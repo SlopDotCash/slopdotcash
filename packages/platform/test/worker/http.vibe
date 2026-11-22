@@ -61,7 +61,7 @@ const results = route({ method: "POST", path: "/api/v1/vetting/fixture/results",
 const traces = route({ method: "PUT", path: "/api/v1/fixture/traces/:id", access: "public", limitKib: 1, request: undefined, answer: Received, rejected: "trace_refused", cache: { browserSeconds: 60, mustRevalidate: true } })
 const unsubscribe = route({ method: "POST", path: "/api/v1/fixture/unsubscribe", access: "public", limitKib: 1, request: undefined, answer: Entries, rejected: "unsubscribe_refused", cache: "no-store" })
 const strict = route({ method: "POST", path: "/api/v1/fixture/strict", access: "public", limitKib: 1, request: undefined, answer: Saved, rejected: "strict_refused", cache: "no-store", invalid: { status: 400, code: "strict_invalid", message: "Notes must be text" } })
-const tiered = route({ method: "GET", path: "/api/v1/fixture/tiered", access: "public", limitKib: 1, request: undefined, answer: Item, rejected: "tiered_refused", cache: "no-store", cors: { production: ["https://slop.cash"], staging: ["https://staging.slop.cash"], local: ["https://slop.test"] } })
+const tiered = route({ method: "GET", path: "/api/v1/fixture/tiered", access: "public", limitKib: 1, request: undefined, answer: Item, rejected: "tiered_refused", cache: "no-store", cors: { production: ["https://slop.cash"], staging: ["https://staging.slop.cash"], local: ["https://slop.test"] }, corsCredentials: true })
 const relay = route({ method: "GET", path: "/api/v1/fixture/relay/:size", access: "public", limitKib: 1, request: undefined, answer: Relayed, rejected: "relay_refused", cache: { browserSeconds: 31536000, immutable: true } })
 
 const api = [item, me, notes, disputes, closeSession, wallets, results, traces, unsubscribe, strict, tiered, relay]

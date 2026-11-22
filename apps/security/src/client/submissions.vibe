@@ -1,6 +1,6 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"
 import { type AnyRoute, route } from "@repo/platform/route"
-import { SubmissionView } from "./intake.vibe"
+import { ProofOfConcept, SubmissionView } from "./intake.vibe"
 
 export schema VulnerablePackage { ecosystem: string; name?: string }
 
@@ -9,6 +9,7 @@ export schema Vulnerability { package: VulnerablePackage; vulnerableVersionRange
 export schema PrivateReport {
   summary: string
   description: string
+  proofOfConcept?: ProofOfConcept
   severity?: "critical" | "high" | "medium" | "low"
   cvssVectorString?: string
   cweIds?: ReadonlyArray<string>

@@ -1,0 +1,214 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { deploymentOrigins } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { bundle, database, migrate, workerOptions } from "@repo/platform/testing"
+import { githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Miniflare, Request as WebRequest } from "miniflare"
+import { Started as StartedFlow } from "../src/client/identity.vibe"
+
+const staging = deploymentOrigins("staging")
+const identity = staging.identity
+const site = staging.site
+const foreign = "https://attacker.example"
+const bindingName = "__Host-slop_oauth_bind_"
+const stateName = "__Host-slop_oauth_state"
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly text: string
+  readonly body: unknown
+}
+
+interface Fetching {
+  readonly method?: string
+  readonly json?: unknown
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+interface Flow {
+  readonly flowId: string
+  readonly authorizationUrl: string
+  readonly pollCapability: string
+}
+
+service Identity {
+  readonly db: D1Database
+  readonly net: Internet
+  fetch(url: string, init?: Fetching): Answer!!
+}
+
+error MigrationFailed { file: string }
+
+const Started = Layer.effect(Identity, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })))
+  const net = internet({ github: github.handler })
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
+  const mf = try acquireRelease(sync(() => new Miniflare(workerOptions({
+    script,
+    d1: { IDENTITY_DB: "slop-private" },
+    ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+    vars: {
+      SLOP_ENVIRONMENT: "staging",
+      GITHUB_APP_CLIENT_ID: github.app.clientId,
+      GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+      IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    },
+    outbound: net.handler,
+  }))), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "IDENTITY_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  const db = try promise(() => database(mf, "IDENTITY_DB"))
+  return {
+    db,
+    net,
+    fetch: (url, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(url, {
+        method: init.method ?? (init.json === undefined ? "GET" : "POST"),
+        headers: { ...init.json === undefined ? {} : { "content-type": "application/json" }, ...init.headers },
+        redirect: "manual",
+        ...init.json === undefined ? {} : { body: JSON.stringify(init.json) },
+      })
+      const text = await response.text()
+      const json = (response.headers.get("content-type") ?? "").includes("json") && text !== ""
+      return { status: response.status, headers: Object.fromEntries(response.headers), text, body: json ? JSON.parse(text) as unknown : text }
+    }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function call(url: string, init: Fetching = {}) {
+  return try (try Identity).fetch(url, init)
+}
+
+function errorOf(answer: Answer) {
+  return typeof answer.body === "object" && answer.body !== null && "error" in answer.body ? answer.body.error : undefined
+}
+
+function cookieAttributes(header: string | undefined) {
+  return (header ?? "").split("; ").slice(1)
+}
+
+effect function begin(audience: string, address: string, origin: string | undefined = site) {
+  const answer = try call(`${identity}/v1/oauth/start`, { json: { audience }, headers: { "cf-connecting-ip": address, ...origin === undefined ? {} : { origin } } })
+  const flow: Flow = try orDie(Schema.decodeUnknownEffect(StartedFlow)(answer.body))
+  const binding = (answer.headers["set-cookie"] ?? "").split(";")[0] ?? ""
+  return { answer, flow, binding }
+}
+
+effect function poll(flow: Flow, audience: string, address: string, headers: Readonly<Record<string, string>> = {}) {
+  return try call(`${identity}/v1/oauth/poll`, { json: { flowId: flow.flowId, pollCapability: flow.pollCapability, audience }, headers: { "cf-connecting-ip": address, ...headers } })
+}
+
+effect function authorize(flow: Flow, cookie: string | undefined) {
+  return try call(flow.authorizationUrl, { headers: cookie === undefined ? {} : { cookie } })
+}
+
+effect function consented(answer: Answer) {
+  const state = new RegExp(`${stateName}=([^;]+)`, "u").exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""
+  const consent = new URL(answer.headers.location ?? `${identity}/missing-location`)
+  consent.searchParams.set("login", "octo")
+  const { net } = try Identity
+  const redirected = try promise(async () => net.handler(new WebRequest(consent.toString(), { redirect: "manual" })))
+  return { state, callback: redirected.headers.get("location") ?? "" }
+}
+
+effect function callback(url: string, cookies: ReadonlyArray<string>) {
+  return try call(url, { headers: { cookie: cookies.join("; ") } })
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A website sign-in completes only in the browser that started it, and the terminal keeps its unbound protocol (spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity")', () => effect {
+    const { db } = try Identity
+    const originless = try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { "cf-connecting-ip": "198.51.100.10" } })
+
+    const own = try begin("slop-points-web", "198.51.100.11")
+    const secret = own.binding.split("=")[1] ?? ""
+    const stored = (try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(own.flow.flowId).first<{ readonly browser_binding_hash: string | null }>()))?.browser_binding_hash
+    const waiting = try poll(own.flow, "slop-points-web", "198.51.100.11", { origin: site, cookie: own.binding })
+    const strangerAuthorize = try authorize(own.flow, undefined)
+    const other = try begin("slop-points-web", "198.51.100.12")
+    const borrowed = try authorize(own.flow, other.binding.replace(other.flow.flowId, own.flow.flowId))
+    const authorized = try authorize(own.flow, own.binding)
+    const signIn = try consented(authorized)
+    const completed = try callback(signIn.callback, [`${stateName}=${signIn.state}`, own.binding])
+    const mismatched = [
+      try poll(own.flow, "slop-points-web", "198.51.100.13"),
+      try poll(own.flow, "slop-points-web", "198.51.100.13", { origin: site }),
+    ]
+    const issued = try poll(own.flow, "slop-points-web", "198.51.100.11", { origin: site, cookie: own.binding })
+
+    const hijacked = try begin("slop-points-web", "198.51.100.14")
+    const hijackSignIn = try consented(try authorize(hijacked.flow, hijacked.binding))
+    const hijackCallback = try callback(hijackSignIn.callback, [`${stateName}=${hijackSignIn.state}`])
+    const hijackStarter = try poll(hijacked.flow, "slop-points-web", "198.51.100.14", { origin: site, cookie: hijacked.binding })
+
+    const refused = try begin("slop-points-web", "198.51.100.15")
+    const refusedAuthorized = try authorize(refused.flow, refused.binding)
+    const refusedState = new RegExp(`${stateName}=([^;]+)`, "u").exec(refusedAuthorized.headers["set-cookie"] ?? "")?.[1] ?? ""
+    const githubError = try callback(`${identity}/v1/oauth/callback?state=${refusedState}&error=access_denied`, [`${stateName}=${refusedState}`, refused.binding])
+    const refusedStarter = try poll(refused.flow, "slop-points-web", "198.51.100.15", { origin: site, cookie: refused.binding })
+
+    const unbound = try begin("slop-points-web", "198.51.100.16")
+    try promise(() => db.prepare("UPDATE identity_oauth_flows SET browser_binding_hash = NULL WHERE id = ?").bind(unbound.flow.flowId).run())
+    const unboundAuthorize = try authorize(unbound.flow, unbound.binding)
+
+    const expiring = try begin("slop-points-web", "198.51.100.17")
+    try promise(() => db.prepare("UPDATE identity_oauth_flows SET created_at = '2026-01-01T00:00:00.000Z', expires_at = '2026-01-01T00:05:00.000Z' WHERE id = ?").bind(expiring.flow.flowId).run())
+    const expired = try poll(expiring.flow, "slop-points-web", "198.51.100.17", { origin: site, cookie: expiring.binding })
+
+    const terminal = try begin("private-trace-api", "198.51.100.18", undefined)
+    const terminalAuthorize = try authorize(terminal.flow, undefined)
+    const terminalWaiting = try poll(terminal.flow, "private-trace-api", "198.51.100.18")
+    const terminalStored = (try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(terminal.flow.flowId).first<{ readonly browser_binding_hash: string | null }>()))?.browser_binding_hash
+
+    const preflights = [
+      try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }),
+      try call(`${identity}/v1/oauth/poll`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }),
+    ]
+    const foreignPreflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: foreign, "access-control-request-method": "POST" } })
+
+    try same({
+      originless: [originless.status, errorOf(originless), originless.headers["set-cookie"]],
+      started: [own.answer.status, own.binding.startsWith(`${bindingName}${own.flow.flowId}=`), cookieAttributes(own.answer.headers["set-cookie"]), own.answer.headers["access-control-allow-origin"], own.answer.headers["access-control-allow-credentials"], own.answer.text.includes(secret), secret.length, stored?.length, stored === secret ? "secret stored" : "hash stored"],
+      waiting: [waiting.status, waiting.headers["access-control-allow-credentials"]],
+      strangerAuthorize: [strangerAuthorize.status, strangerAuthorize.headers.location, strangerAuthorize.headers["set-cookie"]],
+      borrowed: [borrowed.status, borrowed.headers.location],
+      authorized: [authorized.status, new URL(authorized.headers.location ?? identity).origin, completed.status],
+      mismatched: mismatched.map((answer) => [answer.status, errorOf(answer)]),
+      issued: [issued.status, issued.headers["access-control-allow-credentials"], issued.headers["set-cookie"]],
+      hijacked: [hijackCallback.status, hijackCallback.headers.location, hijackStarter.status, errorOf(hijackStarter)],
+      githubError: [githubError.status, refusedStarter.status, errorOf(refusedStarter)],
+      unboundAuthorize: [unboundAuthorize.status, unboundAuthorize.headers.location],
+      expired: [expired.status, errorOf(expired)],
+      terminal: [terminal.answer.status, terminal.answer.headers["set-cookie"], terminalAuthorize.status, terminalWaiting.status, terminalStored],
+      preflights: preflights.map((answer) => [answer.status, answer.headers["access-control-allow-origin"], answer.headers["access-control-allow-credentials"]]),
+      foreignPreflight: [foreignPreflight.status, foreignPreflight.headers["access-control-allow-origin"]],
+    }, {
+      originless: [403, "origin_required", undefined],
+      started: [201, true, ["Path=/", "Max-Age=300", "Secure", "HttpOnly", "SameSite=None"], site, "true", false, 43, 64, "hash stored"],
+      waiting: [202, "true"],
+      strangerAuthorize: [403, undefined, undefined],
+      borrowed: [403, undefined],
+      authorized: [302, "https://github.com", 200],
+      mismatched: [[403, "browser_mismatch"], [403, "browser_mismatch"]],
+      issued: [200, "true", `${bindingName}${own.flow.flowId}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=None`],
+      hijacked: [403, undefined, 410, "callback_failed"],
+      githubError: [400, 410, "callback_failed"],
+      unboundAuthorize: [403, undefined],
+      expired: [410, "flow_unavailable"],
+      terminal: [201, undefined, 302, 202, null],
+      preflights: [[204, site, "true"], [204, site, "true"]],
+      foreignPreflight: [403, undefined],
+    })
+  })
+})

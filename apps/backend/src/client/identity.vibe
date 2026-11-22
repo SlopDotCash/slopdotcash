@@ -1,4 +1,4 @@
-// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"
 import { deploymentOrigins } from "@repo/platform/config"
 import { type AnyRoute, type TierOrigins, route } from "@repo/platform/route"
 
@@ -20,10 +20,10 @@ export schema LocalPolled = PollPending | IdentityDelivered
 export schema ConsumeRequest { readonly audience: IdentityAudience }
 export schema ConsumedIdentity { readonly githubActorId: string; readonly githubLogin: string; readonly audience: IdentityAudience; readonly githubNodeId?: string }
 
-export const oauthStart = route({ method: "POST", path: "/v1/oauth/start", access: "public", limitKib: 4, request: StartRequest, answer: Started, rejected: "invalid_request", cache: "no-store", status: 201, cors: browserOrigins })
+export const oauthStart = route({ method: "POST", path: "/v1/oauth/start", access: "public", limitKib: 4, request: StartRequest, answer: Started, rejected: "invalid_request", cache: "no-store", status: 201, cors: browserOrigins, corsCredentials: true })
 export const oauthAuthorize = route({ method: "GET", path: "/v1/oauth/authorize", access: "public", limitKib: 1, request: undefined, answer: Schema.String, rejected: "invalid_request", cache: "no-store" })
 export const oauthCallback = route({ method: "GET", path: "/v1/oauth/callback", access: "public", limitKib: 1, request: undefined, answer: Schema.String, rejected: "invalid_request", cache: "no-store" })
-export const oauthPoll = route({ method: "POST", path: "/v1/oauth/poll", access: "public", limitKib: 4, request: PollRequest, answer: Polled, rejected: "invalid_request", cache: "no-store", cors: browserOrigins })
+export const oauthPoll = route({ method: "POST", path: "/v1/oauth/poll", access: "public", limitKib: 4, request: PollRequest, answer: Polled, rejected: "invalid_request", cache: "no-store", cors: browserOrigins, corsCredentials: true })
 export const localStart = route({ method: "POST", path: "/v1/local/start", access: "public", limitKib: 4, request: LocalStartRequest, answer: Started, rejected: "invalid_request", cache: "no-store", status: 201 })
 export const localPoll = route({ method: "POST", path: "/v1/local/poll", access: "public", limitKib: 4, request: PollRequest, answer: LocalPolled, rejected: "invalid_request", cache: "no-store" })
 export const assertionsConsume = route({ method: "POST", path: "/v1/assertions/consume", access: "public", limitKib: 4, request: ConsumeRequest, answer: ConsumedIdentity, rejected: "invalid_request", cache: "no-store" })

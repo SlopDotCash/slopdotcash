@@ -1,11 +1,11 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"; spec/security/routineDecisions.md, "The reporter appeals a routine close once, to the owner, and the pass never reads the report again"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
 import { millisOf } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import { type Actor, refuse } from "@repo/platform/http"
 import { Restrictions } from "@repo/ports/backend"
 import type { Json } from "@repo/ports/backend"
 import type { Decision, Event, PrivateCase, ProjectClearance, Receipt } from "../../gen/security__cases.ts"
-import { Rejected, apply, committed as holdsAward, reporterRelated } from "../../gen/security__cases.effect.vibe"
+import { Rejected, apply, committed as holdsAward, reporterRelated, routineAppealable, routineReturned } from "../../gen/security__cases.effect.vibe"
 import { postSecurityCasesByIdActions as rows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
@@ -188,7 +188,7 @@ effect function requestInformation(plan: Plan) {
   const text = try reason(body)
   const event: Event = { type: "requestInformation", checkedEpoch: observed.epoch }
   const next = try stepped(observed.model, event, by, "request-information")
-  return changeOf(plan, observed.model, next, { kind: "request-information", role: observed.roles.has("security-maintainer") ? "security-maintainer" : "triager", reason: text, evidenceReference: null, detail: {}, event })
+  return changeOf(plan, observed.model, next, { kind: "request-information", role: observed.roles.has("security-maintainer") ? "security-maintainer" : "triager", reason: text, evidenceReference: null, detail: {}, event, set: { next_action: null, next_action_due_at: null } })
 }
 
 effect function rootCauseFree(projectId: string, caseId: string, rootCauseKey: string) {
@@ -359,8 +359,12 @@ effect function appeal(plan: Plan) {
   try requireAction(observed, by, "appeal")
   const text = try textField(body, "reason", 20, 2000, rows.invalidRequestInvalidReason, rows.invalidRequestReasonMustBe20)
   const event: Event = { type: "appeal" }
-  const next = try stepped(observed.model, event, by, "appeal")
   const from = observed.record.row.receipt_state
+  if (routineAppealable(observed.model, by)) {
+    const returned = routineReturned(by, observed.model)
+    return changeOf(plan, observed.model, returned, { kind: "appeal", role: "reporter", reason: text, evidenceReference: null, detail: { from, routine: true }, event, set: { appeal_from_state: from }, returnedToOwner: true })
+  }
+  const next = try stepped(observed.model, event, by, "appeal")
   return changeOf(plan, observed.model, next, { kind: "appeal", role: "reporter", reason: text, evidenceReference: null, detail: { from }, event, set: { appeal_from_state: from } })
 }
 

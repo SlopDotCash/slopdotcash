@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open"
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { D1, allChunked, list, rows, sql } from "@repo/platform/d1"
 import { type Actor, handleRaw, json, refuse } from "@repo/platform/http"
@@ -15,6 +15,7 @@ import { listSubmissions, readSubmission } from "../client/submissions.vibe"
 import { idleMs, loaded, noVolatile, settled } from "../forwarding/store.vibe"
 import { ReadAborted, ReportUnreadable, githubNumber, readReport } from "../privacy/reads.vibe"
 import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
+import { routineOwnerRanking } from "../routine/store.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
 import { IntakeSettings } from "./availability.vibe"
 import { parseReport } from "./report.vibe"
@@ -131,13 +132,18 @@ effect function visible(actor: Actor) {
   const projects = try scopedProjects(actor)
   let authorityUnavailable = projects.authorityUnavailable
   const moderator = try (try Roles).has(actor.githubId, "moderator")
-  const candidates = try candidatesOf(actor, projects.scoped, moderator)
+  const recent = try candidatesOf(actor, projects.scoped, moderator)
+  const ranking = try routineOwnerRanking(projects.scoped)
+  const rankOf = new Map(ranking.map((rankedCase, index) => [rankedCase, index]))
+  const [firstMissing, ...moreMissing] = ranking.filter((rankedCase) => !recent.some((row) => row.case_id === rankedCase))
+  const older = firstMissing === undefined ? [] : try rows(SubmissionRow, sql`SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id WHERE s.reporter_github_id<>${actor.githubId} AND i.case_id IN ${list([firstMissing, ...moreMissing])}`)
+  const candidates = [...recent, ...older]
   const stored = new Map((try allChunked(StoredIntake, [...own, ...candidates].map((row) => row.id), (chunk) => sql`SELECT * FROM security_submission_intake WHERE submission_id IN ${list(chunk)}`)).map((row) => [row.submission_id, row]))
   const caseIds = [...new Set([...stored.values()].map((row) => row.case_id))]
   const standings = new Map((try allChunked(CaseStanding, caseIds, (chunk) => sql`SELECT ${standingColumns} FROM security_cases WHERE id IN ${list(chunk)}`)).map((row) => [row.id, row]))
   const triaging = new Set((try rows(MemberCase, sql`SELECT case_id FROM security_case_members WHERE github_id=${actor.githubId} AND role='triager' AND revoked_at IS NULL`)).map((row) => row.case_id))
   const nowMs = try Clock.currentTimeMillis
-  const shown: Array<{ readonly createdAt: string; readonly submission: unknown }> = []
+  const shown: Array<{ readonly createdAt: string; readonly rank?: number; readonly submission: unknown }> = []
   for (const row of own) {
     const intake = stored.get(row.id)
     shown.push({ createdAt: row.created_at, submission: try ownView(row, intake, intake === undefined ? undefined : standings.get(intake.case_id), nowMs) })
@@ -153,9 +159,10 @@ effect function visible(actor: Actor) {
     }
     if (!holds(roles, reviewers)) continue
     const current = settledRow(candidate, true, nowMs) catch () => candidate
-    shown.push({ createdAt: candidate.created_at, submission: roleView(current, intake, standing, roles, nowMs) })
+    const rank = roles.has("security-maintainer") ? rankOf.get(standing.id) : undefined
+    shown.push({ createdAt: candidate.created_at, ...rank === undefined ? {} : { rank }, submission: roleView(current, intake, standing, roles, nowMs) })
   }
-  shown.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+  shown.sort((left, right) => (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER) || right.createdAt.localeCompare(left.createdAt))
   return { submissions: shown.map((entry) => entry.submission), authorityUnavailable }
 }
 

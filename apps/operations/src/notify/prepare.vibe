@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
+// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/moderation.md, "An underfunded month asks the steward once, and each owner cut notifies its contributor once"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { isoNow } from "@repo/platform/clock"
 import { hmacSha256Hex, sha256Hex } from "@repo/platform/crypto"
 import { D1, type Statement, first, sql } from "@repo/platform/d1"
@@ -9,6 +9,7 @@ import { type CaseNoticeAccess, SecurityNoticeAccess, VettingBans } from "@repo/
 import { SlopbotAudience } from "@repo/ports/slopbot"
 import { type AccessCheck, type AppealSource, type Kind, type Notice, type NoticeAudience, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
 import { inPayoutAudience } from "../../gen/operations__payoutAudience.effect.vibe"
+import { cutContributor, requestOpen } from "../notifications/audience.vibe"
 import type { Projection } from "../notifications/rows.vibe"
 import { githubNumber, payoutProjectOf } from "../notifications/statements.vibe"
 import { digestText } from "../notifications/store.vibe"
@@ -53,10 +54,15 @@ effect function within(audience: Statement, githubId: string) {
   return (try first(Membership, sql`SELECT ${githubId} IN (${audience}) AS member`))?.member === 1
 }
 
+effect function holds(fact: Statement) {
+  return (try first(Membership, sql`SELECT ${fact} AS member`))?.member === 1
+}
+
 const appealPrefixes = ["slopbot-appeal:", "slopbot-value-appeal:"] as const
 const disputePrefix = "slopbot-points-dispute:"
 const scamPrefix = "slopbot-scam-review:"
 const enforcementPrefix = "project-enforcement:"
+const reviewPrefix = "reinstatement-review:"
 const resolvedSuffix = ":resolved"
 
 interface AppealFacts {
@@ -105,6 +111,9 @@ effect function audienceOf(facts: NoticeFacts) {
   const vettingBan = kind === "ProjectBanned" && facts.eventKey.startsWith(enforcementPrefix)
     && (try (try VettingBans).serviceBan({ enforcementId: facts.eventKey.slice(enforcementPrefix.length), projectId: facts.subject }))
   const steward = kind === "PayoutException" && payoutAudienceHolds(try (try Registry).project(facts.subject), facts.recipient)
+  const eventKey = sql`${facts.eventKey}`
+  const cut = kind === "PayoutException" && (try holds(cutContributor(eventKey, project, sql`${facts.recipient}`)))
+  const undecided = kind === "ReinstatementReview" && facts.eventKey.startsWith(reviewPrefix) && (try holds(requestOpen(eventKey)))
   const owner = (ownerKind(kind) || vettingBan) && (try within(try (try ProjectAudience).owners(project), facts.recipient))
   const affectedContributor = vettingBan && (try within(try (try ContributorAudience).affected(project), facts.recipient))
   const staffPath = ownerKind(kind) && (try first(NoticeLink, sql`SELECT action_path FROM notifications WHERE event_key = ${facts.eventKey} AND recipient_github_id = ${facts.recipient}`))?.action_path === "/admin"
@@ -124,6 +133,8 @@ effect function audienceOf(facts: NoticeFacts) {
     resolved: appeal.resolved,
     scamPenaltyStands: scam.stands,
     author: scam.author,
+    cutContributor: cut,
+    requestOpen: undecided,
   } satisfies NoticeAudience
 }
 

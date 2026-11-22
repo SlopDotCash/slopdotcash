@@ -17,7 +17,7 @@ Categories:
 - duplicate: substantially repeats another open item by the same author.
 - out_of_scope: contradicts scope rules the repository publishes.
 - busywork: preference-only or unnecessary work the repository's guidance says it does not want.
-- missing_evidence: a required template, test result or evidence the guidance demands is absent.
+- missing_evidence: a required template, test result or evidence the guidance demands is absent. Match the declared change types to the diff and scope. A generic success phrase or a link without an accessible relevant result does not demonstrate the outcome. Check whether the original problem and reachable path are shown, and whether the test output, logs, video, benchmark or physical-device result actually covers the change.
 - gaming: farming rewards, split or near-identical submissions, forged attribution, self-dealing.
 - low_quality: weak work, or one of the supplied verified objective defects. Weak work alone is label-only.
 

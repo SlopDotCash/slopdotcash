@@ -1,11 +1,12 @@
 // spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
 import { adaptPullRequestFile } from "../snapshot/adaptPr.vibe"
 import { restoreSnapshot } from "../snapshot/restore.vibe"
+import { extractCollectedData, restoreLocal } from "../snapshot/restoreLocal.vibe"
 import { defaultSnapshotPath, packTransport } from "../snapshot/write.vibe"
 
 export error SnapshotUsage { message: string }
 
-const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot adapt-pr <input> <output> <registry>"
+const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot restore-local <data dir> <output> | snapshot extract-collected <bundle.zip> <data dir> | snapshot adapt-pr <input> <output> <registry>"
 
 export effect function snapshot(args: ReadonlyArray<string>) {
   const [command, ...rest] = args
@@ -17,6 +18,15 @@ export effect function snapshot(args: ReadonlyArray<string>) {
   if (command === "restore" && rest.length === 2) {
     const bytes = try restoreSnapshot(rest[0] ?? "", rest[1] ?? "")
     try Console.log(`[Slop] restored ${bytes} published leaderboard bytes`)
+    return
+  }
+  if (command === "restore-local" && rest.length === 2) {
+    const bytes = try restoreLocal(rest[0] ?? "", rest[1] ?? "")
+    try Console.log(`[Slop] restored ${bytes} collected leaderboard bytes`)
+    return
+  }
+  if (command === "extract-collected" && rest.length === 2) {
+    try extractCollectedData(rest[0] ?? "", rest[1] ?? "")
     return
   }
   if (command === "adapt-pr" && rest.length === 3) {

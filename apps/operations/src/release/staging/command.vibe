@@ -35,6 +35,6 @@ export effect function staging(args: ReadonlyArray<string>) {
   const checkout = root ?? "."
   provide cloudflare({ root: checkout, wrangler: pinnedWrangler(checkout) }) {
     const deployment = try stagingAcceptance(checkout, deploymentId)
-    try Console.log(`Staging ${deployment.url} and ${deployment.canonical}: roots, OAuth persistence, callback routing, browser isolation, anonymous account and write authentication verified. Interactive login acceptance is separate.`)
+    try Console.log(`Staging ${deployment.url} and ${deployment.canonical}: roots, OAuth persistence, browser binding, callback routing, browser isolation, anonymous account and write authentication verified. Interactive login acceptance is separate.`)
   }
 }

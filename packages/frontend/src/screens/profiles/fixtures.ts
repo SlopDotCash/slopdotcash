@@ -1,9 +1,7 @@
-// spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/views.md, "Story: Read a contributor's profile"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
 import type { DirectTransfer } from "@repo/settlement/client";
 import { paidCycle } from "../cycles/fixtures.ts";
-import type { CycleShare, MembershipFacts } from "./profile.ts";
-
-export const aliceMember: MembershipFacts = { actor: { id: "U_kgDOAAAD6Q", login: "alice" }, welcome: 5, socialPoints: 10 };
+import type { CycleShare } from "./profile.ts";
 
 export const shares: ReadonlyArray<CycleShare> = paidCycle.contributors.filter((contributor) => contributor.actor.login === "alice").map((contributor) => ({ contributor, cycle: paidCycle }));
 

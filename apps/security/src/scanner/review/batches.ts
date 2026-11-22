@@ -3,7 +3,8 @@ import { sha256Of } from "@repo/platform/git/bytes";
 import { DETERMINISTIC_COVERAGE_ID, INVENTORY_SCHEMA, MAX_INVENTORY_BYTES, MAX_INVENTORY_ITEMS, textParts } from "../inspect/inspection.ts";
 import type { InventoryItem, RepositoryInspection } from "../inspect/model.ts";
 import { surfacesOf } from "../inspect/surfaces.ts";
-import { type ReviewPass, SCAN_REVIEW_AREAS, type ScannerEvidence } from "../providers/review.ts";
+import { type ReviewPass, SCAN_REVIEW_AREAS, type ScanArea, type ScannerEvidence, type VerifiedCoverage } from "../providers/review.ts";
+import { type CoverageScope, referencedPath, worstCoverage } from "./coverage.ts";
 import { fittedAliasCount, prefixSums, spanStarts, worstRank } from "./plan.ts";
 
 export const DEFAULT_BATCH_TOKENS = 150_000;
@@ -44,6 +45,38 @@ export function callTimeoutMs(estimatedTokens: number): number {
 
 function planned(evidence: string, items: number): PlannedCall {
   return { evidence, inputSha256: sha256Of(evidence), items, estimatedTokens: tokens(byteLength(evidence)) };
+}
+
+/** @throws {never} */
+export function callPaths(call: PlannedCall): ReadonlySet<string> {
+  const bundle = JSON.parse(call.evidence) as { readonly items: ReadonlyArray<{ readonly id: string }>; readonly sameBytesAs?: Readonly<Record<string, ReadonlyArray<string>>> };
+  return new Set([...bundle.items.map((item) => referencedPath(item.id)), ...Object.values(bundle.sameBytesAs ?? {}).flat().map(referencedPath)]);
+}
+
+/** @throws {never} */
+export function coveredPaths(inspection: RepositoryInspection): ReadonlySet<string> {
+  return new Set([...inspection.deterministic.map((record) => record.path), ...inspection.media.map((record) => record.path), ...inspection.artifacts.map((artifact) => artifact.path)]);
+}
+
+/** @throws {never} */
+export function batchScopes(inspection: RepositoryInspection, batches: ReadonlyArray<PlannedCall>, sameBytesOutsideBatches: SameBytesOutsideBatches): { readonly batch: (index: number) => CoverageScope; readonly synthesis: CoverageScope } {
+  const covered = coveredPaths(inspection);
+  const batchPaths = batches.map(callPaths);
+  const outside = sameBytesOutsideBatches.flatMap((entry) => entry.paths.map(referencedPath));
+  return {
+    batch: (index) => ({
+      kind: "batch",
+      supplied: batchPaths[index] ?? new Set(),
+      elsewhere: new Set([...batchPaths.flatMap((paths, other) => (other === index ? [] : [...paths])), ...outside]),
+      covered,
+    }),
+    synthesis: {
+      kind: "synthesis",
+      supplied: new Set(["prepass", ...batches.map((_, index) => `batch-${index + 1}`)]),
+      elsewhere: new Set([...batchPaths.flatMap((paths) => [...paths]), ...outside]),
+      covered,
+    },
+  };
 }
 
 function inventoryOf(inspection: RepositoryInspection): Inventory {
@@ -161,7 +194,7 @@ export function synthesisCall(inspection: RepositoryInspection, batches: Readonl
   const bundleGaps = gaps.length > MAX_BUNDLE_GAPS ? [...gaps.slice(0, MAX_BUNDLE_GAPS - 1), `${gaps.length - MAX_BUNDLE_GAPS + 1} further visibility gaps are listed in the prepass item`] : gaps;
   const items = [
     { id: "prepass", text: prepass },
-    ...results.map((result, index) => ({ id: `batch-${index + 1}`, text: JSON.stringify({ verdict: result.review.verdict, confidence: result.confidence, coverage: result.coverage, findings: result.findings }) })),
+    ...results.map((result, index) => ({ id: `batch-${index + 1}`, text: JSON.stringify({ verdict: result.review.verdict, confidence: result.confidence, coverage: result.coverage, findings: result.findings, gaps: result.coverageGaps ?? [] }) })),
   ].map((item) => ({ ...item, sha256: sha256Of(item.text) }));
   return planned(JSON.stringify({ schemaVersion: INVENTORY_SCHEMA, synthesis: { inventorySha256: inspection.inventorySha256 }, items, artifacts: [], visibilityGaps: bundleGaps }), items.length);
 }
@@ -234,6 +267,9 @@ export function combine(inventorySha256: string, batchResults: ReadonlyArray<Sca
   const coverage = completed
     ? (Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, worstOf(COVERAGES, results.map((result) => result.coverage?.[area] ?? "missing"))])) as ScannerEvidence["coverage"])
     : null;
+  const verifiedCoverage = completed
+    ? (Object.fromEntries(SCAN_REVIEW_AREAS.map((area) => [area, worstCoverage(results.map((result) => result.verifiedCoverage?.[area] ?? "missing"))])) as Record<ScanArea, VerifiedCoverage>)
+    : undefined;
   const verdict = completed ? worstOf(VERDICTS, results.map((result) => result.review.verdict ?? "no-findings")) : null;
   const findings = completed ? results.flatMap((result) => result.findings) : [];
   const usage = results.every((result) => result.usage !== null)
@@ -257,11 +293,17 @@ export function combine(inventorySha256: string, batchResults: ReadonlyArray<Sca
     providerRequestId: last.providerRequestId,
     returnedModel: last.returnedModel,
     coverage,
+    coverageGaps: completed ? results.flatMap((result) => result.coverageGaps ?? []) : [],
+    ...(verifiedCoverage === undefined ? {} : { verifiedCoverage }),
     confidence: completed ? Math.min(...results.map((result) => result.confidence ?? 0)) : null,
     findings,
     usage,
     cost,
-    visibilityGaps: [...new Set(results.flatMap((result) => result.visibilityGaps))],
+    visibilityGaps: [...new Set(results.flatMap((result) => result.visibilityGaps))].filter((gap) => {
+      if (verifiedCoverage === undefined) return true;
+      const [reviewer, area, state] = gap.split(":");
+      return reviewer !== last.review.reviewer || area === undefined || !Object.hasOwn(verifiedCoverage, area) || verifiedCoverage[area as ScanArea] === state;
+    }),
     passes,
   };
 }

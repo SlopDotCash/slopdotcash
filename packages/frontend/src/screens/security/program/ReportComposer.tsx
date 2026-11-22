@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { type ReportDraft, reportBody } from "../../../flows/security/private.vibe";
 import type { ComposerPhase } from "./compose.vibe";
 import { ReportFields } from "./ReportFields.tsx";
+import { ProofFileView } from "./ReportProofFields.tsx";
 import { SecurityOffer } from "./SecurityOffer.tsx";
 import type { ProgramTerms } from "./terms.schema.ts";
 
@@ -57,6 +58,7 @@ function Reviewed({ draft, login, projectName, terms }: Pick<ReportComposerProps
       <SecurityOffer terms={terms} compact />
       <h4 className="font-semibold text-foreground">{body.summary}</h4>
       <pre className="max-h-96 overflow-auto rounded-md border border-border bg-muted p-4 font-mono text-sm whitespace-pre-wrap">{body.description}</pre>
+      {body.proofOfConcept ? <ProofFileView proof={body.proofOfConcept} /> : null}
       <Classification draft={draft} />
       <p className="flex flex-wrap gap-3">
         <Status presentation={{ tone: "Neutral", icon: "Lock", label: "Private · screened by Surplus Intelligence" }} />
@@ -133,6 +135,7 @@ export function ReportComposer({ login, projectName, terms, draft, attempted, st
       ) : (
         <ReportFields
           draft={draft}
+          disabled={busy}
           onChange={(next) => {
             setInvalid(null);
             onChange(next);

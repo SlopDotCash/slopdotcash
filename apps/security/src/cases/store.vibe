@@ -1,4 +1,4 @@
-// spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+// spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"
 import { isoNow } from "@repo/platform/clock"
 import type { SqlValue } from "@repo/platform/bindings"
 import { ConstraintViolation, D1, type Statement, sql } from "@repo/platform/d1"
@@ -35,6 +35,7 @@ export type Column =
   | "receipt_state" | "severity" | "loss_finding" | "root_cause_key" | "duplicate_of" | "evidence_digest" | "technical_decider_github_id"
   | "related_party" | "related_party_review" | "related_party_reviewer_github_id" | "award_state" | "award_gross_minor" | "award_gross_base"
   | "payment_state" | "payment_deadline" | "appeal_state" | "appeal_from_state" | "received_at_source" | "reporter_github_login"
+  | "next_action" | "next_action_due_at"
 
 export type Assignments = Partial<Readonly<Record<Column, SqlValue>>>
 
@@ -51,6 +52,7 @@ export interface Change {
   readonly require?: Statement
   readonly unmet?: Refusal
   readonly relatedReview?: boolean
+  readonly returnedToOwner?: boolean
 }
 
 export const reporterKinds: ReadonlySet<string> = new Set(["claim", "submit", "submit-direct", "record", "verify-link", "reject-link", "triage", "reserve-award", "approve-award", "receive", "receipt-mismatch", "request-information", "decide", "award", "remediation", "consent-payment", "prepare-payment", "verify-payment", "recover-payment", "appeal", "decide-appeal", "decide-related-party", "disclosure", "recognition"])
@@ -118,6 +120,7 @@ export interface CaseNotice {
   readonly detail: { readonly [key: string]: Json }
   readonly program: ReportingProgram | undefined
   readonly relatedReview: boolean
+  readonly returnedToOwner?: boolean
   readonly at: string
 }
 
@@ -129,7 +132,8 @@ export effect function caseNotices(input: CaseNotice) {
     ...reporterKinds.has(input.kind) ? [input.reporterGithubId] : [],
     ...technicalKinds.has(input.kind) ? ids("technical") : [],
     ...input.kind === "verify-payment" || input.kind === "recover-payment" ? ids("financial") : [],
-    ...input.kind === "appeal" || input.relatedReview ? moderators : [],
+    ...input.returnedToOwner === true ? ids("technical") : [],
+    ...(input.kind === "appeal" && input.returnedToOwner !== true) || input.relatedReview ? moderators : [],
     ...input.kind === "assign-triager" && typeof input.detail.githubId === "string" ? [input.detail.githubId] : [],
   ]
   const landed = sql`EXISTS (SELECT 1 FROM security_case_events WHERE case_id = ${input.caseId} AND case_revision = ${input.revision} AND idempotency_key = ${input.idempotencyKey})`
@@ -176,6 +180,8 @@ const assignments: Readonly<Record<Column, (value: SqlValue) => Statement>> = {
   appeal_from_state: (value) => sql`appeal_from_state = ${value}`,
   received_at_source: (value) => sql`received_at_source = ${value}`,
   reporter_github_login: (value) => sql`reporter_github_login = ${value}`,
+  next_action: (value) => sql`next_action = ${value}`,
+  next_action_due_at: (value) => sql`next_action_due_at = ${value}`,
 }
 
 export function modelColumns(before: PrivateCase, next: PrivateCase): Assignments {
@@ -189,7 +195,7 @@ export function modelColumns(before: PrivateCase, next: PrivateCase): Assignment
   }
 }
 
-function setList(set: Assignments, at: string): Statement {
+export function setList(set: Assignments, at: string): Statement {
   const parts = (Object.keys(set) as Column[]).map((column) => assignments[column](set[column] ?? null))
   return [...parts, sql`revision = revision + 1`, sql`updated_at = ${at}`].reduce((left, right) => sql`${left}, ${right}`)
 }
@@ -228,7 +234,7 @@ export effect function committed(input: Commit) {
     caseEvent({ caseId: row.id, revision, kind: change.kind, actorGithubId: actor.githubId, role: change.role, idempotencyKey: input.idempotencyKey, reason: change.reason, evidenceReference: change.evidenceReference, detail: change.detail, at, guard: true }),
     ...change.after ?? [],
     accessLog(row.id, actor.githubId, observed.roles, "write", at),
-    ...(try caseNotices({ caseId: row.id, revision, kind: change.kind, idempotencyKey: input.idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail: change.detail, program: observed.program, relatedReview: change.relatedReview === true, at })),
+    ...(try caseNotices({ caseId: row.id, revision, kind: change.kind, idempotencyKey: input.idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail: change.detail, program: observed.program, relatedReview: change.relatedReview === true, returnedToOwner: change.returnedToOwner === true, at })),
   ]
   const results = (try D1).batch(statements) catch effect (error) => {
     if (error instanceof ConstraintViolation) return try violated(error)

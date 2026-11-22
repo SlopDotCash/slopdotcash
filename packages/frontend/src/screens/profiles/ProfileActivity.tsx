@@ -1,34 +1,26 @@
-// spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+// spec/frontend/views.md, "Story: Read a contributor's profile"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
 import { contributorPullSearchUrl, type ProfileIndex, profileCounts } from "@repo/points/client";
-import { BarChart, cn, DataState, MetricGrid } from "@repo/ui";
+import { cn, DataState } from "@repo/ui";
 import type { ReactNode } from "react";
-import { type DatedAward, dailyPoints } from "../../projections/profile.ts";
 import type { Shown } from "../home/listing.ts";
-import { formatDate } from "../projects/index.ts";
 import { ContributorIdentity } from "./ContributorIdentity.tsx";
-import { activityDays, censusMatches } from "./profile.ts";
+import { censusMatches } from "./profile.ts";
 
 export type ProfileActivityProps = {
   /** The login asked for. */
   login: string;
   /** The contributor's actor id, once a record names it. */
   actorId?: string;
-  /** The member's dated Points awards, newest first. */
-  awards?: ReadonlyArray<DatedAward>;
   /** The profile census of recorded pull requests. */
   census: Shown<ProfileIndex>;
   /** Shows the identity header from the census record. */
   showIdentity: boolean;
   /** Status lines and links under the identity. */
   badges?: ReactNode;
-  /** The Points totals. */
-  summary?: ReactNode;
   /** Sections shown between the record and the payments. */
   children?: ReactNode;
   /** The awards and payments section. */
   payments?: ReactNode;
-  /** Now, in milliseconds, whose UTC day ends the chart. */
-  nowMs: number;
 };
 
 const segments = [
@@ -67,23 +59,8 @@ function PullRequestBar({ counts, login }: { counts: Counts; login: string }) {
   );
 }
 
-function ActivityChart({ awards, nowMs }: { awards: ReadonlyArray<DatedAward>; nowMs: number }) {
-  const days = dailyPoints(awards, nowMs, activityDays);
-  if (Math.max(...days.map((day) => day.points)) <= 0) return null;
-  const total = days.reduce((sum, day) => sum + day.points, 0);
-  return (
-    <section aria-label="Daily activity" className="flex flex-col gap-2">
-      <h2 className="text-sm text-muted-foreground">{activityDays} days</h2>
-      <BarChart
-        label={`Points per day, last ${activityDays} days: ${total.toLocaleString("en-US")} points`}
-        bars={days.map((day) => ({ label: `${formatDate(day.day)} · ${day.points.toLocaleString("en-US")} points`, value: Math.max(0, day.points) }))}
-      />
-    </section>
-  );
-}
-
-/** A contributor's record: identity, Points, daily activity, pull requests and payments; missing counts read as unavailable, never as zero. */
-export function ProfileActivity({ login, actorId, awards, census, showIdentity, badges, summary, children, payments, nowMs }: ProfileActivityProps) {
+/** A contributor's record: identity, pull requests and payments; missing counts read as unavailable, never as zero. */
+export function ProfileActivity({ login, actorId, census, showIdentity, badges, children, payments }: ProfileActivityProps) {
   const matches = census.value === undefined ? [] : censusMatches(census.value.people, login, actorId);
   const person = matches.length === 1 ? matches[0] : undefined;
   const id = actorId ?? person?.id;
@@ -101,8 +78,6 @@ export function ProfileActivity({ login, actorId, awards, census, showIdentity, 
         />
       ) : null}
       {badges}
-      {summary ? <MetricGrid>{summary}</MetricGrid> : null}
-      {awards ? <ActivityChart awards={awards} nowMs={nowMs} /> : null}
       <DataState status={census.status} onRetry={census.onRetry} retryLabel="Retry profile">
         {counts ? <PullRequestBar counts={counts} login={shownLogin} /> : null}
       </DataState>

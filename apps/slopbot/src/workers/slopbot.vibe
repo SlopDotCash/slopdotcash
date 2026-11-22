@@ -47,9 +47,9 @@ export interface Env extends AppVars, WebhookVars, ActivationVars, ValueSettings
 const slopbotCron = "*/5 * * * *"
 
 const jobSettings = Layer.effect(JobSettings, effect {
-  const { appUserId } = try WebhookSettings
+  const { appUserId, evidenceSwitch } = try WebhookSettings
   const { trust } = try ClosureActivation
-  return { review: { appUserId, verifierKey: trust.verifierKey }, appeal: { appUserId, trust } }
+  return { review: { appUserId, verifierKey: trust.verifierKey, evidenceSwitch }, appeal: { appUserId, trust } }
 })
 
 function services(env: Env) {

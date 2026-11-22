@@ -1,6 +1,6 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
-import { headings, reportText, submissions } from "./fixtures.ts";
+import { headings, reportText, reportWithProof, submissions } from "./fixtures.ts";
 import type { ReportDetailProps } from "./ReportDetail.tsx";
 
 const onReview = fn();
@@ -23,6 +23,7 @@ export const meta: ComponentMeta<ReportDetailProps> = {
     SignedOut: { detail: { status: "signedOut" } },
     Stale: { detail: { status: "ready", report: reportText, refreshError: "The private report could not refresh." } },
     Closed: { open: false },
+    WithProof: { detail: { status: "ready", report: reportWithProof } },
   },
   play: {
     // spec/frontend/reportDetails.md, "Private report IDs scope both heading references"
@@ -36,6 +37,12 @@ export const meta: ComponentMeta<ReportDetailProps> = {
     // spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"
     Closed: async () => {
       await expect(screen.queryByRole("region")).toBeNull();
+    },
+    // spec/frontend/reportDetails.md, "Private report IDs scope both heading references"
+    WithProof: async () => {
+      const [, proofRegion] = screen.getAllByRole("region");
+      await expect(proofRegion?.getAttribute("aria-labelledby")?.startsWith(`${headings.card} `)).toBe(true);
+      await expect(screen.getByRole("link", { name: /Download/u }).getAttribute("download")).toBe(reportWithProof.proofOfConcept.fileName);
     },
   },
 };

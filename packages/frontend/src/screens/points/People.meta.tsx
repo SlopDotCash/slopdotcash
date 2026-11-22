@@ -1,10 +1,10 @@
 import { expect, screen } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
-import { census, current, failed, history, loading, people, stewards } from "./fixtures.ts";
+import { census, current, failed, loading, people, stewards } from "./fixtures.ts";
 import type { PeopleProps } from "./People.tsx";
 
 export const meta: ComponentMeta<PeopleProps> = {
-  args: { census: current(census), members: { kind: "read", people: current(people) }, history: current(history), stewards, query: "" },
+  args: { census: current(census), members: { kind: "read", people: current(people) }, stewards, query: "" },
   examples: {
     Preview: { members: { kind: "preview", site: "https://slop.cash" } },
     MembersFailed: { members: { kind: "read", people: failed() } },

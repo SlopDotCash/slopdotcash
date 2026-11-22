@@ -1,12 +1,13 @@
-// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
+// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"
 import { type CommitAttribution, type CopyBinding, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, contributes, eligibleKind, initial as attributionInitial, recipientFor, recipientLines } from "../../gen/points__authorship.effect.vibe"
 import { type PointShare, type Recipient, allocatePoints, canWriteAllocation, eligibleAllocation, lineTotal } from "../../gen/points__allocation.effect.vibe"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
+import { type JointMembership, canWithholdJoint, holdsJointDecision, withheldMember } from "../../gen/points__scoringPolicy.effect.vibe"
 import { type Units, accept as acceptUnit, canAccept as canAcceptUnit, canForm, form, initial as unitsInitial } from "../../gen/points__workUnits.effect.vibe"
 import { valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
 import { commitActorKind } from "../kernels/scoring/lines.ts"
 import { valueTierBand } from "../kernels/scoring/tiers.ts"
-import { Commits } from "./book.vibe"
+import { Commits, Sources } from "./book.vibe"
 import { type Actor, type ActorIndex, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import { scoredSource, valueAssessed } from "./policy.vibe"
 
@@ -61,6 +62,8 @@ export interface Timed {
 
 const shareSuffix = (count: number, zeroLines: boolean, who: string) =>
   count > 1 ? ` Shared among ${count} ${who} ${zeroLines ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.` : ""
+
+const withheldReason = "A maintainer ratification of another pull request withheld this merge's joint value assessment; the accepted merge keeps the one-third minimum."
 
 const memberRefused = "Joint scoring requires current human decision and review sources for every member"
 
@@ -397,8 +400,19 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     if (jointOf.has(member.pullId) && jointOf.get(member.pullId) !== decision) throw new FactsRefused({ reason: "Joint source members disagree about their current decision", sourceId: member.pullId })
     jointOf.set(member.pullId, decision)
   }
+  const withheldMembers = new Set<string>()
+  const scoredMembers = new Set<string>()
+  for (const decision of input.decisions) for (const unit of decision.units) {
+    const withheld = unit.carriers.some(ratified)
+    for (const claim of unit.claims) {
+      if (!withheld) scoredMembers.add(claim.sourceId)
+      else if (!ratified(claim.sourceId)) withheldMembers.add(claim.sourceId)
+    }
+  }
+  const membership = (id: string): JointMembership => ({ inWithheldUnit: withheldMembers.has(id), ownRatification: ratified(id), inScoredUnit: scoredMembers.has(id) })
   const attributionHeld = new Set(input.attributionHolds)
-  for (const decision of input.decisions) if (decision.members.some((member) => attributionHeld.has(member.pullId))) for (const member of decision.members) attributionHeld.add(member.pullId)
+  const heldDecisions = new Set(input.decisions.filter((decision) => decision.members.some((member) => holdsJointDecision(input.attributionHolds.has(member.pullId), membership(member.pullId)))))
+  for (const decision of heldDecisions) for (const member of decision.members) attributionHeld.add(member.pullId)
   const held: HeldSource[] = [...attributionHeld].map((sourceId) => ({ sourceId, reason: "attribution-hold" as const }))
   const hold = (sourceIds: ReadonlyArray<string>, reason: HoldReason) => {
     for (const sourceId of sourceIds) if (!held.some((entry) => entry.sourceId === sourceId)) held.push({ sourceId, reason })
@@ -471,7 +485,8 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     creditActors.set(pull.id, outcomeActors.get(pull.id) ?? new Set())
     if (attributionHeld.has(pull.id) || held.some((entry) => entry.sourceId === pull.id)) continue
     const decision = joint.get(pull.id)
-    if (ratification === null && decision !== undefined && !decision.spans) continue
+    const jointWithheld = ratification === null && decision !== undefined && !decision.spans
+    if (jointWithheld && !withheldMember(membership(pull.id))) continue
     const observations = observedCommits.get(pull.id) ?? []
     const found = recipientsOf(observations, eligibleAuthor(pull.author, actors))
     if (found === "synchronization-only") {
@@ -482,7 +497,8 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     if (assessment !== null && ratification === null && assessment.head !== pull.headRefOid) throw new FactsRefused({ reason: "Current value decision does not match the collected accepted outcome", sourceId: pull.id })
     const outcome = try scoredSource({ key: pull.id, unit: index + 1, project: pull.project, head: pull.headRefOid, acceptedAt: pull.mergedAt, assessment, ratification }, actors)
     if (outcome.assessed) assessed.add(pull.id)
-    const { scored } = outcome
+    const scored = jointWithheld && canWithholdJoint(outcome.scored, membership(pull.id)) ? try (try Sources).send(pull.id, { type: "withholdJoint", membership: membership(pull.id) }) : outcome.scored
+    if (jointWithheld && !scored.jointWithheld) continue
     if (valueAssessed(scored) && assessment !== null && assessment.tier !== "none" && (pull.commits ?? []).some((commit) => {
       const owner = owners.get(commitKey(pull, commit.oid))
       return owner !== undefined && owner.id !== pull.id
@@ -498,6 +514,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     const valued = applied === null && valueAssessed(scored) ? assessment : null
     const thirds = scored.points / 10
     const baseReason = applied !== null ? `Maintainer-ratified ${applied.tier} accepted outcome: ${applied.reason}`
+      : scored.jointWithheld ? withheldReason
       : valued !== null ? `Provisional value assessment (${valued.tier}): ${valued.rationale}${valued.tier === "none" ? " The accepted merge keeps the one-third minimum." : ""}`
       : scored.policy === "ValueV1" ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
       : `Accepted outcome has provisional ${thirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`
@@ -527,7 +544,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
   }
 
   for (const plan of live) {
-    if (plan.decision.members.some((member) => attributionHeld.has(member.pullId))) continue
+    if (heldDecisions.has(plan.decision)) continue
     const prepared = plan.decision.units.filter((unit) => unit.claims.length > 0 && !unit.carriers.some(ratified))
     if (prepared.some((unit) => plan.lines.get(unit.workUnitId)?.weights === null)) {
       hold(plan.decision.members.map((member) => member.pullId), "incomplete-lines")

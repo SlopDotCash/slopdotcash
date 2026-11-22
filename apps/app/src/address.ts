@@ -1,9 +1,7 @@
-// spec/app/index.md, "The shell shows one route, opened from the address"
-// The address the browser opened, as the event that opens its route: the path's segments split at "/", empty ones
-// dropped and each percent-decoded, whether the query carries `x`, and whether the hash is `#security-settings`.
-import type { Event } from "../gen/app.ts";
+// spec/app/index.md, "The shell shows one route, opened from the address"; spec/app/index.md, "An old address opens the page that replaced it"
+import { canonical, equal_app, type Event } from "../gen/app.ts";
 
-/** The segments of `path`, or undefined where one does not percent-decode. */
+/** The segments of `path`, split at "/" without empty ones and each percent-decoded, or undefined where one does not decode. */
 export function segmentsOf(path: string): string[] | undefined {
   try {
     return path.split("/").filter(Boolean).map(decodeURIComponent);
@@ -21,4 +19,16 @@ export function openingOf(path: string, search: string, hash: string): Event {
   return segments === undefined
     ? { type: "openUndecodable" }
     : { type: "open", segments, withX: new URLSearchParams(search).has("x"), securitySettings: hash === "#security-settings" };
+}
+
+const sections: Readonly<Record<string, string>> = { awards: "#monthly-awards", funding: "#funding" };
+
+/** The address that replaces an old one in the history, its query kept and its section named, or undefined where the address is already canonical. */
+export function canonicalAddress(path: string, search: string, hash: string): string | undefined {
+  const segments = segmentsOf(path);
+  if (segments === undefined) return undefined;
+  const target = canonical(segments, hash === "#security-settings");
+  if (equal_app(target, segments)) return undefined;
+  const section = segments[0] === "wallet" ? "#wallets" : hash || (sections[segments[2] ?? ""] ?? "");
+  return `${pathTo(target)}${search}${section}`;
 }

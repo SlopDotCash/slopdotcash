@@ -1,0 +1,270 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { Request, Response } from "miniflare"
+
+const stewardId = 41
+const primaryId = 9001
+const otherId = 9003
+const rpcUrl = "https://rpc.base.test"
+
+interface AccessScript {
+  permission: string
+  missing: ReadonlyArray<number>
+}
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+  readonly access: AccessScript
+  readonly slopbot: (request: Request) => Response
+}
+
+function owner() {
+  return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+}
+
+function repositoryAnswer(url: URL, access: AccessScript) {
+  const id = Number(url.searchParams.get("repositoryId"))
+  if (access.missing.includes(id)) return { installation: "missing" }
+  const path = url.searchParams.get("repository") ?? ""
+  return { installation: "installed", installationId: 77, permission: url.searchParams.get("login") === `member-${stewardId}` ? access.permission : "read", roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }
+}
+
+function rpcAnswer(body: { readonly id: number; readonly method: string; readonly params: ReadonlyArray<{ readonly data?: string }> }) {
+  const data = body.params[0]?.data
+  const result = body.method === "eth_chainId" ? "0x2105" : body.method === "eth_getCode" ? "0x6080" : data === "0x313ce567" ? `0x${"12".padStart(64, "0")}` : `0x${"20".padStart(64, "0")}${"4".padStart(64, "0")}${"534c4f50".padEnd(64, "0")}`
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { headers: { "content-type": "application/json" } })
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
+    github.world.addRepo({ id: primaryId, nodeId: `R_${primaryId}`, owner: `member-${stewardId}`, name: "tool", defaultBranch: "main", license: { spdx: "MIT" } })
+    github.world.addRepo({ id: otherId, nodeId: `R_${otherId}`, owner: `member-${stewardId}`, name: "other", defaultBranch: "main", license: { spdx: "MIT" } })
+  }))
+  const access: AccessScript = { permission: "admin", missing: [] }
+  const slopbot = (request: Request) => new Response(JSON.stringify(repositoryAnswer(new URL(request.url), access)), { headers: { "content-type": "application/json" } })
+  const net = internet({ github: github.handler, rpc: { [rpcUrl]: async (request) => rpcAnswer(await request.json() as never) } })
+  return { github, net, access, slopbot }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const world = try World
+  const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+  return areaLayer({
+    root: new URL("..", import.meta.url).pathname,
+    entry: "worker",
+    d1: { SLOP_DB: "slop-private" },
+    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl },
+    services: { SLOPBOT: (request) => world.slopbot(request) },
+    internet: world.net,
+  })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, name: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer.body, "error") ?? null]
+}
+
+effect function member(githubId: number) {
+  const area = try Area
+  const session = `owner-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
+}
+
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" }
+
+interface Listed {
+  readonly id: string
+  readonly name: string
+  readonly githubId: number
+  readonly commitSha: string
+  readonly fileSha256: string
+}
+
+effect function listed(id: string, name: string, githubId: number) {
+  const world = try World
+  const commitSha = (try orDie(Effect.try(() => world.github.world.repo(`member-${stewardId}/${name}`).branches.get("main")))) ?? ""
+  return { id, name, githubId, commitSha, fileSha256: try sha256Hex("MIT license\n") } satisfies Listed
+}
+
+function manifest(project: Listed, extra: Readonly<Record<string, unknown>> = {}) {
+  const { id } = project
+  const repository = `member-${stewardId}/${project.name}`
+  return {
+    schemaVersion: "1",
+    id,
+    slug: id,
+    name: `Project ${id}`,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
+    listingTier: "community",
+    status: "paused",
+    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(project.githubId), repositoryNodeId: `R_${project.githubId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${project.commitSha}/LICENSE`, commitSha: project.commitSha, fileSha256: project.fileSha256 },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: usdc,
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+    ...extra,
+  }
+}
+
+effect function revise(as: Session, id: string, json: unknown) {
+  return try (try Area).request(`/api/v1/projects/${id}`, { method: "PUT", json, as })
+}
+
+effect function stored(id: string) {
+  const rows = try (try Area).sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id)
+  const row = rows[0] ?? {}
+  return { revision: Number(row.revision ?? 0), status: String(row.status ?? ""), manifest: (try orDie(Effect.try(() => JSON.parse(String(row.manifest ?? "{}"))))) as Record<string, unknown> }
+}
+
+function refusedNaming(answer: Answer, name: string) {
+  return [...outcome(answer), String(field(answer.body, "message") ?? "").includes(name)]
+}
+
+function withSlopbot(manifest: Record<string, unknown>, setting: Readonly<Record<string, unknown>>) {
+  return { ...manifest, slopbot: { ...((field(manifest, "slopbot") ?? {}) as Record<string, unknown>), ...setting } }
+}
+
+function externalPrize(manifest: Record<string, unknown>) {
+  const reward = { kind: "external-prize-share", currency: null, chain: null, rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0 platform pool", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 1000, unusedFunds: "not-applicable", fundingState: "external-opportunity", externalOpportunity: { name: "Research prize", advertisedAmountDisplay: "$10,000", url: "https://prize.example.org/rules" }, maintainerShare: 1000 }
+  return { ...Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== "rewardAsset")), reward }
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An owner turns the report deposit off and on, published at once as presentation (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("deposit-tool", "tool", primaryId)
+    const id = tool.id
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const fresh = try stored(id)
+    const refused: Array<ReadonlyArray<unknown>> = []
+    for (const security of [{ reportDeposit: "false" }, { reportDeposit: 0 }, { reportDeposit: null }, { reportDeposit: false, amount: "1" }, { deposit: false }, [], "off", null, false]) {
+      refused.push(outcome(try revise(steward, id, { manifest: { ...fresh.manifest, security }, expectedRevision: 1 })))
+    }
+    const off = try revise(steward, id, { manifest: { ...fresh.manifest, security: { reportDeposit: false } }, expectedRevision: 1 })
+    const afterOff = try stored(id)
+    const on = try revise(steward, id, { manifest: { ...afterOff.manifest, security: { reportDeposit: true } }, expectedRevision: 2 })
+    const afterOn = try stored(id)
+    const changes = { presentation: ["security"], executable: [], financial: [] }
+    try same({
+      created: [created.status, fresh.revision, Object.hasOwn(fresh.manifest, "security")],
+      refused,
+      off: [off.status, field(off.body, "changes"), afterOff.revision, afterOff.status, afterOff.manifest.security],
+      on: [on.status, field(on.body, "changes"), afterOn.revision, afterOn.manifest.security],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: [201, 1, false],
+      refused: Array.from({ length: 9 }, () => [422, "invalid_manifest"]),
+      off: [200, changes, 2, fresh.status, { reportDeposit: false }],
+      on: [200, changes, 3, { reportDeposit: true }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('An owner sets the intake cap, wanted issues, submission fee and maintainer share within their limits (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const other = try listed("settings-other", "other", otherId)
+    const id = other.id
+    const base = manifest(other, { slopbot: { automaticClosure: false } })
+    const prizeShare = try area.request("/api/v1/projects", { json: { manifest: externalPrize(base) }, as: steward })
+    const zeroShare = try area.request("/api/v1/projects", { json: { manifest: { ...base, reward: { ...base.reward, maintainerShare: 0 } } }, as: steward })
+    const created = try area.request("/api/v1/projects", { json: { manifest: { ...base, reward: { ...base.reward, maintainerShare: 2000 } } }, as: steward })
+    const fresh = try stored(id)
+    const capZero = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 0 }), expectedRevision: 1 })
+    const capHigh = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 501 }), expectedRevision: 1 })
+    const capWithoutConsent = try revise(steward, id, { manifest: { ...fresh.manifest, slopbot: { intakeCap: 25 } }, expectedRevision: 1 })
+    const capped = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 25 }), expectedRevision: 1 })
+    const afterCap = try stored(id)
+    const wanted = try revise(steward, id, { manifest: withSlopbot(afterCap.manifest, { wantedIssues: true }), expectedRevision: 2 })
+    const afterWanted = try stored(id)
+    const feeHigh = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "20000000" } }), expectedRevision: 3 })
+    const feeShape = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amount: "2000000" } }), expectedRevision: 3 })
+    const fee = try revise(steward, id, { manifest: withSlopbot(afterWanted.manifest, { submissionFee: { enabled: true, amountMinor: "2500000" } }), expectedRevision: 3 })
+    const after = try stored(id)
+    const slopbot = (field(after.manifest, "slopbot") ?? {}) as Record<string, unknown>
+    const changes = { presentation: ["slopbot"], executable: [], financial: [] }
+    try same({
+      prizeShare: refusedNaming(prizeShare, "maintainerShare"),
+      zeroShare: refusedNaming(zeroShare, "maintainerShare"),
+      created: [created.status, fresh.revision, field(field(fresh.manifest, "reward"), "maintainerShare"), Object.hasOwn((field(fresh.manifest, "reward") ?? {}) as object, "maintainerShareHistory")],
+      capZero: refusedNaming(capZero, "intakeCap"),
+      capHigh: refusedNaming(capHigh, "intakeCap"),
+      capWithoutConsent: refusedNaming(capWithoutConsent, "project.slopbot"),
+      capped: [capped.status, field(capped.body, "changes"), afterCap.revision],
+      wanted: [wanted.status, field(wanted.body, "changes"), afterWanted.revision],
+      feeHigh: refusedNaming(feeHigh, "submissionFee"),
+      feeShape: refusedNaming(feeShape, "submissionFee"),
+      fee: [fee.status, field(fee.body, "changes"), after.revision],
+      slopbot: [slopbot.intakeCap, slopbot.wantedIssues, slopbot.submissionFee, typeof slopbot.automaticClosure],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      prizeShare: [422, "invalid_manifest", true],
+      zeroShare: [422, "invalid_manifest", true],
+      created: [201, 1, 2000, false],
+      capZero: [422, "invalid_manifest", true],
+      capHigh: [422, "invalid_manifest", true],
+      capWithoutConsent: [422, "invalid_manifest", true],
+      capped: [200, changes, 2],
+      wanted: [200, changes, 3],
+      feeHigh: [422, "invalid_manifest", true],
+      feeShape: [422, "invalid_manifest", true],
+      fee: [200, changes, 4],
+      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "boolean"],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})

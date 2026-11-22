@@ -144,6 +144,111 @@ function scriptAlias(text: string, target: string): unknown {
   }
 }
 
+interface Wrapper {
+  readonly flags?: string;
+  readonly arguments?: string;
+  readonly optional?: string;
+  readonly split?: string;
+  readonly positional?: number | "number";
+  readonly assignments?: boolean;
+  readonly dash?: boolean;
+  readonly numeric?: boolean;
+  readonly stdin?: boolean;
+}
+
+const options = (text: string): ReadonlySet<string> => new Set(text.split(" ").filter(Boolean));
+
+const WRAPPERS: Readonly<Record<string, Wrapper>> = {
+  env: { flags: "i 0 ignore-environment null", arguments: "u unset", split: "S split-string", assignments: true, dash: true },
+  "cross-env": { assignments: true },
+  sudo: {
+    flags: "A b B E H i k n P S s askpass background bell login non-interactive preserve-groups reset-timestamp set-home shell stdin",
+    arguments: "C g p r t T U u close-from command-timeout group other-user prompt role type user",
+    optional: "preserve-env",
+    assignments: true,
+  },
+  doas: { flags: "n s S", arguments: "a u" },
+  nice: { arguments: "n adjustment", numeric: true },
+  nohup: {},
+  timeout: { flags: "v foreground preserve-status verbose", arguments: "k s kill-after signal", positional: 1 },
+  xargs: {
+    flags: "0 o p r t x exit interactive no-run-if-empty null open-tty verbose",
+    arguments: "a d E I L n P s arg-file delimiter max-args max-chars max-procs process-slot-var",
+    optional: "e i l eof max-lines replace",
+    stdin: true,
+  },
+  stdbuf: { arguments: "e i o error input output" },
+  ionice: { flags: "t ignore", arguments: "c n class classdata" },
+  setsid: { flags: "c f w ctty fork wait" },
+  chrt: {
+    flags: "a b d f i o r R v all-tasks batch deadline fifo idle other reset-on-fork rr verbose",
+    arguments: "D P T sched-deadline sched-period sched-runtime",
+    positional: "number",
+  },
+  taskset: { flags: "a c all-tasks cpu-list", positional: 1 },
+  time: { flags: "a p q v append portability quiet verbose", arguments: "f o format output" },
+};
+
+const SU: Wrapper = {
+  flags: "f l m p P login pty preserve-environment",
+  arguments: "g G s w group shell supp-group whitelist-environment",
+  split: "c command session-command",
+  dash: true,
+};
+
+const INTERPRETER_NAME = /^(?:(?:ba|da|k|z)?sh|node(?:js)?|python[0-9.]*|ruby|perl|php)$/u;
+
+const NON_EXECUTING = options(
+  "echo printf true false : test [ [[ exit return export unset set shift local readonly declare typeset wait sleep pwd " +
+    "cp mv rm rmdir mkdir touch ln chmod chown chgrp install cat ls head tail wc sort uniq tee cut tr grep egrep fgrep sed awk diff cmp " +
+    "basename dirname readlink realpath which whereis type hash tar zip unzip gzip gunzip bzip2 xz git " +
+    "apt apt-get yum dnf apk brew port pacman zypper choco snap",
+);
+
+type OptionStep = { readonly offset: number; readonly split?: Word } | { readonly gap: true; readonly offset?: undefined };
+
+function wrapperOption(spec: Wrapper, words: ReadonlyArray<Word>, offset: number): OptionStep {
+  const gap: OptionStep = { gap: true };
+  const word = words[offset];
+  if (word === undefined || word.dynamic) return gap;
+  const value = word.value;
+  if (value === "-") return spec.dash ? { offset: offset + 1 } : gap;
+  const flags = options(spec.flags ?? "");
+  const required = options(spec.arguments ?? "");
+  const optional = options(spec.optional ?? "");
+  const split = options(spec.split ?? "");
+  const argument = (name: string, attached: string | undefined): OptionStep => {
+    const next = attached === undefined ? offset + 2 : offset + 1;
+    const body = attached === undefined ? words[offset + 1] : { value: attached, dynamic: word.dynamic };
+    if (!body) return gap;
+    return split.has(name) ? { offset: next, split: body } : { offset: next };
+  };
+  if (value.startsWith("--")) {
+    const equals = value.indexOf("=");
+    const name = value.slice(2, equals === -1 ? undefined : equals);
+    const attached = equals === -1 ? undefined : value.slice(equals + 1);
+    if (flags.has(name) && attached === undefined) return { offset: offset + 1 };
+    if (optional.has(name)) return { offset: offset + 1 };
+    if (required.has(name) || split.has(name)) return argument(name, attached);
+    return gap;
+  }
+  if (spec.numeric && /^-\d+$/u.test(value)) return { offset: offset + 1 };
+  for (let index = 1; index < value.length; index += 1) {
+    const letter = value[index] ?? "";
+    if (flags.has(letter)) continue;
+    if (optional.has(letter)) return { offset: offset + 1 };
+    if (required.has(letter) || split.has(letter)) return argument(letter, value.slice(index + 1) || undefined);
+    return gap;
+  }
+  return { offset: offset + 1 };
+}
+
+function wrapperOf(command: Word): Wrapper | undefined {
+  if (command.dynamic || (command.value.includes("/") && !posix.isAbsolute(command.value))) return undefined;
+  const name = posix.basename(command.value);
+  return name === "su" ? SU : Object.hasOwn(WRAPPERS, name) ? WRAPPERS[name] : undefined;
+}
+
 /** @throws {never} */
 export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: ReadonlyArray<CommandSource>): LocalHelpers {
   const byPath = new Map(files.map((file) => [file.path, file]));
@@ -153,6 +258,13 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
   const queue: CommandSource[] = [...roots];
   const missing = (from: string, word?: Word) =>
     unacquired.add(`Local install helper not acquired at ${from}: ${word && !word.dynamic ? word.value : "unresolved"}`);
+  const launches = (directory: string | null, word: Word) => {
+    if (word.dynamic) return false;
+    if (INTERPRETER_NAME.test(posix.basename(word.value))) return true;
+    const path = localPath(directory, word);
+    const text = path === null ? null : byPath.get(path)?.text;
+    return typeof text === "string" && (text.startsWith("#!") || /\.(?:sh|bash|zsh|ksh|dash)$/iu.test(path ?? ""));
+  };
   for (let index = 0; index < queue.length; index += 1) {
     const source = queue[index];
     if (source === undefined) continue;
@@ -176,7 +288,7 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
     };
     const parsed = commands(source.text);
     if (parsed.unresolved) missing(source.path);
-    for (const words of parsed.commands) {
+    for (let words of parsed.commands) {
       let offset = 0;
       const first = words[0];
       if (first && !first.quoted && /^(?:if|elif|else|then|fi|for|while|until|do|done|case|esac|select|function|\{|\})$/u.test(first.value))
@@ -193,29 +305,83 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
         missing(source.path);
         continue;
       }
-      let command = words[offset++];
+      let command: Word | undefined = words[offset++];
       if (!command) continue;
-      if (/^(?:env|sudo)$/u.test(posix.basename(command.value))) {
-        let expanded = false;
-        for (;;) {
-          const option = words[offset];
-          if (option === undefined || !option.value.startsWith("-")) break;
-          offset += 1;
-          if (option.value === "--") break;
-          if (option.value === "-i" || option.value === "--ignore-environment") continue;
-          if (option.value === "-S" || option.value === "--split-string") {
-            const body = words[offset];
-            if (body && !body.dynamic && directory !== null) queue.push({ ...source, directory, text: body.value });
-            else missing(source.path);
-          } else missing(source.path);
-          expanded = true;
+      let stdinWords = false;
+      let handled = false;
+      for (let spec = wrapperOf(command); spec; spec = command === undefined ? undefined : wrapperOf(command)) {
+        let split: Word | undefined;
+        let gap = false;
+        if (spec === SU) {
+          let user = false;
+          let ended = false;
+          const rest: Word[] = [];
+          while (offset < words.length && !gap) {
+            const word = words[offset];
+            if (word === undefined) break;
+            if (!ended && rest.length === 0 && word.value === "--") {
+              ended = true;
+              offset += 1;
+            } else if (!ended && rest.length === 0 && word.value.startsWith("-")) {
+              const step = wrapperOption(SU, words, offset);
+              if (step.offset === undefined) gap = true;
+              else {
+                split = step.split ?? split;
+                offset = step.offset;
+              }
+            } else if (!user) {
+              user = true;
+              offset += 1;
+            } else {
+              rest.push(word);
+              offset += 1;
+            }
+          }
+          if (!gap && split && rest.length > 0) gap = true;
+          if (!gap && !split) {
+            handled = rest.length === 0;
+            words = rest;
+            offset = 0;
+            command = { value: "sh", dynamic: false };
+            break;
+          }
+        } else {
+          while (!gap && !split && words[offset]?.value.startsWith("-")) {
+            if (words[offset]?.value === "--") {
+              offset += 1;
+              break;
+            }
+            const step = wrapperOption(spec, words, offset);
+            if (step.offset === undefined) gap = true;
+            else {
+              split = step.split;
+              offset = step.offset;
+            }
+          }
+          if (!gap && !split) {
+            if (spec.positional === "number") {
+              if (/^\d+$/u.test(words[offset]?.value ?? "")) offset += 1;
+            } else offset += spec.positional ?? 0;
+            if (spec.assignments) while (words[offset] && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[offset]?.value ?? "")) offset += 1;
+          }
+        }
+        if (gap) missing(source.path);
+        else if (split) {
+          if (!split.dynamic && directory !== null) queue.push({ ...source, directory, text: split.value });
+          else missing(source.path);
+        }
+        if (gap || split) {
+          handled = true;
           break;
         }
-        if (expanded) continue;
-        while (words[offset] && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[offset]?.value ?? "")) offset += 1;
+        stdinWords ||= spec.stdin === true;
         command = words[offset++];
-        if (!command) continue;
+        if (!command) {
+          handled = true;
+          break;
+        }
       }
+      if (handled || !command) continue;
       const name = posix.basename(command.value);
       if (/^(?:eval|exec|command)$/u.test(name)) {
         missing(source.path);
@@ -295,8 +461,9 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
             missing(source.path);
             directory = null;
           }
-        }
+        } else if (!inline && stdinWords) missing(source.path);
       } else if (command.dynamic || command.value.includes("/")) include(command, "direct");
+      else if (!NON_EXECUTING.has(name) && words.slice(offset).some((word) => launches(directory, word))) missing(source.path);
     }
   }
   return { included, unacquired: [...unacquired].sort() };

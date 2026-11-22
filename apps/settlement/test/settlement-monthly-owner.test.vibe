@@ -80,14 +80,16 @@ effect function origin(projectId: string, actor: string) {
 }
 
 const shares: ReadonlyArray<readonly [string, string]> = [["77", "100000000"], ["101", "500000000"], ["102", "400000000"]]
+const closeoutShares: ReadonlyArray<readonly [string, string]> = [["77", "30000000"], ["101", "70000000"], ["102", "50000000"]]
 
-effect function proposed(env: Env, projectId: string) {
+effect function proposed(env: Env, projectId: string, closeout = false) {
   const manifest = manifestOf(projectId)
   const manifestSha256 = try sha256Hex(manifest)
   try seed(env, "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
   try seed(env, "INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
-  try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (?, '2026-11', ?, ?, ?, '1000000000', 3, '2026-12-01T00:11:00.000Z')", projectId, manifest, manifestSha256, "a".repeat(64))
-  for (const [actor, gross] of shares) try seed(env, "INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (?, '2026-11', ?, ?, ?, ?)", projectId, actor, `user${actor}`, gross, try origin(projectId, actor))
+  if (closeout) try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at, early_close_at) VALUES (?, '2026-11', ?, ?, ?, '150000000', 3, '2026-11-19T00:30:00.000Z', '2026-11-19T00:00:00.000Z')", projectId, manifest, manifestSha256, "b".repeat(64))
+  else try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (?, '2026-11', ?, ?, ?, '1000000000', 3, '2026-12-01T00:11:00.000Z')", projectId, manifest, manifestSha256, "a".repeat(64))
+  for (const [actor, gross] of closeout ? closeoutShares : shares) try seed(env, "INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (?, '2026-11', ?, ?, ?, ?)", projectId, actor, `user${actor}`, gross, try origin(projectId, actor))
   views.set(projectId, { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: userStewarded.has(projectId) ? "UserSteward" : "OrganizationSteward", listing: listers.has(projectId) ? { fromApplication: true, applicantGithubId: listers.get(projectId) } : { fromApplication: false }, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${projectId}`, integrationBranch: "main", aliases: [] }], closureConsent: false })
 }
 
@@ -97,6 +99,11 @@ effect function snapshot(env: Env, projectId: string, free: string | null, obser
 
 effect function pledge(env: Env, projectId: string, period: string, amount: string, vault: string = vaultOf(projectId)) {
   try seed(env, "INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, 'base-sepolia', ?, ?, ?, 1, '1', '2026-12-02T12:00:00.000Z')", projectId, vault, period, amount)
+}
+
+effect function noticeDetail(env: Env, eventKey: string) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT detail FROM notifications WHERE event_key = ?").bind(eventKey).all())
+  return String((found.results[0] as Readonly<Record<string, unknown>> | undefined)?.detail ?? "")
 }
 
 effect function automaticOff(env: Env, projectId: string) {
@@ -362,10 +369,77 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
       earlyOn: errorOf(earlyOn), settingsAfterEarlyOn, lateOn: [lateOn.status, lateOn.body], settingsAfterLateOn, triggers,
     }, {
       off: [200, { automatic: false }], writer: [403, "owner_required"], waiting: ["automatic-off"], runs: 0,
-      lateCut: 200, unpledgedCut: 200,
+      lateCut: 409, unpledgedCut: 200,
       atCutoff: { hotel: "frozen", india: "frozen", juliet: "frozen", kilo: "automatic-off", lima: "automatic-off", mike: "automatic-off", november: "frozen", romeo: "automatic-off" },
       romeoAfterNotice: ["automatic-off"],
       earlyOn: [409, "cut_notice_window"], settingsAfterEarlyOn: 1, lateOn: [200, { automatic: true }], settingsAfterLateOn: 2, triggers: 4,
+    })
+  })
+
+  it.effect('Close ASI\'s November pool early (spec/settlement/asiNovemberCloseout.md, "Story: Close ASI\'s November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-11-18T12:00:00.000Z"))
+    try proposed(env, "asi", true)
+    try proposed(env, "papa")
+    const beforeClose = try ask(env, "/asi/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    const change = try ask(env, "/asi/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "70000000", expectedSequence: 0 } })
+    const cut = try ask(env, "/asi/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "60000000", expectedSequence: 0, reason: "Half of the reviewed work was reverted upstream." } })
+    clock.set(Date.parse("2026-11-20T00:00:00.000Z"))
+    const view = try ask(env, "/asi/monthly/2026-11", { as: steward })
+    const frozen = try ask(env, "/asi/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    const ordinary = try ask(env, "/papa/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    const changes = try count(env, "SELECT count(*) AS n FROM monthly_allocation_changes WHERE project_id = 'asi'")
+    const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'asi' AND trigger = 'owner' AND actor_id = '77'")
+    const papaRuns = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'papa'")
+    try same({
+      beforeClose: errorOf(beforeClose), change: errorOf(change), cut: errorOf(cut),
+      view: [view.status, field(view.body, "proposal", "earlyCloseAt"), field(view.body, "proposal", "capBase")],
+      frozen: [frozen.status, field(frozen.body, "run", "trigger")], ordinary: errorOf(ordinary), changes, runs, papaRuns,
+    }, {
+      beforeClose: [409, "month_open"], change: [409, "closeout_allocations_fixed"], cut: [409, "closeout_allocations_fixed"],
+      view: [200, "2026-11-19T00:00:00.000Z", "150000000"],
+      frozen: [200, "owner"], ordinary: [409, "month_open"], changes: 0, runs: 1, papaRuns: 0,
+    })
+  })
+
+  it.effect('A month pledged in the vault that pays it closes cuts 24 hours before the cutoff and every change at the cutoff, with the automatic default off (spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    for (const projectId of ["sierra", "tango", "uniform"]) {
+      try proposed(env, projectId)
+      try automaticOff(env, projectId)
+    }
+    try pledge(env, "sierra", "2026-11", "1000000")
+    try pledge(env, "uniform", "2026-11", "1000000")
+    try pledge(env, "tango", "2026-11", "1000000", `0x${"0".repeat(40)}`)
+    const reason = "Half of the reviewed work was reverted upstream."
+    const earlyCut = try ask(env, "/uniform/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason } })
+    const earlyNotice = try noticeDetail(env, "monthly-cut:uniform:2026-11:1")
+    clock.set(Date.parse("2026-12-03T22:00:00.000Z"))
+    const lateCut = try ask(env, "/sierra/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason } })
+    const lateCutChanges = try count(env, "SELECT count(*) AS n FROM monthly_allocation_changes WHERE project_id = 'sierra'")
+    const kept = try ask(env, "/sierra/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "500000000", expectedSequence: 0 } })
+    clock.set(Date.parse("2026-12-04T00:01:00.000Z"))
+    const afterCutoffCut = try ask(env, "/sierra/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 1, reason } })
+    const afterCutoffChange = try ask(env, "/sierra/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "500000000", expectedSequence: 1 } })
+    const otherVault = try ask(env, "/tango/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason } })
+    const otherVaultNotice = try noticeDetail(env, "monthly-cut:tango:2026-11:1")
+    const sierraChanges = try count(env, "SELECT count(*) AS n FROM monthly_allocation_changes WHERE project_id = 'sierra'")
+    const sierraNotices = try count(env, "SELECT count(*) AS n FROM notifications WHERE event_key LIKE 'monthly-cut:sierra:%'")
+    try same({
+      earlyCut: earlyCut.status, earlyNoticeLocksAtCutoff: earlyNotice.includes("2026-12-04 00:00 UTC"),
+      lateCut: [...errorOf(lateCut), String(field(lateCut.body, "message")).includes("2026-12-03 00:00 UTC")], lateCutChanges,
+      kept: [kept.status, field(kept.body, "proposal", "allocationSequence")],
+      afterCutoffCut: errorOf(afterCutoffCut), afterCutoffChange: errorOf(afterCutoffChange),
+      otherVault: otherVault.status, otherVaultNoticeLocksAtCutoff: otherVaultNotice.includes("2026-12-04 00:00 UTC"),
+      sierraChanges, sierraNotices,
+    }, {
+      earlyCut: 200, earlyNoticeLocksAtCutoff: true,
+      lateCut: [409, "cut_notice_window", true], lateCutChanges: 0,
+      kept: [200, 1],
+      afterCutoffCut: [409, "cutoff_passed"], afterCutoffChange: [409, "cutoff_passed"],
+      otherVault: 200, otherVaultNoticeLocksAtCutoff: false,
+      sierraChanges: 1, sierraNotices: 0,
     })
   })
 })

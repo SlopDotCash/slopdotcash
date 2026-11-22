@@ -1,0 +1,82 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { type ZipEntry, zipContent, zipEntries } from "../ingestion/archive.ts"
+import { maxFileBytes, maxPartBytes, maxSnapshotBytes, readParts } from "../client/snapshot/parts.vibe"
+import { atomicWrite, attempt } from "./files.vibe"
+
+export const ledgerEntry = "data/leaderboard.json"
+export const profilesEntry = "data/profiles.json"
+export const maxCollectedParts = 8
+export const maxCollectedProfilesBytes = 8 * 1024 * 1024
+
+const partEntry = /^data\/leaderboard\/[a-f0-9]{64}\.part$/u
+const partPath = /^\/data\/leaderboard\/([a-f0-9]{64})\.part$/u
+const regularFile = 0o100000
+
+export error CollectedDataRefused { message: string }
+
+effect function refuse(refused: boolean, message: string) {
+  if (refused) throw new CollectedDataRefused({ message })
+}
+
+effect function bounded(path: string, maximum: number) {
+  const fs = try FileSystem.FileSystem
+  const info = try attempt(fs.stat(path), path, "Restored leaderboard file is unavailable")
+  try refuse(info.type !== "File" || Number(info.size) > maximum, "Restored leaderboard file exceeds its bound")
+  const bytes = try attempt(fs.readFile(path), path, "Restored leaderboard file is unavailable")
+  try refuse(bytes.length > maximum, "Restored leaderboard file exceeds its bound")
+  return bytes
+}
+
+export effect function restoreLocal(directory: string, output: string) {
+  const files = try Path.Path
+  const root = try bounded(files.join(directory, "leaderboard.json"), maxSnapshotBytes)
+  const bytes = try readParts(root, (path) => effect {
+    const match = partPath.exec(path)
+    if (match === null) throw new CollectedDataRefused({ message: "Invalid restored leaderboard part path" })
+    return try bounded(files.join(directory, "leaderboard", `${match[1] ?? ""}.part`), maxPartBytes)
+  })
+  const target = files.resolve(output)
+  try atomicWrite(target, bytes)
+  return bytes.byteLength
+}
+
+export function collectedEntries(entries: ReadonlyArray<ZipEntry>): ReadonlyArray<ZipEntry> | string {
+  const wanted: ZipEntry[] = []
+  const names = new Set<string>()
+  let parts = 0
+  for (const entry of entries) {
+    const part = partEntry.test(entry.name)
+    if (entry.name !== ledgerEntry && entry.name !== profilesEntry && !part) continue
+    if (names.has(entry.name) || (entry.fileType !== 0 && entry.fileType !== regularFile) || entry.size <= 0) return "Invalid data entry in the checked bundle"
+    if (entry.name === ledgerEntry && entry.size > maxFileBytes) return "Ledger exceeds its bound"
+    if (entry.name === profilesEntry && entry.size > maxCollectedProfilesBytes) return "Profiles exceed their bound"
+    if (part) {
+      parts += 1
+      if (entry.size > maxPartBytes || parts > maxCollectedParts) return "Ledger part exceeds its bound"
+    }
+    names.add(entry.name)
+    wanted.push(entry)
+  }
+  return names.has(ledgerEntry) && names.has(profilesEntry) ? wanted : "Checked bundle has no ledger or profiles"
+}
+
+export effect function extractCollectedData(archive: string, destination: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const bytes = try attempt(fs.readFile(archive), archive, "Checked bundle is unavailable")
+  const entries = Effect.try(() => zipEntries(bytes)) catch effect () => {
+    throw new CollectedDataRefused({ message: "Invalid checked bundle" })
+  }
+  const wanted = collectedEntries(entries)
+  if (typeof wanted === "string") throw new CollectedDataRefused({ message: wanted })
+  try attempt(fs.makeDirectory(destination, { mode: 0o700 }), destination, "Collected data directory could not be created")
+  try attempt(fs.makeDirectory(files.join(destination, "leaderboard"), { mode: 0o700 }), destination, "Collected data directory could not be created")
+  for (const entry of wanted) {
+    const content = Effect.try(() => zipContent(bytes, entry)) catch effect () => {
+      throw new CollectedDataRefused({ message: "Invalid data entry in the checked bundle" })
+    }
+    const target = files.join(destination, entry.name.slice("data/".length))
+    try attempt(fs.writeFile(target, content, { flag: "wx", mode: 0o600 }), target, "Collected data could not be written")
+  }
+  return wanted.length
+}

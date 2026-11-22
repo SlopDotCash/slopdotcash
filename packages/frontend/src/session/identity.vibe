@@ -1,4 +1,4 @@
-// spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+// spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
 import { type IdentityAudience, type PublicMember, oauthPoll, oauthStart, pointsJoin } from "@repo/backend/client"
 import { type Outcome, exchanged, outgoing } from "@repo/platform/browser"
 import { isoAt, millisOf } from "@repo/platform/clock"
@@ -26,7 +26,7 @@ const capabilityPattern = /^[A-Za-z0-9_-]{40,128}$/u
 const assertionPattern = /^slop_assert_v1_[A-Za-z0-9_-]{40,128}$/u
 const memberLoginPattern = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
 
-const identityInit: globalThis.RequestInit = { credentials: "omit", redirect: "error", cache: "no-store", referrerPolicy: "no-referrer" }
+const identityInit: globalThis.RequestInit = { credentials: "include", redirect: "error", cache: "no-store", referrerPolicy: "no-referrer" }
 
 const messages = {
   invalid: "Sign-in failed. Start again.",
@@ -72,6 +72,7 @@ interface Answered {
 }
 
 export function identityFailure(status: number, code?: unknown): string {
+  if (status === 403 && code === "browser_mismatch") return "Sign-in could not be confirmed in this browser. Allow cookies for slop.cash, then start again."
   if (status === 410 && code === "callback_failed") return "Sign-in failed. Please start again."
   if (status === 410) return "Sign-in expired. Please start again."
   if (status === 429) return "Too many sign-in attempts. Wait one minute, then try again."
@@ -91,7 +92,7 @@ effect function instant(value: unknown) {
 function refusal(outcome: Exclude<Outcome, { readonly kind: "unreachable" }>, local: boolean): SignInFailed {
   const body = outcome.kind === "answered" ? recordOf(outcome.value) : undefined
   if (local && outcome.status === 503) return new SignInFailed({ message: typeof body?.message === "string" ? body.message : messages.localUnavailable })
-  return new SignInFailed({ message: identityFailure(outcome.status, outcome.status === 410 ? body?.error : undefined) })
+  return new SignInFailed({ message: identityFailure(outcome.status, outcome.status === 410 || outcome.status === 403 ? body?.error : undefined) })
 }
 
 effect function post(url: string, body: unknown, local: boolean) {

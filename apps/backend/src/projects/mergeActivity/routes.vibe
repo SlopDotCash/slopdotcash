@@ -1,9 +1,9 @@
-// spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"
-import { rows, sql } from "@repo/platform/d1"
+// spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import { answered, fixedHeaders, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
-import { type MergeActivityAnswer, type MergeRepository, mergeActivity } from "../../client/projects.vibe"
+import { type MergeActivityAnswer, type MergeRepository, WantedIssue, mergeActivity } from "../../client/projects.vibe"
 import { getMergeActivity } from "../../client/refusals.vibe"
 
 schema ServedRow {
@@ -16,6 +16,10 @@ schema ServedRow {
   waiting_capped: number
   merged_outside_30d: number
   median_merge_hours: number | null
+  open_outside: number | null
+  open_outside_capped: number | null
+  wanted_label: string | null
+  wanted_issues: string | null
 }
 
 interface Refusal {
@@ -27,12 +31,22 @@ interface Refusal {
 
 const hoursPerDay = 24
 const servedCache = { "cache-control": cacheControl(mergeActivity.cache) }
+const decodeWanted = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(WantedIssue)))
 
 function refused(row: Refusal) {
   return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": row.headers["cache-control"] })
 }
 
-function repositoryOf(row: ServedRow): MergeRepository {
+effect function wantedOf(row: ServedRow) {
+  if (row.wanted_label === null || row.wanted_issues === null) return {}
+  const wantedIssues = decodeWanted(row.wanted_issues) catch effect (error) => {
+    throw new RowMismatch({ text: `merge activity of ${row.project_id} ${row.repository}`, issue: String(error) })
+  }
+  return { wantedLabel: row.wanted_label, wantedIssues }
+}
+
+effect function repositoryOf(row: ServedRow) {
+  const wanted = try wantedOf(row)
   return {
     repository: row.repository,
     observedAt: row.observed_at,
@@ -42,13 +56,16 @@ function repositoryOf(row: ServedRow): MergeRepository {
     waitingCapped: row.waiting_capped === 1,
     mergedOutsideLast30Days: row.merged_outside_30d,
     medianHoursToMerge: row.median_merge_hours,
-  }
+    openOutside: row.open_outside,
+    openOutsideCapped: row.open_outside_capped === 1,
+    ...wanted,
+  } satisfies MergeRepository
 }
 
 export effect function mergeActivityAnswer() {
-  const found = try rows(ServedRow, sql`SELECT project_id, repository, observed_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours FROM repository_merge_activity WHERE observed_at IS NOT NULL ORDER BY project_id, repository`)
+  const found = try rows(ServedRow, sql`SELECT project_id, repository, observed_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours, open_outside, open_outside_capped, wanted_label, wanted_issues FROM repository_merge_activity WHERE observed_at IS NOT NULL ORDER BY project_id, repository`)
   const projects = new Map<string, MergeRepository[]>()
-  for (const row of found) projects.set(row.project_id, [...projects.get(row.project_id) ?? [], repositoryOf(row)])
+  for (const row of found) projects.set(row.project_id, [...projects.get(row.project_id) ?? [], try repositoryOf(row)])
   return {
     schema: "slop-merge-activity-v1",
     waitingDays: waitingHours / hoursPerDay,

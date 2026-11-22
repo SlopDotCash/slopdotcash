@@ -1,15 +1,18 @@
-// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"
+// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import type { Event } from "../../../gen/backend__mergeActivity.ts"
-import { canReadFailed, decodeEvent, due, readable, schedule } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { maxCap, minCap } from "../../../gen/backend__intakeCap.effect.vibe"
+import { canReadFailed, decodeEvent, due, readable, schedule, wantedLabelName } from "../../../gen/backend__mergeActivity.effect.vibe"
 import { validRepositoryPath } from "../github/lookup.vibe"
-import { type Read, repositoryRead } from "./github.vibe"
-import { type Evidence, type Facts, type Key, type StoredRow, rowOf, send, stateOf, storedRows, unlist } from "./store.vibe"
+import { type Read, ownIssue, repositoryRead } from "./github.vibe"
+import { type Evidence, type Facts, type Key, type Step, type StoredRow, noEvidence, rowOf, sendAll, stateOf, storedRows, unlist } from "./store.vibe"
+import { ensureWantedLabel } from "./wantedLabel.vibe"
 
 schema ProjectManifest { id: string; manifest: string }
 schema ListedRepository { id: string; githubUrl?: string }
-schema Listing { status: string; listingTier: string; repositories: ReadonlyArray<ListedRepository> }
+schema SlopbotSettings { intakeCap?: number; wantedIssues?: boolean }
+schema Listing { status: string; listingTier: string; repositories: ReadonlyArray<ListedRepository>; slopbot?: SlopbotSettings }
 
 export interface Refreshed {
   readonly read: number
@@ -20,16 +23,33 @@ interface Registered {
   readonly projectId: string
   readonly listed: ReadonlyArray<string>
   readonly measured: boolean
+  readonly intake: boolean
+  readonly label: string
 }
 
 interface Queued {
   readonly key: Key
+  readonly project: Registered
   readonly stored: StoredRow | undefined
+  readonly ready: string
 }
 
 function pathOf(repository: ListedRepository) {
   if (repository.githubUrl === undefined) return repository.id
   return URL.parse(repository.githubUrl)?.pathname.replace(/^\/|\/$/gu, "") ?? ""
+}
+
+function intakeOf(settings: SlopbotSettings | undefined) {
+  const cap = settings?.intakeCap
+  return cap !== undefined && Number.isSafeInteger(cap) && cap >= minCap && cap <= maxCap
+}
+
+function labelOf(settings: SlopbotSettings | undefined) {
+  return settings?.wantedIssues === true ? wantedLabelName : ""
+}
+
+function factsOf(at: number, project: Registered, reads: number): Facts {
+  return { at, measured: project.measured, listed: true, running: true, reads, intake: project.intake, label: project.label, labelPending: false }
 }
 
 function keyText(projectId: string, repository: string) {
@@ -51,13 +71,15 @@ effect function registered() {
       projectId: row.id,
       listed: listing.repositories.map(pathOf).filter(validRepositoryPath),
       measured: listing.status === "active" && listing.listingTier !== "retired",
+      intake: intakeOf(listing.slopbot),
+      label: labelOf(listing.slopbot),
     })
   }
   return projects
 }
 
-effect function sent(key: Key, facts: Facts, event: Event, evidence?: Evidence) {
-  return send(key, facts, event, schedule, evidence) catch effect (error) => {
+effect function sent(key: Key, facts: Facts, steps: ReadonlyArray<Step>, evidence: Evidence) {
+  return sendAll(key, facts, steps, evidence) catch effect (error) => {
     if (error._tag !== "Rejected") throw error
     return undefined
   }
@@ -70,12 +92,27 @@ effect function unlisted(key: Key, facts: Facts) {
   }
 }
 
-effect function readEvent(read: Read) {
-  if (read.kind === "failed") return { event: { type: "readFailed" }, evidence: { failure: read.failure, mergedAt: [] } } as const
-  const { open, capped, merged, mergedAt } = read.pulls
-  const event = decodeEvent({ type: "readSucceeded", open, capped, merged }) catch () => undefined
-  if (event === undefined) return { event: { type: "readFailed" }, evidence: { failure: "read-failed", mergedAt: [] } } as const
-  return { event, evidence: { failure: "read-failed", mergedAt } } as const
+interface Outcome {
+  readonly event: Event
+  readonly evidence: Evidence
+}
+
+effect function readEvent(repository: string, read: Read) {
+  if (read.kind === "failed") return { event: { type: "readFailed" }, evidence: { ...noEvidence, failure: read.failure } } satisfies Outcome
+  const { open, capped, merged, mergedAt, countedBeyond, countCapped, wanted } = read.pulls
+  const issues = wanted.map((issue) => ({ number: issue.number, ownRepository: ownIssue(repository, issue.number, issue.url), openPulls: issue.openPullRequests }))
+  const event = decodeEvent({ type: "readSucceeded", open, capped, merged, countedBeyond, countCapped, wanted: issues }) catch () => undefined
+  if (event === undefined) return { event: { type: "readFailed" }, evidence: noEvidence } satisfies Outcome
+  return { event, evidence: { failure: "read-failed", mergedAt, wanted } } satisfies Outcome
+}
+
+effect function stepsOf(item: Queued, outcome: Outcome) {
+  const label = item.project.label
+  const steps: Step[] = [{ event: outcome.event, by: schedule }]
+  if (outcome.event.type !== "readSucceeded" || label === "" || item.ready === label) return steps
+  const attempt = try ensureWantedLabel(item.key.repository, label)
+  steps.push({ event: { type: "ensureLabel", attempt }, by: schedule })
+  return steps
 }
 
 export effect function refreshMergeActivity() {
@@ -87,14 +124,15 @@ export effect function refreshMergeActivity() {
   for (const row of stored) {
     const project = projectBy.get(row.project_id)
     if (project === undefined || project.listed.includes(row.repository)) continue
-    try unlisted({ projectId: row.project_id, repository: row.repository }, { at, measured: project.measured, listed: true, running: true, reads: 0 })
+    try unlisted({ projectId: row.project_id, repository: row.repository }, factsOf(at, project, 0))
   }
   const queue: Queued[] = []
   for (const project of projects) {
     if (!project.measured) continue
     for (const repository of project.listed) {
       const found = storedBy.get(keyText(project.projectId, repository))
-      if (due(stateOf({ at, measured: true, listed: true, running: true, reads: 0 }, rowOf(found)))) queue.push({ key: { projectId: project.projectId, repository }, stored: found })
+      const row = try rowOf(found)
+      if (due(stateOf(factsOf(at, project, 0), row))) queue.push({ key: { projectId: project.projectId, repository }, project, stored: found, ready: row.labelReady })
     }
   }
   const since = (item: Queued) => item.stored === undefined ? 0 : millisOf(item.stored.attempted_at)
@@ -103,13 +141,13 @@ export effect function refreshMergeActivity() {
   let read = 0
   let failed = 0
   for (const item of queue) {
-    const facts: Facts = { at, measured: true, listed: true, running: true, reads }
-    const state = stateOf(facts, rowOf(item.stored))
+    const facts = factsOf(at, item.project, reads)
+    const state = stateOf(facts, try rowOf(item.stored))
     if (!readable(state, schedule)) break
     if (!canReadFailed(state, schedule)) continue
-    const outcome = try readEvent(try repositoryRead(item.key.repository, at))
+    const outcome = try readEvent(item.key.repository, try repositoryRead(item.key.repository, at, item.project.label))
     reads += 1
-    const next = try sent(item.key, facts, outcome.event, outcome.evidence)
+    const next = try sent(item.key, facts, try stepsOf(item, outcome), outcome.evidence)
     if (next === undefined) continue
     if (outcome.event.type === "readSucceeded") read += 1
     else failed += 1

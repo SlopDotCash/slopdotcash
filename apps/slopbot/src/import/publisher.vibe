@@ -1,4 +1,4 @@
-// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
 import { first, sql } from "@repo/platform/d1"
 import { GitHub } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
@@ -13,7 +13,7 @@ import { observe, unregistered } from "../scope/facts.vibe"
 import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"
 import { assessmentKeyStored, storedAssessmentKey, valueAssessmentKey, workUnitAssessmentKey } from "../value/history/read.vibe"
 import { type ValueSettingsVars, producerRevisionOf, subscriptionCutoff, valueSettings } from "../value/inference/settings.vibe"
-import { reached, withHistoricalIntakeDiagnostics } from "./diagnostics.vibe"
+import { diagnosedIntake, reached, withHistoricalIntakeDiagnostics } from "./diagnostics.vibe"
 
 export service ImportSettings {
   readonly producerRevision: string
@@ -362,4 +362,5 @@ export effect function publishSubscription(administratorGithubId: string, input:
 
 export const publisherMethods = {
   publishSubscription: (administratorGithubId: string, input: unknown, bundle?: Uint8Array) => withHistoricalIntakeDiagnostics(publishSubscription(administratorGithubId, input, bundle)),
+  publishSubscriptionDiagnosed: (administratorGithubId: string, input: unknown, correlation: string, bundle?: Uint8Array) => diagnosedIntake(correlation, publishSubscription(administratorGithubId, input, bundle)),
 }

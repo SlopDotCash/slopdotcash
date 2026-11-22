@@ -1,4 +1,4 @@
-// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"
+// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"
 import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
 import { currentTableVersion, debitFor, moderatorReview } from "../../gen/slopbot__categories.effect.vibe"
@@ -6,7 +6,7 @@ import { type ConfirmedClose, type Penalties, type PenaltyRow as Debit, type Rev
 import type { PenaltyNotice } from "../publish/comment.vibe"
 import { type CategoryName, categories, findingOf } from "../review/verdict.vibe"
 
-export const penaltyTableVersion = "slopbot-penalties-v1"
+export const penaltyTableVersion = "slopbot-penalties-v2"
 export const pointsPerThird = 10
 
 export type ReversalReason = "appeal_upheld" | "maintainer_reopen"
@@ -47,7 +47,11 @@ export interface Coverage {
   readonly occurredAt: string
 }
 
-const versions: Readonly<Record<string, number>> = { [penaltyTableVersion]: currentTableVersion }
+const versions: Readonly<Record<string, number>> = { "slopbot-penalties-v1": 1, [penaltyTableVersion]: currentTableVersion }
+
+export function tableVersionOf(text: string) {
+  return versions[text] ?? 0
+}
 
 function seconds(iso: string) {
   return Math.floor(millisOf(iso) / 1000)
@@ -74,7 +78,7 @@ effect function debitOf(row: typeof PenaltyRow.Type) {
     bucket: { actor: Number(row.author_github_id), project: 1, period: periodNumber(row.period) },
     revision: row.revision ?? "",
     category: findingOf(category),
-    tableVersion: versions[row.table_version] ?? 0,
+    tableVersion: tableVersionOf(row.table_version),
     debit: row.debit_thirds * pointsPerThird,
     recordedAt: seconds(row.recorded_at),
     moderatorReview: row.moderator_review === 1,

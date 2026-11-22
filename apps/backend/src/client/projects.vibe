@@ -1,4 +1,4 @@
-// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { AppealState } from "@repo/ports/security"
 
@@ -51,6 +51,13 @@ export const ProjectDetail = Schema.Struct({
   vetting: JsonObject,
 })
 
+export schema WantedIssue {
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly openPullRequests: number
+}
+
 export schema MergeRepository {
   readonly repository: string
   readonly observedAt: string
@@ -60,6 +67,10 @@ export schema MergeRepository {
   readonly waitingCapped: boolean
   readonly mergedOutsideLast30Days: number
   readonly medianHoursToMerge: number | null
+  readonly openOutside: number | null
+  readonly openOutsideCapped: boolean
+  readonly wantedLabel?: string
+  readonly wantedIssues?: ReadonlyArray<WantedIssue>
 }
 
 export schema MergeProject {

@@ -44,7 +44,7 @@ const isoBmffVideoBrands: ReadonlySet<string> = new Set([
   "3g2a", "3g2b", "3gp4", "3gp5", "3gp6", "M4V ", "M4VH", "M4VP", "MSNV", "avc1", "cmfc", "cmfv", "dash",
   "iso2", "iso3", "iso4", "iso5", "iso6", "isom", "mp41", "mp42", "qt  ",
 ]);
-const isoVideoCodecs: ReadonlySet<string> = new Set(["av01", "avc1", "hev1", "hvc1", "vp09"]);
+const isoVideoCodecs: ReadonlySet<string> = new Set(["av01", "avc1", "avc3", "hev1", "hvc1", "vp09"]);
 const jpegFrameMarkers: ReadonlySet<number> = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
 const pngDepths: ReadonlyMap<number, ReadonlySet<number>> = new Map([
   [0, new Set([1, 2, 4, 8, 16])],
