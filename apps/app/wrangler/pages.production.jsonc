@@ -6,6 +6,7 @@
     "SLOP_ENVIRONMENT": "production",
     "PUBLIC_SITE_URL": "https://slop.cash",
     "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "OWNER_SESSION_GITHUB_ID": "18633264",
     "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
     "MONTHLY_PAYMENT_SCHEDULE": "{\"firstPeriod\":\"2026-11\",\"cutoffSecondsAfterPeriodEnd\":259200}",
     "PAYMENT_NETWORKS": "[]",
