@@ -112,68 +112,64 @@ lemma EscSubRight(t: seq<int>, a: seq<int>, b: seq<int>, x: seq<int>)
 
 // ---- The whole reserve release (plan item 12) ----
 
-// Membership in every filter of a list at once, so that the filters inside generated definitions use it.
-lemma EscFilterMembers<T>(xs: seq<T>)
-  ensures forall f: T -> bool, y {:trigger y in Std.Collections.Seq.Filter(f, xs)} {:trigger Std.Collections.Seq.Filter(f, xs), y in xs} ::
-    y in Std.Collections.Seq.Filter(f, xs) <==> y in xs && f(y)
-{
-  forall f: T -> bool, y ensures y in Std.Collections.Seq.Filter(f, xs) <==> y in xs && f(y) {
-    ProofLib.FilterMember(f, xs, y);
-  }
-}
-
-// Each kept element of every filter is an element of the list.
-lemma EscFilterIndex<T>(xs: seq<T>)
-  ensures forall f: T -> bool, i {:trigger Std.Collections.Seq.Filter(f, xs)[i]} ::
-    0 <= i < |Std.Collections.Seq.Filter(f, xs)| ==> Std.Collections.Seq.Filter(f, xs)[i] in xs && f(Std.Collections.Seq.Filter(f, xs)[i])
-{
-  forall f: T -> bool, i | 0 <= i < |Std.Collections.Seq.Filter(f, xs)|
-    ensures Std.Collections.Seq.Filter(f, xs)[i] in xs && f(Std.Collections.Seq.Filter(f, xs)[i])
-  {
-    ProofLib.FilterMember(f, xs, Std.Collections.Seq.Filter(f, xs)[i]);
-  }
-}
-
-// Filters of one list by predicates that agree on it are equal.
-lemma EscFilterSame<T>(xs: seq<T>)
-  ensures forall f: T -> bool, g: T -> bool {:trigger Std.Collections.Seq.Filter(f, xs), Std.Collections.Seq.Filter(g, xs)} ::
-    (forall i :: 0 <= i < |xs| ==> f(xs[i]) == g(xs[i])) ==> Std.Collections.Seq.Filter(f, xs) == Std.Collections.Seq.Filter(g, xs)
-{
-  forall f: T -> bool, g: T -> bool | forall i :: 0 <= i < |xs| ==> f(xs[i]) == g(xs[i])
-    ensures Std.Collections.Seq.Filter(f, xs) == Std.Collections.Seq.Filter(g, xs)
-  {
-    ProofLib.FilterSamePredicate(f, g, xs);
-  }
-}
-
-// Two month lists with the same periods, position by position, keep as many months under every filter by period.
-lemma EscMonthCounts(xs: seq<MonthReserve>, ys: seq<MonthReserve>)
-  requires |xs| == |ys| && forall i :: 0 <= i < |xs| ==> xs[i].period == ys[i].period
-  ensures forall f: MonthReserve -> bool {:trigger Std.Collections.Seq.Filter(f, ys)} ::
-    (forall i :: 0 <= i < |xs| ==> f(xs[i]) == f(ys[i])) ==> |Std.Collections.Seq.Filter(f, xs)| == |Std.Collections.Seq.Filter(f, ys)|
-{
-  forall f: MonthReserve -> bool | forall i :: 0 <= i < |xs| ==> f(xs[i]) == f(ys[i])
-    ensures |Std.Collections.Seq.Filter(f, xs)| == |Std.Collections.Seq.Filter(f, ys)|
-  {
-    ProofLib.FilterLengthPointwise(f, f, xs, ys);
-  }
-}
-
 // The month a period names is in the list, and it is the only month of that period.
 lemma EscMonthFor(e: Escrow, p: int)
   requires alwaysMonths(e)
   ensures monthFor(e, p).period > 0 ==> monthFor(e, p) in e.months && monthFor(e, p).period == p
-  ensures monthFor(e, p).period > 0 ==> forall m :: m in e.months && m.period == p ==> m == monthFor(e, p)
+  ensures monthFor(e, p).period > 0 ==> forall y :: y in e.months && y.period == p ==> y == monthFor(e, p)
 {
-  EscFilterMembers(e.months);
-  EscFilterIndex(e.months);
+  var period := p;
+  ProofLib.FilterMember((m: MonthReserve) => (m.period == period), e.months, monthFor(e, p));
   if monthFor(e, p).period > 0 {
     var m0 := monthFor(e, p);
-    assert m0 in e.months && m0.period == p;
-    forall m | m in e.months && m.period == p ensures m == m0 {
-      assert m0.period == m.period;
+    assert m0 in e.months;
+    forall y | y in e.months && y.period == p ensures y == m0 {
+      ProofLib.FilterMember((other: MonthReserve) => (other.period == m0.period), e.months, y);
+      ProofLib.FilterMember((other: MonthReserve) => (other.period == m0.period), e.months, m0);
     }
   }
+}
+
+// A fold that keeps the last pledge of a period returns the one pledge of that period.
+lemma EscFoldPick(f: (Pledge, Pledge) -> Pledge, q: int, init: Pledge, xs: seq<Pledge>, x: Pledge)
+  requires forall acc: Pledge, y: Pledge :: f(acc, y) == (if y.period == q then y else acc)
+  requires x in xs && x.period == q
+  requires forall i, j :: 0 <= i < |xs| && 0 <= j < |xs| && xs[i].period == q && xs[j].period == q ==> i == j
+  ensures Std.Collections.Seq.FoldLeft(f, init, xs) == x
+  decreases |xs|
+{
+  if xs[0] == x {
+    assert forall y :: y in xs[1..] ==> y.period != q;
+    EscFoldNone(f, q, f(init, xs[0]), xs[1..]);
+  } else {
+    assert x in xs[1..];
+    EscFoldPick(f, q, f(init, xs[0]), xs[1..], x);
+  }
+}
+
+lemma EscFoldNone(f: (Pledge, Pledge) -> Pledge, q: int, init: Pledge, xs: seq<Pledge>)
+  requires forall acc: Pledge, y: Pledge :: f(acc, y) == (if y.period == q then y else acc)
+  requires forall y :: y in xs ==> y.period != q
+  ensures Std.Collections.Seq.FoldLeft(f, init, xs) == init
+  decreases |xs|
+{
+  if |xs| > 0 { assert xs[0] in xs; EscFoldNone(f, q, f(init, xs[0]), xs[1..]); }
+}
+
+// With one pledge per period, the pledge of a period is that pledge.
+lemma EscPledgeOf(e: Escrow, x: Pledge)
+  requires alwaysPledgesCovered(e) && x in e.pledges
+  ensures pledgeOf(e, x.period) == x
+{
+  var period := x.period;
+  forall i, j | 0 <= i < |e.pledges| && 0 <= j < |e.pledges| && e.pledges[i].period == period && e.pledges[j].period == period
+    ensures i == j
+  {
+    if i != j {
+      ProofLib.FilterTwo((o: Pledge) => (o.period == x.period), e.pledges, i, j);
+    }
+  }
+  EscFoldPick((found: Pledge, p: Pledge) => (if (p.period == period) then p else found), period, noPledge, e.pledges, x);
 }
 
 // An amount equal to another leaves zero when it is subtracted from it.
@@ -236,10 +232,12 @@ lemma EscReleaseMonths(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent,
   EscZeroAdd(m0.released, g);
   EscChain(d1, g, m0.remaining);
   EscChain(d1, m0.remaining, m0.admittedGross);
+  EscChain(g, m0.remaining, m0.admittedGross);
   settlement__money_lawEqualOrder_ensures(g, m0.admittedGross, settlement__money_zero);
   assert settlement__money_positiveAmount(m0.admittedGross);
   assert !leafTouched(e, p);
   settlement__money_lawZeroOrder_ensures(m0.admittedGross);
+  settlement__money_lawNumericOrderTotal_ensures(m0.admittedGross, settlement__money_zero);
   settlement__money_lawEqualOrder_ensures(r1, settlement__money_zero, m0.admittedGross);
   assert settlement__money_compareAmounts(r1, m0.admittedGross) < 0;
   var up := m0.(remaining := r1, released := d1);
@@ -263,10 +261,13 @@ lemma EscReleaseMonths(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent,
       assert after.months[i] in after.months;
     }
   }
-  EscMonthCounts(e.months, after.months);
-  EscFilterSame(e.months);
-  EscFilterMembers(after.months);
-  assert up.period == m0.period;
+  forall m | m in after.months ensures |ProofLib.Filter((other: MonthReserve) => (other.period == m.period), after.months)| == 1 {
+    var i :| 0 <= i < |after.months| && after.months[i] == m;
+    var mo := e.months[i];
+    assert mo in e.months && mo.period == m.period;
+    ProofLib.FilterLengthPointwise((other: MonthReserve) => (other.period == m.period), (other: MonthReserve) => (other.period == m.period), e.months, after.months);
+    ProofLib.FilterSamePredicate((other: MonthReserve) => (other.period == m.period), (other: MonthReserve) => (other.period == mo.period), e.months);
+  }
 }
 
 // The conservation identities after a whole release: the released gross moves from the pool reserve to free funds.
@@ -301,11 +302,13 @@ lemma EscReleasePledges(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent
   var after := releaseReserve(e, release, ev, by_);
   assert after.pledges == e.pledges && after.pledged == e.pledged;
   settlement__money_lawNumericOrderTotal_ensures(after.free, e.free);
+  settlement__money_lawNumericOrderTotal_ensures(e.free, e.pledged);
   settlement__money_lawNumericOrderTransitive_ensures(e.pledged, e.free, after.free);
-  forall x | x in e.pledges ensures settlement__money_compareAmounts(x.amount, x.amount) >= 0 {
+  settlement__money_lawNumericOrderTotal_ensures(after.free, e.pledged);
+  forall x | x in e.pledges ensures pledgeOf(after, x.period) == x && settlement__money_compareAmounts(x.amount, x.amount) >= 0 {
+    EscPledgeOf(e, x);
     settlement__money_lawEqualReflexive_ensures(x.amount);
   }
-  assert forall q :: pledgeOf(after, q) == pledgeOf(e, q);
 }
 
 // Awards keep their validity: months keep their periods.

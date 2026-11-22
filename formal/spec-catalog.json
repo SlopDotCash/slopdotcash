@@ -22449,7 +22449,7 @@
     },
     {
       "path": "spec/settlement/escrow.md",
-      "sha256": "7858fe40ab9de3f52b1febf23e7b0b679a8536b4b81a79165abf2f8924e9b47e",
+      "sha256": "aca7c954edc8618f7024b9125a6c4228f3ad3daaa7005ae4d7baf505680cd0ee",
       "module": "settlement__escrow",
       "stories": [
         {
@@ -22458,23 +22458,23 @@
         },
         {
           "heading": "Story: Deposit and withdraw only free funds",
-          "line": 148
+          "line": 147
         },
         {
           "heading": "Story: Commit awards without double reservation",
-          "line": 204
+          "line": 203
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period",
-          "line": 249
+          "line": 248
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects",
-          "line": 552
+          "line": 569
         },
         {
           "heading": "Story: Every base unit is accounted for",
-          "line": 607
+          "line": 624
         }
       ],
       "rules": [
@@ -22518,7 +22518,7 @@
         },
         {
           "heading": "Story: Hold one asset under exact contract counters / Events apply once, in canonical block and event order",
-          "line": 130,
+          "line": 129,
           "definitions": [
             "later",
             "advance",
@@ -22527,7 +22527,7 @@
         },
         {
           "heading": "Story: Deposit and withdraw only free funds / Anyone may deposit the vault asset and it joins the one free balance",
-          "line": 150,
+          "line": 149,
           "definitions": [
             "Deposit",
             "canDeposit",
@@ -22536,7 +22536,7 @@
         },
         {
           "heading": "Story: Deposit and withdraw only free funds / Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up",
-          "line": 168,
+          "line": 167,
           "definitions": [
             "canWithdraw",
             "withdraw"
@@ -22544,7 +22544,7 @@
         },
         {
           "heading": "Story: Deposit and withdraw only free funds / Anyone may move accrued fees only to the fixed fee recipient",
-          "line": 191,
+          "line": 190,
           "definitions": [
             "canClaimFees",
             "claimFees"
@@ -22552,7 +22552,7 @@
         },
         {
           "heading": "Story: Commit awards without double reservation / An owner award reserves gross from free funds once per source",
-          "line": 206,
+          "line": 205,
           "definitions": [
             "feeFor",
             "noSource",
@@ -22566,7 +22566,7 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / The owner turns monthly commitments on with a positive cap or off",
-          "line": 251,
+          "line": 250,
           "definitions": [
             "canSetMonthly",
             "setMonthly"
@@ -22574,11 +22574,12 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / The owner pledges free funds to coming months, raising but never lowering an open pledge",
-          "line": 264,
+          "line": 263,
           "definitions": [
             "noPledge",
             "pledgeOf",
             "openPledged",
+            "otherOpenPledged",
             "unpledgedCovers",
             "openInWindowPledge",
             "pledgePeriods",
@@ -22591,7 +22592,7 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / A pledge closes when its period is admitted or its window has closed",
-          "line": 309,
+          "line": 311,
           "definitions": [
             "closesAt",
             "closePledge",
@@ -22601,7 +22602,7 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / Anyone may admit an attester-signed root once per period inside its window",
-          "line": 331,
+          "line": 333,
           "definitions": [
             "RootAuthorization",
             "validPeriod",
@@ -22615,13 +22616,14 @@
             "capFor",
             "closeNamed",
             "admissionEnabled",
+            "offAdmission",
             "canAdmitRoot",
             "admitRoot"
           ]
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once",
-          "line": 402,
+          "line": 407,
           "definitions": [
             "LegacyEntry",
             "LegacyCommitment",
@@ -22637,7 +22639,7 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / A proven leaf reclassifies pool gross into one award without debiting free funds",
-          "line": 446,
+          "line": 452,
           "definitions": [
             "LeafProof",
             "noMonth",
@@ -22650,7 +22652,7 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / On Solana an uncommittable leaf returns to free funds and a later hand commit strands it",
-          "line": 480,
+          "line": 486,
           "definitions": [
             "consumedFor",
             "leafReleasable",
@@ -22662,18 +22664,21 @@
         },
         {
           "heading": "Story: Reserve one attested monthly pool per period / Only an owner request co-signed by the current authority releases pool gross",
-          "line": 513,
+          "line": 519,
           "definitions": [
             "ReleaseAuthorization",
             "canReleaseReserve",
             "releaseReserve",
             "alwaysEvmReleaseWhole",
+            "leafTouched",
+            "alwaysTouchedMonthsShrink",
+            "alwaysReleaseWhole",
             "lawNoLeafAfterRelease"
           ]
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects / Anyone may pay a matured award; net goes to the destination and the fee accrues",
-          "line": 554,
+          "line": 571,
           "definitions": [
             "PayableBinding",
             "noAward",
@@ -22687,7 +22692,7 @@
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects / An identity-authority rotation observed at the factory changes only who signs next",
-          "line": 593,
+          "line": 610,
           "definitions": [
             "canObserveAuthority",
             "observeAuthority"
@@ -22695,7 +22700,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Gross buckets conserve every deposit and the fee buckets conserve every fee",
-          "line": 609,
+          "line": 626,
           "definitions": [
             "alwaysValidCounters",
             "alwaysGrossConserved",
@@ -22706,7 +22711,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Every award and withdrawal keeps its exact fee and immutable identity",
-          "line": 636,
+          "line": 653,
           "definitions": [
             "validAward",
             "alwaysAwards",
@@ -22719,7 +22724,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Identity, history and cumulative counters never go backwards",
-          "line": 672,
+          "line": 689,
           "definitions": [
             "stepIdentityFixed",
             "sameAwardTerms",
@@ -22732,6 +22737,7 @@
             "stepPoolLeavesOnlyByLeafOrRelease",
             "stepFreeLeavesOnlyByOwnerOrRoot",
             "stepFreeEntersOnlyByDepositOrRelease",
+            "pledgeClosable",
             "stepPledgeIrrevocable",
             "stepManualBlockedWhilePoolPending",
             "stepOneRootPerPeriod",
@@ -22741,7 +22747,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Pool deposits, withdrawals, leaves after opt-out, releases, pledges and fee claims are reachable",
-          "line": 728,
+          "line": 750,
           "definitions": [
             "sometimesDepositWhilePoolPending",
             "sometimesWithdrawWhilePoolPending",
@@ -22759,7 +22765,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Simulation samples reach the November 2026 window",
-          "line": 748,
+          "line": 770,
           "definitions": [
             "evValues",
             "solanaAsset",
@@ -22831,11 +22837,11 @@
         },
         {
           "target": "./reserveRelease.md",
-          "line": 522
+          "line": 528
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 598
+          "line": 615
         }
       ]
     },
@@ -24902,7 +24908,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "edec810c6e23ee0afafdb8b67ef086ee2106181616a791a383375f40aec2159b",
+      "sha256": "68e2eb4d5a6f6db06073d337c9465e48cbdff2d060d7816b6ec855e0830f7970",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -24911,7 +24917,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree",
-          "line": 256
+          "line": 259
         }
       ],
       "rules": [
@@ -24954,6 +24960,7 @@
           "definitions": [
             "canObserveHead",
             "observeHead",
+            "otherOpenPledges",
             "observation",
             "canCreateObligations",
             "createObligations",
@@ -24963,7 +24970,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may prepare one funded obligation by hand, and only while no pool gross is pending",
-          "line": 107,
+          "line": 110,
           "definitions": [
             "obligationOf",
             "awardFact",
@@ -24973,7 +24980,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may also commit any source by hand on chain; the month observes it",
-          "line": 130,
+          "line": 133,
           "definitions": [
             "canCommitManualAward",
             "commitManualAward",
@@ -24995,7 +25002,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Anyone admits the attester-signed root of exactly the month's unreserved obligations",
-          "line": 172,
+          "line": 175,
           "definitions": [
             "canAdmitRoot",
             "admitRoot",
@@ -25005,7 +25012,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized",
-          "line": 199,
+          "line": 202,
           "definitions": [
             "leavesPerCall",
             "leafInCall",
@@ -25016,7 +25023,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The vault keeps its other operations while the month is reserved",
-          "line": 238,
+          "line": 241,
           "definitions": [
             "canWithdraw",
             "withdraw",
@@ -25026,7 +25033,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / An obligation is reserved, paid or conflicted only as the vault's finalized award shows",
-          "line": 258,
+          "line": 261,
           "definitions": [
             "obligationMatches",
             "alwaysObligationsMatchVault",
@@ -25045,7 +25052,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 294,
+          "line": 297,
           "definitions": [
             "assetValues",
             "mintValues",
@@ -25065,7 +25072,7 @@
             "eligibilityValues",
             "snapshotValues",
             "earlierUnreservedValues",
-            "otherOpenPledgesValues",
+            "bansValues",
             "depositValues",
             "evValues",
             "actorValues",
@@ -25130,15 +25137,15 @@
         },
         {
           "target": "./monthPledges.md",
-          "line": 86
+          "line": 89
         },
         {
           "target": "./paymentInvestigation.md",
-          "line": 242
+          "line": 245
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 243
+          "line": 246
         }
       ]
     },
