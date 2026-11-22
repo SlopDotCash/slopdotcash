@@ -1682,6 +1682,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    privateTraceContractV2Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1692,6 +1693,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
+    request.get("/protocol/private-trace-v2.md"),
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
@@ -1703,6 +1705,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    privateTraceContractV2Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1741,6 +1744,24 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContract).toContain("Retention is permanent");
   expect(privateTraceContract).toContain("No website or API");
   expect(privateTraceContract).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContract).not.toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2Response.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  const privateTraceContractV2 = await privateTraceContractV2Response.text();
+  expect(privateTraceContractV2).toContain(
+    "# Private trace privacy contract v2",
+  );
+  expect(privateTraceContractV2).toContain("Licensing is not available yet");
+  expect(privateTraceContractV2).toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2).toContain("while the setting is on");
+  expect(privateTraceContractV2).toContain(
+    "also store the terms version once consent records ship",
+  );
+  expect(privateTraceContractV2).toContain("Retention is permanent");
+  expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
+  expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContractV2).not.toContain("## Storage contract");
   for (const response of [pointsRulesResponse, scoringRulesResponse]) {
     const rules = await response.text();
     expect(rules).toContain("Every accepted merge receives at least 10 Points");
