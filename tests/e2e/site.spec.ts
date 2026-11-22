@@ -1754,6 +1754,10 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   );
   expect(privateTraceContractV2).toContain("Licensing is not available yet");
   expect(privateTraceContractV2).toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2).toContain("while the setting is on");
+  expect(privateTraceContractV2).toContain(
+    "also store the terms version once consent records ship",
+  );
   expect(privateTraceContractV2).toContain("Retention is permanent");
   expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
   expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
