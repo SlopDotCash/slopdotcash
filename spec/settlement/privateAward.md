@@ -334,12 +334,23 @@ can never be admitted as a direct award, since no later snapshot restores a
 financial approver, so correlating these observations costs that search
 nothing.
 
-Discovered by simulation: a direct award reaches its recording state only
-near the end of a 20-event trace, and there a receipt pair, weighted 20,
-records both legs before a single transfer, weighted 8, usually could, so
-no kept trace showed the transfer guard allow its event and the deeper
-probe ran past its time limit. A single transfer is weighted as the pair
-is.
+Discovered by simulation: the guard probes for a single direct-award
+transfer and for a direct-award recovery found no state that allowed them in
+200000 traces of 20 events, and each search ran past its time limit. Only a
+direct award to a payer who still holds the financial role reaches those
+events. Two of the three authority snapshots are later epochs, which cannot
+be followed by the first, so a trace that observed one first never had a
+payer. Two more first-epoch snapshots therefore name a technical member, 6
+or 8, whom no sampled actor plays; they differ from the staff snapshot in
+nothing else the model reads. A case could also record a root cause that no
+sampled journal finding matched, so the journal samples pair each case with
+each finding. An observed vault that covers the award sends it to a vault
+reservation instead of the direct rail, so deposits and fund observations
+are rarer, authority snapshots are observed less often, and the direct
+admission, wallet, consent, preparation, recording and recovery events are
+weighted above the events that are open in most states. A recovery is
+weighted far above the rest because few of its sampled arguments match the
+prepared request.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
@@ -349,7 +360,7 @@ pure val sourceValues = Set(C::SlopReceived)
 pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
-pure val snapshotValues = Set(C::staff,
+pure val snapshotValues = Set(C::staff, { ...C::staff, technical: List(2, 3, 6) }, { ...C::staff, technical: List(2, 3, 8) },
   { ...C::staff, epoch: 2, financial: List(), moderators: List(4, 5, 7), relatedParties: List(1) },
   { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
@@ -373,7 +384,8 @@ pure val evidenceValues = Set(awardReceipt(1), awardReceipt(2), SC::bountyReceip
 pure val updateValues = Set(SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }))
 pure val journalTerms: DB::Terms = { caseId: 2, project: 1, finding: 2, payerActor: 5, reporterActor: 1,
   network: FR::Base, asset: "asset", feeWallet: "fees", gross: List(4), split: T::StandardSplit }
-pure val journalTermsValues = Set(journalTerms, { ...journalTerms, caseId: 1, finding: 1 })
+pure val journalTermsValues = Set(journalTerms, { ...journalTerms, finding: 1 }, { ...journalTerms, caseId: 1, finding: 1 },
+  { ...journalTerms, caseId: 1 })
 pure val qualifiedRouteValues = Set({ network: FR::Base, asset: "asset", feeWallet: "fees" })
 pure val payerWalletValues = Set(DB::payerOne)
 pure val reporterWalletValues = Set(DB::reporterOne)
@@ -391,19 +403,20 @@ pure val awardResearcher: DB::Transfer = { ...DB::researcherTransfer, principal:
 pure val awardFee: DB::Transfer = { ...DB::feeTransfer, fee: List(1) }
 pure val transferValues = Set(awardResearcher, awardFee)
 pure val pairValues = Set({ researcher: awardResearcher, fee: awardFee })
-pure val weight_deposit = 2
-pure val weight_observeFunds = 2
+pure val weight_deposit = 1
+pure val weight_observeFunds = 1
 pure val weight_receive = 8
 pure val weight_observeRoute = 8
-pure val weight_observeAuthority = 3
+pure val weight_observeAuthority = 1
 pure val weight_decide = 10
 pure val weight_showAmounts = 15
 pure val weight_decideAward = 15
 pure val weight_reconcile = 10
-pure val weight_admitDirect = 25
-pure val weight_observeWallets = 15
-pure val weight_consent = 15
-pure val weight_prepareDirect = 25
-pure val weight_recordPair = 20
-pure val weight_recordTransfer = 20
+pure val weight_admitDirect = 100
+pure val weight_observeWallets = 60
+pure val weight_consent = 60
+pure val weight_prepareDirect = 100
+pure val weight_recordPair = 40
+pure val weight_recordTransfer = 40
+pure val weight_recoverDirect = 100
 ```

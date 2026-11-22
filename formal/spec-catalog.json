@@ -25832,7 +25832,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "73205481fca62b70479634cb7a4030eb77582371bccbca303b1347997015d50c",
+      "sha256": "307a3fb105bc859c35b6b7a74eb600e98da72ccc4308e587906a6281828b1094",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -26036,7 +26036,8 @@
             "weight_consent",
             "weight_prepareDirect",
             "weight_recordPair",
-            "weight_recordTransfer"
+            "weight_recordTransfer",
+            "weight_recoverDirect"
           ]
         }
       ],
