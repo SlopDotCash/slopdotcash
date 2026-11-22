@@ -4402,7 +4402,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "2b5180706b5890800889dc7805be199fb132f9803867ef781951f37a285424df",
+      "sha256": "8fd8b1aaaf9e390a0020a1c9f9788ea404f88c9a7da3225b356a29882703b6e7",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4424,9 +4424,9 @@
         2481, 2483, 2508, 2560, 2865, 2868, 3168, 3288, 3409, 3422, 3433, 3434,
         3621, 3622, 3813, 3829, 3841, 3848, 3874, 3884, 3888, 3892, 3896, 3951,
         3970, 3997, 4014, 4048, 4049, 4051, 4067, 4084, 4085, 4086, 4095, 4100,
-        4280, 4638, 4660, 4669, 4719, 4754, 4760, 4767, 4836, 4908, 5076, 5201,
-        5393, 5552, 5908, 5918, 5920, 5933, 5966, 5968, 5969, 5973, 5977, 6033,
-        6097, 6150, 6153, 6242, 6290, 6370, 6380, 6387
+        4280, 4638, 4660, 4669, 4719, 4754, 4760, 4767, 4836, 4924, 5110, 5237,
+        5429, 5588, 5975, 5985, 5987, 6000, 6033, 6035, 6036, 6040, 6044, 6100,
+        6164, 6217, 6220, 6309, 6357, 6437, 6447, 6454
       ],
       "review": "mapped-abstraction"
     },
@@ -15876,7 +15876,7 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "0bea750c1c5e099e4a04d4ee46fa923f0b7cd362caa032b7439194e195f403c5",
+      "sha256": "507e7f222f7725f1d973b43ed2b7f435b399ddb725d700cf8db50dcafc635a69",
       "sources": [
         "scripts/accepted-implementation-memo.ts",
         "scripts/generate-leaderboard.ts",
@@ -15898,6 +15898,8 @@
         "nonemptyCommitCensusCanScoreTest",
         "onlyExactEarlierPositiveSquashCanWithholdCreditTest",
         "previousSquashDoesNotReplaceRatifiedOrIndependentlyAcceptedWorkTest",
+        "previousSubmittedCommitKeepsIndependentAndRatifiedWorkTest",
+        "previousSubmittedCommitRequiresNativeAcceptanceTest",
         "previouslyRewardedSquashCannotScoreAgainTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"

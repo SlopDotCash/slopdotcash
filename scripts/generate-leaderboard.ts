@@ -4882,13 +4882,29 @@ export function implementationDigestCandidates(
 
 type PreviousImplementationMetadata =
   | PreviousImplementationObservation
-  | { kind: "unresolved"; shape: string };
+  | { kind: "unresolved"; shape: string; headSha: string };
 
 type PreviousImplementationRead = {
   candidates: Map<string, AcceptedImplementationSource[]>;
   unresolvedShapes: Set<string>;
   acceptedOrdinaryOwners: Map<string, string>;
+  submittedOrdinaryCandidates: {
+    predecessor: AcceptedImplementationPredecessor;
+    source: AcceptedImplementationSource;
+  }[];
+  unresolvedSubmittedOrdinaryOids: Set<string>;
 };
+
+function earlierImplementationPredecessor(
+  candidate: AcceptedImplementationPredecessor,
+  current?: AcceptedImplementationPredecessor,
+): boolean {
+  return (
+    !current ||
+    candidate.mergedAt < current.mergedAt ||
+    (candidate.mergedAt === current.mergedAt && candidate.id < current.id)
+  );
+}
 
 function observePreviousImplementation(
   value: unknown,
@@ -4982,14 +4998,14 @@ function observePreviousImplementation(
     row.additions,
     row.deletions,
   );
-  if (row.mergeCommit == null) return { kind: "unresolved", shape };
+  if (row.mergeCommit == null) return { kind: "unresolved", shape, headSha };
   const proof = readImplementationAcceptance(
     candidate.id,
     headSha,
     row.mergeCommit,
     path,
   );
-  if (proof === null) return { kind: "unresolved", shape };
+  if (proof === null) return { kind: "unresolved", shape, headSha };
   if (proof === "ineligible") return { kind: "ineligible" };
   if (proof.mergeTreeSha === proof.firstParentTreeSha)
     return { kind: "ineligible" };
@@ -5014,6 +5030,9 @@ export async function readPreviousImplementationSources(
     string,
     AcceptedImplementationPredecessor
   >();
+  const submittedOrdinaryCandidates: PreviousImplementationRead["submittedOrdinaryCandidates"] =
+    [];
+  const unresolvedSubmittedOrdinaryOids = new Set<string>();
   const consider = (
     observation: PreviousImplementationMetadata,
     candidate: AcceptedImplementationPredecessor,
@@ -5021,15 +5040,30 @@ export async function readPreviousImplementationSources(
     if ("source" in observation) {
       const oid = acceptedOrdinaryCommitOid(observation.source);
       if (oid && carriedOrdinaryOids.has(oid)) {
-        const chosen = acceptedOrdinarySources.get(oid);
         if (
-          !chosen ||
-          candidate.mergedAt < chosen.mergedAt ||
-          (candidate.mergedAt === chosen.mergedAt && candidate.id < chosen.id)
+          earlierImplementationPredecessor(
+            candidate,
+            acceptedOrdinarySources.get(oid),
+          )
         )
           acceptedOrdinarySources.set(oid, candidate);
       }
     }
+    // The older one-commit source enters native verification by exact OID.
+    // Its whole-PR file/line shape need not match a later multi-commit carrier.
+    if (
+      observation.kind === "candidate" &&
+      carriedOrdinaryOids.has(observation.source.headSha)
+    )
+      submittedOrdinaryCandidates.push({
+        predecessor: candidate,
+        source: observation.source,
+      });
+    if (
+      observation.kind === "unresolved" &&
+      carriedOrdinaryOids.has(observation.headSha)
+    )
+      unresolvedSubmittedOrdinaryOids.add(observation.headSha);
     if (!("shape" in observation) || !shapes.has(observation.shape)) return;
     if (observation.kind === "unresolved") {
       unresolvedShapes.add(observation.shape);
@@ -5094,6 +5128,8 @@ export async function readPreviousImplementationSources(
     acceptedOrdinaryOwners: new Map(
       [...acceptedOrdinarySources].map(([oid, source]) => [oid, source.id]),
     ),
+    submittedOrdinaryCandidates,
+    unresolvedSubmittedOrdinaryOids,
   };
 }
 
@@ -5673,44 +5709,75 @@ async function collectLeaderboardFromGitHub(
       if (previousJournal === undefined)
         previousJournal =
           (await options.readPreviousImplementationJournal?.()) ?? null;
-      const prior = previousJournal
-        ? await readPreviousImplementationSources(
-            client,
-            preflight.id,
-            new Set(current.keys()),
-            previousPositiveImplementationSources(previousJournal, {
-              repository: repository.id,
-              projectId: repository.projectId,
-              mergedBefore: windowFrom.toISOString(),
-              recordedThrough: now.toISOString(),
-            }),
-            options.implementationMemo,
-            carriedOrdinaryOids,
-          )
-        : {
-            candidates: new Map<string, AcceptedImplementationSource[]>(),
-            unresolvedShapes: new Set<string>(),
-            acceptedOrdinaryOwners: new Map<string, string>(),
-          };
-      for (const [oid, sourceId] of prior.acceptedOrdinaryOwners)
-        previousAcceptedOrdinaryOwners.set(
-          `${repository.id.toLowerCase()}\0${oid}`,
-          sourceId,
-        );
+      const priorSources = previousJournal
+        ? previousPositiveImplementationSources(previousJournal, {
+            repository: repository.id,
+            projectId: repository.projectId,
+            mergedBefore: windowFrom.toISOString(),
+            recordedThrough: now.toISOString(),
+          })
+        : [];
+      const prior = await readPreviousImplementationSources(
+        client,
+        preflight.id,
+        new Set(current.keys()),
+        priorSources,
+        options.implementationMemo,
+        carriedOrdinaryOids,
+      );
       // Past candidates are already bound to latest positive ordinary Points.
       // Lookup equality is always by exact native bytes, never by file counts.
       const present = implementationDigestCandidates(
         mergedPullRequestReferences,
         new Set([...prior.candidates.keys(), ...prior.unresolvedShapes]),
       );
-      const previous = [...prior.candidates.values()].flat();
-      if (present.length === 0) continue;
+      const previous = present.length
+        ? [...prior.candidates.values()].flat()
+        : [];
       const native = await readImplementationProofs(
         options.readAcceptedImplementation,
         { full_name: repository.id, node_id: preflight.id, private: false },
-        [...present, ...previous],
+        dedupeByNodeId([
+          ...present,
+          ...previous,
+          ...prior.submittedOrdinaryCandidates.map(({ source }) => source),
+        ]),
         options.implementationMemo,
       );
+      const priorById = new Map(
+        priorSources.map((source) => [source.id, source]),
+      );
+      const repoKey = repository.id.toLowerCase();
+      for (const [oid, sourceId] of prior.acceptedOrdinaryOwners)
+        previousAcceptedOrdinaryOwners.set(`${repoKey}\0${oid}`, sourceId);
+      for (const { source, predecessor } of prior.submittedOrdinaryCandidates) {
+        if (native.unavailable.has(source.id))
+          prior.unresolvedSubmittedOrdinaryOids.add(source.headSha);
+        if (!native.digests.has(source.id)) continue;
+        const key = `${repoKey}\0${source.headSha}`;
+        const existing = previousAcceptedOrdinaryOwners.get(key);
+        if (
+          earlierImplementationPredecessor(
+            predecessor,
+            existing ? priorById.get(existing) : undefined,
+          )
+        )
+          previousAcceptedOrdinaryOwners.set(key, predecessor.id);
+      }
+      if (prior.unresolvedSubmittedOrdinaryOids.size) {
+        for (const { outcome } of mergedPullRequestReferences) {
+          if (
+            outcome?.commits?.some(
+              ({ oid, parentCount }) =>
+                parentCount === 1 &&
+                prior.unresolvedSubmittedOrdinaryOids.has(oid) &&
+                !previousAcceptedOrdinaryOwners.has(`${repoKey}\0${oid}`),
+            )
+          )
+            unresolvedImplementationSources.add(outcome.id);
+        }
+      }
+      if (present.length === 0) continue;
       const mergedAt = new Map(
         mergedPullRequestReferences.flatMap(({ outcome }) =>
           outcome ? [[outcome.id, outcome.mergedAt] as const] : [],

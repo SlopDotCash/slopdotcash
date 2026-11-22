@@ -730,6 +730,8 @@ test("an older award is eligible only for its exact public merged source and rep
       candidates: new Map(),
       unresolvedShapes: new Set(),
       acceptedOrdinaryOwners: new Map(),
+      submittedOrdinaryCandidates: [],
+      unresolvedSubmittedOrdinaryOids: new Set(),
     });
   for (const [parents, observation] of [
     [
@@ -962,6 +964,12 @@ const priorSquashes = [retained.headRefOid, "d".repeat(40)].map(
     },
   }),
 );
+const priorSingleSubmissions = priorSquashes.map(
+  ({ accepted, pull }, index) => ({
+    accepted: String(index + 3).repeat(40),
+    pull: { ...pull, headRefOid: accepted },
+  }),
+);
 type Failure =
   | "forbidden"
   | "mixed"
@@ -1125,6 +1133,7 @@ async function fixture(
     | "commit-lines-missing"
     | "commit-lines-negative"
     | "cross-window-squash"
+    | "cross-window-submitted"
     | "open-reorder"
     | "open-skip",
   failure?: Failure,
@@ -1147,6 +1156,8 @@ async function fixture(
   const comparisonPages: number[] = [];
   const commitLineBatches: string[][] = [];
   const previousImplementationBatches: string[][] = [];
+  const crossWindow =
+    mode === "cross-window-squash" || mode === "cross-window-submitted";
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
@@ -1164,9 +1175,9 @@ async function fixture(
   }));
   const sourceNodeFor = (pull: (typeof pulls)[number]) => {
     const node = nodeFor(pull);
-    if (mode === "cross-window-squash")
+    if (crossWindow)
       node.url = `https://github.com/${repository.id}/pull/${pull.number}`;
-    if (mode === "cross-window-squash" && pull.id === unaffected.id) {
+    if (crossWindow && pull.id === unaffected.id) {
       const independent = node.commits.nodes[0].commit;
       const carried = priorSquashes[1].accepted;
       const edit = "e".repeat(40);
@@ -1272,19 +1283,25 @@ async function fixture(
         const data: Record<string, unknown> = {};
         let errors: unknown[] | undefined;
         if (
-          mode === "cross-window-squash" &&
+          crossWindow &&
           query.includes("query PreviousImplementationSources")
         ) {
           previousImplementationBatches.push(v.ids);
           data.nodes = v.ids.map((id) => {
             const { accepted, pull } = required(
-              priorSquashes.find(({ pull }) => pull.id === id),
+              (mode === "cross-window-submitted"
+                ? priorSingleSubmissions
+                : priorSquashes
+              ).find(({ pull }) => pull.id === id),
             );
             const prior = nodeFor(pull);
             return {
               ...prior,
-              changedFiles: 3,
-              commits: { ...prior.commits, totalCount: 3 },
+              changedFiles: mode === "cross-window-submitted" ? 9 : 3,
+              commits:
+                mode === "cross-window-submitted"
+                  ? prior.commits
+                  : { ...prior.commits, totalCount: 3 },
               repository: {
                 id: nodeId(repository.owner, repository.name),
                 isPrivate: false,
@@ -1832,14 +1849,18 @@ function journalFor(
   );
 }
 
-test("rolling collection reserves earlier accepted squashes from its prior positive Points source batch", async () => {
+async function verifyCrossWindowCredit(
+  mode: "cross-window-squash" | "cross-window-submitted",
+) {
   setSystemTime(new Date(GENERATED_AT));
-  const f = await fixture("cross-window-squash");
+  const f = await fixture(mode);
+  const prior =
+    mode === "cross-window-submitted" ? priorSingleSubmissions : priorSquashes;
   try {
     const before = await f.generate();
     const journal = appendPointAwards(
       { ...journalFor(before), revisions: [] },
-      priorSquashes.map(({ pull }) => ({
+      prior.map(({ pull }) => ({
         ...awardForScore(
           required(
             before.ledger.find((event) => event.source.id === retained.id),
@@ -1861,15 +1882,18 @@ test("rolling collection reserves earlier accepted squashes from its prior posit
       GENERATED_AT,
     );
     let journalReads = 0;
-    let nativeReads = 0;
+    const nativeReads: string[][] = [];
     const options: GenerateOptions = {
       readPreviousImplementationJournal: async () => {
         journalReads++;
         return journal;
       },
-      readAcceptedImplementation: async () => {
-        nativeReads++;
-        return { digests: new Map(), unavailable: new Set() };
+      readAcceptedImplementation: async (_repository, sources) => {
+        nativeReads.push(sources.map(({ id }) => id));
+        return {
+          digests: new Map(sources.map(({ id }) => [id, "d".repeat(64)])),
+          unavailable: new Set(),
+        };
       },
     };
     const digest = "b".repeat(64);
@@ -1909,14 +1933,18 @@ test("rolling collection reserves earlier accepted squashes from its prior posit
       );
       expect(
         snapshot.ledger.some((event) =>
-          priorSquashes.some(({ pull }) => pull.id === event.source.id),
+          prior.some(({ pull }) => pull.id === event.source.id),
         ),
       ).toBe(false);
     }
-    expect(nativeReads).toBe(0);
+    expect(nativeReads).toEqual(
+      mode === "cross-window-submitted"
+        ? [prior.map(({ pull }) => pull.id)]
+        : [],
+    );
     expect(journalReads).toBe(2);
     expect(f.stats().previousImplementationBatches).toEqual([
-      priorSquashes.map(({ pull }) => pull.id),
+      prior.map(({ pull }) => pull.id),
     ]);
     const withdrawn = appendPointAwards(
       journal,
@@ -1932,10 +1960,32 @@ test("rolling collection reserves earlier accepted squashes from its prior posit
     });
     expect(noPriorCredit.ledger).toEqual(before.ledger);
     expect(f.stats().previousImplementationBatches).toHaveLength(1);
+    if (mode === "cross-window-submitted") {
+      const incomplete = await f.generate({
+        ...options,
+        readAcceptedImplementation: async () => ({
+          digests: new Map(),
+          unavailable: new Set([prior[0].pull.id]),
+        }),
+      });
+      expect(
+        incomplete.ledger.some((event) => event.source.id === retained.id),
+      ).toBe(false);
+      expect(
+        incomplete.ledger.filter((event) => event.source.id === unaffected.id),
+      ).toEqual(
+        before.ledger.filter((event) => event.source.id === unaffected.id),
+      );
+    }
   } finally {
     await f.close();
   }
-});
+}
+
+test.each(["cross-window-squash", "cross-window-submitted"] as const)(
+  "rolling collection reserves earlier accepted work from prior positive Points with %s",
+  verifyCrossWindowCredit,
+);
 
 test("removed node is recorded after a complete recollection and both valid outcomes reach atomic output", async () => {
   setSystemTime(new Date(GENERATED_AT));

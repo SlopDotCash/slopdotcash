@@ -10,8 +10,8 @@
 // Finite selection gate for one accepted source. A complete first-owner proof
 // can show all ordinary commits already credited. An attribution proof gap is
 // distinct from transport/identity failure and never revokes retained Points.
-// The single-parent acceptance identity is an authenticated input, not an author
-// or a changed-line weight. The model abstracts transport and Git tree evidence.
+// The acceptance identity is an authenticated input, separate from the author
+// and changed-line weight. The model abstracts transport and Git tree evidence.
 module implementation_credit_gate {
   var s: { selected: bool, complete: bool, duplicate: bool, held: bool,
     fatal: bool, credited: bool, retained: int }
@@ -30,6 +30,12 @@ module implementation_credit_gate {
   action selectPreviousAcceptance(rollingFallback: bool, earlierPositive: bool, exactAcceptance: bool,
     sameRepository: bool, independentWork: bool): bool =
     selectPromotedAcceptance(rollingFallback and earlierPositive and exactAcceptance, sameRepository, independentWork)
+  action selectPreviousSubmission(rollingFallback: bool, earlierExactCandidate: bool, nativeProof: str,
+    independentWork: bool): bool = {
+    val compare = rollingFallback and earlierExactCandidate
+    selectSource(true, compare and nativeProof == "equal" and not(independentWork),
+      compare and nativeProof == "unavailable", false)
+  }
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -66,6 +72,18 @@ module implementation_credit_gate {
   run onlyExactEarlierPositiveSquashCanWithholdCreditTest =
     init.then(selectPreviousAcceptance(true, false, true, true, false)).then(credit)
       .expect(s.credited and invariant)
+  run previousSubmittedCommitRequiresNativeAcceptanceTest =
+    init.then(selectPreviousSubmission(true, true, "equal", false))
+      .expect(s.duplicate and invariant).then(credit.fail())
+    .then(init).then(selectPreviousSubmission(true, true, "different", false))
+      .then(credit).expect(s.credited and invariant)
+    .then(init).then(selectPreviousSubmission(true, true, "unavailable", true))
+      .expect(s.held and invariant).then(credit.fail())
+  run previousSubmittedCommitKeepsIndependentAndRatifiedWorkTest =
+    init.then(selectPreviousSubmission(true, true, "equal", true))
+      .then(credit).expect(s.credited and invariant)
+    .then(init).then(selectPreviousSubmission(false, true, "unavailable", false))
+      .then(credit).expect(s.credited and invariant)
     .then(init).then(selectPreviousAcceptance(true, true, false, true, false)).then(credit)
       .expect(s.credited and invariant)
   run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
