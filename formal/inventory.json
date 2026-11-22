@@ -3823,6 +3823,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0147_trace_licensing.sql",
+      "sha256": "bc52b3d6b7efdd1b01bcfb6f5d7d5378624ebd769b49c90f45a33246a5e0014d",
+      "models": [],
+      "candidateLines": [
+        6, 29, 33, 46, 48, 50, 52, 60, 103, 116, 117, 118, 129, 130, 139, 142,
+        150, 155
+      ],
+      "review": "pending"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -7144,14 +7154,14 @@
     },
     {
       "path": "src/lib/notifications.ts",
-      "sha256": "b746754ee55f8f134c052c4dcf3a81d76eb774a403b60866ce1f6e42c2976ca1",
+      "sha256": "326e0da30329381b4415ff6428f2eebbb8a0b26d170123a5112daa45c189a638",
       "models": [
         "formal/models/api/inbox_mark_read.qnt",
         "formal/models/api/inbox_queries.qnt",
         "formal/models/ui/ui_inbox_reads.qnt",
         "formal/models/ui/ui_incomplete_assessments.qnt"
       ],
-      "candidateLines": [73, 278, 279],
+      "candidateLines": [74, 283, 284],
       "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
@@ -7870,6 +7880,13 @@
       ],
       "candidateLines": [80, 102, 362, 373],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/trace-licensing.ts",
+      "sha256": "3a3c3788f2e21a1d9943d2916456e7a04ff11be5e08826f86d05f28e86365014",
+      "models": [],
+      "candidateLines": [],
+      "review": "pending"
     },
     {
       "path": "src/lib/use-action.ts",
