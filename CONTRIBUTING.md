@@ -303,6 +303,8 @@ its last hit. The CI summary shows task times, cache status and exit codes.
 Simulation receipts include the installed Quint evaluator's bytes. The
 task runner adds that identity to simulation-capable tests and selftests.
 Generation, builds, typechecks and native contract checks keep their own keys.
+Turbo passes `QUINT_HOME` to tasks so they use the selected evaluator. Its
+bytes determine the fingerprint.
 
 ### Seeds and budgets
 
