@@ -62,6 +62,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "test:browser": {
@@ -70,7 +73,10 @@
         "//#gen",
         "^build"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "check": {
       "dependsOn": [
@@ -164,6 +170,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "//#selftest:tools:a": {
@@ -191,7 +200,10 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:tools:b": {
       "dependsOn": [
@@ -218,7 +230,10 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:tools:rest": {
       "dependsOn": [
@@ -248,7 +263,10 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "//#selftest:docs": {
       "inputs": [
@@ -271,6 +289,9 @@
       ],
       "outputs": [
         "vibestack/examples/*/.spec-cache/tests-*.json.{gz,zst}"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "//#check": {
@@ -392,6 +413,9 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
       ]
     },
     "vibestack-studio#test:browser": {
@@ -400,7 +424,10 @@
         "^build",
         "//#gen"
       ],
-      "outputs": []
+      "outputs": [],
+      "env": [
+        "VIBESTACK_QUINT_EVALUATOR"
+      ]
     },
     "@repo/ui#build": {
       "dependsOn": [
@@ -436,7 +463,8 @@
     "@repo/contracts#test": {
       "dependsOn": [],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/setup/action.yml"],
-      "outputs": []
+      "outputs": [],
+      "env": []
     },
     "@repo/platform#test": {
       "dependsOn": [

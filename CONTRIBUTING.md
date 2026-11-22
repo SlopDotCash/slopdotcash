@@ -224,9 +224,9 @@ page runs one, as Studio's does.
 Vitest stores transformed test modules per package. That package's installed
 lockfile controls when its transforms are cleared.
 
-A tool integration checking disposable projects can use
-`withFormalCache(directory, run)` from `vibestack/cache.ts` to reuse completed
-Quint, LemmaScript and Dafny actions. Use a directory writable only by trusted
+A tool integration checking disposable projects can import `check` and
+`withFormalCache` from [vibestack/formal](vibestack/formal.ts) to reuse
+completed Quint, LemmaScript and Dafny actions in one Node process. Use a directory writable only by trusted
 runs. Each project keeps its own lock, generated files and stage results.
 A nightly or acceptance check still reads fresh inputs.
 It also remembers a package's passing test run under a hash of what its tests
@@ -296,6 +296,9 @@ verifier too, since they may run proofs, as Studio's do. A process that
 outlives a reinstall, as `spec watch` does, reads Quint, LemmaScript and Dafny
 again once their installed files change. GitHub's local Turborepo cache keeps an entry for seven days after
 its last hit. The CI summary shows task times, cache status and exit codes.
+Simulation receipts include the installed Quint evaluator's bytes. The
+task runner adds that identity to simulation-capable tests and selftests.
+Generation, builds, typechecks and native contract checks keep their own keys.
 
 ### Seeds and budgets
 
