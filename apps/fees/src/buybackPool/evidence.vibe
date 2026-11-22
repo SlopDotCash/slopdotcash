@@ -1,12 +1,12 @@
-// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee"
+// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee"
 import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import { type BookedDirectFee, incomeEvidence } from "../buyback/income.vibe"
-import { exactNumber } from "../evm/abi.ts"
 import type { IncomeEntry } from "../buyback/codec.vibe"
+import { exactNumber } from "../evm/abi.ts"
 import type { Instance, Names } from "../journal/codec.vibe"
 import type { Held } from "../runtime/config.vibe"
 import { robinhoodUsdg, slopToken } from "../runtime/pins.ts"
-import { type ArrivalEntry, type PoolInstance, ArrivalRow, arrivalEntry } from "./codec.vibe"
+import { type ArrivalEntry, type AssetFee, type AssetShare, type PoolInstance, ArrivalRow, arrivalEntry } from "./codec.vibe"
 
 module verified {
   import type { IncomeEntry } from "../buyback/codec.vibe"
@@ -14,8 +14,15 @@ module verified {
   import { shareOf } from "../kernels/buybackShares.ts"
   /** @throws {never} */
   export function halfOfIncome(entries: ReadonlyArray<IncomeEntry>): bigint { return shareOf(entries.reduce((total, entry) => total + fromAmount(entry.amount), 0n), 5_000n) }
+  /** @throws {never} */
+  export function exactIncome(entries: ReadonlyArray<IncomeEntry>): boolean { return entries.every((entry) => fromAmount(entry.amount) <= 9007199254740991n) }
 }
-import { halfOfIncome } from verified
+import { exactIncome, halfOfIncome } from verified
+
+export interface PoolAsset {
+  readonly token: string
+  readonly booked: ReadonlyArray<BookedDirectFee>
+}
 
 export interface PoolQuery {
   readonly scope: string
@@ -24,7 +31,7 @@ export interface PoolQuery {
   readonly names: Names
   readonly wallet: string
   readonly journal: Instance
-  readonly bookedUsdg: ReadonlyArray<BookedDirectFee>
+  readonly assets: ReadonlyArray<PoolAsset>
   readonly bookedSlop: ReadonlyArray<BookedDirectFee>
 }
 
@@ -35,16 +42,37 @@ export effect function arrivalEvidence(scope: string, wallet: string) {
   return entries
 }
 
-effect function localShare(fees: ReadonlyArray<IncomeEntry>) {
-  const share = exactNumber(halfOfIncome(fees))
-  if (share === undefined) throw new RowMismatch({ text: "Robinhood fee share", issue: "the retained half exceeds the pool model's exact range" })
-  return share === 0 ? [] : [share]
+export function poolAssets(assets: ReadonlyArray<PoolAsset>): ReadonlyArray<PoolAsset> {
+  const reference = assets.find((asset) => asset.token.toLowerCase() === robinhoodUsdg) ?? { token: robinhoodUsdg, booked: [] }
+  const seen = new Set<string>([robinhoodUsdg, slopToken])
+  const others = assets.filter((asset) => {
+    const token = asset.token.toLowerCase()
+    if (seen.has(token)) return false
+    seen.add(token)
+    return true
+  })
+  return [{ ...reference, token: robinhoodUsdg }, ...others.map((asset) => ({ ...asset, token: asset.token.toLowerCase() }))]
 }
 
 export effect function poolInstance(query: PoolQuery) {
   const { scope, offset, wallet } = query
-  const fees = try incomeEvidence({ network: "Robinhood", wallet, usdc: robinhoodUsdg, scope, offset }, query.bookedUsdg)
-  const slop = try incomeEvidence({ network: "Robinhood", wallet, usdc: slopToken, scope, offset }, query.bookedSlop)
+  const tokens: Array<string> = []
+  const fees: Array<AssetFee> = []
+  const reserved: Array<AssetShare> = []
+  for (const candidate of poolAssets(query.assets)) {
+    const income = try incomeEvidence({ network: "Robinhood", wallet, usdc: candidate.token, scope, offset }, candidate.booked)
+    const share = exactNumber(halfOfIncome(income))
+    if (!exactIncome(income) || share === undefined) {
+      if (tokens.length === 0) throw new RowMismatch({ text: "Robinhood fee share", issue: "the USDG income exceeds the pool model's exact range" })
+      try Effect.logWarning("fee_buyback_asset_unrepresentable", { network: "Robinhood", token: candidate.token })
+      continue
+    }
+    tokens.push(candidate.token)
+    const asset = tokens.length
+    for (const entry of income) fees.push({ ...entry, asset })
+    if (share > 0) reserved.push({ asset, amount: share })
+  }
+  const slop: ReadonlyArray<IncomeEntry> = try incomeEvidence({ network: "Robinhood", wallet, usdc: slopToken, scope, offset }, query.bookedSlop)
   const arrivals = try arrivalEvidence(scope, wallet)
   return {
     scope,
@@ -53,11 +81,12 @@ export effect function poolInstance(query: PoolQuery) {
     names: query.names,
     wallet,
     journal: query.journal,
+    assets: tokens,
     arrivalEvidence: arrivals,
     arrivals,
     feeEvidence: fees,
     fees,
-    reserved: try localShare(fees),
+    reserved,
     slopEvidence: slop,
     slopFees: slop,
     runs: 0,

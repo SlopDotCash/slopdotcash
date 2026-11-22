@@ -4,7 +4,7 @@ import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
-import { installationId, leaseAuthor, leaseRepository } from "./support/routingWorker.vibe"
+import { installationId, leaseAuthor, leaseRepository } from "./support/routingFixtures.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 

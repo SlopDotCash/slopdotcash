@@ -1,5 +1,5 @@
 // spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
-import { isoNow, millisOf } from "@repo/platform/clock"
+import { millisOf } from "@repo/platform/clock"
 import { D1, RowMismatch, first, rows, sql } from "@repo/platform/d1"
 import { type AwardAssetTerms, type ProgramDeployment, type ProgramFundsRead, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
 import { NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
@@ -121,7 +121,7 @@ export const SecurityProgramFundsLive = Layer.effect(SecurityProgramFunds, effec
   const services = try Effect.context<D1>()
   return {
     read: ({ projectId, terms }) => effect {
-      const nowMillis = millisOf(try isoNow())
+      const nowMillis = try Clock.currentTimeMillis
       return Effect.provide(readSecurityProgramFunds(projectId, terms, nowMillis), services) catch effect (error) => match (error) {
         when ReservationsUnreadable: throw new RowMismatch({ text: "security_award_reservations", issue: error.reason });
         default: throw error;

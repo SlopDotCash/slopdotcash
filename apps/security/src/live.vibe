@@ -28,7 +28,7 @@ import { remediationAct, remediationContribution, remediationHandlersLive } from
 import { screeningJob } from "./screening/jobs.vibe"
 import { screeningRoutes } from "./screening/routes.vibe"
 
-export { AccessJournalLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ScanRequestsLive, SecurityNoticeAccessLive, VettingBansLive, approvedAwardsLive, enforcementPorts, remediationAct, remediationContribution, withDecidingEvidence, withRetainedEvidence }
+export { AccessJournalLive, AuditLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ScanRequestsLive, SecurityNoticeAccessLive, VettingBansLive, approvedAwardsLive, enforcementPorts, remediationAct, remediationContribution, withDecidingEvidence, withRetainedEvidence }
 
 export interface SecurityEnv {
   readonly VETTING_EVIDENCE: R2Bucket

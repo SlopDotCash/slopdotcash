@@ -1,0 +1,171 @@
+// spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"
+import type { Statement } from "@repo/platform/d1"
+import type { Json } from "@repo/ports/backend"
+import { type AwardAssetTerms, ApprovedAwards } from "@repo/ports/security"
+import { type CaseContext, type DirectPaymentAction, type DirectPaymentView, type DirectRefusal, DirectRefused, type PaymentViewContext, type PaymentViewer, type RecoveryRefusal, RecoveryRefused } from "@repo/ports/settlement"
+import type { DirectSettlementView } from "../client/direct.vibe"
+import { NETWORKS } from "../kernels/networks.ts"
+import { consentEscrow, escrowProgram, prepareEscrow, securitySettlementView } from "../securityScope/settlement.vibe"
+import { awardAsset } from "../securityScope/programFunds.vibe"
+import { EvmDirectRails } from "./evm.vibe"
+import { type RecoveryView, directActions, recoveryView } from "./recovery.vibe"
+import { settlementView } from "./routes.vibe"
+import { SolanaDirectRails, isSolanaNetwork } from "./solana.vibe"
+import type { RecoverySignature } from "./solanaRecovery.vibe"
+
+module limbs {
+  import type { Json } from "@repo/ports/backend"
+  /** @throws {TypeError} */
+  export function jsonOf(value: unknown): Json {
+    return JSON.parse(JSON.stringify(value)) as Json
+  }
+}
+import { jsonOf } from limbs
+
+type Fields = Readonly<Record<string, unknown>>
+
+const common = ["action", "expectedRevision", "idempotencyKey"]
+const paymentActions: ReadonlyArray<DirectPaymentAction> = ["consent-payment", "prepare-payment", "verify-payment", "recover-payment"]
+
+function fieldsOf(value: unknown): Fields {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : {}
+}
+
+function exactKeys(body: Fields, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const allowed = new Set([...common, ...required, ...optional])
+  return [...common, ...required].every((key) => Object.hasOwn(body, key)) && Object.keys(body).every((key) => allowed.has(key))
+}
+
+function isSignature(entry: unknown): entry is RecoverySignature {
+  const fields = fieldsOf(entry)
+  return entry === fields && Object.keys(fields).sort().join() === "messageId,signature" && typeof fields.messageId === "string" && typeof fields.signature === "string"
+}
+
+function isText(value: unknown): value is string {
+  return typeof value === "string"
+}
+
+effect function refuse(reason: DirectRefusal): never!DirectRefused {
+  throw new DirectRefused({ reason })
+}
+
+effect function refuseRecovery(reason: RecoveryRefusal): never!RecoveryRefused {
+  throw new RecoveryRefused({ reason })
+}
+
+effect function answer(value: unknown) {
+  return try orDie(Effect.try(() => jsonOf(value)))
+}
+
+effect function consented(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+  if (!exactKeys(body, ["network", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
+  const request = { network: String(body.network), confirmation: body.confirmation === true }
+  if (!request.confirmation) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
+  const award = try (try ApprovedAwards).forCase(context.caseId)
+  const program = try escrowProgram(context.caseId)
+  const deployment = program?.deployments.find((entry) => entry.reviewed.network === request.network)
+  if (deployment === undefined || award?.direct === true) return try answer(try directActions["consent-payment"](context, request, alongside))
+  return try answer(try consentEscrow(context, deployment, alongside))
+}
+
+effect function prepared(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+  if (!exactKeys(body, ["network", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
+  const request = { network: String(body.network), confirmation: body.confirmation === true }
+  if (!request.confirmation) return try refuse("confirmationRequiredConfirmTheExact75")
+  const award = try (try ApprovedAwards).forCase(context.caseId)
+  if (award?.direct === true) return try answer(try directActions["prepare-payment"](context, request, alongside))
+  return try answer(try prepareEscrow(context, request.network, award, try escrowProgram(context.caseId), alongside))
+}
+
+effect function verified(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+  if (!exactKeys(body, ["transactionIds", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
+  const ids = body.transactionIds
+  if (body.confirmation !== true || !Array.isArray(ids) || ids.length < 1 || ids.length > 2 || !ids.every(isText)) return try refuse("invalidRequestConfirmOneOrTwo")
+  return try answer(try directActions["verify-payment"](context, { transactionIds: ids.filter(isText), confirmation: true }, alongside))
+}
+
+effect function recovered(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+  if (!exactKeys(body, ["confirmation"], ["cancellationTransactionId", "signatures"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
+  if (body.confirmation !== true) return try refuseRecovery("confirmationRequiredConfirmTheReviewedPayment")
+  const cancellation = body.cancellationTransactionId
+  if (cancellation !== undefined && !isText(cancellation)) return try refuse("invalidRequestProvideTheCancellationTransaction")
+  const signatures = body.signatures
+  if (signatures !== undefined && (!Array.isArray(signatures) || signatures.length > 64 || !signatures.every(isSignature))) return try refuse("invalidRequestProvideTheExpiredRequest")
+  return try answer(try directActions["recover-payment"](context, {
+    confirmation: true,
+    ...isText(cancellation) ? { cancellationTransactionId: cancellation } : {},
+    ...Array.isArray(signatures) ? { signatures: signatures.filter(isSignature) } : {},
+  }, alongside))
+}
+
+export effect function paymentAction(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: ReadonlyArray<Statement>) {
+  const fields = fieldsOf(body)
+  if (action === "consent-payment") return try consented(context, fields, alongside)
+  if (action === "prepare-payment") return try prepared(context, fields, alongside)
+  if (action === "verify-payment") return try verified(context, fields, alongside)
+  return try recovered(context, fields, alongside)
+}
+
+effect function directNetworks(terms: AwardAssetTerms | undefined) {
+  if (terms === undefined) return []
+  const evm = try EvmDirectRails
+  const solana = try SolanaDirectRails
+  const found: string[] = []
+  for (const network of Object.keys(NETWORKS)) {
+    if (awardAsset(terms, network) === undefined) continue
+    const rail = try (isSolanaNetwork(network) ? solana.rail(network) : evm.rail(network))
+    if (rail !== undefined) found.push(network)
+  }
+  return found
+}
+
+function shownRecovery(recovery: RecoveryView | null, viewer: PaymentViewer) {
+  if (viewer.payer) return recovery
+  if (!viewer.reporter || recovery === null) return null
+  return {
+    generation: recovery.generation,
+    mode: recovery.mode,
+    ...recovery.role === undefined ? {} : { role: recovery.role, legIndex: recovery.legIndex },
+    target: recovery.target,
+    consented: recovery.consented,
+  }
+}
+
+function nextStepOf(direct: DirectSettlementView | undefined, payer: boolean): { readonly nextStep?: string } {
+  if (direct?.walletReviewRequired === true)
+    return { nextStep: payer ? "Payment is held because the reporter changed wallets. Verify any transfers already sent." : "Payment is held because your wallet changed." }
+  if (direct?.state === "awaiting-external-payment")
+    return { nextStep: payer ? "Send the remaining transfers with your external wallet, then verify the transaction IDs." : "Waiting for the payer to send and verify your payment." }
+  return {}
+}
+
+export effect function paymentView(context: PaymentViewContext) {
+  const { caseContext, viewer } = context
+  const direct = try settlementView(caseContext)
+  const vault = try securitySettlementView(caseContext.caseId)
+  const program = try escrowProgram(caseContext.caseId)
+  const railNetworks = try directNetworks(program?.terms)
+  const escrowNetworks = program?.deployments.map((entry) => entry.reviewed.network) ?? []
+  const railAvailable = railNetworks.length > 0 || escrowNetworks.length > 0
+  const awaiting = direct?.state === "awaiting-external-payment"
+  const recovery = awaiting ? try recoveryView(caseContext) : null
+  const open = direct === undefined && vault === undefined && railAvailable
+  const actions = paymentActions.filter((action) => {
+    if (action === "recover-payment") return recovery !== null && recovery.mode !== "legacy-manual" && recovery.mode !== "wallet-required"
+    if (action === "consent-payment") return recovery !== null ? !recovery.consented : open
+    if (action === "verify-payment") return awaiting
+    return awaiting ? direct?.walletReviewRequired === false : open
+  })
+  const settlement: Json | null = direct !== undefined
+    ? try answer({ ...direct, ownerRequest: viewer.payer ? direct.ownerRequest : null, recovery: shownRecovery(recovery, viewer) })
+    : vault === undefined ? null : try answer(vault)
+  return {
+    paymentRail: direct !== undefined ? "direct" : vault !== undefined ? "escrow" : railNetworks.length > 0 ? "direct" : "unavailable",
+    railAvailable,
+    settlementState: direct?.state ?? vault?.state ?? null,
+    settlement,
+    paymentNetworks: [...new Set([...escrowNetworks, ...railNetworks])],
+    actions,
+    ...nextStepOf(direct, viewer.payer),
+  } satisfies DirectPaymentView
+}

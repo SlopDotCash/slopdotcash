@@ -1,0 +1,181 @@
+// spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"
+import { keccak } from "@repo/platform/chain/evm"
+import type { SlopRate } from "@repo/ports/backend"
+import { feeSettingAmount } from "../../gen/backend__submissionFeeSettings.effect.vibe"
+import { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keptAfterClosedDays, keptToFor, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, ratesAt, rateInForce, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { inStableLimits, lowerAmount, rateMicros, rateScale, slopFeeUnits } from "./submissionFeeKernels.ts"
+
+export type { FeeNetwork, FeeToken, TokenKind } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+export { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keptAfterClosedDays, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, unknownItemGraceMs }
+
+export type FeeTokenKind = "stable" | "slop"
+
+export interface PreviousRate extends SlopRate {
+  readonly acceptedUntil: string
+}
+
+export interface SlopRatesInForce {
+  readonly current: SlopRate | null
+  readonly previous: PreviousRate | null
+}
+
+export interface FeeOption {
+  readonly network: string
+  readonly chainId: number
+  readonly contract: string
+  readonly token: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly amount: string
+  readonly minimumAccepted: string
+  readonly keptTo: string
+}
+
+export interface SubmissionFeeSetting {
+  readonly amountMinor: string
+}
+
+const uint64Max = (1n << 64n) - 1n
+const positiveId = /^[1-9][0-9]{0,19}$/u
+const amountText = /^(0|[1-9][0-9]{0,38})$/u
+const rateText = /^(0|[1-9][0-9]{0,11})(\.[0-9]{1,18})?$/u
+const addressText = /^0x[0-9a-fA-F]{40}$/u
+const settingMinor = /^[1-9][0-9]{0,15}$/u
+const stableUnit = 10n ** BigInt(stableDecimals)
+
+function uint64(value: string | number | bigint) {
+  if (typeof value === "number" && !Number.isSafeInteger(value)) return undefined
+  const text = value.toString()
+  if (!positiveId.test(text) || BigInt(text) > uint64Max) return undefined
+  return BigInt(text)
+}
+
+function baseUnits(value: string) {
+  return amountText.test(value) ? BigInt(value) : undefined
+}
+
+function instant(value: string) {
+  const time = Date.parse(value)
+  return Number.isFinite(time) && new Date(time).toISOString() === value ? time : undefined
+}
+
+export function submissionFeeItem(repositoryId: string | number | bigint, pullNumber: string | number | bigint) {
+  const repository = uint64(repositoryId)
+  const pull = uint64(pullNumber)
+  if (repository === undefined || pull === undefined) return undefined
+  const tag = new TextEncoder().encode("slop-fee-v1")
+  const packed = new Uint8Array(tag.length + 16)
+  packed.set(tag, 0)
+  const view = new DataView(packed.buffer)
+  view.setBigUint64(tag.length, repository, false)
+  view.setBigUint64(tag.length + 8, pull, false)
+  return keccak(packed).toLowerCase()
+}
+
+export function validStableFee(stableMinor: string) {
+  const value = baseUnits(stableMinor)
+  return value !== undefined && inStableLimits(value, BigInt(minMinor), BigInt(maxMinor))
+}
+
+export function amountAtLeast(paid: string, due: string) {
+  const paidUnits = baseUnits(paid)
+  const dueUnits = baseUnits(due)
+  return paidUnits !== undefined && dueUnits !== undefined && paidUnits >= dueUnits
+}
+
+export function slopRateScaled(slopPerUsd: string) {
+  if (!rateText.test(slopPerUsd)) return undefined
+  const [whole, fraction = ""] = slopPerUsd.split(".")
+  const scaled = BigInt(whole) * rateScale + BigInt(fraction.padEnd(18, "0"))
+  return scaled > 0n ? scaled : undefined
+}
+
+export function slopRateText(scaled: bigint) {
+  if (scaled <= 0n) return undefined
+  const rounded = rateMicros(scaled)
+  if (rounded <= 0n) return undefined
+  const fraction = (rounded % 1_000_000n).toString().padStart(6, "0").replace(/0+$/u, "")
+  const text = fraction === "" ? `${rounded / 1_000_000n}` : `${rounded / 1_000_000n}.${fraction}`
+  return rateText.test(text) ? text : undefined
+}
+
+export function slopFeeBase(stableMinor: string, slopPerUsd: string) {
+  const stable = baseUnits(stableMinor)
+  const scaled = slopRateScaled(slopPerUsd)
+  if (stable === undefined || stable <= 0n || scaled === undefined) return undefined
+  const fee = slopFeeUnits(stable, scaled, BigInt(slopShareBps), stableUnit)
+  return fee > 0n ? fee.toString() : undefined
+}
+
+export function slopRatesAt(rates: ReadonlyArray<SlopRate>, at: string): SlopRatesInForce | undefined {
+  const time = instant(at)
+  if (time === undefined) return undefined
+  const timed: { readonly rate: SlopRate; readonly effectiveAt: number }[] = []
+  for (const rate of rates) {
+    const effectiveAt = instant(rate.effectiveAt)
+    if (effectiveAt === undefined || slopRateScaled(rate.slopPerUsd) === undefined) return undefined
+    timed.push({ rate, effectiveAt })
+  }
+  const inForce = ratesAt(timed.map(({ rate, effectiveAt }) => ({ effectiveAt, slopPerUsd: rate.slopPerUsd })), time)
+  const stored = (effectiveAt: number) => timed.find((entry) => entry.effectiveAt === effectiveAt)?.rate ?? null
+  if (!rateInForce(inForce.current)) return { current: null, previous: null }
+  const previous = rateInForce(inForce.previous) ? stored(inForce.previous.effectiveAt) : null
+  return {
+    current: stored(inForce.current.effectiveAt),
+    previous: previous === null ? null : { ...previous, acceptedUntil: new Date(inForce.current.effectiveAt + rateGraceMs).toISOString() },
+  }
+}
+
+export function slopFeeDueAt(stableMinor: string, rates: ReadonlyArray<SlopRate>, at: string) {
+  const inForce = slopRatesAt(rates, at)
+  if (inForce === undefined || inForce.current === null) return null
+  const now = slopFeeBase(stableMinor, inForce.current.slopPerUsd)
+  if (now === undefined) return null
+  if (inForce.previous === null) return now
+  const before = slopFeeBase(stableMinor, inForce.previous.slopPerUsd)
+  return before === undefined ? null : lowerAmount(BigInt(before), BigInt(now)).toString()
+}
+
+export function submissionFeeTokenKind(network: string, token: string): FeeTokenKind | null {
+  if (!addressText.test(token)) return null
+  const kind = tokenKind(network, token.toLowerCase())
+  return kind === "StableToken" ? "stable" : kind === "SlopToken" ? "slop" : null
+}
+
+export function submissionFeeOptions(stableMinor: string, rates: ReadonlyArray<SlopRate>, at: string): ReadonlyArray<FeeOption> {
+  if (baseUnits(stableMinor) === undefined) return []
+  const due = slopFeeDueAt(stableMinor, rates, at)
+  const current = slopRatesAt(rates, at)?.current ?? null
+  const slopNow = current === null ? undefined : slopFeeBase(stableMinor, current.slopPerUsd)
+  const options: FeeOption[] = []
+  for (const terms of feeNetworks) {
+    const base = { network: terms.network, chainId: terms.chainId, contract: terms.contract }
+    for (const token of terms.tokens) {
+      if (token.kind === "StableToken")
+        options.push({ ...base, token: token.address, symbol: token.symbol, decimals: token.decimals, amount: stableMinor, minimumAccepted: stableMinor, keptTo: keptToFor(terms.network, token.kind) })
+      if (token.kind === "SlopToken" && due !== null && slopNow !== undefined)
+        options.push({ ...base, token: token.address, symbol: token.symbol, decimals: token.decimals, amount: slopNow, minimumAccepted: due, keptTo: keptToFor(terms.network, token.kind) })
+    }
+  }
+  return options
+}
+
+function settingRecord(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+export function submissionFeeSettingOf(value: unknown): SubmissionFeeSetting | null {
+  const record = settingRecord(value)
+  const keys = record === undefined ? "" : Object.keys(record).sort().join(",")
+  const given = record?.amountMinor
+  const wellFormed = typeof given === "string" && settingMinor.test(given) && Number.isSafeInteger(Number(given))
+  const amount = feeSettingAmount({
+    present: value !== undefined,
+    exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean",
+    enabled: record?.enabled === true,
+    amountGiven: given !== undefined && given !== null,
+    amountWellFormed: wellFormed,
+    amountMinor: wellFormed ? Number(given) : 0,
+  })
+  return amount > 0 ? { amountMinor: String(amount) } : null
+}

@@ -1,4 +1,4 @@
-// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { D1, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
@@ -25,11 +25,19 @@ export interface ResolvedIdentity {
   readonly nodeId: string | undefined
 }
 
+export interface StartFacts {
+  readonly audience: Audience
+  readonly mode: FlowMode
+  readonly origin: boolean
+  readonly binding: string | undefined
+}
+
 export interface PollFacts {
   readonly flowId: string
   readonly capability: string
   readonly audience: Audience
   readonly localRoute: boolean
+  readonly binding: boolean
 }
 
 export type PollStep = "pollAnswered" | "storeAssertion" | "pollLocal"
@@ -46,6 +54,8 @@ const flowColumns = sql`id, state_hash, poll_capability_hash, encrypted_pkce_ver
 const assertionColumns = sql`token_hash, github_actor_id, github_login, github_node_id, audience, created_at, expires_at, consumed_at`
 
 schema WindowRow { readonly request_count: number; readonly expires_at: number }
+
+schema BindingRow { readonly browser_binding_hash: string | null }
 
 effect function loadedFrom([flows = [], assertions = []]: ReadonlyArray<Rows>, now: number, window: WindowView | undefined) {
   const flowRows = try decoded(FlowRow, flows, "identity flow")
@@ -99,21 +109,33 @@ effect function unwindowed(now: number, window: WindowView | undefined) {
   return { state: try requestState(now, undefined, undefined, window), flow: undefined, assertion: undefined } satisfies Loaded
 }
 
-export effect function start(principal: string, audience: Audience, mode: FlowMode, secrets: FlowSecrets) {
+export effect function start(principal: string, facts: StartFacts, secrets: FlowSecrets) {
   const settings = try IdentitySettings
   const now = try nowSeconds()
-  const event: Event = { type: "start", client: 1, audience, mode }
+  const { audience, mode, origin, binding } = facts
+  const event: Event = { type: "start", client: 1, audience, mode, origin }
   const prior = try windowed("StartScope", principal, now, (window) => unwindowed(now, window), () => event)
   const sealed = try sealVerifier(settings.stateKey, secrets.verifier, secrets.flowId)
   const expiresAt = try isoAt((now + flowLifetime) * 1000)
-  const insert = sql`INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, encrypted_pkce_verifier, pkce_iv, audience, status, created_at, expires_at)
-    VALUES (${secrets.flowId}, ${try digestOf(secrets.state)}, ${try digestOf(secrets.capability)}, ${sealed.ciphertext}, ${sealed.iv}, ${wireAudience[audience]}, 'pending', ${try isoAt(now * 1000)}, ${expiresAt})`
+  const bindingHash = binding === undefined ? null : try digestOf(binding)
+  const insert = sql`INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, encrypted_pkce_verifier, pkce_iv, audience, status, created_at, expires_at, browser_binding_hash)
+    VALUES (${secrets.flowId}, ${try digestOf(secrets.state)}, ${try digestOf(secrets.capability)}, ${sealed.ciphertext}, ${sealed.iv}, ${wireAudience[audience]}, 'pending', ${try isoAt(now * 1000)}, ${expiresAt}, ${bindingHash})`
   const stored = (try D1).run(insert) catch () => 0
   if (stored !== 1) {
     try apply((try unwindowed(now, prior)).state, { type: "startStorageFailed", client: 1 }, noSender)
     throw new FlowNotStored()
   }
   return { expiresAt }
+}
+
+export effect function refuseOriginRequired(principal: string) {
+  const now = try nowSeconds()
+  try windowed("StartScope", principal, now, (window) => unwindowed(now, window), (): Event => ({ type: "refuseOriginRequired", client: 1 }))
+}
+
+export effect function bindingHashOf(flowId: string) {
+  const row = try first(BindingRow, sql`SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ${flowId}`)
+  return row?.browser_binding_hash ?? undefined
 }
 
 export effect function refuseRateLimited(scope: RateScope, principal: string) {
@@ -192,14 +214,14 @@ effect function pollTarget(flowId: string, capability: string) {
 
 function pollEvent(step: PollStep, facts: PollFacts, capability: number): Event {
   switch (step) {
-    case "pollAnswered": return { type: "pollAnswered", client: 1, flowId: 1, capability, audience: facts.audience, localRoute: facts.localRoute }
-    case "storeAssertion": return { type: "storeAssertion", client: 1, flowId: 1, capability, audience: facts.audience }
+    case "pollAnswered": return { type: "pollAnswered", client: 1, flowId: 1, capability, audience: facts.audience, localRoute: facts.localRoute, binding: facts.binding }
+    case "storeAssertion": return { type: "storeAssertion", client: 1, flowId: 1, capability, audience: facts.audience, binding: facts.binding }
     case "pollLocal": return { type: "pollLocal", client: 1, flowId: 1, capability }
   }
 }
 
 function pollStep(state: Identity, facts: PollFacts, capability: number): PollStep {
-  if (pollOutcome(state, 1, capability, facts.audience, facts.localRoute) !== "PollReady") return "pollAnswered"
+  if (pollOutcome(state, 1, capability, facts.audience, facts.localRoute, facts.binding) !== "PollReady") return "pollAnswered"
   return facts.localRoute ? "pollLocal" : "storeAssertion"
 }
 
@@ -207,7 +229,7 @@ effect function pollDecision(step: PollStep, loaded: Loaded, facts: PollFacts, c
   const event = pollEvent(step, facts, capability)
   try apply(loaded.state, event, noSender)
   if (step === "pollAnswered") {
-    const answered: Decision<Polled> = { value: { kind: step, outcome: pollOutcome(loaded.state, 1, capability, facts.audience, facts.localRoute) }, writes: [] }
+    const answered: Decision<Polled> = { value: { kind: step, outcome: pollOutcome(loaded.state, 1, capability, facts.audience, facts.localRoute, facts.binding) }, writes: [] }
     return answered
   }
   const flow = try present(loaded.flow, event, loaded.state, noSender)
@@ -246,7 +268,7 @@ export effect function issueAssertion(facts: PollFacts) {
   const now = try nowSeconds()
   const at = try isoAt(now * 1000)
   const target = try pollTarget(facts.flowId, facts.capability)
-  const event: Event = { type: "issueAssertion", flowId: 1, capability: target.capability, audience: facts.audience }
+  const event: Event = { type: "issueAssertion", flowId: 1, capability: target.capability, audience: facts.audience, binding: facts.binding }
   return try update(requestAggregate("identity assertion issue", now, sql`id = ${facts.flowId}`, target.assertionWhere, undefined), (loaded) => effect {
     try apply(loaded.state, event, noSender)
     return {

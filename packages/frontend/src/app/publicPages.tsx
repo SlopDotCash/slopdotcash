@@ -1,15 +1,18 @@
-// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
+// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
 import type { Effect } from "effect";
+import { minCap } from "../../gen/backend__intakeCap.ts";
+import type { PoolRead } from "../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../gen/frontend__requests.ts";
 import { networkPays } from "../kernels/payingNetworks.ts";
+import { maintainerShareLines } from "../projections/maintainerShare.ts";
 import { mergeActivityCardLine, summarizeModelOutcomes, summarizeWhoBuilds } from "../projections/statistics.ts";
 import { whoBuildsFigures } from "../reads/funding.vibe";
-import { loadPointsSummary } from "../reads/points.vibe";
 import { listedProjects, loadRegistry, type RegistryBoot } from "../reads/registry.vibe";
 import { repositoryRegistryOf } from "../reads/registryTerms.ts";
-import { HomePage } from "../screens/home/index.ts";
+import { HomePage, projectCoverage } from "../screens/home/index.ts";
 import type { ListedProject, MergeLine, Shown } from "../screens/home/index.ts";
-import { projectFunding, shownReward } from "../screens/projects/summary.ts";
+import { poolReadOf } from "../screens/projects/history.ts";
+import { type MergeIndex, projectFunding, projectHeld, projectPromiseOf, slopbotSettings } from "../screens/projects/summary.ts";
 import { projectOf } from "../screens/projects/project.schema.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime } from "../screens/projects/reads.vibe";
 import { useShownRead } from "../screens/projects/hooks.ts";
@@ -20,7 +23,15 @@ import type { PageRuntime } from "./runtime.vibe";
 
 type Reads = Effect.Success<ReturnType<typeof projectReads>>;
 
+interface Listing {
+  readonly projects: Shown<ReadonlyArray<ListedProject>>;
+  readonly funding: PoolRead;
+  readonly capped: boolean;
+}
+
 const unread: Shown<never> = { status: "Loading", value: undefined };
+
+const unmerged: Shown<MergeIndex> = { status: "Loading", value: undefined };
 
 function settledStatus(settled: Settled<unknown>): ReadStatus {
   return settled.status === "running" ? "Loading" : settled.status === "failed" ? "Failed" : "Current";
@@ -30,18 +41,40 @@ function registryStatus(boot: RegistryBoot): ReadStatus {
   return boot.error !== undefined ? "Failed" : boot.freshness.tag === "RegistryStale" ? "Stale" : "Current";
 }
 
-function useListing(reads: Reads, boot: RegistryBoot): { readonly projects: Shown<ReadonlyArray<ListedProject>>; readonly mergeLine: MergeLine } {
+function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>): Listing {
   const pool = useShownRead(reads.pool, "all");
-  const merge = useShownRead(reads.merge, "all");
   const nowMs = Date.now();
-  const listed = listedProjects(boot).flatMap((record) => {
+  const now = new Date(nowMs);
+  const shown = listedProjects(boot).flatMap((record) => {
     const project = projectOf(record);
-    if (project === undefined) return [];
-    const funding = projectFunding({ project, read: { status: pool.status, vaults: pool.value?.get(project.id) }, networkPays, nowMs });
-    return [{ ...shownReward(project, funding), pool: funding.display, escrow: { deployments: project.deployments } } satisfies ListedProject];
+    return project === undefined ? [] : [{ record, project }];
   });
-  const mergeLine: MergeLine = (project) => (merge.status === "Current" || merge.status === "Stale" ? mergeActivityCardLine(merge.value?.get(project.id), nowMs) : null);
-  return { projects: { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined }, mergeLine };
+  const listed = shown.map(({ record, project }) => {
+    const read = { status: pool.status, vaults: pool.value?.get(project.id) };
+    const funding = projectFunding({ project, read, networkPays, nowMs });
+    const promise = projectPromiseOf({ project, funding, read, networkPays });
+    const coverage = projectCoverage({ pool: funding.facts, deployments: project.deployments, vaults: read.vaults ?? [], networkPays });
+    const shareLine = maintainerShareLines(record, now)?.card;
+    return {
+      ...project,
+      funding: funding.facts,
+      promise,
+      coverage,
+      held: projectHeld(project, merge, nowMs),
+      ...(shareLine === undefined ? {} : { shareLine }),
+      escrow: { deployments: project.deployments },
+    } satisfies ListedProject;
+  });
+  return {
+    projects: { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined },
+    funding: poolReadOf(pool.status),
+    capped: shown.some(({ project }) => slopbotSettings(project).intakeCap >= minCap),
+  };
+}
+
+function useMergeLine(merge: Shown<MergeIndex>): MergeLine {
+  const nowMs = Date.now();
+  return (project) => (merge.status === "Current" || merge.status === "Stale" ? mergeActivityCardLine(merge.value?.get(project.id), nowMs) : null);
 }
 
 function useSection(runtime: PageRuntime): { readonly section: ProjectRuntime; readonly reads: Settled<Reads>; readonly boot: Settled<RegistryBoot> } {
@@ -49,21 +82,26 @@ function useSection(runtime: PageRuntime): { readonly section: ProjectRuntime; r
   return { section, reads: useOnce(section, "reads", () => projectReads()), boot: useOnce(section, "registry", () => loadRegistry()) };
 }
 
-function HomeListed({ runtime, section, reads, boot }: { runtime: PageRuntime; section: ProjectRuntime; reads: Reads; boot: RegistryBoot }) {
-  const { projects, mergeLine } = useListing(reads, boot);
-  const summary = useOnce(section, "points-summary", () => loadPointsSummary());
-  const totals = { status: settledStatus(summary), value: summary.status === "done" ? summary.value.contributors : undefined };
-  return <HomePage runtime={runtime} projects={projects} mergeLine={mergeLine} totals={totals} />;
+type ListedProps = { runtime: PageRuntime; reads: Reads; boot: RegistryBoot };
+
+function HomeMerged({ runtime, reads, boot }: ListedProps) {
+  const { projects, funding } = useListing(reads, boot, useShownRead(reads.merge, "all"));
+  return <HomePage runtime={runtime} projects={projects} funding={funding} />;
+}
+
+function HomeListed({ runtime, reads, boot }: ListedProps) {
+  const { projects, funding, capped } = useListing(reads, boot, unmerged);
+  return capped ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
 }
 
 const failedRead: Shown<never> = { status: "Failed", value: undefined, onRetry: () => location.reload() };
 
-/** `/`: the home page over the project registry, this month's pool funding, merge activity and the lifetime Points summary. */
+/** `/`: the home page over the project registry, this month's pool funding and owner promises, and the merge activity once some project has an intake cap. */
 export function HomeRoute({ runtime }: PageProps) {
-  const { section, reads, boot } = useSection(runtime);
-  if (reads.status === "done" && boot.status === "done") return <HomeListed runtime={runtime} section={section} reads={reads.value} boot={boot.value} />;
+  const { reads, boot } = useSection(runtime);
+  if (reads.status === "done" && boot.status === "done") return <HomeListed runtime={runtime} reads={reads.value} boot={boot.value} />;
   const projects = reads.status === "failed" || boot.status === "failed" ? failedRead : unread;
-  return <HomePage runtime={runtime} projects={projects} mergeLine={() => null} totals={unread} />;
+  return <HomePage runtime={runtime} projects={projects} funding="PoolLoading" />;
 }
 
 function liveOf(work: Settled<Effect.Success<ReturnType<typeof loadWork>>>): Shown<LiveFootprint> {
@@ -77,8 +115,10 @@ function liveOf(work: Settled<Effect.Success<ReturnType<typeof loadWork>>>): Sho
   };
 }
 
-function SponsorsListed({ runtime, section, reads, boot }: { runtime: PageRuntime; section: ProjectRuntime; reads: Reads; boot: RegistryBoot }) {
-  const { projects, mergeLine } = useListing(reads, boot);
+function SponsorsListed({ runtime, section, reads, boot }: ListedProps & { section: ProjectRuntime }) {
+  const merge = useShownRead(reads.merge, "all");
+  const { projects } = useListing(reads, boot, merge);
+  const mergeLine = useMergeLine(merge);
   const whoBuilds = useOnce(section, "who-builds", () => whoBuildsFigures());
   const work = useMounted(section, () => loadWork(boot, repositoryRegistryOf, false));
   if (whoBuilds.status === "running") return null;

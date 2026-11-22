@@ -1,9 +1,10 @@
-// spec/points/journal.md, "A penalty revision records one published debit request"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
+// spec/points/journal.md, "A penalty revision records the debit applied against the month's credit"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
 import type { LeaderboardSnapshot } from "../client/snapshot/schema.vibe"
 import type { Award, Penalty, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
-import { type Repositories, type Store, command, countsFromDay, hold, instant, projectOf, ruleOf, workCounts } from "./ledger.vibe"
+import { type Repositories, type Store, command, countsFromDay, instant, projectOf, ruleOf, workCounts } from "./ledger.vibe"
 import { appended, commit, flush, rowsOf, samePenalty, sendAll } from "./rows.vibe"
+import { type PenaltyEvidence, penaltyAmount } from "../../gen/points__journal.effect.vibe"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -68,21 +69,19 @@ effect function candidatesOf(store: Store, repositories: Repositories, snapshot:
 
 effect function recordCandidate(store: Store, repositories: Repositories, candidate: Candidate, digest: string, recordedAt: string) {
   const { award, penalty } = candidate
-  const requested = penalty.reversedAt === null ? penalty.debit : 0
   const prior = store.latest.get(award.key)
-  if (prior?.award.amount === -requested) {
-    if (!samePenalty(prior.penalty, penalty)) hold(store, { subject: award.key, reason: "an unchanged debit request appends no revision for new reversal evidence", digest })
-    return []
-  }
-  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const view = { registry: repositories.registry, actors: [{ projectId: award.projectId, actorId: award.actor.id }] }
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId], view })
   const key = opened.names.keys.get(award.key)
   if (key === undefined || opened.names.opaque.has(award.key)) throw new PenaltyRefused({ key: award.key, reason: "the recorded penalty is outside the journal model" })
   const effectiveAt = penalty.reversedAt ?? (prior === undefined ? award.occurredAt : recordedAt)
-  const refused = try sendAll(opened, [{ type: "recordPenalty", p: {
+  const evidence: PenaltyEvidence = {
     key, occurredAt: try instant(award.occurredAt), repositoryCountsFrom: countsFromDay(repositories, candidate.repository),
     tableVersion: ruleOf(candidate.sourceRule).tableVersion, requested: penalty.debit, reversed: penalty.reversedAt !== null,
     digest, effectiveAt: try instant(effectiveAt), reason: reasonOf(candidate),
-  } }])
+  }
+  if (prior !== undefined && prior.award.amount === penaltyAmount(try opened.machine.get(), evidence) && samePenalty(prior.penalty, penalty)) return []
+  const refused = try sendAll(opened, [{ type: "recordPenalty", p: evidence }])
   if (refused !== "") throw new PenaltyRefused({ key: award.key, reason: `the journal refused ${refused}` })
   const rows: Row[] = []
   const provenance = { recordedAt, sourceDigest: digest, effectiveAt, decisionSourceId: award.sourceId, penalty }

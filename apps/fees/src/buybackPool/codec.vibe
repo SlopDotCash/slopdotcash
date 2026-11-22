@@ -3,14 +3,13 @@ import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
 import { zero } from "../../gen/settlement__money.effect.vibe"
-import { type Event, type Pool, type PoolDecision, type PoolLeg, type PoolReason, type PoolState, apply, burn, decodeState, initial, loseSend, purchase, settleBurn, settlePurchase } from "../../gen/fees__buybackPool.effect.vibe"
+import { type Event, type Pool, type PoolDecision, type PoolLeg, type PoolReason, type PoolState, apply, burn, decodeState, initial, loseSend, purchase, settleBurn, settlePurchase, usdg } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress } from "../../gen/fees__buyback.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import { type IncomeEntry, amountOf } from "../buyback/codec.vibe"
 import { type Instance, type Names, amountOf as exactAmount } from "../journal/codec.vibe"
 import { inScope } from "../journal/writes.vibe"
 import type { Held } from "../runtime/config.vibe"
-import { robinhoodUsdg } from "../runtime/pins.ts"
 
 module text {
   import type { IncomeEntry } from "../buyback/codec.vibe"
@@ -27,6 +26,10 @@ export interface ArrivalEntry {
   readonly height: number
 }
 
+export type AssetFee = IncomeEntry & { readonly asset: number }
+
+export interface AssetShare { readonly asset: number; readonly amount: number }
+
 export interface PoolInstance {
   readonly scope: string
   readonly offset: number
@@ -34,11 +37,12 @@ export interface PoolInstance {
   readonly names: Names
   readonly wallet: string
   readonly journal?: Instance
+  readonly assets: ReadonlyArray<string>
   readonly arrivalEvidence: ReadonlyArray<ArrivalEntry>
   readonly arrivals: ReadonlyArray<ArrivalEntry>
-  readonly feeEvidence: ReadonlyArray<IncomeEntry>
-  readonly fees: ReadonlyArray<IncomeEntry>
-  readonly reserved: ReadonlyArray<number>
+  readonly feeEvidence: ReadonlyArray<AssetFee>
+  readonly fees: ReadonlyArray<AssetFee>
+  readonly reserved: ReadonlyArray<AssetShare>
   readonly slopEvidence: ReadonlyArray<IncomeEntry>
   readonly slopFees: ReadonlyArray<IncomeEntry>
   readonly runs: number
@@ -130,6 +134,15 @@ export function poolVersion(instance: PoolInstance): Statement {
     || '#' || (SELECT count(*) FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}))`
 }
 
+export function assetToken(instance: PoolInstance, asset: number) {
+  return instance.assets[asset - 1]
+}
+
+export function assetOf(instance: PoolInstance, token: string) {
+  const index = instance.assets.indexOf(token.toLowerCase())
+  return index < 0 ? undefined : index + 1
+}
+
 export function receiptOf(names: Names, entry: IncomeEntry) {
   return names.number("receipt", `pool:${entry.kind}:${entry.text}`)
 }
@@ -159,10 +172,10 @@ effect function credited(instance: PoolInstance, start: Pool) {
   let state = start
   for (const fee of instance.fees) {
     const label = `Robinhood fee ${fee.kind} ${fee.text}`
-    const robinhoodFee = { receipt: receiptOf(names, fee), amount: try whole(amountText(fee), label), chainTime: fee.chainTime }
+    const robinhoodFee = { receipt: receiptOf(names, fee), asset: fee.asset, amount: try whole(amountText(fee), label), chainTime: fee.chainTime }
     state = try admitted(state, { type: "recordRobinhoodFee", robinhoodFee }, label)
   }
-  for (const amount of instance.reserved) state = try admitted(state, { type: "reserveLocalShare", amount }, "Robinhood fee share")
+  for (const share of instance.reserved) state = try admitted(state, { type: "reserveLocalShare", asset: share.asset, amount: share.amount }, `Robinhood fee share of ${assetToken(instance, share.asset) ?? share.asset}`)
   for (const fee of instance.slopFees) state = try admitted(state, { type: "receiveSlopFee", fee: { receipt: receiptOf(names, fee), quantity: fee.amount, chainTime: fee.chainTime } }, `SLOP fee ${fee.kind} ${fee.text}`)
   for (const arrival of instance.arrivals) state = try admitted(state, { type: "creditArrival", arrival: arrivalOf(names, arrival) }, `bridge arrival ${arrival.order}`)
   return state
@@ -195,9 +208,9 @@ export effect function decodePool(instance: PoolInstance, [sent, reserved, repla
   let runSpent = 0
   for (const row of sendRows) {
     const label = `pool send ${row.id}`
-    const usdg = row.token.toLowerCase() === robinhoodUsdg
+    const asset = assetOf(instance, row.token)
     if (row.tx_id === null) {
-      if (row.kind === "approval" || (row.kind === "buyback" && !usdg)) continue
+      if (row.kind === "approval" || (row.kind === "buyback" && asset === undefined)) continue
       const decision = try recordedDecision(row, row.kind === "buyback" ? "PurchaseLeg" : "BurnLeg", offset)
       if (decision !== undefined) decisions.push(decision)
       continue
@@ -205,7 +218,7 @@ export effect function decodePool(instance: PoolInstance, [sent, reserved, repla
     if (row.mode !== "live") continue
     if (row.state !== "submitted" && row.state !== "unknown" && row.state !== "finalized" && row.state !== "failed") throw new RowMismatch({ text: label, issue: `a signed send cannot be ${row.state}` })
     if (row.raw_tx === null) throw new RowMismatch({ text: label, issue: "a signed send lacks its journaled bytes" })
-    if (row.kind === "buyback" && !usdg) throw new RowMismatch({ text: label, issue: "a purchase from a token other than USDG is outside the pool; its acquired SLOP must be imported first" })
+    if (row.kind === "buyback" && asset === undefined) throw new RowMismatch({ text: label, issue: "a purchase from a token outside the pool's assets; its acquired SLOP must be imported first" })
     const later = replacements.filter((entry) => entry.conversion_id === row.id)
     const kind: SendKind = row.kind === "buyback" ? "buyback" : row.kind === "burn" ? "burn" : "approval"
     sends.push({
@@ -226,22 +239,23 @@ export effect function decodePool(instance: PoolInstance, [sent, reserved, repla
     const at = { ...state, clock: millisOf(row.created_at) - offset }
     const succeeded = row.state === "finalized"
     if (kind === "buyback") {
-      const spent = try whole(row.amount_in, label)
+      const amountIn = try whole(row.amount_in, label)
+      const spent = asset === usdg ? amountIn : try whole(row.quote_value_micro === null ? null : String(row.quote_value_micro), label)
       purchases += 1
       if (instance.runs > 0 && purchases > instance.runFrom) runSpent += spent
       const minimum = amountOf(try exactAmount(row.min_amount_out ?? "0", label))
-      state = { ...purchase(at, { route: "RouteFound", tx, spent, minimum, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: spent }), clock }
-      if (row.state === "unknown") state = loseSend(state, tx)
+      state = { ...purchase(at, { route: "RouteFound", tx, asset: asset ?? usdg, amountIn, spent, minimum, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: amountIn }, "Worker"), clock }
+      if (row.state === "unknown") state = loseSend(state, tx, "Worker")
       if (row.state === "finalized" || row.state === "failed") {
         const output = succeeded ? amountOf(try exactAmount(row.amount_out ?? "0", label)) : zero
-        state = settlePurchase(state, { tx, succeeded, finalized: true, output, toFeeWallet: true, slopToken: true })
+        state = settlePurchase(state, { tx, succeeded, finalized: true, output, toFeeWallet: true, slopToken: true }, "Worker")
       }
       continue
     }
     const quantity = amountOf(try exactAmount(row.amount_in, label))
-    state = { ...burn(at, { tx, quantity, value: 0, gasValue: 0, destination: deadAddress, tokenPaused: false }), clock }
-    if (row.state === "unknown") state = loseSend(state, tx)
-    if (row.state === "finalized" || row.state === "failed") state = settleBurn(state, { tx, succeeded, finalized: true })
+    state = { ...burn(at, { tx, quantity, value: 0, gasValue: 0, destination: deadAddress, tokenPaused: false }, "Worker"), clock }
+    if (row.state === "unknown") state = loseSend(state, tx, "Worker")
+    if (row.state === "finalized" || row.state === "failed") state = settleBurn(state, { tx, succeeded, finalized: true }, "Worker")
   }
   const pool = try decodeState({ ...state, clock, runNumber: instance.runs, runSpent, decisions } satisfies Pool)
   return { state: pool, sends, purchases } satisfies Ledger

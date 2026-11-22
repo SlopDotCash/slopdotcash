@@ -50,17 +50,21 @@ function testProvider(answers: (method: string, params: ReadonlyArray<unknown>) 
 }
 
 function evmWallet(send: () => Promise<unknown>) {
-  return testProvider(async (method, params) => {
+  const signatures: string[] = [];
+  const provider = testProvider(async (method, params) => {
     if (method === "eth_requestAccounts" || method === "eth_accounts") return [evmAccount.address];
     if (method === "eth_chainId") return `0x${baseSepolia.toString(16)}`;
     if (method === "personal_sign") return evmAccount.signMessage({ message: { raw: params[0] as Hex } });
     if (method === "eth_signTypedData_v4") {
       const typed = JSON.parse(String(params[1])) as { domain: { name: string; version: string; chainId: string; verifyingContract: Address }; message: Record<string, string> };
-      return evmAccount.signTypedData(signable(typed));
+      const signature = await evmAccount.signTypedData(signable(typed));
+      signatures.push(signature);
+      return signature;
     }
     if (method === "eth_sendTransaction") return send();
     throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
   });
+  return Object.assign(provider, { signatures });
 }
 
 function signable(typed: { domain: { name: string; version: string; chainId: string; verifyingContract: Address }; message: Record<string, string> }) {
@@ -369,7 +373,7 @@ describe('Ask the wallet once per saved attempt and keep an uncertain one (spec/
   });
 });
 
-describe(`Sign exactly the binding the server prepared (spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => {
+describe(`Sign exactly the binding the server prepared (spec/frontend/walletConsent.md, "Story: Sign exactly the binding the server prepared"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature")`, () => {
   it("an EVM wallet is confirmed on each EVM chain and then binds a reserved payment, every request naming the expected account", async () => {
     const backend = fakeBackend(undefined);
     const runtime = started(backend.fetch);
@@ -382,18 +386,17 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
       const registered = yield* registerFamily(evmSigner(connection), actor, []);
       const binding = yield* PayoutBinding;
       yield* binding.follow(Number(actor), evmAddress);
-      yield* binding.open({ paymentId: "obligation-1", chain: "base", network: "base-sepolia", vault: evmVault, claimId: registered.claims.base ?? "", claimAddress: evmAddress }, actor, []);
+      yield* binding.open({ paymentId: "obligation-1", chain: "base", network: "base-sepolia", vault: evmVault, claimId: registered.claims.base ?? "", claimAddress: evmAddress }, actor);
       const phases = [(yield* binding.choose(id)).consent.phase, (yield* binding.prepare()).consent.phase, (yield* binding.sign()).consent.phase];
       const posted = yield* binding.post();
-      return { message: registered.message, phases, phase: posted.consent.phase, notice: posted.notice, problem: posted.problem, saved: posted.consent.savedWallet };
+      return { phases, phase: posted.consent.phase, saved: posted.consent.savedWallet };
     }));
-    expect({ ...outcome, calls: backend.seen.filter((call) => call.method === "POST").map((call) => [call.path.slice("/api/v1/payments/wallets/".length), call.actor]) }).toStrictEqual({
-      message: "EVM wallet confirmed. Eligible unpaid awards are sent automatically.",
+    const authorized = backend.seen.find((call) => call.path.endsWith("/bind-authorize"))?.body as { signature?: string } | undefined;
+    expect({ ...outcome, signedBy: wallet.signatures.at(-1) === authorized?.signature, calls: backend.seen.filter((call) => call.method === "POST").map((call) => [call.path.slice("/api/v1/payments/wallets/".length), call.actor]) }).toStrictEqual({
       phases: ["Connected", "Prepared", "Signed"],
       phase: "Accepted",
-      notice: "Wallet consent saved. Payment is not yet verified. Reload this page to check progress.",
-      problem: "",
       saved: evmAddress,
+      signedBy: true,
       calls: [
         ...["base", "robinhood", "ethereum"].flatMap(() => [["register", actor], ["challenge", actor], ["authorize", actor]]),
         ["bind-challenge", actor],
@@ -412,16 +415,71 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
       const id = (yield* choice.current()).find((offer) => offer.name === "Payout wallet")?.id ?? 0;
       const binding = yield* PayoutBinding;
       yield* binding.follow(Number(actor), evmAddress);
-      yield* binding.open({ paymentId: "obligation-2", chain: "base", network: "base-sepolia", vault: evmVault, claimId: "claim-base-1", claimAddress: evmAddress }, actor, []);
+      yield* binding.open({ paymentId: "obligation-2", chain: "base", network: "base-sepolia", vault: evmVault, claimId: "claim-base-1", claimAddress: evmAddress }, actor);
       yield* binding.choose(id);
       const prepared = yield* binding.prepare();
-      return { phase: prepared.consent.phase, problem: prepared.problem };
+      return { phase: prepared.consent.phase, explained: prepared.problem !== "" };
     }));
     expect({ ...outcome, signed: wallet.seen.includes("eth_signTypedData_v4"), authorized: backend.seen.some((call) => call.path.endsWith("/bind-authorize")) }).toStrictEqual({
       phase: "Refused",
-      problem: "The payout consent names a different account, address, network or vault. Refresh and review again.",
+      explained: true,
       signed: false,
       authorized: false,
+    });
+  });
+
+  it("a connected wallet other than the authorized claim is refused, and nothing is prepared, signed or registered", async () => {
+    const backend = fakeBackend(undefined);
+    const runtime = started(backend.fetch);
+    const wallet = evmWallet(async () => "0x");
+    const outcome = await runtime.runPromise(Effect.gen(function* () {
+      const choice = yield* WalletChoice;
+      announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d41", "Payout wallet", wallet);
+      const id = (yield* choice.current()).find((offer) => offer.name === "Payout wallet")?.id ?? 0;
+      const binding = yield* PayoutBinding;
+      const claimAddress = "0x00000000000000000000000000000000000000c3";
+      yield* binding.follow(Number(actor), claimAddress);
+      yield* binding.open({ paymentId: "obligation-3", chain: "base", network: "base-sepolia", vault: evmVault, claimId: "claim-base-1", claimAddress }, actor);
+      const chosen = yield* binding.choose(id);
+      const prepared = yield* binding.prepare();
+      return { phase: chosen.consent.phase, explained: chosen.problem !== "", afterPrepare: prepared.consent.phase, saved: prepared.consent.savedWallet === claimAddress };
+    }));
+    expect({ ...outcome, prompts: wallet.seen.filter((method) => method === "personal_sign" || method === "eth_signTypedData_v4" || method === "eth_sendTransaction"), posts: backend.seen.filter((call) => call.method === "POST").map((call) => call.path) }).toStrictEqual({
+      phase: "Refused",
+      explained: true,
+      afterPrepare: "Refused",
+      saved: true,
+      prompts: [],
+      posts: [],
+    });
+  });
+
+  it("an EVM consent posts the wallet's signature as signed, and the server, not the page, refuses one by another key", async () => {
+    const backend = fakeBackend(undefined);
+    const runtime = started(backend.fetch);
+    const other = privateKeyToAccount("0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba");
+    const wallet = testProvider(async (method, params) => {
+      if (method === "eth_requestAccounts" || method === "eth_accounts") return [evmAccount.address];
+      if (method === "eth_chainId") return `0x${baseSepolia.toString(16)}`;
+      if (method === "eth_signTypedData_v4") return other.signTypedData(signable(JSON.parse(String(params[1]))));
+      throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+    });
+    const outcome = await runtime.runPromise(Effect.gen(function* () {
+      const choice = yield* WalletChoice;
+      announce("8e0c1c55-1c7a-4c2b-9a6e-3b2f1a0c0d51", "Payout wallet", wallet);
+      const id = (yield* choice.current()).find((offer) => offer.name === "Payout wallet")?.id ?? 0;
+      const binding = yield* PayoutBinding;
+      yield* binding.follow(Number(actor), evmAddress);
+      yield* binding.open({ paymentId: "obligation-4", chain: "base", network: "base-sepolia", vault: evmVault, claimId: "claim-base-1", claimAddress: evmAddress }, actor);
+      const phases = [(yield* binding.choose(id)).consent.phase, (yield* binding.prepare()).consent.phase, (yield* binding.sign()).consent.phase];
+      const posted = yield* binding.post();
+      return { phases, phase: posted.consent.phase, saved: posted.consent.savedWallet };
+    }));
+    expect({ ...outcome, posted: backend.seen.filter((call) => call.method === "POST").map((call) => call.path.slice("/api/v1/payments/wallets/".length)) }).toStrictEqual({
+      phases: ["Connected", "Prepared", "Signed"],
+      phase: "Refused",
+      saved: evmAddress,
+      posted: ["bind-challenge", "bind-authorize"],
     });
   });
 
@@ -440,10 +498,10 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
         const id = (yield* choice.current()).find((offer) => offer.family === "solana" && offer.solanaBinding)?.id ?? 0;
         const binding = yield* PayoutBinding;
         yield* binding.follow(Number(actor), owner.address);
-        yield* binding.open({ paymentId: "obligation-sol", chain: "solana", network: "solana-devnet", vault, claimId: "claim-solana-1", claimAddress: owner.address }, actor, []);
+        yield* binding.open({ paymentId: "obligation-sol", chain: "solana", network: "solana-devnet", vault, claimId: "claim-solana-1", claimAddress: owner.address }, actor);
         const phases = [(yield* binding.choose(id)).consent.phase, (yield* binding.prepare()).consent.phase, (yield* binding.sign()).consent.phase];
         const posted = yield* binding.post();
-        return { phases, phase: posted.consent.phase, notice: posted.notice, problem: posted.problem };
+        return { phases, phase: posted.consent.phase, explained: posted.problem !== "" };
       }));
       unregister();
       return { ...outcome, completed: backend.seen.some((call) => call.path.endsWith("/solana-bind/complete")) };
@@ -452,15 +510,13 @@ describe(`Sign exactly the binding the server prepared (spec/frontend/walletCons
       honest: {
         phases: ["Connected", "Prepared", "Signed"],
         phase: "Accepted",
-        notice: "Binding submitted; payment is not yet verified. Reload this page to check progress.",
-        problem: "",
+        explained: false,
         completed: true,
       },
       altered: {
         phases: ["Connected", "Prepared", "Refused"],
         phase: "Refused",
-        notice: "",
-        problem: "Your wallet changed the binding transaction or returned an invalid signature. Nothing was submitted by this page.",
+        explained: true,
         completed: false,
       },
     });

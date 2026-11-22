@@ -1,5 +1,6 @@
 // spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
 import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
 import { instantOf } from "../kernels/records/instants.ts"
 import type { Category as PenaltyCategory } from "../../gen/slopbot__categories.ts"
@@ -17,6 +18,19 @@ export interface Actor {
 export interface Retained {
   readonly actor: Actor
   readonly originalPullRequestUrl: string
+  readonly discussion: ReferenceDiscussion
+}
+
+export interface ChangedFile {
+  readonly filename: string
+  readonly previousFilename: string | null
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface FileAttribution {
+  readonly limited: boolean
+  readonly files: ReadonlyArray<ChangedFile>
 }
 
 export interface Commit {
@@ -26,6 +40,22 @@ export interface Commit {
   readonly retained: Retained | null
   readonly additions: number
   readonly deletions: number
+  readonly attributions: ReadonlyArray<FileAttribution>
+  readonly resolutions: ReadonlyArray<ReadonlyArray<ChangedFile>>
+}
+
+export interface RetainedCopyClaim {
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly verified: boolean
+}
+
+export interface JointClaim {
+  readonly id: string
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly path: string
+  readonly copy: RetainedCopyClaim | null
 }
 
 export interface Review {
@@ -143,7 +173,7 @@ export interface JointUnit {
   readonly rationale: string
   readonly sources: ReadonlyArray<string>
   readonly carriers: ReadonlyArray<string>
-  readonly commits: ReadonlyArray<string>
+  readonly claims: ReadonlyArray<JointClaim>
   readonly retainedOriginal: string | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
 }

@@ -6,11 +6,18 @@ type Context = { args: CopyButtonProps; canvasElement: HTMLElement };
 // Each story that writes gets its own clipboard, so the Disabled story's spy stays untouched.
 const written = fn(() => Promise.resolve());
 const refused = fn(() => Promise.reject(new Error("Not allowed")));
+const prompted = fn(() => Promise.resolve());
+const labels = { ready: "Copy", copied: "Copied", failed: "Select text" };
 
 export const meta: ComponentMeta<CopyButtonProps> = {
   args: { text: "pnpm install" },
   // The browser's answers, which no type can supply.
-  examples: { Copies: { onCopy: written }, Refused: { onCopy: refused } },
+  examples: {
+    Copies: { onCopy: written },
+    Refused: { onCopy: refused },
+    Prompt: { onCopy: prompted, label: "Copy agent prompt", labels, tone: "primary", restAfter: 1600 },
+    "Prompt refused": { onCopy: refused, label: "Copy agent prompt", labels, tone: "primary" },
+  },
   play: {
     Copies: async ({ canvasElement }: Context) => {
       written.mockClear();
@@ -21,6 +28,25 @@ export const meta: ComponentMeta<CopyButtonProps> = {
       await expect(await canvas.findByText("Copied")).toBe(canvas.getByRole("status"));
       // spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
       await waitFor(() => expect(canvas.getByRole("status").textContent).toBe(""), { timeout: 3000 });
+    },
+    Prompt: async ({ canvasElement }: Context) => {
+      prompted.mockClear();
+      const canvas = within(canvasElement);
+      const button = canvas.getByRole("button", { name: "Copy agent prompt" });
+      // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"
+      await userEvent.click(button);
+      await waitFor(() => expect([prompted.mock.calls, button.dataset.copy, canvas.getByRole("status").textContent]).toEqual([[["pnpm install"]], "Copied", "Copied"]));
+      // spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
+      await waitFor(() => expect(button.dataset.copy).toBe("Ready"), { timeout: 3000 });
+      await expect(canvas.getByRole("button", { name: "Copy agent prompt" })).toBe(button);
+    },
+    "Prompt refused": async ({ canvasElement }: Context) => {
+      const canvas = within(canvasElement);
+      const button = canvas.getByRole("button", { name: "Copy agent prompt" });
+      // spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
+      await userEvent.click(button);
+      await waitFor(() => expect(button.dataset.copy).toBe("CopyFailed"));
+      await expect(canvas.getByRole("status").textContent).toBe("Copy failed. Select and copy the text.");
     },
     Refused: async ({ canvasElement }: Context) => {
       refused.mockClear();

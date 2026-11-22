@@ -26,7 +26,8 @@ single-source record is current for each source.
 
 ### A claim is one changed path in one commit and belongs to its first accepted carrier
 
-Group collection follows current references and retained joint membership.
+Group collection follows current references and retained joint membership,
+leaving out a referenced pull request that can never join (next rule).
 Its bounds are a collection limit, not a scoring cap: an unfinished group
 stays pending and is never published in part. Each claim names a
 repository, commit and path. Every pull request that carries the same
@@ -59,6 +60,42 @@ pure def lawLaterCarrierEarnsNothing(e: Evidence, first: int, later: int): bool 
   (validEvidence(e) and 0 <= first and first < later and later < e.accepted.length())
     implies e.claims.every(c => not(c.carriers.contains(e.accepted.nthOr(first, 0))
       and c.carriers.contains(e.accepted.nthOr(later, 0))) or c.credit != e.accepted.nthOr(later, 0))
+```
+
+### A referenced pull request that can never join the group is left out instead of holding it
+
+Source `collectValueGroup` in `value-group-collection.ts` (development
+`f0aab5b03`, #3172; `value-referenced-group.test.ts`). Collection discovers
+a candidate three ways: through a body, review or timeline reference only,
+as a carrier of an accepted commit of the group, or as a retained member of
+a current joint record. A candidate found only by reference is left out,
+and its own references are not followed, when its repository is not
+registered to the same project, or when its acceptance time (`merged_at`,
+else the observed indirect acceptance, else `closed_at`) is before the value
+consumer's configured start: such work belongs to another project or to the
+[historical import](./historicalImport.md) and can never be valued here.
+The same cases for a carrier or a retained member still keep the group
+pending, since a shared accepted commit or a retained record ties it to the
+group. A candidate with no readable acceptance time, an unreadable or
+private repository, or a refused read keeps the group pending however it
+was found. A candidate that is left out is not a source of the group.
+
+```quint
+type Discovery = ByReference | ByCarrier | ByMembership
+type GroupJoin = Joins | LeftOut | JoinPending
+pure def joins(discovery: Discovery, sameProject: bool, acceptedAt: int, valueStart: int): GroupJoin =
+  if (not(sameProject)) (if (discovery == ByReference) LeftOut else JoinPending)
+  else if (acceptedAt <= 0) JoinPending
+  else if (acceptedAt < valueStart) (if (discovery == ByReference) LeftOut else JoinPending)
+  else Joins
+pure def lawReferenceNeverHoldsTheGroup(discovery: Discovery, sameProject: bool, acceptedAt: int, valueStart: int): bool =
+  (discovery == ByReference and acceptedAt > 0) implies joins(discovery, sameProject, acceptedAt, valueStart) != JoinPending
+pure def lawTiedSourceNeverLeftOut(discovery: Discovery, sameProject: bool, acceptedAt: int, valueStart: int): bool =
+  discovery != ByReference implies joins(discovery, sameProject, acceptedAt, valueStart) != LeftOut
+pure def lawOnlyRegisteredCurrentWorkJoins(discovery: Discovery, sameProject: bool, acceptedAt: int, valueStart: int): bool =
+  joins(discovery, sameProject, acceptedAt, valueStart) == Joins implies (sameProject and acceptedAt >= valueStart and acceptedAt > 0)
+pure val acceptedAtValues = Set(0, 1793491100, 1793491300)
+pure val valueStartValues = Set(1793491200)
 ```
 
 ### A complete partition assigns every claim to exactly one outcome

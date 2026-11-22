@@ -1,7 +1,7 @@
 // spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import type { Census } from "../../gen/points__census.effect.vibe"
-import { type ActorKind, type EventKind, type LedgerEvent, Machine, type Window, decodeState, enabled, initial, machineOver, windowDays } from "../../gen/points__window.effect.vibe"
+import { type ActorKind, type Event, type EventKind, type LedgerEvent, Machine, type Window, decodeState, enabled, initial, machineOver, windowDays } from "../../gen/points__window.effect.vibe"
 import type { Identities } from "../census/collect.vibe"
 import { dayMs } from "./days.ts"
 
@@ -103,22 +103,26 @@ effect function failRefresh(run: Machine.Shape) {
   try orDie(run.send({ type: "failRefresh" }))
 }
 
-export effect function publishRefresh<E, R, A, WE, WR>(run: Machine.Shape, refresh: Census!E!R, write: (window: Window) => A!WE!WR) {
-  const census = refresh catch effect (error) => {
+export interface Refreshed {
+  readonly censuses: ReadonlyArray<Census>
+}
+
+export effect function publishRefresh<T extends Refreshed, E, R, A, WE, WR>(run: Machine.Shape, refresh: T!E!R, write: (refreshed: T, window: Window) => A!WE!WR) {
+  const refreshed = refresh catch effect (error) => {
     try failRefresh(run)
     throw error
   }
-  const complete = { type: "completeCensus", c: census } as const
+  const complete: Event = { type: "completeCensus", censuses: [...refreshed.censuses] }
   if (!enabled(try run.get(), complete)) {
     try failRefresh(run)
-    throw new WindowRefused({ message: "The source census is not verified complete for this window; the previous window stays published" })
+    throw new WindowRefused({ message: "Every source census of the refresh must be verified complete for this window; the previous window stays published" })
   }
   const ready = try orDie(run.send(complete))
   if (!enabled(ready, { type: "publish" })) {
     try failRefresh(run)
     throw new WindowRefused({ message: "Every recorded ledger event must belong to the source census" })
   }
-  const written = write(ready) catch effect (error) => {
+  const written = write(refreshed, ready) catch effect (error) => {
     try failRefresh(run)
     throw error
   }

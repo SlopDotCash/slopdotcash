@@ -335,7 +335,6 @@ effect function grant(actor: Actor) {
   const repositoryNumber = idOf(identity.githubId)
   const request: GrantRequest = {
     id: state.grants.reduce((highest, each) => Math.max(highest, each.id), 0) + 1,
-    kind: "OwnerApproved",
     repository: repositoryNumber,
     revision,
     manifestDigest: revision,
@@ -343,10 +342,6 @@ effect function grant(actor: Actor) {
     check: { actor: idOf(maintainer), repository: repositoryNumber, access: "AccessVerified" },
     decision: 1,
     reason: 1,
-    branch: "IntegrationBranch",
-    head: 1,
-    scope: 1,
-    limitations: 1,
     confirmed: true,
   }
   const by = idOf(actor.githubId)

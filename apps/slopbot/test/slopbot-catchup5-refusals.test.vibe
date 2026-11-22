@@ -1,0 +1,82 @@
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { rejectionDetail } from "../src/route/refusal.ts"
+import { type AssessmentContext, valueAssessmentSchema, valueAssessmentProblem, valueOutcomeRules } from "../src/value/inference/assessment.vibe"
+
+const providers = providerFake()
+
+const Spend = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "spend",
+  d1: { SLOPBOT_DB: "slop-private" },
+  vars: { ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" },
+  services: { SLOP_NOTIFY: async () => new Response(null, { status: 202 }) },
+  queues: { producers: { SLOPBOT_QUEUE: "slopbot-jobs" }, consumers: { "slopbot-jobs": { maxRetries: 0 } } },
+  internet: internet({ providers: providers.handler }),
+})
+
+const sonnet = (call: ProviderCall) => call.route === "surplus-anthropic" && call.model === "claude-sonnet-5.5"
+
+const secret = "PRIVATE-REPLY-TEXT"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function refusedOnce(area: AreaShape, reviewKey: string, number: number, text: string) {
+  providers.reply(sonnet, { text })
+  const job = { kind: "review", deliveryId: `refusal-${number}`, installationId: 9100, repositoryId: 7001, owner: "ada", repo: "widgets", itemKind: "pull_request", number } as const
+  const answer = try area.post("/test/spend/review", { reviewKey, claimToken: `claim-${reviewKey}`, kind: "triage", allowedSteps: 1, at: null, job })
+  const rows = try area.sql("SELECT c.outcome, c.failure, d.detail FROM slopbot_costs c LEFT JOIN slopbot_call_failure_details d ON d.call_id = c.id WHERE c.review_key = ? ORDER BY c.id", reviewKey)
+  return { status: answer.status, rows }
+}
+
+const dimensions = { alignment: "a", impact: "b", complexity: "c", verification: "d", maintenance: "e", overlap: "f" }
+
+const openContext: AssessmentContext = {
+  evidenceUrls: ["https://github.com/ada/widgets/pull/12"],
+  relatedPullRequestUrls: [],
+  jointPullRequestUrls: [],
+  reviews: [],
+  requiredReviewIds: [],
+  merged: false,
+  closed: false,
+  singleRouteAllowed: true,
+}
+
+layer(Spend, { excludeTestServices: true, timeout: "480 seconds" })((it) => {
+  it.effect('A refused reply records which field failed and never its text (spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Every call is free, attributed and accounted")', () => effect {
+    const area = try Area
+    const mismatched = try refusedOnce(area, "refusal-1", 1, JSON.stringify({ category: 3, note: secret }))
+    const unreadable = try refusedOnce(area, "refusal-2", 2, `Here is my verdict: ${secret}`)
+    const fenced = try refusedOnce(area, "refusal-3", 3, "```json\n{\"category\":\"spam\"}\n```")
+    const kept = try area.sql("SELECT detail FROM slopbot_call_failure_details")
+    try same({ mismatched, unreadable, fenced, leaked: JSON.stringify(kept).includes(secret) }, {
+      mismatched: { status: 200, rows: [{ outcome: "failed", failure: "schema-invalid verdict", detail: "unexpected field note" }] },
+      unreadable: { status: 200, rows: [{ outcome: "failed", failure: "schema-invalid verdict", detail: "reply had prose before the JSON" }] },
+      fenced: { status: 200, rows: [{ outcome: "failed", failure: "schema-invalid verdict", detail: "reply was wrapped in a Markdown fence" }] },
+      leaked: false,
+    })
+  }, { timeout: 300_000 })
+
+  it.effect('An open pull request is told its tier rules and a reply giving it a tier is refused by name (spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence")', () => effect {
+    const open = { pull: { state: "open", merged_at: null, closed_at: null } }
+    const tiered = { status: "assessed", tier: "small", rationale: secret, dimensions, evidenceUrls: [...openContext.evidenceUrls], relatedPullRequests: [], limitations: [], reviews: [] }
+    const explain = (value: unknown) => valueAssessmentProblem(value, openContext)
+    try same({
+      rules: valueOutcomeRules(open).split("\n").filter((line) => line.startsWith("- ")).length,
+      merged: valueOutcomeRules({ pull: { state: "closed", merged_at: "2026-11-20T10:00:00Z", closed_at: "2026-11-20T10:00:00Z" } }).split("\n").filter((line) => line.startsWith("- ")).length,
+      refused: rejectionDetail(tiered, valueAssessmentSchema, explain),
+      untiered: valueAssessmentProblem({ ...tiered, status: "unresolved", tier: null, limitations: ["The pull request is still open."] }, openContext),
+    }, {
+      rules: 3,
+      merged: 2,
+      refused: "an unmerged pull request was given a tier",
+      untiered: undefined,
+    })
+  })
+})

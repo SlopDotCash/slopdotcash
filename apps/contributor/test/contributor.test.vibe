@@ -93,7 +93,7 @@ module node {
 import { type Run, base64, python, removeDirectory, repositoryBytes, runNode, siteDirectory, treeFiles } from node
 
 const frozenTemplateSha256 = "2f5b6490e2a6b2d6262b35283f202c8118143d67db83b4b99b787ff442b81d2b"
-const pinnedCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const pinnedCommit = "8660a61214a6427a4e66c540c7dc73d50cc7790b"
 const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -917,9 +917,9 @@ const carriedOutputs: Readonly<Record<string, string>> = {
   "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
   "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
   "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
-  "skill-templates/skills/project-contributor-template/SKILL.md": "04a5f7e352c686f10f42f19bf1fad9ff2977877fb9d44e61f1cfbf40e72f2acb",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "5a3d408ee19c3b213935e34401814ff94e4053bc80338a2dfaf2b7938f6846e8",
   "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
-  "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "37f9a68890c23eb6a1988e57fe465df1c7ec4b7c80729f5bf9477e24b5270fa7",
+  "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "2a7b22d80fcfeb838b3dcf993eaf541fb4b252fbf63f599f7932b8251d70254a",
   "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.d.mts": "cbb5b0466305c37007951b25c7d1fcdc0557de690ff93e2d8db59ed4e1b0d8f0",
   "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
@@ -1041,7 +1041,7 @@ effect function restored() {
 }
 
 layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('The site program publishes the three global skills with their discovery copies, index, llms.txt and manifest, the template trees and protocol documents, labels working-tree edits per skill, and a refused role publishes nothing (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required")', () => effect {
+  it.effect('The site program publishes the three global skills with their discovery copies, index, llms.txt and manifest, the template trees and protocol documents, labels working-tree edits per skill, and a refused role publishes nothing (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"; spec/contributor/maintainerWorkflow.md, "Story: The entry skill routes by the requested task")', () => effect {
     const expected = try globalOutputs()
     const committedRun = try runSite()
     const committedOutputs = try published()
@@ -1131,13 +1131,22 @@ const delisted: Fixture = { id: "delisted", status: "paused", listingTier: "reti
 const gamma: Fixture = { id: "gamma", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma" }] }
 const shared: Fixture = { id: "shared", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma-docs" }] }
 const fixtures = [alpha, beta, pausedTool, unsure, unscanned, draft, delisted, gamma, shared]
-const monthlyPool = {
-  reward: { kind: "monthly-pool", currency: "USDC", chain: "base", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000" },
-  escrow: { deployments: [{ network: "base-mainnet", vault: "0x4f891b8c3d3fab9150fcdc94176b96863cd02899" }] },
+const today = new Date()
+const thisMonth = today.toISOString().slice(0, 7)
+const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1)).toISOString().slice(0, 7)
+function monthlyPool(monthlyCapMinor: string, cycleCaps: ReadonlyArray<{ readonly cycleId: string; readonly monthlyCapMinor: string }> = []) {
+  return {
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", cycle: "calendar-month-utc", monthlyCapMinor, monthlyCapDisplay: "$1,000", cycleCaps },
+    escrow: { deployments: [{ network: "base-mainnet", vault: "0x4f891b8c3d3fab9150fcdc94176b96863cd02899" }] },
+  }
 }
-const poolProject: Fixture = { id: "pool-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/pool-project" }], extra: monthlyPool }
-const securityProject: Fixture = { id: "security-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/security-project" }], securityBounty: { status: "open" }, extra: monthlyPool }
-const pausedPool: Fixture = { id: "paused-pool", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "example/paused-pool" }], extra: monthlyPool }
+const poolProject: Fixture = { id: "pool-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/pool-project" }], extra: monthlyPool("1000000000", [{ cycleId: thisMonth, monthlyCapMinor: "0" }]) }
+const nextPool: Fixture = { id: "next-pool", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/next-pool" }], extra: monthlyPool("1000000000", [{ cycleId: nextMonth, monthlyCapMinor: "0" }]) }
+const zeroPool: Fixture = { id: "zero-pool", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/zero-pool" }], extra: monthlyPool("0") }
+const securityProject: Fixture = { id: "security-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/security-project" }], securityBounty: { status: "open" }, extra: monthlyPool("0") }
+const pausedPool: Fixture = { id: "paused-pool", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "example/paused-pool" }], extra: monthlyPool("1000000000") }
+const cappedProject: Fixture = { id: "capped-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/capped-project" }, { id: "example/capped-docs" }], extra: { slopbot: { intakeCap: 20 } } }
+const monthFixtures = [poolProject, nextPool, zeroPool, securityProject, pausedPool, cappedProject]
 
 const programTerms = { revision: "draft-1", effectiveAt: "2026-11-01T00:00:00.000Z", paymentTransfersIp: false, retroactive: false }
 const registered = {
@@ -1258,46 +1267,49 @@ effect function bodyOf(path: string, bytes: Uint8Array) {
   return try Effect.try((): unknown => JSON.parse(text))
 }
 
-const fundingUnavailable = "project discovery pool funding unavailable"
-const cap = [0, 0, 0, 1]
+const countsUnavailable = "project discovery intake counts unavailable"
 
-interface FundingSeen {
-  readonly asked: ReadonlyArray<ReadonlyArray<string>>
+interface IntakeSeen {
+  readonly asked: number
   readonly logged: ReadonlyArray<string>
 }
 
-type FundingAnswer = "Facts" | "Short" | "Fail" | "Nothing"
-
-function pool(freeNow: ReadonlyArray<number>, pledged: ReadonlyArray<number> = [0]) {
-  return { read: "PoolCurrent", monthlyPool: true, period: 202611, amount: cap, priorAmount: [0], priorPending: false, freeNow, monthStartRead: false, freeAtStart: [0], withdrawnSince: false, pledgeSupport: pledged.some((limb) => limb !== 0), pledged }
+interface CappedCount {
+  readonly openOutside: number
+  readonly hoursAgo: number
 }
 
-function funding(answer: FundingAnswer, poolProjectFree: ReadonlyArray<number> = [0], pledged: ReadonlyArray<number> = [0]) {
+function observedHoursAgo(hours: number) {
+  return new Date(Date.now() - hours * 3_600_000).toISOString()
+}
+
+function intakeCounts(answer: "Counts" | "Fail", capped: ReadonlyArray<CappedCount> = []) {
   return {
     answer,
-    pools: [
-      { projectId: "pool-project", pool: pool(poolProjectFree, pledged) },
-      { projectId: "paused-pool", pool: pool(cap) },
-      ...answer === "Short" ? [] : [{ projectId: "security-project", pool: pool([0]) }],
+    counts: [
+      { projectId: "alpha", openOutside: 450, observedAt: observedHoursAgo(1) },
+      ...capped.map(({ openOutside, hoursAgo }) => ({ projectId: "capped-project", openOutside, observedAt: observedHoursAgo(hoursAgo) })),
     ],
   }
 }
 
-effect function planFunding(plan: ReturnType<typeof funding>) {
-  const answer = try call("/api/v1/test/publication-funding", { json: plan })
-  if (answer.status !== 200) return try Effect.die(new Error(`the funding plan was refused: ${answer.status}`))
-  return answer.body as FundingSeen
+type IntakePlan = ReturnType<typeof intakeCounts>
+
+effect function planIntake(plan: IntakePlan) {
+  const answer = try call("/api/v1/test/publication-intake", { json: plan })
+  if (answer.status !== 200) return try Effect.die(new Error(`the intake plan was refused: ${answer.status}`))
+  return answer.body as IntakeSeen
 }
 
-effect function underFunding<A>(plan: ReturnType<typeof funding>, step: A!!World) {
-  try planFunding(plan)
+effect function underIntake<A>(plan: IntakePlan, step: A!!World) {
+  try planIntake(plan)
   const result = try step
-  const seen = try planFunding(plan)
-  return { result, asked: seen.asked, unavailable: seen.logged.filter((line) => line === fundingUnavailable).length }
+  const seen = try planIntake(plan)
+  return { result, asked: seen.asked, unavailable: seen.logged.filter((line) => line === countsUnavailable).length }
 }
 
-effect function discoveredUnder(plan: ReturnType<typeof funding>) {
-  const { result, asked, unavailable } = try underFunding(plan, call("/.well-known/slop/projects.json"))
+effect function discoveredUnder(plan: IntakePlan) {
+  const { result, asked, unavailable } = try underIntake(plan, call("/.well-known/slop/projects.json"))
   const body = result.body as { readonly projects: ReadonlyArray<{ readonly project_id: string }> }
   return { status: result.status, cache: result.headers["cache-control"], listed: body.projects.map((entry) => entry.project_id), asked, unavailable }
 }
@@ -1436,7 +1448,7 @@ effect function reinstate(githubId: string) {
 }
 
 layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month\'s configured amount is positive"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
     const records = new Map<string, Stored>()
     for (const fixture of fixtures) records.set(fixture.id, try storeRevision(fixture, 1, manifestOf(fixture)))
     try secured(
@@ -1517,41 +1529,42 @@ layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "30
     try same(elsewhere.map((answer) => ({ status: answer.status, origin: answer.headers["access-control-allow-origin"] })), [{ status: 200, origin: undefined }, { status: 404, origin: undefined }])
     try same(elsewhere[0]?.body, passThroughPage)
 
-    for (const fixture of [poolProject, securityProject, pausedPool]) try storeRevision(fixture, 1, manifestOf(fixture))
+    for (const fixture of monthFixtures) try storeRevision(fixture, 1, manifestOf(fixture))
     try secured(
       [{ projectId: "gamma", sourceProjectId: "gamma", restriction: "ModeratorBan" }, { projectId: "shared", sourceProjectId: "gamma", restriction: "ModeratorBan" }],
-      [cleared("alpha"), cleared("beta"), cleared("pool-project"), cleared("security-project"), cleared("paused-pool")],
+      [cleared("alpha"), cleared("beta"), ...monthFixtures.map((fixture) => cleared(fixture.id))],
     )
-    const candidates = ["alpha", "beta", "pool-project", "security-project", "unscanned", "unsure"]
-    const withPool = ["alpha", "alpha", "beta", "pool-project", "security-project"]
-    const withoutPool = ["alpha", "alpha", "beta", "security-project"]
-    const listedAs = (listed: ReadonlyArray<string>, unavailable: number) => ({ status: 200, cache: "no-store", listed, asked: [candidates], unavailable })
-    const months = {
-      underfunded: try discoveredUnder(funding("Facts", [999, 999, 999])),
-      emptyVault: try discoveredUnder(funding("Facts", [0])),
-      funded: try discoveredUnder(funding("Facts", cap)),
-      pledged: try discoveredUnder(funding("Facts", [0], cap)),
-      failed: try discoveredUnder(funding("Fail", [999, 999, 999])),
-      nothing: try discoveredUnder(funding("Nothing", [999, 999, 999])),
-      short: try discoveredUnder(funding("Short", [999, 999, 999])),
+    const open = ["alpha", "alpha", "beta", "capped-project", "capped-project", "next-pool", "security-project"]
+    const paused = ["alpha", "alpha", "beta", "next-pool", "security-project"]
+    const listedAs = (listed: ReadonlyArray<string>, unavailable: number) => ({ status: 200, cache: "no-store", listed, asked: 1, unavailable })
+    const lists = {
+      belowCap: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 19, hoursAgo: 1 }])),
+      atCap: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 20, hoursAgo: 1 }])),
+      aboveCap: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 45, hoursAgo: 1 }])),
+      oneRepositoryAtCap: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 19, hoursAgo: 1 }, { openOutside: 20, hoursAgo: 2 }])),
+      withinThreeDays: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 45, hoursAgo: 71 }])),
+      olderThanThreeDays: try discoveredUnder(intakeCounts("Counts", [{ openOutside: 45, hoursAgo: 73 }])),
+      noCounts: try discoveredUnder({ answer: "Counts", counts: [] }),
+      failed: try discoveredUnder(intakeCounts("Fail", [{ openOutside: 45, hoursAgo: 1 }])),
     }
-    try same(months, {
-      underfunded: listedAs(withoutPool, 0),
-      emptyVault: listedAs(withoutPool, 0),
-      funded: listedAs(withPool, 0),
-      pledged: listedAs(withPool, 0),
-      failed: listedAs(withPool, 1),
-      nothing: listedAs(withPool, 1),
-      short: listedAs(withPool, 1),
+    try same(lists, {
+      belowCap: listedAs(open, 0),
+      atCap: listedAs(paused, 0),
+      aboveCap: listedAs(paused, 0),
+      oneRepositoryAtCap: listedAs(paused, 0),
+      withinThreeDays: listedAs(paused, 0),
+      olderThanThreeDays: listedAs(open, 0),
+      noCounts: listedAs(open, 0),
+      failed: listedAs(open, 1),
     })
 
-    const direct = ["skill.md", "skill-manifest.json", "downloads/contribute-to-pool-project.skill", "terms.json"].map((path) => `/projects/pool-project/${path}`)
-    const directly = (plan: ReturnType<typeof funding>) => underFunding(plan, Effect.forEach(direct, (path) => call(path)))
-    const unfundedDirect = try directly(funding("Facts", [999, 999, 999]))
-    const fundedDirect = try directly(funding("Facts", cap))
-    try same({ unfunded: unfundedDirect.result.map(shown), asked: [unfundedDirect.asked, fundedDirect.asked] }, { unfunded: fundedDirect.result.map(shown), asked: [[], []] })
-    try same(unfundedDirect.result.map((answer) => answer.status), [200, 200, 200, 200])
-    try planFunding(funding("Nothing"))
+    const direct = ["pool-project", "zero-pool", "capped-project"].flatMap((id) => ["skill.md", "skill-manifest.json", `downloads/contribute-to-${id}.skill`, "terms.json"].map((path) => `/projects/${id}/${path}`))
+    const directly = (plan: IntakePlan) => underIntake(plan, Effect.forEach(direct, (path) => call(path)))
+    const pausedDirect = try directly(intakeCounts("Counts", [{ openOutside: 45, hoursAgo: 1 }]))
+    const openDirect = try directly(intakeCounts("Counts"))
+    try same({ paused: pausedDirect.result.map(shown), asked: [pausedDirect.asked, openDirect.asked] }, { paused: openDirect.result.map(shown), asked: [0, 0] })
+    try same(pausedDirect.result.map((answer) => answer.status), direct.map(() => 200))
+    try planIntake(intakeCounts("Counts"))
   })
 
   it.effect('A restriction or a new registry revision that lands between two requests governs the next one (spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
@@ -1621,7 +1634,7 @@ layer(Layer.merge(Running, webCrypto), { excludeTestServices: true, timeout: "30
       [{ projectId: "relay-quarantined", sourceProjectId: "relay-quarantined", restriction: "FlagQuarantine" }],
       [cleared("relay"), cleared("relay-quarantined"), cleared("relay-paused"), cleared("relay-retired")],
     )
-    try planFunding(funding("Facts"))
+    try planIntake(intakeCounts("Counts"))
     const relayBytes = try served(relay, relayRecord, 1)
     const closed = try.all [call("/projects/relay-quarantined/skill.md"), call("/projects/relay-quarantined/terms.json"), call("/projects/relay-retired/skill.md"), call("/projects/relay-retired/terms.json")]
     const paused = try.all [call("/projects/relay-paused/skill.md"), call("/projects/relay-paused/terms.json")]

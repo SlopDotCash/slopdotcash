@@ -33,7 +33,7 @@ const mf = startWorker({ d1: { SLOP_DB: "wallet-conformance" } });
 const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined);
 if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
 const unrecorded = Layer.mergeAll(
-  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]) }),
+  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]), payoutRecipient: (project) => Effect.succeed(project.stewardGithubId) }),
   Layer.succeed(Audit, { statements: () => Effect.succeed([]) }),
 );
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto, unrecorded));

@@ -1,6 +1,6 @@
-// spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"
+// spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together"
 import type { AgentMarkProps } from "@repo/ui";
-import { agentShortcuts, opensNewTab } from "../../../gen/frontend__presentation.ts";
+import { agentShortcuts, opensNewTab, siteSkillPath } from "../../../gen/frontend__presentation.ts";
 
 export type AgentName = AgentMarkProps["agent"];
 
@@ -28,13 +28,13 @@ export function siteOrigin(origin: string): string {
 }
 
 /** @throws {never} */
-export function bootstrapPrompt(origin: string): string {
-  return `Read ${siteOrigin(origin)}/SKILL.md and follow it.`;
+export function bootstrapPrompt(origin: string, skillPath: string = siteSkillPath): string {
+  return `Read ${siteOrigin(origin)}${skillPath} and follow it.`;
 }
 
 /** @throws {URIError} */
-export function agentLinks(prompt: string, origin: string): AgentLink[] {
-  const skill = `${siteOrigin(origin)}/SKILL.md`;
+export function agentLinks(prompt: string, origin: string, skillPath: string = siteSkillPath): AgentLink[] {
+  const skill = `${siteOrigin(origin)}${skillPath}`;
   return agentShortcuts.flatMap((shortcut) =>
     isAgentName(shortcut.agent) ? [{ agent: shortcut.agent, href: launchers[shortcut.agent](shortcut.carriesPrompt ? prompt : skill), newTab: opensNewTab(shortcut) }] : [],
   );

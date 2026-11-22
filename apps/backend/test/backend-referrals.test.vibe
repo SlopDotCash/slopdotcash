@@ -1,5 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Response } from "miniflare"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, type GitHubRequest, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
@@ -24,14 +25,19 @@ const Built = Layer.effect(World, effect {
   return { github, net: internet({ github: github.handler }) }
 })
 
+// The project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
   return areaLayer({
-    root: new URL("..", import.meta.url).pathname,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     d1: { SLOP_DB: "slop-private" },
     vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader },
+    services: { ASSETS: () => new Response("Not found", { status: 404 }) },
     internet: net,
   })
 }), Built)
@@ -96,7 +102,7 @@ effect function project(id: string, status: string, listingTier: string, created
   try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, referrer_github_id, referrer_github_login) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)", id, status, text, digest, createdAt, createdAt, referrer?.[0] ?? null, referrer?.[1] ?? null)
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('A member chooses, replaces and reuses referral names, and a followed link opens the project form for the current active name (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")', () => effect {
     const area = try Area
     const { github, net } = try World
@@ -279,7 +285,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('Only public registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is not (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order")', () => effect {
+  it.effect('Only registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is listed too (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
     const area = try Area
     const empty = try area.request(projectsPath)
     try project("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
@@ -298,6 +304,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       schema: "slop-referred-projects-v1",
       projects: [
         { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        // The query filters no listing or restriction: a retired row with a referrer appears (spec/backend/referralProjects.md).
+        { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
         { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
       ],

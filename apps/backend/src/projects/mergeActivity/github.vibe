@@ -1,16 +1,13 @@
-// spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
+// spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { GitHubApp, type Scope } from "@repo/platform/github/app"
 import type { Association, MergedPull, OpenPull } from "../../../gen/backend__mergeActivity.ts"
-import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { countPageSize, countPages, countReadCapped, medianWindowHours, mergedPageSize, mergedPages, openPageSize, openPages, openReadCapped, outsideAuthor, waitingHours, wantedIssuesStored, wantedTitleLength } from "../../../gen/backend__mergeActivity.effect.vibe"
+import type { WantedIssue } from "../../client/projects.vibe"
 
 export const hourMillis = 3_600_000
 
-const openPage = 50
-const openPages = 6
-const mergedPage = 100
-const mergedPages = 3
 const answerLimitBytes = 4 * 1024 * 1024
 const maintainers: ReadonlySet<string> = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
 const associations: Readonly<Record<string, Association>> = {
@@ -24,7 +21,7 @@ const associations: Readonly<Record<string, Association>> = {
 
 const openQuery = `query($owner:String!,$name:String!,$after:String){
   repository(owner:$owner,name:$name){
-    pullRequests(states:OPEN,first:${openPage},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
+    pullRequests(states:OPEN,first:${openPageSize},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
       pageInfo{hasNextPage endCursor}
       nodes{createdAt isDraft authorAssociation author{__typename}
         reviews(first:40){nodes{authorAssociation author{__typename}}}
@@ -34,8 +31,26 @@ const openQuery = `query($owner:String!,$name:String!,$after:String){
   }
 }`
 
+const countQuery = `query($owner:String!,$name:String!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:${countPageSize},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{isDraft authorAssociation author{__typename}}
+    }
+  }
+}`
+
+const wantedQuery = `query($owner:String!,$name:String!,$label:String!){
+  repository(owner:$owner,name:$name){
+    issues(states:OPEN,labels:[$label],first:${wantedIssuesStored},orderBy:{field:CREATED_AT,direction:ASC}){
+      nodes{number title url
+        closedByPullRequestsReferences(first:1,includeClosedPrs:false){totalCount}}
+    }
+  }
+}`
+
 const mergedQuery = `query($q:String!,$after:String){
-  search(query:$q,type:ISSUE,first:${mergedPage},after:$after){
+  search(query:$q,type:ISSUE,first:${mergedPageSize},after:$after){
     pageInfo{hasNextPage endCursor}
     nodes{... on PullRequest{createdAt mergedAt authorAssociation author{__typename}}}
   }
@@ -53,6 +68,18 @@ schema OpenRepository { pullRequests: OpenConnection; latest: Latest }
 schema OpenData { repository: OpenRepository | null }
 schema SearchConnection { pageInfo: PageInfo; nodes: ReadonlyArray<MergedNode> }
 schema MergedData { search: SearchConnection }
+schema CountNode { isDraft: boolean; authorAssociation?: string; author?: Actor | null }
+schema CountConnection { pageInfo: PageInfo; nodes: ReadonlyArray<CountNode> }
+schema CountRepository { pullRequests: CountConnection }
+schema CountData { repository: CountRepository | null }
+
+const WantedNode = Schema.Struct({
+  number: Schema.optionalKey(Schema.Unknown),
+  title: Schema.optionalKey(Schema.Unknown),
+  url: Schema.optionalKey(Schema.Unknown),
+  closedByPullRequestsReferences: Schema.optionalKey(Schema.NullOr(Schema.Struct({ totalCount: Schema.Number }))),
+})
+const WantedData = Schema.Struct({ repository: Schema.NullOr(Schema.Struct({ issues: Schema.Struct({ nodes: Schema.Array(WantedNode) }) })) })
 
 export error ReadFailed { failure: string }
 
@@ -61,6 +88,9 @@ export interface Pulls {
   readonly capped: boolean
   readonly merged: ReadonlyArray<MergedPull>
   readonly mergedAt: ReadonlyArray<string>
+  readonly countedBeyond: number
+  readonly countCapped: boolean
+  readonly wanted: ReadonlyArray<WantedIssue>
 }
 
 export type Read = { readonly kind: "read"; readonly pulls: Pulls } | { readonly kind: "failed"; readonly failure: string }
@@ -92,7 +122,17 @@ function failureOf(error: GitHubFailure) {
 }
 
 function scopeOf(name: string) {
-  return { repositories: [name], permissions: { pull_requests: "read" } } satisfies Scope
+  return { repositories: [name], permissions: { pull_requests: "read", issues: "read" } } satisfies Scope
+}
+
+export function ownIssue(repository: string, number: number, url: string) {
+  return url.toLowerCase() === `https://github.com/${repository}/issues/${number}`.toLowerCase()
+}
+
+function wantedOf(repository: string, node: typeof WantedNode.Type): WantedIssue | undefined {
+  const { number, title, url } = node
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || typeof title !== "string" || typeof url !== "string" || !ownIssue(repository, number, url)) return undefined
+  return { number, title: title.slice(0, wantedTitleLength), url, openPullRequests: Math.max(0, node.closedByPullRequestsReferences?.totalCount ?? 0) }
 }
 
 function mergedOf(node: MergedNode, createdAt: string, mergedAt: string): MergedPull {
@@ -111,11 +151,12 @@ effect function openPulls(owner: string, name: string, nowMillis: number) {
   const latest: MergedNode[] = []
   let after: string | null = null
   let capped = false
-  for (let page = 0; page < openPages; page++) {
+  let countAfter: string | null = null
+  for (let page = 1; page <= openPages; page++) {
     const data: OpenData = try asked(openQuery, { owner, name, after }, OpenData)
     const repository = data.repository
     if (repository === null) throw new ReadFailed({ failure: "github-repository-missing" })
-    if (page === 0) latest.push(...repository.latest.nodes)
+    if (page === 1) latest.push(...repository.latest.nodes)
     let reachedRecent = false
     for (const node of repository.pullRequests.nodes) {
       if (millisOf(node.createdAt) > waitingBefore) reachedRecent = true
@@ -128,11 +169,44 @@ effect function openPulls(owner: string, name: string, nowMillis: number) {
       })
     }
     const info: PageInfo = repository.pullRequests.pageInfo
-    if (!info.hasNextPage || reachedRecent) break
-    if (page === openPages - 1) capped = true
+    if (openReadCapped(page, info.hasNextPage, reachedRecent)) capped = true
+    if (!info.hasNextPage) break
     after = info.endCursor
+    if (reachedRecent || page === openPages) {
+      countAfter = after
+      break
+    }
   }
-  return { open, capped, latest }
+  return { open, capped, latest, countAfter }
+}
+
+effect function countedPulls(owner: string, name: string, from: string | null) {
+  let countedBeyond = 0
+  let countCapped = false
+  let after = from
+  for (let page = 1; after !== null && page <= countPages; page++) {
+    const data: CountData = try asked(countQuery, { owner, name, after }, CountData)
+    const repository = data.repository
+    if (repository === null) throw new ReadFailed({ failure: "github-repository-missing" })
+    for (const node of repository.pullRequests.nodes) if (!node.isDraft && outsideAuthor(associationOf(node), botOf(node))) countedBeyond += 1
+    const info: PageInfo = repository.pullRequests.pageInfo
+    if (countReadCapped(page, info.hasNextPage)) countCapped = true
+    after = info.hasNextPage ? info.endCursor : null
+  }
+  return { countedBeyond, countCapped }
+}
+
+effect function wantedIssues(repository: string, owner: string, name: string, label: string) {
+  if (label === "") return []
+  const data = try asked(wantedQuery, { owner, name, label }, WantedData)
+  if (data.repository === null) throw new ReadFailed({ failure: "github-repository-missing" })
+  const issues: WantedIssue[] = []
+  for (const node of data.repository.issues.nodes) {
+    const issue = wantedOf(repository, node)
+    if (issue === undefined) throw new ReadFailed({ failure: "github-wanted-issue-invalid" })
+    issues.push(issue)
+  }
+  return issues.slice(0, wantedIssuesStored)
 }
 
 effect function searchedMerges(repository: string, nowMillis: number) {
@@ -149,8 +223,9 @@ effect function searchedMerges(repository: string, nowMillis: number) {
   return found
 }
 
-effect function pullsOf(repository: string, owner: string, name: string, nowMillis: number) {
-  const { open, capped, latest } = try openPulls(owner, name, nowMillis)
+effect function pullsOf(repository: string, owner: string, name: string, nowMillis: number, label: string) {
+  const { open, capped, latest, countAfter } = try openPulls(owner, name, nowMillis)
+  const { countedBeyond, countCapped } = try countedPulls(owner, name, countAfter)
   const searched = try searchedMerges(repository, nowMillis)
   const windowStart = hourOf(nowMillis) - medianWindowHours
   const olderLatest = latest.filter((node) => typeof node.mergedAt === "string" && hourOf(millisOf(node.mergedAt)) < windowStart)
@@ -161,7 +236,8 @@ effect function pullsOf(repository: string, owner: string, name: string, nowMill
     merged.push(mergedOf(node, node.createdAt, node.mergedAt))
     mergedAt.push(node.mergedAt)
   }
-  return { kind: "read", pulls: { open, capped, merged, mergedAt } } satisfies Read
+  const wanted = try wantedIssues(repository, owner, name, label)
+  return { kind: "read", pulls: { open, capped, merged, mergedAt, countedBeyond, countCapped, wanted } } satisfies Read
 }
 
 effect function installation(owner: string, name: string) {
@@ -172,11 +248,11 @@ effect function installation(owner: string, name: string) {
   return token === undefined ? undefined : id
 }
 
-export effect function repositoryRead(repository: string, nowMillis: number) {
+export effect function repositoryRead(repository: string, nowMillis: number, label: string) {
   const [owner = "", name = ""] = repository.split("/")
   const installed = try installation(owner, name)
   if (installed === undefined) return { kind: "failed", failure: "app-not-installed" } satisfies Read
   provide (try GitHubApp).asInstallation(installed, scopeOf(name)) {
-    return pullsOf(repository, owner, name, nowMillis) catch (error) => ({ kind: "failed", failure: error.failure }) satisfies Read
+    return pullsOf(repository, owner, name, nowMillis, label) catch (error) => ({ kind: "failed", failure: error.failure }) satisfies Read
   }
 }

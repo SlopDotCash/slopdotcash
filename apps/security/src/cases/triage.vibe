@@ -166,7 +166,7 @@ export effect function triaged(caseId: string, starter: Starter, budgetMs: numbe
   if (answer.kind === "failed") return try triageFinished(run, answer.failure === "NotConfigured" ? { tag: "TriageUnavailableResult" } : { tag: "TriageFailedResult" })
   const draft = appealDraft(answer.text)
   if (draft === undefined) return try triageFinished(run, { tag: "TriageFailedResult" })
-  return try triageFinished(run, { tag: "Drafted", returnCase: draft.proposedOutcome === "return", confidencePercent: Math.floor(draft.confidence * 100), exclusions: run.exclusions, matchedLine: 0 }, draft)
+  return try triageFinished(run, { tag: "Drafted", returnCase: draft.proposedOutcome === "return", confidencePercent: Math.floor(draft.confidence * 100), exclusions: run.exclusions }, draft)
 }
 
 export effect function scheduledTriage(caseId: string) {

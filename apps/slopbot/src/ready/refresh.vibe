@@ -1,0 +1,121 @@
+// spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/readyLabel.md, "Only a human merges"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"
+import { isoAt } from "@repo/platform/clock"
+import { GitHub } from "@repo/platform/github"
+import { type HeadAtWrite, type PullStatus, type ReadyObservation, type ReadyPull, apply, notReady, queuesAfterReview, readyCheckWanted, readyDecision, readyLabelName } from "../../gen/slopbot__readyLabel.effect.vibe"
+import { WebhookSettings } from "../ingress/webhook.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import { type ReadyLabelJob, type ReviewJob, readyJob, send } from "../jobs/job.vibe"
+import { addLabels } from "../publish/labels.vibe"
+import { type Pull, type ReadyItem, type ReadySetting, type ReviewComment, factsAt, pullLabelled, pullOpen, readPull, readySetting, reviewComment, unreadFacts } from "./facts.vibe"
+import { reasonText, readyLine, withReadyLine } from "./protectedPaths.ts"
+import { type PullSeen, type ReadyRowRead, modelOf, readyLabelWanted, readyRow, rowStateOf, saveRow, storedState, timeAfter } from "./store.vibe"
+
+export error ReadyWriteUnconfirmed { status: number; write: string }
+
+schema CommentWritten { readonly id: number }
+
+const offAnswer = "ready label is off for this project"
+
+function statusOf(pull: Pull): PullStatus {
+  return pull.merged === true ? "PullMerged" : pull.state === "open" ? "PullOpen" : "PullClosed"
+}
+
+function seenOf(pull: Pull): PullSeen {
+  return { status: statusOf(pull), head: pull.head.sha, labelled: pullLabelled(pull, readyLabelName) }
+}
+
+effect function removeReadyLabel(item: ReadyItem) {
+  const github = try GitHub
+  const removed: number = Effect.map(github.send("DELETE", `/repositories/${item.repositoryId}/issues/${item.number}/labels/${encodeURIComponent(readyLabelName)}`, undefined), (sent) => sent.status) catch effect (error) => {
+    if (error._tag === "NotFound") return 404
+    throw error
+  }
+  if (removed !== 200 && removed !== 404) throw new ReadyWriteUnconfirmed({ status: removed, write: "label removal" })
+}
+
+effect function writeReadyLine(item: ReadyItem, comment: ReviewComment, line: string | null) {
+  const body = withReadyLine(comment.body, line)
+  if (body === comment.body) return
+  const github = try GitHub
+  const updated = try github.send("PATCH", `/repositories/${item.repositoryId}/issues/comments/${comment.id}`, { body }, CommentWritten)
+  if (updated.status !== 200 || updated.value?.id !== comment.id) throw new ReadyWriteUnconfirmed({ status: updated.status, write: "comment update" })
+}
+
+effect function headAtWrite(item: ReadyItem, head: string) {
+  const current = try readPull(item)
+  const seen: HeadAtWrite = current === undefined ? "UnreadableHead" : current.head.sha === head ? "SameHead" : "MovedHead"
+  return { seen, head: current?.head.sha ?? head }
+}
+
+function answerOf(after: ReadyPull, labelled: boolean, reason: string) {
+  if (after.reason === "LabelOff") return "ready label removed: setting off"
+  if (after.reason === "NotOpen") return "pull request is not open"
+  if (after.reason === "HeadMoved") return "head moved during the ready check"
+  if (after.labelled) return labelled ? "ready label kept" : "ready label added"
+  return labelled ? `ready label removed: ${reason}` : `not ready: ${reason}`
+}
+
+effect function refreshed(job: ReadyLabelJob, setting: ReadySetting, row: ReadyRowRead | undefined, pull: Pull, appUser: number) {
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const seen = seenOf(pull)
+  const before = modelOf(row, seen, nowMillis)
+  const open = pullOpen(pull)
+  const projectId = setting.observed.projectId ?? ""
+  const read = setting.labelOn && open ? try factsAt(job, pull, setting.settings) : unreadFacts(pull)
+  const comment = open ? try reviewComment(job, projectId, pull.node_id, appUser) : undefined
+  const decided = readyDecision(read.facts, setting.settings)
+  const decision = decided.ready && comment === undefined ? notReady("CommentUnavailable", false) : decided
+  const writes = setting.labelOn && open && (decision.ready !== before.labelled || comment !== undefined)
+  const recheck = writes ? try headAtWrite(job, seen.head) : { seen: "SameHead" as const, head: seen.head }
+  const observed: ReadyObservation = {
+    contributorWork: setting.contributorWork,
+    installationActive: true,
+    pullReadable: true,
+    saved: setting.saved,
+    settings: setting.settings,
+    facts: read.facts,
+    commentFound: comment !== undefined,
+    headAtWrite: recheck.seen,
+  }
+  const after = try apply(before, { type: "refresh", observed })
+  const reason = reasonText(after.reason, read.counts, setting.settings)
+  const nextCheckAt = try timeAfter(nowMillis, before, after.nextCheckAt)
+  if (after.labelled && !seen.labelled && after.reason === "AllConditionsHold") try addLabels({ ref: job, projectId, number: job.number, itemNodeId: pull.node_id }, [readyLabelName])
+  if (!after.labelled && seen.labelled) try removeReadyLabel(job)
+  if (comment !== undefined && after.reason !== "HeadMoved") try writeReadyLine(job, comment, after.line === "NoReadyLine" ? null : readyLine(after.labelled, reason, seen.head, read.counts, setting.settings))
+  if (after.row !== "NoReadyRow") try saveRow(job, {
+    headSha: after.reason === "HeadMoved" ? recheck.head : seen.head,
+    state: storedState(after.row),
+    reason,
+    firstSeenAt: after.firstSeenAt === before.now ? at : row?.first_seen_at ?? at,
+    nextCheckAt,
+  }, at)
+  return answerOf(after, seen.labelled, reason)
+}
+
+export effect function refreshReadyLabel(job: ReadyLabelJob) {
+  const { appUserId } = try WebhookSettings
+  const setting = try readySetting(job)
+  const row = try readyRow(job)
+  if (!readyCheckWanted(setting.labelOn, rowStateOf(row))) return offAnswer
+  if (!(try activeInstallation(job.installationId))) return "installation removed or suspended"
+  const pull = try readPull(job)
+  if (pull === undefined) return "pull request not readable"
+  return try refreshed(job, setting, row, pull, Number(appUserId))
+}
+
+effect function queuedAfterReview(review: ReviewJob) {
+  const item = { owner: review.owner, repo: review.repo, repositoryId: review.repositoryId, number: review.number }
+  if (!queuesAfterReview(review.itemKind === "pull_request", try readyLabelWanted(item))) return false
+  try send(readyJob({ deliveryId: `${review.deliveryId}:ready`, installationId: review.installationId, ...item }))
+  return true
+}
+
+export effect function queueReadyAfterReview(review: ReviewJob) {
+  if (review.itemKind !== "pull_request") return false
+  return queuedAfterReview(review) catch effect (error) => {
+    try Effect.logError("slopbot ready label queue failed", { delivery: review.deliveryId, failure: error._tag })
+    return false
+  }
+}

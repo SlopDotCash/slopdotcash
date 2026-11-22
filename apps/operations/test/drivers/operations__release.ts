@@ -1,4 +1,4 @@
-// spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"
+// spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/operations__release.conformance.ts";
 import type { Actor, Event, Release } from "../../gen/operations__release.ts";

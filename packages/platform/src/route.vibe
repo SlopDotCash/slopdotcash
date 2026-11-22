@@ -43,6 +43,7 @@ export interface Route<B, A, X extends Access = Access> {
   readonly cache: Cache
   readonly status?: 200 | 201 | 202
   readonly cors?: Cors
+  readonly corsCredentials?: true
   readonly corsHeaders?: ReadonlyArray<string>
   readonly invalid?: Refusal
   readonly actorMismatch?: Refusal

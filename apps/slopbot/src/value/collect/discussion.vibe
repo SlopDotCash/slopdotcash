@@ -1,0 +1,43 @@
+// spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"
+import type { CensusOutcome } from "@repo/ports/points"
+import { tryReferenceDiscussion, validateHistoricalDiscussion } from "@repo/points/collect"
+import { collectReferenceEvidence } from "../evidence/collect.vibe"
+import { EvidenceRefused, type Pull } from "../evidence/types.vibe"
+
+export const attributionSourceChanged = "Attribution source changed after the outcome census"
+
+export interface DiscoveryTarget {
+  readonly outcome: CensusOutcome
+  readonly mergedAt: string
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly deadlineMs: number | undefined
+}
+
+export function attributionSourceMatches(pull: Pull, outcome: CensusOutcome, mergedAt: string) {
+  return pull.node_id === outcome.id && pull.number === outcome.number && pull.html_url === outcome.url
+    && pull.head.sha === outcome.headRefOid && pull.merged_at === mergedAt && Date.parse(pull.updated_at) === Date.parse(outcome.updatedAt)
+}
+
+effect function assertAttributionSource(pull: Pull, target: DiscoveryTarget) {
+  if (!attributionSourceMatches(pull, target.outcome, target.mergedAt)) throw new EvidenceRefused({ reason: attributionSourceChanged })
+}
+
+function countedRead(target: DiscoveryTarget, deadlineMs: number) {
+  const { outcome, mergedAt, repository, repositoryNodeId } = target
+  return (pull: Pull) => effect {
+    try assertAttributionSource(pull, target)
+    const headSha = outcome.headRefOid
+    if (headSha === undefined || headSha === "") return undefined
+    const [owner = "", name = ""] = repository.split("/")
+    const answer = try tryReferenceDiscussion({ owner, name, number: outcome.number }, deadlineMs)
+    if (answer === null) return undefined
+    return validateHistoricalDiscussion(answer, { repository, repositoryNodeId, id: outcome.id, number: outcome.number, url: outcome.url, headSha, mergedAt }, pull)
+  }
+}
+
+export effect function referenceDiscovery(target: DiscoveryTarget) {
+  const discovery = try collectReferenceEvidence(target.repository, target.outcome.number, target.deadlineMs === undefined ? undefined : countedRead(target, target.deadlineMs))
+  try assertAttributionSource(discovery.pull, target)
+  return discovery
+}

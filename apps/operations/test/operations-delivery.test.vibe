@@ -11,10 +11,12 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { EmailConsent, EmailEnrollment, ProjectAudience, type ProjectView, Registry } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
 import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
-import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
+import { AuthorityUnavailable, SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import { SlopbotAudience } from "@repo/ports/slopbot"
+import { inboxItem, noNotice } from "../gen/operations__notifications.effect.vibe"
 import type { Release } from "../src/notifications/rows.vibe"
 import { noticePorts } from "../src/notifications/statements.vibe"
+import { noticeIdOf, observe, recipientScope } from "../src/notifications/store.vibe"
 import { mailAdmins } from "../src/notify/admin.vibe"
 import { claimOne } from "../src/notify/claim.vibe"
 import { NotifySettings, notifySettings, releaseFor } from "../src/notify/config.vibe"
@@ -31,6 +33,8 @@ const owner = "9200000004"
 const userSteward = "9200000005"
 const organization = "9200000006"
 const lister = "9200000007"
+const optedOut = "9200000008"
+const reviewer = "9200000098"
 const caseId = "sc_delivery_journey"
 const projectId = "delivery-journey"
 const memberVersion = "3".repeat(64)
@@ -47,6 +51,14 @@ const pilot = JSON.stringify({
   recipients: {
     [first]: { email: "first@slop.test", verifiedAt: seededAt, evidenceReference: "operator check first", backupGithubId: second },
     [second]: secondDestination,
+  },
+})
+
+const activityPilotFile = JSON.stringify({
+  inboxUrl,
+  recipients: {
+    [second]: { email: "second@slop.test", verifiedAt: seededAt, evidenceReference: "operator check second" },
+    [optedOut]: { email: "opted-out@slop.test", verifiedAt: seededAt, evidenceReference: "operator check opted out" },
   },
 })
 
@@ -70,6 +82,7 @@ function providerSend(message: EmailMessage): Promise<void> {
 
 const caseAccess = new Map<string, number>([[first, 0], [second, 1]])
 const askedCase: string[] = []
+const authorityDown = new Set<string>()
 const owners = new Set<string>([owner])
 const payoutProjects = new Map<string, ProjectView>()
 const askedAudience: string[] = []
@@ -168,6 +181,7 @@ const AudiencePorts = Layer.mergeAll(
   Layer.succeed(SecurityNoticeAccess, {
     forCase: (read) => effect {
       askedCase.push(`${read.caseId}:${read.githubId}`)
+      if (authorityDown.has(read.githubId)) throw new AuthorityUnavailable({ projectId })
       const hours = caseAccess.get(read.githubId)
       return { allowed: hours !== undefined, acknowledgeHours: hours ?? 0 }
     },
@@ -185,6 +199,8 @@ const AudiencePorts = Layer.mergeAll(
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => effect { return sql`SELECT 1` },
   }),
   Layer.succeed(ContributorAudience, { affected: () => effect { askedAudience.push("affected"); return nobody } }),
@@ -202,6 +218,7 @@ const Settings = Layer.provide(notifySettings({
   NOTIFY_GENERAL_EMAIL_ENABLED: "true",
   NOTIFY_UNSUBSCRIBE_KEY: unsubscribeKey,
   SECURITY_MAIL_PILOT: pilot,
+  ACTIVITY_MAIL_PILOT: activityPilotFile,
   ADMIN_EMAILS: "ops@slop.test, lead@slop.test",
 }), webCrypto)
 
@@ -213,7 +230,7 @@ const World = Layer.mergeAll(
   webCrypto,
   clock.layer,
   mailVia({ send: providerSend }, (mail) => mail),
-  rolesFrom({ ADMIN_GITHUB_IDS: "9200000099", PROJECT_MODERATOR_GITHUB_IDS: "" }),
+  rolesFrom({ ADMIN_GITHUB_IDS: "9200000099", PROJECT_MODERATOR_GITHUB_IDS: reviewer }),
 )
 
 function payoutView(projectId: string, stewardGithubId: string, stewardAccount: ProjectView["stewardAccount"], listing: ProjectView["listing"]): ProjectView {
@@ -380,18 +397,23 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('The fifth failed attempt exhausts and escalates; a revoked role, a failed ownership read and a stale claim send nothing (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access")', () => effect {
+  it.effect('The fifth failed attempt exhausts, keeps the earlier bound destination and escalates once authority answers; a revoked role, a failed ownership read and a stale claim send nothing (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access")', () => effect {
     const { pilot, release } = try securityPilot()
     try save([caseNotice("security-case:exhaust-1", second)])
-    plans.set("second@slop.test", ["quota", "quota", "quota", "quota", "quota"])
+    plans.set("second@slop.test", ["quota", "quota", "quota", "quota"])
     const attempts: Array<[string, number]> = []
-    for (const wait of [61_000, 121_000, 241_000, 481_000, 0]) {
+    for (const [index, wait] of [61_000, 121_000, 241_000, 481_000, 0].entries()) {
+      if (index === 4) authorityDown.add(second)
       try dispatchSecurity()
+      authorityDown.delete(second)
       const row = try outbox("security-case:exhaust-1", second)
       attempts.push([row.state, row.attempts])
       clock.advance(wait)
     }
     const exhausted = try outbox("security-case:exhaust-1", second)
+    const unescalated = try escalationKeys(first)
+    const ofSecond = try observe(recipientScope([second]), release)
+    const exhaustedWord = inboxItem(ofSecond.inbox.notices[noticeIdOf(ofSecond, "security", exhausted.id) - 1] ?? noNotice, false).email
 
     try save([caseNotice("security-case:revoked-1", first)])
     const revoked = try outbox("security-case:revoked-1", first)
@@ -416,14 +438,14 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const afterFailedRead = try outbox("security-case:unread-owner-1", first)
     try same({
       attempts,
-      exhausted: [exhausted.state, exhausted.attempts, sentTo(exhausted.id).length],
+      exhausted: [exhausted.state, exhausted.attempts, sentTo(exhausted.id).length, exhausted.destination_digest !== null, exhaustedWord, unescalated.includes(`security-escalation:${exhausted.id}`)],
       revoked: [afterRevocation.state, afterRevocation.attempts, sentTo(revoked.id).length, askedCase.includes(`${caseId}:${first}`)],
       stale: [expired.state, expired.attempts, sentTo(stale.id).length],
       failedOwnershipRead: [afterFailedRead.state, afterFailedRead.attempts, sentTo(unread.id).length, faults.failingBatch],
       backups: [(try escalationKeys(first)).slice(1), (try escalationKeys(second)).slice(1)],
     }, {
       attempts: [["retrying", 1], ["retrying", 2], ["retrying", 3], ["retrying", 4], ["exhausted", 5]],
-      exhausted: ["exhausted", 5, 0],
+      exhausted: ["exhausted", 5, 0, true, "FailedWord", false],
       revoked: ["suppressed", 1, 0, true],
       stale: ["ambiguous", 1, 0],
       failedOwnershipRead: ["retrying", 1, 0, 0],
@@ -431,7 +453,7 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Activity mail carries the one-click unsubscribe headers, a former owner gets nothing, a payout exception reaches a user steward or the lister of an Organization steward, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/payoutAudience.md, "Story: A payout exception reaches an account that can sign in"; spec/operations/payoutAudience.md, "The account that listed a project is its source application\'s applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
+  it.effect('Activity mail carries the one-click unsubscribe headers, an essential notice reaches the recipient\'s pilot unless security mail is off, a former owner gets nothing, a payout exception reaches a user steward or the lister of an Organization steward, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/moderation.md, "An enforcement record reaches its applicant and steward, and a reinstatement request the moderators who did not place it"; spec/operations/payoutAudience.md, "Story: A payout exception reaches an account that can sign in"; spec/operations/payoutAudience.md, "The account that listed a project is its source application\'s applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
     const db = try D1
     const { pilot, release } = try activityPilot()
     try save([
@@ -500,6 +522,46 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       ["suppressed", []],
       ["provider-accepted", [`payout-${organization}@slop.test`]],
     ])
+
+    const manifestSha = "a".repeat(64)
+    const record = (project: string, id: string, sequence: number, action: string, stateAfter: string, appealAfter: string, steward: boolean) =>
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES (${id}, ${project}, ${sequence}, ${action}, ${stateAfter}, ${appealAfter}, 'journey record', 'journey evidence', '9201', '["github:9201"]',
+          ${steward ? owner : first}, ${steward ? "steward" : "placer"}, NULL, ${steward ? "project-steward" : "project-moderator"}, ${steward ? "owner-request" : "admin-panel"}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${seededAt})`
+    const reviewVersion = "9".repeat(64)
+    try db.batch([
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('delivery-open', 'paused', 1, '{"id":"delivery-open"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
+      record("delivery-open", "enf_delivery_open_pause", 1, "quarantine", "quarantined", "none", false),
+      record("delivery-open", "enf_delivery_open_request", 2, "request_reinstatement", "quarantined", "requested", true),
+      record(projectId, "enf_delivery_decided_pause", 1, "quarantine", "quarantined", "none", false),
+      record(projectId, "enf_delivery_decided_request", 2, "request_reinstatement", "quarantined", "requested", true),
+      record(projectId, "enf_delivery_decided_denial", 3, "deny_reinstatement", "quarantined", "denied", false),
+      sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${reviewer}, 'reviewer@slop.test', ${reviewVersion}, ${seededAt})`,
+      sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${reviewer}, 1, 1, ${reviewVersion}, ${seededAt})`,
+    ])
+    const reviews = [["delivery-open", "enf_delivery_open_request"], [projectId, "enf_delivery_decided_request"]] as const
+    try save(reviews.map(([project, request]) => ({ eventKey: `reinstatement-review:${request}`, recipientGithubId: reviewer, kind: "ReinstatementReview", subject: project, actionPath: "/admin", sourceAt: seededAt })))
+    try dispatch("activity", pilot, from, release)
+    const reviewRows: OutboxState[] = []
+    for (const [, request] of reviews) reviewRows.push(try outbox(`reinstatement-review:${request}`, reviewer))
+    try same(reviewRows.map((row) => [row.state, sentTo(row.id).map(([to]) => to)]), [
+      ["provider-accepted", ["reviewer@slop.test"]],
+      ["suppressed", []],
+    ])
+
+    try db.run(sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${optedOut}, 0, 0, NULL, ${seededAt})`)
+    try save([second, optedOut].map((recipientGithubId, index) => ({ eventKey: `wallet-claim:pilot-${index + 1}`, recipientGithubId, kind: "WalletChanged", subject: "base", actionPath: "/account#wallets", sourceAt: seededAt })))
+    try dispatch("activity", pilot, from, release)
+    const pilotWallet = try outbox("wallet-claim:pilot-1", second)
+    const optedOutWallet = try outbox("wallet-claim:pilot-2", optedOut)
+    try same({
+      pilotWallet: [pilotWallet.state, sentTo(pilotWallet.id).map(([to]) => to)],
+      optedOutWallet: [optedOutWallet.state, sentTo(optedOutWallet.id).length],
+    }, {
+      pilotWallet: ["provider-accepted", ["second@slop.test"]],
+      optedOutWallet: ["suppressed", 0],
+    })
   })
 
   it.effect('A routed security report reaches each recipient as one generic mail per report version (spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one")', () => effect {

@@ -1,18 +1,20 @@
-// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/projections.md, "Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { AccountPayment, PaymentsAccount } from "@repo/settlement/client";
 import { Alert, Button, DataState, PageHeader, Spinner } from "@repo/ui";
 import { Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
+import type { PageRuntime } from "../../app/runtime.vibe";
 import type { AccessLost } from "../../wallets/core/binding.vibe";
 import { loginHrefFor, useSession } from "../../app/useSession.ts";
 import { payoutMessages } from "../../flows/account/payouts.vibe";
 import { CHAIN_NAMES } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
+import { ContributorAllocationRow } from "./ContributorAllocationRow.tsx";
 import { useFeed } from "./feed.ts";
 import { netAmountProps } from "./PayoutAmount.tsx";
 import { PayoutConsent } from "./PayoutConsent.tsx";
-import { followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
+import { allocationOf, followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
 import { PayoutRow } from "./PayoutRow.tsx";
 import { awardStatus, paymentStatus, receivedStatus } from "./status.ts";
 
@@ -38,6 +40,8 @@ export type PayoutsViewProps = {
   onRetry: () => void;
   /** What the payee can do for a reserved payout. */
   consent?: (payment: AccountPayment) => ReactNode;
+  /** The account's row of the contributor token allocation. */
+  allocation?: ReactNode;
 };
 
 function AwardsAndPayments({ account, consent }: { account: PaymentsAccount; consent?: PayoutsViewProps["consent"] }) {
@@ -116,8 +120,8 @@ function DirectTransfers({ account }: { account: PaymentsAccount }) {
   );
 }
 
-/** The signed-in account's awards, payments, and direct transfers, each with its own state; nothing is shown as paid without finalized evidence. */
-export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent }: PayoutsViewProps) {
+/** The signed-in account's awards, payments, direct transfers and contributor allocation, each with its own state; nothing is shown as paid without finalized evidence. */
+export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent, allocation }: PayoutsViewProps) {
   return (
     <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
@@ -145,13 +149,25 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
         </Alert>
       ) : null}
       {account ? (
-        <DataState status={problem ? "Stale" : "Current"}>
-          <AwardsAndPayments account={account} consent={consent} />
-          <DirectTransfers account={account} />
-        </DataState>
+        <>
+          <DataState status={problem ? "Stale" : "Current"}>
+            <AwardsAndPayments account={account} consent={consent} />
+            <DirectTransfers account={account} />
+          </DataState>
+          {allocation}
+        </>
       ) : null}
     </main>
   );
+}
+
+function walletKey(account: PaymentsAccount): string {
+  return account.wallets.map((wallet) => [wallet.chain, wallet.address, wallet.authorized, wallet.firstAuthorizedAt ?? ""].join(":")).join("|");
+}
+
+function AllocationSection({ runtime, account }: { runtime: PageRuntime; account: PaymentsAccount }) {
+  const feed = useFeed(runtime, `allocation:${account.githubUserId}:${walletKey(account)}`, allocationOf(account));
+  return <ContributorAllocationRow view={feed.failed ? { tag: "AllocationUnavailable" } : feed.value} onRetry={feed.restart} />;
 }
 
 function lostShown(lost: AccessLost): PayoutsShown {
@@ -174,6 +190,7 @@ export function PayoutsPage({ runtime }: PageProps) {
       account={account}
       onRetry={feed.restart}
       consent={account ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} /> : undefined}
+      allocation={account ? <AllocationSection runtime={runtime} account={account} /> : undefined}
     />
   );
 }

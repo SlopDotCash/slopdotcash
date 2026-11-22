@@ -34,6 +34,8 @@ const registry = Layer.succeed(Registry, {
   byRepository: () => Effect.succeed(undefined),
   byPath: () => Effect.succeed(undefined),
   active: () => Effect.succeed([]),
+  pausedProjects: () => Effect.succeed([]),
+  appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
   fence: () => Effect.succeed(sql`1`),
 });
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, factsLayer, registry));
@@ -61,7 +63,7 @@ export const driver: Driver & AsyncDisposable = {
       if (verdict === "accepted") facts.revision = event.revision;
       return verdict;
     }
-    return outcome(setAutomatic(project, { automatic: event.automatic, expectedSequence: event.expectedSequence, authority: event.authority }), runtime);
+    return outcome(setAutomatic(project, { automatic: event.automatic, expectedSequence: event.expectedSequence, authority: event.authority, lateCutNotice: event.lateCutNotice }), runtime);
   },
   observe: () => observed(),
   [Symbol.asyncDispose]: async () => {

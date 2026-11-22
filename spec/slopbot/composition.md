@@ -211,8 +211,9 @@ pure def sometimesReopenReversedDebit(c: Slopbot): bool =
 ### The author's appeal is triaged and decided once; an upheld appeal reverses the debit and reopens only Slopbot's own close
 
 The author's appeal opens on the revision's current debit and stops any
-further reservation or request in the same write. A Scam finding always
-escalates to a moderator, who decides it. An upheld appeal reverses the
+further reservation or request in the same write. Triage reads the
+appellant's ban and the item's sibling appeals before it escalates. A Scam
+finding always escalates to a moderator, who decides it. An upheld appeal reverses the
 debit of the revision once and lets Slopbot reopen the item only while a
 fresh read shows Slopbot's own close.
 
@@ -233,6 +234,10 @@ pure def draftAppeal(c: Slopbot, by: int, uphold: bool, confidenceHundredths: in
   { ...c, appeal: A::draft(c.appeal, uphold, confidenceHundredths) }
 pure def canObserveBan(c: Slopbot, by: int, ban: A::BanStatus): bool = by == slopbotWorker and A::canObserveBan(c.appeal, ban)
 pure def observeBan(c: Slopbot, by: int, ban: A::BanStatus): Slopbot = { ...c, appeal: A::observeBan(c.appeal, ban) }
+pure def canObserveSibling(c: Slopbot, by: int, siblingStatus: A::SiblingStatus): bool =
+  by == slopbotWorker and A::canObserveSibling(c.appeal, siblingStatus)
+pure def observeSibling(c: Slopbot, by: int, siblingStatus: A::SiblingStatus): Slopbot =
+  { ...c, appeal: A::observeSibling(c.appeal, siblingStatus) }
 pure def canEscalateAppeal(c: Slopbot, by: int): bool = by == slopbotWorker and A::canEscalateByCriteria(c.appeal)
 pure def escalateAppeal(c: Slopbot, by: int): Slopbot = { ...c, appeal: A::escalateByCriteria(c.appeal) }
 pure def canDecideAppeal(c: Slopbot, by: int, uphold: bool): bool = A::canModeratorDecide(c.appeal, by, uphold)
@@ -309,6 +314,7 @@ pure val evidenceValues = Set({ source: maintainerReopen, node: "pr", currentRev
     existingDebit: true, reversalOnly: false })
 pure val confidenceHundredthsValues = Set(95)
 pure val banValues = Set(A::NotBanned)
+pure val siblingStatusValues = Set(A::NoSiblingHold)
 pure val itemStateValues = Set({ seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot,
   installation: C::InstallationActive }, { seq: 2, itemNode: "pr", revision: "head", item: C::ItemClosed,
   closedBy: C::ClosedByHuman, installation: C::InstallationActive })
@@ -323,6 +329,7 @@ pure val weight_notifyModerator = 6
 pure val weight_openAppeal = 8
 pure val weight_draftAppeal = 8
 pure val weight_observeBan = 8
+pure val weight_observeSibling = 8
 pure val weight_escalateAppeal = 8
 pure val weight_decideAppeal = 8
 pure val weight_observeItem = 6

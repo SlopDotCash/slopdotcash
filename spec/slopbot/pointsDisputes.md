@@ -39,12 +39,12 @@ type Resolution = Unresolved | Upheld | Denied
 type NoticeKind = OpenedNotice | EscalatedNotice | ResolvedNotice
 type Notice = { kind: NoticeKind, recipient: int }
 type Dispute = { filed: bool, revision: str, recipient: int, statementLength: int, statementDigest: str,
-  now: int, lastToken: int, claimToken: int, claimUntil: int, callsInFlight: bool, unknownCostCalls: int,
-  draft: DraftChoice, draftConfidence: int, escalation: Escalation, resolution: Resolution,
+  now: int, lastToken: int, claimToken: int, claimUntil: int, callsInFlight: bool, costsRecorded: bool,
+  recordedCalls: int, unknownCostCalls: int, draft: DraftChoice, draftConfidence: int, escalation: Escalation, resolution: Resolution,
   resolver: int, reasonLength: int, notices: List[Notice] }
 pure val initial: Dispute = { filed: false, revision: "", recipient: 0, statementLength: 0, statementDigest: "",
-  now: 0, lastToken: 0, claimToken: 0, claimUntil: 0, callsInFlight: false, unknownCostCalls: 0,
-  draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, resolution: Unresolved,
+  now: 0, lastToken: 0, claimToken: 0, claimUntil: 0, callsInFlight: false, costsRecorded: false,
+  recordedCalls: 0, unknownCostCalls: 0, draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, resolution: Unresolved,
   resolver: 0, reasonLength: 0, notices: List() }
 pure val slopModerators: Set[int] = Set(18633264, 202660855)
 pure val leaseSeconds = 600
@@ -80,8 +80,10 @@ admitted only while that token is the current claim and its lease has not
 expired (`mayWrite` with the worker's token after the model call), so a
 worker whose lease was taken over writes nothing. An unregistered or restricted
 project or an unavailable installation escalates without a model call.
-Provider calls are journaled before the draft; a failed, blocked or
-budget-deferred triage escalates as unavailable. Any other error under the
+Provider calls are journaled (`recordCalls`, `recordCosts`) before the
+draft, by the worker whose claim is still current even if its lease has just
+expired; a failed, blocked or budget-deferred triage escalates as
+unavailable. Any other error under the
 lease escalates as unavailable too ("Slopbot triage is unavailable;
 independent review is required"), whether it comes before the calls start,
 after their costs are recorded or after a saved draft
@@ -104,10 +106,12 @@ pure def lawExpiredLeaseNeverWrites(holder: int, until: int, observedAt: int, to
   observedAt >= until implies not(tokenHolds(holder, until, observedAt, token))
 pure def canObserveTime(d: Dispute, observedAt: int): bool = observedAt >= d.now
 pure def observeTime(d: Dispute, observedAt: int): Dispute = { ...d, now: observedAt }
+pure def unrecordedCalls(d: Dispute): bool = d.callsInFlight and not(d.costsRecorded)
 pure def canClaim(d: Dispute): bool = needsTriage(d) and (d.claimToken == 0 or d.now >= d.claimUntil)
 pure def claim(d: Dispute): Dispute =
   { ...d, lastToken: d.lastToken + 1, claimToken: d.lastToken + 1, claimUntil: d.now + leaseSeconds,
-    unknownCostCalls: if (d.callsInFlight) d.unknownCostCalls + 1 else d.unknownCostCalls, callsInFlight: false }
+    unknownCostCalls: if (unrecordedCalls(d)) d.unknownCostCalls + 1 else d.unknownCostCalls, callsInFlight: false,
+    costsRecorded: false }
 pure def escalatedWith(reason: Escalation, d: Dispute): Dispute =
   if (d.escalation != NotEscalated) d
   else { ...d, escalation: reason, notices: d.notices.concat(List({ kind: EscalatedNotice, recipient: 18633264 },
@@ -118,20 +122,24 @@ pure def escalateUnavailable(d: Dispute, token: int, availability: Availability)
   escalatedWith(if (availability == Unregistered) ProjectUnregistered
     else if (availability == Restricted) ProjectRestricted else InstallationUnavailable, d)
 pure def canStartCall(d: Dispute, token: int): bool = holds(d, token) and d.draft == NoDraft and not(d.callsInFlight)
-pure def startCall(d: Dispute, token: int): Dispute = { ...d, callsInFlight: true }
+pure def startCall(d: Dispute, token: int): Dispute = { ...d, callsInFlight: true, costsRecorded: false }
+pure def canRecordCosts(d: Dispute, token: int): bool = token > 0 and token == d.claimToken and unrecordedCalls(d)
+pure def recordCosts(d: Dispute, token: int): Dispute = { ...d, costsRecorded: true, recordedCalls: d.recordedCalls + 1 }
 pure def canDraft(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): bool =
-  holds(d, token) and d.callsInFlight and d.draft == NoDraft and confidenceHundredths >= 0 and confidenceHundredths <= 100
+  holds(d, token) and d.callsInFlight and d.costsRecorded and d.draft == NoDraft and confidenceHundredths >= 0 and
+  confidenceHundredths <= 100
 pure def draft(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): Dispute =
-  { ...d, callsInFlight: false, draft: if (uphold) DraftUphold else DraftDeny,
+  { ...d, callsInFlight: false, costsRecorded: false, draft: if (uphold) DraftUphold else DraftDeny,
     draftConfidence: if (confidenceHundredths > cappedConfidence) cappedConfidence else confidenceHundredths }
-pure def canFailTriage(d: Dispute, token: int): bool = holds(d, token) and needsTriage(d)
-pure def failTriage(d: Dispute, token: int): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
+pure def canFailTriage(d: Dispute, token: int): bool = holds(d, token) and needsTriage(d) and not(unrecordedCalls(d))
+pure def failTriage(d: Dispute, token: int): Dispute =
+  escalatedWith(TriageUnavailable, { ...d, callsInFlight: false, costsRecorded: false })
 pure def canEscalateDrafted(d: Dispute, token: int): bool = holds(d, token) and d.draft != NoDraft and d.escalation == NotEscalated
 pure def escalateDrafted(d: Dispute, token: int): Dispute = escalatedWith(ModeratorReviewRequired, d)
 pure def canRelease(d: Dispute, token: int): bool = token > 0 and token == d.claimToken
 pure def release(d: Dispute, token: int): Dispute =
-  { ...d, claimToken: 0, claimUntil: 0, callsInFlight: false,
-    unknownCostCalls: if (d.callsInFlight) d.unknownCostCalls + 1 else d.unknownCostCalls }
+  { ...d, claimToken: 0, claimUntil: 0, callsInFlight: false, costsRecorded: false,
+    unknownCostCalls: if (unrecordedCalls(d)) d.unknownCostCalls + 1 else d.unknownCostCalls }
 pure def lawStaleWorkerNeverDrafts(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): bool =
   (token != d.claimToken or d.now >= d.claimUntil) implies not(canDraft(d, token, uphold, confidenceHundredths))
 pure def lawStaleWorkerNeverEscalates(d: Dispute, token: int): bool =
@@ -149,12 +157,19 @@ pure def alwaysTriageNeedsFiling(d: Dispute): bool = not(d.filed) implies
 pure def stepDraftAndEscalationOnce(before: Dispute, after: Dispute): bool =
   (before.draft != NoDraft implies after.draft == before.draft and after.draftConfidence == before.draftConfidence) and
   (before.escalation != NotEscalated implies after.escalation == before.escalation)
+pure def alwaysCostsRecordedOnlyInFlight(d: Dispute): bool = d.costsRecorded implies d.callsInFlight
 pure def stepUnknownCostsRetained(before: Dispute, after: Dispute): bool = after.unknownCostCalls >= before.unknownCostCalls
+pure def stepRecordedCostNeverUnknown(before: Dispute, after: Dispute): bool =
+  before.costsRecorded implies after.unknownCostCalls == before.unknownCostCalls
+pure def stepRecordedCallsRetained(before: Dispute, after: Dispute): bool = after.recordedCalls >= before.recordedCalls
 pure def stepTokensIncrease(before: Dispute, after: Dispute): bool = after.lastToken >= before.lastToken and after.now >= before.now
 pure def sometimesDraftedAndEscalated(d: Dispute): bool = d.draft != NoDraft and d.escalation == ModeratorReviewRequired
 pure def sometimesUnavailableEscalated(d: Dispute): bool = d.escalation == ProjectRestricted
 pure def sometimesErrorBeforeCallsEscalated(d: Dispute): bool =
-  d.escalation == TriageUnavailable and d.draft == NoDraft and d.unknownCostCalls == 0 and not(d.callsInFlight)
+  d.escalation == TriageUnavailable and d.draft == NoDraft and d.unknownCostCalls == 0 and d.recordedCalls == 0 and
+    not(d.callsInFlight)
+pure def sometimesErrorAfterRecordedCostsEscalated(d: Dispute): bool =
+  d.escalation == TriageUnavailable and d.draft == NoDraft and d.unknownCostCalls == 0 and d.recordedCalls > 0
 pure def sometimesLostCostRetried(d: Dispute): bool = d.unknownCostCalls > 0 and d.claimToken > 0
 pure def sometimesLeaseTakenOver(d: Dispute): bool = d.lastToken >= 2 and d.claimToken == d.lastToken
 pure def sometimesTakenOverWhileOldCallInFlight(d: Dispute): bool =

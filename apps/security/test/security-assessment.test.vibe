@@ -12,12 +12,13 @@ import { analysisPrompt, analysisPromptRevision, jsonValue } from "../src/analys
 import { privateRoute } from "../src/analysis/route.vibe"
 import { type AssessmentView, analyze, assessQualified, assessmentRead } from "../src/assessment/routes.vibe"
 import { assessmentAt, attempted, caseExclusions, started } from "../src/assessment/store.vibe"
+import { caseRecord } from "../src/cases/rows.vibe"
 import { caseAuthority } from "../src/caseAuthority/snapshot.vibe"
 import { caseStanding } from "../src/intake/rows.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { ReportingPrograms, reportingProgramsLive } from "../src/receipt/program.vibe"
-import { type Answer, type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { type Answer, type World, maintainer, other, pausedExclusion, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 
 service Assessed {
   readonly world: World
@@ -57,6 +58,8 @@ const ports = Layer.mergeAll(
     byRepository: () => succeed(undefined),
     byPath: () => succeed(undefined),
     active: () => succeed([fixture]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => succeed(sql`1`),
   } satisfies Registry.Shape),
   Layer.succeed(Authority, {
@@ -305,6 +308,65 @@ effect function scoped(world: World, revision: number, line: string, createdAt: 
   try promise(() => rows(world, "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, json_set(manifest, '$.securityBounty.scope', json(?)), ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1", revision, JSON.stringify(scopeWith(line)), String(revision).repeat(64), createdAt, project))
 }
 
+effect function paused(world: World, revision: number, line: string | undefined) {
+  const manifest = line === undefined ? "json_set(manifest, '$.securityBounty.status', 'paused')" : "json_set(manifest, '$.securityBounty.status', 'paused', '$.securityBounty.scope', json(?))"
+  const scope = line === undefined ? [] : [JSON.stringify(scopeWith(line))]
+  try promise(() => rows(world, `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, ${manifest}, ?, 'Paused fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1`, revision, ...scope, String(revision).repeat(64), new Date().toISOString(), project))
+}
+
+const reportG = { summary: "Paused program vault skips the fee cap", description: "The fee cap is read before the pause check; the attached test charges an uncapped fee on a paused vault.", severity: "high" }
+const reportH = { summary: "Unscoped vault rounds withdrawals up", description: "Withdrawals round the share price up; the attached test exits with one unit more than it burned.", severity: "high" }
+const pausedLine = "Fees charged while the program is paused and the vault is empty"
+
+effect function unpaidReceipts(assessed: Assessed.Shape) {
+  const { world, fake } = assessed
+  try paused(world, 5, pausedLine)
+  const g = try submit(world, "assessment-case-g-01", reportG)
+  try qualify(world, g.id)
+  fake.reply(about(reportG.summary), { text: proposal("A paused vault charges an uncapped fee.", []) })
+  try assessQualified({ caseId: g.caseId, version: 1 })
+  const pausedRun = fake.calls.at(-1)
+  try paused(world, 6, undefined)
+  const h = try submit(world, "assessment-case-h-01", reportH)
+  try qualify(world, h.id)
+  fake.reply(about(reportH.summary), { text: proposal("Withdrawals round the share price up.", []) })
+  try assessQualified({ caseId: h.caseId, version: 1 })
+  const unscopedRun = fake.calls.at(-1)
+  const scopeOf = (call: ProviderCall | undefined) => (jsonValue(said(call)) as { readonly programScope?: unknown } | undefined)?.programScope
+  try same({
+    paused: scopeOf(pausedRun),
+    pausedExclusions: try caseExclusions(g.caseId),
+    unscoped: scopeOf(unscopedRun),
+    unscopedExclusions: try caseExclusions(h.caseId),
+    rows: [...(try attempts(world, g.caseId)), ...(try attempts(world, h.caseId))].map((row) => [row.attempt, row.state]),
+  }, {
+    paused: { includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, pausedLine] },
+    pausedExclusions: { defaults: 10, owner: [pausedLine.length] },
+    unscoped: null,
+    unscopedExclusions: { defaults: 0, owner: [] },
+    rows: [[1, "complete"], [1, "complete"]],
+  })
+}
+
+effect function unpaidScopeKept(world: World) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-scoped", idempotencyKey: "assessment-case-u-01", origin: "slop", report: reportF } }))
+  if (answer.status !== 201) return try die(new Error(`unpaid report not received: ${answer.status} ${JSON.stringify(answer.body)}`))
+  const received = caseOf(answer)
+  const record = try caseRecord(received.caseId)
+  const terms = record?.model.terms
+  try same({
+    state: record?.row.submission_state,
+    policyRevision: record?.row.policy_revision,
+    terms: terms === undefined ? undefined : { paid: terms.paidTerms, scoped: terms.scoped, excluded: terms.excludedFindings },
+    exclusions: try caseExclusions(received.caseId),
+  }, {
+    state: "verified",
+    policyRevision: 1,
+    terms: { paid: false, scoped: true, excluded: [pausedExclusion.length] },
+    exclusions: { defaults: 10, owner: [pausedExclusion.length] },
+  })
+}
+
 effect function receiptScopeKept(assessed: Assessed.Shape) {
   const { world, fake } = assessed
   try scoped(world, 3, ownerLine, new Date(Date.now() - 1000).toISOString())
@@ -393,10 +455,18 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }
   })
 
-  it.effect('Assessment runs carry the receipt-time "does not qualify" lines, for every version, under the current prompt revision (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
+  it.effect('Assessment runs carry the receipt-time "does not qualify" lines, for every version, under the current prompt revision; a paused program\'s receipt carries its owner lines and a receipt without a scope carries none (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
     const assessed = try Assessed
     provide shellOf(assessed) {
       try receiptScopeKept(assessed)
+      try unpaidReceipts(assessed)
+    }
+  })
+
+  it.effect('A paused program\'s unpaid receipt is scoped and keeps its owner "does not qualify" lines on the case and in assessment (spec/security/program.md, "Receipt terms come only from the open published revision"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage")', () => effect {
+    const assessed = try Assessed
+    provide shellOf(assessed) {
+      try unpaidScopeKept(assessed.world)
     }
   })
 })

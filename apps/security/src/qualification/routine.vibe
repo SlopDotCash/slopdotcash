@@ -1,0 +1,234 @@
+// spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"
+import { type ModelReply, Provider, ProviderFailure, providers } from "@repo/platform/providers"
+import { type RoutineInput, type RoutineProposal, routineMessage, routinePrompt, routineProposal } from "../analysis/prompts.ts"
+import { SECURITY_DEFAULT_EXCLUSIONS, routineClosingExclusions } from "../program/exclusions.ts"
+import { protectedCheckout, secretVariable } from "../programs/checkout.vibe"
+import { qualificationMode } from "./sandbox.vibe"
+import { type WireGate, attemptTimeoutMs, boundedFetch, maximumMicroUsd, outputTokens, screeningModel, shortToken, syntheticReport } from "./screeningWire.ts"
+
+export type RoutineFailureCategory =
+  | "request-bound"
+  | "price-bound"
+  | "http-status"
+  | "network"
+  | "timeout"
+  | "receipt-unreadable"
+  | "receipt-missing"
+  | "receipt-over-budget"
+  | "total-over-budget"
+  | "model-unidentified"
+  | "incomplete"
+  | "schema-invalid"
+  | "wrong-answer"
+
+type Detail = Readonly<Record<string, string | number | boolean | null>>
+
+interface Scenario {
+  readonly name: string
+  readonly input: RoutineInput
+  readonly wrong: (answer: RoutineProposal) => string | null
+}
+
+interface Spent {
+  readonly micro: number
+  readonly requests: number
+}
+
+export error RoutineQualificationFailed { message: string }
+error AttemptFailed { category: RoutineFailureCategory; detail: Detail }
+
+export const maximumCalls = 5
+export const totalMaximumMicroUsd = maximumMicroUsd * maximumCalls
+const backoffMs = 3_000
+const maxReplyBytes = 1024 * 1024
+const usage = "usage: security-routine-qualification [--mode plan|execute]"
+const release = "Routine-decision qualification requires the protected main release."
+const transient: ReadonlySet<RoutineFailureCategory> = new Set(["network", "timeout", "receipt-unreadable", "incomplete", "schema-invalid"])
+const phishingLine = SECURITY_DEFAULT_EXCLUSIONS[3] ?? ""
+const earlierTheft = "sc_qualification_earlier_theft"
+const demoVault = syntheticReport.report.description.slice(syntheticReport.report.description.indexOf("// SPDX"))
+const scope = { includedAssets: ["DemoVault.sol, a synthetic local contract"], severityRubric: "Critical means theft or permanent freezing of deposits.", lossDefinition: "Theft or permanent freezing of a depositor's funds." }
+const closing = routineClosingExclusions(null)
+const plainReport = { severity: null, cvss: null, cweIds: [], packages: [] }
+
+export const routineScenarios: ReadonlyArray<Scenario> = [
+  {
+    name: "published-line",
+    input: {
+      report: {
+        ...plainReport,
+        summary: "The project website can be copied for a phishing campaign",
+        description: "Public synthetic qualification only. The marketing website has no DMARC reject policy, so an attacker can send email that looks like the project and link to a copy of the website. No contract, key or deposit is affected and no funds can move through this.",
+      },
+      scope,
+      doesNotQualify: closing,
+      earlierReports: [],
+    },
+    wrong: (answer) => answer.doesNotQualifyLine !== phishingLine ? "doesNotQualifyLine" : answer.lossOfFundsPlausible ? "lossOfFundsPlausible" : null,
+  },
+  {
+    name: "plausible-loss-duplicate",
+    input: {
+      report: {
+        ...plainReport,
+        cweIds: ["CWE-862"],
+        summary: "Included DemoVault.sol lets Bob withdraw Alice's deposit",
+        description: "Public synthetic qualification only; no deployed target or real funds. The complete affected Solidity component is included below. The local EVM test deploys DemoVault, gives Alice 100 wei and Bob 0, then Alice calls deposit with value 100. Bob calls withdraw(Alice, 100). The call succeeds: balances[Alice] is 0, Bob's balance is 100, and the vault balance is 0. The test asserts all three outcomes. withdraw selects the debited account from caller input but transfers its funds to msg.sender without checking that caller owns that account. Run it with: forge test --match-test testBobWithdrawsAliceDeposit.\n\n" + demoVault,
+      },
+      scope,
+      doesNotQualify: closing,
+      earlierReports: [
+        { id: "sc_qualification_earlier_fees", summary: "The report claims deposit() rounds a fee in the vault's favour by one wei." },
+        { id: earlierTheft, summary: "The report shows that DemoVault.withdraw(account, amount) debits the account named by the caller and pays msg.sender without checking that msg.sender is that account, so any caller can take another depositor's balance." },
+      ],
+    },
+    wrong: (answer) => !answer.lossOfFundsPlausible ? "lossOfFundsPlausible" : answer.proof !== "present" ? "proof" : answer.duplicateOfCaseId !== earlierTheft ? "duplicateOfCaseId" : answer.doesNotQualifyLine !== null ? "doesNotQualifyLine" : null,
+  },
+  {
+    name: "missing-proof",
+    input: {
+      report: {
+        ...plainReport,
+        summary: "Your contracts are probably insecure",
+        description: "Public synthetic qualification only. A scanner printed several warnings for this repository. I did not look at which function is affected and I have no steps, test or transaction to show. Please review the code.",
+      },
+      scope,
+      doesNotQualify: closing,
+      earlierReports: [],
+    },
+    wrong: (answer) => answer.proof !== "missing" ? "proof" : null,
+  },
+]
+
+function failed(category: RoutineFailureCategory, detail: Detail = {}) {
+  return new AttemptFailed({ category, detail })
+}
+
+function retryable(failure: AttemptFailed) {
+  return failure.category === "http-status" ? failure.detail.retryable === true : transient.has(failure.category)
+}
+
+effect function charged(spent: Ref.Ref<Spent>, micro: number) {
+  try Ref.update(spent, (current) => ({ ...current, micro: current.micro + micro }))
+}
+
+effect function receiptBounded(spent: Ref.Ref<Spent>, cost: number | null) {
+  try charged(spent, cost ?? maximumMicroUsd)
+  if (cost === null) throw failed("receipt-missing")
+  if (cost > maximumMicroUsd) throw failed("receipt-over-budget", { costMicroUsd: cost })
+  if ((try Ref.get(spent)).micro > totalMaximumMicroUsd) throw failed("total-over-budget")
+}
+
+effect function refused(spent: Ref.Ref<Spent>, failure: ProviderFailure) {
+  const status = failure.status
+  if (status === undefined) {
+    try charged(spent, maximumMicroUsd)
+    throw failed(failure.category === "Timeout" ? "timeout" : "network")
+  }
+  if (status < 200 || status > 299) {
+    try charged(spent, failure.receipt.costMicroUsd ?? maximumMicroUsd)
+    throw failed("http-status", { status, retryable: status === 408 || status === 429 || status >= 500 })
+  }
+  if (failure.reason === "response-unreadable") {
+    try charged(spent, maximumMicroUsd)
+    throw failed("receipt-unreadable", { status })
+  }
+  try receiptBounded(spent, failure.receipt.costMicroUsd)
+  if (failure.category === "Malformed") throw failed("schema-invalid")
+  throw failed("incomplete")
+}
+
+effect function answered(spent: Ref.Ref<Spent>, scenario: Scenario, reply: ModelReply) {
+  try receiptBounded(spent, reply.costMicroUsd)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u.test(reply.model)) throw failed("model-unidentified", { servedModel: shortToken(reply.model) })
+  const answer = routineProposal(reply.text, scenario.input)
+  if (answer === undefined) throw reply.stopReason !== "end_turn" ? failed("incomplete") : failed("schema-invalid")
+  const field = scenario.wrong(answer)
+  if (field !== null) throw failed("wrong-answer", { scenario: scenario.name, field })
+  return reply.model
+}
+
+effect function completed(gate: WireGate, dryRun: boolean, scenario: Scenario) {
+  const provider = try Provider
+  const outer = try FetchHttpClient.Fetch
+  provide FetchHttpClient.Fetch = boundedFetch(gate, dryRun, 0, outer) {
+    return provider.complete({
+      route: "surplus-anthropic",
+      model: screeningModel,
+      system: routinePrompt,
+      messages: [{ role: "user", content: routineMessage(scenario.input) }],
+      maxTokens: outputTokens,
+      effort: "high",
+      timeoutMs: attemptTimeoutMs,
+      accept: "allText",
+    }) catch effect (failure) => {
+      return failure
+    }
+  }
+}
+
+effect function attempt(spent: Ref.Ref<Spent>, dryRun: boolean, scenario: Scenario) {
+  const before = try Ref.get(spent)
+  if (!dryRun && (before.requests >= maximumCalls || before.micro + maximumMicroUsd > totalMaximumMicroUsd)) throw failed("total-over-budget")
+  const gate: WireGate = { stop: undefined, sent: false }
+  const answer = try completed(gate, dryRun, scenario)
+  if (gate.sent) try Ref.update(spent, (current) => ({ ...current, requests: current.requests + 1 }))
+  if (gate.stop === "dry-run") return undefined
+  if (gate.stop !== undefined) throw failed(gate.stop)
+  if (answer instanceof ProviderFailure) return try refused(spent, answer)
+  return try answered(spent, scenario, answer)
+}
+
+effect function scenarioQualified(spent: Ref.Ref<Spent>, dryRun: boolean, scenario: Scenario, failures: Array<Readonly<Record<string, string>>>) {
+  for (;;) {
+    const outcome = attempt(spent, dryRun, scenario) catch effect (error) => {
+      return error
+    }
+    if (!(outcome instanceof AttemptFailed)) return outcome
+    failures.push({ scenario: scenario.name, category: outcome.category })
+    const now = try Ref.get(spent)
+    if (!retryable(outcome) || now.requests >= maximumCalls || now.micro + maximumMicroUsd > totalMaximumMicroUsd) {
+      const detail = { ...outcome.detail, scenario: scenario.name, requests: now.requests }
+      throw new RoutineQualificationFailed({ message: `Routine-decision qualification failed (${outcome.category}); no publication is permitted. ${JSON.stringify({ category: outcome.category, detail })}` })
+    }
+    try Effect.sleep(Duration.millis(backoffMs))
+  }
+}
+
+export effect function qualifyRoutine(dryRun: boolean) {
+  const spent = try Ref.make<Spent>({ micro: 0, requests: 0 })
+  const failedAttempts: Array<Readonly<Record<string, string>>> = []
+  let model: string | null = null
+  for (const scenario of routineScenarios) {
+    const served = try scenarioQualified(spent, dryRun, scenario, failedAttempts)
+    model = served ?? model
+  }
+  return {
+    path: "private-report-routine-decision",
+    provider: "surplus",
+    model,
+    requests: (try Ref.get(spent)).requests,
+    failedAttempts,
+    outcome: dryRun ? "dry-run; no provider calls" : "three synthetic reports read as required",
+  }
+}
+
+export effect function securityRoutineQualification(args: ReadonlyArray<string>) {
+  const mode = qualificationMode(args, usage) catch effect () => {
+    throw new RoutineQualificationFailed({ message: usage })
+  }
+  if (mode === "plan") {
+    provide providers({ surplus: { apiKey: Redacted.make("synthetic-dry-run-no-credential") }, timeoutMs: attemptTimeoutMs, maxReplyBytes }) {
+      try Console.log(JSON.stringify(try qualifyRoutine(true)))
+    }
+    return
+  }
+  protectedCheckout({ refs: ["refs/heads/main"], events: ["push", "workflow_dispatch"], message: release }) catch effect () => {
+    throw new RoutineQualificationFailed({ message: release })
+  }
+  const apiKey = try secretVariable("SURPLUS_API_KEY")
+  if (apiKey === undefined) throw new RoutineQualificationFailed({ message: release })
+  provide providers({ surplus: { apiKey }, timeoutMs: attemptTimeoutMs, maxReplyBytes }) {
+    try Console.log(JSON.stringify(try qualifyRoutine(false)))
+  }
+}

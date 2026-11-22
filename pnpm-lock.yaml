@@ -300,12 +300,39 @@ importers:
 
   apps/app:
     dependencies:
+      '@repo/backend':
+        specifier: workspace:*
+        version: link:../backend
+      '@repo/contributor':
+        specifier: workspace:*
+        version: link:../contributor
       '@repo/design-system':
         specifier: workspace:*
         version: link:../../packages/design-system
+      '@repo/fees':
+        specifier: workspace:*
+        version: link:../fees
       '@repo/frontend':
         specifier: workspace:*
         version: link:../../packages/frontend
+      '@repo/operations':
+        specifier: workspace:*
+        version: link:../operations
+      '@repo/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
+      '@repo/points':
+        specifier: workspace:*
+        version: link:../points
+      '@repo/security':
+        specifier: workspace:*
+        version: link:../security
+      '@repo/settlement':
+        specifier: workspace:*
+        version: link:../settlement
+      '@repo/slopbot':
+        specifier: workspace:*
+        version: link:../slopbot
       '@repo/ui':
         specifier: workspace:*
         version: link:../../packages/ui

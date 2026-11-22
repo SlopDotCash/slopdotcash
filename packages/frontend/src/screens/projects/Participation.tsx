@@ -1,5 +1,5 @@
 // spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
-import { ExternalLink } from "@repo/ui";
+import { ExternalLink, Status, StatusIcon } from "@repo/ui";
 import type { ReactNode } from "react";
 import type { ShownProject } from "./project.schema.ts";
 
@@ -14,10 +14,9 @@ export type ParticipationProps = {
 
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Start({ children }: { children: ReactNode }) {
   return (
     <section id="start" className="flex flex-col gap-2">
-      <h2 className="text-xl font-semibold text-foreground">{title}</h2>
       {children}
     </section>
   );
@@ -28,7 +27,8 @@ export function Participation({ project, successorName, install }: Participation
   const { participation, steward } = project;
   if (participation?.state === "archived")
     return (
-      <Section title="Archived">
+      <Start>
+        <h2 className="text-xl font-semibold text-foreground">Archived</h2>
         <p>
           Continue with{" "}
           <a href={`/projects/${participation.successorProjectId}`} className={linkClass}>
@@ -36,35 +36,29 @@ export function Participation({ project, successorName, install }: Participation
           </a>
           .
         </p>
-      </Section>
+      </Start>
     );
   if (participation?.state === "permission-required")
     return (
-      <Section title="Permission required">
-        <p>
-          Contact{" "}
+      <Start>
+        <p className="flex flex-wrap items-center gap-1">
+          <StatusIcon icon="Lock" role="img" aria-label="Permission required" />{" "}
           <ExternalLink href={steward.github.profileUrl} className={linkClass}>
-            {steward.displayName}
-          </ExternalLink>{" "}
-          about permission before contributing.
+            Ask {steward.displayName}
+          </ExternalLink>
         </p>
-      </Section>
+      </Start>
     );
   if (project.status === "paused")
     return (
-      <Section title="Project paused">
-        <p>Do not install this project&apos;s skill or start work.</p>
-        <p>
-          A paused project is not collected or scored. Its steward,{" "}
-          <ExternalLink href={steward.github.profileUrl} className={linkClass}>
-            {steward.displayName}
-          </ExternalLink>
-          , can review its status and next steps on the project setup page. Check back here for a change.{" "}
+      <Start>
+        <p className="flex flex-wrap items-center gap-1">
+          <Status presentation={{ tone: "Caution", icon: "Pause", label: "Paused" }} />{" "}
           <a href={`/projects/${project.slug}/manage`} className={linkClass}>
-            Project owner: review setup
+            Owner setup
           </a>
         </p>
-      </Section>
+      </Start>
     );
   return install;
 }

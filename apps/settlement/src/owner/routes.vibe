@@ -1,4 +1,4 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"
 import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain } from "@repo/platform/chain/rpc"
 import { type Address, type Blockhash, GenesisPinMissing, address, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
 import { Caller, Refused, handle, sameOriginWrite } from "@repo/platform/http"
@@ -7,14 +7,16 @@ import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports
 import { lockMonthCounts } from "../../gen/settlement__monthPledges.effect.vibe"
 import { Rejected, reviewAllowed } from "../../gen/settlement__ownerTransactions.effect.vibe"
 import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { type MonthlySettingAction, paymentsSolanaMonthlyCommitment } from "../client/monthly.vibe"
 import { type FundingAction, type MonthLockAction, paymentsSolanaFunding, paymentsSolanaMonthLock } from "../client/owner.vibe"
-import { postPaymentsProjectsByIdSolanaFunding as parity, postPaymentsProjectsByIdSolanaMonthLock as lockParity } from "../client/refusals.vibe"
+import { postPaymentsProjectsByIdSolanaFunding as parity, postPaymentsProjectsByIdSolanaMonthLock as lockParity, postPaymentsProjectsByIdSolanaMonthlyCommitment as settingParity } from "../client/refusals.vibe"
 import { MAX_BASE_UNITS, parseBaseUnits, parseDecimalAmount } from "../kernels/amounts.ts"
 import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { registryDeployments } from "../vault/deployments.vibe"
 import { DeploymentMismatch } from "../vault/evmTotals.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
 import { type LockCheck, checkMonthLock, lockedFunds, reviewLock, reviewRelease } from "./monthLock.vibe"
+import { type MonthlyIntent, checkMonthlySetting, readMonthlySetting, reviewMonthlySetting } from "./monthlySetting.vibe"
 import { PaymentNetworks } from "./networks.vibe"
 import type { FundingOperation } from "./ownerInstructions.ts"
 import { DeploymentUnverified, verifiedDeployment } from "./solanaDeployment.vibe"
@@ -32,6 +34,7 @@ const refusals = {
   invalidAmount: row(parity.invalidFundingAmount),
   vaultNotFound: row(parity.fundingVaultNotFound),
   unavailable: row(parity.paymentsUnavailable),
+  unconfigured: row(parity.paymentsUnavailable),
 } satisfies Readonly<Record<string, Refusal>>
 
 const lockRefusals = {
@@ -40,11 +43,21 @@ const lockRefusals = {
   invalidAmount: row(lockParity.invalidMonthLockAmount),
   vaultNotFound: row(lockParity.fundingVaultNotFound),
   unavailable: row(lockParity.paymentsUnavailable),
+  unconfigured: row(lockParity.paymentsUnavailable),
+} satisfies Readonly<Record<string, Refusal>>
+
+const settingRefusals = {
+  origin: row(settingParity.originForbiddenPrivateNoStore),
+  invalid: row(settingParity.invalidMonthlySetting),
+  vaultNotFound: row(settingParity.fundingVaultNotFound),
+  unavailable: row(settingParity.paymentsUnavailable),
+  unconfigured: row(settingParity.fundingUnavailablePrivateNoStore),
 } satisfies Readonly<Record<string, Refusal>>
 
 interface Located {
   readonly vaultNotFound: Refusal
   readonly unavailable: Refusal
+  readonly unconfigured: Refusal
 }
 
 const withdrawalAuthority = "Only the project steward with current repository authority can withdraw free funds from an unrestricted project."
@@ -90,7 +103,7 @@ effect function registered(projectId: string, network: NetworkKey, vault: string
   const [deployment] = matches
   if (matches.length !== 1 || deployment === undefined || deployment.family !== "solana") throw refusedWith(located.vaultNotFound)
   const urls = try networks.urls(network)
-  if (urls === undefined) throw refusedWith(located.unavailable)
+  if (urls === undefined) throw refusedWith(located.unconfigured)
   return { deployment: deployment satisfies SolanaDeployment, urls }
 }
 
@@ -247,8 +260,73 @@ effect function answerLock(projectId: string, body: MonthLockAction) {
   }
 }
 
+type SettingStep =
+  | { readonly kind: "read" }
+  | { readonly kind: "review"; readonly intent: MonthlyIntent }
+  | { readonly kind: "check"; readonly intent: MonthlyIntent; readonly blockhash: Blockhash; readonly transactionId: string }
+
+interface SettingRequest {
+  readonly network: NetworkKey
+  readonly vault: string
+  readonly step: SettingStep
+}
+
+const CAP_TEXT = /^(0|[1-9][0-9]{0,19})$/u
+
+function settingRejected(message: string) {
+  return new Refused({ status: settingParity.monthlySettingRejected.status, code: settingParity.monthlySettingRejected.error, message })
+}
+
+effect function settingStepOf(body: MonthlySettingAction) {
+  if (body.step === "read") return { kind: "read" } satisfies SettingStep
+  const wallet = body.wallet === undefined ? undefined : address(body.wallet)
+  const { cap, enabled } = body
+  if ((body.step !== "review" && body.step !== "check") || wallet === undefined || cap === undefined || !CAP_TEXT.test(cap) || enabled === undefined) throw refusedWith(settingRefusals.invalid)
+  const intent: MonthlyIntent = { wallet, cap, enabled }
+  if (body.step === "review") return { kind: "review", intent } satisfies SettingStep
+  const { blockhash, transactionId } = body
+  if (blockhash === undefined || !isBlockhash(blockhash) || transactionId === undefined || transactionId.length > 100) throw refusedWith(settingRefusals.invalid)
+  return { kind: "check", intent, blockhash, transactionId } satisfies SettingStep
+}
+
+effect function settingRequestOf(body: MonthlySettingAction) {
+  const step = try settingStepOf(body)
+  if (!isNetworkKey(body.network) || NETWORKS[body.network].family !== "solana") throw refusedWith(settingRefusals.unavailable)
+  return { network: body.network, vault: body.vault, step } satisfies SettingRequest
+}
+
+effect function monthlySetting(projectId: string, request: SettingRequest) {
+  const { deployment, urls } = try registered(projectId, request.network, request.vault, settingRefusals)
+  const capture: Capture = { revision: deployment.revision, snapshotDigest: "" }
+  const { step } = request
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = try verifiedDeployment(deployment)
+    if (step.kind === "read") return { setting: try readMonthlySetting(verified) }
+    if (step.kind === "review") return { plan: try reviewMonthlySetting({ verified, intent: step.intent, capture }) }
+    return { status: try checkMonthlySetting({ verified, intent: step.intent, blockhash: step.blockhash, transactionId: step.transactionId, capture }) }
+  }
+}
+
+effect function answerSetting(projectId: string, body: MonthlySettingAction) {
+  if (!(try sameOriginWrite())) throw refusedWith(settingRefusals.origin)
+  const request = try settingRequestOf(body)
+  return monthlySetting(projectId, request) catch effect (error) => match (error) {
+    when WalletActionRefused: throw settingRejected(error.message);
+    when Rejected: throw refusedWith(settingRefusals.unavailable);
+    when DeploymentUnverified: throw refusedWith(settingRefusals.unavailable);
+    when DeploymentMismatch: throw refusedWith(settingRefusals.unavailable);
+    when RpcUnavailable: throw refusedWith(settingRefusals.unavailable);
+    when RpcMalformed: throw refusedWith(settingRefusals.unavailable);
+    when RpcRefused: throw refusedWith(settingRefusals.unavailable);
+    when WrongChain: throw refusedWith(settingRefusals.unavailable);
+    when GenesisPinMissing: throw refusedWith(settingRefusals.unavailable);
+    default: throw error;
+  }
+}
+
 export const ownerRoutes = Layer.mergeAll(
   handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body)),
   handle(paymentsSolanaMonthLock, (input) => answerLock(input.params.id ?? "", input.body)),
+  handle(paymentsSolanaMonthlyCommitment, (input) => answerSetting(input.params.id ?? "", input.body)),
 )
 

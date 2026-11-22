@@ -59,7 +59,7 @@ const minor = (amount: ReadonlyArray<number>) => BigInt(amount.reduceRight((text
 
 const fixture: ProjectView = {
   projectId: project, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
-  retirement: "NotRetired", stewardGithubId: "1", repositories: [{ id: "4001", nodeId: "R_bounty", fullName: repository, integrationBranch: "main", aliases: [] }], closureConsent: false,
+  retirement: "NotRetired", stewardGithubId: "1", stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "4001", nodeId: "R_bounty", fullName: repository, integrationBranch: "main", aliases: [] }], closureConsent: false,
 };
 
 const manifest = JSON.stringify({ id: project, securityBounty: { status: "open", fundingPolicy: "after-approval", amount: { grossMinor: "1000000", currency: "USDC", decimals: 6, network: "base" } } });
@@ -75,7 +75,7 @@ async function programFunds() {
 }
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: () => Effect.succeed(fixture), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: () => Effect.succeed(fixture), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),

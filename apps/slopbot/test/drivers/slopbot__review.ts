@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { isoNow } from "@repo/platform/clock";
@@ -29,6 +29,7 @@ const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.laye
 let generation = 0;
 let tokens = 0;
 let attempt: Attempt | undefined;
+let remembered: Denial | undefined;
 let boundRoute: Route = "AdvisoryReview";
 
 const reviewKey = () => `review-g${generation}`;
@@ -83,12 +84,20 @@ async function opened(route: Route) {
   ));
   if (result.kind !== "claimed") return undefined;
   attempt = result.attempt;
+  remembered = undefined;
   return result.attempt;
 }
 
-function settledStep<E, R>(held: Attempt, step: Effect.Effect<string, E, R>, denial?: Denial) {
+function rememberDenial(denial: Denial) {
+  return Effect.sync(() => {
+    if (denial.source === "SurplusSpendingDenial" && !denial.orbioServed) remembered = denial;
+  });
+}
+
+function settledStep<E, R>(held: Attempt, step: Effect.Effect<string, E, R>) {
   return Effect.gen(function* () {
     const status = yield* step;
+    const denial = remembered;
     if (status === "BudgetBlocked" && denial !== undefined) yield* blockAttempt(held, denial);
     if (status === "RetryableFailure") yield* finishAttempt(held, "failed", { skipReason: "Error: every model route step failed" });
   });
@@ -117,8 +126,10 @@ async function dispatch(event: Event) {
   if (held === undefined) return "refused" as const;
   switch (event.type) {
     case "start":
+      remembered = undefined;
       return settled(startCalls(held, "Triage"), runtime);
     case "startConfirm":
+      remembered = undefined;
       return settled(startCalls(held, "Confirm"), runtime);
     case "recheckRegistry":
       return settled(settledStep(held, recheckAttempt(held, event.registry)), runtime);
@@ -127,8 +138,11 @@ async function dispatch(event: Event) {
     case "recordCall": {
       const call = routeCall(event.call);
       const denial = denialOf(event.call, event.resetAt);
-      const recorded = recordAttemptCall(held, event.call.kind, event.call.provider, call, event.call.verdict, denial).pipe(Effect.tap(() => keepCalls(held, event.call.kind, [call])));
-      return settled(settledStep(held, recorded, denial), runtime);
+      const recorded = recordAttemptCall(held, event.call.kind, event.call.provider, call, event.call.verdict, denial).pipe(
+        Effect.tap(() => keepCalls(held, event.call.kind, [call])),
+        Effect.tap(() => rememberDenial(denial)),
+      );
+      return settled(settledStep(held, recorded), runtime);
     }
     case "finish":
       return settled(completeAttempt(held, {}, event.unreviewed), runtime);
@@ -153,6 +167,7 @@ export const driver: Driver<ReviewView> & AsyncDisposable = {
   reset: () => {
     generation++;
     attempt = undefined;
+    remembered = undefined;
     boundRoute = "AdvisoryReview";
     clock.set(clockAt(1));
   },

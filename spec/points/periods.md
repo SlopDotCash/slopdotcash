@@ -61,10 +61,11 @@ vault and source digest). The one reviewed Base qualification payment
 (PRD section 11, issue 904) is pinned data outside this predicate: its
 finalized, paid obligation and its matching `paid` event never protect a
 month. This is stricter than the settlement phase alone, which never freezes
-an open proposal. The owner's decision is pending: the
-alternative is to freeze only on the monthly settlement phase and its
-approved, funded, scheduled or paid obligations; until then the stricter
-production predicate is kept, so more months are protected, never fewer.
+an open proposal. Operator decision, 20 November 2026 (PRD section 7): the
+Points of a project-month with a recorded payment are frozen by exactly this
+predicate; the generator holds a candidate revision that would change them
+and the import refuses a batch that changes one
+([protected months](./protectedMonths.md)).
 
 The individual records are private to the settlement adapter
 (`pointProtectionQuery` is a private, read-only preflight): whether a

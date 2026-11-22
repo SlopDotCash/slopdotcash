@@ -1,5 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
+import { deploymentOrigins } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { type ScheduledOutcome, bundle, database, migrate, scheduled, workerOptions } from "@repo/platform/testing"
 import { type GitHubFake, type ScriptedFailure, githubFake } from "@repo/platform/testing/github"
@@ -8,9 +9,13 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { Miniflare, Request as WebRequest } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 
-const identity = "https://identity.slop.test"
+// identity/config.vibe accepts only a tier's canonical identity origin or an enabled loopback origin; the local tier
+// has no canonical origin. The web flows run against the staging tier's own origins, and the loopback handoff
+// test below covers the local return path.
+const staging = deploymentOrigins("staging")
+const identity = staging.identity
 const internal = "https://identity.internal"
-const site = "https://slop.test"
+const site = staging.site
 const stateKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/u
 const pastCreated = "2026-01-01T00:00:00.000Z"
@@ -63,7 +68,7 @@ const Started = Layer.effect(Identity, effect {
     d1: { IDENTITY_DB: "slop-private" },
     ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
     vars: {
-      SLOP_ENVIRONMENT: "local",
+      SLOP_ENVIRONMENT: "staging",
       GITHUB_APP_CLIENT_ID: github.app.clientId,
       GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
       IDENTITY_STATE_KEY: stateKey,
@@ -266,7 +271,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       ["user 403", failing(userCall, { status: 403 })],
       ["user 429", failing(userCall, { status: 429 })],
       ["user 503", failing(userCall, { status: 503 })],
-      ["user transport", failing(userCall, { disconnect: true })],
+      // The Workers runtime re-sends an idempotent GET once after a dropped connection (the request log shows a
+      // disconnected /user followed by a second /user), so a lasting transport failure drops both sends.
+      ["user transport", (github: GitHubFake) => { github.failNext(userCall, { disconnect: true }); github.failNext(userCall, { disconnect: true }) }],
       ["user malformed", (github: GitHubFake) => github.alterNext(userCall, () => HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe({ id: "7", login: "octo", node_id: "U_octo", created_at: pastCreated })))],
     ]
     const failedSignIns: Array<readonly [string, unknown]> = []
@@ -304,7 +311,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       try call(`${identity}/v1/oauth/start`, { json: { audience: "nobody" }, headers: { "cf-connecting-ip": "198.51.100.4" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://slop.cash" } }),
       try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://evil.test" } }),
-      try call("http://identity.slop.test/v1/oauth/authorize?flow_id=x&state=y"),
+      try call(`${identity.replace(/^https:/u, "http:")}/v1/oauth/authorize?flow_id=x&state=y`),
       try call(`${identity}/v1/no-such-route`),
     ].map((answer) => [answer.status, answer.body])
     const preflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } })
@@ -353,7 +360,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       unavailable: [503, { error: "service_unavailable", message: "Identity service is temporarily unavailable." }, "60"],
       refusals: [
         [400, { error: "invalid_request", message: "Invalid identity audience" }],
-        [403, { error: "origin_forbidden" }],
+        // Another tier's site and a foreign site are both refused by the per-tier CORS gate (client/identity.vibe
+        // browserOrigins) before the flow handler's own origin check.
+        [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [400, { error: "https_required" }],
         [404, { error: "not_found" }],
@@ -362,7 +371,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows (spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
+  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows, expired site sessions among them (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
     const local = try begin("/v1/local/start", { audience: "slop-points-web", returnOrigin: "http://127.0.0.1:4466" })
     const badOrigin = try call(`${identity}/v1/local/start`, { json: { audience: "slop-points-web", returnOrigin: "https://slop.cash" } })
     const wrongRoute = try poll("/v1/oauth/poll", local.flow, "slop-points-web")
@@ -376,11 +385,17 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     try sql("INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, audience, status, created_at, expires_at) VALUES (?, ?, ?, 'slop-points-web', 'callback_failed', ?, ?)", "flow_expired_journey_00000000", "a".repeat(64), "b".repeat(64), pastCreated, pastExpired)
     try sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, audience, created_at, expires_at, consumed_at, github_node_id) VALUES (?, '8', 'other', 'private-trace-api', ?, ?, NULL, NULL)", "c".repeat(64), "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:30.000Z")
     try sql("INSERT INTO identity_rate_limits (key_hash, request_count, window_started_at, expires_at) VALUES (?, 3, 1000, 1060)", "d".repeat(64))
+    // The identity Worker's hourly job also ends expired site sessions (identity/maintenance.vibe purgeExpired).
+    for (const [actor, githubId, expiresAt] of [["actor-expired", "31", "2020-01-01T00:00:00.000Z"], ["actor-live", "32", "2099-01-01T00:00:00.000Z"]]) {
+      try sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actor, githubId, `member-${githubId}`, "2026-01-01T00:00:00.000Z")
+      try sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", actor.padEnd(64, "0"), actor, expiresAt)
+    }
     const cron = try (try Identity).scheduled("17 * * * *")
     const remaining = [
       try sql("SELECT count(*) AS count FROM identity_oauth_flows WHERE id IN (?, ?)", "flow_expired_journey_00000000", live.flow.flowId),
       try sql("SELECT count(*) AS count FROM identity_assertions WHERE token_hash = ?", "c".repeat(64)),
       try sql("SELECT count(*) AS count FROM identity_rate_limits WHERE key_hash = ?", "d".repeat(64)),
+      try sql("SELECT actor_id FROM points_sessions ORDER BY actor_id"),
     ]
     const { net, outboundErrors } = try Identity
 
@@ -404,7 +419,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       again: [410, { error: "flow_consumed", message: "Identity flow was already consumed" }],
       assertions: [{ count: 0 }],
       cron: "ok",
-      remaining: [[{ count: 1 }], [{ count: 0 }], [{ count: 0 }]],
+      remaining: [[{ count: 1 }], [{ count: 0 }], [{ count: 0 }], [{ actor_id: "actor-live" }]],
       unexpected: [[], []],
     })
   })

@@ -16,14 +16,14 @@ export const rewardAssetsAreTheReviewedCoinOrAValidToken = vectors<Choice, Asset
   [{ network: "ethereum", assetKind: "native", tokenAddress: "", tokenSymbol: "" }, { kind: "asset", asset: { network: "ethereum", kind: "native", address: "0x0000000000000000000000000000000000000000", symbol: "ETH" }, decimals: 18 }],
   [token("base", " 0xABCDEFabcdef0123456789012345678901234567 ", " $VAULT "), { kind: "asset", asset: { network: "base", kind: "token", address: "0xabcdefabcdef0123456789012345678901234567", symbol: "$VAULT" }, decimals: 36 }],
   [token("solana", "So11111111111111111111111111111111111111112", "wSOL"), { kind: "asset", asset: { network: "solana", kind: "token", address: "So11111111111111111111111111111111111111112", symbol: "wSOL" }, decimals: 36 }],
-  [token("base", "0x1234", "TOK"), { kind: "invalid", message: "Enter a 0x token contract address with 40 hexadecimal characters" }],
-  [token("ethereum", "0x0000000000000000000000000000000000000000", "ETH"), { kind: "invalid", message: "Enter a 0x token contract address with 40 hexadecimal characters" }],
+  [token("base", "0x1234", "TOK"), { kind: "invalid", message: "Enter a 0x address with 40 hex characters" }],
+  [token("ethereum", "0x0000000000000000000000000000000000000000", "ETH"), { kind: "invalid", message: "Enter a 0x address with 40 hex characters" }],
   [token("solana", "0xabcdefabcdef0123456789012345678901234567", "TOK"), { kind: "invalid", message: "Enter a base58 SPL mint address" }],
   [token("solana", "11111111111111111111111111111111", "SOL"), { kind: "invalid", message: "Choose SOL as the native coin" }],
   [token("base", "0x833589FCD6EDB6E08F4C7C32D4F71B54BDA02913", "USDC"), { kind: "invalid", message: "That address is the network stablecoin; choose USDC" }],
   [token("solana", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC"), { kind: "invalid", message: "That address is the network stablecoin; choose USDC" }],
-  [token("base", "0xabcdefabcdef0123456789012345678901234567", "  "), { kind: "invalid", message: "Enter a token symbol of 1 to 16 letters or digits" }],
-  [token("base", "0xabcdefabcdef0123456789012345678901234567", "SEVENTEEN-LETTERS"), { kind: "invalid", message: "Enter a token symbol of 1 to 16 letters or digits" }],
+  [token("base", "0xabcdefabcdef0123456789012345678901234567", "  "), { kind: "invalid", message: "Enter a symbol of 1-16 letters or digits" }],
+  [token("base", "0xabcdefabcdef0123456789012345678901234567", "SEVENTEEN-LETTERS"), { kind: "invalid", message: "Enter a symbol of 1-16 letters or digits" }],
 ], rewardAssetChoice);
 
 export const amountsBecomeExactBaseUnits = vectors<readonly [string, number], BaseUnits>([

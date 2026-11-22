@@ -4,7 +4,7 @@ import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
 import { GitHub, github, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
-import { type Event, type Method, type Origin, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
+import { type Event, type Method, type Origin, type Page, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
 import { type CachedDiscussion, type DiscussionCache, type DiscussionEntry, parsedJson } from "./discussions.vibe"
 import { replayed } from "./replayed.ts"
 
@@ -21,6 +21,12 @@ const repositoryRoot = /^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\//u
 const gitObject = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u
 const contentsRef = /^\?ref=[a-f0-9]{40}$/u
 const jsonType = /^application\/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)/iu
+const repositoryScope = /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u
+const itemListPath = /^\/(?:pulls\/[1-9]\d*\/(?:files|reviews|comments|commits)|issues\/[1-9]\d*\/(?:comments|events|timeline))$/u
+const commitPath = /^\/commits\/[a-f0-9]{40}$/u
+const commitPullsPath = /^\/commits\/[a-f0-9]{40}\/pulls$/u
+const commitFilesQuery = /^\?per_page=100&page=[1-9]\d*$/u
+const commitPullsQuery = /^\?per_page=100(?:&page=[1-9]\d*)?$/u
 
 export error IngestionCheckpoint { message: string }
 
@@ -76,6 +82,17 @@ export function immutableRead(url: string): string | undefined {
   const object = gitObject.exec(path)
   if (object !== null) return parsed.search === "" || (object[1] === "trees" && parsed.search === "?recursive=1") ? object[2] : undefined
   return path.startsWith("contents/") && path.length > "contents/".length && contentsRef.test(parsed.search) ? "contents" : undefined
+}
+
+export function evidencePage(url: string): Page {
+  const parsed = URL.parse(url)
+  if (parsed === null) return "OtherPage"
+  const path = repositoryScope.exec(parsed.pathname)?.[1] ?? ""
+  if (itemListPath.test(path)) return "ItemList"
+  const plain = parsed.username === "" && parsed.password === "" && parsed.hash === ""
+  if (!plain) return "OtherPage"
+  if (commitPath.test(path) && commitFilesQuery.test(parsed.search)) return "CommitFiles"
+  return commitPullsPath.test(path) && commitPullsQuery.test(parsed.search) ? "CommitPulls" : "OtherPage"
 }
 
 function transportError(request: HttpClientRequest.HttpClientRequest, description: string) {
@@ -182,7 +199,13 @@ export function ingestion(options: TransportOptions = {}) {
 
     effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
       let state = try machine.get()
-      try Console.warn(JSON.stringify({ event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+      const delayMs = state.wakeAt - state.now
+      const at = try isoAt(state.now)
+      try Console.warn(JSON.stringify(state.pageWait
+        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs, at }
+        : state.gatewayWait
+          ? { event: "github_ingestion_gateway_retry_wait", gatewayRetries: state.gatewayRetries, delayMs, at }
+          : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs, at }))
       while (state.phase === "Waiting" && state.now < state.wakeAt) {
         try sleeping(state.wakeAt - state.now)
         state = try advanced(machine)
@@ -195,7 +218,7 @@ export function ingestion(options: TransportOptions = {}) {
       const url = request.url
       const headers = plainHeaders(request.headers)
       const machine = try run.next(try Clock.currentTimeMillis)
-      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi" }) catch effect () => {
+      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi", page: evidencePage(url) }) catch effect () => {
         throw transportError(request, checkpointMessage)
       }
       if (begun.phase === "Checkpointed") throw transportError(request, checkpointMessage)

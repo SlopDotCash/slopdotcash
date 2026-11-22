@@ -1,0 +1,123 @@
+// spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { ProgramFundsView } from "@repo/ports/security"
+import { FundingAction, FundingAnswer } from "./owner.vibe"
+import { getProjectVaultsById, postProjectVaultsById, postProjectVaultsByIdSolanaFunding } from "./refusals.vibe"
+
+const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
+
+export schema VaultSetupBody {
+  readonly step: string
+  readonly expectedRevision: number
+  readonly network: string
+  readonly claimId: string
+  readonly automatic: boolean
+  readonly transactionId?: string
+  readonly payoutPolicy?: string
+}
+
+export const VaultNetworks = Schema.Struct({ revision: Schema.Number, networks: Schema.Array(Schema.String) })
+
+export const BountyVaultNetworks = Schema.Struct({
+  revision: Schema.Number,
+  canSetup: Schema.Boolean,
+  networks: Schema.Array(Schema.String),
+  funds: Schema.NullOr(ProgramFundsView),
+})
+
+export const VaultSetupRead = Schema.Union([BountyVaultNetworks, VaultNetworks])
+
+const EvmCreationCall = Schema.Struct({ from: Schema.String, to: Schema.String, data: Schema.String, value: Schema.Literal("0x0") })
+
+export const EvmVaultReview = Schema.Struct({
+  payoutPolicy: Schema.Literals(["ordinary", "security-bounty"]),
+  family: Schema.Literal("evm"),
+  network: Schema.String,
+  owner: Schema.String,
+  asset: Schema.String,
+  cap: Schema.String,
+  capDisplay: Schema.String,
+  automatic: Schema.Boolean,
+  chainId: Schema.String,
+  existingVault: Schema.NullOr(Schema.String),
+  transaction: EvmCreationCall,
+})
+
+const SolanaCreationTransaction = Schema.Struct({
+  blockhash: Schema.String,
+  lastValidBlockHeight: Schema.Number,
+  transaction: Schema.String,
+  networkFeeLamports: Schema.String,
+})
+
+export const SolanaVaultReview = Schema.Struct({
+  payoutPolicy: Schema.Literals(["ordinary", "security-bounty"]),
+  family: Schema.Literal("solana"),
+  network: Schema.String,
+  owner: Schema.String,
+  asset: Schema.String,
+  cap: Schema.String,
+  capDisplay: Schema.String,
+  automatic: Schema.Boolean,
+  creation: JsonObject,
+  projectPda: Schema.String,
+  vault: Schema.String,
+  decimals: Schema.Number,
+  existingVault: Schema.NullOr(Schema.String),
+  transaction: Schema.NullOr(SolanaCreationTransaction),
+})
+
+export const VaultReviewed = Schema.Struct({ review: Schema.Union([EvmVaultReview, SolanaVaultReview]) })
+
+export const VaultPending = Schema.Struct({ status: Schema.Literal("pending"), provisional: Schema.optional(JsonObject) })
+
+export const VaultRegistered = Schema.Struct({
+  status: Schema.Literal("registered"),
+  deployment: JsonObject,
+  project: JsonObject,
+  revision: Schema.Number,
+  notice: Schema.optional(Schema.String),
+})
+
+export const VaultSetupAnswer = Schema.Union([VaultReviewed, VaultPending, VaultRegistered])
+
+export const projectVaultRead = route({
+  method: "GET",
+  path: "/api/v1/project-vaults/:id",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: VaultSetupRead,
+  rejected: getProjectVaultsById.invalidRequest.error,
+  cache: "no-store",
+})
+
+export const projectVaultSetup = route({
+  method: "POST",
+  path: "/api/v1/project-vaults/:id",
+  access: "sessionWrite",
+  limitKib: 64,
+  request: VaultSetupBody,
+  answer: VaultSetupAnswer,
+  rejected: postProjectVaultsById.invalidRequestInvalidVaultSetupRequest.error,
+  cache: "no-store",
+  invalid: {
+    status: postProjectVaultsById.invalidRequestInvalidVaultSetupRequest.status,
+    code: postProjectVaultsById.invalidRequestInvalidVaultSetupRequest.error,
+    message: postProjectVaultsById.invalidRequestInvalidVaultSetupRequest.message,
+    headers: postProjectVaultsById.invalidRequestInvalidVaultSetupRequest.headers,
+  },
+})
+
+export const projectVaultSolanaFunding = route({
+  method: "POST",
+  path: "/api/v1/project-vaults/:id/solana-funding",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: FundingAction,
+  answer: FundingAnswer,
+  rejected: postProjectVaultsByIdSolanaFunding.fundingActionRejected.error,
+  cache: "no-store",
+})
+
+export const vaultSetupApi: ReadonlyArray<AnyRoute> = [projectVaultRead, projectVaultSetup, projectVaultSolanaFunding]

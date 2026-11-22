@@ -1,0 +1,353 @@
+// spec/settlement/vaultSnapshots.md, "Story: Register the reviewed deployment before observing its balances"; spec/settlement/vaultSnapshots.md, "Story: Finish a pending registration after the owner leaves"
+import { assert, layer } from "@effect/vitest"
+import { type ReviewedFactory } from "@repo/platform/chain/reviewed"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { anvil } from "@repo/platform/testing/chains"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type AuthorityRead, Authority, type Json, type ProjectView, Registry, type RegistryManifest, RegistryManifests, Restrictions, VaultRegistrationRefused, Wallets } from "@repo/ports/backend"
+import { type EvmAddress, IMPLEMENTATION_SLOT, evmAddress } from "../src/chain/evm/abi.ts"
+import type { VaultSetupBody } from "../src/client/vaultSetup.vibe"
+import { PaymentNetworks } from "../src/owner/networks.vibe"
+import { finishSavedVaultCreations } from "../src/owner/savedCreations.vibe"
+import { CreationSources, type VaultActor, ownerVaultPost } from "../src/owner/vaultSetup.vibe"
+import { PaymentRpc } from "../src/vault/rpc.vibe"
+import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
+
+const SOURCE_COMMIT = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+const windowOpen = 1796346000
+const OWNER: VaultActor = { githubId: "7", login: "owner" }
+const WRITER: VaultActor = { githubId: "8", login: "writer" }
+
+interface Listed {
+  view: ProjectView
+  manifest: Record<string, unknown>
+}
+
+interface Appended {
+  readonly projectId: string
+  readonly path: "owner" | "saved"
+}
+
+service World {
+  readonly escrow: EscrowStack
+  readonly clock: ReturnType<typeof settableClock>
+  readonly projects: Map<string, Listed>
+  readonly access: Map<string, AuthorityRead>
+  readonly appended: Appended[]
+  readonly layer: Layer.Layer<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | Registry | RegistryManifests | Authority | Restrictions | Wallets | PaymentNetworks | PaymentRpc | CreationSources>
+}
+
+function hexBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array((hex.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(hex.slice(2 + index * 2, 4 + index * 2), 16)
+  return bytes
+}
+
+effect function codeDigest(escrow: EscrowStack, at: string) {
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  return try sha256Hex(hexBytes(String(code)))
+}
+
+effect function address(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) return try die(new Error(`${text} is not an address`))
+  return parsed
+}
+
+effect function reviewedFactory(escrow: EscrowStack) {
+  const owner = try address(escrow.roles.owner.address)
+  const probe = try promise(() => escrow.createVault({ owner, projectId: word(0x5e7a0n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 1n, monthlyEnabled: false }))
+  const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = try address(`0x${slot.slice(-40)}`)
+  return {
+    network: "base-mainnet", sourceCommit: SOURCE_COMMIT, codeSha256: try codeDigest(escrow, probe), bindingDelaySeconds: 0n,
+    identityAuthority: try address(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, factory: escrow.factory,
+    factoryCodeSha256: try codeDigest(escrow, escrow.factory), registrar: try address(escrow.roles.registrar.address),
+    upgrade: {
+      authority: try address(escrow.roles.upgrader.address), vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow, escrow.implementation), factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(escrow, factoryImplementation),
+    },
+  } as unknown as ReviewedFactory
+}
+
+effect function migrated(name: string) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return try promise(() => database(mf, "SLOP_DB"))
+}
+
+function deploymentsOf(manifest: Record<string, unknown>): ReadonlyArray<Record<string, unknown>> {
+  const escrow = manifest.escrow as { deployments: ReadonlyArray<Record<string, unknown>> }
+  return escrow.deployments
+}
+
+function ports(projects: Map<string, Listed>, access: Map<string, AuthorityRead>, appended: Appended[]) {
+  const listedOf = (listed: Listed) => effect {
+    const text = JSON.stringify(listed.manifest)
+    return { projectId: listed.view.projectId, active: true, revision: listed.view.revision, manifest: text, manifestSha256: try sha256Hex(text), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
+  }
+  return Layer.mergeAll(
+    Layer.succeed(RegistryManifests, {
+      current: () => effect {
+        const found: RegistryManifest[] = []
+        for (const listed of projects.values()) found.push(try orDie(listedOf(listed)))
+        return found
+      },
+      project: (projectId) => effect {
+        const listed = projects.get(projectId)
+        return listed === undefined ? undefined : try orDie(listedOf(listed))
+      },
+    }),
+    Layer.succeed(Registry, {
+      project: (projectId) => effect { return projects.get(projectId)?.view },
+      byRepository: () => effect { return undefined },
+      byPath: () => effect { return undefined },
+      active: () => effect { return [...projects.values()].map((listed) => listed.view) },
+      pausedProjects: () => effect { return [] },
+      fence: () => effect { return sql`SELECT 1` },
+      appendVaultRegistration: (registration) => effect {
+        const listed = projects.get(registration.projectId)
+        if (listed === undefined) throw new VaultRegistrationRefused({ code: "stale_revision" })
+        const deployment = registration.deployment as Record<string, unknown>
+        const existing = deploymentsOf(listed.manifest)
+        if (existing.some((entry) => entry.deploymentTransaction === deployment.deploymentTransaction)) return { project: listed.view, manifest: listed.manifest as Json }
+        if (existing.length > 0) throw new VaultRegistrationRefused({ code: "vault_already_registered" })
+        if (registration.expectedRevision > listed.view.revision) throw new VaultRegistrationRefused({ code: "stale_revision" })
+        const manifest = { ...listed.manifest, escrow: { ...(listed.manifest.escrow as Record<string, unknown>), deployments: [deployment] } }
+        const view = { ...listed.view, revision: listed.view.revision + 1 }
+        projects.set(registration.projectId, { view, manifest })
+        appended.push({ projectId: registration.projectId, path: registration.path })
+        return { project: view, manifest: manifest as Json }
+      },
+    }),
+    Layer.succeed(Authority, {
+      repository: (read) => effect { return access.get(read.actorGithubId) ?? { actorGithubId: read.actorGithubId, repositoryId: read.repositoryId, permission: "PermissionDenied", installation: "Installed" } },
+    }),
+    Layer.succeed(Restrictions, {
+      account: () => effect { return { banned: false } },
+      project: () => effect { return { restricted: false } },
+      fence: () => effect { return sql`SELECT 1` },
+      unbanned: () => effect { return sql`SELECT 1` },
+    }),
+  )
+}
+
+const Started = Layer.effect(World, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const db = try migrated("settlement-vault-setup")
+  const factory = try reviewedFactory(escrow)
+  const projects = new Map<string, Listed>()
+  const access = new Map<string, AuthorityRead>([
+    [OWNER.githubId, { actorGithubId: OWNER.githubId, repositoryId: "repo-1", permission: "PermissionVerified", installation: "Installed" }],
+    [WRITER.githubId, { actorGithubId: WRITER.githubId, repositoryId: "repo-1", permission: "PermissionVerified", installation: "Installed", repositoryAdmin: false }],
+  ])
+  const appended: Appended[] = []
+  const clock = settableClock(windowOpen * 1000)
+  const urls = Redacted.make([chain.url] as ReadonlyArray<string>)
+  const owner = escrow.roles.owner.address
+  const services = Layer.mergeAll(
+    ports(projects, access, appended),
+    Layer.succeed(Wallets, {
+      effective: () => effect { return undefined },
+      payable: () => effect { return undefined },
+      authorized: (wallet) => effect { return wallet.githubId === OWNER.githubId && wallet.network === "Base" ? [{ address: owner, claimId: "claim-7", digest: "digest-7" }] : [] },
+      fence: () => effect { return sql`SELECT 1` },
+    }),
+    Layer.succeed(PaymentNetworks, { served: ["base-mainnet"], urls: () => effect { return urls } }),
+    Layer.succeed(PaymentRpc, { urls: { "base-mainnet": urls }, genesis: {} }),
+    Layer.succeed(CreationSources, { factories: [factory], programs: [] }),
+  )
+  return { escrow, clock, projects, access, appended, layer: Layer.provideMerge(services, Layer.mergeAll(d1(db), webCrypto, outbound)) }
+})
+
+effect function listed(projectId: string) {
+  const { escrow, projects } = try World
+  const manifest = {
+    id: projectId, status: "active",
+    reward: { kind: "monthly-pool", chain: "base", monthlyCapMinor: "50000000", monthlyCapDisplay: "50 USDC" },
+    rewardAsset: { address: escrow.dollar, decimals: 6 },
+    escrow: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] },
+  }
+  const view: ProjectView = {
+    projectId, revision: 3, manifestSha256: try sha256Hex(JSON.stringify(manifest)), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
+    retirement: "NotRetired", stewardGithubId: OWNER.githubId, stewardAccount: "UserSteward", listing: { fromApplication: false },
+    repositories: [{ id: "repo-1", nodeId: "R_1", fullName: "acme/widget", integrationBranch: "main", aliases: [] }], closureConsent: false,
+  }
+  projects.set(projectId, { view, manifest })
+}
+
+effect function revisionOf(projectId: string) {
+  return (try World).projects.get(projectId)?.view.revision ?? 0
+}
+
+effect function body(projectId: string, step: "review" | "register", transactionId?: string) {
+  return { step, expectedRevision: try revisionOf(projectId), network: "base-mainnet", claimId: "claim-7", automatic: false, ...(transactionId === undefined ? {} : { transactionId }) } satisfies VaultSetupBody
+}
+
+effect function refusal(projectId: string, actor: VaultActor, request: VaultSetupBody) {
+  const answer = ownerVaultPost(projectId, actor, request) catch (error) => error._tag === "Refused" ? error.code : error._tag
+  return typeof answer === "string" ? answer : "answered"
+}
+
+effect function created(projectId: string) {
+  const reviewed = try ownerVaultPost(projectId, OWNER, try body(projectId, "review"))
+  if (!("review" in reviewed) || reviewed.review.family !== "evm") return try die(new Error("an EVM review was expected"))
+  return reviewed.review.transaction
+}
+
+effect function sent(transaction: { readonly to: string; readonly data: string }) {
+  const { escrow } = try World
+  const receipt = try promise(() => escrow.send(escrow.roles.owner.address, transaction.to as EvmAddress, transaction.data as `0x${string}`))
+  return receipt.transactionHash
+}
+
+effect function signedRepeat(transaction: { readonly to: string; readonly data: string }) {
+  const { escrow } = try World
+  const raw = try promise(() => escrow.signTransaction(escrow.roles.owner.address, transaction.to as EvmAddress, transaction.data as `0x${string}`))
+  return (try promise(() => escrow.sendRaw(raw))).transactionHash
+}
+
+effect function holdFinality() {
+  const { escrow } = try World
+  escrow.chain.setFinalized(try promise(() => escrow.head()))
+}
+
+effect function finalizeAll() {
+  try holdFinality()
+}
+
+effect function savedRows(projectId: string) {
+  return try (try D1).all(sql`SELECT state, attempts, last_code FROM saved_vault_creations WHERE project_id = ${projectId} ORDER BY rowid`)
+}
+
+effect function snapshotCount(projectId: string) {
+  return (try (try D1).all(sql`SELECT vault FROM vault_snapshots WHERE project_id = ${projectId}`)).length
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function sweepAfter(minutes: number) {
+  const world = try World
+  world.clock.advance(minutes * 60_000)
+  return try finishSavedVaultCreations()
+}
+
+layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Register the project vault (spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer")', () => effect {
+    const world = try World
+    provide world.clock.layer, world.layer {
+      const project = "vault-setup-register"
+      try listed(project)
+      const writer = try refusal(project, WRITER, try body(project, "review"))
+      const transaction = try created(project)
+      try holdFinality()
+      const tx = try sent(transaction)
+      const pending = try ownerVaultPost(project, OWNER, try body(project, "register", tx))
+      const waiting = try savedRows(project)
+      try finalizeAll()
+      const registered = try ownerVaultPost(project, OWNER, try body(project, "register", tx))
+      const appendedOnce = world.appended.filter((entry) => entry.projectId === project).length
+      const snapshots = try snapshotCount(project)
+      const second = try refusal(project, OWNER, try body(project, "review"))
+      const upper = try ownerVaultPost(project, OWNER, try body(project, "register", `0x${tx.slice(2).toUpperCase()}`))
+      try same({
+        writer,
+        pending: "status" in pending && pending.status === "pending" && pending.provisional !== undefined,
+        waiting,
+        registered: "status" in registered && registered.status === "registered" ? registered.revision : undefined,
+        appendedOnce,
+        snapshots,
+        second,
+        upper: "status" in upper ? upper.status : undefined,
+        appendedAfterUpper: world.appended.filter((entry) => entry.projectId === project).length,
+        closed: try savedRows(project),
+      }, {
+        writer: "vault_authority_required",
+        pending: true,
+        waiting: [{ state: "waiting", attempts: 0, last_code: null }],
+        registered: 4,
+        appendedOnce: 1,
+        snapshots: 1,
+        second: "vault_already_registered",
+        upper: "registered",
+        appendedAfterUpper: 1,
+        closed: [{ state: "registered", attempts: 0, last_code: null }],
+      })
+    }
+  })
+
+  it.effect('Finish a pending registration after the owner leaves (spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old")', () => effect {
+    const world = try World
+    provide world.clock.layer, world.layer {
+      const project = "vault-setup-saved"
+      try listed(project)
+      const transaction = try created(project)
+      try holdFinality()
+      const tx = try sent(transaction)
+      try ownerVaultPost(project, OWNER, try body(project, "register", tx))
+      const early = try sweepAfter(3)
+      const afterEarly = try savedRows(project)
+      const granted = world.access.get(OWNER.githubId)
+      world.access.set(OWNER.githubId, { actorGithubId: OWNER.githubId, repositoryId: "repo-1", permission: "PermissionDenied", installation: "Installed" })
+      try finalizeAll()
+      try sweepAfter(3)
+      const lostAccess = try savedRows(project)
+      if (granted !== undefined) world.access.set(OWNER.githubId, granted)
+      const finished = try sweepAfter(3)
+      const savedPath = world.appended.filter((entry) => entry.projectId === project).map((entry) => entry.path)
+
+      const failedProject = "vault-setup-saved-failed"
+      try listed(failedProject)
+      const repeat = try created(failedProject)
+      try sent(repeat)
+      try holdFinality()
+      const reverted = try signedRepeat(repeat)
+      try ownerVaultPost(failedProject, OWNER, try body(failedProject, "register", reverted))
+      try finalizeAll()
+      try sweepAfter(3)
+      const refused = try savedRows(failedProject)
+      const notAskedAgain = try sweepAfter(3)
+
+      const expiringProject = "vault-setup-saved-expiry"
+      try listed(expiringProject)
+      const expiring = try created(expiringProject)
+      try holdFinality()
+      const expiringTx = try sent(expiring)
+      try ownerVaultPost(expiringProject, OWNER, try body(expiringProject, "register", expiringTx))
+      try sweepAfter(49 * 60)
+      const expired = try savedRows(expiringProject)
+      try ownerVaultPost(expiringProject, OWNER, try body(expiringProject, "register", expiringTx))
+      const waitingAgain = try savedRows(expiringProject)
+
+      const crowdedProject = "vault-setup-saved-limit"
+      try listed(crowdedProject)
+      const crowded = try created(crowdedProject)
+      try holdFinality()
+      const hashes = [try sent(crowded), try signedRepeat(crowded), try signedRepeat(crowded), try signedRepeat(crowded)]
+      for (const hash of hashes) try ownerVaultPost(crowdedProject, OWNER, try body(crowdedProject, "register", hash))
+      const crowdedRows = (try savedRows(crowdedProject)).length
+      try same({ early, afterEarly, lostAccess, finished, savedPath, refused, notAskedAgain, expired, waitingAgain, crowdedRows }, {
+        early: { registered: 0, waiting: 1, ended: 0 },
+        afterEarly: [{ state: "waiting", attempts: 1, last_code: null }],
+        lostAccess: [{ state: "waiting", attempts: 2, last_code: "authority_required" }],
+        finished: { registered: 1, waiting: 0, ended: 0 },
+        savedPath: ["saved"],
+        refused: [{ state: "refused", attempts: 1, last_code: "vault_creation_failed" }],
+        notAskedAgain: { registered: 0, waiting: 0, ended: 0 },
+        expired: [{ state: "expired", attempts: 0, last_code: "expired" }],
+        waitingAgain: [{ state: "waiting", attempts: 0, last_code: null }],
+        crowdedRows: 3,
+      })
+    }
+  })
+})

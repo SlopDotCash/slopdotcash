@@ -24,7 +24,7 @@ export interface Env {
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
 }
 
-export const recordedHeadSha = "c".repeat(40)
+const recordedHeadSha = "c".repeat(40)
 
 const registered: ReadonlyArray<{ readonly projectId: string; readonly path: string; readonly repositoryId: string }> = [
   { projectId: "alpha", path: "ada/alpha", repositoryId: "7001" },
@@ -57,6 +57,8 @@ const registryPorts = Layer.mergeAll(
       return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
     },
     active: () => effect { return registered.map(viewOf) },
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => effect { return sql`1` },
   }),
   Layer.succeed(Restrictions, {
@@ -86,9 +88,10 @@ const singleJournalPublication = Layer.effect(HistoricalPublication, effect {
   const context = try Effect.context<D1 | Experimental.Crypto.Crypto>()
   const registry = try Registry
   return {
-    publish: (admitted) => effect {
+    publish: (admitted, admit) => effect {
       const [source] = admitted.sources
       if (admitted.mode !== "single" || source === undefined) throw new PublicationFailed()
+      try admit(undefined)
       const project = registry.project(source.projectId) catch effect () => { throw new PublicationFailed() }
       if (project === undefined) throw new PublicationFailed()
       const registryFence = try registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] })

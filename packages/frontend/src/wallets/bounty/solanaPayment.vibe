@@ -1,7 +1,7 @@
 // spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
 import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
 import { randomId } from "@repo/platform/crypto"
-import { type Event, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import { type Event, type HistoryResult, type Keyed, Machine, Rejected, type Result, type SolanaPrompt, adapter, canCheckHistory, canEnterCandidate, canHistoryReply, canObserveHeight, canReceivePlan, canSend, canSignIn, canSignOut, canVerify, canVerifyReply, heightReader, initial, machineOver, server, visible } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
 import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { modelNumber } from "../../flows/security/private.vibe"
 import { storageKeys } from "../../platform/storage.vibe"
@@ -127,6 +127,11 @@ export effect function solanaPromptOver(storage: ListedStorage | undefined, pref
   } satisfies SolanaJournal
 }
 
+export function submittedOf(state: SolanaPrompt): string {
+  const saved = visible(state)
+  return saved.candidate !== "" ? saved.candidate : saved.hash !== "" ? saved.hash : state.memory
+}
+
 export interface SolanaPaymentInput {
   readonly caseId: string
   readonly generation: number
@@ -185,8 +190,8 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     try authorize
   }
 
-  effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string) {
-    return try prompt.written({ type: "walletReply", identity, reply, signature }, adapter)
+  effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string, stored: boolean) {
+    return try prompt.written({ type: "walletReply", identity, reply, signature, stored: stored && slotWritable(storage) }, adapter)
   }
 
   effect function send<R>(connection: SolanaConnection, authority: Authority<R>) {
@@ -212,22 +217,22 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     }) catch effect (error) => {
       if (!requested) throw error
       if (error._tag === "WalletDeclined") {
-        try reply(identity, "Declined", "")
+        try reply(identity, "Declined", "", true)
         throw refused(solanaMessages.declined)
       }
-      try reply(identity, "Uncertain", "")
+      try reply(identity, "Uncertain", "", true)
       throw refused(solanaMessages.uncertain)
     }
     const signature = base58Encode(signed)
     if (!(try verifyMessageSignature(key, reviewed.message, signed))) {
-      const uncertain = try reply(identity, "Uncertain", "")
+      const uncertain = try reply(identity, "Uncertain", "", true)
       if (!isSolanaSignature(signature)) throw new WalletFailed({ message: solanaMessages.unsigned })
       let kept: SolanaPrompt | undefined = undefined
       if (uncertain !== undefined && canEnterCandidate(uncertain, visible(uncertain), signature, account)) kept = try prompt.written({ type: "enterCandidate", read: visible(uncertain), candidate: signature }, account)
       throw refused(`Submitted ${signature}. Keep this signature; it does not match the prepared request${kept === undefined ? " and could not be saved" : ""}.`)
     }
-    const after = try reply(identity, "Signed", signature)
-    if (after === undefined) throw refused(`Submitted ${signature}. Keep this signature; browser storage could not save it.`)
+    const after = (try reply(identity, "Signed", signature, true)) ?? (try reply(identity, "Signed", signature, false))
+    if (after === undefined || after.memory === signature) throw refused(`Submitted ${signature}. Keep this signature; browser storage could not save it.`)
     if (visible(after).hash !== signature) throw refused(`Submitted ${signature}. Keep this signature; the saved request changed.`)
     return signature
   }
@@ -258,7 +263,7 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     try guarded(authority.authorizeVerification)
     const read = visible(before)
     const candidate = entered?.trim() ?? ""
-    if (candidate !== "" && isSolanaSignature(candidate) && candidate !== read.candidate && canEnterCandidate(before, read, candidate, account)) {
+    if (candidate !== "" && isSolanaSignature(candidate) && candidate !== submittedOf(before) && canEnterCandidate(before, read, candidate, account)) {
       const saved = try prompt.written({ type: "enterCandidate", read, candidate }, account)
       if (saved === undefined) throw refused(solanaMessages.storageBlocked)
     }
@@ -266,8 +271,7 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     if (!canVerify(ready, account)) throw refused(solanaMessages.uncertainShown)
     const checking = try prompt.written({ type: "verify" }, account)
     const request = checking?.request ?? ready.request
-    const saved = visible(try current())
-    const signature = saved.candidate !== "" ? saved.candidate : saved.hash
+    const signature = submittedOf(try current())
     const next = authority.verify([signature]) catch effect (error) => {
       try answered(request, "CheckUnavailable")
       throw error
@@ -288,7 +292,6 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
 
   effect function beginHistory() {
     const state = try current()
-    if (state.phase === "HistoryCheck") return state.request
     const sessionId = try sessionActor()
     const sessionNumber = sessionId === undefined ? 0 : actorNumber(sessionId)
     if (!canCheckHistory(state, sessionNumber, account)) throw refused(paymentMessages.stateChanged)
@@ -297,9 +300,9 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     return after.request
   }
 
-  effect function endHistory(request: number, paymentFound: boolean) {
+  effect function endHistory(request: number, history: HistoryResult) {
     const state = try current()
-    if (canHistoryReply(state, lifetime, request, paymentFound, server)) try prompt.written({ type: "historyReply", lifetime, request, found: paymentFound }, server)
+    if (canHistoryReply(state, lifetime, request, history, server)) try prompt.written({ type: "historyReply", lifetime, request, history }, server)
     return try current()
   }
 

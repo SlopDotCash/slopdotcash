@@ -353,7 +353,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         older,
         closed,
         unsupported,
-        bounty: { result: bountyWrite, rows: try rows("SELECT period FROM vault_month_pledges WHERE project_id = ?", bounty), total: try rows("SELECT open_pledged_gross FROM vault_snapshots WHERE project_id = ?", bounty) },
+        bounty: { result: bountyWrite, rows: try rows("SELECT period FROM vault_month_pledges WHERE project_id = ?", bounty), total: try rows("SELECT open_pledged_gross FROM vault_snapshots WHERE project_id = ?", bounty), starts: try rows("SELECT period FROM vault_month_starts WHERE project_id = ?", bounty) },
       }, {
         stored: {
           rows: [
@@ -382,7 +382,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
           rows: [pledgeStored.rows[0], { period: "2026-12", amount: "7", open: 0, block_number: String(pledgeTotals.block + 1n) }, pledgeStored.rows[2], pledgeStored.rows[3]],
           total: [{ total_deposited: "41000000", open_pledged_gross: null }],
         },
-        bounty: { result: ["ObservationStored", 200], rows: [], total: [{ open_pledged_gross: null }] },
+        bounty: { result: ["ObservationStored", 200], rows: [], total: [{ open_pledged_gross: null }], starts: [] },
       })
     }
   })

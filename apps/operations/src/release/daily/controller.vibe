@@ -1,0 +1,370 @@
+// spec/operations/dailyCollection.md, "Story: Keep published contribution data fresh without a person watching it"; spec/operations/dailyCollection.md, "A daily tick starts one fresh collection only when none runs"; spec/operations/dailyCollection.md, "A superseded collection is published by a retained-data release at most three times and never replaces newer data"; spec/operations/dailyCollection.md, "A failed collection with a checkpoint is resumed once, never a resume of a resume"; spec/operations/dailyCollection.md, "A follow-up acts only on a completed trusted main release, and publishes before it resumes"; spec/operations/dailyCollection.md, "Live data older than 48 hours fails the daily run"
+import { boundedBytes } from "@repo/platform/browser"
+import { type GitHubFailure, GitHub, defaultTimeoutMs, githubApi, githubWith } from "@repo/platform/github"
+import { GitHubApp, githubApp } from "@repo/platform/github/app"
+import {
+  type FollowedRun,
+  type ReleaseRead,
+  canPublish,
+  followUpOf,
+  initial,
+  liveDataStale,
+  machineOver,
+  resumePollMinutes,
+  resumeQuietMinutes,
+  servedNewer,
+  startPollMinutes,
+  startQuietMinutes,
+  trustedMainRelease,
+} from "../../../gen/operations__dailyCollection.effect.vibe"
+
+export error DailyCollectionFailed { message: string }
+
+schema RunRepository { readonly full_name: string }
+schema WorkflowRun {
+  readonly id: number
+  readonly status: string
+  readonly conclusion: string | null
+  readonly event: string
+  readonly head_branch: string | null
+  readonly path: string
+  readonly run_attempt: number
+  readonly created_at: string
+  readonly repository: RunRepository
+  readonly head_repository: RunRepository | null
+}
+schema RunList { readonly workflow_runs: ReadonlyArray<WorkflowRun> }
+schema JobStep { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly started_at?: string | null }
+schema RunJob { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly steps?: ReadonlyArray<JobStep> | null }
+schema RunJobs { readonly jobs: ReadonlyArray<RunJob> }
+schema RunArtifact { readonly name: string; readonly expired: boolean }
+schema RunArtifacts { readonly artifacts: ReadonlyArray<RunArtifact> }
+schema DispatchAnswer { readonly workflow_run_id?: number | null }
+
+export interface DispatchApp {
+  readonly clientId: string
+  readonly privateKey: Redacted.Redacted<string>
+  readonly installation: string
+}
+
+export interface Access {
+  readonly repository: string
+  readonly fallback: Redacted.Redacted<string> | undefined
+  readonly app: DispatchApp | undefined
+}
+
+const deployWorkflow = "deploy.yml"
+const monthlyWorkflow = "monthly-rewards.yml"
+const prepareJob = "Prepare checked browser bundle"
+const collectStep = "Generate live contribution data"
+const profilesStep = "Generate live contributor profiles"
+const restoreJob = "Restore trusted production discussion reads"
+const deployJob = "Deploy trusted production bundle"
+const publishedStep = "Verify Cloudflare deployment commit metadata"
+const fast = { skip_proofs: "true", skip_browser_tests: "true" }
+const liveProfiles = "https://slop.cash/data/profiles.json"
+const userAgent = "slop-daily-collection"
+const readLimitBytes = 4 * 1024 * 1024
+const liveLimitBytes = 256 * 1024 * 1024
+const minuteMillis = 60_000
+const maxAttempts = 6
+const dispatchPolls = 20
+const dispatchPollMillis = 15_000
+const dispatchSlackMillis = 60_000
+const runPollMillis = 60_000
+const rerunSettleMillis = 30_000
+const unavailableStepMillis = 30_000
+const limitedMinMillis = 30_000
+const limitedMaxMillis = 65 * minuteMillis
+const resetSlackMillis = 5_000
+const installationId = /^[1-9]\d{0,17}$/u
+
+type Inputs = Readonly<Record<string, string>>
+
+interface Release {
+  readonly collected: boolean
+  readonly collectionFailed: boolean
+  readonly resumed: boolean
+  readonly published: boolean
+  readonly profilesStartedAt: string | undefined
+}
+
+interface Decision {
+  readonly action: "publish" | "resume" | "none"
+  readonly reason: string
+}
+
+function stepNamed(job: RunJob | undefined, name: string) {
+  const found = (job?.steps ?? []).filter((candidate) => candidate.name === name)
+  return found.length === 1 ? found[0] : undefined
+}
+
+function releaseOf(jobs: ReadonlyArray<RunJob>): Release {
+  const prepare = jobs.filter((job) => job.name === prepareJob)
+  const job = prepare.length === 1 ? prepare[0] : undefined
+  const collect = stepNamed(job, collectStep)
+  return {
+    collected: job?.conclusion === "success" && collect?.conclusion === "success",
+    collectionFailed: collect?.conclusion === "failure",
+    resumed: jobs.find((candidate) => candidate.name === restoreJob)?.conclusion === "success",
+    published: stepNamed(jobs.find((candidate) => candidate.name === deployJob), publishedStep)?.conclusion === "success",
+    profilesStartedAt: stepNamed(job, profilesStep)?.started_at ?? undefined,
+  }
+}
+
+function followedOf(run: WorkflowRun): FollowedRun {
+  return {
+    repository: run.repository.full_name,
+    headRepository: run.head_repository?.full_name ?? "",
+    branch: run.head_branch ?? "",
+    event: run.event,
+    path: run.path,
+    completed: run.status === "completed",
+  }
+}
+
+function decisionOf(run: WorkflowRun, jobs: ReadonlyArray<RunJob>, artifacts: ReadonlyArray<RunArtifact>, repository: string): Decision {
+  const followed = followedOf(run)
+  const read = releaseOf(jobs)
+  const release: ReleaseRead = {
+    collected: read.collected,
+    collectionFailed: read.collectionFailed,
+    resumed: read.resumed,
+    published: read.published,
+    checkpointSaved: artifacts.some((artifact) => artifact.name === `leaderboard-discussions-${run.run_attempt}` && !artifact.expired),
+  }
+  const followUp = followUpOf(followed, repository, release)
+  if (followUp === "PublishCollection") return { action: "publish", reason: "its fresh collection succeeded but it did not publish" }
+  if (followUp === "ResumeCollection") return { action: "resume", reason: "its collection failed after a checkpoint" }
+  if (!(trustedMainRelease(followed, repository) && followed.completed)) return { action: "none", reason: "not a completed trusted main release" }
+  if (release.collectionFailed && release.resumed) return { action: "none", reason: "a resumed collection is not resumed again" }
+  if (release.collectionFailed) return { action: "none", reason: "the failed collection saved no checkpoint" }
+  return { action: "none", reason: "nothing to publish or resume" }
+}
+
+function failed(message: string) {
+  return new DailyCollectionFailed({ message })
+}
+
+function retryWait(error: GitHubFailure, attempt: number, now: number) {
+  if (error._tag === "RateLimited") return Math.min(Math.max((error.resetAt ?? 0) - now + resetSlackMillis, limitedMinMillis), limitedMaxMillis)
+  if (error._tag === "GitHubUnavailable" && error.status !== undefined && error.status >= 500) return attempt * unavailableStepMillis
+  return undefined
+}
+
+effect function pause(millis: number) {
+  try sleep(Duration.millis(millis))
+}
+
+effect function retried<A>(path: string, call: () => A!GitHubFailure, attempt = 1): A!GitHubFailure {
+  return call() catch effect (error) => {
+    const wait = retryWait(error, attempt, try Clock.currentTimeMillis)
+    if (wait === undefined || attempt >= maxAttempts || !("status" in error) || error.status === undefined) throw error
+    try Console.log(`GitHub answered ${error.status} on ${path}; retrying in ${Math.round(wait / 1000)}s.`)
+    try pause(wait)
+    return try retried(path, call, attempt + 1)
+  }
+}
+
+effect function read<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S) {
+  const github = try GitHub
+  return try retried(path, () => github.json(path, schema, { limitBytes: readLimitBytes }))
+}
+
+effect function post(path: string, body: unknown) {
+  const github = try GitHub
+  return try retried(path, () => github.send("POST", path, body, DispatchAnswer))
+}
+
+effect function runsOf(repository: string, workflow: string, query: string) {
+  return (try read(`/repos/${repository}/actions/workflows/${workflow}/runs?${query}`, RunList)).workflow_runs
+}
+
+effect function jobsOf(repository: string, id: number) {
+  return (try read(`/repos/${repository}/actions/runs/${id}/jobs?per_page=100`, RunJobs)).jobs
+}
+
+effect function runOf(repository: string, id: number) {
+  return try read(`/repos/${repository}/actions/runs/${id}`, WorkflowRun)
+}
+
+export effect function collectionRunning(repository: string) {
+  const monthly = try runsOf(repository, monthlyWorkflow, "branch=main&per_page=20")
+  if (monthly.some((run) => run.status !== "completed")) return "the monthly close"
+  for (const run of try runsOf(repository, deployWorkflow, "branch=main&per_page=30")) {
+    if (run.status === "completed" || !trustedMainRelease(followedOf(run), repository)) continue
+    const prepare = (try jobsOf(repository, run.id)).find((job) => job.name === prepareJob)
+    if (prepare?.status !== "completed") return `release ${run.id}`
+  }
+  return undefined
+}
+
+effect function waitForQuiet(repository: string, budgetMinutes: number, pollMinutes: number) {
+  const until = (try Clock.currentTimeMillis) + budgetMinutes * minuteMillis
+  for (;;) {
+    const busy = try collectionRunning(repository)
+    if (busy === undefined) return true
+    if ((try Clock.currentTimeMillis) + pollMinutes * minuteMillis > until) {
+      try Console.log(`A collection is still running (${busy}).`)
+      return false
+    }
+    try Console.log(`Waiting: a collection is running (${busy}).`)
+    try pause(pollMinutes * minuteMillis)
+  }
+}
+
+effect function dispatchedIds(repository: string) {
+  return try runsOf(repository, deployWorkflow, "branch=main&event=workflow_dispatch&per_page=20")
+}
+
+export effect function dispatch(repository: string, inputs: Inputs) {
+  const before = new Set((try dispatchedIds(repository)).map((run) => run.id))
+  const startedAt = try Clock.currentTimeMillis
+  const answer = try post(`/repos/${repository}/actions/workflows/${deployWorkflow}/dispatches`, { ref: "main", inputs, return_run_details: true })
+  const returned = answer.value?.workflow_run_id
+  if (returned !== undefined && returned !== null && returned > 0) return returned
+  for (let poll = 0; poll < dispatchPolls; poll++) {
+    try pause(dispatchPollMillis)
+    const fresh = (try dispatchedIds(repository))
+      .filter((run) => !before.has(run.id) && Date.parse(run.created_at) >= startedAt - dispatchSlackMillis)
+      .sort((a, b) => a.id - b.id)
+    const first = fresh[0]
+    if (first !== undefined) return first.id
+  }
+  throw failed("The dispatched release did not appear")
+}
+
+effect function waitForRun(repository: string, id: number) {
+  for (;;) {
+    const run = try runOf(repository, id)
+    if (run.status === "completed") return run
+    try pause(runPollMillis)
+  }
+}
+
+export effect function liveProfilesAt() {
+  const client = try HttpClient.HttpClient
+  const url = `${liveProfiles}?snapshot=${try Clock.currentTimeMillis}`
+  provide FetchHttpClient.RequestInit = { redirect: "error", cache: "no-store" } {
+    const response = try client.execute(HttpClientRequest.get(url))
+    if (response.status < 200 || response.status >= 300) return undefined
+    const bytes = try boundedBytes(response, liveLimitBytes, liveProfiles)
+    const body: unknown = try Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+    const generatedAt = typeof body === "object" && body !== null && "generatedAt" in body ? body.generatedAt : undefined
+    const millis = typeof generatedAt === "string" ? Date.parse(generatedAt) : Number.NaN
+    return Number.isFinite(millis) ? millis : undefined
+  }
+}
+
+export effect function dailyMachine() {
+  const kept = try Ref.make(initial)
+  return try machineOver(() => Ref.get(kept), (next) => Ref.set(kept, next))
+}
+
+export effect function startDaily(repository: string) {
+  const daily = try dailyMachine()
+  if (try waitForQuiet(repository, startQuietMinutes, startPollMinutes)) {
+    try daily.send({ type: "dailyTick" })
+    const id = try dispatch(repository, fast)
+    try Console.log(`Dispatched fresh collection release ${id}.`)
+  } else {
+    try Console.log("Skipped today's collection: one is already running.")
+  }
+  const live = try liveProfilesAt()
+  const now = try Clock.currentTimeMillis
+  if (liveDataStale(live !== undefined, live === undefined ? 0 : now - live)) {
+    const message = `Live contribution data is ${live === undefined ? "unreadable" : `from ${new Date(live).toISOString()}`}; it should be under 48 hours old.`
+    try Console.log(`::error::${message}`)
+    throw failed(message)
+  }
+}
+
+effect function resumeCollection(repository: string, id: number) {
+  const daily = try dailyMachine()
+  try daily.send({ type: "dailyTick" })
+  try daily.send({ type: "finishFailed", checkpoint: true })
+  if (!(try waitForQuiet(repository, resumeQuietMinutes, resumePollMinutes))) {
+    try Console.log("::warning::Not resumed: another collection ran for five hours.")
+    throw failed("Not resumed: another collection ran for five hours.")
+  }
+  try daily.send({ type: "resume" })
+  const resumed = try dispatch(repository, { ...fast, discussion_resume_run: String(id) })
+  try Console.log(`Dispatched resumed collection ${resumed} from release ${id}.`)
+}
+
+effect function publishCollection(repository: string, id: number, started: string | undefined) {
+  const daily = try dailyMachine()
+  try daily.send({ type: "dailyTick" })
+  try daily.send({ type: "finishSuperseded" })
+  const startedAt = started === undefined ? Number.NaN : Date.parse(started)
+  effect function newer() {
+    const live = try liveProfilesAt()
+    return servedNewer(live !== undefined, live ?? 0, Number.isFinite(startedAt), startedAt)
+  }
+  for (;;) {
+    if (!canPublish(try daily.get(), true)) break
+    if (try newer()) {
+      try Console.log("The live site already serves this collection or a newer one.")
+      return
+    }
+    const publishing = try dispatch(repository, { ...fast, use_published_data: "true", data_from_run: String(id) })
+    try Console.log(`Publishing release ${id}'s collection through release ${publishing}.`)
+    let result = try waitForRun(repository, publishing)
+    if (result.conclusion !== "success" && result.conclusion !== "cancelled" && !(try newer())) {
+      try Console.log(`Release ${publishing} ended ${result.conclusion}; rerunning its failed jobs once.`)
+      try post(`/repos/${repository}/actions/runs/${publishing}/rerun-failed-jobs`, undefined)
+      try pause(rerunSettleMillis)
+      result = try waitForRun(repository, publishing)
+    }
+    if (releaseOf(try jobsOf(repository, publishing)).published) {
+      try daily.send({ type: "publish", superseded: false })
+      try Console.log(`Published release ${id}'s collection.`)
+      return
+    }
+    if (result.conclusion !== "success") {
+      if (try newer()) {
+        try Console.log("Newer data went live meanwhile; nothing left to publish.")
+        return
+      }
+      const message = `Release ${publishing} ended ${result.conclusion} without publishing.`
+      try Console.log(`::error::${message}`)
+      throw failed(message)
+    }
+    try daily.send({ type: "publish", superseded: true })
+    try Console.log(`Release ${publishing} was superseded by a newer main; publishing again.`)
+  }
+  try Console.log("::error::Three publishing releases in a row were superseded.")
+  throw failed("Three publishing releases in a row were superseded.")
+}
+
+export effect function followUpDaily(repository: string, id: number) {
+  const run = try runOf(repository, id)
+  const jobs = try jobsOf(repository, id)
+  const artifacts = (try read(`/repos/${repository}/actions/runs/${id}/artifacts?per_page=100`, RunArtifacts)).artifacts
+  const decision = decisionOf(run, jobs, artifacts, repository)
+  try Console.log(`Release ${id}: ${decision.action} (${decision.reason}).`)
+  if (decision.action === "resume") {
+    try resumeCollection(repository, id)
+  }
+  if (decision.action === "publish") {
+    try publishCollection(repository, id, releaseOf(jobs).profilesStartedAt)
+  }
+}
+
+export function dailyAccess(access: Access) {
+  const app = access.app
+  const fallback = succeed(access.fallback)
+  if (app === undefined || !installationId.test(app.installation)) return githubWith({ authority: githubApi, credential: fallback, userAgent, timeoutMs: defaultTimeoutMs })
+  const name = access.repository.split("/")[1] ?? ""
+  return Layer.unwrap(Effect.provide(effect {
+    const minted = try GitHubApp
+    const credential = effect {
+      return minted.installationToken(app.installation, { repositories: [name], permissions: { actions: "write" } }) catch effect (error) => {
+        const reason = error._tag === "GitHubMalformed" ? "invalid token" : error._tag === "NotFound" ? "HTTP 404" : error.status === undefined ? error._tag : `HTTP ${error.status}`
+        try Console.log(`Dispatch App token unavailable (${reason}); using GITHUB_TOKEN.`)
+        return access.fallback
+      }
+    }
+    return githubWith({ authority: githubApi, credential, userAgent, timeoutMs: defaultTimeoutMs })
+  }, githubApp({ appId: app.clientId, privateKey: app.privateKey, userAgent })))
+}

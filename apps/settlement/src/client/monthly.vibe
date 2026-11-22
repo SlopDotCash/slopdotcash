@@ -1,6 +1,7 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"
 import { type AnyRoute, route } from "@repo/platform/route"
-import { getPaymentsProjectsByIdMonthlyByPeriod, postPaymentsProjectsByIdMonthlyByPeriodAllocations, postPaymentsProjectsByIdMonthlyByPeriodCommitment, postPaymentsProjectsByIdMonthlyByPeriodFinalize, postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment, postPaymentsProjectsByIdMonthlySettings } from "./refusals.vibe"
+import { MonthLockTransaction } from "./owner.vibe"
+import { getPaymentsProjectsByIdMonthlyByPeriod, postPaymentsProjectsByIdMonthlyByPeriodAllocations, postPaymentsProjectsByIdMonthlyByPeriodCommitment, postPaymentsProjectsByIdMonthlyByPeriodFinalize, postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment, postPaymentsProjectsByIdMonthlySettings, postPaymentsProjectsByIdSolanaMonthlyCommitment } from "./refusals.vibe"
 
 export schema MonthlyAwardState = "excluded" | "underfunded" | "awaiting-reservation" | "reserved" | "paid" | "conflict"
 
@@ -30,6 +31,7 @@ export schema MonthlyAsset {
 
 export schema MonthlyProposal {
   readonly capBase: string
+  readonly earlyCloseAt?: string
   readonly allocationSequence: number
   readonly allocations: ReadonlyArray<MonthlyAllocation>
   readonly latestCutAt: string | null
@@ -257,4 +259,62 @@ export const monthlyCuts = route({
   cache: "private",
 })
 
-export const monthlyApi: ReadonlyArray<AnyRoute> = [monthlyView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyCommitment, monthlySolanaCommitment, monthlyCuts]
+export schema MonthlySettingAction {
+  readonly step: string
+  readonly network: string
+  readonly vault: string
+  readonly wallet?: string
+  readonly cap?: string
+  readonly enabled?: boolean
+  readonly blockhash?: string
+  readonly transactionId?: string
+}
+
+export schema MonthlyCommitmentState {
+  readonly cap: string
+  readonly enabled: boolean
+}
+
+export schema MonthlySettingRead {
+  readonly current: MonthlyCommitmentState
+  readonly decimals: number
+}
+
+export schema MonthlySettingPlan {
+  readonly wallet: string
+  readonly cap: string
+  readonly enabled: boolean
+  readonly decimals: number
+  readonly current: MonthlyCommitmentState
+  readonly transaction: MonthLockTransaction | null
+}
+
+export schema MonthlySettingShown {
+  readonly setting: MonthlySettingRead
+}
+
+export schema MonthlySettingReviewed {
+  readonly plan: MonthlySettingPlan
+}
+
+export schema MonthlySettingChecked {
+  readonly status: "pending" | "failed" | "finalized"
+}
+
+export schema MonthlySettingAnswered = MonthlySettingShown | MonthlySettingReviewed | MonthlySettingChecked
+
+const settingRows = postPaymentsProjectsByIdSolanaMonthlyCommitment
+
+export const paymentsSolanaMonthlyCommitment = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/solana-monthly-commitment",
+  access: "public",
+  limitKib: 4,
+  request: MonthlySettingAction,
+  answer: MonthlySettingAnswered,
+  rejected: settingRows.monthlySettingRejected.error,
+  cache: "private",
+  invalid: refusal(settingRows.invalidMonthlySetting),
+})
+
+export const monthlyApi: ReadonlyArray<AnyRoute> = [monthlyView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyCommitment, monthlySolanaCommitment, monthlyCuts, paymentsSolanaMonthlyCommitment]

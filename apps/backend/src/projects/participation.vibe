@@ -1,0 +1,18 @@
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"
+import { D1, first, sql } from "@repo/platform/d1"
+import { ProjectParticipation } from "@repo/ports/backend"
+
+schema Found { found: number }
+
+export function participation(projectId: string, githubId: string) {
+  return sql`SELECT 1 AS found WHERE EXISTS (SELECT 1 FROM project_revisions WHERE project_id = ${projectId} AND actor_github_id = ${githubId}) OR EXISTS (SELECT 1 FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ${projectId} AND a.applicant_github_id = ${githubId})`
+}
+
+export const ProjectParticipationLive = Layer.effect(ProjectParticipation, effect {
+  const db = try D1
+  return {
+    participated: (projectId, githubId) => provideService(effect {
+      return (try first(Found, participation(projectId, githubId))) !== undefined
+    }, D1, db),
+  } satisfies ProjectParticipation.Shape
+})

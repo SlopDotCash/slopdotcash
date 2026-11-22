@@ -17,6 +17,7 @@ export interface SettingChoice {
   readonly automatic: boolean
   readonly expectedSequence: number
   readonly authority: SettingsAuthority
+  readonly lateCutNotice: boolean
 }
 
 function reads(projectId: string): ReadonlyArray<Statement> {
@@ -81,6 +82,7 @@ export effect function setAutomatic(projectId: string, choice: SettingChoice) {
     automatic: choice.automatic,
     expectedSequence: choice.expectedSequence,
     authority: choice.authority,
+    lateCutNotice: choice.lateCutNotice,
   }))
   const stored = try first(StoredSetting, sql`SELECT sequence FROM monthly_payment_settings WHERE project_id = ${projectId} AND sequence = ${next.sequence} AND actor_id = ${String(choice.authority.actor)}`)
   if (stored === undefined) throw new ProjectChanged({ projectId, write: "monthly setting" })

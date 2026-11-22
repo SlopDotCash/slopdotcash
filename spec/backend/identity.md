@@ -2,7 +2,7 @@
 
 PRD sections 3 and 9 make GitHub the only login method. The identity Worker
 (`workers/identity/handler.ts`, `persistence.ts`, `contracts.ts`,
-`rate-limit.ts`, migrations 0002, 0006 and 0108) runs the GitHub
+`rate-limit.ts`, migrations 0002, 0006, 0108 and 0146) runs the GitHub
 authorization-code flow with PKCE and returns a one-time identity assertion
 bound to one audience. Every start and poll request, admitted or refused,
 counts in its client's fixed one-minute D1 window (12 starts, 120 polls)
@@ -22,7 +22,9 @@ exchange and `/user` read, and is the only source of a flow's GitHub
 identity or callback failure; `workerClock` advances the trusted clock; and
 `identityCron` is the hourly cleanup. Browser and backend requests (start,
 callback claim, poll, consume) need no sender: their authority is the state,
-cookie, capability or token they present. Model flow,
+cookie, capability or token they present; the browser binding of a
+website flow is the Worker's own comparison of the request's binding cookie
+with the flow's stored hash, never a request field. Model flow,
 state, capability and token identifiers stand for random 256-bit values: the
 shell stores only their SHA-256 digests and compares in constant time. The
 token of a production flow is derived deterministically from that flow, so
@@ -55,7 +57,7 @@ type FlowMode = Production | LocalHandoff
 type FlowStatus = Pending | CallbackProcessing | CallbackComplete | AssertionIssued | CallbackFailed
 type GitHubIdentity = { actor: int, login: str, nodeId: int }
 type Flow = { id: int, oauthState: int, capability: int, audience: Audience, mode: FlowMode,
-  status: FlowStatus, pkceStored: bool, github: GitHubIdentity, createdAt: int, expiresAt: int }
+  status: FlowStatus, pkceStored: bool, github: GitHubIdentity, createdAt: int, expiresAt: int, bound: bool }
 type Assertion = { token: int, audience: Audience, github: GitHubIdentity,
   createdAt: int, expiresAt: int, consumed: bool, consumedAt: int }
 type RateScope = StartScope | PollScope
@@ -72,7 +74,7 @@ pure val startLimit = 12
 pure val pollLimit = 120
 pure val noGitHub: GitHubIdentity = { actor: 0, login: "", nodeId: 0 }
 pure val absentFlow: Flow = { id: 0, oauthState: 0, capability: 0, audience: PointsWeb, mode: Production,
-  status: CallbackFailed, pkceStored: false, github: noGitHub, createdAt: 0, expiresAt: 0 }
+  status: CallbackFailed, pkceStored: false, github: noGitHub, createdAt: 0, expiresAt: 0, bound: false }
 pure val absentAssertion: Assertion = { token: 0, audience: PointsWeb, github: noGitHub,
   createdAt: 0, expiresAt: 0, consumed: true, consumedAt: 0 }
 pure val initial: Identity = { now: 0, flows: List(), assertions: List(),
@@ -99,13 +101,15 @@ pure def countRequest(s: Identity, client: int, scope: RateScope): List[RateWind
   s.windows.select(w => not(w.client == client and w.scope == scope)).append(counted)
 pure def admitted(s: Identity, client: int, scope: RateScope): bool =
   nextWindow(windowOf(s, client, scope), s.now).count <= limitOf(scope)
-pure def canStart(s: Identity, client: int, audience: Audience, mode: FlowMode): bool =
+pure def canStart(s: Identity, client: int, audience: Audience, mode: FlowMode, origin: bool): bool =
   client > 0 and admitted(s, client, StartScope) and (mode == LocalHandoff implies audience == PointsWeb)
-pure def start(s: Identity, client: int, audience: Audience, mode: FlowMode): Identity =
+    and (websiteFlow(audience, mode) implies origin)
+pure def start(s: Identity, client: int, audience: Audience, mode: FlowMode, origin: bool): Identity =
   val id = s.lastFlow + 1
   { ...s, windows: countRequest(s, client, StartScope), lastFlow: id,
     flows: s.flows.append({ id: id, oauthState: id, capability: id, audience: audience, mode: mode,
-      status: Pending, pkceStored: true, github: noGitHub, createdAt: s.now, expiresAt: s.now + flowLifetime }) }
+      status: Pending, pkceStored: true, github: noGitHub, createdAt: s.now, expiresAt: s.now + flowLifetime,
+      bound: websiteFlow(audience, mode) }) }
 pure def canStartStorageFailed(s: Identity, client: int): bool = client > 0 and admitted(s, client, StartScope)
 pure def startStorageFailed(s: Identity, client: int): Identity =
   { ...s, windows: countRequest(s, client, StartScope) }
@@ -123,6 +127,47 @@ pure def alwaysRateWindowsCounted(s: Identity): bool = s.windows.every(w => w.co
 pure def lawFullWindowRefusesUntilItExpires(w: RateWindow, now: int): bool =
   ((w.count >= limitOf(w.scope) and w.expiresAt > now) implies nextWindow(w, now).count > limitOf(w.scope))
     and (w.expiresAt <= now implies nextWindow(w, now).count == 1)
+```
+
+### A website flow belongs to the browser that started it
+
+A production flow of the web audience is bound to the browser that started
+it (Slop development `805b26053`, `workers/identity/handler.ts`
+`requiresBrowserBinding`, `browserBound`, migration
+`0146_identity_browser_binding.sql`). Its start must come from a browser
+page: a start with no `Origin` header answers 403 `origin_required`
+("Website sign-in must start from Slop"), counts in the start window and
+stores nothing. The start response sets a binding cookie
+`__Host-slop_oauth_bind_<flowId>` (HttpOnly, Secure, SameSite=None, Path=/,
+Max-Age=300) holding 32 random bytes; the flow stores only its SHA-256
+(`browser_binding_hash`) and every check compares in constant time.
+Authorization answers the 403 page "Sign-in not started here" ("This sign-in
+link was started in a different browser. Start sign-in again from Slop.")
+without the binding and stores nothing. The callback claims the flow first;
+without the binding the callback handler then fails the claimed flow
+(`failCallback`, as any later callback failure) and answers the same page, so
+its starter's poll answers `callback_failed` and never receives an
+assertion. A poll of a bound flow without the binding answers 403
+`browser_mismatch` ("This sign-in belongs to another browser") after
+`flow_unavailable` and `wrong_flow` and before waiting, counts in the poll
+window and changes no flow; the successful poll clears the cookie
+(Max-Age=0). Start and poll answer credentialed CORS
+(`access-control-allow-credentials: true`) to the allowed product origins.
+A private-trace flow and a local handoff have no browser to bind: they store
+no hash and keep their protocol. The binding secret never appears in a body
+or a log. These are shell obligations; the rule states what the store
+admits.
+
+```quint
+pure def websiteFlow(audience: Audience, mode: FlowMode): bool = audience == PointsWeb and mode == Production
+pure def canRefuseOriginRequired(s: Identity, client: int): bool = client > 0 and admitted(s, client, StartScope)
+pure def refuseOriginRequired(s: Identity, client: int): Identity = { ...s, windows: countRequest(s, client, StartScope) }
+pure def alwaysBoundOnlyForWebsite(s: Identity): bool = s.flows.every(f => f.bound iff websiteFlow(f.audience, f.mode))
+pure def lawWebsiteStartNeedsOrigin(s: Identity, client: int): bool = not(canStart(s, client, PointsWeb, Production, false))
+pure def lawBoundFlowAnswersOnlyItsBrowser(s: Identity, client: int, flowId: int, capability: int, audience: Audience): bool =
+  flowById(s, flowId).bound implies (pollOutcome(s, flowId, capability, audience, false, false) != PollReady
+    and not(canStoreAssertion(s, client, flowId, capability, audience, false))
+    and not(canIssueAssertion(s, flowId, capability, audience, false)))
 ```
 
 ### The callback claims a pending flow once and clears its verifier before contacting GitHub
@@ -177,8 +222,9 @@ A poll names the flow, its capability and its audience. Production and local
 flows answer only their own poll route. Before the callback completes, a
 poll is told to wait. An unknown or expired flow, a wrong capability and a
 wrong audience all answer the same `flow_unavailable`; a poll on the other
-route answers `wrong_flow`; a failed callback answers `callback_failed` and a
-used flow `flow_consumed`. Every poll first counts in its client's poll
+route answers `wrong_flow`; a bound website flow polled without its browser
+binding answers `browser_mismatch` (above); a failed callback answers
+`callback_failed` and a used flow `flow_consumed`. Every poll first counts in its client's poll
 window; an over-limit poll is refused (`refuseRateLimited`) and handled no
 further.
 A production poll first stores the flow's one deterministic assertion. The
@@ -190,36 +236,39 @@ assertion. A local poll returns the identity to the local backend once and
 creates no assertion.
 
 ```quint
-type PollOutcome = PollUnavailable | PollWrongMode | PollPending | PollCallbackFailed | PollConsumed | PollReady
-pure def pollOutcome(s: Identity, flowId: int, capability: int, audience: Audience, localRoute: bool): PollOutcome =
+type PollOutcome = PollUnavailable | PollWrongMode | PollBrowserMismatch | PollPending | PollCallbackFailed | PollConsumed | PollReady
+pure def pollOutcome(s: Identity, flowId: int, capability: int, audience: Audience, localRoute: bool, binding: bool): PollOutcome =
   val f = flowById(s, flowId)
   if (not(live(s, f)) or f.capability != capability or f.audience != audience) PollUnavailable
   else if ((f.mode == LocalHandoff) != localRoute) PollWrongMode
+  else if (f.bound and not(binding)) PollBrowserMismatch
   else if (f.status == Pending or f.status == CallbackProcessing) PollPending
   else if (f.status == CallbackFailed) PollCallbackFailed
   else if (f.status == AssertionIssued) PollConsumed
   else PollReady
-pure def canPollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool): bool =
-  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, localRoute) != PollReady
-pure def pollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool): Identity =
+pure def canPollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool,
+  binding: bool): bool =
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, localRoute, binding) != PollReady
+pure def pollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool,
+  binding: bool): Identity =
   { ...s, windows: countRequest(s, client, PollScope) }
-pure def canStoreAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience): bool =
+pure def canStoreAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience, binding: bool): bool =
   val row = assertionFor(s, flowId)
-  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, false) == PollReady
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, false, binding) == PollReady
     and (hasAssertion(s, flowId) implies not(row.consumed) and s.now < row.expiresAt)
-pure def storeAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience): Identity =
+pure def storeAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience, binding: bool): Identity =
   val f = flowById(s, flowId)
   if (hasAssertion(s, flowId)) { ...s, windows: countRequest(s, client, PollScope) } else
     { ...s, windows: countRequest(s, client, PollScope), assertions: s.assertions.append({ token: flowId, audience: f.audience, github: f.github,
       createdAt: s.now, expiresAt: s.now + assertionLifetime, consumed: false, consumedAt: 0 }) }
-pure def canIssueAssertion(s: Identity, flowId: int, capability: int, audience: Audience): bool =
+pure def canIssueAssertion(s: Identity, flowId: int, capability: int, audience: Audience, binding: bool): bool =
   val row = assertionFor(s, flowId)
-  pollOutcome(s, flowId, capability, audience, false) == PollReady and hasAssertion(s, flowId)
+  pollOutcome(s, flowId, capability, audience, false, binding) == PollReady and hasAssertion(s, flowId)
     and not(row.consumed) and s.now < row.expiresAt
-pure def issueAssertion(s: Identity, flowId: int, capability: int, audience: Audience): Identity =
+pure def issueAssertion(s: Identity, flowId: int, capability: int, audience: Audience, binding: bool): Identity =
   { ...s, flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }), issued: s.issued.append(flowId) }
 pure def canPollLocal(s: Identity, client: int, flowId: int, capability: int): bool =
-  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, PointsWeb, true) == PollReady
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, PointsWeb, true, false) == PollReady
 pure def pollLocal(s: Identity, client: int, flowId: int, capability: int): Identity =
   { ...s, windows: countRequest(s, client, PollScope), flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }),
     localDelivered: s.localDelivered.append(flowId) }
@@ -239,7 +288,7 @@ pure def alwaysAssertionsMatchTheirFlow(s: Identity): bool = s.flows.every(f => 
     and (f.status == CallbackComplete or f.status == AssertionIssued))
 pure def lawPendingFlowIsNotReady(s: Identity, flowId: int, capability: int, audience: Audience): bool =
   (flowById(s, flowId).status == Pending or flowById(s, flowId).status == CallbackProcessing)
-    implies pollOutcome(s, flowId, capability, audience, false) != PollReady
+    implies pollOutcome(s, flowId, capability, audience, false, true) != PollReady
 ```
 
 ### The assertion is consumed atomically by its own audience before it expires
@@ -313,12 +362,15 @@ pure def sometimesLocalDelivered(s: Identity): bool = s.localDelivered.length() 
 pure def sometimesAssertionExpiredUnused(s: Identity): bool = s.assertions.some(a => not(a.consumed) and a.expiresAt <= s.now)
 pure def sometimesIssuedFlowPurged(s: Identity): bool = s.issued.some(id => not(hasFlow(s, id)))
 pure def sometimesExpiredPendingFlow(s: Identity): bool = s.flows.some(f => f.status == Pending and f.expiresAt <= s.now)
+pure def sometimesUnboundFlowIssued(s: Identity): bool =
+  s.flows.some(f => not(f.bound) and f.mode == Production and f.status == AssertionIssued)
+pure def sometimesBoundFlowIssued(s: Identity): bool = s.flows.some(f => f.bound and f.status == AssertionIssued)
 pure def leadsToCallbackSettles(s: Identity, later: Identity): bool =
   flowById(s, 1).status == CallbackProcessing implies flowById(later, 1).status != CallbackProcessing
 pure val fair_failCallback = "weak"
-pure val sampleStarted: Identity = start(initial, 1, PointsWeb, Production)
+pure val sampleStarted: Identity = start(initial, 1, PointsWeb, Production, true)
 pure val sampleComplete: Identity = completeCallback(claimCallback(sampleStarted, 1, 1), githubExchange, 1, { actor: 7, login: "octo", nodeId: 70 })
-pure val sampleIssued: Identity = issueAssertion(storeAssertion(sampleComplete, 1, 1, 1, PointsWeb), 1, 1, PointsWeb)
+pure val sampleIssued: Identity = issueAssertion(storeAssertion(sampleComplete, 1, 1, 1, PointsWeb, true), 1, 1, PointsWeb, true)
 pure val sValues = Set(initial).union(Set(sampleStarted)).union(Set(sampleComplete)).union(Set(sampleIssued))
 pure val audienceValues = Set(PointsWeb, PrivateTrace)
 pure val wValues = Set({ client: 2, scope: StartScope, count: 12, expiresAt: 60 }, { client: 2, scope: PollScope, count: 3, expiresAt: 60 },
@@ -334,6 +386,8 @@ pure val githubValues = Set({ actor: 7, login: "octo", nodeId: 70 }, { actor: 7,
   { actor: 8, login: "other", nodeId: 80 }, { actor: 0, login: "", nodeId: 0 })
 pure val byValues = Set(githubExchange, workerClock, identityCron, 0)
 pure val localRouteValues = Set(true, false)
+pure val originValues = Set(true, false)
+pure val bindingValues = Set(true, false)
 pure val weight_start = 6
 pure val weight_claimCallback = 6
 pure val weight_completeCallback = 6

@@ -1,4 +1,4 @@
-// spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"
+// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"
 import { program } from "@repo/platform/program"
 import { site } from "../site/site.vibe"
 

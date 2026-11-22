@@ -1,18 +1,18 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"
-import { Alert, Button, Disclosure, Field, Select, Spinner, Status } from "@repo/ui";
+import { Alert, Button, Field, Select, Spinner, Status } from "@repo/ui";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { PageRuntime } from "../../../app/runtime.vibe";
 import { SignInPanel } from "../../../app/SignInPanel.tsx";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
 import { useView } from "../../account/useView.ts";
-import { LinkReportSection } from "../program/ClaimForm.tsx";
 import { run, useMounted } from "../program/hooks.ts";
 import { type CaseList, type SecurityCase, caseOf } from "./case.schema.ts";
 import { CaseDetail, type PaymentSlot } from "./CaseDetail.tsx";
+import { SecurityReports } from "./LinkReports.tsx";
 import { type ReportFilter, awardShort, badge, caseTitle, filterOption, listPresentation, matchesReport, reportFilters } from "./labels.ts";
 import { RetryButton, StaleNotice } from "./parts.tsx";
-import { type CasesRuntime, casesRuntime, loadCases, openCase, programChoices, recheckSession, watchCases } from "./runtime.vibe";
+import { type CasesRuntime, casesRuntime, loadCases, openCase, recheckSession, watchCases } from "./runtime.vibe";
 
 const casePattern = /^sc_[A-Za-z0-9_-]{8,72}$/u;
 
@@ -27,8 +27,8 @@ export type CasesViewProps = {
   onReload: () => void;
   /** The selected case. */
   detail: ReactNode;
-  /** Where a reporter links a report filed on GitHub. */
-  link?: ReactNode;
+  /** The viewer's reports around the case list, given the list without the cases they already show. */
+  reports?: (cases: (known: ReadonlyArray<string>) => ReactNode) => ReactNode;
 };
 
 function Retry({ label, onRetry }: { label: string; onRetry: () => void }) {
@@ -63,9 +63,40 @@ function CaseChoice({ record, selected, onOpen }: { record: SecurityCase; select
 }
 
 /** The viewer's private cases: a filter for maintainers, the case list and the selected case. */
-export function CasesView({ list, filter, onFilter, selected, onOpen, note, refreshError, onReload, detail, link }: CasesViewProps) {
+export function CasesView({ list, filter, onFilter, selected, onOpen, note, refreshError, onReload, detail, reports }: CasesViewProps) {
   const maintains = list.programs.some((entry) => entry.roles.includes("security-maintainer"));
-  const shown = list.cases.filter((record) => matchesReport(record, filter));
+  const cases = (known: ReadonlyArray<string>) => (
+    <section aria-labelledby="security-cases" className="flex flex-col gap-4">
+      <h2 id="security-cases" className="text-xl font-semibold text-foreground">
+        Cases
+      </h2>
+      {list.authorityUnavailable === true ? (
+        <p role="status" className="flex items-center gap-2">
+          <Status title="Some maintainer access could not be checked" presentation={badge("Partial list", "Caution", "Alert")} />
+          <RetryButton label="Retry access check" onRetry={onReload} />
+        </p>
+      ) : null}
+      {list.cases.length === 0 ? (
+        <p className="text-muted-foreground">No cases</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {list.cases
+            .filter((record) => !known.includes(record.id) && matchesReport(record, filter))
+            .map((record) => (
+              <CaseChoice key={record.id} record={record} selected={selected === record.id} onOpen={() => onOpen(record.id)} />
+            ))}
+        </ul>
+      )}
+      {selected ? (
+        <>
+          <Button variant="ghost" size="icon" className="self-start" aria-label="Back to reports" title="Back to reports" onClick={() => onOpen(null)}>
+            <ArrowLeft aria-hidden className="size-4" />
+          </Button>
+          {detail}
+        </>
+      ) : null}
+    </section>
+  );
   return (
     <div className="flex flex-col gap-6">
       {note ? <p role="status">{note}</p> : null}
@@ -81,35 +112,7 @@ export function CasesView({ list, filter, onFilter, selected, onOpen, note, refr
           </Select>
         </Field>
       ) : null}
-      <section aria-labelledby="security-cases" className="flex flex-col gap-4">
-        <h2 id="security-cases" className="text-xl font-semibold text-foreground">
-          Cases
-        </h2>
-        {list.authorityUnavailable === true ? (
-          <p role="status" className="flex items-center gap-2">
-            <Status title="Some maintainer access could not be checked" presentation={badge("Partial list", "Caution", "Alert")} />
-            <RetryButton label="Retry access check" onRetry={onReload} />
-          </p>
-        ) : null}
-        {list.cases.length === 0 ? (
-          <p className="text-muted-foreground">No cases</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {shown.map((record) => (
-              <CaseChoice key={record.id} record={record} selected={selected === record.id} onOpen={() => onOpen(record.id)} />
-            ))}
-          </ul>
-        )}
-        {selected ? (
-          <>
-            <Button variant="ghost" size="icon" className="self-start" aria-label="Back to reports" title="Back to reports" onClick={() => onOpen(null)}>
-              <ArrowLeft aria-hidden className="size-4" />
-            </Button>
-            {detail}
-          </>
-        ) : null}
-      </section>
-      {link}
+      {reports ? reports(cases) : cases([])}
     </div>
   );
 }
@@ -117,23 +120,6 @@ export function CasesView({ list, filter, onFilter, selected, onOpen, note, refr
 function initialCase(): string | null {
   const id = new URLSearchParams(location.search).get("case");
   return id !== null && casePattern.test(id) ? id : null;
-}
-
-function Link({ runtime, section, owner, onCreated }: { runtime: PageRuntime; section: CasesRuntime; owner: string; onCreated: (created: unknown) => void }) {
-  const choices = useMounted(section, programChoices);
-  return (
-    <Disclosure summary="Link report" defaultOpen={location.hash === "#security-link"}>
-      {choices.status === "running" ? (
-        <p role="status">Loading projects…</p>
-      ) : choices.status === "failed" ? (
-        <Alert variant="destructive">{choices.message}</Alert>
-      ) : choices.value.kind === "failed" ? (
-        <Alert variant="destructive">{choices.value.message}</Alert>
-      ) : (
-        <LinkReportSection runtime={runtime} owner={owner} projects={choices.value.projects} onCreated={onCreated} />
-      )}
-    </Disclosure>
-  );
 }
 
 type ContentProps = { runtime: PageRuntime; section: CasesRuntime; owner: string; embedded: boolean; payment?: PaymentSlot };
@@ -189,7 +175,21 @@ function InboxContent({ runtime, section, owner, embedded, payment }: ContentPro
           refreshError={list.refreshError}
           onReload={reload}
           detail={selected ? <CaseDetail key={selected} runtime={section} owner={owner} caseId={selected} payment={payment} /> : null}
-          link={embedded ? undefined : <Link runtime={runtime} section={section} owner={owner} onCreated={created} />}
+          reports={(cases) => (
+            <SecurityReports
+              runtime={runtime}
+              section={section}
+              owner={owner}
+              list={list.value}
+              filter={filter}
+              selected={selected}
+              onOpen={open}
+              onCreated={created}
+              onReload={reload}
+              cases={cases}
+              embedded={embedded}
+            />
+          )}
         />
       );
     default: {

@@ -1,11 +1,15 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
+import type { MonthlyOwnerView } from "@repo/settlement/client";
+import type { OwnerMonthly } from "../../../../gen/frontend__ownerMonthly.ts";
 import { cutsClosed, frozen, frozenMonth, managing, proposedMonth, reading, reviewedCommitment, underfundedMonth, viewOnlyMonth } from "./fixtures.ts";
 import type { MonthPanelProps } from "./MonthPanel.tsx";
 
 const onSave = fn(() => Promise.resolve(true));
 const onReserve = fn();
 const reason = "The second pull request was reverted the next day.";
+const closeoutMonth: MonthlyOwnerView = { ...proposedMonth, period: "2026-11", proposal: proposedMonth.proposal && { ...proposedMonth.proposal, earlyCloseAt: "2026-11-19T00:00:00.000Z" } };
+const closingEarly: OwnerMonthly = { ...managing, month: { ...managing.month, fixed: true } };
 
 export const meta: ComponentMeta<MonthPanelProps> = {
   args: { view: proposedMonth, state: managing, onSave, onFinalize: fn(), onAutomaticChange: fn(), onReserve, manageHref: "/projects/slop/manage#vault-monthly-base-mainnet-0x5e1f0000000000000000000000000000000000aa" },
@@ -17,6 +21,7 @@ export const meta: ComponentMeta<MonthPanelProps> = {
     PaymentsDisabled: { paymentsDisabled: true },
     Saved: { savedActor: "101" },
     Underfunded: { view: underfundedMonth, state: frozen },
+    Closeout: { view: closeoutMonth, state: closingEarly },
   },
   play: {
     // spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"
@@ -39,6 +44,10 @@ export const meta: ComponentMeta<MonthPanelProps> = {
       await userEvent.type(amount, "500");
       await userEvent.type(screen.getByRole("textbox", { name: "Reason (shown publicly and sent to the contributor)" }), reason);
       await expect(screen.getByRole("button", { name: "Save octocat" })).toBeDisabled();
+    },
+    // spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"
+    Closeout: async () => {
+      await expect([screen.queryByRole("textbox"), screen.queryByRole("button", { name: "Save octocat" }), screen.getByRole("button", { name: "Finalize awards" })]).toEqual([null, null, expect.anything()]);
     },
     // spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"
     ViewOnly: async () => {

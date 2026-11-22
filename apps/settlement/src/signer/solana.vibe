@@ -1,4 +1,4 @@
-// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"
+// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
 import { ed25519 } from "@noble/curves/ed25519.js"
 import { hexToBytes } from "@noble/hashes/utils.js"
 import { type Account, type Address, type LatestBlockhash, MAX_TRANSACTION_BYTES, SolanaRpc, address, addressOf, base64Decode, base64Encode, isSignature, publicKey as publicKeyOf, solanaRpc } from "@repo/platform/chain/solana"
@@ -6,7 +6,7 @@ import { nowSeconds } from "@repo/platform/clock"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import { sha256Hex, utf8 } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import type { Stack } from "../../gen/settlement__signer.effect.vibe"
+import { type Stack, canRetireReverted, initial as unbound } from "../../gen/settlement__signer.effect.vibe"
 import { type AwardAccount, type BindingAccount, type ProjectAccount, decodeAward, decodeBinding, decodeProject } from "../chain/solana/accounts.ts"
 import { type Digest, type U64, digest, i64, u64 } from "../chain/solana/bytes.ts"
 import { bindingMessage } from "../chain/solana/messages.ts"
@@ -14,6 +14,7 @@ import { awardAddress, awardId, bindingAddress } from "../chain/solana/pda.ts"
 import { completesPrepared, transactionId, unsignedTransaction, withSignature } from "../chain/solana/transactions.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey } from "../kernels/networks.ts"
+import { type BindingRecord, type Step, advance, attemptOf, fresh, loadBinding, withAttempt, withAuthority } from "../journal/bindings.vibe"
 import { type Entries, within } from "../journal/journal.vibe"
 import { DeploymentUnverified, type VerifiedDeployment, verifiedDeployment } from "../owner/solanaDeployment.vibe"
 import type { SolanaDeployment } from "../vault/policy.vibe"
@@ -178,13 +179,14 @@ export effect function finalizedProject(verified: VerifiedDeployment) {
 export interface SolanaStatus {
   readonly failed: boolean
   readonly finalized: boolean
+  readonly slot: number
 }
 
 export effect function statusOf(signature: string) {
   if (!isSignature(signature)) throw new AttemptHeld({ reason: "Invalid transaction signature" })
   const [status] = try (try SolanaRpc).signatureStatuses([signature])
   if (status === undefined) return undefined
-  return { failed: status.err, finalized: status.confirmationStatus === "finalized" } satisfies SolanaStatus
+  return { failed: status.err, finalized: status.confirmationStatus === "finalized", slot: status.slot } satisfies SolanaStatus
 }
 
 effect function observed(signature: string) {
@@ -387,6 +389,30 @@ effect function signedBinding(context: BindingContext, signer: { readonly addres
   return { message: compiled.message, bytes: compiled.bytes }
 }
 
+interface FinalOutcome {
+  readonly block: number
+  readonly landed: boolean
+}
+
+effect function signedRecord(entries: Entries, key: string, record: BindingRecord, transactionId: string, authority: Address) {
+  const intent = record.state.latestIntent + 1
+  const authorized = withAuthority(record, authority)
+  const signed = withAttempt(authorized.record, transactionId)
+  const observed: Step[] = authorized.authority > record.state.authority ? [{ event: { type: "observeAuthority", authority: authorized.authority }, by: "attester" }] : []
+  return try advance(entries, key, signed.record, [
+    ...observed,
+    { event: { type: "recordIntent", intent }, by: "account" },
+    { event: { type: "authorize", actor: record.state.actor, signature: { wallet: record.state.wallet, signer: record.state.wallet, intent }, expiresAt: 0 }, by: "account" },
+    { event: { type: "signBinding", nonce: 0, attempt: signed.attempt, authority: authorized.authority }, by: "attester" },
+  ])
+}
+
+effect function retiredRecord(entries: Entries, key: string, record: BindingRecord, transactionId: string, outcome: FinalOutcome) {
+  const receipt = { attempt: attemptOf(record, transactionId), reverted: true, block: outcome.block, canonicalBlock: outcome.block, bindingLanded: outcome.landed }
+  if (!canRetireReverted(record.state, receipt)) throw held(outcome.landed ? "Binding changed; finalized receipt reconciliation required" : "Existing transaction failed; reconcile before retry")
+  return try advance(entries, key, record, [{ event: { type: "retireReverted", receipt }, by: "attester" }])
+}
+
 export effect function prepareSolanaBinding(scope: SignerScope, request: BindingRequest) {
   const reviewed = try reviewedSolana(request.network, request.vault, "SolanaBindingHalf")
   return try onSolana(reviewed, (verified) => effect {
@@ -396,17 +422,21 @@ export effect function prepareSolanaBinding(scope: SignerScope, request: Binding
     if (context.binding !== undefined && (context.binding.destination !== context.destination || context.binding.claimDigest !== context.claimDigest)) try rotationAuthorized(scope.tables, request, context.binding)
     const fingerprint = try fingerprintOf(context, request)
     const key = attemptKey(request)
+    const actor = Number(context.actor)
+    if (!Number.isSafeInteger(actor)) throw held("Invalid Solana request")
+    const unsignedRecord = fresh({ ...unbound, actor, wallet: context.destination })
     const existing = try within(scope.journal, (entries) => readSolanaAttempt(entries, key))
     let expired: SolanaAttempt | undefined = undefined
+    let outcome: FinalOutcome | undefined = undefined
     if (existing !== undefined) {
       if (existing.fingerprint !== fingerprint) throw held("Idempotency collision")
       const status = try statusOf(existing.transactionId)
       if (status !== undefined && !status.failed) return { transactionId: existing.transactionId } satisfies PreparedBinding
-      if (status?.failed === true) throw held("Existing transaction failed; reconcile before retry")
+      if (status !== undefined && !status.finalized) throw held("Existing transaction failed; reconcile before retry")
       const height = try (try SolanaRpc).blockHeight("finalized")
-      if (height <= existing.lastValidBlockHeight) return prepared(existing)
+      if (status === undefined && height <= existing.lastValidBlockHeight) return prepared(existing)
       const current = try bindingAt(verified, context.bindingAddress)
-      if (current !== undefined && current.destination === context.destination && current.claimDigest === context.claimDigest) throw held("Binding changed; finalized receipt reconciliation required")
+      outcome = { block: status?.slot ?? height, landed: current !== undefined && current.destination === context.destination && current.claimDigest === context.claimDigest }
       expired = existing
     }
     if (context.award.paid) throw held("Award already paid")
@@ -420,7 +450,12 @@ export effect function prepareSolanaBinding(scope: SignerScope, request: Binding
       if (current !== undefined && current.fingerprint !== fingerprint) throw held("Journal collision")
       if (current !== undefined && (expired === undefined || current.transactionId !== expired.transactionId || current.generation !== expired.generation)) return current
       if (expired !== undefined && current === undefined) throw held("Expired attempt disappeared from durable journal")
-      if (current !== undefined) try entries.put(`${key}:expired:${current.generation}`, current)
+      let record = unsignedRecord
+      if (current !== undefined && outcome !== undefined) {
+        const adopted = (try loadBinding(entries, key)) ?? (try signedRecord(entries, key, unsignedRecord, current.transactionId, signer.address))
+        record = try retiredRecord(entries, key, adopted, current.transactionId, outcome)
+        try entries.put(`${key}:expired:${current.generation}`, current)
+      }
       const raw = withSignature(unsigned, signer.address, try signer.sign(message.bytes))
       const id = raw === undefined ? undefined : transactionId(raw)
       if (raw === undefined || id === undefined || raw.length > MAX_TRANSACTION_BYTES) throw held("Transaction too large")
@@ -435,6 +470,7 @@ export effect function prepareSolanaBinding(scope: SignerScope, request: Binding
         generation: latest.lastValidBlockHeight,
         cosigner: context.destination,
       } satisfies SolanaAttempt
+      try signedRecord(entries, key, record, id, signer.address)
       try entries.put(key, candidate)
       return candidate
     })

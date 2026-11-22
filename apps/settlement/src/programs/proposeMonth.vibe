@@ -1,8 +1,11 @@
-// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"
+// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"
 import { nowSeconds } from "@repo/platform/clock"
+import { github } from "@repo/platform/github"
+import { collectorRenewal } from "@repo/points/collect"
 import { Registry } from "@repo/ports/backend"
 import { monthEnd } from "../../gen/settlement__monthly.effect.vibe"
 import { type Period, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { maintainerDecisions, noDecisionReader } from "../monthly/maintainerDecisions.vibe"
 import { type Proposed, proposeProject } from "../monthly/propose.vibe"
 
 export error ProposalArguments { message: string }
@@ -21,8 +24,15 @@ effect function periodFrom(args: ReadonlyArray<string>, now: number) {
   return period
 }
 
+effect function decisionReader() {
+  const primary = (try Config.withDefault(Config.String("GH_TOKEN"), "")).trim()
+  const token = primary !== "" ? primary : (try Config.withDefault(Config.String("GITHUB_TOKEN"), "")).trim()
+  return token === "" ? noDecisionReader : Layer.provide(maintainerDecisions, github({ token: Redacted.make(token), userAgent: "slop-monthly-rewards" }))
+}
+
 function line(period: Period, outcome: Proposed) {
   const month = formatPeriod(period)
+  if (outcome.kind === "Unread") return `::error::[Slop] ${month} allocation of ${outcome.projectId} was not proposed: its maintainer decisions could not be read (${outcome.reason})`
   if (outcome.kind === "Proposed") return `[Slop] proposed ${month} allocation of ${outcome.projectId}: ${outcome.recipients} recipients from snapshot ${outcome.snapshotSha256}`
   if (outcome.kind === "AlreadyProposed") return `[Slop] ${month} allocation of ${outcome.projectId} was already proposed`
   if (outcome.kind === "Incomplete") return `[Slop] ${month} allocation of ${outcome.projectId} is incomplete and differs from the closed ledger`
@@ -35,16 +45,24 @@ export effect function proposeMonth(args: ReadonlyArray<string>) {
   const period = try periodFrom(args, now)
   if (now < monthEnd(period)) throw new ProposalArguments({ message: `cycle ${formatPeriod(period)} has not closed` })
   const projects = try (try Registry).active()
+  const reader = try decisionReader()
   const failed: string[] = []
-  for (const project of projects) {
-    const outcome = proposeProject({ projectId: project.projectId, period }) catch effect (error) => {
-      try Effect.logError("monthly proposal failed", { projectId: project.projectId, error: error._tag })
-      return undefined
-    }
-    if (outcome === undefined) failed.push(project.projectId)
-    else {
-      try Console.log(line(period, outcome))
-      if (outcome.kind === "Incomplete" || outcome.kind === "Failed") failed.push(project.projectId)
+  provide collectorRenewal() {
+    provide reader {
+      for (const project of projects) {
+        const outcome = proposeProject({ projectId: project.projectId, period }) catch effect (error) => {
+          try Effect.logError("monthly proposal failed", { projectId: project.projectId, error: error._tag })
+          return undefined
+        }
+        if (outcome === undefined) failed.push(project.projectId)
+        else if (outcome.kind === "Unread") {
+          try Console.error(line(period, outcome))
+          failed.push(project.projectId)
+        } else {
+          try Console.log(line(period, outcome))
+          if (outcome.kind === "Incomplete" || outcome.kind === "Failed") failed.push(project.projectId)
+        }
+      }
     }
   }
   if (failed.length > 0) throw new ProposalsFailed({ message: `monthly allocation proposal refused for ${failed.join(", ")}` })

@@ -33,7 +33,7 @@ const fixtureProject: ProjectView = {
   manifestStatus: "Active",
   listingTier: "Community",
   retirement: "NotRetired",
-  stewardGithubId: "900",
+  stewardGithubId: "900", stewardAccount: "UserSteward", listing: { fromApplication: false },
   repositories: [{ id: "R_evidence", nodeId: "R_evidence", fullName: "slop-test/evidence", integrationBranch: "main", aliases: [] }],
   closureConsent: false,
 }
@@ -46,6 +46,8 @@ function ports(env: Env) {
       byRepository: (repositoryId) => succeed(repositoryId === "R_evidence" ? fixtureProject : undefined),
       byPath: () => succeed(undefined),
       active: () => succeed([fixtureProject]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => succeed(sql`1`),
     } satisfies Registry.Shape),
     Layer.succeed(Authority, {

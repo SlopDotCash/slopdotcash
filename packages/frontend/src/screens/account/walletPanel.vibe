@@ -144,7 +144,7 @@ export const payoutWallets = Layer.effect(PayoutWallets, effect {
     const change = (try SubscriptionRef.get(shown)).change
     if (change === undefined) return
     signer = undefined
-    try update((panel) => ({ ...panel, change: undefined, message: keptMessage(change.family) }))
+    try update((panel) => ({ ...panel, change: undefined, message: keptMessage }))
   }
 
   try browser.onAccountChange(() => effect {

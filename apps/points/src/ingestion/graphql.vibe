@@ -1,9 +1,11 @@
-// spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"
+// spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"
 import { boundedBytes } from "@repo/platform/browser"
 import { millisOf } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
 import { githubApi, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
-import { type Budget, budgetDecision, maxGenerationCost, rateLimitReserve } from "../../gen/points__census.effect.vibe"
+import { type Budget, type ProbeAnswer, availableCost, budgetDecision, maxGenerationCost, probeOutcome, probeStarts, rateLimitReserve } from "../../gen/points__census.effect.vibe"
+import { historicalDiscussionHasRateLimit, historicalDiscussionQuery } from "./historicalDiscussion.vibe"
+import { IngestionCheckpoint, checkpointMessage } from "./read.vibe"
 
 export const graphqlPageSize = 100
 export const minimumGraphqlPageSize = 1
@@ -19,6 +21,8 @@ const gatewayFailures: ReadonlyArray<number> = [502, 503, 504]
 const comparisonTimeout = "Server Error: Sorry, this diff is taking too long to generate."
 const decimalHeader = /^\d+$/u
 const unresolvedNodeMessage = "GitHub could not resolve an enumerated source node; a fresh complete census is required"
+const discoveryForbidden = "GitHub GraphQL reference discovery is forbidden"
+const discoveryResetUnavailable = "GitHub GraphQL quota reset is unavailable"
 
 export type JsonRecord = Readonly<Record<string, unknown>>
 export type Variables = Readonly<Record<string, unknown>>
@@ -38,6 +42,12 @@ export interface RateLimitSnapshot {
 
 export interface ExecuteOptions {
   readonly commitStatistics?: boolean
+}
+
+export interface DiscussionVariables {
+  readonly owner: string
+  readonly name: string
+  readonly number: number
 }
 
 export interface GraphqlOptions {
@@ -61,6 +71,8 @@ export service Graphql {
   execute(document: string, variables?: Variables, options?: ExecuteOptions): JsonRecord!GraphqlFailure
   compareCommitPage(owner: string, name: string, base: string, head: string, page: number): JsonRecord!GraphqlFailure
   ensureBudget(requiredCost: number): void!(GraphqlFailed | BudgetExceeded)
+  availableBudget(): number!!
+  tryReferenceDiscussion(variables: DiscussionVariables, deadlineMs: number): (JsonRecord | null)!(GraphqlFailure | IngestionCheckpoint)
   requestCount(): number!!
   rateLimit(): RateLimitSnapshot!GraphqlFailed
 }
@@ -202,6 +214,14 @@ export effect function ensureStartingBudget() {
   if (rateLimit.remaining < requiredRemaining) throw new BudgetExceeded({ message: `GitHub GraphQL has only ${rateLimit.remaining} points remaining; at least ${requiredRemaining} are required to start a complete snapshot` })
 }
 
+export effect function availableBudget() {
+  return try (try Graphql).availableBudget()
+}
+
+export effect function tryReferenceDiscussion(variables: DiscussionVariables, deadlineMs: number) {
+  return try (try Graphql).tryReferenceDiscussion(variables, deadlineMs)
+}
+
 export effect function executeNodeBatch(document: string, ids: ReadonlyArray<string>, variables: Variables = {}, options: ExecuteOptions = {}): JsonRecord!GraphqlFailure!Graphql {
   const client = try Graphql
   return client.execute(document, { ...variables, ids }, options) catch effect (error) => {
@@ -250,17 +270,22 @@ export function graphqlClient(options: GraphqlOptions) {
       try sleeping(baseDelayMs * 2 ** (attempt - 1))
     }
 
-    effect function ensureBudget(requiredCost: number) {
-      if (!Number.isInteger(requiredCost) || requiredCost < 0) throw new GraphqlFailed({ message: "requiredCost must be a non-negative integer" })
-      const current = rateLimit
-      if (current === undefined) return
+    function budgetOf(current: RateLimitSnapshot): Budget {
       const resetAt = millisOf(current.resetAt)
-      const budget: Budget = {
+      return {
         windowSpent: windowConsumedCost,
         windowDrain: startingRemaining === undefined ? 0 : startingRemaining - current.remaining,
         remaining: current.remaining,
         waitedForReset: waitedResetAt !== undefined && waitedResetAt === resetAt,
       }
+    }
+
+    effect function ensureBudget(requiredCost: number) {
+      if (!Number.isInteger(requiredCost) || requiredCost < 0) throw new GraphqlFailed({ message: "requiredCost must be a non-negative integer" })
+      const current = rateLimit
+      if (current === undefined) return
+      const resetAt = millisOf(current.resetAt)
+      const budget = budgetOf(current)
       const summary = `${windowConsumedCost}/${effectiveMaxGenerationCost()} points consumed in the current window, ${current.remaining} remaining; reserve ${rateLimitReserve}`
       const decision = budgetDecision(budget, requiredCost)
       if (decision === "SpendNow") return
@@ -282,7 +307,7 @@ export function graphqlClient(options: GraphqlOptions) {
       return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${authority}/graphql`, { headers }), { query: document, variables })
     }
 
-    effect function exchanged(request: HttpClientRequest.HttpClientRequest, label: string) {
+    effect function exchanged(request: HttpClientRequest.HttpClientRequest, label: string, limitMs: number = timeoutMs) {
       const read = effect {
         const response = try client.execute(request)
         const bytes = boundedBytes(response, maxGraphqlResponseBytes, label) catch effect (error) => {
@@ -297,7 +322,7 @@ export function graphqlClient(options: GraphqlOptions) {
         return { kind: "answered", status: response.status, headers: Object.fromEntries(Object.entries(response.headers)), body } satisfies Exchange
       }
       const redirectsRefused = provideService(read, FetchHttpClient.RequestInit, { redirect: "error" })
-      return timeout(redirectsRefused, Duration.millis(timeoutMs)) catch effect (error) => match (error._tag) {
+      return timeout(redirectsRefused, Duration.millis(limitMs)) catch effect (error) => match (error._tag) {
         when "TimeoutError": { kind: "transient", timedOut: true } satisfies Exchange;
         when "HttpClientError": { kind: "transient", timedOut: false } satisfies Exchange;
         default: throw error;
@@ -367,6 +392,13 @@ export function graphqlClient(options: GraphqlOptions) {
       if (data === undefined) throw new GraphqlFailed({ message: "GitHub GraphQL response.data must be an object" })
       const reported = parsedRateLimit(data.rateLimit)
       if (reported === undefined) throw new GraphqlFailed({ message: "data.rateLimit must report cost, limit, remaining and resetAt" })
+      try accounted(reported, label)
+      if (unavailable.length > 0) throw new SourceNodeUnavailable({ message: unresolvedNodeMessage, sources: unavailable })
+      if (statistics !== undefined) throw statistics
+      return data
+    }
+
+    effect function accounted(reported: Omit<RateLimitSnapshot, "consumedDuringRun">, label: string) {
       const resetAt = millisOf(reported.resetAt)
       const previousResetAt = rateLimit === undefined ? Number.NaN : millisOf(rateLimit.resetAt)
       if (Number.isFinite(resetAt) && Number.isFinite(previousResetAt) && resetAt !== previousResetAt) {
@@ -380,8 +412,65 @@ export function graphqlClient(options: GraphqlOptions) {
       rateLimit = { ...reported, consumedDuringRun: consumedCost }
       const effective = effectiveMaxGenerationCost()
       if (windowConsumedCost > effective) throw new BudgetExceeded({ message: `${label} safety budget exceeded (${windowConsumedCost}/${effective} points consumed in the current window, ${reported.remaining} remaining; reserve ${rateLimitReserve})` })
-      if (unavailable.length > 0) throw new SourceNodeUnavailable({ message: unresolvedNodeMessage, sources: unavailable })
-      if (statistics !== undefined) throw statistics
+    }
+
+    effect function deferredDiscussion(budget: Budget, answer: ProbeAnswer, delay: number | undefined, deadlineMs: number) {
+      const now = try Clock.currentTimeMillis
+      const outcome = probeOutcome(budget, true, answer, delay ?? -1, now, deadlineMs)
+      if (outcome === "ProbeFailed") throw new GraphqlFailed({ message: answer === "ProbeForbidden" ? discoveryForbidden : discoveryResetUnavailable })
+      if (outcome === "ProbeCheckpointed") throw new IngestionCheckpoint({ message: checkpointMessage })
+      if (outcome === "ProbeWaitedNoDiscovery" && delay !== undefined) try sleeping(delay)
+      return null
+    }
+
+    effect function limitedDiscussion(budget: Budget, status: number, headers: Readonly<Record<string, string>>, body: string, deadlineMs: number) {
+      const secondary = try secondaryRateLimitDelayMs(status, headers, body)
+      const primary = headers["x-ratelimit-remaining"] === "0"
+      const rawRetry = headers["retry-after"]
+      const retryAfter = rawRetry !== undefined && decimalHeader.test(rawRetry) && Number.isSafeInteger(Number(rawRetry) * 1_000) ? Number(rawRetry) * 1_000 : undefined
+      if (!primary && secondary === undefined && retryAfter === undefined && status !== 429) return try deferredDiscussion(budget, "ProbeForbidden", undefined, deadlineMs)
+      const now = try Clock.currentTimeMillis
+      const primaryDelay = rateLimitHints(headers, now).primaryDelay
+      const reset = primary && primaryDelay > 0 ? primaryDelay : undefined
+      const unhinted = status === 429 && !primary && secondary === undefined && retryAfter === undefined ? 60_000 : 0
+      const delay = primary && reset === undefined ? undefined : Math.max(reset ?? 0, secondary ?? 0, retryAfter ?? 0, unhinted)
+      return try deferredDiscussion(budget, "ProbeRateLimited", delay, deadlineMs)
+    }
+
+    effect function referenceDiscussion(variables: DiscussionVariables, deadlineMs: number) {
+      const current = rateLimit
+      const budget = current === undefined ? undefined : budgetOf(current)
+      if (budget === undefined || !probeStarts(budget, true)) return null
+      const startedAt = try Clock.currentTimeMillis
+      const limitMs = Math.min(timeoutMs, deadlineMs - startedAt)
+      if (limitMs <= 0) return null
+      requests += 1
+      const exchange = exchanged(outgoing(historicalDiscussionQuery, variables, undefined), "GitHub GraphQL", limitMs) catch effect (error) => {
+        if (error._tag === "GraphqlBoundary") return { kind: "transient", timedOut: false } satisfies Exchange
+        throw error
+      }
+      if (exchange.kind === "transient") return null
+      const { status, headers, body } = exchange
+      if (status === 403 || status === 429) return try limitedDiscussion(budget, status, headers, body, deadlineMs)
+      const envelope = record(try parsedText(body))
+      if (status < 200 || status >= 300 || envelope === undefined) return null
+      const errors = envelope.errors
+      if (errors !== undefined && !Array.isArray(errors)) return null
+      const listed: ReadonlyArray<unknown> = Array.isArray(errors) ? errors : []
+      if (listed.some((error) => record(error)?.type === "RATE_LIMITED")) {
+        const rawReset = record(record(envelope.data)?.rateLimit)?.resetAt
+        const resetAt = typeof rawReset === "string" ? millisOf(rawReset) : Number.NaN
+        const answeredAt = try Clock.currentTimeMillis
+        const delay = Number.isFinite(resetAt) ? Math.max(0, resetAt - answeredAt + 1_000) : undefined
+        return try deferredDiscussion(budget, "ProbeRateLimited", delay, deadlineMs)
+      }
+      const data = record(envelope.data)
+      if (data === undefined || !historicalDiscussionHasRateLimit(data)) return null
+      const reported = parsedRateLimit(data.rateLimit)
+      if (reported === undefined) return null
+      try accounted(reported, "GitHub GraphQL")
+      const finishedAt = try Clock.currentTimeMillis
+      if (listed.length > 0 || deadlineMs <= finishedAt) return null
       return data
     }
 
@@ -389,6 +478,10 @@ export function graphqlClient(options: GraphqlOptions) {
       execute: (document, variables = {}, options = {}) => executeRequest(document, variables, options, undefined),
       compareCommitPage: (owner, name, base, head, page) => executeRequest("", {}, {}, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${base}...${head}?per_page=${graphqlPageSize}&page=${page}`),
       ensureBudget,
+      availableBudget: () => effect {
+        return rateLimit === undefined ? 0 : availableCost(budgetOf(rateLimit))
+      },
+      tryReferenceDiscussion: referenceDiscussion,
       requestCount: () => effect {
         return requests
       },

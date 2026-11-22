@@ -1,0 +1,123 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type Address, type Blockhash, address, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
+import { Refused, handle } from "@repo/platform/http"
+import { Authority, Registry, Restrictions } from "@repo/ports/backend"
+import { reviewAllowed } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { FundingAction } from "../client/owner.vibe"
+import { postProjectVaultsByIdSolanaFunding as parity } from "../client/refusals.vibe"
+import { projectVaultSolanaFunding } from "../client/vaultSetup.vibe"
+import { MAX_BASE_UNITS, parseDecimalAmount } from "../kernels/amounts.ts"
+import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { registryDeployments } from "../vault/deployments.vibe"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { PaymentNetworks } from "./networks.vibe"
+import type { FundingOperation } from "./ownerInstructions.ts"
+import { verifiedDeployment } from "./solanaDeployment.vibe"
+import { type FundingIntent, checkFunding, grossOf, planKind, reviewFunding } from "./solanaFunding.vibe"
+import { type Capture, draft } from "./store.vibe"
+import { type VaultActor, vaultActorOf } from "./vaultSetup.vibe"
+
+interface Entry {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+function refused(entry: Entry, message?: string) {
+  return new Refused({ status: entry.status, code: entry.error, message: message ?? entry.message ?? "", headers: entry.headers })
+}
+
+const withdrawalAuthority = "Only the project steward with current repository authority can withdraw free funds from an unrestricted project."
+
+type Step =
+  | { readonly step: "review"; readonly operation: FundingOperation; readonly network: NetworkKey; readonly vault: string; readonly wallet: Address; readonly amount: string }
+  | { readonly step: "check"; readonly operation: FundingOperation; readonly network: NetworkKey; readonly vault: string; readonly wallet: Address; readonly gross: string; readonly blockhash: Blockhash; readonly transactionId: string }
+
+effect function stepOf(body: FundingAction) {
+  const wallet = address(body.wallet)
+  const operation: FundingOperation | undefined = body.operation === "deposit" ? "deposit" : body.operation === "withdraw" ? "withdraw" : undefined
+  if (wallet === undefined || operation === undefined || (body.step !== "review" && body.step !== "check")) throw refused(parity.invalidFundingAction)
+  if (!isNetworkKey(body.network) || NETWORKS[body.network].family !== "solana") throw refused(parity.notFoundBountyVaultNotFound)
+  const common = { operation, network: body.network, vault: body.vault, wallet }
+  if (body.step === "review") {
+    if (body.amount === undefined || body.amount.length > 80) throw refused(parity.invalidFundingAction)
+    return { ...common, step: "review", amount: body.amount } satisfies Step
+  }
+  const { gross, blockhash, transactionId } = body
+  if (gross === undefined || !/^[1-9][0-9]{0,19}$/u.test(gross) || blockhash === undefined || !isBlockhash(blockhash) || transactionId === undefined || transactionId.length > 100)
+    throw refused(parity.invalidFundingAction)
+  return { ...common, step: "check", gross, blockhash, transactionId } satisfies Step
+}
+
+effect function authorized(projectId: string, actor: VaultActor) {
+  const project = try (try Registry).project(projectId)
+  if (project === undefined) throw refused(parity.notFound)
+  const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId: project.repositories[0]?.id ?? "" })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused(parity.githubUnavailable, "Slopbot must be available to check current repository permission.")
+  if (read.installation !== "Installed") throw refused(parity.slopbotRequired, "Slopbot must be available to check current repository permission.")
+  if (read.permission !== "PermissionVerified") throw refused(parity.authorityRequired, "Write, maintain or admin access is required. Ask a maintainer with that access to finish setup.")
+  return project
+}
+
+effect function bountyVault(projectId: string, network: NetworkKey, vault: string) {
+  const networks = try PaymentNetworks
+  if (!networks.served.includes(network)) throw refused(parity.fundingUnavailable)
+  const registry = registryDeployments([network], "security-bounty") catch () => undefined
+  if (registry === undefined) throw refused(parity.fundingUnavailable)
+  const deployment = registry.deployments.find((candidate) => candidate.projectId === projectId && candidate.network === network && candidate.vault === vault)
+  if (deployment === undefined || deployment.family !== "solana") throw refused(parity.notFoundBountyVaultNotFound)
+  const urls = try networks.urls(network)
+  if (urls === undefined) throw refused(parity.fundingUnavailable)
+  return { deployment: deployment satisfies SolanaDeployment, urls }
+}
+
+effect function depositOpen(projectId: string, actor: VaultActor, stewardGithubId: string) {
+  const restrictions = try Restrictions
+  if ((try restrictions.account(actor.githubId)).banned || (try restrictions.account(stewardGithubId)).banned) throw refused(parity.maintainerBanned)
+  if ((try restrictions.project(projectId)).restricted) throw refused(parity.projectRestricted)
+}
+
+effect function factsOf(projectId: string, actor: VaultActor, operation: FundingOperation, capture: Capture) {
+  const project = try authorized(projectId, actor)
+  const restricted = (try (try Restrictions).project(projectId)).restricted
+  const steward = operation === "withdraw" && project.stewardGithubId === actor.githubId
+  const facts = {
+    steward, repositoryAuthority: operation === "withdraw", revision: capture.revision, restricted: operation === "withdraw" && restricted, networkServed: true,
+    snapshotDigest: capture.snapshotDigest, obligationFunded: false, monthLockPlanned: false, lockedFunds: false,
+  } satisfies ReviewFacts
+  if (!reviewAllowed(draft(capture), planKind(operation), facts)) throw refused(parity.fundingActionRejected, withdrawalAuthority)
+  return facts
+}
+
+effect function fund(projectId: string, actor: VaultActor, step: Step) {
+  const project = try authorized(projectId, actor)
+  const { deployment, urls } = try bountyVault(projectId, step.network, step.vault)
+  if (step.step === "review" && step.operation === "deposit") try depositOpen(projectId, actor, project.stewardGithubId)
+  const capture: Capture = { revision: project.revision, snapshotDigest: "" }
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = try verifiedDeployment(deployment)
+    if (step.step === "check") {
+      const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(step.gross) }
+      return { status: try checkFunding(verified, intent, step.blockhash, step.transactionId, capture, try factsOf(projectId, actor, step.operation, capture)) }
+    }
+    const parsed = parseDecimalAmount({ text: step.amount, decimals: verified.decimals, maximum: MAX_BASE_UNITS })
+    if (parsed.kind === "Refused") throw refused(parity.invalidFundingAmount)
+    const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(parsed.amount.toString()) }
+    return { plan: try reviewFunding(verified, intent, capture, try factsOf(projectId, actor, step.operation, capture)) }
+  }
+}
+
+const unavailableTags = ["DeploymentUnverified", "DeploymentMismatch", "RpcUnavailable", "RpcMalformed", "RpcRefused", "WrongChain", "GenesisPinMissing", "Rejected"]
+
+export effect function bountyFunding(projectId: string, actor: VaultActor, body: FundingAction) {
+  const step = try stepOf(body)
+  return fund(projectId, actor, step) catch effect (error) => {
+    if (error._tag === "WalletActionRefused") throw refused(parity.fundingActionRejected, error.message)
+    if (unavailableTags.includes(error._tag)) throw refused(parity.fundingUnavailable)
+    throw error
+  }
+}
+
+export const bountyFundingRoutes = handle(projectVaultSolanaFunding, (request) => bountyFunding(request.params.id ?? "", vaultActorOf(request.actor), request.body))

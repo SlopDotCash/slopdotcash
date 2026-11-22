@@ -2,7 +2,8 @@
 import type { RepositoryInspection } from "../inspect/model.ts"
 import { reviewScan } from "../providers/route.vibe"
 import { type ScannerEvidence, type ScannerProfile, retryableFailure } from "../providers/review.ts"
-import { MAX_CALL_ATTEMPTS, type PlannedCall, callTimeoutMs, combine, failedReview, labelFailure, passOf, planReview, synthesisCall, withEarlierAttempts } from "./batches.ts"
+import { MAX_CALL_ATTEMPTS, type PlannedCall, batchScopes, callPaths, callTimeoutMs, combine, coveredPaths, failedReview, labelFailure, passOf, planReview, synthesisCall, withEarlierAttempts } from "./batches.ts"
+import { verifyCoverage } from "./coverage.ts"
 
 export interface ReviewOptions {
   readonly batchTokens?: number
@@ -32,8 +33,8 @@ export effect function reviewInventory(inspection: RepositoryInspection, profile
   const plan = try orDie(Effect.try(() => planReview(inspection, options.batchTokens)))
   const retryDelayMs = options.retryDelayMs ?? 2_000
   if (plan.mode === "single") {
-    const evidence = try reviewScan({ evidence: plan.call.evidence, inputSha256: plan.call.inputSha256, profile, synthesis: false, timeoutMs: callTimeoutMs(plan.call.estimatedTokens) })
-    return { plan, evidence }
+    const reviewed = try reviewScan({ evidence: plan.call.evidence, inputSha256: plan.call.inputSha256, profile, synthesis: false, timeoutMs: callTimeoutMs(plan.call.estimatedTokens) })
+    return { plan, evidence: verifyCoverage(reviewed, { kind: "single", supplied: callPaths(plan.call), elsewhere: new Set<string>(), covered: coveredPaths(inspection) }) }
   }
   const failed = try Ref.make(false)
   const outcomes = try Effect.forEach(plan.batches, (batch) => effect {
@@ -51,10 +52,11 @@ export effect function reviewInventory(inspection: RepositoryInspection, profile
   if (failedOutcome !== undefined) {
     return { plan, evidence: failedReview(labelFailure(failedOutcome.evidence, `batch-${firstFailure + 1}-of-${plan.batches.length}`), inspection.inventorySha256, batchPasses) }
   }
-  const results = outcomes.flatMap((outcome) => (outcome === undefined ? [] : [outcome.evidence]))
+  const scopes = batchScopes(inspection, plan.batches, plan.sameBytesOutsideBatches)
+  const results = outcomes.flatMap((outcome, index) => (outcome === undefined ? [] : [verifyCoverage(outcome.evidence, scopes.batch(index))]))
   const synthesis = try orDie(Effect.try(() => synthesisCall(inspection, plan.batches, results, plan.batchTokens, plan.sameBytesOutsideBatches)))
   const final = try called(synthesis, profile, true, retryDelayMs)
   const passes = [...batchPasses, passOf("synthesis", plan.batches.length + 1, synthesis, final.evidence, final.attempts)]
   if (final.evidence.review.status !== "completed") return { plan, evidence: failedReview(labelFailure(final.evidence, "synthesis"), inspection.inventorySha256, passes) }
-  return { plan, evidence: combine(inspection.inventorySha256, results, final.evidence, passes) }
+  return { plan, evidence: combine(inspection.inventorySha256, results, verifyCoverage(final.evidence, scopes.synthesis), passes) }
 }

@@ -187,9 +187,12 @@ A final outcome completes the request with no retry time. A parked request
 waits with no retry time. A transient retry waits one hour and does not
 count as an attempt. A blocked outcome counts one attempt for the claimed
 delivery and waits one hour doubled per earlier attempt, at most one day.
-The first incomplete outcome records when the source gap started. Later
-non-resolving outcomes keep it. Only an accepted final outcome other than
-exhausted attempts clears it. The outcome also settles every unread or
+The first incomplete outcome records when the source gap started, and so
+does an exhausted-attempts end, which is final yet not an assessment, so
+that the pull request enters the maintainer's Inbox when its paid attempts
+run out (`value-processing.ts` lines 199-211, development `6dc34ed89`,
+#3172). Later non-resolving outcomes keep it. Only an accepted final outcome
+other than exhausted attempts clears it. The outcome also settles every unread or
 waiting delivery for the identical installation, repository ID, owner,
 name and pull request received by the claim time, without counting an
 attempt for them. Completion needs the current claim and an unexpired lease.
@@ -202,7 +205,7 @@ pure def retryTime(code: Outcome, attempts: int, now: int): int =
   if (terminal(code) or code == Parked) 0
   else if (code == Retry) now + 3600 else now + backoff(attempts)
 pure def gapSince(prior: int, code: Outcome, now: int): int =
-  if (resolving(code)) 0 else if (prior > 0) prior else if (code == SourceIncomplete) now else 0
+  if (resolving(code)) 0 else if (prior > 0) prior else if (code == SourceIncomplete or code == AttemptsExhausted) now else 0
 pure def settleDelivery(d: Delivery, owner: Delivery, code: Outcome, now: int): Delivery =
   if (d.id == owner.id)
     { ...d, state: if (terminal(code)) Completed else Waiting, code: code, leaseUntil: 0,

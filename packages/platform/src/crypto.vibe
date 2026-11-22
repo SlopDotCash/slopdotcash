@@ -1,4 +1,4 @@
-// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"
+// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/points/periods.md, "A period freezes only when settlement has frozen, reserved or completed it, or an obligation exists"
 import * as Base64Url from "effect/encoding/Base64Url"
 import * as Hex from "effect/encoding/Hex"
 import { aesGcmDecrypt, aesGcmEncrypt, rs256Signature } from "./webcrypto.ts"
@@ -50,6 +50,14 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   let difference = a.length ^ b.length
   for (let index = 0; index < Math.max(a.length, b.length); index++) difference |= (a[index] ?? 0) ^ (b[index] ?? 0)
   return difference === 0
+}
+
+export const minimumOperatorSecretLength = 32
+
+export function operatorBearerAuthorized(authorization: string | undefined, secret: Redacted.Redacted<string> | undefined): boolean {
+  const configured = secret !== undefined && Redacted.value(secret).length >= minimumOperatorSecretLength
+  const expected = `Bearer ${configured ? Redacted.value(secret) : "x".repeat(minimumOperatorSecretLength)}`
+  return timingSafeEqual(utf8(authorization ?? ""), utf8(expected)) && configured
 }
 
 export function base64url(bytes: Uint8Array): string {

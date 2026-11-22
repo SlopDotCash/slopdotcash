@@ -75,6 +75,10 @@ export interface Signed {
   readonly minimumOutput: bigint
   readonly deadline: number
   readonly blockhashSlot: number
+  readonly toPinnedRouter: boolean
+  readonly approvedAmount: bigint
+  readonly allowance: bigint
+  readonly pricedFeeMicro: bigint
   readonly expiresAt?: number
 }
 

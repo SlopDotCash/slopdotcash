@@ -1,0 +1,63 @@
+// spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
+import { validIntegrationBranch } from "./definition.ts"
+import { type Json, objectOf } from "./revisionChanges.ts"
+
+export schema BranchRequest { readonly integrationBranch: Schema.Unknown; readonly expectedRevision: Schema.Unknown; readonly reason?: Schema.Unknown; readonly contribution?: Schema.Unknown }
+
+export interface BranchRevision {
+  readonly integrationBranch: unknown
+  readonly expectedRevision: unknown
+  readonly reason?: unknown
+  readonly contribution?: unknown
+}
+
+export interface Selection {
+  readonly name: string
+  readonly commitSha: string
+}
+
+export function selectionOf(value: unknown): Selection | "unexpected" | undefined {
+  const selection = objectOf(value)
+  if (selection === undefined || Array.isArray(value)) return undefined
+  const keys = Object.keys(selection)
+  if (!Object.hasOwn(selection, "name") || !Object.hasOwn(selection, "commitSha") || keys.length !== 2) return "unexpected"
+  const { name, commitSha } = selection
+  if (typeof name !== "string" || !validIntegrationBranch(name) || typeof commitSha !== "string" || !/^[0-9a-f]{40}$/u.test(commitSha)) return undefined
+  return { name, commitSha }
+}
+
+export function declarationMatches(value: unknown, current: Json, repository: string, branch: string): boolean {
+  const declaration = objectOf(value)
+  const target = objectOf(declaration?.repository)
+  const steward = objectOf(declaration?.steward)
+  if (declaration === undefined || target === undefined || steward === undefined) return false
+  const github = objectOf(objectOf(current.steward)?.github) ?? {}
+  return (
+    declaration.kind === "slop-project-authority" &&
+    declaration.schemaVersion === "1" &&
+    declaration.projectId === current.id &&
+    declaration.policyRevision === objectOf(current.terms)?.revision &&
+    target.fullName === repository &&
+    target.id === objectOf(current.authority)?.repositoryId &&
+    target.integrationBranch === branch &&
+    steward.actorId === github.actorId &&
+    steward.nodeId === github.nodeId
+  )
+}
+
+function repositoriesOf(manifest: Json): ReadonlyArray<Json> {
+  return Array.isArray(manifest.repositories) ? manifest.repositories.map((entry) => objectOf(entry) ?? {}) : []
+}
+
+export function primaryBranch(manifest: Json): string {
+  return String(repositoriesOf(manifest)[0]?.integrationBranch ?? "")
+}
+
+export function withBranch(manifest: Json, branch: string, contribution: unknown): Json {
+  const [primary = {}, ...additional] = repositoriesOf(manifest)
+  return { ...manifest, repositories: [{ ...primary, integrationBranch: branch }, ...additional], ...(contribution === undefined ? {} : { contribution }) }
+}
+
+export function branchReason(login: string, from: string, to: string, commitSha: string, note: string | null): string {
+  return `Owner integration branch change by @${login}: ${from} to ${to} at ${commitSha}.${note === null ? "" : ` ${note}`}`
+}

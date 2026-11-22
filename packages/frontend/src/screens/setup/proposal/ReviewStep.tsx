@@ -15,7 +15,7 @@ import { draftRegistry } from "../fields/skills.vibe";
 import { rewardSymbol } from "../fields/rewardAsset.ts";
 import { slopbotInstallUrl } from "../fields/slopbot.ts";
 import { Chip } from "../../admin/parts.tsx";
-import { chainOf, rewardKindOf } from "./form.ts";
+import { chainOf, honorSystemOf, rewardKindOf } from "./form.ts";
 import { useRun } from "./run.ts";
 
 export type ListingPreviewProps = {
@@ -46,7 +46,7 @@ function MonthlyFunding({ proposal: p, pool }: { proposal: Proposal; pool: Month
     <>
       {amount}/mo
       {chain === undefined ? p.settlementChain : <NetworkMark network={CHAIN_NAMES[chain]} showName={false} size="sm" role="img" aria-label={CHAIN_NAMES[chain]} title={CHAIN_NAMES[chain]} />}
-      <Chip tone="Caution">Pledge</Chip>
+      <Chip tone="Caution">{honorSystemOf(p) ? "Honor system (not vaulted or guaranteed)" : "Pledge"}</Chip>
     </>
   );
 }

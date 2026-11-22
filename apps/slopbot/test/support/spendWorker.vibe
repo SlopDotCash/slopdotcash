@@ -1,16 +1,18 @@
-// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"
+// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"
 import type { D1Database, Fetcher, Queue, QueueMessage } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { Caller, Unauthenticated, handle, outbound } from "@repo/platform/http"
 import { route } from "@repo/platform/route"
+import { settableClock } from "@repo/platform/testing/clock"
 import { byCron, worker } from "@repo/platform/worker"
 import { budgetJobs, recordBudgetBlock } from "../../src/budget/store.vibe"
 import { type Job, JobQueue, ReviewJob, decodeJob, jobQueue } from "../../src/jobs/job.vibe"
 import { recordCalls } from "../../src/route/calls.vibe"
 import { type CallRecord, routeProviders, runRoute } from "../../src/route/route.vibe"
-import { spendJobs } from "../../src/spend/jobs.vibe"
+import { dispatchFailureAlert, spendJobs } from "../../src/spend/jobs.vibe"
 import { SpendNotify, spendNotify } from "../../src/spend/notify.vibe"
+import { testPrompt } from "./spendPrompt.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -20,7 +22,6 @@ export interface Env {
   readonly SURPLUS_API_KEY?: string
 }
 
-export const testPrompt = { system: "Review the one item you are shown.", policy: "Spam is unsolicited promotion.", item: "Buy cheap tokens now." }
 
 schema TestVerdict { category: string }
 
@@ -29,8 +30,13 @@ schema ReviewRequest {
   claimToken: string
   kind: "triage" | "confirm"
   allowedSteps: number
+  at: number | null
   job: ReviewJob
 }
+
+schema FailureRun { at: number }
+
+schema FailureRunAnswer { outcome: "done" | "needsReconciliation" }
 
 schema RecordedCall {
   routeStep: number
@@ -55,6 +61,8 @@ const verdictOutput = {
   validate: (value: unknown) => Schema.is(TestVerdict)(value) ? value : undefined,
 }
 
+const failures = route({ method: "POST", path: "/test/spend/failures", access: "public", limitKib: 1, request: FailureRun, answer: FailureRunAnswer, rejected: "rejected", cache: "no-store" })
+
 const review = route({ method: "POST", path: "/test/spend/review", access: "public", limitKib: 8, request: ReviewRequest, answer: ReviewAnswer, rejected: "rejected", cache: "no-store" })
 
 function recorded(call: CallRecord) {
@@ -70,7 +78,28 @@ function recorded(call: CallRecord) {
   }
 }
 
+effect function at<A, E, R>(now: number, program: A!E!R) {
+  const clock = settableClock(now).layer
+  provide clock {
+    return try program
+  }
+}
+
 effect function reviewed(input: typeof ReviewRequest.Type) {
+  return input.at === null ? try routed(input) : try at(input.at, routed(input))
+}
+
+effect function failureRun(input: typeof FailureRun.Type) {
+  return try at(input.at, effect {
+    const reconciled = dispatchFailureAlert() catch effect (error) => {
+      if (error._tag === "NeedsReconciliation") return "needsReconciliation" as const
+      throw error
+    }
+    return { outcome: reconciled === "needsReconciliation" ? reconciled : "done" as const }
+  })
+}
+
+effect function routed(input: typeof ReviewRequest.Type) {
   let rechecks = 0
   const outcome = try runRoute(testPrompt, input.kind === "triage" ? "medium" : "high", verdictOutput, () => effect {
     rechecks += 1
@@ -101,7 +130,7 @@ function services(env: Env) {
 
 export default worker({
   services,
-  routes: handle(review, (input) => reviewed(input.body)),
+  routes: Layer.mergeAll(handle(review, (input) => reviewed(input.body)), handle(failures, (input) => failureRun(input.body))),
   scheduled: byCron<D1 | JobQueue | SpendNotify>({ "*/5 * * * *": [...budgetJobs, ...spendJobs] }),
   queue: (message) => resumed(message),
 })

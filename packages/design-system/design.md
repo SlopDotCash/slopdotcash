@@ -16,24 +16,30 @@ not force.
   (WCAG 1.4.11). `border` divides content and is decorative.
 - **Type.** Bricolage Grotesque for every word, with optical sizing; JetBrains Mono for amounts, addresses,
   hashes and commands, with tabular numbers, in 400 to 700. Sizes are a named scale, each with its line
-  height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, and `xs` to `2xl`
-  keep Tailwind's steps. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
+  height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, `text-control`
+  (15px, tight) a header control, `text-prompt` (17px) the agent prompt, `text-wordmark` (22px, 19px under `md`
+  as `text-wordmark-sm`) the header's wordmark, and `xs` to `4xl` keep Tailwind's steps, `3xl` (32px) and
+  `4xl` (40px) being a project card's name and amount; `leading-summary` (1.45) is a card's description. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
   the large headings, `label` for small capitals. Development's headings are 800 (12 rules), `font-extrabold`;
-  `font-strong` (650) and `font-heavy` (750, its text button) sit between Tailwind's weights.
+  `font-strong` (650) and `font-heavy` (750) sit between Tailwind's weights.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
   it, and `rounded-full` is the pill and the avatar. `rounded-chip` (0.6rem) is a chip or tag and
-  `rounded-card` (16px) a large card. One `panel` shadow, for what floats; `shadow-underline` marks the
+  `rounded-card` (16px) a large card, `rounded-avatar` (10px) a project's picture. One `panel` shadow, for what floats; `shadow-underline` marks the
   selected tab, `shadow-edge` (an inset 1px `primary` ring) the selected step, and `shadow-glow` (3px of `primary`
   at 25%) a focused field around its `ring`.
-- **Controls.** A button is 48px high, 40px small; a text field or select is 52px. Every control can be hit
+- **Controls.** A button is 48px high, 40px small, in 16px bold with 18px icons, as development's `.button`;
+  `outline` is its bordered secondary button and `inverse` the ink "Log in"; a text field or select is 52px. Every control can be hit
   in a 44px square, however small it is drawn.
 - **Motion.** `fast` for hover and press, `base` for most changes, `slow` for entering and leaving.
   `animate-caret` blinks the typing caret; a spinner is Tailwind's `animate-spin`. Reduced motion removes all of
   it.
 - **Focus.** The ring is 3px wide and 3px off the element, as in development, in `ring`.
-- **Layers.** `z-raised` lifts a cell over its neighbours, `z-header` is the sticky header, and `z-modal`
+- **Layers.** `z-raised` lifts a cell over its neighbours, `z-header` is the sticky header (over the page
+  behind `backdrop-blur-header`, 16px), and `z-modal`
   holds menus, dialogs and the backdrop behind them, above the header.
-- **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout.
+- **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout. `shell` (1180px)
+  is the one content width of the header, the home page and the footer, as development's `.shell`: 24px of
+  gutter each side, 14px under `md`.
 
 Network marks (Base, Ethereum, Robinhood Chain, Solana: `NetworkMark`) and the Slop mark (`Logo`) keep their
 own published colors. They are literal colors in `@repo/ui`, each with its reason on the line above, because
@@ -127,8 +133,10 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `breakpoint.sm` | 30rem |
 | `breakpoint.md` | 42.5rem |
 | `breakpoint.lg` | 56.25rem |
+| `breakpoint.shell` | 73.75rem |
 | `rounded.chip` | 0.6rem |
 | `rounded.card` | 16px |
+| `rounded.avatar` | 10px |
 | `text.xs.size` | 0.75rem |
 | `text.xs.leading` | 1rem |
 | `text.ui.size` | 13px |
@@ -137,14 +145,28 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `text.sm.leading` | 1.25rem |
 | `text.copy.size` | 15px |
 | `text.copy.leading` | 1.6 |
+| `text.control.size` | 15px |
+| `text.control.leading` | 1 |
 | `text.base.size` | 1rem |
 | `text.base.leading` | 1.5rem |
 | `text.lg.size` | 1.125rem |
 | `text.lg.leading` | 1.75rem |
+| `text.prompt.size` | 17px |
+| `text.prompt.leading` | 1.55 |
 | `text.xl.size` | 1.25rem |
 | `text.xl.leading` | 1.75rem |
+| `text.wordmark-sm.size` | 19px |
+| `text.wordmark-sm.leading` | 1 |
+| `text.wordmark-sm.tracking` | -0.03em |
 | `text.2xl.size` | 1.5rem |
 | `text.2xl.leading` | 2rem |
+| `text.wordmark.size` | 22px |
+| `text.wordmark.leading` | 1 |
+| `text.wordmark.tracking` | -0.03em |
+| `text.3xl.size` | 2rem |
+| `text.3xl.leading` | 1 |
+| `text.4xl.size` | 2.5rem |
+| `text.4xl.leading` | 0.95 |
 | `weight.medium` | 500 |
 | `weight.semibold` | 600 |
 | `weight.strong` | 650 |
@@ -155,6 +177,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `leading.none` | 1 |
 | `leading.tight` | 1.15 |
 | `leading.snug` | 1.3 |
+| `leading.summary` | 1.45 |
 | `leading.body` | 1.6 |
 | `tracking.display` | -0.055em |
 | `tracking.tighter` | -0.04em |
@@ -163,6 +186,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `z.raised` | 1 |
 | `z.header` | 20 |
 | `z.modal` | 50 |
+| `blur.header` | 16px |
 | `focus.width` | 3px |
 | `focus.offset` | 3px |
 | `keyframes.typewriter-caret` | 50%{opacity:0} |

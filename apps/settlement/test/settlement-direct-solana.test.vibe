@@ -408,12 +408,15 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it)
           asked.push(fanout.kind)
           return []
         },
+        payoutRecipient: (project) => effect { return project.stewardGithubId },
       }),
       Layer.succeed(Registry, {
         project: () => effect { return undefined },
         byRepository: () => effect { return undefined },
         byPath: () => effect { return undefined },
         active: () => effect { return [] },
+        pausedProjects: () => Effect.succeed([]),
+        appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
         fence: () => effect { return sql`1` },
       }),
       paymentRpc("{}", "{}"),

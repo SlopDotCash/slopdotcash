@@ -1,7 +1,7 @@
-// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"
+// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"
 import type { Statement } from "@repo/platform/d1"
 import { route } from "@repo/platform/route"
-import { Network, type ReadFailure } from "./backend.vibe"
+import { type Json, Network, type ReadFailure } from "./backend.vibe"
 
 export schema VaultPurpose = "Ordinary" | "PrivateBounty"
 
@@ -260,3 +260,95 @@ export schema CycleIndex {
 }
 
 export const cycleIndexUrl = "/data/cycles/index.json"
+
+export schema DirectPaymentAction = "consent-payment" | "prepare-payment" | "verify-payment" | "recover-payment"
+
+export schema CaseContext {
+  readonly caseId: string
+  readonly revision: number
+  readonly reporterGithubId: string
+  readonly actorGithubId: string
+}
+
+export schema PaymentViewer {
+  readonly payer: boolean
+  readonly reporter: boolean
+}
+
+export schema PaymentViewContext {
+  readonly caseContext: CaseContext
+  readonly viewer: PaymentViewer
+}
+
+export type DirectRefusal =
+  | "confirmationRequiredAcceptPublicChainVisibility"
+  | "confirmationRequiredConfirmTheExact75"
+  | "invalidRequestConfirmOneOrTwo"
+  | "invalidRequestUseThePaymentS"
+  | "forbiddenOnlyTheReporterMay"
+  | "railUnavailable"
+  | "railUnavailableTheProgramHasNo"
+  | "railUnavailableTheBountyVaultPays"
+  | "railUnavailableDirectPaymentIsUnavailable"
+  | "railUnavailableReceiptVerificationIsUnavailable"
+  | "paymentWalletRequiredConfirmAPayoutWallet"
+  | "paymentWalletConflict"
+  | "paymentWalletConflictPayerReporterAndPlatform"
+  | "paymentConsentRequired"
+  | "paymentProofUnavailable"
+  | "paymentNonceUnavailable"
+  | "paymentNotPending"
+  | "paymentWalletChanged"
+  | "paymentNetworkChanged"
+  | "paymentAlreadyVerified"
+  | "paymentNotPreparedPrepareTheExactPayment"
+  | "paymentAlreadyVerifiedThisPaymentIsAlready"
+  | "paymentUnverified"
+  | "paymentReplay"
+  | "paymentReplayThisTransferIsAlready"
+  | "paymentLegAlreadyVerified"
+  | "paymentPreparationChanged"
+  | "staleRevision"
+
+export type RecoveryRefusal =
+  | "paymentRecoveryRequired"
+  | "paymentRecoveryRequiredProveTheExpiredRequest"
+  | "paymentNotPreparedPrepareTheExactPayment"
+  | "paymentWalletRequiredConfirmAPayoutWallet"
+  | "paymentAlreadyVerifiedThisPaymentIsAlready"
+  | "paymentAlreadyVerifiedThisTransferIsAlready"
+  | "originalPayerRequired"
+  | "railUnavailablePaymentRecoveryIsUnavailable"
+  | "paymentConsentRequiredTheReporterMustConsent"
+  | "paymentWalletConflict"
+  | "paymentRecoveryChanged"
+  | "legacyPaymentReviewRequired"
+  | "legacyPaymentReviewRequiredThisLegacyRequestHas"
+  | "invalidRequestEachExpiredRequestNeeds"
+  | "invalidRequestSignTheExactExpired"
+  | "expiryProofRequired"
+  | "feePaymentPending"
+  | "cancellationRequired"
+  | "cancellationUnverified"
+  | "confirmationRequiredConfirmTheReviewedPayment"
+
+export error DirectRefused { reason: DirectRefusal }
+export error RecoveryRefused { reason: RecoveryRefusal }
+export error SolanaPayerRefused { message: string }
+
+export schema PaymentRailView = "direct" | "escrow" | "unavailable"
+
+export interface DirectPaymentView {
+  readonly paymentRail: PaymentRailView
+  readonly railAvailable: boolean
+  readonly settlementState: string | null
+  readonly settlement: Json | null
+  readonly paymentNetworks: ReadonlyArray<string>
+  readonly actions: ReadonlyArray<DirectPaymentAction>
+  readonly nextStep?: string
+}
+
+export service DirectPayments {
+  act(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: ReadonlyArray<Statement>): Json!(ReadFailure | DirectRefused | RecoveryRefused | SolanaPayerRefused)
+  view(context: PaymentViewContext): DirectPaymentView!ReadFailure
+}

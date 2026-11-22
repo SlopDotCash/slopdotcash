@@ -1,0 +1,176 @@
+// spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"; spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"
+import { isoAt } from "@repo/platform/clock"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { routineClockPending } from "../../gen/security__cases.effect.vibe"
+import type { Event, Observation, Reading } from "../../gen/security__routineDecisions.ts"
+import { earlierCases, failuresNow, maxUnavailableAttempts, readable, screeningWaitMs, unavailableRetryMs, withoutCalls } from "../../gen/security__routineDecisions.effect.vibe"
+import { type MissingEvidence, type RoutineProposal, routineMissingEvidence, routinePromptRevision } from "../analysis/prompts.ts"
+import { routineCalls } from "./calls.vibe"
+import { routineProofNextAction } from "./reasons.ts"
+import { type DecisionFacts, type Loaded, type Rank, recorded, routineAt } from "./store.vibe"
+import { type ActiveMode, isRoutineSeverity, severityRanks } from "./tables.ts"
+
+export interface RoutineLimits {
+  readonly casesPerRun: number
+  readonly modelCasesPerRun: number
+  readonly modelCasesPerDay: number
+  readonly minIntervalMs: number
+  readonly timeoutMs: number
+}
+
+export type RoutineSource = "request" | "admin"
+
+export interface RoutineRun {
+  readonly runId: number
+  readonly mode: ActiveMode
+  readonly examined: number
+  readonly recorded: number
+}
+
+interface Tally {
+  examined: number
+  recorded: number
+  modelLeft: number
+}
+
+interface Planned {
+  readonly event: Event
+  readonly facts: Omit<DecisionFacts, "runId">
+}
+
+schema RunId { id: number }
+schema Used { calls: number }
+schema Candidate { id: string; revision: number }
+schema Earlier { id: string }
+schema AnalysisRank { proposed_severity: string | null; potential_loss: string | null }
+
+export const backgroundLimits: RoutineLimits = { casesPerRun: 25, modelCasesPerRun: 1, modelCasesPerDay: 120, minIntervalMs: 3 * 60 * 1000, timeoutMs: 22_000 }
+export const adminLimits: RoutineLimits = { ...backgroundLimits, modelCasesPerRun: 3, timeoutMs: 50_000 }
+
+const unknownRank: Rank = { lossPlausible: null, severity: null, proofPresent: null }
+const clockRank: Rank = { lossPlausible: false, severity: null, proofPresent: false }
+
+function plannedWithout(found: Observation, rank: Rank, duplicateOf: string | null = null): Planned {
+  return { event: { type: "decideReport", found }, facts: { duplicateOf, exclusionLine: null, missing: [], rank, calls: [], promptRevision: routinePromptRevision } }
+}
+
+effect function leased(mode: ActiveMode, source: RoutineSource, nowMs: number, limits: RoutineLimits) {
+  const startedAt = try isoAt(nowMs)
+  const since = try isoAt(nowMs - limits.minIntervalMs)
+  const taken = try (try D1).run(sql`INSERT INTO security_routine_runs (mode, source, started_at) SELECT ${mode}, ${source}, ${startedAt} WHERE NOT EXISTS (SELECT 1 FROM security_routine_runs WHERE started_at > ${since})`)
+  if (taken !== 1) return undefined
+  return (try first(RunId, sql`SELECT id FROM security_routine_runs WHERE started_at = ${startedAt} AND mode = ${mode} AND source = ${source} ORDER BY id DESC LIMIT 1`))?.id
+}
+
+effect function candidates(mode: ActiveMode, nowMs: number, limit: number) {
+  const now = try isoAt(nowMs)
+  const screeningSince = try isoAt(nowMs - screeningWaitMs)
+  const retrySince = try isoAt(nowMs - unavailableRetryMs)
+  return try rows(Candidate, sql`SELECT id, revision FROM security_cases
+    WHERE submission_state = 'verified'
+      AND appeal_state = 'none'
+      AND award_state NOT IN ('reserved', 'approved')
+      AND related_party_review <> 'pending'
+      AND NOT EXISTS (SELECT 1 FROM security_case_events e WHERE e.case_id = security_cases.id AND e.kind IN ('appeal', 'decide-appeal'))
+      AND (receipt_state = 'received'
+        OR (receipt_state = 'needs-information' AND next_action = ${routineProofNextAction} AND (next_action_due_at <= ${now}
+          OR EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.case_id = security_cases.id
+            AND i.report_version > COALESCE((SELECT d.report_version FROM security_routine_decisions d WHERE d.case_id = security_cases.id AND d.outcome = 'needs-proof' AND d.applied = 1 ORDER BY d.id DESC LIMIT 1), 0)))))
+      AND NOT EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.case_id = security_cases.id AND i.screening_state IN ('queued', 'running') AND security_cases.updated_at > ${screeningSince})
+      AND NOT EXISTS (SELECT 1 FROM security_routine_decisions d WHERE d.case_id = security_cases.id AND d.case_revision = security_cases.revision AND d.mode = ${mode} AND (d.outcome <> 'unavailable' OR d.decided_at > ${retrySince}))
+    ORDER BY received_at ASC, rowid ASC LIMIT ${limit}`)
+}
+
+effect function analysisRank(caseId: string) {
+  const found = try first(AnalysisRank, sql`SELECT proposed_severity, potential_loss FROM security_case_analyses WHERE case_id = ${caseId} AND state = 'complete' ORDER BY attempt DESC LIMIT 1`)
+  if (found === undefined) return unknownRank
+  return { lossPlausible: found.potential_loss === "likely", severity: isRoutineSeverity(found.proposed_severity) ? found.proposed_severity : null, proofPresent: null } satisfies Rank
+}
+
+effect function earlierSameDigest(caseId: string, digest: string) {
+  return (try first(Earlier, sql`SELECT c.id FROM security_cases c, security_cases r
+    WHERE r.id = ${caseId} AND c.project_id = r.project_id AND c.id <> r.id
+      AND c.submission_state = 'verified'
+      AND (c.received_at < r.received_at OR (c.received_at = r.received_at AND c.rowid < r.rowid))
+      AND (c.receipt_evidence_digest = ${digest} OR EXISTS (SELECT 1 FROM security_submission_intake i JOIN security_intake_reports x ON x.submission_id = i.submission_id WHERE i.case_id = c.id AND x.content_sha256 = ${digest}))
+      AND NOT EXISTS (SELECT 1 FROM security_submissions s WHERE s.case_id = c.id AND s.state IN ('failed', 'abandoned'))
+    ORDER BY c.received_at ASC, c.rowid ASC LIMIT 1`))?.id
+}
+
+function labelsOf(first: RoutineProposal, second: RoutineProposal): ReadonlyMap<string, number> {
+  const named = [...new Set([first.duplicateOfCaseId, second.duplicateOfCaseId].flatMap((id) => id === null ? [] : [id]))]
+  return new Map(named.map((id, index) => [id, earlierCases[index] ?? 0]))
+}
+
+function readingOf(proposal: RoutineProposal, labels: ReadonlyMap<string, number>, closing: ReadonlyArray<string>): Reading {
+  return {
+    lossPlausible: proposal.lossOfFundsPlausible,
+    duplicateOf: proposal.duplicateOfCaseId === null ? 0 : labels.get(proposal.duplicateOfCaseId) ?? 0,
+    line: proposal.doesNotQualifyLine === null ? 0 : closing.indexOf(proposal.doesNotQualifyLine) + 1,
+    proofPresent: proposal.proof === "present",
+    severity: severityRanks[proposal.severity],
+  }
+}
+
+function missingOf(first: RoutineProposal, second: RoutineProposal): ReadonlyArray<MissingEvidence> {
+  return routineMissingEvidence.filter((word) => first.missing.includes(word) || second.missing.includes(word))
+}
+
+function rankOf(first: RoutineProposal, second: RoutineProposal): Rank {
+  return {
+    lossPlausible: first.lossOfFundsPlausible || second.lossOfFundsPlausible,
+    severity: severityRanks[first.severity] >= severityRanks[second.severity] ? first.severity : second.severity,
+    proofPresent: first.proof === "present" && second.proof === "present",
+  }
+}
+
+effect function plannedFor(loaded: Loaded, allowModel: boolean, timeoutMs: number) {
+  const { routine, record, intake } = loaded
+  const caseId = record.row.id
+  if (withoutCalls(routine)) return plannedWithout({ tag: "NoCallNeeded" }, routineClockPending(routine.privateCase) ? clockRank : try analysisRank(caseId))
+  if (intake === undefined || intake.digest === null) return plannedWithout({ tag: "NotStored" }, try analysisRank(caseId))
+  const earlier = try earlierSameDigest(caseId, intake.digest)
+  if (earlier !== undefined) return plannedWithout({ tag: "SameDigest", earlier: earlierCases[0] ?? 0 }, unknownRank, earlier)
+  if (failuresNow(routine) >= maxUnavailableAttempts) return plannedWithout({ tag: "NoCallNeeded" }, try analysisRank(caseId))
+  if (!allowModel) return undefined
+  const answer = try routineCalls({ caseId, submissionId: intake.submission_id, reportVersion: intake.report_version, nowMs: routine.nowMs, timeoutMs })
+  if (answer.kind === "failed") return { event: { type: "failCalls" }, facts: { duplicateOf: null, exclusionLine: null, missing: [], rank: unknownRank, calls: answer.calls, promptRevision: routinePromptRevision } } satisfies Planned
+  const labels = labelsOf(answer.first, answer.second)
+  return {
+    event: { type: "decideReport", found: { tag: "Calls", first: readingOf(answer.first, labels, answer.closing), second: readingOf(answer.second, labels, answer.closing) } },
+    facts: { duplicateOf: answer.first.duplicateOfCaseId, exclusionLine: answer.first.doesNotQualifyLine, missing: missingOf(answer.first, answer.second), rank: rankOf(answer.first, answer.second), calls: answer.calls, promptRevision: routinePromptRevision },
+  } satisfies Planned
+}
+
+effect function passed(runId: number, mode: ActiveMode, nowMs: number, limits: RoutineLimits, tally: Tally) {
+  for (const candidate of try candidates(mode, nowMs, limits.casesPerRun)) {
+    tally.examined += 1
+    const loaded = try routineAt(candidate.id, mode, nowMs)
+    if (!readable(loaded.routine)) continue
+    const planned = try plannedFor(loaded, tally.modelLeft > 0, limits.timeoutMs)
+    if (planned === undefined) continue
+    if (planned.facts.calls.length > 0) tally.modelLeft -= 1
+    if (try recorded(candidate.id, mode, { revision: loaded.routine.privateCase.revision, nowMs }, planned.event, { ...planned.facts, runId })) tally.recorded += 1
+  }
+  return tally
+}
+
+effect function finished(runId: number, tally: Tally) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  try (try D1).run(sql`UPDATE security_routine_runs SET finished_at = ${at}, examined = ${tally.examined}, recorded = ${tally.recorded} WHERE id = ${runId} AND finished_at IS NULL`)
+}
+
+export effect function runRoutineDecisions(mode: ActiveMode, source: RoutineSource, limits: RoutineLimits) {
+  const nowMs = try Clock.currentTimeMillis
+  const runId = try leased(mode, source, nowMs, limits)
+  if (runId === undefined) return undefined
+  const dayStart = `${(try isoAt(nowMs)).slice(0, 10)}T00:00:00.000Z`
+  const used = try first(Used, sql`SELECT COALESCE(SUM(model_calls), 0) AS calls FROM security_routine_decisions WHERE decided_at >= ${dayStart}`)
+  const tally: Tally = { examined: 0, recorded: 0, modelLeft: Math.min(limits.modelCasesPerRun, limits.modelCasesPerDay - Math.floor((used?.calls ?? 0) / 2)) }
+  const counted = passed(runId, mode, nowMs, limits, tally) catch effect (error) => {
+    try finished(runId, tally)
+    throw error
+  }
+  try finished(runId, counted)
+  return { runId, mode, examined: counted.examined, recorded: counted.recorded } satisfies RoutineRun
+}

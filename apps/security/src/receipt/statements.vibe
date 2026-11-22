@@ -9,7 +9,7 @@ import { awardStates } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import type { FrozenTerms } from "./program.vibe"
 
-export type ReceiptSource = "github-verified" | "slop-received"
+export type ReceiptSource = "github-verified" | "slop-received" | "maintainer-attested"
 
 export type CaseRole = "reporter" | "security-maintainer" | "triager" | "financial" | "dispute"
 

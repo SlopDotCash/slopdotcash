@@ -30,6 +30,7 @@ service World {
 error MigrationFailed { file: string }
 
 schema Failure { project_id: string; repository: string; failure: string }
+schema Latest { revision: number }
 
 function iso(hours: number) {
   return new Date(start + hours * hour).toISOString()
@@ -88,10 +89,18 @@ const Shell = Layer.unwrap(effect {
   return Layer.mergeAll(d1(db), http, app)
 })
 
+// Every manifest change appends the next revision (migrations/0019 projects_match_revision_update).
 effect function project(id: string, status: string, paths: ReadonlyArray<string>) {
   const text = try orDie(Effect.try(() => manifest(id, status, paths)))
-  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${"a".repeat(64)}, ${t0}, ${t0})
-    ON CONFLICT (id) DO UPDATE SET status = excluded.status, manifest = excluded.manifest`)
+  const [latest] = try rows(Latest, sql`SELECT coalesce(max(revision), 0) AS revision FROM project_revisions WHERE project_id = ${id}`)
+  const revision = (latest?.revision ?? 0) + 1
+  const digest = String(revision).padStart(64, "a")
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, ${revision}, ${text}, ${digest}, 'Seeded', '1', 'member-1', ${t0})`)
+  if (revision === 1) {
+    try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${digest}, ${t0}, ${t0})`)
+  } else {
+    try (try D1).run(sql`UPDATE projects SET status = ${status}, revision = ${revision}, manifest = ${text}, manifest_sha256 = ${digest}, updated_at = ${t0} WHERE id = ${id}`)
+  }
 }
 
 effect function counted(before: number) {

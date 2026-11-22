@@ -1,14 +1,16 @@
-// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
 import { type Row, type SendReceipt, canAbandonIntent, isOpen, latestAttempt, replacementWaitMs, wallet } from "../../gen/fees__conversion.effect.vibe"
 import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
-import { type Journal, networkNames, unitsOf } from "../journal/codec.vibe"
+import { type Journal, type Unaccounted, networkNames, unitsOf } from "../journal/codec.vibe"
 import { type JournaledAttempt, journaledAttempts } from "../journal/queries.vibe"
 import { journal } from "../journal/store.vibe"
 import { expireUnlanded } from "../expiry/prove.vibe"
-import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber, wideNumber } from "./chain.vibe"
+import { observeBalance } from "../receipts/discover.vibe"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber } from "./chain.vibe"
 import { type Session, renewed, step } from "./session.vibe"
 
 export error ReceiptUnrepresentable { row: number; field: string }
+export error ImportRefused { network: string; txId: string }
 
 export interface Reconciled { readonly reconciled: number; readonly blocked: ReadonlySet<number> }
 
@@ -34,17 +36,19 @@ effect function receiptOf(session: Session, row: Row, landed: Landed) {
   return {
     tx: session.names.number("tx", landed.txId),
     succeeded: landed.succeeded,
-    output: try exact(landed.output, row.id, "output"),
+    output: try exact(row.kind === "Claim" ? landed.feesClaimed : landed.output, row.id, "output"),
     actualNative: try exact(try unitsOf(landed.actualWei, session.state.network, `fee send ${row.id} native fee`), row.id, "actualNative"),
     finalized: true,
+    roleFree: landed.roleFree,
+    allowanceAtBlock: try exact(landed.allowance, row.id, "allowanceAtBlock"),
   } satisfies SendReceipt
 }
 
 function receiptBinds(row: Row, landed: Landed) {
   if (!landed.succeeded) return true
   switch (row.kind) {
-    case "Approval": return landed.allowance === wideNumber(row.amountIn)
-    case "Claim": return landed.roleFree && landed.feesClaimed > 0n && landed.feesClaimed === landed.walletCredit && landed.feesClaimed === landed.vaultDebit && landed.feesClaimed >= wideNumber(row.amountIn)
+    case "Approval": return true
+    case "Claim": return landed.feesClaimed > 0n && landed.feesClaimed === landed.walletCredit && landed.feesClaimed === landed.vaultDebit
     case "Conversion": return true
     default: {
       const _exhaustive: never = row.kind
@@ -145,10 +149,29 @@ function journaledBytes(attempts: ReadonlyArray<JournaledAttempt>): ReadonlyMap<
   return new Map(attempts.map((attempt) => [attempt.txId, attempt.rawTx]))
 }
 
+effect function importOne(session: Session, entry: Unaccounted, address: string) {
+  if (entry.recorded.kind === "Conversion") try observeBalance(session, entry.recorded.token, address)
+  return (try step(session, { type: "importRecorded", runId: session.runId, recorded: entry.recorded })) !== undefined
+}
+
+effect function imported(session: Session, book: Journal) {
+  for (const entry of book.unaccounted) {
+    if (!(try renewed(session, true))) break
+    const address = book.tokens[entry.recorded.token - 1] ?? ""
+    if (!(try importOne(session, entry, address))) {
+      try Effect.logWarning("fee_native_import_refused", { network: session.state.network, token: address, txId: entry.txId })
+      throw new ImportRefused({ network: session.state.network, txId: entry.txId })
+    }
+  }
+  return book.unaccounted.length
+}
+
 export effect function reconcile(session: Session) {
+  const imports = try imported(session, try journal(session.instance, session.names))
   const book = try journal(session.instance, session.names)
+  if (imports > 0) session.state = book.state
   const bytes = journaledBytes(try journaledAttempts(networkNames[session.state.network]))
-  const blocked = new Set<number>()
+  const blocked = new Set<number>(book.unaccounted.length === 0 ? [] : session.state.holdings.map((entry) => entry.token))
   let reconciled = 0
   for (const row of session.state.rows.filter((row) => isOpen(row) || expiredAwaitingReceipt(session, row))) {
     const current = session.state.rows[row.id - 1] ?? row

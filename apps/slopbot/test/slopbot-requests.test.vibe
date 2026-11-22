@@ -8,6 +8,7 @@ import { settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { RegistryObservation } from "../gen/slopbot__repositoryScope.ts"
+import { apiStart } from "../gen/slopbot__valueRequests.effect.vibe"
 import { leaseSources } from "../src/value/requests/leases.vibe"
 import { type Gathered, type Run, claimRequest, nextDue, recordOutcome, resumeParked, startRun } from "../src/value/requests/store.vibe"
 import { type SiteEnv, idle, inboxSite, registryOver, slopbotAccess } from "./support/requestsWorker.vibe"
@@ -52,6 +53,7 @@ const publishable: Gathered = {
   threw: false,
   registry: activeRegistry,
   configured: true,
+  valueStart: apiStart,
   repositoryMatches: true,
   pull: "PullClosed",
   occurredAt: Math.floor(t0 / 1000),
@@ -270,8 +272,14 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         VALUES ('ia-4', 'token-ia-4', '2026-11-03T02:10:00.000Z', 'completed', 'published', NULL, '2026-11-03T02:05:00.000Z', 0, NULL)`,
     ])
     const completed = try inbox({ as: maintainer.githubId })
+    try batch(requested("ia-5", 17, "2026-11-03T03:00:00.000Z"))
+    clock.set(Date.parse("2026-11-03T03:00:10.000Z"))
+    const last = try claimed(try startRun(), "ia-5")
+    try leaseSources(last.claim, [{ repositoryDatabaseId: 7001, pullRequestNumber: 17 }])
+    const exhausted = try recordOutcome(last.claim, { ...publishable, admission: "AdmitExhausted" }, [{ repositoryDatabaseId: 7001, pullRequestNumber: 17 }])
+    const exhaustedShown = try inbox({ as: maintainer.githubId })
 
-    try same({ signedOut, shown, denied, configured, administratorLookups, uncertain, changedProject, changedActor, badCursor, otherMethod, completed }, {
+    try same({ signedOut, shown, denied, configured, administratorLookups, uncertain, changedProject, changedActor, badCursor, otherMethod, completed, exhausted, exhaustedShown }, {
       signedOut: { status: 401, cache: "private, no-store", body: { error: "not_signed_in" } },
       shown: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [item], next: null } },
       denied: { status: 200, cache: "private, no-store", body: { recipientGithubId: reader.githubId, items: [], next: null } },
@@ -283,6 +291,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       badCursor: { status: 400, cache: "private, no-store", body: { error: "invalid_cursor" } },
       otherMethod: { status: 405, cache: "private, no-store", body: { error: "method_not_allowed" } },
       completed: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [], next: null } },
+      exhausted: "AttemptsExhausted",
+      exhaustedShown: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [{ ...item, pullRequest: 17, since: "2026-11-03T03:00:10.000Z", retryAt: null }], next: null } },
     })
   })
 })

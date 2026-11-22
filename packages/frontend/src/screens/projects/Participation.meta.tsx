@@ -13,7 +13,11 @@ export const meta: ComponentMeta<ParticipationProps> = {
   play: {
     // spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
     Paused: async () => {
-      await expect([screen.getByRole("heading", { name: "Project paused" }), screen.queryByText("Agent setup")]).toEqual([expect.anything(), null]);
+      await expect([screen.getByRole("link", { name: "Owner setup" }).getAttribute("href"), screen.queryByText("Agent setup")]).toEqual(["/projects/slop/manage", null]);
+    },
+    // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
+    PermissionRequired: async () => {
+      await expect([screen.getByRole("img", { name: "Permission required" }), screen.getByRole("link", { name: "Ask Slop Labs" }).getAttribute("href")]).toEqual([expect.anything(), "https://github.com/slopdotcash"]);
     },
     // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
     Archived: async () => {

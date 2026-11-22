@@ -267,6 +267,47 @@ pure val remainingValues = Set(0, 100, 5000)
 pure val attemptValues = Set(1, 2)
 ```
 
+### A split Search range whose children disagree with the parent count is repeated once
+
+The closed and merged references of the live collection come from GitHub
+Search (`collectSearchReferences`, `collectSearchReferenceRange` in
+`scripts/generate-leaderboard.ts`). A range whose first page reports a
+`totalCount` of 950 or more, or whose cursor pages deduplicate by node ID to a
+count other than that `totalCount`, is split at its midpoint into two halves,
+each collected the same way; a range of one second (1,000 ms) or less is never
+split and refuses the snapshot. The deduplicated union of the two halves must
+equal the parent's `totalCount`. The first such mismatch, at any depth,
+discards every reference of that attempt and repeats the original range the
+collection asked for once, with the same client (its request accounting,
+cutoff and completeness checks carry over). A mismatch in the repeat refuses
+the snapshot (`Split GitHub Search returned <n> unique references but parent
+reported <m> for <range>`). Any other failure is not repeated, and a count
+that changes between the cursor pages of one range refuses the snapshot.
+
+```quint
+pure val searchSafeResultLimit = 950
+pure val minimumSearchSliceMs = 1000
+type SplitOutcome = SplitCollected | SplitRepeated | SplitRefused
+pure def splitNeeded(parentCount: int, cursorUnique: int): bool =
+  parentCount >= searchSafeResultLimit or cursorUnique != parentCount
+pure def splitAllowed(rangeMs: int): bool = rangeMs > minimumSearchSliceMs
+pure def splitOutcome(attempt: int, childrenUnique: int, parentCount: int): SplitOutcome =
+  if (childrenUnique == parentCount) SplitCollected else if (attempt == 1) SplitRepeated else SplitRefused
+pure def lawSplitRepeatedOnlyOnce(attempt: int, childrenUnique: int, parentCount: int): bool =
+  splitOutcome(attempt, childrenUnique, parentCount) == SplitRepeated implies (attempt == 1 and childrenUnique != parentCount)
+pure def lawSecondSplitMismatchRefused(childrenUnique: int, parentCount: int): bool =
+  childrenUnique != parentCount implies splitOutcome(2, childrenUnique, parentCount) == SplitRefused
+pure def lawReconciledSplitCollected(attempt: int, parentCount: int): bool =
+  splitOutcome(attempt, parentCount, parentCount) == SplitCollected
+pure def lawLargeRangeSplits(parentCount: int, cursorUnique: int): bool =
+  parentCount >= searchSafeResultLimit implies splitNeeded(parentCount, cursorUnique)
+pure def lawMinimumRangeNeverSplits(rangeMs: int): bool = rangeMs <= minimumSearchSliceMs implies not(splitAllowed(rangeMs))
+pure val parentCountValues = Set(0, 949, 950, 951)
+pure val childrenUniqueValues = Set(0, 949, 950, 951)
+pure val cursorUniqueValues = Set(0, 949, 950)
+pure val rangeMsValues = Set(999, 1000, 1001)
+```
+
 ### An optional discussion probe starts only with two available points and never waits for quota to probe
 
 The live GraphQL client may run one optional reference-discussion read

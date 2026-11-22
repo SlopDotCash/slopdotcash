@@ -492,6 +492,12 @@ export function isScanResult(result: RecordedResult): result is ScanResult {
 }
 
 const serious = new Set(["medium", "high", "critical"]);
+const advisoryGap = new RegExp(`^(?:${reviewers.join("|")}):(?:${scanThreats.join("|")}):outside-revision$`, "u");
+
+/** @throws {never} */
+export function advisoryReviewGap(gap: string): boolean {
+  return advisoryGap.test(gap);
+}
 const open = new Set(["high", "critical"]);
 
 /** @throws {never} */
@@ -515,7 +521,7 @@ function scanProblems(result: ScanResult): string[] {
   if (result.confirmation !== null) problems.push("Only a malicious disposition carries a confirmation");
   if (result.disposition === "incomplete") return problems;
   for (const surface of scanSurfaces) if (result.coverage[surface].state !== "complete") problems.push(`The ${surface} surface was not read completely`);
-  if (result.visibilityGaps.length > 0) problems.push("The scan reported visibility gaps");
+  if (result.visibilityGaps.some((gap) => !advisoryReviewGap(gap))) problems.push("The scan reported visibility gaps");
   const inventory = result.assessed.inputManifestSha256;
   const reviewProblems = (review: ScanReview, name: string) => {
     if (review.status !== "completed") problems.push(`The ${name} review did not complete`);
@@ -527,8 +533,9 @@ function scanProblems(result: ScanResult): string[] {
   const specialist = result.specialistReview;
   if (specialist !== null) {
     reviewProblems(specialist, "specialist");
-    if (escalated && (specialist.verdict !== "no-findings" || specialist.risk !== "low")) problems.push("The specialist review did not clear the escalated result");
+    if (escalated && specialist.risk === "high") problems.push("The specialist review did not clear the escalated result");
   } else if (escalated) problems.push("An ambiguous or high-risk result needs a specialist review");
+  if (result.primaryReview.risk === "high") problems.push("The primary review reported a high or critical finding");
   for (const threat of scanThreats) if (result.checks[threat] === "not-run") problems.push(`The ${threat} check did not run`);
   if (result.artifacts.some((artifact) => artifact.state !== "released")) problems.push("An artifact is still quarantined or blocked");
   if (result.findings.some((finding) => open.has(finding.severity))) problems.push("A high or critical finding is open");

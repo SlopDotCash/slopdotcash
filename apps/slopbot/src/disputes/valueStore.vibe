@@ -278,9 +278,11 @@ effect function writesFor(key: string, options: ValueOptions, loaded: LoadedDisp
         WHERE appeal_key = ${key} AND draft IS NULL AND resolved_at IS NULL`]
     case "escalateRestricted":
     case "escalateDraft":
+    case "escalateBanAtAnswer":
     case "escalateOverdue":
       return try escalationStatements(key, itemNodeId, escalationTextOf(next.escalation, "appellant"), next.notices, at)
     case "reject":
+    case "escalateBanAtAnswer":
       return try escalationStatements(key, itemNodeId, escalationTextOf(next.escalation, answeredBy(before, step.by)), next.notices, at)
     case "accept":
       return [resolvedWrite(key, next.resolution, answeredBy(before, step.by), at)]

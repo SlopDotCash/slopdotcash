@@ -28,9 +28,11 @@ import cases as C from "./cases"
 type AttemptState = AttemptRunning | AttemptComplete | AttemptFailed | AttemptUnavailable
 type Mode = Automatic | OwnerRun
 type Attempt = { version: int, mode: Mode, state: AttemptState, startedAt: int, budgetMs: int, exclusions: T::ExclusionContext }
-type Assessment = { reportVersion: int, qualifiedVersion: int, authority: C::Authority, attempts: int -> Attempt, count: int, shown: int }
+type Assessment = { reportVersion: int, qualifiedVersion: int, authority: C::Authority, attempts: int -> Attempt, count: int, shown: int,
+  received: bool }
 pure val noAttempt: Attempt = { version: 0, mode: Automatic, state: AttemptFailed, startedAt: 0, budgetMs: 0, exclusions: T::noExclusions }
-pure val initial: Assessment = { reportVersion: 1, qualifiedVersion: 0, authority: C::noAuthority, attempts: Map(), count: 0, shown: 0 }
+pure val initial: Assessment = { reportVersion: 1, qualifiedVersion: 0, authority: C::noAuthority, attempts: Map(), count: 0, shown: 0,
+  received: false }
 pure def latest(a: Assessment): Attempt = a.attempts.getOr(a.count, noAttempt)
 pure def retryable(a: Assessment, nowMs: int): bool = a.count == 0 or latest(a).version != a.reportVersion
   or latest(a).state == AttemptFailed or latest(a).state == AttemptUnavailable
@@ -66,7 +68,7 @@ qualification; a revision hides the shown result until the new version is
 assessed. Authority comes from the case's verified snapshot.
 
 ```quint
-pure def canObserveVersion(a: Assessment, version: int): bool = version == a.reportVersion + 1
+pure def canObserveVersion(a: Assessment, version: int): bool = version == a.reportVersion + 1 and not(a.received)
 pure def observeVersion(a: Assessment, version: int): Assessment = { ...a, reportVersion: version, shown: 0 }
 pure def canObserveQualified(a: Assessment, version: int): bool = version == a.reportVersion and a.qualifiedVersion != version
 pure def observeQualified(a: Assessment, version: int): Assessment = { ...a, qualifiedVersion: version }
@@ -93,12 +95,19 @@ row and reads the report from the GitHub advisory (the claim `INSERT … WHERE
 (? IS NULL AND NOT EXISTS(intake)) OR EXISTS(qualified intake)` in
 `backend/security/analysis.ts`). Its receipt version is qualified at once.
 The shell passes the case's own stored receipt source, never a request's
-claim; a case with a Slop intake still needs screening.
+claim; a case with a Slop intake still needs screening. Such a case has no
+screening record, so no later report version reaches its assessment
+(`received`): the only intake row is written with a Slop-received case in its
+receipt batch (`apps/security/src/receipt/statements.vibe`), and a report
+revision updates only an intake row joined to its case
+(`apps/security/src/intake/revision.vibe`). Discovered by conformance: the
+model let a case qualified at receipt observe a second version, which no
+screening record can supply.
 
 ```quint
 pure def canObserveReceiptQualified(a: Assessment, source: C::ReceiptSource): bool =
   (source == C::GithubVerified or source == C::MaintainerAttested) and a.reportVersion == 1 and a.qualifiedVersion == 0
-pure def observeReceiptQualified(a: Assessment, source: C::ReceiptSource): Assessment = { ...a, qualifiedVersion: a.reportVersion }
+pure def observeReceiptQualified(a: Assessment, source: C::ReceiptSource): Assessment = { ...a, qualifiedVersion: a.reportVersion, received: true }
 ```
 
 ### Simulation samples

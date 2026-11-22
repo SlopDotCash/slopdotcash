@@ -1,11 +1,15 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+import type { MergeRepository } from "@repo/backend/client";
 import type { WorkItem } from "@repo/points/client";
 import type { CycleIndexEntry, DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
 import { periodContaining } from "@repo/settlement/kernels/calendar";
+import type { PromiseFacts } from "../../../gen/frontend__projections.ts";
+import { maintainerShareLines } from "../../projections/maintainerShare.ts";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import type { Shown } from "../home/listing.ts";
+import { noPromise } from "../home/promise.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { projectFunding, projectListing } from "./summary.ts";
+import { type FundingVaults, type MergeIndex, projectFunding, projectListing, projectPromiseOf, wantedReadOf } from "./summary.ts";
 
 export const origin = "https://slop.cash";
 
@@ -87,16 +91,63 @@ export const withdrawn: PoolFunding = projectFunding({
   nowMs: Date.parse("2026-12-10T12:00:00.000Z"),
 });
 
-export const unfunded: PoolFunding = projectFunding({
-  project,
-  read: { status: "Current", vaults: [{ ...vault, freeBalance: 100_000_000n, totalGrossWithdrawn: 0n, monthStarts: [] }] },
-  networkPays: payingEverywhere,
-  nowMs: Date.parse("2026-11-17T12:00:00.000Z"),
-});
+const unfundedRead: FundingVaults = { status: "Current", vaults: [{ ...vault, freeBalance: 100_000_000n, totalGrossWithdrawn: 0n, monthStarts: [] }] };
 
-export const listing = projectListing({ project, funding: funded });
+export const unfunded: PoolFunding = projectFunding({ project, read: unfundedRead, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
 
-export const unlisted = projectListing({ project, funding: unfunded });
+export const honorProject: ShownProject = { ...project, reward: { ...project.reward, honorSystem: true } };
+
+export const promised: PromiseFacts = projectPromiseOf({ project: honorProject, funding: unfunded, read: unfundedRead, networkPays: payingEverywhere });
+
+const unreadVaults: FundingVaults = { status: "Current", vaults: [] };
+
+export const unreadFunding: PoolFunding = projectFunding({ project: honorProject, read: unreadVaults, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
+
+export const unverified: PromiseFacts = projectPromiseOf({ project: honorProject, funding: unreadFunding, read: unreadVaults, networkPays: payingEverywhere });
+
+export const unpromised = (funding: PoolFunding): PromiseFacts => noPromise(funding.facts);
+
+const listedAt = Date.parse("2026-11-17T12:00:00.000Z");
+
+export const listing = projectListing({ project, networkPays: payingEverywhere, nowMs: listedAt });
+
+export const unlisted = projectListing({ project: { ...project, reward: { ...project.reward, monthlyCapMinor: 0n, monthlyCapDisplay: "$0" } }, networkPays: payingEverywhere, nowMs: listedAt });
+
+export const mergeNow = Date.parse("2026-11-17T12:00:00.000Z");
+
+export const heldProject: ShownProject = { ...project, record: { slopbot: { intakeCap: 5, wantedIssues: true } } };
+
+const mergeRow: MergeRepository = {
+  repository: "slopdotcash/slop",
+  observedAt: "2026-11-17T06:00:00.000Z",
+  lastAttemptFailed: false,
+  lastMergedAt: "2026-11-16T18:00:00.000Z",
+  waitingOutside: 2,
+  waitingCapped: false,
+  mergedOutsideLast30Days: 9,
+  medianHoursToMerge: 20,
+  openOutside: 6,
+  openOutsideCapped: false,
+  wantedLabel: "slop-wanted",
+  wantedIssues: [
+    { number: 7, title: "Explain the payout check on the cycle page", url: "https://github.com/slopdotcash/slop/issues/7", openPullRequests: 1 },
+    { number: 9, title: "Add the vault address to the receipt", url: "https://github.com/slopdotcash/slop/issues/9", openPullRequests: 0 },
+  ],
+};
+
+export const heldMerge: Shown<MergeIndex> = { status: "Current", value: new Map([["slop", [mergeRow]]]) };
+
+export const openMerge: Shown<MergeIndex> = { status: "Current", value: new Map([["slop", [{ ...mergeRow, openOutside: 1 }]]]) };
+
+export const pendingMerge: Shown<MergeIndex> = { status: "Loading", value: undefined };
+
+export const failedMerge: Shown<MergeIndex> = { status: "Failed", value: undefined };
+
+export const wanted = wantedReadOf(heldProject, heldMerge);
+
+export const noWanted = wantedReadOf(heldProject, failedMerge);
+
+export const shareNotice = maintainerShareLines({ reward: { kind: "monthly-pool", monthlyCapMinor: "500000000", maintainerShare: 1000 } }, new Date(listedAt))?.notice ?? null;
 
 export const unread: PoolFunding = projectFunding({ project, read: { status: "Loading", vaults: undefined }, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
 

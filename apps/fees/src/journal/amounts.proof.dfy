@@ -1,21 +1,21 @@
-// The gwei ceiling is the Euclidean quotient of wei plus one less than a gwei, so its remainder bounds both directions;
+// The megawei ceiling is the Euclidean quotient of wei plus one less than a megawei, so its remainder bounds both directions;
 // the total is proved by induction on how many amounts it has added.
 
 lemma nativeUnits_ensures(wei: int, solana: bool)
   requires (wei >= 0)
   ensures (nativeUnits(wei, solana) >= 0)
   ensures (solana ==> (nativeUnits(wei, solana) == wei))
-  ensures (!(solana) ==> ((((nativeUnits(wei, solana) - 1) * 1000000000) < wei) && (wei <= (nativeUnits(wei, solana) * 1000000000))))
+  ensures (!(solana) ==> ((((nativeUnits(wei, solana) - 1) * 1000000) < wei) && (wei <= (nativeUnits(wei, solana) * 1000000))))
 {
   if !solana {
-    var adjusted := wei + 999999999;
-    CeilingBounds(adjusted, 1000000000);
-    var quotient := adjusted / 1000000000;
-    var remainder := adjusted % 1000000000;
-    assert adjusted == quotient * 1000000000 + remainder;
-    assert 0 <= remainder < 1000000000;
+    var adjusted := wei + 999999;
+    CeilingBounds(adjusted, 1000000);
+    var quotient := adjusted / 1000000;
+    var remainder := adjusted % 1000000;
+    assert adjusted == quotient * 1000000 + remainder;
+    assert 0 <= remainder < 1000000;
     assert nativeUnits(wei, solana) == quotient;
-    assert (quotient - 1) * 1000000000 == quotient * 1000000000 - 1000000000;
+    assert (quotient - 1) * 1000000 == quotient * 1000000 - 1000000;
   }
 }
 
@@ -23,7 +23,7 @@ lemma nativeWei_ensures(units: int, solana: bool)
   requires (units >= 0)
   ensures (nativeWei(units, solana) >= 0)
   ensures (solana ==> (nativeWei(units, solana) == units))
-  ensures (!(solana) ==> (nativeWei(units, solana) == (units * 1000000000)))
+  ensures (!(solana) ==> (nativeWei(units, solana) == (units * 1000000)))
 {
 }
 

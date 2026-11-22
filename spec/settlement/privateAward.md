@@ -25,8 +25,12 @@ target names the case's reporter as the award actor, the case as the
 obligation, this bounty vault and the case's receipt-time asset. Only a
 committed standard 75/25 case holds that obligation, and every hold keeps
 matching its case. The bounty's reserved total is exactly what the vault
-holds in reserve. A confirmed award stays pending without a reservation while
-vault funds are short.
+holds in reserve. The vault's free amount, the latest funds snapshot and the
+bounty's reserved total are always valid amounts in integer base units. A
+confirmed award stays pending without a reservation while vault funds are
+short. A case received through a reporter's claim, a technical approver's
+attestation or link verification, or the GitHub receipt service settling a
+claim enters the award the same way as one Slop received.
 
 ```quint
 import money as M from "./money"
@@ -71,6 +75,23 @@ pure def canReceive(s: PrivateAward, id: int, source: C::ReceiptSource, terms: T
   B::canReceive(s.bounty, id, source, terms, reportVersion)
 pure def receive(s: PrivateAward, id: int, source: C::ReceiptSource, terms: T::ReceiptTerms, reportVersion: int): PrivateAward =
   withBounty(B::receive(s.bounty, id, source, terms, reportVersion), s)
+pure def canClaim(s: PrivateAward, id: int, by: int): bool = B::canClaim(s.bounty, id, by)
+pure def claim(s: PrivateAward, id: int, by: int): PrivateAward = withBounty(B::claim(s.bounty, id, by), s)
+pure def canVerifyLink(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): bool =
+  B::canVerifyLink(s.bounty, id, by, checkedEpoch, terms)
+pure def verifyLink(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): PrivateAward =
+  withBounty(B::verifyLink(s.bounty, id, by, checkedEpoch, terms), s)
+pure def canRejectLink(s: PrivateAward, id: int, by: int, checkedEpoch: int): bool = B::canRejectLink(s.bounty, id, by, checkedEpoch)
+pure def rejectLink(s: PrivateAward, id: int, by: int, checkedEpoch: int): PrivateAward =
+  withBounty(B::rejectLink(s.bounty, id, by, checkedEpoch), s)
+pure def canRecordAttested(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): bool =
+  B::canRecordAttested(s.bounty, id, by, checkedEpoch, terms, confirmed)
+pure def recordAttested(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): PrivateAward =
+  withBounty(B::recordAttested(s.bounty, id, by, checkedEpoch, terms, confirmed), s)
+pure def canSettleClaim(s: PrivateAward, id: int, by: int, listed: bool, terms: T::ReceiptTerms): bool =
+  B::canSettleClaim(s.bounty, id, by, listed, terms)
+pure def settleClaim(s: PrivateAward, id: int, by: int, listed: bool, terms: T::ReceiptTerms): PrivateAward =
+  withBounty(B::settleClaim(s.bounty, id, by, listed, terms), s)
 pure def canObserveAuthority(s: PrivateAward, snapshot: C::Authority): bool = B::canObserveAuthority(s.bounty, snapshot)
 pure def observeAuthority(s: PrivateAward, snapshot: C::Authority): PrivateAward = withBounty(B::observeAuthority(s.bounty, snapshot), s)
 pure def canDecide(s: PrivateAward, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): bool =
@@ -126,6 +147,8 @@ pure def alwaysBountyReserveIsVaultReserve(s: PrivateAward): bool = M::equalAmou
 pure def alwaysBountyCoverIsVaultFree(s: PrivateAward): bool = s.bounty.funds.asset == "" or (s.bounty.funds.asset == s.settlement.vault.asset
   and (M::compareAmounts(s.bounty.reserved, s.bounty.funds.free) > 0
     or M::compareAmounts(M::subtractAmounts(s.bounty.funds.free, s.bounty.reserved), s.settlement.vault.free) <= 0))
+pure def alwaysCoverAmountsValid(s: PrivateAward): bool = M::validAmount(s.settlement.vault.free)
+  and M::validAmount(s.bounty.funds.free) and M::validAmount(s.bounty.reserved)
 pure def stepVaultReservationNeedsCommitment(before: PrivateAward, via: str, after: PrivateAward): bool =
   (after.settlement.payment.phase == P::VaultReserved and before.settlement.payment.phase != P::VaultReserved) implies
     (via == "decideAward" or via == "reviewRelated") and caseOf(after, after.vaultCase).commitment == C::VaultReservation
@@ -322,6 +345,39 @@ Actors follow the case samples: 1 is the reporter, 2 and 3 are technical, 4
 and 7 moderators and 5 the financial approver. The later snapshots revoke
 or ban the financial approver.
 
+Discovered by simulation: with no related reporter and no moderator among
+the deciding actors, the guard probe for a related-party review found no
+reachable state in which a moderator could review a proposal. The snapshot
+that revokes the financial approver therefore also names the reporter a
+related party and makes actor 5 a moderator. A separate related-party
+snapshot and moderator 4 among the actors diluted every other observation
+and actor choice until the search for a direct award paid after its payer
+lost the role found no witness. An award decided after the revoke snapshot
+can never be admitted as a direct award, since no later snapshot restores a
+financial approver, so correlating these observations costs that search
+nothing.
+
+Discovered by simulation: the guard probes for a single direct-award
+transfer and for a direct-award recovery found no state that allowed them in
+200000 traces of 20 events, and each search ran past its time limit. Only a
+direct award to a payer who still holds the financial role reaches those
+events. With only the staff snapshot in the first epoch, two of the three
+sampled authority snapshots were later epochs, which cannot be followed by
+the first, so a trace that observed one first never had a payer. Two more
+first-epoch snapshots therefore name a technical member, 6 or 8, whom no
+sampled actor plays, so three of the five snapshots are first-epoch. That
+member takes no action, but caseRecipients includes every technical member,
+so a case observed under one of these snapshots also saves its case notices
+for actor 6 or 8, and recipientsValid checks that recipient as well. A case could also record a root cause that no
+sampled journal finding matched, so the journal samples pair each case with
+each finding. An observed vault that covers the award sends it to a vault
+reservation instead of the direct rail, so deposits and fund observations
+are rarer, authority snapshots are observed less often, and the direct
+admission, wallet, consent, preparation, recording and recovery events are
+weighted above the events that are open in most states. A recovery is
+weighted with admission and preparation, the heaviest, because few of its
+sampled arguments match the prepared request.
+
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
 pure val idValues = Set(1, 2)
@@ -330,11 +386,13 @@ pure val sourceValues = Set(C::SlopReceived)
 pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
-pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List() }, { ...C::staff, epoch: 2, banned: List(5) })
+pure val snapshotValues = Set(C::staff, { ...C::staff, technical: List(2, 3, 6) }, { ...C::staff, technical: List(2, 3, 8) },
+  { ...C::staff, epoch: 2, financial: List(), moderators: List(4, 5, 7), relatedParties: List(1) },
+  { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
-pure val byValues = Set(1, 2, 5)
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false },
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false, spam: false })
+pure val byValues = Set(-1, 1, 2, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))
 pure val grossValues = Set(List(4))
@@ -352,7 +410,8 @@ pure val evidenceValues = Set(awardReceipt(1), awardReceipt(2), SC::bountyReceip
 pure val updateValues = Set(SC::SetWallet({ claim: D::walletOne.claim, digest: D::walletOne.digest, address: D::walletOne.address }))
 pure val journalTerms: DB::Terms = { caseId: 2, project: 1, finding: 2, payerActor: 5, reporterActor: 1,
   network: FR::Base, asset: "asset", feeWallet: "fees", gross: List(4), split: T::StandardSplit }
-pure val journalTermsValues = Set(journalTerms, { ...journalTerms, caseId: 1, finding: 1 })
+pure val journalTermsValues = Set(journalTerms, { ...journalTerms, finding: 1 }, { ...journalTerms, caseId: 1, finding: 1 },
+  { ...journalTerms, caseId: 1 })
 pure val qualifiedRouteValues = Set({ network: FR::Base, asset: "asset", feeWallet: "fees" })
 pure val payerWalletValues = Set(DB::payerOne)
 pure val reporterWalletValues = Set(DB::reporterOne)
@@ -370,19 +429,20 @@ pure val awardResearcher: DB::Transfer = { ...DB::researcherTransfer, principal:
 pure val awardFee: DB::Transfer = { ...DB::feeTransfer, fee: List(1) }
 pure val transferValues = Set(awardResearcher, awardFee)
 pure val pairValues = Set({ researcher: awardResearcher, fee: awardFee })
-pure val weight_deposit = 2
-pure val weight_observeFunds = 2
+pure val weight_deposit = 1
+pure val weight_observeFunds = 1
 pure val weight_receive = 8
 pure val weight_observeRoute = 8
-pure val weight_observeAuthority = 3
+pure val weight_observeAuthority = 1
 pure val weight_decide = 10
 pure val weight_showAmounts = 15
 pure val weight_decideAward = 15
 pure val weight_reconcile = 10
-pure val weight_admitDirect = 25
-pure val weight_observeWallets = 15
-pure val weight_consent = 15
-pure val weight_prepareDirect = 25
-pure val weight_recordPair = 20
-pure val weight_recordTransfer = 8
+pure val weight_admitDirect = 100
+pure val weight_observeWallets = 60
+pure val weight_consent = 60
+pure val weight_prepareDirect = 100
+pure val weight_recordPair = 40
+pure val weight_recordTransfer = 40
+pure val weight_recoverDirect = 100
 ```

@@ -36,7 +36,7 @@ async function seed() {
   const fake = githubFake()
   const world = fake.world
   world.addUser({ id: 100, login: "ada" })
-  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat", "terra", "backstop", "blocked", "capped", "admitted"]
+  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat", "terra", "backstop", "blocked", "capped", "admitted", "restarted", "lapsed"]
   authors.forEach((login, index) => world.addUser({ id: 300 + index, login }))
   world.addRepo({ id: repositoryId, owner: "ada", name: "widgets", files: policy })
   const items = {
@@ -50,6 +50,8 @@ async function seed() {
     blocked: world.addIssue({ repo, author: "blocked", title: "BLOCKED-TOKEN print is blank", body: "Printing gives an empty page." }),
     capped: world.addIssue({ repo, author: "capped", title: "CAPPED-TOKEN zoom resets", body: "Zoom resets on every reload." }),
     admitted: world.addIssue({ repo, author: "admitted", title: "ADMITTED-TOKEN tabs reorder", body: "Tabs reorder themselves after a save." }),
+    restarted: world.addIssue({ repo, author: "restarted", title: "RESTARTED-TOKEN fonts blur", body: "Fonts blur after a resize." }),
+    lapsed: world.addIssue({ repo, author: "lapsed", title: "LAPSED-TOKEN sync stalls", body: "Sync stalls after a sleep." }),
     binary: await pullWith(world, "binary", "BINARY-TOKEN logo", { "logo.bin": "\u0000binary" }),
     large: await pullWith(world, "large", "LARGE-TOKEN data", { "big.txt": `${"x".repeat(130_000)}\n` }),
     wide: await pullWith(world, "wide", "WIDE-TOKEN notes", wideFiles),
@@ -79,7 +81,11 @@ service World {
   readonly net: Seeded["net"]
 }
 
-const Review = Layer.unwrap(effect {
+type Keys = { readonly ORBIO_API_KEY?: string; readonly SURPLUS_API_KEY?: string }
+
+const bothKeys: Keys = { ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" }
+
+const reviewArea = (keys: Keys) => Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.merge(
     areaLayer({
@@ -89,8 +95,7 @@ const Review = Layer.unwrap(effect {
       vars: {
         GITHUB_API: seeded.fake.authority,
         GITHUB_TOKEN: seeded.token,
-        ORBIO_API_KEY: "orbio-test-credential",
-        SURPLUS_API_KEY: "surplus-test-credential",
+        ...keys,
         SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
         TEST_PROJECTS: JSON.stringify([project]),
       },
@@ -151,7 +156,38 @@ effect function each<A, E>(numbers: ReadonlyArray<number>, read: (number: number
   return found
 }
 
-layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+const resetsAt = "2099-01-01T00:00:00.000Z"
+const pastReset = "2000-01-01T00:00:00.000Z"
+const measured = { terraReadsWithBothKeys: Number.NaN }
+const useful = { text: verdict("none", 0.95, "This report is useful.") }
+
+effect function costsOf(area: AreaShape, fake: Fake, number: number) {
+  return try area.sql("SELECT route_step, provider, requested_model, outcome, (failure IS 'provider budget exhausted') AS denied, billed_micro_usdc FROM slopbot_costs WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?) ORDER BY id", try nodeOf(fake, number))
+}
+
+effect function blocksOf(area: AreaShape, fake: Fake, number: number) {
+  return try area.sql("SELECT retry_at FROM slopbot_budget_blocks WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?)", try nodeOf(fake, number))
+}
+
+effect function registryReads(area: AreaShape) {
+  return Number((try area.post("/test/registry-reads", {})).body)
+}
+
+effect function counted<A, E>(area: AreaShape, run: () => A!E) {
+  const before = try registryReads(area)
+  const value = try run()
+  return { value, reads: (try registryReads(area)) - before }
+}
+
+effect function writesOf(fake: Fake, number: number) {
+  return [(try botComments(fake, number)).length, (try labels(fake, number)).length, (try itemOf(fake, number)).state]
+}
+
+function row(route_step: number, provider: string, requested_model: string, outcome: string, denied: number) {
+  return { route_step, provider, requested_model, outcome, denied, billed_micro_usdc: 0 }
+}
+
+layer(reviewArea(bothKeys), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
   it.effect('A lost comment response is recovered through the App actor and the item keeps one neutralized review comment (spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App\'s own actor, and echoed text is neutralized"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
     const area = try Area
     const { fake, providers, items } = try World
@@ -299,12 +335,10 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     })
   })
 
-  it.effect('The route asks Surplus Sonnet first, a failure falls to Surplus Terra, and a Surplus spending denial skips Terra for Orbio and blocks only when Orbio fails (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block")', () => effect {
+  it.effect('The route asks Surplus Sonnet first, a failure falls to Surplus Terra, and a Surplus spending denial skips Terra for Orbio and blocks only when Orbio fails, a reset already past included, which the next resume run sends at once (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"; spec/slopbot/budgetBlocks.md, "A due block is sent once while its claim is still the failed current one")', () => effect {
     const area = try Area
     const { fake, providers, items } = try World
     try installed(area)
-    const resetsAt = "2099-01-01T00:00:00.000Z"
-    const useful = { text: verdict("none", 0.95, "This report is useful.") }
     try Effect.try(() => {
       providers.reply(asked("surplus-anthropic", sonnetModel, "TERRA-TOKEN"), { text: "{}" })
       providers.reply(asked("surplus-anthropic", terraModel, "TERRA-TOKEN"), useful)
@@ -312,26 +346,31 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       providers.reply(asked("orbio", orbioModel, "BACKSTOP-TOKEN"), useful)
       providers.reply(asked("surplus-anthropic", sonnetModel, "BLOCKED-TOKEN"), { failure: "spendDenied", resetsAt })
       providers.reply(asked("orbio", orbioModel, "BLOCKED-TOKEN"), { text: "{}" })
+      providers.reply(asked("surplus-anthropic", sonnetModel, "LAPSED-TOKEN"), { failure: "spendDenied", resetsAt: pastReset })
+      providers.reply(asked("orbio", orbioModel, "LAPSED-TOKEN"), { text: "{}" })
     })
     const start = providers.calls.length
-    const outcomes = [try reviewed(area, items.terra), try reviewed(area, items.backstop), try reviewed(area, items.blocked)]
+    const terra = try counted(area, () => reviewed(area, items.terra))
+    measured.terraReadsWithBothKeys = terra.reads
+    const outcomes = [terra.value, try reviewed(area, items.backstop), try reviewed(area, items.blocked)]
     const afterBlock = providers.calls.length
     const beforeReset = try reviewed(area, items.blocked)
-    const costsOf = (number: number) => effect {
-      return try area.sql("SELECT route_step, provider, requested_model, outcome, (failure IS 'provider budget exhausted') AS denied, billed_micro_usdc FROM slopbot_costs WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?) ORDER BY id", try nodeOf(fake, number))
-    }
-    const blocksOf = (number: number) => effect {
-      return try area.sql("SELECT retry_at FROM slopbot_budget_blocks WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?)", try nodeOf(fake, number))
-    }
-    const row = (route_step: number, provider: string, requested_model: string, outcome: string, denied: number) => ({ route_step, provider, requested_model, outcome, denied, billed_micro_usdc: 0 })
+    const askedAgain = providers.calls.length - afterBlock
+    const lapsed = try reviewed(area, items.lapsed)
+    const resumed = (try area.post("/test/budget-resume", {})).body
+    const resumedAgain = (try area.post("/test/budget-resume", {})).body
+    const routed = [items.terra, items.backstop, items.blocked, items.lapsed]
     try same({
       outcomes,
       beforeReset,
-      askedAgain: providers.calls.length - afterBlock,
+      askedAgain,
+      lapsed,
+      resumed,
+      resumedAgain,
       calls: providers.calls.slice(start).map((call) => [call.route, call.model]),
-      costs: try each([items.terra, items.backstop, items.blocked], costsOf),
-      blocks: try each([items.terra, items.backstop, items.blocked], blocksOf),
-      published: try each([items.terra, items.backstop, items.blocked], (number) => effect { return (try botComments(fake, number)).length }),
+      costs: try each(routed, (number) => costsOf(area, fake, number)),
+      blocks: try each(routed, (number) => blocksOf(area, fake, number)),
+      published: try each(routed, (number) => effect { return (try botComments(fake, number)).length }),
     }, {
       outcomes: [
         { kind: "settled", result: "review published (no finding)" },
@@ -340,8 +379,12 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       ],
       beforeReset: { kind: "settled", result: `blocked: provider budget until ${resetsAt}` },
       askedAgain: 0,
+      lapsed: { kind: "settled", result: `blocked: provider budget until ${pastReset}` },
+      resumed: { sent: 1, queued: [jobOf(items.lapsed).deliveryId] },
+      resumedAgain: { sent: 0, queued: [jobOf(items.lapsed).deliveryId] },
       calls: [
         ["surplus-anthropic", sonnetModel], ["surplus-anthropic", terraModel],
+        ["surplus-anthropic", sonnetModel], ["orbio", orbioModel],
         ["surplus-anthropic", sonnetModel], ["orbio", orbioModel],
         ["surplus-anthropic", sonnetModel], ["orbio", orbioModel],
       ],
@@ -349,13 +392,14 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
         [row(1, "surplus", sonnetModel, "failed", 0), row(2, "surplus", terraModel, "ok", 0)],
         [row(1, "surplus", sonnetModel, "failed", 1), row(3, "orbio", orbioModel, "ok", 0)],
         [row(1, "surplus", sonnetModel, "failed", 1), row(3, "orbio", orbioModel, "failed", 0)],
+        [row(1, "surplus", sonnetModel, "failed", 1), row(3, "orbio", orbioModel, "failed", 0)],
       ],
-      blocks: [[], [], [{ retry_at: resetsAt }]],
-      published: [1, 1, 0],
+      blocks: [[], [], [{ retry_at: resetsAt }], [{ retry_at: pastReset }]],
+      published: [1, 1, 0, 0],
     })
   })
 
-  it.effect('Past the month\'s free-review cap a new item is skipped before any call or GitHub write, while an admitted item is reviewed again and other repositories and months do not count (spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A bound review of a new item over the month\'s free-review cap is skipped before any call")', () => effect {
+  it.effect('Past the month\'s free-review cap a new item, and a review restarted in a new month after earlier calls, is skipped before any call or GitHub write, while an admitted item is reviewed again and other repositories and months do not count (spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A bound review of a new item over the month\'s free-review cap is skipped before any call")', () => effect {
     const area = try Area
     const { fake, providers, items } = try World
     try installed(area)
@@ -365,7 +409,15 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       const [found] = try area.sql("SELECT COUNT(*) AS n FROM slopbot_review_month_starts WHERE repository_id = ? AND month = ?", repository, during)
       return Number(found?.n)
     }
-    const fill = (repository: number, during: string, count: number) => area.sql("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) SELECT ?, ?, 'pull_request', 100000 + i, ? FROM n", count, repository, during, now)
+    const fill = (repository: number, during: string, count: number) => area.sql("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at) SELECT ?, ?, 'pull_request', 100000 + i, ? FROM n WHERE ? > 0", count, repository, during, now, count)
+    try Effect.try(() => {
+      providers.reply(asked("surplus-anthropic", sonnetModel, "RESTARTED-TOKEN"), { text: "{}" })
+      providers.reply(asked("surplus-anthropic", terraModel, "RESTARTED-TOKEN"), { text: "{}" })
+      providers.reply(asked("orbio", orbioModel, "RESTARTED-TOKEN"), { text: "{}" })
+    })
+    const firstRun = try reviewed(area, items.restarted)
+    try area.sql("UPDATE slopbot_review_month_starts SET month = '2000-02' WHERE repository_id = ? AND item_kind = 'issue' AND item_number = ?", repositoryId, items.restarted)
+    const restartedBefore = try writesOf(fake, items.restarted)
     try fill(repositoryId, month, 1999 - (try countOf(repositoryId, month)))
     try fill(repositoryId + 1, month, 2000)
     try fill(repositoryId, "2000-01", 2000)
@@ -381,13 +433,23 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try Effect.try(() => { fake.world.item(repo, items.admitted).body = "Tabs reorder themselves after a save, and after a reload." })
     const again = try reviewed(area, items.admitted)
     const cappedReview = try area.sql("SELECT status, skip_reason, action FROM slopbot_reviews WHERE item_node_id = ?", try nodeOf(fake, items.capped))
+    const restartStart = providers.calls.length
+    const restarted = try reviewed(area, items.restarted)
+    const restartedCalls = providers.calls.slice(restartStart).filter((call) => mentions(call, "RESTARTED-TOKEN")).length
+    const restartedReview = try area.sql("SELECT status, skip_reason, action FROM slopbot_reviews WHERE item_node_id = ?", try nodeOf(fake, items.restarted))
     try same({
       admitted,
       atCap,
       capped,
       cappedCalls,
       cappedReview,
-      cappedWrites: [(try botComments(fake, items.capped)).length, (try labels(fake, items.capped)).length, (try itemOf(fake, items.capped)).state],
+      cappedWrites: try writesOf(fake, items.capped),
+      firstRun,
+      restarted,
+      restartedCalls,
+      restartedReview,
+      restartedCosts: (try costsOf(area, fake, items.restarted)).length,
+      restartedWrites: [restartedBefore, try writesOf(fake, items.restarted)],
       again,
       afterAgain: try countOf(repositoryId, month),
       untouched: [try countOf(repositoryId + 1, month), try countOf(repositoryId, "2000-01")],
@@ -398,9 +460,67 @@ layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       cappedCalls: 0,
       cappedReview: [{ status: "skipped", skip_reason: "monthly-review-cap", action: null }],
       cappedWrites: [0, 0, "open"],
+      firstRun: { kind: "failed", error: "ReviewFailed" },
+      restarted: { kind: "settled", result: "monthly-review-cap" },
+      restartedCalls: 0,
+      restartedReview: [{ status: "skipped", skip_reason: "monthly-review-cap", action: null }],
+      restartedCosts: 3,
+      restartedWrites: [restartedBefore, restartedBefore],
       again: { kind: "settled", result: "review published (no finding)" },
       afterAgain: 2000,
       untouched: [2000, 2000],
+    })
+  })
+})
+
+layer(reviewArea({ SURPLUS_API_KEY: "surplus-test-credential" }), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('With no Orbio key a Surplus spending denial records one free call and blocks the review until its reset (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    try Effect.try(() => providers.reply(asked("surplus-anthropic", sonnetModel, "BLOCKED-TOKEN"), { failure: "spendDenied", resetsAt }))
+    const start = providers.calls.length
+    const outcome = try reviewed(area, items.blocked)
+    try same({
+      outcome,
+      calls: providers.calls.slice(start).map((call) => [call.route, call.model]),
+      costs: try costsOf(area, fake, items.blocked),
+      blocks: try blocksOf(area, fake, items.blocked),
+      published: (try botComments(fake, items.blocked)).length,
+      unanswered: providers.unanswered.length,
+    }, {
+      outcome: { kind: "settled", result: `blocked: provider budget until ${resetsAt}` },
+      calls: [["surplus-anthropic", sonnetModel]],
+      costs: [row(1, "surplus", sonnetModel, "failed", 1)],
+      blocks: [{ retry_at: resetsAt }],
+      published: 0,
+      unanswered: 0,
+    })
+  })
+})
+
+layer(reviewArea({ ORBIO_API_KEY: "orbio-test-credential" }), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('With no Surplus key the route asks Orbio alone, records no Surplus row and reads the registry only for the step it calls (spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    try Effect.try(() => providers.reply(asked("orbio", orbioModel, "TERRA-TOKEN"), useful))
+    const start = providers.calls.length
+    const terra = try counted(area, () => reviewed(area, items.terra))
+    try same({
+      outcome: terra.value,
+      readsBeyondBothKeys: terra.reads - measured.terraReadsWithBothKeys,
+      calls: providers.calls.slice(start).map((call) => [call.route, call.model]),
+      costs: try costsOf(area, fake, items.terra),
+      blocks: try blocksOf(area, fake, items.terra),
+      published: (try botComments(fake, items.terra)).length,
+    }, {
+      outcome: { kind: "settled", result: "review published (no finding)" },
+      readsBeyondBothKeys: -1,
+      calls: [["orbio", orbioModel]],
+      costs: [row(3, "orbio", orbioModel, "ok", 0)],
+      blocks: [],
+      published: 1,
     })
   })
 })

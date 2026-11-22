@@ -1,0 +1,25 @@
+// spec/settlement/unsafeDestinations.md, "Story: Keep accepted cycle files and unsafe-destination evidence on a trusted base"; spec/settlement/unsafeDestinations.md, "An existing cycle manifest keeps its identity"
+import { systemGit } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { verifyTransitionAuthorities } from "../cycles/transitions.vibe"
+
+export error UnsafeDestinationArguments { message: string }
+
+const usage = "Usage: unsafe-destinations <base-sha> <head-sha>"
+const userAgent = "slop-unsafe-destinations"
+const githubTimeoutMs = 30_000
+
+effect function configuredToken() {
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("GH_TOKEN")))
+  return token === undefined || Redacted.value(token) === "" ? undefined : token
+}
+
+export effect function unsafeDestinations(args: ReadonlyArray<string>) {
+  const [baseSha, headSha, ...extra] = args
+  if (!baseSha || !headSha || extra.length > 0) throw new UnsafeDestinationArguments({ message: usage })
+  const token = try configuredToken()
+  provide Layer.mergeAll(systemGit, github({ userAgent, timeoutMs: githubTimeoutMs, ...(token === undefined ? {} : { token }) })) {
+    const result = try verifyTransitionAuthorities(".", baseSha, headSha)
+    try Console.log(`[Slop] preserved unsafe destination history in ${result.preservedFiles} existing cycle manifests; verified ${result.verifiedReports} signed reports`)
+  }
+}

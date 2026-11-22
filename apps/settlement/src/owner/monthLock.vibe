@@ -69,6 +69,7 @@ effect function built<A>(outcome: Built<A>) {
 }
 
 effect function pledgeInstructions(verified: VerifiedDeployment, wallet: Address, periods: ReadonlyArray<number>, amount: bigint) {
+  if (wallet !== verified.owner) throw refused("Only the vault owner can pledge months")
   return try built(pledgeMonthInstructions({ program: verified.program, project: verified.project, owner: wallet, periods, amount }))
 }
 

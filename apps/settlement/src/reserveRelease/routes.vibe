@@ -1,4 +1,4 @@
-// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
+// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
 import * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { EvmRpc } from "@repo/platform/chain/evm"
 import { D1 } from "@repo/platform/d1"
@@ -10,7 +10,7 @@ import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import { authorize, periodOf, refused, unchanged } from "../monthly/owner.vibe"
 import { servedDeploymentOf } from "../monthly/store.vibe"
 import { registryDeployments } from "../vault/deployments.vibe"
-import { type OwnerReleaseRequest, type ReleaseCheckRequest, type ReleaseOwner, ReleaseApprover, ReleaseRefused, checkRelease, prepareRelease } from "./release.vibe"
+import { type OwnerReleaseRequest, type ReleaseCheckRequest, type ReleaseOwner, ReleaseApprover, ReleaseRefused, checkRelease, prepareRelease, refuseUnsupportedNetwork } from "./release.vibe"
 
 export interface ReleaseCall {
   readonly request: OwnerReleaseRequest | ReleaseCheckRequest
@@ -27,13 +27,14 @@ export service ReserveReleases {
 effect function registeredDeployment(request: OwnerReleaseRequest, network: NetworkKey) {
   const loaded = try registryDeployments([network], "ordinary")
   const found = loaded.deployments.find((deployment) => deployment.projectId === request.projectId && deployment.network === network)
-  if (found === undefined || found.family !== "evm") throw new ReleaseRefused({ message: "Monthly deployment unavailable" })
+  if (found === undefined) throw new ReleaseRefused({ message: "Monthly deployment unavailable" })
   return found
 }
 
 effect function released(call: ReleaseCall, network: NetworkKey) {
   const { request, owner } = call
   const deployment = try registeredDeployment(request, network)
+  if (deployment.family === "solana") return try refuseUnsupportedNetwork(request, deployment, owner)
   if ("planId" in request) return try checkRelease(request, deployment)
   return try prepareRelease(request, deployment, owner)
 }

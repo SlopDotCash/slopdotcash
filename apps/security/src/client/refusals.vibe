@@ -493,6 +493,7 @@ export const getSecurityCasesById = {
 export const postSecurityCasesByIdActions = {
   ...withOriginForbiddenAndInvalidContentLength,
   ...withNotFoundCaseNotFound,
+  ...withProjectNotFoundV2,
   ...withIdempotencyConflict,
   ...withInvalidRequestInvalidExpectedRevision,
   staleRevision: { status: 409, error: "stale_revision", message: "The case changed since you loaded it", headers: jsonPrivateNoStoreRobotsTag },

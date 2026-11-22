@@ -62,11 +62,11 @@ export function rewardAssetChoice(choice: Pick<FundingChoice, "network" | "asset
       return { kind: "asset", asset: { network: choice.network, kind: "native", address: native.address, symbol: native.symbol }, decimals: native.decimals };
     case "token": {
       const address = canonicalAssetAddress(network, choice.tokenAddress);
-      if (address === undefined) return { kind: "invalid", message: network.family === "evm" ? "Enter a 0x token contract address with 40 hexadecimal characters" : "Enter a base58 SPL mint address" };
+      if (address === undefined) return { kind: "invalid", message: network.family === "evm" ? "Enter a 0x address with 40 hex characters" : "Enter a base58 SPL mint address" };
       if (isNativeAssetAddress(choice.network, address)) return { kind: "invalid", message: `Choose ${native.symbol} as the native coin` };
       if (address === stablecoin.address) return { kind: "invalid", message: `That address is the network stablecoin; choose ${stablecoin.symbol}` };
       const symbol = choice.tokenSymbol.trim();
-      if (!symbolPattern.test(symbol)) return { kind: "invalid", message: "Enter a token symbol of 1 to 16 letters or digits" };
+      if (!symbolPattern.test(symbol)) return { kind: "invalid", message: "Enter a symbol of 1-16 letters or digits" };
       return { kind: "asset", asset: { network: choice.network, kind: "token", address, symbol }, decimals: tokenDecimals };
     }
     default: {

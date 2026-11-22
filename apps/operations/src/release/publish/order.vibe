@@ -7,7 +7,7 @@ import { checkedSchedules } from "../verify/probes.vibe"
 import { type ExpectedBindings, activeTag, checkedVersion, releaseMessage, secretNames, uploadedVersionId } from "../wrangler/outputs.vibe"
 import { ConfigRefused, type Reviewed, driftMessage, reviewOnlyKeys, secretDrift, tierName } from "./config.vibe"
 
-export const publicationOrder: ReadonlyArray<Service> = ["PaymentAttesters", "FeeConverter", "VettingSandbox", "Notify", "Slopbot", "RepositoryAccess", "IdentityWorker", "VettingBackup", "VettingRetention", "Referral"]
+export const publicationOrder: ReadonlyArray<Service> = ["PaymentAttesters", "FeeConverter", "VettingSandbox", "Notify", "Slopbot", "RepositoryAccess", "IdentityWorker", "VettingBackup", "VettingRetention", "Referral", "SubmissionFee"]
 
 interface Home {
   readonly app: string
@@ -27,6 +27,7 @@ const homes: { readonly [S in Service]: Home } = {
   VettingBackup: { app: "operations", worker: "backup" },
   VettingRetention: { app: "operations", worker: "backup" },
   Referral: { app: "settlement", worker: "referralAccrual", only: "Production" },
+  SubmissionFee: { app: "fees", worker: "submissionFee", only: "Production" },
 }
 
 export interface Publication {

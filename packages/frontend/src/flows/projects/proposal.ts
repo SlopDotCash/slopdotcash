@@ -43,6 +43,7 @@ export const emptyProposal = Object.freeze({
   maintainerNotes: "",
   fundingMode: "none",
   monthlyPool: "",
+  honorSystem: "false",
   settlementChain: "base",
   rewardKind: "stablecoin",
   rewardAssetAddress: "",

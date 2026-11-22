@@ -38,17 +38,15 @@ const otherAreas = Layer.mergeAll(
 )
 
 function enforcement(env: Env) {
-  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom(env), otherAreas)
+  const gitHub = Layer.provide(github({ authority: "https://api.github.test", token: Redacted.make("ghs_admission_fixture"), userAgent: "security-admission-test" }), outboundVia(env.GITHUB))
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom(env), otherAreas, evidenceBucket(env.VETTING_EVIDENCE), skillTemplateFrom(env.ASSETS), gitHub)
   return Layer.provideMerge(ProjectEventsLive, Layer.provideMerge(EnforcementRowsLive, base))
 }
 
 export default worker({
   services: (env: Env) => Layer.mergeAll(
     enforcement(env),
-    evidenceBucket(env.VETTING_EVIDENCE),
     vettingSandbox(env.SANDBOX),
-    skillTemplateFrom(env.ASSETS),
-    Layer.provide(github({ authority: "https://api.github.test", token: Redacted.make("ghs_admission_fixture"), userAgent: "security-admission-test" }), outboundVia(env.GITHUB)),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     Layer.provide(Layer.merge(RegistryLive, RegistryManifestsLive), d1(env.SLOP_DB)),

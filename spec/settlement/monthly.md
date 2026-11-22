@@ -35,6 +35,8 @@ import allocation as A from "./allocation"
 import money as M from "./money"
 import payoutExclusions as X from "./payoutExclusions"
 import monthPledges as P from "./monthPledges"
+import maintainerShare as S from "./maintainerShare"
+import asiNovemberCloseout as C from "./asiNovemberCloseout"
 type Role = ProjectOwner | Steward | RepositoryAdmin | Writer | NoRole
 type AuthorityFact = { actor: int, role: Role, banned: bool, revision: int }
 type Eligibility = { revision: int, active: bool, verifiedPool: bool, paused: bool, restricted: bool, retired: bool,
@@ -56,7 +58,7 @@ type Monthly = { project: str, period: int, phase: MonthlyPhase, skip: SkipReaso
   exclusions: List[X::Exclusion], shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int, frozenBy: int,
   obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int,
   proposedShares: List[A::Share], changes: List[Change], cuts: List[Cut], publicCuts: List[Cut], notices: List[CutNotice],
-  latestCutAt: int, frozenAt: int, pledgedVault: str }
+  latestCutAt: int, frozenAt: int, pledgedVault: str, earlyCloseAt: int }
 pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero, rewardStartAt: 0,
   vault: "", asset: "", feePolicy: "", exclusions: List() }
 pure val noEligibility: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false,
@@ -66,7 +68,7 @@ pure val initial: Monthly = { project: "eliza", period: 0, phase: Unopened, skip
   snapshotDigest: "", exclusions: List(), shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0,
   frozenBy: 0, obligations: List(), banned: List(),
   underfundedNotice: false, coordinatorRetries: 0, proposedShares: List(), changes: List(), cuts: List(), publicCuts: List(),
-  notices: List(), latestCutAt: 0, frozenAt: 0, pledgedVault: "" }
+  notices: List(), latestCutAt: 0, frozenAt: 0, pledgedVault: "", earlyCloseAt: 0 }
 pure val firstAutomaticPeriod = 202611
 pure val cutoffSeconds = 259200
 pure val proposalWindowSeconds = 259200
@@ -88,8 +90,8 @@ pure def monthStart(period: int): int =
   (era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear - 719468) * 86400
 pure def monthEnd(period: int): int = monthStart(nextPeriod(period))
 pure def cutoff(m: Monthly): int = monthEnd(m.period) + cutoffSeconds
-pure def canOpenMonth(m: Monthly, period: int): bool = m.phase == Unopened and validPeriod(period)
-pure def openMonth(m: Monthly, period: int): Monthly = { ...m, phase: Collecting, period: period }
+pure def canOpenMonth(m: Monthly, project: str, period: int): bool = m.phase == Unopened and project != "" and validPeriod(period)
+pure def openMonth(m: Monthly, project: str, period: int): Monthly = { ...m, phase: Collecting, project: project, period: period }
 pure def canObserveClock(m: Monthly, now: int): bool = m.phase != Unopened and now > m.now
 pure def observeClock(m: Monthly, now: int): Monthly = { ...m, now: now }
 pure def canObserveEligibility(m: Monthly, eligibility: Eligibility): bool =
@@ -108,31 +110,106 @@ policy, a reward start before the month ends and a registered vault, whose
 escrow policy is effective for the month and whose monthly amount is
 positive. The revision used is the current one the month observed. The pool
 equals that revision's monthly amount: unallocated funds never raise a later
-month. Weights come only from a complete accepted-work snapshot minus that
-revision's own payout exclusion list; for the November 2026 exception
+month. Apart from a published maintainer share, weights come only from a
+complete accepted-work snapshot minus that revision's own payout exclusion
+list; for the November 2026 exception
 projects that list covers nobody in 2026-11. A month with no weighted contributor gets
 an empty proposal that pays nothing. The shared allocator breaks equal
 remainders by permanent actor ID. A paused project gets no proposal; a later
 run inside the window proposes it once it is active again.
 
+When the revision sets a [maintainer share](./maintainerShare.md) for the
+month (`basisPoints` above zero, at most 30%), the proposal also needs the
+month's complete decision record, and a month without a share takes none
+(development `8660a6121`, `src/lib/payments/escrow-cycle.ts`
+`buildEscrowCycle`, `scripts/prepare-monthly-rewards.ts`). The share comes
+out of the monthly amount first: the rest is divided over the Points
+weights and each maintainer's part of the share is added to that account's
+amount, so an account has one share a month; a maintainer with no Points
+weight is appended after the Points recipients with exactly its part.
+Without a share nothing changes. A failed decision read proposes nothing
+for that project and a later run of the same month proposes it.
+
 ```quint
+pure val noShareRecord: S::DecisionRecord = S::noRecord
+pure def shareRecordFits(m: Monthly, basisPoints: int, record: S::DecisionRecord): bool =
+  basisPoints >= 0 and basisPoints <= S::maxShareBasisPoints
+    and (if (basisPoints > 0) S::validRecord(record, m.period, record.repositories) and record.repositories.length() > 0
+         else record == noShareRecord)
+pure def maintainerPool(revision: RevisionFact, exclusions: List[X::Exclusion], basisPoints: int, record: S::DecisionRecord): M::Amount =
+  S::sharePool(revision.monthlyAmount, basisPoints, S::shareWeights(record, exclusions))
+pure def mergedShares(points: List[A::Share], maintainers: List[A::Share]): List[A::Share] =
+  points.listMap(s => { ...s, amount: M::addAmounts(s.amount, amountFor(maintainers, s.actor)) })
+    .concat(maintainers.select(x => not(hasActor(points, x.actor))))
+pure def proposalShares(snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact, basisPoints: int,
+  record: S::DecisionRecord): List[A::Share] =
+  val weights = X::rewardWeights(snapshot, exclusions)
+  val pool = maintainerPool(revision, exclusions, basisPoints, record)
+  val points = if (weights.length() == 0) List() else A::allocateAmounts(M::subtractAmounts(revision.monthlyAmount, pool), weights)
+  mergedShares(points, S::maintainerShares(pool, S::shareWeights(record, exclusions)))
 pure def proposalWindowOpen(m: Monthly): bool = m.now >= monthEnd(m.period) and m.now < monthEnd(m.period) + proposalWindowSeconds
 pure def projectMayPropose(e: Eligibility, revision: RevisionFact): bool = e.revision == revision.number and e.revision > 0
   and e.active and e.verifiedPool and not(e.paused) and not(e.retired) and e.vaultRegistered
   and e.receiptPolicyActive and e.monthlyPoolReward
-pure def canPropose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact): bool =
+pure def canPropose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact, basisPoints: int,
+  record: S::DecisionRecord): bool =
   val weights = X::rewardWeights(snapshot, exclusions)
+  val pool = maintainerPool(revision, exclusions, basisPoints, record)
   m.phase == Collecting and proposalWindowOpen(m) and revision == m.currentRevision and projectMayPropose(m.eligibility, revision)
     and revision.rewardStartAt < monthEnd(m.period) and exclusions == revision.exclusions
     and X::novemberException(m.project, exclusions) and revision.effectivePeriod <= m.period and M::validAmount(revision.monthlyAmount) and M::positiveAmount(revision.monthlyAmount)
     and M::withinMaximum(revision.monthlyAmount, revision.maximum)
     and X::usableSnapshot(snapshot, m.project, m.period)
-    and (weights.length() == 0 or A::canCommitAllocation(revision.monthlyAmount, weights))
-pure def propose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact): Monthly =
-  val weights = X::rewardWeights(snapshot, exclusions)
-  val shares = if (weights.length() == 0) List() else A::allocateAmounts(revision.monthlyAmount, weights)
+    and shareRecordFits(m, basisPoints, record) and M::compareAmounts(revision.monthlyAmount, pool) >= 0
+    and (weights.length() == 0 or A::canCommitAllocation(M::subtractAmounts(revision.monthlyAmount, pool), weights))
+pure def propose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact, basisPoints: int,
+  record: S::DecisionRecord): Monthly =
+  val shares = proposalShares(snapshot, exclusions, revision, basisPoints, record)
   { ...m, phase: Proposed, revision: revision, cap: revision.monthlyAmount, snapshotDigest: snapshot.digest,
-    exclusions: exclusions, shares: shares, proposedShares: shares, total: if (weights.length() == 0) M::zero else revision.monthlyAmount }
+    exclusions: exclusions, shares: shares, proposedShares: shares, total: if (shares.length() == 0) M::zero else A::allocatedTotal(shares) }
+pure def sometimesMaintainerWithoutPointsPaid(m: Monthly): bool = m.phase == Proposed and m.earlyCloseAt == 0
+  and m.shares.some(s => s.actor == 4 and M::positiveAmount(s.amount))
+```
+
+### The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change
+
+The one historical exception of the [ASI November
+closeout](./asiNovemberCloseout.md): ASI's 2026-11 month is proposed from
+the reviewed import's stored base, from the cutoff 2026-11-19T00:00:00.000Z
+on and before any ordinary proposal, for a project that may propose and is
+not restricted, under the current revision and its own exclusions. Its pool
+is the closeout's gross of 150,000,000 base units rather than the revision's
+monthly amount, divided over the cutoff-specific Points weights by the
+shared allocator with no maintainer share, and the month records its early
+close time (`early_close_at`). The owner may finalize it from that time,
+before the month ends; the automatic path keeps the ordinary cutoff. No
+allocation change is accepted on it (409 `closeout_allocations_fixed`, and
+the trigger of `migrations/0143_asi_november_closeout.sql`). Development
+`backend/payments/monthly.ts` (`loadBase`, `freezeMonthlyPeriod`, the change
+write).
+
+```quint
+pure def canProposeCloseout(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact): bool =
+  val weights = X::rewardWeights(snapshot, exclusions)
+  m.phase == Collecting and C::closeoutMonth(m.project, m.period) and m.now >= C::closeoutCutoff
+    and revision == m.currentRevision and projectMayPropose(m.eligibility, revision) and not(m.eligibility.restricted)
+    and revision.rewardStartAt < monthEnd(m.period) and exclusions == revision.exclusions
+    and X::novemberException(m.project, exclusions) and revision.effectivePeriod <= m.period
+    and M::validAmount(revision.monthlyAmount) and M::positiveAmount(revision.monthlyAmount)
+    and X::usableSnapshot(snapshot, m.project, m.period)
+    and (weights.length() == 0 or A::canCommitAllocation(C::closeoutCap, weights))
+pure def proposeCloseout(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact): Monthly =
+  val weights = X::rewardWeights(snapshot, exclusions)
+  val shares = if (weights.length() == 0) List() else A::allocateAmounts(C::closeoutCap, weights)
+  { ...m, phase: Proposed, revision: revision, cap: C::closeoutCap, snapshotDigest: snapshot.digest,
+    exclusions: exclusions, shares: shares, proposedShares: shares,
+    total: if (shares.length() == 0) M::zero else A::allocatedTotal(shares), earlyCloseAt: C::closeoutCutoff }
+pure def alwaysCloseoutOnlyForTheReviewedMonth(m: Monthly): bool = m.earlyCloseAt > 0 implies
+  (C::closeoutMonth(m.project, m.period) and m.earlyCloseAt == C::closeoutCutoff and proposedPhase(m.phase))
+pure def alwaysCloseoutUnchanged(m: Monthly): bool = m.earlyCloseAt > 0 implies (m.changes.length() == 0 and m.cuts.length() == 0)
+pure def sometimesCloseoutFinalizedEarly(m: Monthly): bool = m.earlyCloseAt > 0 and m.trigger == OwnerTrigger
+  and m.frozenAt < monthEnd(m.period)
+pure val weight_proposeCloseout = 3
 ```
 
 ### A month that is not proposed in its window gets no proposal
@@ -162,8 +239,14 @@ change allocations; the ban is read again at the write, so a concurrent ban
 refuses the whole write. A change under a stale project revision refuses.
 Nobody changes their own allocation. A payout-excluded actor cannot receive
 a positive amount. The total never exceeds the month's pool and every amount
-fits the vault network's integer range. While the automatic default is on,
-nothing changes after the cutoff. A change at or above the contributor's
+fits the vault network's integer range. While the month freezes at the
+cutoff without the owner, because the automatic default is on or because
+its stored pledge in the vault that pays it keeps it (`freezesAtCutoff`,
+`pledgeKeepsMonth`), nothing changes at or after the cutoff (409
+`cutoff_passed`); a pledge in another vault of the project, or a retired
+project's pledge, leaves changes open (development `8660a6121`,
+`backend/payments/monthly.ts`, the change write). The reviewed closeout
+month accepts no change at all (409 `closeout_allocations_fixed`). A change at or above the contributor's
 proposed amount is private: it is kept in the change journal for disputes
 and reconciliation and needs no reason.
 
@@ -180,7 +263,8 @@ pure def changeAllowed(m: Monthly, actor: int, amount: M::Amount, expectedSequen
     and hasActor(m.shares, actor) and M::validAmount(amount) and M::withinMaximum(amount, m.revision.maximum)
     and not(M::positiveAmount(amount) and X::excludedIn(m.exclusions, actor, m.period))
     and M::compareAmounts(A::allocatedTotal(replaceShare(m.shares, actor, amount)), m.cap) <= 0
-    and not(m.automatic and m.now >= cutoff(m))
+    and not(freezesAtCutoff(m) and m.now >= cutoff(m)) and m.earlyCloseAt == 0
+pure def freezesAtCutoff(m: Monthly): bool = m.automatic or pledgeKeepsMonth(m)
 pure def canAdjust(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): bool =
   changeAllowed(m, actor, amount, expectedSequence, fact) and not(belowProposal(m, actor, amount))
 pure def adjust(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): Monthly =
@@ -199,13 +283,16 @@ new amount, reason and time) and one Inbox notice for the contributor, keyed
 by the month, the contributor and the change sequence. The public cut list
 holds each contributor whose latest change is a cut, with that cut; a later
 change back to or above the proposal removes the contributor from the list,
-but every cut record stays. With the automatic default on, a cut is refused
-in the last 24 hours before the cutoff (`cut_notice_window`), so the
-contributor always has 24 hours of notice before the month can lock.
+but every cut record stays. While the month freezes at the cutoff without
+the owner (the automatic default on, or its stored pledge in the paying
+vault keeping it), a cut is refused in the last 24 hours before the cutoff
+(409 `cut_notice_window`), so the contributor has 24 hours of notice before
+the month can lock; the notice text names that time whenever
+`freezesAtCutoff` holds.
 
 ```quint
 pure def proposedFor(m: Monthly, actor: int): M::Amount = amountFor(m.proposedShares, actor)
-pure def cutWindowOpen(m: Monthly): bool = not(m.automatic and m.now >= cutoff(m) - cutNoticeSeconds)
+pure def cutWindowOpen(m: Monthly): bool = not(freezesAtCutoff(m) and m.now >= cutoff(m) - cutNoticeSeconds)
 pure def canCut(m: Monthly, actor: int, amount: M::Amount, reasonLength: int, expectedSequence: int, fact: AuthorityFact): bool =
   changeAllowed(m, actor, amount, expectedSequence, fact) and belowProposal(m, actor, amount)
     and reasonLength >= cutReasonMin and reasonLength <= cutReasonMax and cutWindowOpen(m) and m.now > 0
@@ -218,6 +305,8 @@ pure def cut(m: Monthly, actor: int, amount: M::Amount, reasonLength: int, expec
     cuts: m.cuts.append(record), publicCuts: m.publicCuts.select(c => c.actor != actor).append(record),
     notices: m.notices.append({ project: m.project, period: m.period, actor: actor, sequence: m.sequence + 1 }),
     latestCutAt: m.now }
+pure def stepNoCutInNoticeWindow(before: Monthly, via: str, after: Monthly): bool =
+  via == "cut" implies not(freezesAtCutoff(before) and before.now >= cutoff(before) - cutNoticeSeconds)
 ```
 
 ### Turning the automatic default on never locks a cut with less than 24 hours of notice
@@ -246,8 +335,10 @@ pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Mo
 
 ### The owner may finalize early; the coordinator freezes at the cutoff unless the default is off
 
-The owner path needs the same authority and current sequence, and is
-refused until 24 hours after the latest cut (`cut_notice_pending`). The automatic
+The owner path needs the same authority and current sequence and a month
+that has ended (409 `month_open`), except the reviewed closeout month, which
+it may finalize from its recorded early close time, and is refused until 24
+hours after the latest cut (`cut_notice_pending`). The automatic
 path needs the cutoff, a month from 2026-11 on and a served vault network,
 and either the automatic default with a project that is not paused or
 restricted, or the owner's on-chain pledge for the month in the vault that
@@ -266,7 +357,7 @@ pure def financialTermsSame(proposed: RevisionFact, observed: RevisionFact): boo
 pure def cutNoticeElapsed(m: Monthly): bool = m.latestCutAt == 0 or m.now >= m.latestCutAt + cutNoticeSeconds
 pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bool =
   m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence and financialTermsSame(m.revision, m.currentRevision)
-    and cutNoticeElapsed(m)
+    and cutNoticeElapsed(m) and (m.now >= monthEnd(m.period) or (m.earlyCloseAt > 0 and m.now >= m.earlyCloseAt))
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
   { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
 pure def automaticMayFreeze(m: Monthly): bool = m.now >= cutoff(m) and m.period >= firstAutomaticPeriod and m.eligibility.networkServed
@@ -408,7 +499,8 @@ pure def alwaysAllocationConserved(m: Monthly): bool = M::validAmount(m.total) a
 pure def proposedPhase(phase: MonthlyPhase): bool =
   phase == Proposed or phase == Frozen or phase == Funded or phase == Completed
 pure def alwaysCapFromRevision(m: Monthly): bool = proposedPhase(m.phase) implies
-  m.cap == m.revision.monthlyAmount and M::positiveAmount(m.cap) and m.revision.effectivePeriod <= m.period
+  (if (m.earlyCloseAt > 0) m.cap == C::closeoutCap else m.cap == m.revision.monthlyAmount)
+    and M::positiveAmount(m.cap) and m.revision.effectivePeriod <= m.period
 pure def alwaysUnproposedEmpty(m: Monthly): bool = not(proposedPhase(m.phase)) implies
   m.shares.length() == 0 and M::equalAmounts(m.total, M::zero) and m.obligations.length() == 0 and m.sequence == 0
     and m.proposedShares.length() == 0 and m.changes.length() == 0 and m.cuts.length() == 0 and m.latestCutAt == 0
@@ -507,7 +599,46 @@ pure def stepPeriodFixed(before: Monthly, after: Monthly): bool = before.phase !
 ### Proposals, changes, cuts, freezes, exclusions and payments are reachable
 
 In the samples November 2026 ends at 1796083200, its cuts close at
-1796256000 while the default is on, and its cutoff is 1796342400.
+1796256000 while the default is on, and its cutoff is 1796342400; October
+2026 ends at 1793491200 and its cutoff is 1793750400.
+
+Discovered by simulation: with the earlier weights few sampled runs of 20
+events ever proposed a month, because the clock usually passed the proposal
+window before the month observed its eligibility and revision; the clock is therefore tried least often and the proposal most
+often. Discovered by simulation: a withdrawal needs a cut and then a change of
+that contributor back to the proposed amount before the month freezes, so
+changes and cuts are tried more often than owner finalization; a month allows
+only as many changes as there are sampled expected sequences, so this cannot
+crowd out later events. Discovered by simulation: churn of the observed
+revision before the proposal left the proposal's revision stale, so revisions
+are observed no more often than other facts.
+
+Discovered by simulation: every copy of an event picks all its parameters on
+every step, so a run costs in proportion to the total weight. Weights about
+six times as high for proposals, changes and cuts reached a withdrawn cut no
+sooner and made each run about three and a half times as long, so every
+event that is not favoured has weight 1 or 2, and the events after a freeze
+keep their order relative to one another.
+
+Discovered by simulation: a change back up can withdraw a cut only to the
+proposed amount, and a sole contributor is proposed the whole pool, which no
+sampled amount reached, so a sole contributor's cut could never be withdrawn;
+a change to the whole pool is sampled too. Discovered by simulation: after
+the first event of a November month most clock samples already closed its
+proposal window, and every clock sample after the first closed an October
+month's cut window; a second day of each month is sampled. Discovered by
+simulation: once a month observes eligibility revision 2, which it never
+leaves, every sampled authority fact was stale, so an owner and a steward
+under revision 2 are sampled too. Discovered by simulation: no sampled
+eligibility was restricted, so a restricted project is sampled too; it can
+still be proposed, changed, cut and finalized by hand, but the automatic
+cutoff freezes it only under its pledge.
+
+Discovered by simulation: with the earlier weights and samples a search for a
+withdrawn cut could outlast its hour on a loaded machine. With these, 200
+runs of 20 events take about as long as before, and the search reached a
+withdrawn cut within about a second and a half of processor time after
+start-up for each of three seeds.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -534,11 +665,11 @@ pure def sometimesCutThenOwnerFinalized(m: Monthly): bool = m.trigger == OwnerTr
 pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTrigger and not(m.automatic)
 pure def sometimesLateCutHoldsDefaultOff(m: Monthly): bool = m.phase == Proposed and not(m.automatic) and cutNoticeOutlastsCutoff(m)
 pure val periodValues = Set(202611, 202610)
-pure val nowValues = Set(1793491300, 1796083300, 1796256100, 1796342400, 1796342600, 1796343000)
+pure val nowValues = Set(1793491300, 1793577600, 1795046500, 1796083300, 1796169600, 1796256100, 1796342400, 1796342600, 1796343000)
 pure val reasonLengthValues = Set(19, 20, 500)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
   retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
-pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
+pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 }, { ...eligible, restricted: true })
 pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128,
   rewardStartAt: 1790000000, vault: "vault", asset: "usdc", feePolicy: "v2", exclusions: List() }
 pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 },
@@ -548,13 +679,22 @@ pure val snapshotSample: X::WorkSnapshot = { project: "eliza", period: 202611, d
   rows: List({ actor: 1, acceptedWork: List(10), participation: 30, recognition: 0 }, { actor: 2, acceptedWork: List(30), participation: 0, recognition: 5 },
     { actor: 3, acceptedWork: List(10), participation: 0, recognition: 0 }) }
 pure val snapshotValues = Set(snapshotSample, { ...snapshotSample, rows: List() }, { ...snapshotSample, coverage: X::MissingSources },
-  { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) })
+  { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) },
+  { ...snapshotSample, project: "asi" })
+pure val projectValues = Set("eliza", "asi")
+pure val basisPointsValues = Set(0, 2000)
+pure val decisionSample: S::Decision = { repository: 1, pull: 1, author: 9, authorOutside: true, decider: 1, deciderBot: false,
+  kind: S::MergedByMaintainer, period: 202611, headForkOwnedByDecider: false, headForkMissing: false,
+  deciderDeletedHeadWithinWindow: false }
+pure val recordValues = Set(noShareRecord, { period: 202611, repositories: List(1), deciders: List(1, 4), digest: "m1",
+  decisions: List(decisionSample, { ...decisionSample, pull: 2, decider: 4 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2, 3)
-pure val amountValues = Set(List(0), List(2), List(5), List(6))
+pure val amountValues = Set(List(0), List(2), List(5), List(6), List(10))
 pure val expectedSequenceValues = Set(0, 1, 2)
 pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revision: 1 }, { actor: 2, role: Steward, banned: false, revision: 1 },
-  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 })
+  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 },
+  { actor: 9, role: ProjectOwner, banned: false, revision: 2 }, { actor: 2, role: Steward, banned: false, revision: 2 })
 pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1, 2)
 pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
@@ -568,17 +708,17 @@ pure def awardFact(actor: int, gross: M::Amount, paid: bool): AwardFact =
 pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, List(2), true))).union(Set(awardFact(2, List(6), true)))
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
-pure val weight_observeClock = 6
+pure val weight_observeClock = 1
 pure val weight_propose = 6
-pure val weight_observeRevision = 2
-pure val weight_adjust = 5
-pure val weight_cut = 5
-pure val weight_observeSettings = 2
-pure val weight_finalize = 8
-pure val weight_autoFreeze = 3
-pure val weight_noteUnderfunded = 4
-pure val weight_createObligations = 6
-pure val weight_recordReserved = 6
-pure val weight_recordPaid = 6
-pure val weight_recordConflict = 3
+pure val weight_observeRevision = 1
+pure val weight_adjust = 6
+pure val weight_cut = 3
+pure val weight_observeSettings = 1
+pure val weight_finalize = 1
+pure val weight_autoFreeze = 1
+pure val weight_noteUnderfunded = 1
+pure val weight_createObligations = 2
+pure val weight_recordReserved = 2
+pure val weight_recordPaid = 2
+pure val weight_recordConflict = 1
 ```

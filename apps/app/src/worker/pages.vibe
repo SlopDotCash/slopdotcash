@@ -15,13 +15,16 @@ import { type RoleVars, rolesFrom } from "@repo/platform/roles"
 import { type Area, type Execution, area, pages } from "@repo/platform/worker"
 import { contributorAudience, disputeTriage, points } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
-import { settlement } from "@repo/settlement/live"
+import { type PaymentNetworkVars, PoolListingLive, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, paymentNetworks, reservedAwardFeedAccess, settlement } from "@repo/settlement/live"
+import { githubApp } from "@repo/platform/github/app"
 import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
 import { documents } from "./document.vibe"
 import { workerCaches } from "./edgeCaches.ts"
 
-export interface PagesEnv extends BackendVars, SecurityEnv, RoleVars {
+export interface PagesEnv extends BackendVars, SecurityEnv, RoleVars, PaymentNetworkVars, RecoveryBindings, ReservedAwardFeedVars {
   readonly SLOP_DB: D1Database
+  readonly GITHUB_INTAKE_APP_ID?: string
+  readonly GITHUB_INTAKE_APP_PRIVATE_KEY?: string
   readonly SLOP_IDENTITY: Fetcher
   readonly SLOPBOT_VALUE_IMPORT?: HistoricalValueBinding
 }
@@ -48,6 +51,10 @@ function bindings(env: PagesEnv) {
     repositoryAccessReader(env.SLOPBOT),
     historicalValueImport(env.SLOPBOT_VALUE_IMPORT),
     disputeTriage(env.SLOPBOT),
+    paymentNetworks(env),
+    bindingRecovery(env),
+    Layer.provide(githubApp({ appId: env.GITHUB_INTAKE_APP_ID ?? "", privateKey: Redacted.make(env.GITHUB_INTAKE_APP_PRIVATE_KEY ?? ""), userAgent: "slop.cash" }), outbound),
+    reservedAwardFeedAccess(env.OPERATOR_FEED_TOKEN),
   )
 }
 
@@ -64,6 +71,7 @@ const shared = Layer.mergeAll(
   CallerLive,
   RegistryLive,
   RegistryManifestsLive,
+  PoolListingLive,
 )
 
 function services(env: Served) {

@@ -1,10 +1,11 @@
-// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"
+// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import { type RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
+import { RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, update } from "@repo/platform/stored"
 import type { Event, Merges, Row, Summary } from "../../../gen/backend__mergeActivity.ts"
 import { type NotAState, apply, decodeEvent, decodeState, noRow, noSummary, registry, schedule } from "../../../gen/backend__mergeActivity.effect.vibe"
-import { hourMillis, hourOf } from "./github.vibe"
+import { WantedIssue } from "../../client/projects.vibe"
+import { hourMillis, hourOf, ownIssue } from "./github.vibe"
 
 export schema StoredRow {
   project_id: string
@@ -17,6 +18,11 @@ export schema StoredRow {
   waiting_capped: number | null
   merged_outside_30d: number | null
   median_merge_hours: number | null
+  open_outside: number | null
+  open_outside_capped: number | null
+  wanted_label: string | null
+  wanted_issues: string | null
+  wanted_label_ready: string | null
 }
 
 export interface Key {
@@ -30,16 +36,27 @@ export interface Facts {
   readonly listed: boolean
   readonly running: boolean
   readonly reads: number
+  readonly intake: boolean
+  readonly label: string
+  readonly labelPending: boolean
 }
 
 export interface Evidence {
   readonly failure: string
   readonly mergedAt: ReadonlyArray<string>
+  readonly wanted: ReadonlyArray<WantedIssue>
 }
 
-export const columns = sql`project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours`
+export interface Step {
+  readonly event: Event
+  readonly by: string
+}
 
-const noEvidence: Evidence = { failure: "read-failed", mergedAt: [] }
+export const columns = sql`project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours, open_outside, open_outside_capped, wanted_label, wanted_issues, wanted_label_ready`
+
+export const noEvidence: Evidence = { failure: "read-failed", mergedAt: [], wanted: [] }
+
+const decodeWanted = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(WantedIssue)))
 
 function hoursOf(iso: string | null) {
   return iso === null ? 0 : hourOf(millisOf(iso))
@@ -47,22 +64,42 @@ function hoursOf(iso: string | null) {
 
 function summaryOf(stored: StoredRow): Summary {
   if (stored.observed_at === null) return noSummary
+  const waitingOutside = stored.waiting_outside ?? 0
   return {
     lastMergedAt: hoursOf(stored.last_merged_at),
-    waitingOutside: stored.waiting_outside ?? 0,
+    waitingOutside,
     waitingCapped: stored.waiting_capped === 1,
     mergedOutside30d: stored.merged_outside_30d ?? 0,
     medianDoubled: stored.median_merge_hours === null ? -1 : Math.round(stored.median_merge_hours * 2),
+    openOutside: stored.open_outside ?? waitingOutside,
+    openOutsideCapped: stored.open_outside_capped === 1,
   }
 }
 
-export function rowOf(stored: StoredRow | undefined): Row {
+effect function wantedOf(stored: StoredRow) {
+  if (stored.wanted_label === null || stored.wanted_issues === null) return []
+  const issues = decodeWanted(stored.wanted_issues) catch effect (error) => {
+    throw new RowMismatch({ text: `merge activity of ${stored.project_id} ${stored.repository}`, issue: String(error) })
+  }
+  return issues.map((issue) => ({ number: issue.number, ownRepository: ownIssue(stored.repository, issue.number, issue.url), openPulls: issue.openPullRequests }))
+}
+
+export effect function rowOf(stored: StoredRow | undefined) {
   if (stored === undefined) return noRow
-  return { stored: true, observedAt: hoursOf(stored.observed_at), attemptedAt: hoursOf(stored.attempted_at), failed: stored.failure !== null, summary: summaryOf(stored) }
+  return {
+    stored: true,
+    observedAt: hoursOf(stored.observed_at),
+    attemptedAt: hoursOf(stored.attempted_at),
+    failed: stored.failure !== null,
+    summary: summaryOf(stored),
+    label: stored.wanted_label ?? "",
+    wanted: try wantedOf(stored),
+    labelReady: stored.wanted_label_ready ?? "",
+  } satisfies Row
 }
 
 export function stateOf(facts: Facts, row: Row): Merges {
-  return { repository: 1, now: hourOf(facts.at), measured: facts.measured, listed: facts.listed, row, running: facts.running, reads: facts.reads }
+  return { repository: 1, now: hourOf(facts.at), measured: facts.measured, listed: facts.listed, row, running: facts.running, reads: facts.reads, intake: facts.intake, label: facts.label, labelPending: facts.labelPending }
 }
 
 function scope(key: Key) {
@@ -71,7 +108,7 @@ function scope(key: Key) {
 
 effect function loaded(facts: Facts, [found]: ReadonlyArray<Rows>) {
   const [stored] = try decoded(StoredRow, found ?? [], "repository merge activity")
-  return try decodeState(stateOf(facts, rowOf(stored)))
+  return try decodeState(stateOf(facts, try rowOf(stored)))
 }
 
 function aggregate(key: Key, facts: Facts): Aggregate<Merges, RowMismatch | NotAState, never> {
@@ -95,10 +132,15 @@ effect function writeOf(key: Key, at: number, event: Event, after: Row, evidence
   switch (event.type) {
     case "readSucceeded": {
       const summary = after.summary
-      return sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours)
-        VALUES (${key.projectId}, ${key.repository}, ${now}, ${now}, NULL, ${try lastMerged(summary.lastMergedAt, evidence.mergedAt)}, ${summary.waitingOutside}, ${summary.waitingCapped ? 1 : 0}, ${summary.mergedOutside30d}, ${summary.medianDoubled === -1 ? null : summary.medianDoubled / 2})
-        ON CONFLICT (project_id, repository) DO UPDATE SET observed_at = excluded.observed_at, attempted_at = excluded.attempted_at, failure = NULL, last_merged_at = excluded.last_merged_at, waiting_outside = excluded.waiting_outside, waiting_capped = excluded.waiting_capped, merged_outside_30d = excluded.merged_outside_30d, median_merge_hours = excluded.median_merge_hours`
+      const label = after.label === "" ? null : after.label
+      const wanted = label === null ? null : JSON.stringify(evidence.wanted)
+      const ready = after.labelReady === "" ? null : after.labelReady
+      return sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours, open_outside, open_outside_capped, wanted_label, wanted_issues, wanted_label_ready)
+        VALUES (${key.projectId}, ${key.repository}, ${now}, ${now}, NULL, ${try lastMerged(summary.lastMergedAt, evidence.mergedAt)}, ${summary.waitingOutside}, ${summary.waitingCapped ? 1 : 0}, ${summary.mergedOutside30d}, ${summary.medianDoubled === -1 ? null : summary.medianDoubled / 2}, ${summary.openOutside}, ${summary.openOutsideCapped ? 1 : 0}, ${label}, ${wanted}, ${ready})
+        ON CONFLICT (project_id, repository) DO UPDATE SET observed_at = excluded.observed_at, attempted_at = excluded.attempted_at, failure = NULL, last_merged_at = excluded.last_merged_at, waiting_outside = excluded.waiting_outside, waiting_capped = excluded.waiting_capped, merged_outside_30d = excluded.merged_outside_30d, median_merge_hours = excluded.median_merge_hours, open_outside = excluded.open_outside, open_outside_capped = excluded.open_outside_capped, wanted_label = excluded.wanted_label, wanted_issues = excluded.wanted_issues, wanted_label_ready = excluded.wanted_label_ready`
     }
+    case "ensureLabel":
+      return sql`UPDATE repository_merge_activity SET wanted_label_ready = ${after.labelReady === "" ? null : after.labelReady} WHERE ${scope(key)}`
     case "readFailed":
       return sql`INSERT INTO repository_merge_activity (project_id, repository, attempted_at, failure) VALUES (${key.projectId}, ${key.repository}, ${now}, ${evidence.failure})
         ON CONFLICT (project_id, repository) DO UPDATE SET attempted_at = excluded.attempted_at, failure = excluded.failure`
@@ -109,36 +151,38 @@ effect function writeOf(key: Key, at: number, event: Event, after: Row, evidence
   }
 }
 
-interface Step {
-  readonly event: Event
-  readonly by: string
-}
-
 effect function decide(key: Key, facts: Facts, steps: ReadonlyArray<Step>, evidence: Evidence, current: Merges) {
   let state = current
-  const writes: Statement[] = []
+  const touched: Event[] = []
   for (const { event, by } of steps) {
     const next = try apply(state, event, by)
-    for (const write of next.out) {
-      if (write.table !== "MergeActivityRows" || write.repository !== state.repository) continue
-      const statement = try writeOf(key, facts.at, event, next.state.row, evidence)
-      if (statement !== undefined) writes.push(statement)
-    }
+    if (next.out.some((write) => write.table === "MergeActivityRows" && write.repository === state.repository)) touched.push(event)
     state = next.state
+  }
+  const read = touched.some((event) => event.type === "readSucceeded")
+  const writes: Statement[] = []
+  for (const event of touched) {
+    if (read && event.type === "ensureLabel") continue
+    const statement = try writeOf(key, facts.at, event, state.row, evidence)
+    if (statement !== undefined) writes.push(statement)
   }
   return { value: state, writes }
 }
 
+export effect function sendAll(key: Key, facts: Facts, steps: ReadonlyArray<Step>, evidence: Evidence = noEvidence) {
+  return try update(aggregate(key, facts), (current) => decide(key, facts, steps, evidence, current))
+}
+
 export effect function send(key: Key, facts: Facts, event: Event, by: string, evidence: Evidence = noEvidence) {
-  return try update(aggregate(key, facts), (current) => decide(key, facts, [{ event, by }], evidence, current))
+  return try sendAll(key, facts, [{ event, by }], evidence)
 }
 
 export effect function unlist(key: Key, facts: Facts) {
   return try update(aggregate(key, facts), (current) => decide(key, facts, [{ event: { type: "unlistPath" }, by: registry }, { event: { type: "prune" }, by: schedule }], noEvidence, current))
 }
 
-export effect function receive(key: Key, facts: Facts, input: unknown, by: string) {
-  return try send(key, facts, try decodeEvent(input), by)
+export effect function receive(key: Key, facts: Facts, input: unknown, by: string, evidence: Evidence = noEvidence) {
+  return try send(key, facts, try decodeEvent(input), by, evidence)
 }
 
 export effect function storedRows() {
@@ -146,5 +190,5 @@ export effect function storedRows() {
 }
 
 export effect function storedRow(key: Key) {
-  return rowOf(try first(StoredRow, sql`SELECT ${columns} FROM repository_merge_activity WHERE ${scope(key)}`))
+  return try rowOf(try first(StoredRow, sql`SELECT ${columns} FROM repository_merge_activity WHERE ${scope(key)}`))
 }

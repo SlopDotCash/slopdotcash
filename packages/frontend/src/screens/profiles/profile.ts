@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions"
 import { githubUserIdFromNodeId } from "@repo/backend/nodeId";
 import type { LeaderboardSnapshot, ProfileRecord, RepositoryRegistry } from "@repo/points/client";
 import type { CycleContributor, CycleIndexEntry, DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
@@ -12,8 +12,6 @@ import type { RegistryBoot } from "../../reads/registry.vibe";
 
 export interface MembershipFacts {
   readonly actor: ProfileActorSource;
-  readonly welcome: number;
-  readonly socialPoints: number;
 }
 
 export interface CycleShare {
@@ -36,8 +34,6 @@ export interface SnapshotStandings {
   readonly applied: ReadonlyMap<string, number>;
 }
 
-export const recentDays = 30;
-export const activityDays = 35;
 export const shownRecords = 5;
 
 export const penaltyLabels: Readonly<Record<string, string>> = {
@@ -45,6 +41,7 @@ export const penaltyLabels: Readonly<Record<string, string>> = {
   scam: "Scam",
   busywork: "Rule violation",
   gaming: "Rule violation",
+  missing_evidence: "Missing PR evidence",
 };
 
 const avatarActor = /^https:\/\/avatars\.githubusercontent\.com\/u\/(\d+)(?:\?|$)/u;

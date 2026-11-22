@@ -14,6 +14,7 @@ import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
+import { earlyCloseAt } from "./closeout.vibe"
 import { PledgeRow, modelNetwork, storedPledgesOf } from "../vault/store.vibe"
 
 module limbs {
@@ -45,9 +46,16 @@ export schema ReviewBudget {
   readonly monthlyCapMinor?: string
 }
 
+export schema ShareHistoryEntry {
+  readonly basisPoints: number
+  readonly throughCycle: string
+}
+
 export schema ManifestReward {
   readonly kind: string
   readonly monthlyCapMinor?: string
+  readonly maintainerShare?: number
+  readonly maintainerShareHistory?: ReadonlyArray<ShareHistoryEntry>
   readonly cycleCaps?: ReadonlyArray<CycleCap>
   readonly rewardStartAt?: string
   readonly payoutExclusions?: ReadonlyArray<ManifestExclusion>
@@ -73,6 +81,19 @@ export schema ManifestState {
   readonly state: string
 }
 
+export schema ManifestAuthority {
+  readonly state: string
+  readonly repositoryId?: string | number
+  readonly repositoryNodeId?: string
+}
+
+export schema ManifestRepository {
+  readonly id: string
+  readonly countsFrom?: string
+  readonly githubId?: string
+  readonly nodeId?: string
+}
+
 export schema ManifestTerms {
   readonly receiptPolicy?: ManifestState
 }
@@ -81,9 +102,10 @@ export schema MonthlyManifest {
   readonly id: string
   readonly status: string
   readonly name?: string
-  readonly authority?: ManifestState
+  readonly authority?: ManifestAuthority
   readonly terms?: ManifestTerms
   readonly reward: ManifestReward
+  readonly repositories?: ReadonlyArray<ManifestRepository>
   readonly escrow?: ManifestEscrow
 }
 
@@ -105,6 +127,21 @@ export interface CurrentRevision {
   readonly number: number
   readonly manifest: string
   readonly manifestSha256: string
+}
+
+export interface StoredShareRow {
+  readonly actor: number
+  readonly login: string
+  readonly decisions: number
+  readonly amount: Amount
+}
+
+export interface StoredShare {
+  readonly basisPoints: number
+  readonly pool: Amount
+  readonly text: string
+  readonly sha256: string
+  readonly rows: ReadonlyArray<StoredShareRow>
 }
 
 export interface MonthFacts {
@@ -429,6 +466,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     publicCuts,
     notices,
     latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
+    earlyCloseAt: try earlyCloseAt(project, period),
   }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)
@@ -487,7 +525,15 @@ export effect function readMonth(key: MonthKey) {
   return { rows, state: try stateOf(key, rows, facts, now), facts } satisfies Loaded
 }
 
-export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>) {
+function shareWrites(key: MonthKey, proposal: Statement, share: StoredShare, created: string): Statement[] {
+  const period = formatPeriod(key.period)
+  return [
+    sql`INSERT INTO monthly_maintainer_shares (project_id, period, basis_points, pool_base, decisions, decisions_sha256, created_at) SELECT ${key.projectId}, ${period}, ${share.basisPoints}, ${fromAmount(share.pool).toString()}, ${share.text}, ${share.sha256}, ${created} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period) DO NOTHING`,
+    ...share.rows.map((row) => sql`INSERT INTO monthly_maintainer_share_rows (project_id, period, github_user_id, github_login, decisions, gross_base) SELECT ${key.projectId}, ${period}, ${String(row.actor)}, ${row.login}, ${row.decisions}, ${fromAmount(row.amount).toString()} WHERE EXISTS (SELECT 1 FROM monthly_maintainer_shares WHERE project_id = ${key.projectId} AND period = ${period} AND decisions_sha256 = ${share.sha256}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`),
+  ]
+}
+
+export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>, share: StoredShare | undefined) {
   const created = try isoAt(next.now * 1000)
   const period = formatPeriod(key.period)
   const digests: string[] = []
@@ -502,6 +548,7 @@ export effect function proposalWrites(key: MonthKey, next: Monthly, current: Cur
   return [
     sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}) ON CONFLICT (project_id, period) DO NOTHING`,
     ...rows,
+    ...(share === undefined ? [] : shareWrites(key, proposal, share, created)),
   ]
 }
 

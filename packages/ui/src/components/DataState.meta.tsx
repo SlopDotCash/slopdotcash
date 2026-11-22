@@ -26,10 +26,17 @@ const retries = async ({ args, canvasElement }: Context, act: (button: HTMLEleme
 
 export const meta: ComponentMeta<DataStateProps> = {
   args: { status: "Current", children: rows },
+  examples: { "Stale with time": { status: "Stale", updatedAt: <time dateTime="2026-11-22T10:00:00Z">22 Nov 2026, 10:00</time> } },
   play: {
     // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
     StatusStale: async (context: Context) => {
       await expect(shown(context.canvasElement)).toEqual(["polite", true, true]);
+      await expect(await retries(context, (button) => userEvent.click(button))).toBe(1);
+    },
+    // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently": the stale notice
+    // carries when the retained rows were read, and still offers Retry.
+    "Stale with time": async (context: Context) => {
+      await expect([...shown(context.canvasElement), context.canvasElement.querySelector("[aria-live] time")?.getAttribute("dateTime")]).toEqual(["polite", true, true, "2026-11-22T10:00:00Z"]);
       await expect(await retries(context, (button) => userEvent.click(button))).toBe(1);
     },
     // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"

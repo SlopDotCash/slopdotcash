@@ -4,11 +4,11 @@ import { type Registry, compareCodeUnits, findRepository } from "../client/snaps
 import { type Award, type Coverage, type Revision as Row, journalText } from "../kernels/records/canonical.ts"
 import { journalFile, pointKey } from "../kernels/records/ids.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
-import { type AwardKey, type Category, type Event, type FrozenPeriod, type Ledger, type Revision, type SourceRule, Machine, decodeState, initial, inv, machineOver, noDecision } from "../../gen/points__journal.effect.vibe"
+import { type AwardKey, type Category, type Decision, type Event, type FrozenPeriod, type Ledger, type Revision, type SourceRule, Machine, decodeState, initial, inv, machineOver, noDecision } from "../../gen/points__journal.effect.vibe"
 import type { FreezeEvidence } from "../../gen/points__periods.ts"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import type { Unit } from "../../gen/points__workUnits.ts"
-import { sizePoints } from "../../gen/points__allocation.effect.vibe"
+import { allocatePoints, sizePoints } from "../../gen/points__allocation.effect.vibe"
 
 module verified {
   import { legacyHolder as holder } from "@repo/backend/legacy"
@@ -39,7 +39,9 @@ export interface Store {
 
 export interface Repositories { readonly registry: Registry; readonly countsFrom: ReadonlyMap<string, string> }
 
-export interface Scope { readonly awards: ReadonlyArray<Award>; readonly units: ReadonlyArray<string>; readonly sources: ReadonlyArray<string> }
+export interface Member { readonly projectId: string; readonly actorId: string }
+export interface View { readonly registry: Registry | undefined; readonly actors: ReadonlyArray<Member> }
+export interface Scope { readonly awards: ReadonlyArray<Award>; readonly units: ReadonlyArray<string>; readonly sources: ReadonlyArray<string>; readonly view?: View }
 
 export interface Names {
   readonly keys: Map<string, AwardKey>
@@ -76,6 +78,8 @@ const legacyRules: Readonly<Record<Exclude<SourceRule, "PenaltyTable">, string>>
   VerifiedPayoutV1: "verified-payout-v1",
 }
 const penaltyRule = /^slopbot-penalties-v([1-9][0-9]*)$/u
+const reviewPath = /^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/iu
+const reviewFragment = /^#(?:pullrequestreview-|discussion_r)[0-9]+$/u
 
 export function categoryOf(category: string): Category {
   return categories[category] ?? "Evidence"
@@ -92,6 +96,24 @@ export function legacyRuleOf(revision: Revision): string {
 
 export function bandOf(total: number): number | undefined {
   return [-1, 1, 2, 3, 4, 5].find((band) => sizePoints(band) === total)
+}
+
+export function reviewIdentity(registry: Registry | undefined, url: string) {
+  const parsed = URL.parse(url)
+  if (parsed === null || parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com" || parsed.username !== "" ||
+    parsed.password !== "" || parsed.port !== "" || parsed.search !== "") return undefined
+  const path = reviewPath.exec(parsed.pathname)
+  if (path === null || !reviewFragment.test(parsed.hash.toLowerCase())) return undefined
+  const ownerRepo = `${path[1]}/${path[2]}`
+  const repository = registry === undefined ? undefined : findRepository(registry, ownerRepo)
+  return `${(repository?.id ?? ownerRepo).toLowerCase()}/pull/${path[3]}`
+}
+
+function viewSource(view: View, award: Award) {
+  if (award.category !== "substantive-review" && award.category !== "evaluated-contribution") return award.sourceId
+  const identity = reviewIdentity(view.registry, award.sourceUrl)
+  if (identity !== undefined) return `review\u0000${identity}`
+  return award.category === "substantive-review" ? `review\u0000${award.sourceUrl.split("#")[0] ?? ""}` : `evaluated\u0000${award.key}`
 }
 
 export effect function instant(at: string) {
@@ -167,11 +189,19 @@ export effect function openStore(history: string, published: string | null, free
   const ids = new Set(base.revisions.map((revision) => revision.id))
   const missing = checked.revisions.find((revision) => !ids.has(revision.id))
   if (missing !== undefined) throw new HistoryDiverges({ id: missing.id })
+  const store = try storeOf(base.generatedAt, base.coverage, base.revisions)
+  const opened = try command(store, { awards: [], units: [], sources: [] })
+  for (const evidence of freezes) opened.machine.send({ type: "freeze", f: evidence }) catch () => undefined
+  store.frozen.push(...(try opened.machine.get()).frozen)
+  return store
+}
+
+export effect function storeOf(generatedAt: string, coverage: ReadonlyArray<Coverage>, revisions: ReadonlyArray<Row>) {
   const store: Store = {
-    generatedAt: base.generatedAt,
-    now: Math.max(initial.now, try instant(base.generatedAt)),
-    coverage: [...base.coverage],
-    revisions: [...base.revisions],
+    generatedAt,
+    now: Math.max(initial.now, try instant(generatedAt)),
+    coverage: [...coverage],
+    revisions: [...revisions],
     latest: new Map(),
     keysBySource: new Map(),
     units: new Map(),
@@ -180,10 +210,7 @@ export effect function openStore(history: string, published: string | null, free
     frozen: [],
     held: [],
   }
-  for (const row of base.revisions) try index(store, row)
-  const opened = try command(store, { awards: [], units: [], sources: [] })
-  for (const evidence of freezes) opened.machine.send({ type: "freeze", f: evidence }) catch () => undefined
-  store.frozen.push(...(try opened.machine.get()).frozen)
+  for (const row of revisions) try index(store, row)
   return store
 }
 
@@ -211,9 +238,17 @@ export effect function ledgerState() {
 function closure(store: Store, scope: Scope) {
   const units = new Set(scope.units)
   const sources = new Set([...scope.sources, ...scope.awards.map((award) => award.sourceId)])
+  const keys = new Set(scope.awards.map((award) => award.key))
+  const members = new Set((scope.view?.actors ?? []).map((member) => `${member.projectId}\u0000${member.actorId}`))
+  if (members.size > 0) {
+    for (const row of store.latest.values()) {
+      if (!members.has(`${row.award.projectId}\u0000${row.award.actor.id}`)) continue
+      keys.add(row.award.key)
+      sources.add(row.award.sourceId)
+    }
+  }
   for (const source of [...sources]) for (const name of store.unitsBySource.get(source) ?? []) units.add(name)
   for (const name of units) for (const source of store.units.get(name)?.sources ?? []) sources.add(source)
-  const keys = new Set(scope.awards.map((award) => award.key))
   for (const source of sources) for (const key of store.keysBySource.get(source) ?? []) keys.add(key)
   for (const name of units) for (const key of store.units.get(name)?.keys ?? []) keys.add(key)
   return { units, sources, keys }
@@ -221,6 +256,19 @@ function closure(store: Store, scope: Scope) {
 
 function interned(values: Iterable<string>) {
   return new Map([...new Set(values)].sort(compareCodeUnits).map((value, position) => [value, position + 1] as const))
+}
+
+function decisionOf(key: AwardKey, rule: SourceRule, rows: ReadonlyArray<Row>, amount: number, recordedAt: number): Decision {
+  const decided = rows.find((row) => row.decision?.sourceId.startsWith("value:") === true)?.decision ?? rows.find((row) => row.decision !== undefined)?.decision
+  if (decided === undefined || !(key.category === "Penalty" || rule === "ScoreV2" || rule === "ValueV1")) return noDecision
+  return {
+    basis: key.category === "Penalty" ? "PenaltyChange" : "Reassessment",
+    effectiveAt: Math.min(instantOf(decided.effectiveAt) ?? recordedAt, recordedAt),
+    reason: decided.reason,
+    delta: amount,
+    source: decided.sourceId,
+    valued: key.category !== "Penalty" && decided.sourceId.startsWith("value:"),
+  }
 }
 
 function revisionOf(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors: ReadonlyMap<string, number>): Revision {
@@ -231,6 +279,8 @@ function revisionOf(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors:
   const recipients = merged
     ? rows.map((row) => ({ actor: actors.get(row.award.actor.id) ?? 0, lines: row.award.amount })).sort((left, right) => left.actor - right.actor)
     : []
+  const recordedAt = Math.max(...rows.map((row) => instantOf(row.recordedAt) ?? -1))
+  const penalty = first?.penalty
   return {
     id,
     previous: 0,
@@ -238,26 +288,55 @@ function revisionOf(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors:
     amount,
     priorAmount: 0,
     occurredAt: instantOf(first?.award.occurredAt ?? "") ?? -1,
-    recordedAt: Math.max(...rows.map((row) => instantOf(row.recordedAt) ?? -1)),
+    recordedAt,
     rule,
     tableVersion,
     sourceDigest: first?.sourceDigest ?? "",
     provisional: rows.some((row) => row.award.provisional),
-    decision: noDecision,
+    decision: decisionOf(key, rule, rows, amount, recordedAt),
     recipients,
     completeLines: merged,
     shares: recipients.map((recipient) => ({ actor: recipient.actor, points: recipient.lines })),
+    debit: penalty?.debit ?? 0,
+    reversed: penalty !== undefined && penalty.reversedAt !== null,
   }
 }
 
-export effect function command(store: Store, scope: Scope) {
+function positiveAncestor(byId: ReadonlyMap<string, Row>, row: Row) {
+  let found: Row | undefined = row
+  while (found !== undefined && found.award.amount === 0) found = found.previous === null ? undefined : byId.get(found.previous)
+  return found
+}
+
+function unitChain(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors: ReadonlyMap<string, number>, byId: () => ReadonlyMap<string, Row>): Revision[] {
+  const current = revisionOf(id, key, rows, actors)
+  if (current.amount !== 0) return [current]
+  const ancestors = rows.flatMap((row) => {
+    const ancestor = positiveAncestor(byId(), row)
+    return ancestor === undefined ? [] : [ancestor]
+  })
+  if (ancestors.length === 0) return [current]
+  const prior = revisionOf(id, key, ancestors, actors)
+  return [prior, {
+    ...current, id: id + 1, previous: prior.id, priorAmount: prior.amount, occurredAt: prior.occurredAt,
+    recipients: prior.recipients, completeLines: prior.completeLines, shares: allocatePoints(0, prior.recipients),
+    decision: current.decision.basis === "NoBasis" ? noDecision : { ...current.decision, delta: 0 - prior.amount },
+  }]
+}
+
+export interface Projected { readonly names: Names; readonly base: Ledger; readonly groups: ReadonlyArray<{ readonly revisions: ReadonlyArray<Revision>; readonly keys: ReadonlyArray<string> }>; readonly units: ReadonlyArray<Unit> }
+
+export effect function projected(store: Store, scope: Scope) {
   const reach = closure(store, scope)
   const rows = [...reach.keys].flatMap((key) => {
     const row = store.latest.get(key)
     return row === undefined ? [] : [row]
   })
-  const actors = interned([...rows, ...scope.awards.map((award) => ({ award }))].map((row) => row.award.actor.id))
-  const sources = interned(reach.sources)
+  const view = scope.view
+  const awards = [...rows.map((row) => row.award), ...scope.awards]
+  const actors = interned(awards.map((award) => award.actor.id))
+  const sources = interned([...reach.sources, ...(view === undefined ? [] : awards.map((award) => viewSource(view, award)))])
+  const works = interned(awards.map((award) => award.workUnitId))
   const keyIds = interned(reach.keys)
   const unitIds = interned(reach.units)
   const names: Names = {
@@ -268,22 +347,42 @@ export effect function command(store: Store, scope: Scope) {
     sources,
     opaque: new Set(),
   }
-  for (const award of [...rows.map((row) => row.award), ...scope.awards]) {
+  const modelKeys = new Map<string, string>()
+  for (const award of awards) {
     const name = store.unitOfKey.get(award.key)
     const unit = name === undefined ? undefined : unitIds.get(name)
-    names.keys.set(award.key, unit === undefined
-      ? { project: award.projectId, actor: actors.get(award.actor.id) ?? 0, category: categoryOf(award.category), source: sources.get(award.sourceId) ?? 0, workUnit: keyIds.get(award.key) ?? 0 }
-      : { project: award.projectId, actor: 0, category: "MergedWork", source: unit, workUnit: unit })
+    const key: AwardKey = unit !== undefined
+      ? { project: award.projectId, actor: 0, category: "MergedWork", source: unit, workUnit: unit }
+      : {
+        project: award.projectId, actor: actors.get(award.actor.id) ?? 0, category: categoryOf(award.category),
+        source: sources.get(view === undefined ? award.sourceId : viewSource(view, award)) ?? 0,
+        workUnit: (view === undefined ? keyIds.get(award.key) : works.get(award.workUnitId)) ?? 0,
+      }
+    names.keys.set(award.key, key)
+    if (unit !== undefined) continue
+    const text = JSON.stringify(key)
+    const other = modelKeys.get(text)
+    if (other !== undefined && other !== award.key) {
+      names.opaque.add(other)
+      names.opaque.add(award.key)
+    }
+    modelKeys.set(text, award.key)
   }
-  const base: Ledger = { ...initial, now: store.now, frozen: [...store.frozen] }
-  const revisions: Revision[] = []
+  const base: Ledger = { ...initial, now: store.now, frozen: [...store.frozen], coverage: [...new Set(store.coverage.map((entry) => entry.digest))] }
+  let byId: Map<string, Row> | undefined
+  const lookup = () => byId ??= new Map(store.revisions.map((row) => [row.id, row] as const))
+  let next = 1
+  const groups: { revisions: Revision[]; keys: string[] }[] = []
   const units: Unit[] = []
   for (const [name, unitId] of unitIds) {
     const record = store.units.get(name)
     const unitRows = rows.filter((row) => record?.keys.has(row.award.key) === true)
     if (record === undefined || unitRows.length === 0) continue
-    const candidate = revisionOf(revisions.length + 1, { project: record.project, actor: 0, category: "MergedWork", source: unitId, workUnit: unitId }, unitRows, actors)
-    const band = bandOf(candidate.amount) ?? -1
+    const chain = unitChain(next, { project: record.project, actor: 0, category: "MergedWork", source: unitId, workUnit: unitId }, unitRows, actors, lookup)
+    next += chain.length
+    const [first] = chain
+    const occurredAt = Math.max(first?.occurredAt ?? 0, 0)
+    const band = bandOf(first?.amount ?? 0) ?? -1
     units.push({
       id: unitId,
       project: record.project,
@@ -292,23 +391,39 @@ export effect function command(store: Store, scope: Scope) {
       band,
       value: sizePoints(band),
       accepted: true,
-      acceptedPeriod: periodOf(Math.max(candidate.occurredAt, 0)),
+      acceptedPeriod: periodOf(occurredAt),
       superseded: false,
-      frozen: store.frozen.some((period) => period.project === record.project && period.period === periodOf(Math.max(candidate.occurredAt, 0))),
+      frozen: store.frozen.some((period) => period.project === record.project && period.period === periodOf(occurredAt)),
       supersededBy: 0,
     })
-    if (inv({ ...base, revisions: [candidate], nextId: candidate.id + 1 })) revisions.push(candidate)
-    else for (const row of unitRows) names.opaque.add(row.award.key)
+    groups.push({ revisions: chain, keys: unitRows.map((row) => row.award.key) })
   }
   for (const row of rows) {
     if (row.award.category === "merged-pull-request") continue
     const key = names.keys.get(row.award.key)
     if (key === undefined) continue
-    const candidate = revisionOf(revisions.length + 1, key, [row], actors)
-    if (inv({ ...base, revisions: [candidate], nextId: candidate.id + 1 })) revisions.push(candidate)
-    else names.opaque.add(row.award.key)
+    groups.push({ revisions: [revisionOf(next, key, [row], actors)], keys: [row.award.key] })
+    next += 1
   }
-  const state = try decodeState({ ...base, revisions, nextId: revisions.length + 1, units: { units, nextId: unitIds.size + 1, promotions: [], heldPromotions: [] } })
+  return { names, base, groups, units } satisfies Projected
+}
+
+export function viewLedger(view: Projected): Ledger {
+  const revisions = view.groups.flatMap((group) => group.revisions)
+  return { ...view.base, revisions, nextId: Math.max(0, ...revisions.map((revision) => revision.id)) + 1, units: { units: [...view.units], nextId: view.units.length + 1, promotions: [], heldPromotions: [] } }
+}
+
+export effect function command(store: Store, scope: Scope) {
+  const view = try projected(store, scope)
+  const { names, base } = view
+  const revisions: Revision[] = []
+  for (const group of view.groups) {
+    const last = group.revisions[group.revisions.length - 1]?.id ?? 0
+    if (!group.keys.some((key) => names.opaque.has(key)) && inv({ ...base, revisions: [...group.revisions], nextId: last + 1 })) revisions.push(...group.revisions)
+    else for (const key of group.keys) names.opaque.add(key)
+  }
+  const nextId = Math.max(0, ...view.groups.flatMap((group) => group.revisions.map((revision) => revision.id))) + 1
+  const state = try decodeState({ ...base, revisions, nextId, units: { units: [...view.units], nextId: names.units.size + 1, promotions: [], heldPromotions: [] } })
   return { machine: try heldMachine(state), names, start: state.nextId } satisfies Opened
 }
 

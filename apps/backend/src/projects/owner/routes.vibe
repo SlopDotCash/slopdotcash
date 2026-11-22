@@ -1,29 +1,31 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { isoNow } from "@repo/platform/clock"
 import { ConstraintViolation } from "@repo/platform/d1"
-import { type Actor, Refused, admission, body, handleRaw, json } from "@repo/platform/http"
+import { type Actor, Refused, admission, body, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { AccountStanding, Event, Registry, RegistryRead } from "../../../gen/backend__projectComposition.effect.vibe"
 import { Rejected, clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
-import type { AuthorityRead, Creation, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
-import { licenseRecorded } from "../../../gen/backend__projects.effect.vibe"
+import type { AuthorityRead, BranchChange, Creation, NewRepository, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
+import { clearanceState } from "../../../gen/security__enforcement.effect.vibe"
 import { type Exclusion, covers, validList } from "../../../gen/settlement__payoutExclusions.effect.vibe"
 import { type AccessActor, type Checked, type RepositoryIdentity, currentPath, decided, modelRead, readAccess } from "../../authority/live.vibe"
 import { checkedIn, editedConsent, fundingChoiceOf, newProjectManifest, savedConsentOf, withConsent } from "../../closureConsent/form.vibe"
 import { CheckRequest, CreateRequest, EmptyRequest, RemoveRequest, type RepositoryLicense, ReviseRequest, cancelApplication, checkSetup, createProject, listSetup, myApplications, ownedRepositories, publishApplication, removeProject, repositoryFacts, reviseProject, setupViewer } from "../../client/projectSetup.vibe"
 import { getProjectGithubOwnedRepositories, getProjectSetupById, postProjectApplicationsByIdCancel, postProjectApplicationsByIdPublish, postProjectSetupByIdCheck, postProjects, postProjectsByIdRemove, putProjectsById } from "../../client/refusals.vibe"
 import { listedById } from "../../projectRegistry/claims.vibe"
-import { factsByPath, githubLogin, lookupActor, lookupRepository, ownedRepositories as ownedOf, validRepositoryPath } from "../github/lookup.vibe"
-import { idOf, nextMonth } from "../store/codec.vibe"
+import { factsByPath, githubLogin, lookupActor, lookupRepository, ownedRepositories as ownedOf, readIntegrationBranchAuthority, validRepositoryPath } from "../github/lookup.vibe"
+import { idOf, nextMonth, rewardPromiseOf } from "../store/codec.vibe"
 import { accountStanding } from "../store/facts.vibe"
 import { manifestOf } from "../store/rows.vibe"
 import { isRepositoryConflict, loadProject, send } from "../store/store.vibe"
 import { verifiedAsset } from "../tokens/metadata.vibe"
-import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, withMonthlyAmount } from "./manifest.vibe"
+import { type BranchRevision, BranchRequest, branchReason, declarationMatches, primaryBranch, selectionOf, withBranch } from "./integrationBranch.vibe"
+import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, shareHistoryOf, shareOfReward, withMonthlyAmount } from "./manifest.vibe"
 import { type Json, appendedRepositories, classified, objectOf, same } from "./revisionChanges.ts"
 import { type Trusted, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
 import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
+import { managesContacts, publishedProgram, requestedStatus, stagedProgram, withBountyAmount } from "./securityProgram.vibe"
 import { primaryAuthority, primaryOf, refreshSetup } from "./setup.vibe"
 
 const contract = { "x-slop-project-api-contract": "project-registry-v1" }
@@ -31,7 +33,6 @@ const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
 const applicationIdPattern = /^app_[A-Za-z0-9_-]{8,72}$/u
 const maxGithubNames = 5
 const githubRetry = "GitHub could not be checked. Try again."
-const oneChangeAtATime = "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."
 
 function answer(value: unknown, status = 200) {
   return json(value, status, contract)
@@ -154,7 +155,6 @@ function creationRefusal(event: Event, state: Registry, by: number, conflict: Re
   if (!exclusionsMayBecome(state, event.exclusions)) return exclusionsRefusal(state, event.exclusions)
   if (event.registry.restricted) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   const creation = event.creation
-  if (!licenseRecorded(creation.license)) return refusal(putProjectsById.invalidManifest, "Record the repository's root LICENSE facts (URL, commit and file digest) before creating the project")
   if (!creation.facts.public || creation.facts.owner === 0 || creation.facts.branch === 0) return refusal(getProjectSetupById.invalidManifestV3, "Repository or steward facts do not match GitHub")
   if (!creation.fieldsComplete) return refusal(putProjectsById.invalidManifest, "Complete the contribution rules that generate the project skills")
   return conflict
@@ -180,8 +180,19 @@ effect function decodedManifest(manifest: Json, trusted: Trusted) {
   return manifestOf(JSON.stringify(manifest), "submitted manifest") catch effect () => { throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid) }
 }
 
-function trustedOf(manifest: Json): Trusted {
-  return { escrow: manifest.escrow, securityBounty: manifest.securityBounty }
+function namesOf(entry: Json): ReadonlyArray<string> {
+  return [String(entry.id ?? ""), ...(Array.isArray(entry.aliases) ? entry.aliases.map(String) : [])].map((name) => name.toLowerCase())
+}
+
+effect function notAlreadyListed(manifest: Json) {
+  const names = new Set(entries(manifest).flatMap(namesOf))
+  const first = entries(manifest)[0]?.id
+  const repositoryName = typeof first === "string" ? first : "This repository"
+  const origin = try originOf()
+  const listed = try listedManifests()
+  const holder = listed.find((project) => entries(project.manifest).some((entry) => namesOf(entry).some((name) => names.has(name))))
+  if (holder !== undefined) throw refusal(putProjectsById.registryConflict, `${repositoryName} is already listed on Slop as ${holder.id}. Open ${origin}/projects/${holder.id}/manage to continue its setup instead of creating it again.`)
+  if (listed.some((project) => project.id === manifest.id)) throw refusal(putProjectsById.registryConflict, `The project id ${String(manifest.id)} is already used by another project. Choose a different project id.`)
 }
 
 effect function registryFits(manifest: Json, replaces: boolean) {
@@ -243,6 +254,8 @@ effect function creationOf(manifest: Json, checked: Checked, by: number, referre
     fundingChoice: fundingChoiceOf(manifest),
     closureChecked: checkedIn(manifest),
     referrer,
+    reward: { ...rewardPromiseOf(objectOf(manifest.reward)), share: shareOfReward(objectOf(manifest.reward)) },
+    shareHistory: shareHistoryOf(objectOf(manifest.reward)),
   } satisfies Creation
 }
 
@@ -264,11 +277,13 @@ effect function create(actor: Actor) {
   const request = try body(CreateRequest, 128)
   const submitted = objectOf(request.manifest)
   if (submitted === undefined) throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid)
-  const manifest = newProjectManifest(try withMonthlyAmount(try withVerifiedAsset(submitted, undefined), request.monthlyAmount))
-  const decoded = try decodedManifest(manifest, {})
-  const refused = try newProjectRefusal(manifest, { githubId: actor.githubId, githubLogin: actor.login }, false)
+  const staged = newProjectManifest(try withBountyAmount(try withMonthlyAmount(try withVerifiedAsset(submitted, undefined), request.monthlyAmount), undefined, request.bountyAmount))
+  const decoded = try decodedManifest(staged, { securityBounty: staged.securityBounty })
+  const refused = try newProjectRefusal(staged, { githubId: actor.githubId, githubLogin: actor.login }, false)
   if (refused !== undefined) throw refused
+  const manifest = staged.securityBounty === undefined ? staged : try publishedProgram({ projectId: decoded.id, actor, previous: undefined, next: staged, status: undefined, canManageContacts: false })
   const referrer = try resolveReferrer(request.referrer, manifest, actor)
+  try notAlreadyListed(manifest)
   try registryFits(manifest, false)
   const checked = try authorized(manifest, accessActor(actor))
   const by = idOf(actor.githubId)
@@ -304,6 +319,7 @@ export interface Revision {
   readonly expectedRevision: unknown
   readonly reason?: unknown
   readonly monthlyAmount?: string
+  readonly bountyAmount?: string
 }
 
 interface Appended {
@@ -338,17 +354,13 @@ effect function verifiedAppend(entry: Json, actor: AccessActor, countsFrom: stri
   return { entry, checked, facts: { repository: idOf(githubId), owner: idOf(facts.owner.actorId), public: true, archived: false, fork: false, branch: 1 } } satisfies Appended
 }
 
-interface Step {
-  readonly event: Event
-  readonly manifest: Json
-}
-
 interface StepInput {
   readonly current: Json
   readonly prospective: Json
   readonly added: ReadonlyArray<Json>
   readonly consent: { readonly checked: boolean; readonly saved: ReturnType<typeof savedConsentOf> }
-  readonly ownerEdit: boolean
+  readonly consentChanged: boolean
+  readonly changes: { readonly presentation: number; readonly executable: number; readonly financial: number; readonly restricted: number }
   readonly stored: boolean
   readonly actor: AccessActor
   readonly projectId: string
@@ -362,32 +374,33 @@ interface StepInput {
 
 effect function ownerStep(input: StepInput) {
   const { authority, expectedRevision } = input
-  if (input.ownerEdit) {
-    const changes = classified(input.current, input.prospective)
-    const change: OwnerChange = {
-      authority,
-      expectedRevision,
-      presentation: changes.presentation.length > 0,
-      executable: changes.executable.length > 0,
-      financial: changes.financial.length > 0,
-      restrictedField: changes.restricted.length > 0,
-      fieldsComplete: input.fieldsComplete,
-      network: 0,
-      asset: 0,
-      exclusionsChanged: false,
-      clearance: input.clearance,
-    }
-    return { event: input.stored ? { type: "publishUpdate", change, account: closedAccount, exclusions: [] } : { type: "publishOwnerRevision", change, account: closedAccount, exclusions: [] }, manifest: input.prospective } satisfies Step
-  }
-  const entry = input.added[0]
-  if (entry !== undefined) {
+  const appends: NewRepository[] = []
+  for (const entry of input.added) {
     const append = try verifiedAppend(entry, input.actor, nextUtcMonthStart(input.now), input.projectId)
-    return {
-      event: { type: "appendRepository", appendEvidence: { expectedRevision, authority, appended: modelRead(append.checked, input.by, append.facts.repository), facts: append.facts }, account: closedAccount, registry: closedRegistry },
-      manifest: { ...input.prospective, repositories: [...entries(input.current), entry] },
-    } satisfies Step
+    appends.push({ appended: modelRead(append.checked, input.by, append.facts.repository), facts: append.facts })
   }
-  return { event: { type: "editConsent", edit: { authority, expectedRevision, checked: input.consent.checked }, account: closedAccount }, manifest: withConsent(input.prospective, input.consent.saved) } satisfies Step
+  const manifest = withConsent({ ...input.prospective, repositories: [...entries(input.current), ...input.added] }, input.consent.saved)
+  const change: OwnerChange = {
+    authority,
+    expectedRevision,
+    presentation: input.changes.presentation > 0,
+    executable: input.changes.executable > 0 || appends.length > 0,
+    financial: input.changes.financial > 0,
+    restrictedField: input.changes.restricted > 0,
+    fieldsComplete: input.fieldsComplete,
+    network: 0,
+    asset: 0,
+    exclusionsChanged: false,
+    clearance: input.clearance,
+    consent: !input.consentChanged ? "ConsentUntouched" : input.consent.checked ? "ConsentChecked" : "ConsentUnchecked",
+    appends,
+    reward: { ...rewardPromiseOf(objectOf(manifest.reward)), share: shareOfReward(objectOf(manifest.reward)) },
+    shareHistory: shareHistoryOf(objectOf(input.current.reward)),
+  }
+  const event: Event = input.stored
+    ? { type: "publishUpdate", change, account: closedAccount, exclusions: [], appendReads: [] }
+    : { type: "publishOwnerRevision", change, account: closedAccount, exclusions: [], appendReads: [] }
+  return { event, manifest }
 }
 
 function summaryOf(changes: { readonly presentation: ReadonlyArray<string>; readonly executable: ReadonlyArray<string>; readonly financial: ReadonlyArray<string> }, added: ReadonlyArray<Json>, scanRequired: boolean): string {
@@ -399,53 +412,66 @@ function summaryOf(changes: { readonly presentation: ReadonlyArray<string>; read
   ].filter((part) => part !== null).join("; ")
 }
 
-effect function revise(projectId: string, actor: Actor, request: Revision, stored: { readonly applicationId: string } | undefined) {
+effect function revisionTarget(projectId: string, request: { readonly expectedRevision: unknown; readonly reason?: unknown }) {
   if (!projectIdPattern.test(projectId)) throw refusal(putProjectsById.notFoundProjectNotFound)
   const expectedRevision = positiveInteger(request.expectedRevision)
   if (expectedRevision === undefined) throw refusal(putProjectsById.invalidRequestInvalidExpectedRevision)
-  const note = try noteOf(request.reason)
-  const submitted = objectOf(request.manifest)
-  if (submitted === undefined) throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid)
+  return { expectedRevision, note: try noteOf(request.reason) }
+}
+
+effect function ownedCurrent(projectId: string, actor: Actor, expectedRevision: number, stored: { readonly applicationId: string } | undefined) {
   const current = try storedProject(projectId)
   if (current === undefined) throw refusal(putProjectsById.notFoundProjectNotFound)
   if (current.row.revision !== expectedRevision) throw refusal(putProjectsById.staleRevisionNoStore, stored === undefined ? "The project changed since you loaded it" : "The project changed after this update was saved; make the change again in the project's settings")
   const by = idOf(actor.githubId)
   const state = (try loadProject(projectId)).state
-  const banned = banRefusal(try accountStanding({ actor: by, steward: state.project.steward }), by)
+  const account = try accountStanding({ actor: by, steward: state.project.steward })
+  const banned = banRefusal(account, by)
   if (banned !== undefined) throw banned
   if (state.security.restriction !== "Clear") throw refusal(putProjectsById.projectRestrictedS409, `The project is ${restrictionWord(state)}; request reinstatement before changing it`)
   const checked = try authorized(current.manifest, accessActor(actor))
-  let prepared = try withMonthlyAmount(try withVerifiedAsset({ ...submitted, status: current.manifest.status, listingTier: current.manifest.listingTier }, current.manifest.rewardAsset), request.monthlyAmount)
+  return { current, state, by, account, checked }
+}
+
+effect function revise(projectId: string, actor: Actor, request: Revision, stored: { readonly applicationId: string } | undefined) {
+  const { expectedRevision, note } = try revisionTarget(projectId, request)
+  const submitted = objectOf(request.manifest)
+  if (submitted === undefined) throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid)
+  const { current, state, by, checked } = try ownedCurrent(projectId, actor, expectedRevision, stored)
+  let prepared = try withBountyAmount(try withMonthlyAmount(try withVerifiedAsset({ ...submitted, status: current.manifest.status, listingTier: current.manifest.listingTier }, current.manifest.rewardAsset), request.monthlyAmount), current.manifest.securityBounty, request.bountyAmount)
   const before = objectOf(current.manifest.reward)
   const after = objectOf(prepared.reward)
   if (before?.kind === "monthly-pool" && after?.kind === "monthly-pool" && (!same(current.manifest.rewardAsset, prepared.rewardAsset) || before.chain !== after.chain || before.currency !== after.currency)) {
     if (!same(before.cycleCaps, after.cycleCaps)) throw refusal(putProjectsById.financialChangeRestricted)
     prepared = { ...prepared, reward: Object.fromEntries(Object.entries(after).filter(([key]) => key !== "cycleCaps")) }
   }
-  if (!same(current.manifest.securityBounty, prepared.securityBounty)) throw refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
+  const programChanged = !same(current.manifest.securityBounty, prepared.securityBounty)
+  const programStatus = requestedStatus(prepared)
+  if (programChanged) prepared = stagedProgram(prepared)
   if (prepared.id !== projectId) throw refusal(putProjectsById.invalidManifestProjectIdCannotChange)
   const consent = editedConsent(current.manifest, prepared)
   prepared = consent.manifest
-  const trusted = trustedOf(current.manifest)
-  try decodedManifest(prepared, trusted)
+  try decodedManifest(prepared, { escrow: current.manifest.escrow, securityBounty: prepared.securityBounty })
+  const restricted = classified(current.manifest, prepared).restricted
+  if (restricted.length > 0) throw refusal(putProjectsById.ownerFieldRestricted, `These fields do not change through owner self-service: ${restricted.join(", ")}`)
+  if (programChanged) prepared = try publishedProgram({ projectId, actor, previous: current.manifest, next: prepared, status: programStatus, canManageContacts: managesContacts(current.manifest, actor, checked) })
+  const trusted: Trusted = { escrow: current.manifest.escrow, securityBounty: prepared.securityBounty }
   const changes = classified(current.manifest, prepared)
-  if (changes.restricted.length > 0) throw refusal(putProjectsById.ownerFieldRestricted, `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`)
   if (changes.presentation.length + changes.executable.length + changes.financial.length === 0) throw refusal(putProjectsById.noChange)
   const now = try isoNow()
   const added = appendedRepositories(current.manifest, prepared) ?? []
   const listedRepositories = entries(current.manifest)
   const ownerManifest = withConsent({ ...prepared, repositories: listedRepositories }, savedConsentOf(current.manifest))
   const ownerChanges = classified(current.manifest, ownerManifest)
-  const ownerEdit = ownerChanges.presentation.length + ownerChanges.executable.length + ownerChanges.financial.length > 0
   const consentChanged = savedConsentOf(current.manifest) !== consent.saved
-  if ((ownerEdit ? 1 : 0) + added.length + (consentChanged ? 1 : 0) > 1) throw refusal(putProjectsById.invalidManifest, oneChangeAtATime)
-  const prospective = ownerChanges.financial.length > 0 ? prospectiveFinancialChange(current.manifest, ownerManifest, now) : ownerManifest
+  const prospective = ownerChanges.financial.length > 0 ? prospectiveFinancialChange(current.manifest, ownerManifest, now, state.project) : ownerManifest
   if (prospective instanceof Refused) throw prospective
   const clearance = clearanceOf(state.security)
   const scanRequired = changes.executable.length > 0 && clearance !== "ClearanceRetained"
   const summary = `Owner update by @${actor.login}: ${summaryOf(changes, added, scanRequired)}.${note === null ? "" : ` ${note}`}`
   const authority = modelRead(checked, by, idOf(primaryOf(current.manifest).githubId))
-  const step = try ownerStep({ current: current.manifest, prospective, added, consent, ownerEdit, stored: stored !== undefined, actor: accessActor(actor), projectId, now, by, expectedRevision, authority, fieldsComplete: try fieldsComplete(prospective), clearance })
+  const counts = { presentation: ownerChanges.presentation.length, executable: ownerChanges.executable.length, financial: ownerChanges.financial.length, restricted: ownerChanges.restricted.length }
+  const step = try ownerStep({ current: current.manifest, prospective, added, consent, consentChanged, changes: counts, stored: stored !== undefined, actor: accessActor(actor), projectId, now, by, expectedRevision, authority, fieldsComplete: try fieldsComplete(prospective), clearance })
   try decodedManifest(step.manifest, trusted)
   try transitionFits(current.manifest, step.manifest, now)
   try registryFits(step.manifest, true)
@@ -460,12 +486,56 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   return { project: projectAnswer(latest.row, latest.manifest), changes: { presentation: changes.presentation, executable: changes.executable, financial: changes.financial }, setup }
 }
 
+function vettingRefusal(state: Registry, manifest: Json): Refused {
+  const security = state.security
+  const uncleared = security.repositories.find((repository) => clearanceState(security, repository) !== "Cleared")
+  const vetting = uncleared === undefined ? "missing" : clearanceState(security, uncleared).toLowerCase()
+  const primary = primaryOf(manifest)
+  const named = security.repositories.length < 2 || uncleared === undefined ? undefined : uncleared === idOf(primary.githubId) ? primary.id : entries(manifest).find((entry) => idOf(String(entry.githubId ?? "")) === uncleared)?.id
+  return refusal(putProjectsById.vettingRequired, typeof named !== "string" ? `Security vetting is ${vetting}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.` : `Security vetting of ${named} is ${vetting}. A successful retained admission scan of ${named} is required before activation; reinstatement requires fresh evidence.`)
+}
+
+effect function moveIntegrationBranch(projectId: string, actor: Actor, request: BranchRevision) {
+  const { expectedRevision, note } = try revisionTarget(projectId, request)
+  const { current, state, by, account, checked } = try ownedCurrent(projectId, actor, expectedRevision, undefined)
+  const access = checked.access
+  const repository = access.state === "read" && access.access.installation === "installed" && access.access.permission === "admin" ? access.access.repository : undefined
+  if (repository === undefined || !identityMatches(current.manifest, repository)) throw refusal(putProjectsById.authorityRequired, "The integration branch requires current GitHub repository admin permission.")
+  const selection = selectionOf(request.integrationBranch)
+  if (selection === "unexpected") throw new Refused(admission.unexpectedFields)
+  if (selection === undefined) throw refusal(putProjectsById.invalidRequestInvalidExpectedRevision, "Expected an integration branch and its GitHub commit.")
+  const from = primaryBranch(current.manifest)
+  if (from === selection.name) throw refusal(putProjectsById.noChange, "The integration branch is unchanged.")
+  if (current.manifest.listingTier === "retired") throw refusal(putProjectsById.projectRestrictedS409, "A retired project cannot change integration branches.")
+  const manifest = withBranch(current.manifest, selection.name, request.contribution)
+  try decodedManifest(manifest, { escrow: current.manifest.escrow, securityBounty: current.manifest.securityBounty })
+  const proof = try readIntegrationBranchAuthority({ numericId: repository.id, nodeId: repository.node_id }, selection.name, selection.commitSha)
+  if (!declarationMatches(proof, current.manifest, repository.full_name, selection.name)) throw refusal({ status: 422, error: "branch_proof_required", message: "The selected commit must contain a matching .github/slop-project.json declaration." })
+  const now = try isoNow()
+  try transitionFits(withBranch(current.manifest, selection.name, undefined), manifest, now)
+  try registryFits(manifest, true)
+  const complete = try fieldsComplete(manifest)
+  if (state.project.status === "Active" && !complete) throw refusal(putProjectsById.skillContentIncomplete)
+  const clearance = clearanceOf(state.security)
+  if (state.project.status === "Active" && clearance !== "ClearanceRetained") throw vettingRefusal(state, current.manifest)
+  const branchChange: BranchChange = { authority: modelRead(checked, by, idOf(primaryOf(current.manifest).githubId)), repositoryAdmin: true, expectedRevision, target: state.project.branch + 1, declared: true, headCurrent: true, fieldsComplete: complete, clearance }
+  const stale = refusal(putProjectsById.staleRevisionNoStore, "The project changed since you loaded it")
+  send({ projectId, event: { type: "moveBranch", branchChange, account }, by, revision: { manifestText: JSON.stringify(manifest), reason: branchReason(actor.login, from, selection.name, selection.commitSha, note), actor: revisionActor(actor) } }) catch effect (error) => {
+    if (error._tag === "Rejected") throw (error.event.type === "moveBranch" ? banRefusal(error.event.account, by) : undefined) ?? stale
+    throw storeRefusal(error, stale) ?? error
+  }
+  const latest = try storedProject(projectId)
+  if (latest === undefined) throw stale
+  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: false, scanRequest: { kind: "check" } })
+  return { project: projectAnswer(latest.row, latest.manifest), changes: { presentation: [], executable: ["repositories", ...(same(current.manifest.contribution, manifest.contribution) ? [] : ["contribution"])], financial: [] }, setup }
+}
+
 function ownerRefusal(event: Event, state: Registry, by: number, stale: Refused): Refused {
-  if (event.type === "publishOwnerRevision" || event.type === "publishUpdate" || event.type === "editConsent" || event.type === "appendRepository") {
+  if (event.type === "publishOwnerRevision" || event.type === "publishUpdate") {
     const banned = banRefusal(event.account, by)
     if (banned !== undefined) return banned
+    if (event.appendReads.some((read) => read.restricted)) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   }
-  if (event.type === "appendRepository" && event.registry.restricted) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && !event.change.fieldsComplete && state.project.status === "Active") return refusal(putProjectsById.skillContentIncomplete)
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && state.project.funded && (event.change.network !== state.project.network || event.change.asset !== state.project.asset)) return refusal(putProjectsById.financialChangeRestrictedAFundedProjectKeeps)
   if ((event.type === "publishOwnerRevision" || event.type === "publishUpdate") && !exclusionsMayBecome(state, event.exclusions)) return exclusionsRefusal(state, event.exclusions)
@@ -633,7 +703,12 @@ effect function repository(owner: string, name: string) {
 export const OwnerProjectRoutes = Layer.mergeAll(
   handleRaw(createProject, (input) => create(input.actor)),
   handleRaw(reviseProject, (input) => effect {
-    const request = try body(ReviseRequest, 128)
+    const raw = try jsonBody(128)
+    if (Object.hasOwn(raw, "integrationBranch")) {
+      const request = Schema.decodeUnknownEffect(BranchRequest)(raw, { onExcessProperty: "error" }) catch effect () => { throw new Refused(admission.unexpectedFields) }
+      return answer(try moveIntegrationBranch(input.params.id ?? "", input.actor, request))
+    }
+    const request = Schema.decodeUnknownEffect(ReviseRequest)(raw, { onExcessProperty: "error" }) catch effect () => { throw new Refused(admission.unexpectedFields) }
     return answer(try revise(input.params.id ?? "", input.actor, request, undefined))
   }),
   handleRaw(removeProject, (input) => remove(input.params.id ?? "", input.actor)),

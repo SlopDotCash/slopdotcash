@@ -23,8 +23,11 @@ import type { Instance } from "../src/journal/codec.vibe"
 import { journaledAttempts } from "../src/journal/queries.vibe"
 import { type Facts, journal, send } from "../src/journal/store.vibe"
 import { publicPair as reviewedPair, qualifyPair, qualifySolanaRpcPair, recordFile, reviewedDigest, solanaPublicPair, validatePriorRotationProof, witness } from "../src/programs/solanaRpcPair.vibe"
+import { Socket } from "effect/socket"
+import { baseSample, pairSample } from "../gen/fees__solanaRpcRotation.ts"
+import { FeeOperationsUnavailable, inspectFeeOperations } from "../src/programs/feeOperations.vibe"
 import { feeSourceParity } from "../src/programs/feeSourceParity.vibe"
-import { receiptFile, rotateSolanaRpc } from "../src/programs/solanaRpcRotation.vibe"
+import { receiptFile, rotateSolanaRpc, startRun } from "../src/programs/solanaRpcRotation.vibe"
 import { ledger } from "../src/journal/codec.vibe"
 import { solanaGenesis } from "../src/runtime/pins.ts"
 import { jsonValue } from "../src/solana/bytes.ts"
@@ -113,7 +116,7 @@ const liveSolana = { source: 1, converterMode: "Live", buybackMode: "Off", netwo
 
 const quote: Quote = { token: 1, route: "Found", amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }
 
-const swap: SignedSend = { kind: "Conversion", tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 1, priority: 0 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000, deadline: maximumSafeValue, blockhashSlot: anchorSlot }
+const swap: SignedSend = { kind: "Conversion", tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 1, priority: 0 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000, deadline: maximumSafeValue, blockhashSlot: anchorSlot, toPinnedRouter: true, approvedAmount: 0, allowance: 0, pricedFeeMicro: 1000 }
 
 function journalServices(world: World) {
   return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)
@@ -323,7 +326,7 @@ effect function committed(repository: string, files: Readonly<Record<string, str
   return try git(repository, ["rev-parse", "HEAD"])
 }
 
-effect function activeWorker(api: CloudflareApi, tag: string, database: string) {
+const publishWorker = async (api: CloudflareApi, tag: string, database: string) => {
   const base = `https://cloudflare.test/client/v4/accounts/${rotationAccount}/workers/scripts/slop-fee-converter`
   const authorized = { authorization: "Bearer journey" }
   const message = `slop.cash release ${tag}`
@@ -337,15 +340,62 @@ effect function activeWorker(api: CloudflareApi, tag: string, database: string) 
       { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
     ],
   })
-  try promise(async () => {
-    const form = new FormData()
-    form.append("metadata", metadata)
-    return api.handler(new ApiRequest(`${base}/versions`, { method: "POST", headers: authorized, body: form }))
-  })
+  const form = new FormData()
+  form.append("metadata", metadata)
+  await api.handler(new ApiRequest(`${base}/versions`, { method: "POST", headers: authorized, body: form }))
   const pinned = api.state.versions["slop-fee-converter"]?.at(-1)?.id ?? ""
   const deployment = JSON.stringify({ versions: [{ version_id: pinned, percentage: 100 }], annotations: { "workers/message": message } })
-  try promise(() => Promise.resolve(api.handler(new ApiRequest(`${base}/deployments`, { method: "POST", headers: { ...authorized, "content-type": "application/json" }, body: deployment }))))
-  return { pinned, mark: api.calls.length }
+  await api.handler(new ApiRequest(`${base}/deployments`, { method: "POST", headers: { ...authorized, "content-type": "application/json" }, body: deployment }))
+  return { pinned, deployment: api.state.deployments["slop-fee-converter"]?.at(-1)?.id ?? "", mark: api.calls.length }
+}
+
+effect function activeWorker(api: CloudflareApi, tag: string, database: string) {
+  return try promise(() => publishWorker(api, tag, database))
+}
+
+const closingTail: (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike = () => {
+  const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
+  return {
+    readyState: 1,
+    addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
+    removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
+    close: () => undefined,
+    send: () => { for (const listener of listeners.get("close") ?? []) listener({ type: "close", code: 1000 }) },
+  }
+}
+
+interface DiagnosticTraffic {
+  readonly routes: Array<string>
+  readonly statements: Array<string>
+}
+
+function diagnosticCloudflare(api: CloudflareApi, db: D1Database, changeAfterTail: string): { readonly traffic: DiagnosticTraffic; readonly fetch: typeof globalThis.fetch } {
+  const traffic: DiagnosticTraffic = { routes: [], statements: [] }
+  const envelope = (result: unknown) => Response.json({ success: true, errors: [], messages: [], result })
+  const handler: Handler = async (request) => {
+    const path = new URL(request.url).pathname.replace(`/client/v4/accounts/${rotationAccount}`, "")
+    traffic.routes.push(`${request.method} ${path}`)
+    if (request.method === "POST" && path.endsWith("/query")) {
+      const query = (await request.json()) as { readonly sql: string; readonly params: ReadonlyArray<string> }
+      traffic.statements.push(query.sql)
+      const read = await db.prepare(query.sql).bind(...query.params).all()
+      return envelope([{ success: true, results: read.results, meta: { changes: 0 } }])
+    }
+    if (request.method === "POST" && path.endsWith("/workers/scripts/slop-fee-converter/tails")) return envelope({ id: "tail-0001", url: "wss://tail.cloudflare.com/tail-0001" })
+    if (request.method === "DELETE" && path.endsWith("/tails/tail-0001")) {
+      await publishWorker(api, changeAfterTail, reviewedDatabase)
+      return envelope(null)
+    }
+    return api.handler(request)
+  }
+  return { traffic, fetch: asFetch(internet({ hosts: { "api.cloudflare.com": handler } }).handler) }
+}
+
+effect function inspectionOutcome(fetch: typeof globalThis.fetch, root: string, runnerTemp: string, checkout: string) {
+  const settings = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: rotationAccount, CLOUDFLARE_API_TOKEN: "journey-token", GITHUB_SHA: checkout, RUNNER_TEMP: runnerTemp }))
+  const run = Effect.provide(inspectFeeOperations([root]), Layer.merge(FetchHttpClient.layer, settings))
+  const provided = Effect.provideService(Effect.provideService(run, Socket.WebSocketConstructor, closingTail), FetchHttpClient.Fetch, fetch)
+  return Effect.as(provided, "completed") catch (error) => (error instanceof FeeOperationsUnavailable ? error.failure : error._tag)
 }
 
 function writesSince(api: CloudflareApi, mark: number) {
@@ -624,6 +674,64 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
         strayPin: "Active fee database differs from the reviewed binding",
         parity: { changed: "Deployed fee runtime differs from the reviewed checkout", reviewed: 4 },
       },
+    })
+  }))
+
+  it.effect('A failed deployment command is recorded once, and the read-back alone decides that the rotation still ends verified and releases its lease (spec/fees/solanaRpcRotation.md, "An uncertain activation keeps its lease until it expires, and every other end releases only its own lease"; spec/fees/solanaRpcRotation.md, "Each phase is in the receipt before the next starts, and phases only move forward")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-rotation-receipt-" })
+    const saved = effect { return jsonValue(try fs.readFileString(`${directory}/${receiptFile}`)) }
+    const run = try startRun(directory, { schemaVersion: 1, checkout: "a".repeat(40), previousVersion: "11111111-2222-3333-4444-555555555555", deployedSource: "b".repeat(40), phase: "qualification", sourceFiles: 1 })
+    const holds = { passed: true, mainUnchanged: true, baseActive: true, leaseRenewed: true }
+    const candidate = { ...baseSample, version: 11, number: baseSample.number + 1, source: 8, rpc: pairSample }
+    try run.send({ type: "startRotation", request: { manualMain: true, releaseEnabled: true, checkout: 8, pinnedVersion: baseSample.version, pinnedSource: baseSample.source, active: baseSample, onlyActiveAndLatest: true, sourceParity: true, reviewedDatabase: baseSample.database, pair: pairSample } })
+    try run.send({ type: "qualify", check: holds }, { runId: "rpc-rotation-rotation:journey" })
+    try run.send({ type: "leaseOutcome", acquired: true })
+    try run.send({ type: "upload", uploaded: candidate, check: holds }, { candidateVersion: "66666666-7777-8888-9999-000000000000" })
+    try run.send({ type: "deploy", check: holds })
+    try run.send({ type: "recordCommandFailure" })
+    try run.note({ deploymentCommand: { category: "timeout", exitCode: 1, providerCode: null } })
+    const beforeReadback = try saved
+    const again = Effect.as(run.send({ type: "recordCommandFailure" }), "recorded") catch (error) => error._tag
+    try run.send({ type: "confirmActivation", result: "Confirmed" }, { verifiedAt: "2026-11-16T09:00:00.000Z" })
+    const verified = try saved
+    try run.send({ type: "releaseLease" })
+    const end = try run.state()
+
+    try same({ beforeReadback, again, verified, end: [end.phase, end.commandFailed, end.leaseHeld, end.leaseReleased, end.activation, end.receipts] }, {
+      beforeReadback: { schemaVersion: 1, checkout: "a".repeat(40), previousVersion: "11111111-2222-3333-4444-555555555555", deployedSource: "b".repeat(40), phase: "deploying", sourceFiles: 1, runId: "rpc-rotation-rotation:journey", candidateVersion: "66666666-7777-8888-9999-000000000000", deploymentCommand: { category: "timeout", exitCode: 1, providerCode: null } },
+      again: "RotationStopped",
+      verified: { schemaVersion: 1, checkout: "a".repeat(40), previousVersion: "11111111-2222-3333-4444-555555555555", deployedSource: "b".repeat(40), phase: "verified", sourceFiles: 1, runId: "rpc-rotation-rotation:journey", candidateVersion: "66666666-7777-8888-9999-000000000000", deploymentCommand: { category: "timeout", exitCode: 1, providerCode: null }, verifiedAt: "2026-11-16T09:00:00.000Z" },
+      end: ["Verified", true, false, true, 11, ["Qualifying", "AcquiringLease", "Leased", "Uploaded", "Deploying", "Verified"]],
+    })
+  }))
+
+  it.effect('A fee diagnostic whose active Worker changed between its two pins refuses after removing its tail, and wrote nothing (spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const root = try fs.makeTempDirectoryScoped({ prefix: "slop-fee-diagnostic-root-" })
+    const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-fee-diagnostic-runner-" })
+    try fs.makeDirectory(`${root}/apps/fees/wrangler`, { recursive: true })
+    try fs.writeFileString(`${root}/apps/fees/wrangler/feeConverter.production.jsonc`, reviewedRuntime)
+    const started = try acquireRelease(promise(() => journalDatabase("fees-diagnostics")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+    const checkout = "a".repeat(40)
+    const api = cloudflareApi({ accountId: rotationAccount })
+    const pinned = try activeWorker(api, checkout, reviewedDatabase)
+    const cloudflare = diagnosticCloudflare(api, started.db, "c".repeat(40))
+    const outcome = try inspectionOutcome(cloudflare.fetch, root, runnerTemp, checkout)
+    const report = jsonValue(try fs.readFileString(`${runnerTemp}/fee-worker-operations.json`))
+    const scripts = "/workers/scripts/slop-fee-converter"
+    const refused = { deploymentId: pinned.deployment, versionId: pinned.pinned, sourceCommit: checkout, checkedSource: checkout, sourceMatchesCheckout: true, activeVersionRechecked: false, status: "unavailable", stage: "active-version-after", category: "metadata-unavailable", rawLogsRetained: false }
+
+    try same({
+      outcome,
+      report,
+      writes: cloudflare.traffic.routes.filter((route) => !route.startsWith("GET ") && !route.endsWith("/query")),
+      statements: cloudflare.traffic.statements.map((statement) => statement.startsWith("SELECT ")),
+    }, {
+      outcome: refused,
+      report: refused,
+      writes: [`POST ${scripts}/tails`, `DELETE ${scripts}/tails/tail-0001`],
+      statements: [true, true, true],
     })
   }))
 })

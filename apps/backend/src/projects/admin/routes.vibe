@@ -1,20 +1,26 @@
-// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"
+import { isoNow } from "@repo/platform/clock"
 import { rows, sql } from "@repo/platform/d1"
 import { type Actor, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
-import type { AdminKind, Tier } from "../../../gen/backend__projects.ts"
-import { type Event, Rejected } from "../../../gen/backend__projectComposition.effect.vibe"
+import type { Exception, RepositoryStart } from "../../../gen/backend__projects.ts"
+import { type Event, type Registry, type RegistryRead, Rejected, clearanceOf, withExceptionAppends } from "../../../gen/backend__projectComposition.effect.vibe"
 import { projectContract } from "../../access/routes.vibe"
 import { loadAccess } from "../../access/store.vibe"
 import { AdminRevisionRequest, adminManifest, adminProjects } from "../../client/admin.vibe"
 import { getAdminProjects, putAdminProjectsByIdManifest } from "../../client/refusals.vibe"
-import { same } from "../owner/revisionChanges.ts"
+import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
+import { definitionProblem, registryProblem, transitionProblem } from "../owner/definition.ts"
+import { listedManifests } from "../owner/records.vibe"
+import { type Json, classified, objectOf, same } from "../owner/revisionChanges.ts"
+import { consentOf, exclusionsOf, idOf, monthOf } from "../store/codec.vibe"
+import { type Manifest, manifestOf } from "../store/rows.vibe"
+import { type Loaded, exceptionFacts, loadProject, send } from "../store/store.vibe"
+import { verifiedAsset } from "../tokens/metadata.vibe"
 import { ProjectRow, adminProjectView, boundedText, moderation, positiveInteger, projectColumns, projectIdPattern, projectRow, refused, requireAdmin } from "../enforcement/admission.vibe"
 import { enforcementState } from "../enforcement/views.vibe"
-import { manifestOf } from "../store/rows.vibe"
-import { loadProject, send } from "../store/store.vibe"
 
 const bodyBytes = 65536
-const adminFields = ["status", "listingTier", "steward", "participation"] as const
+const registryFacts = ["status", "listingTier", "steward", "participation", "terms"]
 const manifestRows = putAdminProjectsByIdManifest
 
 effect function listProjects(actor: Actor) {
@@ -31,64 +37,95 @@ effect function listProjects(actor: Actor) {
   return json({ projects: listed }, 200, projectContract)
 }
 
-type Change = { readonly kind: "revise"; readonly adminKind: AdminKind; readonly steward: number } | { readonly kind: "place"; readonly tier: Tier }
-
 function invalid(message: string) {
   return refused(manifestRows.invalidManifest, message)
 }
 
-function stewardOf(manifest: Readonly<Record<string, unknown>>): string {
-  const steward = manifest.steward as { readonly github?: { readonly actorId?: unknown } } | undefined
-  return String(steward?.github?.actorId ?? "")
+function list(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
 }
 
-function participationOf(manifest: Readonly<Record<string, unknown>>): string {
-  const participation = manifest.participation as { readonly state?: unknown } | undefined
-  return String(participation?.state ?? "open")
+effect function withVerifiedAsset(manifest: Json, prior: unknown) {
+  if (!Object.hasOwn(manifest, "rewardAsset")) return manifest
+  const priorAsset = objectOf(prior)
+  const verified = try verifiedAsset(manifest.rewardAsset, priorAsset === undefined || typeof priorAsset.network !== "string" || typeof priorAsset.address !== "string" || typeof priorAsset.decimals !== "number" ? undefined : { ...priorAsset, network: priorAsset.network, address: priorAsset.address, decimals: priorAsset.decimals })
+  const reward = objectOf(manifest.reward)
+  return { ...manifest, rewardAsset: verified, ...(reward?.kind === "monthly-pool" ? { reward: { ...reward, chain: verified.network, currency: verified.symbol } } : {}) } satisfies Json
 }
 
-const pausingKinds: ReadonlyArray<AdminKind> = ["Hold", "Delist", "ArchiveParticipation", "RequirePermission"]
-
-function statusAfter(change: Change | undefined, status: unknown): unknown {
-  return change?.kind === "revise" && pausingKinds.includes(change.adminKind) ? "paused" : status
+function nextCycleStart(nowIso: string): number {
+  const now = new Date(nowIso)
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)
 }
 
-effect function changeOf(current: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>) {
-  const keys = new Set([...Object.keys(current), ...Object.keys(next)])
-  const other = [...keys].filter((key) => !(adminFields as ReadonlyArray<string>).includes(key) && !same(current[key], next[key]))
-  if (other.length > 0) throw invalid(`Administrator revisions change only the status, listing tier, steward or participation: ${other.toSorted().join(", ")}`)
-  const changes: Change[] = []
-  if (!same(current.steward, next.steward)) changes.push({ kind: "revise", adminKind: "ChangeSteward", steward: Number(stewardOf(next)) })
-  if (!same(current.participation, next.participation)) {
-    const state = participationOf(next)
-    changes.push({ kind: "revise", adminKind: state === "archived" ? "ArchiveParticipation" : state === "permission-required" ? "RequirePermission" : "OpenParticipationAgain", steward: 0 })
+effect function reviewBudgetFits(previous: Json, next: Json, nowIso: string) {
+  const before = objectOf(previous.reward)
+  const after = objectOf(next.reward)
+  if (before?.kind !== "monthly-pool" || after?.kind !== "monthly-pool") return
+  const priorBudget = objectOf(before.reviewBudget)
+  const nextBudget = objectOf(after.reviewBudget)
+  if (nextBudget === undefined) return
+  const changesBudget = priorBudget === undefined || (priorBudget.fundingState !== "committed" && nextBudget.fundingState === "committed")
+  if (!changesBudget) return
+  if (BigInt(String(after.monthlyCapMinor ?? "0")) < BigInt(String(before.monthlyCapMinor ?? "0"))) throw refused(manifestRows.invalidManifestAReviewBudgetCannot)
+  if (Date.parse(String(nextBudget.effectiveAt ?? "")) < nextCycleStart(nowIso)) throw refused(manifestRows.invalidManifestAReviewBudgetCannotAffectAnOpen)
+}
+
+function appendedOf(previous: Json, next: Json): ReadonlyArray<Json> {
+  return list(next.repositories).slice(list(previous.repositories).length).map((entry) => objectOf(entry) ?? {})
+}
+
+function startOf(entry: Json): RepositoryStart {
+  return { repositoryId: idOf(String(entry.githubId ?? "")), month: monthOf(String(entry.countsFrom ?? "")) }
+}
+
+effect function appendReadsOf(projectId: string, appended: ReadonlyArray<Json>) {
+  const reads: RegistryRead[] = []
+  for (const entry of appended) {
+    const repositoryId = String(entry.githubId ?? "")
+    const keys = [String(entry.id ?? ""), ...list(entry.aliases).map(String)].map((key) => key.toLowerCase())
+    reads.push(registryReadOf(repositoryId, try repositoryClaim({ projectId, repositoryId, keys })))
   }
-  if (next.listingTier !== current.listingTier) {
-    if (next.listingTier === "retired") changes.push({ kind: "revise", adminKind: "Delist", steward: 0 })
-    else changes.push({ kind: "place", tier: next.listingTier === "featured" ? "Featured" : "Community" })
-  }
-  const produced = changes.length === 1 ? statusAfter(changes[0], current.status) : current.status
-  if (next.status !== current.status && next.status !== produced) {
-    if (next.status !== "paused") throw invalid("A project becomes active through its owner's setup check")
-    changes.push({ kind: "revise", adminKind: "Hold", steward: 0 })
-  }
-  const [change, ...more] = changes
-  if (change === undefined || more.length > 0) throw invalid("Change one of the status, listing tier, steward or participation in each administrator revision")
-  return change
+  return reads
 }
 
-function revisedManifest(current: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  return { ...current, status: next.status, listingTier: next.listingTier, steward: next.steward, participation: next.participation }
+function exceptionOf(loaded: Loaded, previous: Json, next: Json, manifest: Manifest, expectedRevision: number): Exception {
+  const changes = classified(previous, next)
+  const changed = [...new Set([...Object.keys(previous), ...Object.keys(next)])].filter((field) => !same(previous[field], next[field]))
+  const appended = appendedOf(previous, next).map(startOf)
+  const draft: Exception = {
+    expectedRevision,
+    reason: 1,
+    ...exceptionFacts(manifest, loaded.rows),
+    financial: changes.financial.length > 0,
+    executable: changes.executable.length > 0 || appended.length > 0,
+    otherFields: changes.presentation.length > 0 || changed.some((field) => changes.restricted.includes(field) && !registryFacts.includes(field)),
+    clearance: "ClearanceMissing",
+    consent: consentOf(manifest),
+    appended,
+  }
+  return { ...draft, clearance: clearanceOf(withExceptionAppends(draft, loaded.state.security)) }
 }
 
-function eventOf(change: Change, expectedRevision: number, reason: string): Event {
-  if (change.kind === "place") return { type: "place", tier: change.tier }
-  return { type: "adminRevise", exception: { kind: change.adminKind, steward: change.steward, expectedRevision, reason: reason === "" ? 0 : 1 }, exclusions: [] }
+function placementOf(previous: Json, next: Json, state: Registry): Event | undefined {
+  const changed = [...new Set([...Object.keys(previous), ...Object.keys(next)])].filter((field) => !same(previous[field], next[field]))
+  if (changed.length !== 1 || changed[0] !== "listingTier" || state.project.retirement !== "NotRetired") return undefined
+  return next.listingTier === "featured" ? { type: "place", tier: "Featured" } : next.listingTier === "community" ? { type: "place", tier: "Community" } : undefined
 }
 
 function restrictionText(restriction: string): string {
-  if (restriction === "Clear") return "clear"
   return restriction === "FlagQuarantine" || restriction === "ModeratorQuarantine" ? "quarantined" : "banned"
+}
+
+function exceptionRefusal(rejected: Rejected) {
+  const state = rejected.state
+  const event = rejected.event
+  if (state.security.restriction !== "Clear") return refused(manifestRows.projectRestrictedNoStore, `The project is ${restrictionText(state.security.restriction)}; a revision must keep it paused and retired until reinstatement`)
+  if (event.type !== "adminRevise") return rejected
+  if (event.appendReads.some((read) => read.restricted)) return refused(manifestRows.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
+  if (event.appendReads.some((read) => read.listedBy > 0)) return refused(manifestRows.registryConflictAnotherProjectListsA)
+  if (event.exception.status === "Active" && !event.exception.fieldsComplete) return refused(manifestRows.skillContentIncomplete)
+  return rejected
 }
 
 effect function revise(actor: Actor, projectId: string) {
@@ -102,29 +139,30 @@ effect function revise(actor: Actor, projectId: string) {
   if (current === undefined) throw refused(manifestRows.notFoundProjectNotFound)
   if (current.revision !== expectedRevision) throw refused(manifestRows.staleRevision)
   if (body.bountyAmount !== undefined) throw invalid("Administrator revisions do not change the security bounty")
-  const submitted = body.manifest
-  if (typeof submitted !== "object" || submitted === null || Array.isArray(submitted)) throw invalid("Project manifest is invalid")
-  const next = submitted as Readonly<Record<string, unknown>>
+  const submitted = objectOf(body.manifest)
+  if (submitted === undefined) throw invalid("Project manifest is invalid")
+  const previous = try orDie(Effect.try(() => JSON.parse(current.manifest) as Json))
+  const next = try withVerifiedAsset(submitted, previous.rewardAsset)
   if (next.id !== projectId) throw refused(manifestRows.invalidManifestProjectIdCannotChange)
-  manifestOf(JSON.stringify(next), `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
-  const previous = try orDie(Effect.try(() => JSON.parse(current.manifest) as Readonly<Record<string, unknown>>))
   if (same(previous, next)) throw refused(manifestRows.noChange)
-  const change = try changeOf(previous, next)
-  const text = JSON.stringify(revisedManifest(previous, next))
+  const now = try isoNow()
+  try reviewBudgetFits(previous, next, now)
+  const problem = definitionProblem(next, { escrow: next.escrow, securityBounty: next.securityBounty }) ?? transitionProblem(previous, next, now)
+  if (problem !== undefined) throw invalid(problem)
+  const text = JSON.stringify(next)
+  const manifest = manifestOf(text, `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
+  const conflict = registryProblem([...(try listedManifests()).filter((listed) => listed.id !== projectId).map((listed) => listed.manifest), next])
+  if (conflict !== undefined) throw refused(manifestRows.registryConflict, conflict)
+  const loaded = try loadProject(projectId)
+  const event = placementOf(previous, next, loaded.state) ?? { type: "adminRevise", exception: exceptionOf(loaded, previous, next, manifest, expectedRevision), exclusions: [...exclusionsOf(manifest)], appendReads: try appendReadsOf(projectId, appendedOf(previous, next)) } satisfies Event
   const by = Number(actor.githubId)
-  send({ projectId, event: eventOf(change, expectedRevision, reason), by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
-    when Rejected: throw try restricted(projectId, error);
+  send({ projectId, event, by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
+    when Rejected: throw exceptionRefusal(error);
     default: throw error;
   }
   const updated = try projectRow(projectId)
   if (updated === undefined) throw refused(manifestRows.notFoundProjectNotFound)
   return json({ project: try adminProjectView(updated) }, 200, projectContract)
-}
-
-effect function restricted(projectId: string, rejected: Rejected) {
-  const restriction = (try loadProject(projectId)).state.security.restriction
-  if (restriction === "Clear") return rejected
-  return refused(manifestRows.projectRestrictedNoStore, `The project is ${restrictionText(restriction)}; a revision must keep it paused and retired until reinstatement`)
 }
 
 export const AdminRoutes = Layer.mergeAll(

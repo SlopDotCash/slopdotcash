@@ -1,0 +1,257 @@
+import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { noticePorts } from "@repo/operations/live"
+import { Request as WorkerRequest } from "miniflare"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { jsonValue, routinePrompt } from "../src/analysis/prompts.ts"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { caseRoutes } from "../src/cases/routes.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { routineRoutes, routineSettings } from "../src/routine/routes.vibe"
+import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+service Routined {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly clock: SettableClock
+  readonly pending: Array<Promise<unknown>>
+  readonly off: WebHandler
+  readonly dryRun: WebHandler
+  readonly live: WebHandler
+}
+
+const project = "intake-fixture"
+const admin = "801"
+const stranger = "49999"
+const minute = 60_000
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? fixture : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([fixture]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+    fence: () => succeed(sql`1`),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+function shellOf(world: World, fake: ProviderFake, clock: SettableClock, mode: string) {
+  const viaFake: Fetcher = { fetch: (sent) => fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]> }
+  const base = Layer.mergeAll(d1(world.db), webCrypto, clock.layer, reportBucket(world.reports), rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: admin }), ports, routineSettings(mode))
+  const route = Layer.provide(privateRoute({ apiKey: "surplus-routine-key" }), Layer.merge(outboundVia(viaFake), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, noticePorts, CallerLive), base)
+}
+
+effect function webHandler(world: World, fake: ProviderFake, clock: SettableClock, mode: string) {
+  const routes = Layer.mergeAll(routineRoutes, caseRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, clock, mode)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
+const Started = Layer.effect(Routined, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const fake = providerFake({ holdMs: 10 })
+  const clock = settableClock(Date.now() + 20 * minute)
+  return {
+    world,
+    fake,
+    clock,
+    pending: [],
+    off: try webHandler(world, fake, clock, "off"),
+    dryRun: try webHandler(world, fake, clock, "dry_run"),
+    live: try webHandler(world, fake, clock, "live"),
+  }
+})
+
+const cookies = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = cookies.get(githubId)
+  if (known !== undefined) return known
+  const token = `r${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"x".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 86_400_000).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  cookies.set(githubId, cookie)
+  return cookie
+}
+
+async function sent(routined: Routined.Shape, handler: WebHandler, path: string, as: string, body?: unknown): Promise<Answer> {
+  const cookie = await sessionCookie(routined.world, as)
+  const execution: ExecutionContext = { waitUntil: (work) => { routined.pending.push(work) } }
+  const headers = { cookie, "x-slop-expected-github-id": as, ...body === undefined ? {} : { "content-type": "application/json", origin } }
+  const init = body === undefined ? { method: "GET", headers } : { method: "POST", headers, body: JSON.stringify(body) }
+  const response = await handler(new WorkerRequest(`${origin}${path}`, init) as unknown as globalThis.Request, Context.make(Execution, { context: execution }))
+  return { status: response.status, body: await response.json() as unknown }
+}
+
+effect function exchanged(routined: Routined.Shape, handler: WebHandler, path: string, as: string, body?: unknown) {
+  const answer = try promise(() => sent(routined, handler, path, as, body))
+  for (let work = routined.pending.shift(); work !== undefined; work = routined.pending.shift()) try promise(() => work)
+  return answer
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function said(call: ProviderCall) {
+  return call.messages[0]?.content ?? ""
+}
+
+function routineOf(summary: string) {
+  return (call: ProviderCall) => call.system === routinePrompt && said(call).includes(summary)
+}
+
+function read(overrides: Readonly<Record<string, unknown>>): ProviderAnswer {
+  return { text: JSON.stringify({ lossOfFundsPlausible: false, duplicateOfCaseId: null, doesNotQualifyIndex: null, proof: "present", missing: [], severity: "medium", ...overrides }) }
+}
+
+effect function submit(world: World, as: string, key: string, summary: string, description: string) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report: { summary, description, severity: "high" } } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+}
+
+effect function caseState(world: World, caseId: string) {
+  const [found] = try promise(() => rows(world, "SELECT receipt_state AS receipt, appeal_state AS appeal, award_state AS award, next_action AS nextAction, next_action_due_at IS NOT NULL AS due, revision FROM security_cases WHERE id=?", caseId))
+  return found
+}
+
+effect function decisions(world: World, mode: string) {
+  return try promise(() => rows(world, "SELECT case_id AS caseId, outcome, basis, hold_reason AS hold, applied, model_calls AS calls FROM security_routine_decisions WHERE mode=? ORDER BY id", mode))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Decide routine reports with an audit record and leave the rest to the owner (spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"; spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"; spec/security/routineDecisions.md, "The reporter appeals a routine close once, to the owner, and the pass never reads the report again"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version")', () => effect {
+    const routined = try Routined
+    const { world, fake, clock } = routined
+    const first = try submit(world, "52001", "routine-first-000001", "Oracle price is read before the update", "The oracle read in settle() happens before update(), so a stale price settles positions. Steps: call settle() in the same block as a price move.")
+    const copy = try submit(world, "52002", "routine-copy-0000001", "Oracle price is read before the update", "The oracle read in settle() happens before update(), so a stale price settles positions. Steps: call settle() in the same block as a price move.")
+    const theft = try submit(world, "52003", "routine-theft-000001", "Any caller withdraws another depositor's balance", "withdraw(account, amount) pays msg.sender without checking the account owner. The attached test drains Alice.")
+    const split = try submit(world, "52004", "routine-split-000001", "Rounding in fee accrual favours the vault", "accrue() rounds down twice; the test shows one wei lost per deposit.")
+    fake.reply(routineOf("Oracle price is read before the update"), read({ severity: "high" }))
+    fake.reply(routineOf("Any caller withdraws another depositor's balance"), read({ lossOfFundsPlausible: true, severity: "critical" }))
+    fake.reply((call) => routineOf("Rounding in fee accrual favours the vault")(call) && (jsonValue(said(call)) as { readonly earlierReports?: ReadonlyArray<{ readonly id: string }> }).earlierReports?.[0]?.id === theft.caseId, read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
+    fake.reply(routineOf("Rounding in fee accrual favours the vault"), read({ severity: "low" }))
+
+    const hidden = try exchanged(routined, routined.dryRun, "/api/v1/security-routine", stranger)
+    const off = try exchanged(routined, routined.off, "/api/v1/security-routine", admin, { action: "run" })
+    const dry = try exchanged(routined, routined.dryRun, "/api/v1/security-routine", admin, { action: "run" })
+    const recent = try exchanged(routined, routined.dryRun, "/api/v1/security-routine", admin, { action: "run" })
+    const dryRows = try decisions(world, "dry_run")
+    const untouched = try caseState(world, copy.caseId)
+    try same(
+      { hidden: [hidden.status, (hidden.body as { readonly error?: unknown }).error], off: [off.status, (off.body as { readonly error?: unknown }).error], dry: [dry.status, (dry.body as { readonly examined?: unknown }).examined], recent: [recent.status, (recent.body as { readonly error?: unknown }).error], applied: dryRows.map((row) => row.applied), untouched: untouched?.receipt },
+      { hidden: [404, "not_found"], off: [409, "routine_decisions_off"], dry: [200, 4], recent: [409, "routine_pass_recent"], applied: [0, 0, 0, 0], untouched: "received" },
+    )
+
+    clock.set(clock.now() + 4 * minute)
+    const live = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const status = try exchanged(routined, routined.live, "/api/v1/security-routine", admin)
+    const after = {
+      first: (try caseState(world, first.caseId))?.receipt,
+      copy: (try caseState(world, copy.caseId))?.receipt,
+      theft: (try caseState(world, theft.caseId))?.receipt,
+      split: (try caseState(world, split.caseId))?.receipt,
+    }
+    const liveRows = (try decisions(world, "live")).map((row) => [row.outcome, row.basis, row.hold, row.applied])
+    const listed = try promise(() => request(world, "/api/v1/security-submissions", { as: maintainer }))
+    const order = ((listed.body as { readonly submissions: ReadonlyArray<{ readonly id: string }> }).submissions).map((entry) => entry.id).slice(0, 3)
+    try same(
+      { live: live.status, status: [status.status, (status.body as { readonly mode?: unknown }).mode], after, liveRows, order },
+      {
+        live: 200,
+        status: [200, "live"],
+        after: { first: "triaging", copy: "duplicate", theft: "triaging", split: "triaging" },
+        liveRows: [["acknowledged", "two-calls", null, 1], ["duplicate", "digest", null, 1], ["acknowledged", "hold", "loss-plausible", 1], ["acknowledged", "hold", "calls-disagreed", 1]],
+        order: [theft.id, first.id, split.id],
+      },
+    )
+
+    const closed = try caseState(world, copy.caseId)
+    const appealed = try exchanged(routined, routined.live, `/api/v1/security-cases/${copy.caseId}/actions`, "52002", { action: "appeal", expectedRevision: closed?.revision, idempotencyKey: "routine-appeal-00000001", reason: "This is a different finding from the earlier report." })
+    const returned = try caseState(world, copy.caseId)
+    const triages = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_appeal_triages WHERE case_id=?", copy.caseId))
+    clock.set(clock.now() + 4 * minute)
+    const again = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const reread = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_routine_decisions WHERE case_id=? AND mode='live'", copy.caseId))
+    try same(
+      { appealed: appealed.status, returned: [returned?.receipt, returned?.appeal], triages: triages[0]?.count, again: again.status, reread: reread[0]?.count },
+      { appealed: 200, returned: ["triaging", "returned"], triages: 0, again: 200, reread: 1 },
+    )
+  })
+
+  it.effect('The proof clock closes an unanswered report and a person asking for information replaces it (spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version")', () => effect {
+    const routined = try Routined
+    const { world, fake, clock } = routined
+    const bare = try submit(world, "52005", "routine-bare-0000001", "Your contracts are probably insecure", "A scanner printed warnings. I have no steps, test or transaction to show.")
+    const lapsed = try submit(world, "52006", "routine-lapse-000001", "The owner can pause withdrawals", "pause() stops withdrawals. I did not write a test and have no transaction to show.")
+    fake.reply(routineOf("Your contracts are probably insecure"), read({ proof: "missing", missing: ["reproduction-steps", "runnable-proof"], severity: "unresolved" }))
+    fake.reply(routineOf("The owner can pause withdrawals"), read({ proof: "missing", missing: ["runnable-proof"], severity: "low" }))
+    clock.set(clock.now() + 20 * minute)
+    try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const asked = try caseState(world, bare.caseId)
+    const requested = try exchanged(routined, routined.live, `/api/v1/security-cases/${bare.caseId}/actions`, maintainer, { action: "request-information", expectedRevision: asked?.revision, idempotencyKey: "routine-person-000001", reason: "Please attach the failing test." })
+    const cleared = try caseState(world, bare.caseId)
+    try same(
+      { asked: [asked?.receipt, asked?.nextAction, asked?.due], requested: requested.status, cleared: [cleared?.receipt, cleared?.nextAction, cleared?.due] },
+      { asked: ["needs-information", "Add reproduction steps or a runnable proof", 1], requested: 200, cleared: ["needs-information", null, 0] },
+    )
+
+    clock.set(clock.now() + 15 * 24 * 60 * minute)
+    const ended = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const rejected = try caseState(world, lapsed.caseId)
+    const kept = try caseState(world, bare.caseId)
+    const lapsedRows = (try decisions(world, "live")).filter((row) => row.caseId === lapsed.caseId).map((row) => [row.outcome, row.basis, row.applied, row.calls])
+    try same(
+      { ended: ended.status, rejected: [rejected?.receipt, rejected?.nextAction, rejected?.due], kept: kept?.receipt, lapsedRows },
+      { ended: 200, rejected: ["rejected", null, 0], kept: "needs-information", lapsedRows: [["needs-proof", "two-calls", 1, 2], ["no-proof-received", "clock", 1, 0]] },
+    )
+  })
+})

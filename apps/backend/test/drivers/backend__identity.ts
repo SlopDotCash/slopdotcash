@@ -10,7 +10,7 @@ import type { Assertion, Audience, Event, Flow, FlowMode, FlowStatus, Identity, 
 import { identitySettings } from "../../src/identity/config.vibe";
 import type { FlowSecrets } from "../../src/identity/pkce.vibe";
 import { windowKey } from "../../src/identity/rateWindow.vibe";
-import { type PollFacts, type PollStep, claimCallback, completeCallback, consume, failCallback, issueAssertion, pollAs, purge, refuseRateLimited, start } from "../../src/identity/store.vibe";
+import { type PollFacts, type PollStep, claimCallback, completeCallback, consume, failCallback, issueAssertion, pollAs, purge, refuseOriginRequired, refuseRateLimited, start } from "../../src/identity/store.vibe";
 
 type View = Pick<Identity, "now" | "flows" | "assertions" | "windows">;
 
@@ -65,6 +65,8 @@ const text = (prefix: string, length: number) => `g${generation}${prefix}`.padEn
 const stateOf = (id: number) => text(`s${id}`, 43);
 const capabilityOf = (id: number) => text(`c${id}`, 43);
 const flowIdOf = (id: number, mode: FlowMode) => mode === "LocalHandoff" ? `flow_local_i_4466_${text(`n${id}`, 32)}` : `flow_${text(`n${id}`, 30)}`;
+const bindingOf = (id: number) => text(`b${id}`, 43);
+const website = (audience: Audience, mode: FlowMode) => audience === "PointsWeb" && mode === "Production";
 const secretsOf = (flowId: string, id: number): FlowSecrets => ({ flowId, state: stateOf(id), capability: capabilityOf(id), verifier: text(`v${id}`, 86) });
 const knownFlow = (id: number) => realFlow.get(id) ?? flowIdOf(id, "Production");
 const seconds = (iso: string) => Math.floor(Date.parse(iso) / 1000) - base;
@@ -105,8 +107,8 @@ async function accepted<A>(effect: Effect.Effect<A, unknown, Services>) {
   return (await settle(effect, modelRefusals)).outcome;
 }
 
-function pollFacts(flowId: number, capability: number, audience: Audience, localRoute: boolean): PollFacts {
-  return { flowId: knownFlow(flowId), capability: capabilityOf(capability), audience, localRoute };
+function pollFacts(flowId: number, capability: number, audience: Audience, localRoute: boolean, binding: boolean): PollFacts {
+  return { flowId: knownFlow(flowId), capability: capabilityOf(capability), audience, localRoute, binding };
 }
 
 async function polled(step: PollStep, client: number, facts: PollFacts, flowId: number) {
@@ -125,7 +127,8 @@ async function dispatch(event: Event, by: number) {
     case "start": {
       const id = lastFlow + 1;
       const flowId = flowIdOf(id, event.mode);
-      const outcome = await accepted(start(principal(event.client), event.audience, event.mode, secretsOf(flowId, id)));
+      const binding = website(event.audience, event.mode) ? bindingOf(id) : undefined;
+      const outcome = await accepted(start(principal(event.client), { audience: event.audience, mode: event.mode, origin: event.origin, binding }, secretsOf(flowId, id)));
       if (outcome === "accepted") {
         lastFlow = id;
         realFlow.set(id, flowId);
@@ -137,11 +140,16 @@ async function dispatch(event: Event, by: number) {
     case "startStorageFailed": {
       storageFailures += 1;
       const flowId = `flow_${text(`f${storageFailures}`, 30)}`;
-      const result = await settle(start(principal(event.client), "PointsWeb", "Production", { ...secretsOf(flowId, 0), state: sentinelState }), [...modelRefusals, "FlowNotStored"]);
+      const result = await settle(start(principal(event.client), { audience: "PointsWeb", mode: "Production", origin: true, binding: bindingOf(0) }, { ...secretsOf(flowId, 0), state: sentinelState }), [...modelRefusals, "FlowNotStored"]);
       if (result.outcome === "accepted") throw new Error("a start whose state collides with a stored flow was stored");
       if (result.tag !== "FlowNotStored") return "refused";
       counted(event.client, "StartScope");
       return "accepted";
+    }
+    case "refuseOriginRequired": {
+      const outcome = await accepted(refuseOriginRequired(principal(event.client)));
+      if (outcome === "accepted") counted(event.client, "StartScope");
+      return outcome;
     }
     case "refuseRateLimited": {
       const outcome = await accepted(refuseRateLimited(event.scope, principal(event.client)));
@@ -155,17 +163,17 @@ async function dispatch(event: Event, by: number) {
     case "failCallback":
       return accepted(failCallback(by, knownFlow(event.flowId)));
     case "issueAssertion": {
-      const outcome = await accepted(issueAssertion(pollFacts(event.flowId, event.capability, event.audience, false)));
+      const outcome = await accepted(issueAssertion(pollFacts(event.flowId, event.capability, event.audience, false, event.binding)));
       const token = pendingTokens.get(event.flowId);
       if (outcome === "accepted" && token !== undefined) tokens.set(event.flowId, token);
       return outcome;
     }
     case "pollAnswered":
-      return polled("pollAnswered", event.client, pollFacts(event.flowId, event.capability, event.audience, event.localRoute), event.flowId);
+      return polled("pollAnswered", event.client, pollFacts(event.flowId, event.capability, event.audience, event.localRoute, event.binding), event.flowId);
     case "storeAssertion":
-      return polled("storeAssertion", event.client, pollFacts(event.flowId, event.capability, event.audience, false), event.flowId);
+      return polled("storeAssertion", event.client, pollFacts(event.flowId, event.capability, event.audience, false, event.binding), event.flowId);
     case "pollLocal":
-      return polled("pollLocal", event.client, pollFacts(event.flowId, event.capability, "PointsWeb", true), event.flowId);
+      return polled("pollLocal", event.client, pollFacts(event.flowId, event.capability, "PointsWeb", true, false), event.flowId);
     case "consume":
       return accepted(consume(tokens.get(event.token) ?? unknownToken, event.audience));
     case "advanceTime": {
@@ -202,6 +210,7 @@ async function observe(): Promise<View> {
       github: { actor: Number(row.github_actor_id ?? 0), login: String(row.github_login ?? ""), nodeId: nodeOf(row.github_node_id) },
       createdAt: seconds(String(row.created_at)),
       expiresAt: seconds(String(row.expires_at)),
+      bound: row.browser_binding_hash === digest(bindingOf(id)),
     };
   });
   const assertions = (await rows("SELECT * FROM identity_assertions ORDER BY rowid")).map((row): Assertion => {

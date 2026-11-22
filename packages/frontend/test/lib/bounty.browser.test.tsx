@@ -1,4 +1,9 @@
+import { base58Encode, base64Encode } from "@repo/platform/chain/solana";
 import { webCrypto } from "@repo/platform/crypto";
+import { meta } from "@repo/settlement/chain/solana/instructions";
+import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
+import { getWallets } from "@wallet-standard/app";
+import type { Wallet, WalletAccount } from "@wallet-standard/base";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -12,6 +17,8 @@ import { BrowserSession, sessionServices } from "../../src/session/browserSessio
 import { connectPayer, directKey, openCasePayment } from "../../src/wallets/bounty/directPrompt.vibe";
 import { type PaymentCase, readPaymentCase } from "../../src/wallets/bounty/paymentCase.vibe";
 import { bountyStorage } from "../../src/wallets/bounty/records.ts";
+import { checkExpiredPayment, connectRecoveryPayer } from "../../src/wallets/bounty/recovery.vibe";
+import { connectSolanaPayer, openCaseSolanaPayment, solanaPrefix } from "../../src/wallets/bounty/solanaPayment.vibe";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
 
 const site = "https://slop.test";
@@ -131,10 +138,11 @@ function announce(uuid: string, provider: unknown) {
   window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info: { uuid, name: "Payer wallet", rdns: "test.payer", icon: "data:image/svg+xml,<svg/>" }, provider }) }));
 }
 
-const walletId = Effect.gen(function* () {
+const walletNamed = (name: string) => Effect.gen(function* () {
   const choice = yield* WalletChoice;
-  return (yield* choice.current()).find((offer) => offer.name === "Payer wallet")?.id ?? 0;
+  return (yield* choice.current()).find((offer) => offer.name === name)?.id ?? 0;
 });
+const walletId = walletNamed("Payer wallet");
 
 const failureOf = <A, E extends { readonly _tag: string; readonly message?: string }, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.match(effect, { onFailure: (error) => `${error._tag}: ${error.message ?? ""}`, onSuccess: () => "succeeded" });
@@ -194,5 +202,211 @@ describe('Make wallet outcomes recoverable without repeating an uncertain send (
       [owner, "verify-payment", [wallet.mined[0]?.hash]],
       [owner, "verify-payment", [wallet.mined[0]?.hash, wallet.mined[1]?.hash]],
     ]);
+  });
+});
+
+const solanaMessageId = "solana-request-1";
+const historyMessageId = "history-1";
+const historyBytes = new TextEncoder().encode("slop bounty history check");
+const otherSignature = base58Encode(new Uint8Array(64).fill(7));
+
+async function solanaPayer() {
+  const keys = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
+  const sign = async (message: Uint8Array) => new Uint8Array(await crypto.subtle.sign("Ed25519", keys.privateKey, Uint8Array.from(message)));
+  const address = base58Encode(raw);
+  const recipient = base58Encode(new Uint8Array(32).fill(3));
+  const compiled = compileLegacy({
+    payer: address as never,
+    blockhash: base58Encode(new Uint8Array(32).fill(9)) as never,
+    instructions: [{ program: "11111111111111111111111111111111" as never, accounts: [meta(address as never, true, true), meta(recipient as never, true)], data: Uint8Array.of(2, 0, 0, 0, 232, 3, 0, 0, 0, 0, 0, 0) }],
+  });
+  if (compiled.kind !== "compiled") throw new Error("message refused");
+  const wire = new Uint8Array(65 + compiled.bytes.length);
+  wire[0] = 1;
+  wire.set(compiled.bytes, 65);
+  return { address, raw, sign, transaction: base64Encode(wire) };
+}
+
+function solanaWallet(payer: Awaited<ReturnType<typeof solanaPayer>>, afterSend: () => void) {
+  const asked = { sent: [] as string[], signedMessages: 0 };
+  const account: WalletAccount = { address: payer.address, publicKey: payer.raw, chains: ["solana:mainnet"], features: ["solana:signAndSendTransaction", "solana:signMessage"] };
+  const wallet = {
+    version: "1.0.0",
+    name: "Payer Solana",
+    icon: "data:image/svg+xml,<svg/>",
+    chains: ["solana:mainnet"],
+    accounts: [account],
+    features: {
+      "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+      "solana:signAndSendTransaction": {
+        version: "1.0.0",
+        supportedTransactionVersions: ["legacy"],
+        signAndSendTransaction: async ({ transaction }: { transaction: Uint8Array }) => {
+          const signature = await payer.sign(transaction.slice(65));
+          asked.sent.push(base58Encode(signature));
+          afterSend();
+          return [{ signature }];
+        },
+      },
+      "solana:signMessage": {
+        version: "1.0.0",
+        signMessage: async ({ message }: { message: Uint8Array }) => {
+          asked.signedMessages += 1;
+          return [{ signedMessage: message, signature: await payer.sign(message) }];
+        },
+      },
+    },
+  } as unknown as Wallet;
+  cleanups.push(getWallets().register(wallet));
+  return asked;
+}
+
+type VerifyAnswer = "finalize" | "expire";
+type RecoverAnswer = "history-check" | "payment-found";
+
+function solanaSite(payer: Awaited<ReturnType<typeof solanaPayer>>, answers: { readonly verify: VerifyAnswer; readonly recover: ReadonlyArray<RecoverAnswer> }) {
+  const actions: Array<{ readonly action: unknown; readonly transactionIds: unknown; readonly signatures: unknown }> = [];
+  const recoveries = [...answers.recover];
+  let revision = 3;
+  let paid: string | null = null;
+  let mode: RecoverAnswer | null = null;
+  const view = () => ({
+    case: {
+      id: caseId,
+      revision,
+      allowedActions: paid !== null ? [] : mode === null ? ["verify-payment"] : ["recover-payment"],
+      paymentRail: "direct",
+      settlement: {
+        rail: "direct",
+        state: paid !== null ? "paid" : "awaiting-external-payment",
+        network: "solana",
+        generation: 0,
+        confirmedTransactionIds: paid === null ? [] : [paid],
+        recovery: paid !== null || mode === null ? null : { generation: 0, mode, payer: payer.address, messages: [{ messageId: historyMessageId, message: base64Encode(historyBytes) }] },
+        ownerRequest: paid !== null || mode !== null ? null : { payer: { address: payer.address }, solana: { transaction: payer.transaction, messageId: solanaMessageId, lastValidBlockHeight: 100 } },
+      },
+    },
+  });
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (path === "/api/v1/project-session") return json(200, { session: { githubId: owner, githubLogin: "payer-maintainer", admin: false } });
+    if (request.headers.get("x-slop-expected-github-id") !== owner) return json(403, { error: "actor_changed", message: "The signed-in account changed." });
+    if (path === `/api/v1/security-cases/${caseId}` && request.method === "GET") return json(200, view());
+    if (path === `/api/v1/security-cases/${caseId}/actions` && request.method === "POST") {
+      const body = JSON.parse(await request.text()) as Record<string, unknown>;
+      actions.push({ action: body.action, transactionIds: body.transactionIds, signatures: body.signatures });
+      if (body.expectedRevision !== revision || body.confirmation !== true) return json(409, { error: "revision_changed", message: "The case changed." });
+      const ids = Array.isArray(body.transactionIds) ? body.transactionIds.map(String) : [];
+      if (body.action === "verify-payment" && mode === null && ids.length === 1) {
+        if (answers.verify === "finalize") paid = ids[0] ?? null;
+        else mode = "history-check";
+      } else if (body.action === "recover-payment" && mode !== null && Array.isArray(body.signatures)) {
+        const answer = recoveries.shift() ?? "history-check";
+        if (answer === "payment-found") paid = payer.address;
+        mode = answer === "payment-found" ? null : answer;
+      } else return json(409, { error: "payment_unverified", message: "The payment could not be verified." });
+      revision += 1;
+      return json(200, view());
+    }
+    return json(404, { error: "not_found", message: "Not found." });
+  };
+  return { fetch, actions };
+}
+
+const tagOf = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.match(effect, { onFailure: (error) => error._tag, onSuccess: () => "succeeded" });
+
+function savedSolana() {
+  const key = Object.keys(sessionStorage).find((entry) => entry.startsWith(`${solanaPrefix(caseId, 0)}${solanaMessageId}:`));
+  return key === undefined ? undefined : (JSON.parse(String(sessionStorage.getItem(key))) as { signature: string | null; candidate?: string });
+}
+
+const solanaOpened = Effect.gen(function* () {
+  yield* (yield* BrowserSession).observe("load");
+  const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
+  const { form, authority } = yield* openCaseSolanaPayment(bountyStorage(), seen);
+  const connection = yield* connectSolanaPayer(yield* walletNamed("Payer Solana"), form.payer, authority);
+  return { form, authority, connection };
+});
+
+describe('Send each prepared message at most once and recover it after expiry (spec/frontend/solanaBountyPrompt.md, "Story: Send each prepared message at most once and recover it after expiry"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt")', () => {
+  it("a signature typed beside the saved one is stored as the candidate and is the one the case verifies", async () => {
+    const payer = await solanaPayer();
+    const wallet = solanaWallet(payer, () => undefined);
+    const backend = solanaSite(payer, { verify: "finalize", recover: [] });
+    const outcome = await page(backend.fetch).runPromise(Effect.gen(function* () {
+      const { form, authority, connection } = yield* solanaOpened;
+      const signature = yield* form.send(connection, authority);
+      const saved = savedSolana();
+      const checked = yield* form.verify(otherSignature, authority);
+      return { signature, saved, paid: checked.current.settlement?.state, phase: (yield* form.current()).phase };
+    }));
+    expect(outcome).toEqual({ signature: wallet.sent[0], saved: { transaction: payer.transaction, signature: wallet.sent[0], attemptId: expect.any(String) }, paid: "paid", phase: "Verified" });
+    expect(wallet.sent).toHaveLength(1);
+    expect(backend.actions).toEqual([{ action: "verify-payment", transactionIds: [otherSignature], signatures: undefined }]);
+  });
+
+  it("a signature the browser cannot save stays in page memory and is verified from the same page", async () => {
+    const payer = await solanaPayer();
+    const setItem = Storage.prototype.setItem;
+    let blocked = false;
+    Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+      if (blocked) throw new DOMException("Storage is full.", "QuotaExceededError");
+      setItem.call(this, key, value);
+    };
+    cleanups.push(() => {
+      Storage.prototype.setItem = setItem;
+    });
+    const wallet = solanaWallet(payer, () => {
+      blocked = true;
+    });
+    const backend = solanaSite(payer, { verify: "finalize", recover: [] });
+    const outcome = await page(backend.fetch).runPromise(Effect.gen(function* () {
+      const { form, authority, connection } = yield* solanaOpened;
+      const sent = yield* tagOf(form.send(connection, authority));
+      const held = yield* form.current();
+      const saved = savedSolana();
+      blocked = false;
+      const resend = yield* tagOf(form.send(connection, authority));
+      const checked = yield* form.verify("", authority);
+      return { sent, held: [held.phase, held.notice, held.memory], saved: saved?.signature, resend, paid: checked.current.settlement?.state, phase: (yield* form.current()).phase };
+    }));
+    expect(outcome).toEqual({ sent: "BountyRefused", held: ["Submitted", "KeepSignature", wallet.sent[0]], saved: null, resend: "BountyRefused", paid: "paid", phase: "Verified" });
+    expect(wallet.sent).toHaveLength(1);
+    expect(backend.actions).toEqual([{ action: "verify-payment", transactionIds: [wallet.sent[0]], signatures: undefined }]);
+  });
+
+  it("an expired payment whose history scan is incomplete returns to the expired form, and the next check signs nothing new and finds the payment", async () => {
+    const payer = await solanaPayer();
+    const wallet = solanaWallet(payer, () => undefined);
+    const backend = solanaSite(payer, { verify: "expire", recover: ["history-check", "payment-found"] });
+    const outcome = await page(backend.fetch).runPromise(Effect.gen(function* () {
+      const { form, authority, connection } = yield* solanaOpened;
+      yield* form.send(connection, authority);
+      yield* form.verify("", authority);
+      const expired = (yield* form.current()).phase;
+      const check = Effect.gen(function* () {
+        const seen: PaymentCase = yield* readPaymentCase(owner, caseId);
+        const recoveryConnection = yield* connectRecoveryPayer(yield* walletNamed("Payer Solana"), owner, seen);
+        const next = yield* checkExpiredPayment(bountyStorage(), owner, seen, recoveryConnection, form);
+        const state = yield* form.current();
+        return { mode: next.settlement?.recovery?.mode ?? next.settlement?.state, phase: state.phase, notice: state.notice, again: yield* form.tracksHistory() };
+      });
+      const first = yield* check;
+      const second = yield* check;
+      return { expired, first, second };
+    }));
+    expect(outcome).toEqual({
+      expired: "Expired",
+      first: { mode: "history-check", phase: "Expired", notice: "HistoryIncomplete", again: true },
+      second: { mode: "paid", phase: "Verified", notice: "HistoryIncomplete", again: false },
+    });
+    expect({ sent: wallet.sent.length, signedMessages: wallet.signedMessages }).toEqual({ sent: 1, signedMessages: 1 });
+    const recovered = backend.actions.filter((entry) => entry.action === "recover-payment").map((entry) => entry.signatures);
+    expect(recovered).toHaveLength(2);
+    expect(recovered[1]).toEqual(recovered[0]);
   });
 });

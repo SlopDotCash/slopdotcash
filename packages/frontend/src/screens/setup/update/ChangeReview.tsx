@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
 import type { RevisionChanges } from "@repo/backend/owner/classify";
 import { CompareChange } from "@repo/ui";
 import { Calendar, Check, Minus, ShieldAlert } from "lucide-react";
@@ -29,8 +29,8 @@ function EffectChip({ effect, active, nextCycle }: { effect: ChangeEffect; activ
 }
 
 function ChangeValue({ field, value }: { field: ChangeField; value: string }) {
-  if (field === "slopbot") {
-    const on = value === "Allowed";
+  if (field === "slopbot" || field === "honorSystem") {
+    const on = value === "Allowed" || value === "On";
     return (
       <Chip tone={on ? "Positive" : "Neutral"} icon={on ? <Check aria-hidden /> : <Minus aria-hidden />}>
         {on ? "On" : "Off"}

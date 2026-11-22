@@ -300,7 +300,8 @@ snapshot's value coverage, in phase `Assessed` (a reassessment), `Ratified`
 (a ratification) or `LegacyScored` (the legacy v2 score of a later
 snapshot). An assessed or ratified score carries the value decision
 `value:<record digest>`; a legacy score carries no decision. A provisional
-minimum never replaces a recorded value. The new value is divided between
+minimum never replaces a recorded value. Only a current unit is rescored:
+a unit a joint unit superseded stays zero. The new value is divided between
 the unit's existing recipients. A frozen reward period refuses the change.
 
 ```quint
@@ -309,7 +310,7 @@ pure def canRescoreUnit(l: Ledger, s: SP::Scored, reason: str, digest: str): boo
   val prior = latest(l, unitKey(s.project, s.unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   (s.phase == SP::Assessed or s.phase == SP::Ratified or s.phase == SP::LegacyScored) and s.project != "" and s.unit > 0 and
-  s.points != prior.amount and s.points >= 10 and s.points <= P::maxSafe and
+  W::live(unitOf(l, s.unit)) and s.points != prior.amount and s.points >= 10 and s.points <= P::maxSafe and
   not(isFrozen(l, s.project, P::periodOf(prior.occurredAt))) and reason != "" and digest != "" and
   A::canWriteAllocation(s.points, prior.recipients, prior.completeLines, false)
 pure def rescoreUnit(l: Ledger, s: SP::Scored, reason: str, digest: str): Ledger =
@@ -365,8 +366,10 @@ re-score it supplies with no decision appends a successor with no decision;
 one it supplies with a decision (`scoreDecisionSourceId`) appends a
 reassessment under the v2 score carrying that decision's source, effective
 time and reason, and a changed decision alone also appends. Applying a
-snapshot never rewrites a key the retained batch owns (below); the retained
-batch itself updates its own keys this way.
+snapshot never rewrites a key the retained batch owns (below): the adapter
+records the snapshot's coverage (`recordSnapshotCoverage`) before applying
+its re-scores, so a re-score whose digest is recorded coverage is a
+snapshot's; the retained batch itself updates its own keys this way.
 
 ```quint
 pure def canRescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): bool =
@@ -382,6 +385,7 @@ pure def canRescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision:
   (a.amount != prior.amount or a.digest != prior.sourceDigest or a.provisional != prior.provisional or
     (decision.basis != NoBasis and (decision.source != prior.decision.source or
       decision.effectiveAt != prior.decision.effectiveAt or decision.reason != prior.decision.reason))) and
+  (batchOwned(l, a.key) implies not(l.coverage.contains(a.digest))) and
   (isFrozen(l, a.key.project, P::periodOf(prior.occurredAt)) implies a.amount == prior.amount)
 pure def rescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): Ledger =
   val prior = latest(l, a.key)
@@ -598,7 +602,7 @@ October implementation pool when every claim is already covered by an
 earlier accepted source, with the decision `owner_duplicate_<dossier digest>`
 and the v2 score, only inside a reviewed packet that applies
 (`reconstructHistoricalPoints` refuses the whole packet otherwise). The
-retirement names the unit's source. The pool must be positive and in October
+retired source is one of the unit's sources. The pool must be positive and in October
 2026. A frozen reward period refuses it.
 
 ```quint
@@ -607,7 +611,7 @@ pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount > 0 and P::periodOf(prior.occurredAt) == P::october2026 and
-  retirement.source == unit and RH::retirementApplies(retirement) and RH::packetApplies(packetRun) and
+  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetApplies(packetRun) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
 pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
     reason: str, digest: str): Ledger =

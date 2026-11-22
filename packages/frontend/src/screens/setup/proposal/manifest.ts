@@ -4,7 +4,7 @@ import { type Proposal, rewardFields } from "../../../flows/projects/proposal.ts
 import { type BountyActor, type BountyTerms, privateBountyTerms } from "../../../flows/security/program.vibe";
 import { type LinkInput, normalizeWebsiteInput, normalizeXInput, withOwnerLinks } from "../../../kernels/projectLinks.ts";
 import { skillRuleFields } from "../fields/contribution.ts";
-import { chainOf, fundingOf, slugOf } from "./form.ts";
+import { chainOf, fundingOf, honorSystemOf, slugOf } from "./form.ts";
 
 export interface DraftManifest {
   readonly manifest: Readonly<Record<string, unknown>>;
@@ -20,6 +20,12 @@ function signedAt(value: string): string {
 
 function validLink(input: LinkInput): string | null {
   return input.ok ? input.value : null;
+}
+
+function rewardOf(p: Proposal, now: string) {
+  const funding = fundingOf(p);
+  const fields = rewardFields(chainOf(p) === undefined ? { ...funding, mode: "none" } : funding, now);
+  return chainOf(p) !== undefined && honorSystemOf(p) ? { ...fields, reward: { ...fields.reward, honorSystem: true } } : fields;
 }
 
 function repositoryLicense(p: Proposal, repository: string) {
@@ -111,7 +117,7 @@ export function draftManifest({ proposal: p, actor, valid, now }: { proposal: Pr
       ...Object.fromEntries(skillRuleFields.map((field) => [field, p[field].trim()])),
     },
     ...(p.automaticClosure === "true" && p.fundingMode !== "bounty" ? { slopbot: { automaticClosure: true } } : {}),
-    ...rewardFields(chainOf(p) === undefined ? { ...funding, mode: "none" } : funding, now),
+    ...rewardOf(p, now),
     ...(bounty?.kind === "terms" ? { securityBounty: bounty.terms } : {}),
     funding: {
       mode: "direct-noncustodial",

@@ -1,8 +1,11 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import { ed25519 } from "@noble/curves/ed25519.js"
 import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
 import type { Hex } from "@repo/platform/chain/evm"
+import { type Address, SYSTEM_PROGRAM, addressOf, base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { decoded, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
@@ -20,14 +23,23 @@ import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { type MonthlyEntry, SOURCE_SEQUENCE_CALL, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, monthlyDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
 import { readSignedType2 } from "../src/chain/evm/transactions.ts"
+import { accountDiscriminator } from "../src/chain/solana/accounts.ts"
+import { type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../src/chain/solana/allocationRoot.ts"
+import { type Digest, type U64, digestBytes, hex, i64, u64 } from "../src/chain/solana/bytes.ts"
+import { solanaMonthlyMessage } from "../src/chain/solana/messages.ts"
+import { awardAddress, awardId as solanaAwardId, bindingAddress, configAddress, keyBytes, monthAddress, projectAddress, settledAddress, vaultAddress } from "../src/chain/solana/pda.ts"
 import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
-import { type Period, formatPeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
+import { type Period, formatPeriod, parsePeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
+import { ordinaryFeeBase } from "../src/kernels/fees.ts"
+import { NETWORKS } from "../src/kernels/networks.ts"
 import { fingerprintOf } from "../src/keeper/attempts.vibe"
 import { journalRegistry, keeperConfig, modelConfiguration } from "../src/keeper/config.vibe"
 import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
 import { type KeeperRun, keeperTick } from "../src/keeper/run.vibe"
 import { operatorKey } from "../src/keeper/signer.vibe"
+import { operatorSolanaSeed } from "../src/keeper/solana.vibe"
 import { IDENTITY_KEY, inTransaction, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
+import { registryProjectDigest } from "../src/owner/ownerInstructions.ts"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 
 service Bench {
@@ -157,7 +169,7 @@ effect function operatorConfig(rpcUrl: string, budget: Budget = {}, apiOrigin?: 
 effect function keeperRun(text: string, execute = true) {
   const { journalPath, operator, clock } = try Bench
   const mode = execute ? "Execute" as const : "DryRun" as const
-  provide Layer.mergeAll(fileJournal(journalPath), outbound, operatorKey(() => operator.privateKey), clock.layer) {
+  provide Layer.mergeAll(fileJournal(journalPath), outbound, operatorKey(() => operator.privateKey), operatorSolanaSeed(() => undefined), clock.layer) {
     try openKeeperStore()
     const config = try keeperConfig(text, undefined)
     const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(try recordOf(IDENTITY_KEY), config)))
@@ -634,6 +646,339 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
         firstLeaf: [incomplete, 1],
         done: [{ ...incomplete, complete: true }, 0n, 2],
       },
+    })
+  })
+})
+
+interface FakeAccount {
+  readonly owner: string
+  readonly executable: boolean
+  readonly data: Uint8Array
+}
+
+interface RpcCall {
+  readonly id: unknown
+  readonly method: string
+  readonly params: ReadonlyArray<unknown>
+}
+
+interface Landed {
+  readonly failed: boolean
+  readonly charge: bigint
+}
+
+interface SolanaChain {
+  readonly accounts: Map<string, FakeAccount>
+  readonly statuses: Map<string, { readonly failed: boolean; readonly finalized: boolean }>
+  readonly landed: Map<string, Landed>
+  readonly sent: Map<string, string>
+  readonly asked: string[]
+  genesis: string
+  chainTime: number
+  blockhashes: number
+  seedReads: number
+}
+
+service SolanaBench {
+  readonly chain: SolanaChain
+  readonly published: Map<string, string>
+  readonly registry: string
+  readonly rpc: string
+  readonly journalPath: string
+  readonly clock: SettableClock
+}
+
+function walletOf(byte: number) {
+  const seed = new Uint8Array(32).fill(byte)
+  return { address: addressOf(ed25519.getPublicKey(seed)) as Address, seedHex: bytesToHex(seed) }
+}
+
+const solanaNetwork = "solana-devnet"
+const solanaProject = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+const solanaGenesis = NETWORKS[solanaNetwork].genesisHash
+const networkDomain = "e".repeat(64)
+const BINDING_DELAY = 86_400n
+const CHAIN_START = 1_795_000_000
+const FEE = 5_000n
+const RENT = 2_000_000n
+const PAYER_BALANCE = 1_000_000_000n
+const solanaCode = new TextEncoder().encode("slop escrow keeper fixture")
+const solanaOperator = walletOf(0x51)
+const identityWallet = walletOf(0x52)
+const payee = walletOf(0x53)
+const solanaProgram = walletOf(0x54).address
+const solanaOwner = walletOf(0x55).address
+const solanaFeeRecipient = walletOf(0x56).address
+const rotationAuthority = walletOf(0x57).address
+const solanaProjectPda = projectAddress(solanaProgram, solanaOwner, registryProjectDigest(solanaProject), "Ordinary")
+const solanaVault = vaultAddress(solanaProgram, solanaProjectPda)
+const payActor = 501n
+const payGross = 1_000_000n
+const paySource = bytesToHex(sha256(new TextEncoder().encode("source:keeper-solana"))) as Digest
+const payAward = solanaAwardId(solanaProjectPda, paySource)
+const payAwardAddress = awardAddress(solanaProgram, solanaProjectPda, payAward)
+const monthPeriod = parsePeriod("2026-10") as Period
+const FROZEN_AT = BigInt(CHAIN_START - 1_000)
+
+function le64(value: bigint) {
+  const bytes = new Uint8Array(8)
+  new DataView(bytes.buffer).setBigUint64(0, BigInt.asUintN(64, value), true)
+  return bytes
+}
+
+function le32(value: number) {
+  const bytes = new Uint8Array(4)
+  new DataView(bytes.buffer).setUint32(0, value, true)
+  return bytes
+}
+
+function anchored(name: string, size: number, fields: ReadonlyArray<readonly [number, Uint8Array]>) {
+  const data = new Uint8Array(size)
+  data.set(accountDiscriminator(name), 0)
+  for (const [offset, bytes] of fields) data.set(bytes, offset)
+  return data
+}
+
+function programAccount(data: Uint8Array): FakeAccount {
+  return { owner: solanaProgram, executable: false, data }
+}
+
+function awardAccount(paid: boolean): FakeAccount {
+  const fee = ordinaryFeeBase(payGross)
+  return programAccount(anchored("Obligation", 145, [
+    [8, le64(payGross)], [16, digestBytes(paySource)], [48, keyBytes(solanaProjectPda)], [80, digestBytes(payAward)], [112, le64(payActor)],
+    [120, le64(payGross - fee)], [128, le64(fee)], [136, Uint8Array.of(paid ? 1 : 0)], [137, le64(BigInt(CHAIN_START - 10))],
+  ]))
+}
+
+const monthEntries: ReadonlyArray<SolanaEntry> = [1, 2, 3, 4, 5].map((index) => ({
+  actor: u64(600n + BigInt(index)) as U64,
+  gross: u64(1_000_000n) as U64,
+  source: bytesToHex(sha256(new TextEncoder().encode(`source:keeper-month-${index}`))) as Digest,
+}))
+
+function monthTree() {
+  const built = solanaAllocationRoot(monthEntries)
+  if (built.kind === "refused") throw new Error(`allocation refused: ${built.issue}`)
+  return built.tree
+}
+
+function fixtureAccounts() {
+  const tree = monthTree()
+  const month = monthAddress(solanaProgram, solanaProjectPda, monthPeriod)
+  return new Map<string, FakeAccount>([
+    [solanaProgram, { owner: "BPFLoader2111111111111111111111111111111111", executable: true, data: solanaCode }],
+    [configAddress(solanaProgram), programAccount(anchored("Config", 105, [[8, keyBytes(identityWallet.address)], [40, keyBytes(solanaFeeRecipient)], [72, keyBytes(rotationAuthority)]]))],
+    [solanaProjectPda, programAccount(anchored("Project", 340, [
+      [8, keyBytes(solanaOwner)], [40, digestBytes(registryProjectDigest(solanaProject))], [72, digestBytes(networkDomain as Digest)], [104, keyBytes(identityWallet.address)],
+      [136, keyBytes(solanaFeeRecipient)], [168, keyBytes(SYSTEM_PROGRAM)], [249, le64(BINDING_DELAY)], [298, le64(172_800n)],
+    ]))],
+    [solanaVault, programAccount(new Uint8Array(8))],
+    [payAwardAddress, awardAccount(false)],
+    [bindingAddress(solanaProgram, solanaProjectPda, u64(payActor) as U64), programAccount(anchored("WalletBinding", 169, [
+      [8, digestBytes(paySource)], [40, keyBytes(identityWallet.address)], [72, le64(payActor)], [80, digestBytes(networkDomain as Digest)], [112, keyBytes(payee.address)], [144, le64(1n)],
+    ]))],
+    [month, programAccount(anchored("MonthlyAllocation", 109, [
+      [8, keyBytes(solanaProjectPda)], [40, le32(monthPeriod)], [44, digestBytes(tree.root)], [76, le64(0n)], [84, le64(tree.total)], [100, le64(FROZEN_AT)],
+    ]))],
+  ])
+}
+
+function accountReply(found: FakeAccount | undefined) {
+  return found === undefined ? null : { owner: found.owner, lamports: 1_000_000, data: [base64Encode(found.data), "base64"], executable: found.executable, rentEpoch: 0, space: found.data.length }
+}
+
+function chainAnswer(chain: SolanaChain, call: RpcCall): unknown {
+  const slotted = (value: unknown) => ({ context: { slot: 10 }, value })
+  switch (call.method) {
+    case "getGenesisHash": return chain.genesis
+    case "getAccountInfo": return slotted(accountReply(chain.accounts.get(String(call.params[0]))))
+    case "getMultipleAccounts": return slotted((Array.isArray(call.params[0]) ? call.params[0] : []).map((key) => accountReply(chain.accounts.get(String(key)))))
+    case "getLatestBlockhash": {
+      chain.blockhashes += 1
+      return slotted({ blockhash: walletOf(0x80 + chain.blockhashes).address, lastValidBlockHeight: 500 })
+    }
+    case "getBlockHeight": return 10
+    case "getSlot": return 10
+    case "getBlockTime": return chain.chainTime
+    case "getFeeForMessage": return slotted(Number(FEE))
+    case "getMinimumBalanceForRentExemption": return Number(RENT)
+    case "getSignaturesForAddress": return []
+    case "getSignatureStatuses": return slotted((Array.isArray(call.params[0]) ? call.params[0] : []).map((signature) => {
+      const status = chain.statuses.get(String(signature))
+      return status === undefined ? null : { slot: 10, confirmations: null, err: status.failed ? { InstructionError: [0, "Custom"] } : null, confirmationStatus: status.finalized ? "finalized" : "confirmed" }
+    }))
+    case "sendTransaction": {
+      const raw = String(call.params[0])
+      const wire = base64Decode(raw) ?? new Uint8Array()
+      const signature = base58Encode(wire.slice(1, 65))
+      chain.sent.set(signature, raw)
+      return signature
+    }
+    case "getTransaction": {
+      const signature = String(call.params[0])
+      const landed = chain.landed.get(signature)
+      const raw = chain.sent.get(signature)
+      if (landed === undefined || raw === undefined) return null
+      return { slot: 10, blockTime: chain.chainTime, transaction: [raw, "base64"], meta: { err: landed.failed ? { InstructionError: [0, "Custom"] } : null, fee: Number(FEE), preBalances: [Number(PAYER_BALANCE)], postBalances: [Number(PAYER_BALANCE - landed.charge)] } }
+    }
+    default: return null
+  }
+}
+
+function solanaPolicy() {
+  return {
+    schemaVersion: "1", effectiveCycle: "2026-11", chain: "solana", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross",
+    deployments: [{
+      network: solanaNetwork, vault: solanaVault, programId: solanaProgram, upgradeAuthority: null, projectPda: solanaProjectPda, networkDomain, asset: SYSTEM_PROGRAM,
+      owner: solanaOwner, identityAuthority: identityWallet.address, feeRecipient: solanaFeeRecipient, rotationAuthority,
+      deploymentTransaction: base58Encode(new Uint8Array(64).fill(7)), sourceCommit, codeSha256: bytesToHex(sha256(solanaCode)),
+      bindingDelaySeconds: BINDING_DELAY.toString(), rotationDelaySeconds: "172800", factory: null, factoryCodeSha256: null, registrar: null,
+    }],
+  }
+}
+
+const SolanaStarted = Layer.effect(SolanaBench, effect {
+  const chain: SolanaChain = { accounts: fixtureAccounts(), statuses: new Map(), landed: new Map(), sent: new Map(), asked: [], genesis: solanaGenesis, chainTime: CHAIN_START, blockhashes: 0, seedReads: 0 }
+  const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+  const rpc = try acquireRelease(promise(() => serve(async (request) => {
+    const call = await request.json() as RpcCall
+    chain.asked.push(call.method === "getAccountInfo" ? `getAccountInfo:${String(call.params[0])}` : call.method)
+    return json({ jsonrpc: "2.0", id: call.id, result: chainAnswer(chain, call) })
+  })), (server) => promise(() => server.close()))
+  const body = { schemaVersion: "1", projects: [{ id: solanaProject, status: "active", escrow: solanaPolicy() }], restrictions: [] }
+  const published = new Map<string, string>()
+  const registry = try acquireRelease(promise(() => serve(async (request) => {
+    const path = new URL(request.url).pathname
+    if (path === "/api/v1/projects") return json(body)
+    const authorization = published.get(path)
+    return authorization === undefined ? new Response("missing", { status: 404 }) : new Response(authorization, { headers: { "content-type": "application/json" } })
+  })), (server) => promise(() => server.close()))
+  const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
+  return { chain, published, registry: new URL(registry.url).origin, rpc: rpc.url, journalPath: `${scratch.root}/keeper-solana.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)) }
+})
+
+effect function solanaConfig(perRun: number) {
+  const { registry, rpc } = try SolanaBench
+  return try Effect.try(() => JSON.stringify({
+    apiOrigin: registry, network: solanaNetwork, projectIds: [solanaProject], signer: solanaOperator.address, rpcUrl: rpc, perRun,
+    gas: { perTransaction: "100000000", perDay: "10000000000", additionalFeeReserve: "0" },
+    monthlySchedule: { firstPeriod: "2026-10", cutoffSecondsAfterPeriodEnd: CUTOFF_SECONDS },
+  }))
+}
+
+effect function solanaRun(perRun: number) {
+  const { journalPath, clock, chain } = try SolanaBench
+  chain.asked.length = 0
+  const seed = () => {
+    chain.seedReads += 1
+    return solanaOperator.seedHex
+  }
+  provide Layer.mergeAll(fileJournal(journalPath), outbound, operatorKey(() => undefined), operatorSolanaSeed(seed), clock.layer) {
+    try openKeeperStore()
+    const config = try keeperConfig(try solanaConfig(perRun), undefined)
+    const core = try keeperCore(try configuredStart(modelConfiguration("Execute", config, 0), journalRegistry(try recordOf(IDENTITY_KEY), config)))
+    try core.admit(1, "InternalTick")
+    const started = try core.begin(1)
+    return try orDie(keeperTick(core, started.runId, config, "Execute"))
+  }
+}
+
+effect function solanaJournal<A>(read: A!unknown!any) {
+  const { journalPath } = try SolanaBench
+  provide fileJournal(journalPath) {
+    try orDie(openKeeperStore())
+    return try orDie(read)
+  }
+}
+
+effect function solanaGas() {
+  return try solanaJournal(inTransaction((tx) => effect {
+    return try decoded(GasRow, try tx.all(sql`SELECT id, maximum, transaction_id, actual FROM gas ORDER BY rowid`), "gas rows")
+  }))
+}
+
+effect function publishSolanaMonth() {
+  const { published } = try SolanaBench
+  const tree = monthTree()
+  const frozenAt = i64(FROZEN_AT)
+  if (frozenAt === undefined) return try die(new Error("freeze time outside i64"))
+  const message = solanaMonthlyMessage({ program: solanaProgram, project: solanaProjectPda, period: monthPeriod, root: tree.root, total: tree.total, frozenAt, network: networkDomain as Digest })
+  const plan = {
+    request: { projectId: solanaProject, period: "2026-10", network: solanaNetwork, snapshotSha256: "c".repeat(64) },
+    deployment: { vault: solanaVault, asset: SYSTEM_PROGRAM },
+    family: "solana", allocationRoot: tree.root, messageHex: hex(message), totalGrossBase: tree.total.toString(), frozenAt: FROZEN_AT.toString(),
+    entries: monthEntries.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.source })),
+  }
+  published.set(`/api/v1/payments/projects/${solanaProject}/monthly/2026-10/authorization/${solanaNetwork}`, JSON.stringify({ authorization: { plan, signatureHex: "0".repeat(128) } }))
+}
+
+function monthState(run: KeeperRun) {
+  return run.results.find((result) => result.operation === "monthly:2026-10")?.state
+}
+
+layer(Layer.mergeAll(Layer.provideMerge(SolanaStarted, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('A Solana deployment progresses through preflight, authority, gas, scanning and local state checks (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/payment.md, "A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes")', () => effect {
+    const { chain } = try SolanaBench
+    try solanaJournal(inTransaction((tx) => tx.run(sql`INSERT INTO awards(scope,id,actor,reserve) VALUES(${`${solanaProject}:${solanaVault}`}, ${payAward}, ${payActor.toString()}, ${"{}"})`)))
+    chain.genesis = walletOf(0x99).address
+    const wrongGenesis = try solanaRun(10)
+    const wrong = { result: wrongGenesis.results.map((result) => [result.operation, result.state, result.failureStage]), seedReads: chain.seedReads, sent: chain.sent.size }
+    chain.genesis = solanaGenesis
+    const early = try solanaRun(10)
+    const beforeMaturity = { award: outcomeOf(early, payAward)?.state, sent: chain.sent.size, seedReads: chain.seedReads }
+    chain.chainTime = CHAIN_START + Number(BINDING_DELAY)
+    const matured = try solanaRun(10)
+    const [first] = [...chain.sent.keys()]
+    const reserved = (try solanaGas()).map((row) => [row.maximum, row.transaction_id === first, row.actual])
+    if (first !== undefined) chain.statuses.set(first, { failed: false, finalized: false })
+    const pending = try solanaRun(10)
+    const unchanged = { award: outcomeOf(pending, payAward)?.state, sent: chain.sent.size }
+    if (first !== undefined) {
+      chain.statuses.set(first, { failed: true, finalized: true })
+      chain.landed.set(first, { failed: true, charge: FEE })
+    }
+    const replaced = try solanaRun(10)
+    const statusAt = chain.asked.indexOf("getSignatureStatuses")
+    const rereadAt = chain.asked.lastIndexOf(`getAccountInfo:${payAwardAddress}`)
+    const sentAt = chain.asked.indexOf("sendTransaction")
+    const second = [...chain.sent.keys()].find((signature) => signature !== first)
+    const replacement = { award: outcomeOf(replaced, payAward)?.state, sent: chain.sent.size, reread: statusAt >= 0 && statusAt < rereadAt && rereadAt < sentAt }
+    if (second !== undefined) {
+      chain.statuses.set(second, { failed: false, finalized: true })
+      chain.landed.set(second, { failed: false, charge: FEE + RENT })
+      chain.accounts.set(payAwardAddress, awardAccount(true))
+    }
+    const paid = try solanaRun(10)
+    const settledRows = (try solanaGas()).map((row) => [row.maximum, row.actual])
+    try publishSolanaMonth()
+    const sentBefore = chain.sent.size
+    const oneLeaf = try solanaRun(1)
+    const afterOne = chain.sent.size - sentBefore
+    const month = monthAddress(solanaProgram, solanaProjectPda, monthPeriod)
+    const [leaf] = monthEntries
+    if (leaf !== undefined) chain.accounts.set(settledAddress(solanaProgram, month, leaf.source), programAccount(anchored("BindingVeto", 8, [])))
+    const rest = try solanaRun(10)
+    try same({
+      wrong,
+      beforeMaturity,
+      matured: outcomeOf(matured, payAward)?.state,
+      reserved,
+      unchanged,
+      replacement,
+      paid: outcomeOf(paid, payAward)?.state,
+      settledRows,
+      months: [monthState(oneLeaf), afterOne, monthState(rest), chain.sent.size - sentBefore - afterOne],
+    }, {
+      wrong: { result: [["deployment", "unavailable", "preflight"]], seedReads: 0, sent: 0 },
+      beforeMaturity: { award: "waiting", sent: 0, seedReads: 0 },
+      matured: "submitted",
+      reserved: [[(FEE + RENT).toString(), true, null]],
+      unchanged: { award: "submitted", sent: 1 },
+      replacement: { award: "submitted", sent: 2, reread: true },
+      paid: "awaiting-payment-index",
+      settledRows: [[(FEE + RENT).toString(), FEE.toString()], [(FEE + RENT).toString(), (FEE + RENT).toString()]],
+      months: ["execution-checked", 1, "execution-checked", 4],
     })
   })
 })

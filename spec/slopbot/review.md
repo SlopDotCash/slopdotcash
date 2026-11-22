@@ -72,6 +72,41 @@ pure def canElapse(r: Review, seconds: int): bool = seconds > 0
 pure def elapse(r: Review, seconds: int): Review = { ...r, now: r.now + seconds }
 ```
 
+### A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap
+
+Source `runReview` in `review.ts`, lines 1488-1575, and `intake-cap.ts`
+(development `e126f2419`, #2986; `8008b4617`, #3058). For a pull request in
+contributor scope the checks after binding run in this order: an exempt
+author's standing unpaid fee ask is released first
+([submission fee gate](./submissionFeeGate.md)); a routing decision that
+does not review is the skip of the rule above; a pull request of a
+not-exempt author that Slopbot has not completed a review of is skipped with
+the reason `intake-cap` while the project is paused at its intake cap (the
+pause is [backend's intake cap](../backend/intakeCap.md), read as a fact);
+a pull request whose fee gate waits (`feeStep` asks or waits) is skipped with
+the reason `fee-needed`; only then comes the monthly cap below. Each skip
+makes no model call, writes no review label, comment or close and uses no
+monthly admission. A later delivery reviews the pull request once the pause
+ends or the fee is paid or released. A failure of the fee step is not a
+review attempt: the attempt's row is finished failed with no
+review-failure comment, and the queue's retry runs the review again.
+
+```quint
+pure def canSkipForIntake(r: Review, paused: bool, outsidePull: bool, reviewedBefore: bool): bool =
+  r.status == Queued and r.bound and not(r.capAdmitted) and r.scope == RS::Contributor and
+  outsidePull and paused and not(reviewedBefore)
+pure def skipForIntake(r: Review, paused: bool, outsidePull: bool, reviewedBefore: bool): Review =
+  { ...r, status: Skipped, bound: false, capAdmitted: false }
+pure def canSkipForFee(r: Review, feeWaits: bool): bool =
+  r.status == Queued and r.bound and not(r.capAdmitted) and r.scope == RS::Contributor and feeWaits
+pure def skipForFee(r: Review, feeWaits: bool): Review = { ...r, status: Skipped, bound: false, capAdmitted: false }
+pure def stepIntakeAndFeeSkipBeforeAdmission(before: Review, via: str, after: Review): bool =
+  (via == "skipForIntake" or via == "skipForFee") implies
+    (not(before.capAdmitted) and before.scope == RS::Contributor and after.calls == before.calls)
+pure def sometimesSkippedBeforeAdmissionWithoutCalls(r: Review): bool =
+  r.status == Skipped and r.scope == RS::Contributor and r.calls.length() == 0
+```
+
 ### A bound review of a new item over the month's free-review cap is skipped before any call
 
 The worker admits the item to the repository's month

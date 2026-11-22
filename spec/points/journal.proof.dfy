@@ -12,11 +12,14 @@ lemma recordRetirementBatch_ensures(l: Ledger, k: AwardKey)
 {
   if inv(l) && canRecordRetirementBatch(l, k) {
     var prior := latest(l, k);
-    var r := noRevision.(id := l.nextId, previous := prior.id, key := k, amount := 0, priorAmount := prior.amount, occurredAt := prior.occurredAt, recordedAt := l.now, rule := SourceRule.ScoreV2, sourceDigest := points__evaluations_retirementZeroDigest, decision := Decision(Basis.RetirementBatch, l.now, "retired evaluator batch", (0 - prior.amount)));
+    var r := noRevision.(id := l.nextId, previous := prior.id, key := k, amount := 0, priorAmount := prior.amount, occurredAt := prior.occurredAt, recordedAt := l.now, rule := SourceRule.ScoreV2, sourceDigest := points__evaluations_retirementZeroDigest, decision := Decision(Basis.RetirementBatch, l.now, "retired evaluator batch", (0 - prior.amount), points__evaluations_retirementZeroDigest, false));
     var after := recordRetirementBatch(l, k);
     assert after == l.(revisions := l.revisions + [r], nextId := l.nextId + 1);
     assert |points__evaluations_retirementZeroDigest| > 0;
     assert r.sourceDigest != "";
+    assert r.decision.source != "";
+    assert decisionRule(r.key.category, r.rule);
+    assert r.tableVersion == 0 && r.debit == 0 && !r.reversed;
     assert amountAllowed(r.key.category, r.amount);
     assert ruleAllowed(r.key.category, r.rule);
     assert unitAllocation(r);
@@ -34,9 +37,10 @@ lemma AppendKeeps(l: Ledger, r: Revision)
   requires amountAllowed(r.key.category, r.amount) && ruleAllowed(r.key.category, r.rule) && unitAllocation(r)
   requires r.recordedAt >= r.occurredAt && r.occurredAt >= 0 && r.recordedAt <= l.now && r.sourceDigest != ""
   requires (!(r.provisional) || (r.key.category.MergedWork? || r.key.category.Review?))
-  requires (!(r.key.category.Penalty?) || (!(r.provisional) && (r.tableVersion > 0))) && (r.key.category.Penalty? || r.tableVersion == 0)
-  requires (r.previous == 0 ==> r.priorAmount == 0) && (r.decision.basis.NoBasis? ==> r.decision == noDecision && r.previous == 0)
-  requires (!r.decision.basis.NoBasis? ==> r.decision.delta == r.amount - r.priorAmount && r.decision.reason != "" && r.decision.effectiveAt <= r.recordedAt)
+  requires (r.key.category.Penalty? ==> (!(r.provisional) && r.tableVersion > 0 && r.debit > 0 && 0 - r.amount <= r.debit && (r.reversed ==> r.amount == 0) && !r.decision.basis.NoBasis?))
+  requires (!(r.key.category.Penalty?) ==> (r.tableVersion == 0 && r.debit == 0 && !(r.reversed)))
+  requires (r.previous == 0 ==> r.priorAmount == 0) && (r.decision.basis.NoBasis? ==> r.decision == noDecision)
+  requires (!r.decision.basis.NoBasis? ==> (r.decision.delta == r.amount - r.priorAmount && r.decision.reason != "" && r.decision.effectiveAt <= r.recordedAt && r.decision.source != "" && decisionRule(r.key.category, r.rule)))
   requires !r.decision.basis.DisputeUpheld?
   ensures alwaysRevisionsWellFormed(l.(revisions := l.revisions + [r], nextId := l.nextId + 1))
   ensures alwaysDecisionsReconcile(l.(revisions := l.revisions + [r], nextId := l.nextId + 1))

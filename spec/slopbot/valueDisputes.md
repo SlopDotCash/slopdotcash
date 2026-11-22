@@ -156,7 +156,8 @@ resolution comment is posted once.
 pure def mayAnswer(d: Dispute, by: int, check: DisputerCheck): bool =
   by > 0 and (by == d.disputer or (check.actor == by and check.item == d.binding.item and check.role == CurrentMaintainer))
 pure def answerable(d: Dispute): bool = unresolved(d) and not(escalated(d)) and d.draft != NoDraft
-pure def canReject(d: Dispute, by: int, check: DisputerCheck): bool = answerable(d) and mayAnswer(d, by, check)
+pure def canReject(d: Dispute, by: int, check: DisputerCheck): bool = answerable(d) and mayAnswer(d, by, check) and
+  d.ban == NotBanned
 pure def reject(d: Dispute, by: int, check: DisputerCheck): Dispute = escalatedWith(DraftRejected, d)
 pure def canEscalateBanAtAnswer(d: Dispute, by: int, check: DisputerCheck): bool =
   unresolved(d) and not(escalated(d)) and d.ban == Banned and mayAnswer(d, by, check)

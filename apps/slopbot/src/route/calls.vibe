@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { D1, sql } from "@repo/platform/d1"
 import type { Usage } from "@repo/platform/providers"
 import { apply } from "../../gen/slopbot__spendAlerts.effect.vibe"
-import { emptySpend, failureKindOf, monthNumber, monthOf } from "../spend/store.vibe"
+import { emptySpend, failureKindOf, monthNumber, monthOf, secondsAt } from "../spend/store.vibe"
 import type { CallRecord } from "./route.vibe"
 
 module pricing {
@@ -45,6 +45,10 @@ export effect function recordCalls(reviewKey: string, installationId: number, ca
         providerReported: call.providerCostMicroUsd !== null,
         provider: call.gateway === "orbio" ? "Orbio" : "Surplus",
         failure: failureKindOf(call.outcome, call.failure),
+        job: 1,
+        model: call.requestedModel,
+        cause: call.failure ?? "",
+        at: secondsAt(at),
       },
     })
     const substituted = call.servedModel !== null && !call.priceKey.endsWith(`/${call.servedModel}`)
@@ -56,6 +60,7 @@ export effect function recordCalls(reviewKey: string, installationId: number, ca
         ${call.servedModel}, ${call.outcome}, ${call.failure}, ${call.usage.input}, ${call.usage.cacheWrite}, ${call.usage.cacheRead}, ${call.usage.output},
         ${priceVersion}, ${price.costMicroUsd}, 0, ${substituted || !price.listPrice ? "estimated" : "list-price"}, ${at}, ${call.providerCostMicroUsd},
         ${call.providerRequestId}, 'review-v2', 0)`)
+    if (call.outcome === "failed" && call.failureDetail) writes.push(sql`INSERT INTO slopbot_call_failure_details (call_id, detail, recorded_at) VALUES (last_insert_rowid(), ${call.failureDetail.slice(0, 200)}, ${at})`)
   }
   try (try D1).batch(writes)
 }

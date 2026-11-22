@@ -1,0 +1,2 @@
+export const busyNumber = 999
+export const lostQueueNumber = 4040

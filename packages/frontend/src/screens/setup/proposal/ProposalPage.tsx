@@ -243,6 +243,7 @@ function ProposalForm({ runtime, store, view, shown, pendingApplications, setupS
             networkFixed={false}
             error={(field) => shownFor(field === "monthlyAmount" ? "monthlyPool" : field === "tokenAddress" ? "rewardAssetAddress" : "rewardAssetSymbol")}
             onChange={(field, value) => change(fundingFields[field], value)}
+            promise={{ checked: p.honorSystem === "true", onChange: (checked) => change("honorSystem", String(checked)) }}
           />
         ) : null}
         {step === 2 ? (

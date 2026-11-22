@@ -1,0 +1,162 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Administrators approve a split exception for one exact future revision"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+import type { D1 } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { type ProgramChange, ProgramRefused, SecurityProgramFunds, SecurityProgramPublication } from "@repo/ports/security"
+import type { Event, Offer, Program } from "../../gen/security__program.ts"
+import { Rejected, apply, fundedEnough, fundingObserver, offerShapeValid } from "../../gen/security__program.effect.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type OwnerVerdict, ownerVerdict } from "./kernel.ts"
+import { type Json, type ManifestContext, canonical, fundingEvidence, isFullAwardSplit, offerOf, ownerChangeOf, securityBountyProblem } from "./manifest.ts"
+import { programFunds } from "./funds.vibe"
+import { programOf } from "./store.vibe"
+
+type Terms = { readonly [key: string]: Json }
+
+interface Refusal {
+  readonly kind: ProgramRefused["kind"]
+  readonly message: string
+}
+
+const ownerRefusals = {
+  ProgramRequired: { kind: "ProgramRequired", message: "Close the bounty program instead of deleting it; existing reports and awards remain available" },
+  SplitRestricted: { kind: "SplitRestricted", message: "Only an admin can change the approved researcher/Slop split" },
+  ContactsChanged: { kind: "ContactsRestricted", message: "Only the project steward or a repository admin can change bounty contacts or the sponsor" },
+  ContactsNamed: { kind: "ContactsRestricted", message: "Only the project steward or a repository admin can name other bounty contacts or a sponsor" },
+  VaultRestricted: { kind: "VaultRestricted", message: "Keep the verified bounty vault; a new vault needs verified registration" },
+  AssetRestricted: { kind: "AssetRestricted", message: "A funded bounty program keeps its network and asset" },
+  FundingUnavailable: { kind: "FundingUnavailable", message: "Opening requires available funds in a verified bounty vault with a current finalized balance" },
+} as const satisfies Readonly<Record<Exclude<OwnerVerdict, "Allowed">, Refusal>>
+
+const newProgramRefusals = {
+  setup: { kind: "InvalidManifest", message: "A new security bounty must pledge funding without an unverified vault; only an after-approval offer can open during setup" },
+  split: { kind: "NewSplitRestricted", message: "A new bounty uses the 75/25 researcher/Slop split; an admin must approve any full-award exception" },
+  contacts: { kind: "ContactsRestrictedNew", message: "A new bounty names its signed-in creator as its private-case contact and sponsor; verified owners can manage contacts after setup" },
+} as const satisfies Readonly<Record<string, Refusal>>
+
+const pledged: Json = { state: "pledged" }
+
+function isTerms(value: unknown): value is Terms {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function member(value: unknown, key: string): unknown {
+  return isTerms(value) ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
+}
+
+function people(terms: unknown): ReadonlyArray<unknown> {
+  const approvers = member(terms, "approvers")
+  return ["technical", "financial", "dispute"].flatMap((role) => {
+    const entries = member(approvers, role)
+    return Array.isArray(entries) ? entries : []
+  })
+}
+
+function deploymentCount(terms: unknown) {
+  const deployments = member(member(terms, "settlement"), "deployments")
+  return Array.isArray(deployments) ? deployments.length : 0
+}
+
+function contextOf(next: unknown, before: unknown): ManifestContext {
+  const repositories = member(next, "repositories")
+  return {
+    repositories: Array.isArray(repositories) ? repositories.flatMap((entry: unknown) => {
+      const id = member(entry, "id")
+      return typeof id === "string" ? [{ id }] : []
+    }) : [],
+    reward: member(next, "reward"),
+    trustedSettlement: member(before, "settlement"),
+  }
+}
+
+effect function refuse(refusal: Refusal) {
+  throw new ProgramRefused(refusal)
+}
+
+effect function valid(terms: unknown, context: ManifestContext) {
+  const problem = securityBountyProblem(terms, context)
+  if (problem !== undefined) try refuse({ kind: "InvalidManifest", message: problem })
+}
+
+effect function stepped(program: Program, event: Event, by: number) {
+  return apply(program, event, by) catch effect (error) => {
+    if (error instanceof Rejected) return undefined
+    throw error
+  }
+}
+
+function publishRefusal(program: Program, offer: Offer): Refusal {
+  if (!offerShapeValid(program, offer, program.revision + 1)) return offer.split === "FullAward" ? ownerRefusals.SplitRestricted : { kind: "InvalidManifest", message: "project.securityBounty is invalid" }
+  if (!fundedEnough(program, offer) || (offer.status === "Open" && offer.policy === "Prefunded")) return ownerRefusals.FundingUnavailable
+  return { kind: "InvalidManifest", message: "project.securityBounty is invalid" }
+}
+
+effect function recorded(program: Program, change: ProgramChange, terms: Terms, administrator: boolean, nowMs: number) {
+  const offer = offerOf(terms)
+  if (offer.status === "Unpublished") return { securityBounty: terms }
+  const by = githubNumber(change.actor.githubId)
+  const approved = offer.split === "FullAward" && administrator ? (try stepped(program, { type: "approveFullSplit" }, by)) ?? program : program
+  const owner = { actor: by, project: change.projectId, projectRevision: approved.projectRevision }
+  const published = try stepped(approved, { type: "publish", owner, offer, nowMs }, by)
+  if (published === undefined) try refuse(publishRefusal(approved, offer))
+  return { securityBounty: terms }
+}
+
+effect function created(change: ProgramChange, after: Terms, status: unknown, administrator: boolean, nowMs: number) {
+  const terms: Terms = { ...after, status: typeof status === "string" ? status : null }
+  try valid(terms, contextOf(change.next, undefined))
+  const opens = status === "paused" || status === "pending-approval" || (status === "open" && member(after, "fundingPolicy") === "after-approval")
+  if (!opens || member(member(after, "funding"), "state") !== "pledged" || deploymentCount(after) > 0) try refuse(newProgramRefusals.setup)
+  if (isFullAwardSplit(member(after, "split"))) try refuse(newProgramRefusals.split)
+  const login = change.actor.login.toLowerCase()
+  const sponsor = member(member(after, "sponsor"), "githubId")
+  const others = people(after).some((person) => member(person, "githubId") !== change.actor.githubId || String(member(person, "githubLogin")).toLowerCase() !== login)
+  if (others || (sponsor !== null && sponsor !== change.actor.githubId)) try refuse(newProgramRefusals.contacts)
+  return try recorded((try programOf(change.projectId)).program, change, terms, administrator, nowMs)
+}
+
+effect function revised(change: ProgramChange, after: Terms, status: unknown, administrator: boolean, nowMs: number) {
+  const before = member(change.previous, "securityBounty")
+  const context = contextOf(change.next, before)
+  const effectiveStatus = typeof status === "string" ? status : null
+  try valid({ ...after, status: effectiveStatus === "open" ? "paused" : effectiveStatus, funding: pledged }, context)
+  const ownerChange = (fundsAvailable: boolean) => ownerChangeOf({ previous: before, next: after, effectiveStatus, actorGithubId: change.actor.githubId, canManageContacts: change.canManageContacts, splitApprover: administrator, fundsAvailable })
+  const restriction = ownerVerdict(ownerChange(true))
+  if (restriction !== "Allowed") try refuse(ownerRefusals[restriction])
+  const history = try programOf(change.projectId)
+  const funds = try programFunds(change.projectId, after)
+  const staged: Terms = { ...after, status: effectiveStatus }
+  const observed = (try stepped(history.program, { type: "observeFunding", snapshot: funds.snapshot, nowMs, offer: offerOf(staged) }, fundingObserver)) ?? history.program
+  const funded = observed.funding === "VerifiedAvailable" ? funds.observedAt : undefined
+  const verdict = ownerVerdict(ownerChange(funded !== undefined))
+  if (verdict !== "Allowed") try refuse(ownerRefusals[verdict])
+  const prior = member(before, "funding") as Json | undefined
+  const funding = funded !== undefined ? fundingEvidence(change.projectId, funded) : deploymentCount(before) > 0 && prior !== undefined ? prior : pledged
+  const stamped: Terms = { ...staged, funding }
+  try valid(stamped, context)
+  return try recorded(observed, change, stamped, administrator, nowMs)
+}
+
+effect function publish(change: ProgramChange) {
+  const before = member(change.previous, "securityBounty")
+  const after = member(change.next, "securityBounty")
+  if (after === undefined) {
+    if (!change.creating && before !== undefined) try refuse(ownerRefusals.ProgramRequired)
+    return { securityBounty: undefined }
+  }
+  if (!change.creating && canonical(after) === canonical(before) && (change.status === undefined || change.status === member(after, "status"))) return { securityBounty: after }
+  if (!isTerms(after)) {
+    try valid(after, contextOf(change.next, before))
+    return try refuse({ kind: "InvalidManifest", message: "project.securityBounty is invalid" })
+  }
+  const administrator = try (try Roles).has(change.actor.githubId, "administrator")
+  const nowMs = try Clock.currentTimeMillis
+  const status = change.status ?? member(after, "status")
+  return change.creating ? try created(change, after, status, administrator, nowMs) : try revised(change, after, status, administrator, nowMs)
+}
+
+export const SecurityProgramPublicationLive = Layer.effect(SecurityProgramPublication, effect {
+  const services = try Effect.context<D1 | Roles | SecurityProgramFunds>()
+  return {
+    publish: (change) => Effect.provide(publish(change), services),
+  } satisfies SecurityProgramPublication.Shape
+})

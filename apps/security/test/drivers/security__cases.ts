@@ -1,19 +1,27 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted } from "effect";
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
 import { D1, type Statement, d1, sql } from "@repo/platform/d1";
-import { Refused, outbound } from "@repo/platform/http";
+import { githubApp } from "@repo/platform/github/app";
+import { Refused, outbound, outboundVia } from "@repo/platform/http";
 import { Roles } from "@repo/platform/roles";
-import { database, migrate, startWorker, storage } from "@repo/platform/testing";
+import { type Handler, database, migrate, startWorker, storage } from "@repo/platform/testing";
 import { settableClock } from "@repo/platform/testing/clock";
+import { githubFake } from "@repo/platform/testing/github";
 import { migrationsDir } from "@repo/platform/testing/paths";
+import { Execution } from "@repo/platform/worker";
 import { Authority as RepositoryAuthority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
 import type { Driver, Options } from "../../gen/security__cases.conformance.ts";
 import type { Authority, Award, Event, PrivateCase, ProjectClearance } from "../../gen/security__cases.ts";
 import { privateRoute } from "../../src/analysis/route.vibe";
 import { AwardClearances } from "../../src/cases/clearance.vibe";
 import { caseRecord } from "../../src/cases/rows.vibe";
-import { claimed, performed } from "../../src/cases/routes.vibe";
+import { claimed, performed, recorded } from "../../src/cases/routes.vibe";
+import { caseOf, caseStanding, submission } from "../../src/intake/rows.vibe";
+import { revisionEvidence } from "../../src/intake/revision.vibe";
+import { githubNumber } from "../../src/privacy/reads.vibe";
+import { replaced } from "../../src/screening/store.vibe";
 import { type Starter, triageFinished, triageStarted } from "../../src/cases/triage.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
 import { ReportingPrograms } from "../../src/receipt/program.vibe";
@@ -33,6 +41,11 @@ const db = await database(mf, "SLOP_DB");
 const epoch = Date.UTC(2031, 0, 1);
 const span = 10_000_000_000;
 const clock = settableClock(epoch);
+const github = githubFake({ now: () => clock.now() });
+github.world.addOrg({ id: 5000, login: "slop-test" });
+github.world.addInstallation({ id: 4403, account: "slop-test", repositories: "all", permissions: { repository_advisories: "read" } });
+const githubUsers = new Set<string>();
+const claimAdvisories = new Map<string, { readonly repository: string; readonly ghsa: string }>();
 const noAuthority: Authority = { epoch: 0, technical: [], financial: [], moderators: [], banned: [], relatedParties: [], programRestricted: false };
 
 let generation = 0;
@@ -53,7 +66,7 @@ const fixture: ProjectView = {
 };
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
@@ -67,12 +80,12 @@ const ports = Layer.mergeAll(
     snapshot: (role) => Effect.succeed(role === "moderator" ? ids(snapshot.moderators) : []),
   }),
   Layer.succeed(ReportingPrograms, {
-    current: () => Effect.succeed({
-      repository,
+    current: (projectId) => Effect.succeed({
+      repository: claimRepository(projectId),
       approvers: { technical: ids(snapshot.technical), financial: ids(snapshot.financial), dispute: ids(snapshot.relatedParties.filter((id) => !snapshot.technical.includes(id) && !snapshot.financial.includes(id))), sponsor: [] },
       status: "open", closesAt: undefined, acknowledgeHours: 0,
     }),
-    atReceipt: () => Effect.succeed(terms === undefined ? undefined : { revision: terms.revision, publishedAt: new Date(base() + terms.publishedAt).toISOString(), terms: frozenOf(terms), excludedFindings: terms.excludedFindings }),
+    atReceipt: () => Effect.succeed(terms === undefined ? undefined : { revision: terms.revision, publishedAt: new Date(base() + terms.publishedAt).toISOString(), terms: frozenOf(terms), scoped: terms.scoped, excludedFindings: terms.excludedFindings }),
     unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
   }),
   Layer.succeed(AwardClearances, {
@@ -85,30 +98,33 @@ const ports = Layer.mergeAll(
   }),
 );
 
+function claimRepository(projectId: string) {
+  return projectId.endsWith("-claim-first") || projectId.endsWith("-claim-second") ? `slop-test/${projectId}` : repository;
+}
+
 const pointerRevision = 1000;
 const projectOf = () => `${project}-g${generation}`;
 
-function manifestOf(projectId: string, lines: ReadonlyArray<string>) {
+function manifestOf(projectId: string, lines: ReadonlyArray<string> | undefined) {
   const scope = { includedAssets: [repository], severityRubric: "Conformance severity rubric.", lossDefinition: "Conformance loss definition.", excludedFindings: lines };
-  return JSON.stringify({ id: projectId, status: "active", ...(lines.length === 0 ? {} : { securityBounty: { scope } }) });
+  return JSON.stringify({ id: projectId, status: "active", ...(lines === undefined ? {} : { securityBounty: { scope } }) });
 }
 
 const storedRevisions = new Map<string, number>();
 
 function storedTerms(receipt: Receive["terms"]): Receive["terms"] {
   if (receipt.revision <= 0) return receipt;
-  const lengths = receipt.paidTerms ? receipt.excludedFindings : [];
-  const variant = `${receipt.revision}:${receipt.publishedAt}:${lengths.join(",")}`;
+  const lengths = receipt.scoped ? receipt.excludedFindings : [];
+  const variant = `${receipt.revision}:${receipt.publishedAt}:${receipt.scoped}:${lengths.join(",")}`;
   const revision = storedRevisions.get(variant) ?? storedRevisions.size + 1;
   storedRevisions.set(variant, revision);
   return { ...receipt, revision };
 }
 
-async function seeded(receipt?: Receive["terms"]): Promise<string> {
-  const projectId = projectOf();
+async function seeded(receipt?: Receive["terms"], projectId = projectOf()): Promise<string> {
   const at = new Date(epoch).toISOString();
-  const pointer = manifestOf(projectId, []);
-  const lines = receipt?.paidTerms ? receipt.excludedFindings.map((length, index) => String(index).padEnd(length, "x")) : [];
+  const pointer = manifestOf(projectId, undefined);
+  const lines = receipt?.scoped ? receipt.excludedFindings.map((length, index) => String(index).padEnd(length, "x")) : undefined;
   await db.batch([
     db.prepare("INSERT OR IGNORE INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Cases conformance',?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at),
     db.prepare("INSERT OR IGNORE INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',?,?,?,?,?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at, at),
@@ -119,7 +135,11 @@ async function seeded(receipt?: Receive["terms"]): Promise<string> {
   return projectId;
 }
 
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
+const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> };
+const githubLayer = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaGitHub), webCrypto, clock.layer));
+const pending: Array<Promise<unknown>> = [];
+const execution: ExecutionContext = { waitUntil: (work) => { pending.push(work); } };
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), githubLayer, outboundVia(viaGitHub), Layer.succeed(Execution, { context: execution })));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {
@@ -127,7 +147,7 @@ async function outcome(program: Effect.Effect<unknown, unknown, Services>): Prom
   if (Exit.isSuccess(exit)) return "accepted";
   const error = Cause.squash(exit.cause);
   if (error instanceof Refused) return "refused";
-  if (typeof error === "object" && error !== null && "_tag" in error && (error._tag === "Rejected" || error._tag === "NotAnEvent" || error._tag === "TriageClosed")) return "refused";
+  if (typeof error === "object" && error !== null && "_tag" in error && ["Rejected", "NotAnEvent", "TriageClosed", "ReplacementLost", "ScreeningMissing", "Conflict"].includes(String(error._tag))) return "refused";
   throw error;
 }
 
@@ -226,14 +246,80 @@ async function receive(caseKey: string, event: Receive): Promise<Outcome> {
   return result;
 }
 
+function githubUser(actor: number) {
+  const id = githubId(actor);
+  if (!githubUsers.has(id)) github.world.addUser({ id: Number(id), login: `member-${id}` });
+  githubUsers.add(id);
+  return `member-${id}`;
+}
+
 async function claim(caseKey: string, by: unknown): Promise<Outcome> {
   if (Number(by ?? 0) !== 1) return "refused";
-  const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "cfgh" : "jmpq"}`;
-  const projectId = await seeded();
+  const projectId = await seeded(undefined, `${projectOf()}-claim-${caseKey}`);
+  const claimRepo = claimRepository(projectId);
+  github.world.addRepo({ id: 3000 + generation * 10 + (caseKey === "first" ? 1 : 2), owner: "slop-test", name: projectId });
+  const advisory = github.world.addAdvisory(claimRepo, { author: githubUser(1), summary: "Conformance claimed advisory", description: "A conformance advisory that GitHub lists for the claimant." }).ghsaId;
+  claimAdvisories.set(caseKey, { repository: claimRepo, ghsa: advisory });
   const result = await outcome(claimed(actorOf(by), { mode: "claim", projectId, advisory, idempotencyKey: key() }));
   const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
   if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
   return result;
+}
+
+async function record(caseKey: string, event: Extract<Event, { type: "recordAttested" }>, by: unknown): Promise<Outcome> {
+  terms = storedTerms(event.terms);
+  const projectId = await seeded(terms);
+  clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+  const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "rvwx" : "hjmp"}`;
+  const result = await outcome(recorded(actorOf(by), {
+    mode: "record", projectId, advisory, idempotencyKey: key(), reporterGithubId: githubId(1), reporterGithubLogin: `member-${githubId(1)}`,
+    receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: event.confirmed,
+  }));
+  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
+  if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
+  await Promise.allSettled(pending.splice(0));
+  return result;
+}
+
+async function settle(caseKey: string, caseId: string, event: Extract<Event, { type: "settleClaim" }>, by: unknown): Promise<Outcome> {
+  const listed = claimAdvisories.get(caseKey);
+  if (Number(by ?? 0) !== -1 || listed === undefined) return "refused";
+  const advisories = github.world.repo(listed.repository).advisories;
+  const index = advisories.findIndex((advisory) => advisory.ghsaId === listed.ghsa);
+  if (!event.listed && index >= 0) advisories.splice(index, 1);
+  if (event.listed && index >= 0) {
+    terms = storedTerms(event.terms);
+    const projectId = (await db.prepare("SELECT project_id FROM security_cases WHERE id=?").bind(caseId).all()).results[0]?.project_id;
+    if (typeof projectId === "string") await seeded(terms, projectId);
+    const createdAt = base() + Math.max(event.terms.receivedAt, 1);
+    clock.set(Math.max(clock.now(), createdAt + 1));
+    (advisories[index] as { createdAt: string }).createdAt = new Date(createdAt).toISOString();
+  }
+  const before = await revisionOf(caseId);
+  const result = await act(caseKey, caseId, 1, "check-receipt");
+  await Promise.allSettled(pending.splice(0));
+  return result === "accepted" && await revisionOf(caseId) > before ? "accepted" : "refused";
+}
+
+async function revise(caseId: string, by: unknown, version: number): Promise<Outcome> {
+  if (Number(by ?? 0) !== 1) return "refused";
+  const [link] = (await db.prepare("SELECT submission_id FROM security_submission_intake WHERE case_id=?").bind(caseId).all()).results;
+  if (typeof link?.submission_id !== "string") return "refused";
+  const id = link.submission_id;
+  const actorGithubId = githubId(1);
+  const digest = version.toString(16).padStart(64, "c");
+  return outcome(Effect.gen(function* () {
+    const row = yield* submission(id);
+    const record = yield* caseStanding(caseId);
+    const [stored] = (yield* Effect.promise(() => db.prepare("SELECT revision, report_version FROM security_submission_intake WHERE submission_id=?").bind(id).all())).results;
+    if (row === undefined || record === undefined || stored === undefined) return yield* Effect.fail(new Refused({ status: 404, code: "not_found", message: "not found" }));
+    if (version !== Number(stored.report_version) + 1) return yield* Effect.fail(new Refused({ status: 409, code: "report_not_editable", message: "not editable" }));
+    const current = caseOf(record, Number(stored.report_version));
+    const evidence = revisionEvidence(row, current, actorGithubId, { object: true, admitted: true });
+    const at = new Date(clock.now()).toISOString();
+    const change = { record, actorGithubId, key: `security-reports/${id}/${version}-${digest}.json`, digest, bytes: 64, eventKey: `revise-${caseId}-${version}`, at };
+    yield* replaced(id, { seenRevision: Number(stored.revision), by: githubNumber(actorGithubId), evidence, change });
+  }));
 }
 
 async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome> {
@@ -245,6 +331,7 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
+  if (event.type === "recordAttested") return cases.has(caseKey) ? "refused" : record(caseKey, event, by);
   const caseId = cases.get(caseKey);
   if (caseId === undefined) return "refused";
   switch (event.type) {
@@ -258,7 +345,8 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
     case "assignTriager": return act(caseKey, caseId, by, "assign-triager", { githubId: githubId(event.actor), githubLogin: `member-${githubId(event.actor)}` });
     case "revokeTriager": return act(caseKey, caseId, by, "revoke-triager", { githubId: githubId(event.actor) });
     case "requestInformation": return act(caseKey, caseId, by, "request-information", { reason: "Show the affected amount." });
-    case "reviseReport": return "refused";
+    case "reviseReport": return revise(caseId, by, event.version);
+    case "settleClaim": return settle(caseKey, caseId, event, by);
     case "decide": {
       const decision = event.decision;
       if (!(decision.finding in findingText)) return "refused";
@@ -336,6 +424,7 @@ export const driver: Driver<ReturnType<typeof shape>> & AsyncDisposable = {
     snapshot = noAuthority;
     terms = undefined;
     storedRevisions.clear();
+    claimAdvisories.clear();
     cases.clear();
     starters.clear();
     clock.set(base());

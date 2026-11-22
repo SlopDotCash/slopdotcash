@@ -1,4 +1,4 @@
-// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally"
+// spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally"
 import { randomId } from "@repo/platform/crypto"
 import { answered, fixedHeaders, handleRaw, json } from "@repo/platform/http"
 import { authorizeUrl } from "@repo/platform/github/oauth"
@@ -8,7 +8,7 @@ import { identityGetV1OauthAuthorize as authorizeRows, identityGetV1OauthCallbac
 import { localFlowOrigin } from "../local/origin.vibe"
 import { LocalRoutes } from "../local/routes.vibe"
 import { IdentitySettings } from "./config.vibe"
-import { bare, capabilityShape, flowShape, httpsGate, pollFlow, publicGate, readJson, refusedBy, startFlow } from "./flows.vibe"
+import { bare, browserBound, capabilityShape, flowShape, httpsGate, pollFlow, publicGate, readJson, refusedBy, startFlow } from "./flows.vibe"
 import { callbackUrl, resolveIdentity } from "./github.vibe"
 import { challengeOf, openVerifier, sameText } from "./pkce.vibe"
 import { audienceOf } from "./projection.vibe"
@@ -49,6 +49,7 @@ effect function authorize() {
   if (flowId === null || !flowShape.test(flowId) || state === null || !capabilityShape.test(state)) throw refusedBy(authorizeRows.invalidRequestInvalidAuthorizationLink)
   const flow = try authorizable(flowId, state)
   if (flow === undefined || flow.encrypted_pkce_verifier === null || flow.pkce_iv === null) throw refusedBy(authorizeRows.flowExpired)
+  if (!(try browserBound(flow))) return try failed(authorizeRows.signInNotStartedHere)
   const verifier = try openVerifier(settings.stateKey, { iv: flow.pkce_iv, ciphertext: flow.encrypted_pkce_verifier }, flow.id)
   const location = authorizeUrl({ clientId: Redacted.value(settings.clientId), redirectUri: callbackUrl(settings.publicOrigin), state, challenge: try challengeOf(verifier) })
   return HttpServerResponse.empty({ status: 302, headers: { ...fixedHeaders, "content-type": "text/plain; charset=utf-8", location, "set-cookie": stateCookieOf(state, flowLifetime) } })
@@ -87,6 +88,10 @@ effect function callback() {
     default: throw error;
   }
   if (flow === undefined || flow.encrypted_pkce_verifier === null || flow.pkce_iv === null) return try failed(callbackRows.signInExpired)
+  if (!(try browserBound(flow))) {
+    try abandon(flow.id)
+    return try failed(callbackRows.signInNotStartedHere)
+  }
   if (refusedByGitHub) {
     try abandon(flow.id)
     return try failed(callbackRows.signInFailed)

@@ -1,6 +1,7 @@
-// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
+// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
 import { periodContaining } from "@repo/settlement/kernels/calendar";
-import { Alert, DataState, NetworkMark } from "@repo/ui";
+import { Alert, DataState, NetworkMark, Spinner } from "@repo/ui";
+import { Hourglass } from "lucide-react";
 import { useState } from "react";
 import type { PoolFacts } from "../../../../gen/frontend__projections.ts";
 import { useMachine as useRead } from "../../../../gen/frontend__requests.react.ts";
@@ -10,7 +11,7 @@ import { loginHrefFor, useSession } from "../../../app/useSession.ts";
 import { viewActor } from "../../../session/session.vibe";
 import type { FundingVault } from "../../../kernels/poolFunding.ts";
 import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment.tsx";
-import { type Connection, type TotalsRuntime, type VaultTotals, totalsRuntime } from "./funding.vibe";
+import { type Connection, type TotalsRuntime, type VaultTotals as TotalsRead, totalsRuntime } from "./funding.vibe";
 import { reloadTotalsOf, useTotals } from "./hooks.ts";
 import { deploymentsOf, type FundingDeployment, type FundingProject, monthlyCapAt } from "./project.schema.ts";
 import { periodOf } from "./savedPlans.ts";
@@ -37,10 +38,20 @@ export type EscrowFundingProps = {
 function FundingTotals({ runtime, projectId }: { runtime: TotalsRuntime; projectId: string }) {
   const read = useRead(runtime);
   const totals = useTotals(runtime, projectId);
+  const status = read.state?.status ?? "Loading";
   const rows = totals?.snapshots.map((snapshot) => <VaultTotals key={`${snapshot.network}:${snapshot.vault}`} snapshot={snapshot} />);
+  const empty = !rows?.length;
+  if (status === "Loading" && empty) return <Spinner size="sm" label="Loading vault totals" />;
+  const pending = (
+    <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Hourglass aria-hidden="true" className="size-4" />
+      Pending
+    </p>
+  );
+  if (status === "Empty" || (status === "Current" && empty)) return pending;
   return (
-    <DataState status={read.state?.status ?? "Loading"} onRetry={() => reloadTotalsOf(runtime, projectId)} skeleton={rows}>
-      {rows}
+    <DataState status={status} onRetry={() => reloadTotalsOf(runtime, projectId)} skeleton={rows}>
+      {empty ? pending : rows}
     </DataState>
   );
 }
@@ -58,7 +69,7 @@ type DeploymentProps = {
   loginHref: string;
   pool: PoolFacts | undefined;
   row: FundingVault | undefined;
-  totals: VaultTotals | undefined;
+  totals: TotalsRead | undefined;
   onFinalized: () => void;
   onLocked: () => void;
 };
@@ -115,7 +126,7 @@ export function EscrowFunding({ runtime, project, readOnly = false, pool, vaults
       </h2>
       {deployments.length === 0 ? (
         <Alert variant="warn" announcement="Polite">
-          The project vault is not set up. Payments disbursed by the project maintainer are not guaranteed.
+          No vault yet. Payments are not guaranteed.
         </Alert>
       ) : (
         <>
