@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 import { expect, onTestFinished, test } from "vitest"
 import { designSystem } from "../eslint.ts"
 import { check, syncDoc, themeCss, tokensCss } from "../generate.ts"
+import { buildTokenProject, checkTokenProject } from "../project.ts"
 import { type Tokens, applyChanges, palette, parseTokens } from "../tokens.ts"
 
 const here = (file: string) => resolve(import.meta.dirname, file)
@@ -190,11 +191,18 @@ test("a build that changes nothing rewrites nothing, and the ESLint config flags
   const copy = mkdtempSync(join(dir, ".cache/design-test-"))
   onTestFinished(() => rmSync(copy, { recursive: true, force: true }))
   for (const file of ["tokens.json", "design.md"]) cpSync(join(dir, file), join(copy, file))
-  const build = () => {
-    execFileSync("node", [here("../cli.ts"), "build"], { cwd: copy })
-    return ["generated/tokens.css", "generated/theme.css", "design.md"].map((file) => statSync(join(copy, file), { bigint: true }).mtimeNs)
-  }
-  expect(build()).toEqual(build())
+  const outputs = ["generated/tokens.css", "generated/theme.css", "design.md"]
+  const snapshot = () => outputs.map((file) => {
+    const path = join(copy, file)
+    return { text: readFileSync(path, "utf8"), modified: statSync(path, { bigint: true }).mtimeNs }
+  })
+  execFileSync("node", [here("../cli.ts"), "build"], { cwd: copy })
+  const published = snapshot()
+  execFileSync("node", [here("../cli.ts"), "build"], { cwd: copy })
+  expect(snapshot()).toEqual(published)
+  buildTokenProject(copy)
+  expect(snapshot()).toEqual(published)
+  expect(checkTokenProject(copy)).toEqual([])
   const [{ ESLint }, { default: tailwind }, { parser }] = await Promise.all(["eslint", "eslint-plugin-better-tailwindcss", "typescript-eslint"].map(load))
   const linter = (name: string, json: string) => {
     mkdirSync(join(copy, name))
@@ -215,7 +223,10 @@ test("a build that changes nothing rewrites nothing, and the ESLint config flags
     [1, literal], [3, restricted], [4, restricted], [5, literal], [6, literal],
     ...Array.from({ length: 10 }, (_, i) => [8 + i, restricted]), [18, literal], [19, literal],
   ])
-  expect(await lint("good.tsx")).toEqual([])
+  const good = readFileSync(here("fixtures/good.tsx"), "utf8")
+  const [layer = "50"] = Object.keys(tokens.z)
+  const withProjectLayer = await eslint.lintText(good.replace("z-50", `z-${layer}`), { filePath: "good.tsx" })
+  expect(withProjectLayer[0]!.messages).toEqual([])
   expect(await lint("good.tsx", empty)).toEqual([])
   expect((await lint("scales.tsx", withScales)).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId]))
     .toEqual(Array.from({ length: 12 }, (_, i) => [3 + i, restricted]))

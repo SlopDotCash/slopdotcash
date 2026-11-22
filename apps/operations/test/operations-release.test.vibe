@@ -350,14 +350,14 @@ effect function git(directory: string, args: ReadonlyArray<string>) {
 
 const recordedOrder: ReadonlyArray<Service> = ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"]
 
-function recorder(calls: string[], afterFirstWorker?: () => void) {
+function recorder(calls: string[], afterFirstWorker?: void!!) {
   effect function refused(stage: string) {
     calls.push(stage)
     throw new PublicationFailed({ stage, message: "dry run publishes nothing" })
   }
   effect function published(service: Service, target: Target) {
     calls.push(`publish ${service}`)
-    if (calls.filter((call) => call.startsWith("publish ")).length === 1) try Effect.sync(() => afterFirstWorker?.())
+    if (afterFirstWorker !== undefined && calls.filter((call) => call.startsWith("publish ")).length === 1) try afterFirstWorker
     return target.sourceSha
   }
   return Layer.succeed(Publisher, {
@@ -438,7 +438,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
       return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
     }
-    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle, afterFirstWorker?: () => void) {
+    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle, afterFirstWorker?: void!!) {
       const run = effect {
         const facts = try runFacts()
         return try publishRelease({ environment, facts, bundle: from, receipts: receiptsPath, root, anchor })
@@ -487,7 +487,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const beforeCurrent = calls.splice(0)
     const current = try publishing("Production", complete)
     const currentCalls = calls.splice(0)
-    const movedEnded = try published("Production", complete, {}, initial, bundle, () => advanceBranch(origin, "main", "apps/operations/src/notice.txt"))
+    const moveBranch = orDie(Effect.try({
+      try: () => advanceBranch(origin, "main", "apps/operations/src/notice.txt"),
+      catch: (cause) => cause,
+    }))
+    const movedEnded = try published("Production", complete, {}, initial, bundle, moveBranch)
     const movedStopped = Exit.isFailure(movedEnded) ? Cause.squash(movedEnded.cause) : undefined
     const movedCalls = calls.splice(0)
     const movedHead = try git(origin, ["rev-parse", "main"])

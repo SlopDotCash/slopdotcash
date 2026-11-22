@@ -518,10 +518,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice Owner-approved private bounty: exactly 75% to the researcher and 25% to Slop. Only a bounty
     /// vault takes it. The source must be a random opaque commitment, never a digest of a private report.
-    function commitBountyAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest)
-        external
-        onlyOwner
-    {
+    function commitBountyAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
         if (purpose != Purpose.Bounty) revert WrongPurpose();
         if (gross % 4 != 0) revert InvalidInput();
         commit(id, actorId, gross, sourceDigest, EscrowMath.bountyFee(gross));
@@ -621,9 +618,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// monthlyDigest(period, root) for exactly these awards, and their gross total must be within
     /// max(monthlyCap, the period's open pledge). The free balance covers new awards only; matching existing
     /// awards retain their payment state and are never reserved twice. Other periods' pledges stay untouched.
-    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation)
-        external
-    {
+    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         uint128 cap = monthlyCapFor(period);
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
