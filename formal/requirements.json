@@ -891,6 +891,24 @@
           "rules": [
             "Story: Complete the approved MVP with auditable evidence"
           ]
+        },
+        {
+          "spec": "spec/backend/submissionFeeSettings.md",
+          "rules": [
+            "Story: Owners turn the submission fee on within fixed bounds / Submission fee settings are exact, bounded and off unless enabled with a valid amount"
+          ]
+        },
+        {
+          "spec": "spec/frontend/feePages.md",
+          "rules": [
+            "Story: Pay a refundable deposit for a pull request or a private report from any wallet / A pay page offers a way to pay only from a record that equals the published terms"
+          ]
+        },
+        {
+          "spec": "spec/slopbot/submissionFeeGate.md",
+          "rules": [
+            "Story: Ask an outside contributor's deposit before the review, and never close for it / Record-only mode notes the ask and writes nothing else"
+          ]
         }
       ],
       "status": "uncovered-no-spec",
@@ -1614,6 +1632,31 @@
           "rules": [
             "Story: Complete the approved MVP with auditable evidence"
           ]
+        },
+        {
+          "spec": "spec/backend/submissionFeeTerms.md",
+          "rules": [
+            "Story: Every part reads the same published fee terms / A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"
+          ]
+        },
+        {
+          "spec": "spec/fees/submissionFeeDeposits.md",
+          "rules": [
+            "Story: Judge each deposit against the pull request it names / A deposit pays its pull request only when it meets every term, and only one deposit pays it",
+            "Story: Follow the chain, never ahead of it / A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"
+          ]
+        },
+        {
+          "spec": "spec/fees/submissionFeeRate.md",
+          "rules": [
+            "Story: Keep a SLOP rate the chain's price supports, published before it counts / One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"
+          ]
+        },
+        {
+          "spec": "spec/fees/submissionFeeSends.md",
+          "rules": [
+            "Story: Send only what is due, once, inside the native ceilings / A signed send is recorded before broadcast and one send per network is in flight"
+          ]
         }
       ],
       "status": "uncovered-no-spec",
@@ -1973,6 +2016,12 @@
           "rules": [
             "Story: Apply a reviewed historical packet only as the owner reviewed it"
           ]
+        },
+        {
+          "spec": "spec/points/protectedMonths.md",
+          "rules": [
+            "Story: Publish a fresh collection without changing a paid month / A candidate holds every new revision that would change a protected project month"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
@@ -2139,7 +2188,7 @@
           "spec": "spec/frontend/poolListing.md",
           "rules": [
             "Story: Pick a project from the Featured and Community sections",
-            "Story: List a monthly pool only in a month it is funded"
+            "Story: List a monthly pool only in a month it has an amount"
           ]
         },
         {
@@ -2869,6 +2918,14 @@
           "spec": "spec/operations/slopbotQuotaWitness.md",
           "rules": [
             "Story: Witness the installation quota with a temporary metadata-only grant"
+          ]
+        },
+        {
+          "spec": "spec/operations/dailyCollection.md",
+          "rules": [
+            "Story: Keep published contribution data fresh without a person watching it / A daily tick starts one fresh collection only when none runs",
+            "Story: Keep published contribution data fresh without a person watching it / A failed collection with a checkpoint is resumed once, never a resume of a resume",
+            "Story: Keep published contribution data fresh without a person watching it / Live data older than 48 hours fails the daily run"
           ]
         }
       ],
