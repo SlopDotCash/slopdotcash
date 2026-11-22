@@ -243,7 +243,9 @@ device, inode, size and modification and change times stay the same, so an
 unchanged toolchain is not read again, nor Z3 asked its version. A check
 reads those times of Dafny's installation once, and reads them again after each
 run of Dafny, so a result is not remembered when the verifier was installed
-again during the run. Generated stories,
+again during the run. On GitHub Actions, the install step uses the same
+strict generation task as verification, so a successful install warms the
+task cache. A failed generation is retried by verification. Generated stories,
 browser build artifacts, compiler declarations and successful test receipts
 are restored with their owning task. `check` is never skipped whole: its
 `driver:` programs run the real application in `traces` every time. Standalone examples install and check
@@ -267,7 +269,10 @@ receipt matches unless another root document changed, and then `check` runs the
 root's tests itself. Generated code names each rule by its heading, not its line, so
 prose that only moves a rule changes none of these keys. Filtered, exclusive, interrupted
 and failed runs record no complete result. Acceptance and nightly checks
-bypass these receipts and the inner verification cache.
+bypass these receipts and the inner verification cache. An owner with a
+direct or transitive `link:` dependency runs its inner tests, typecheck and
+drivers afresh because the linked files can change independently of the
+lockfile.
 
 The spec cache retains recent branch and profile results for 30 days within
 256 MiB, evicting the oldest unused results first. A check's own entries are
@@ -276,8 +281,8 @@ an identical installation does not invalidate it and replacing an executable
 with the same version does; tests, drivers and explorations are keyed by the
 verifier too, since they may run proofs, as Studio's do. A process that
 outlives a reinstall, as `spec watch` does, reads Quint, LemmaScript and Dafny
-again once their installed files change. In CI, a Turborepo cache entry is
-kept for seven days after its last hit, which the run summary names.
+again once their installed files change. GitHub's local Turborepo cache keeps an entry for seven days after
+its last hit. The CI summary shows task times, cache status and exit codes.
 
 ### Seeds and budgets
 
@@ -348,7 +353,7 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 | When | Runs |
 |---|---|
 | Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
-| Nightly | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
+| Nightly on the default branch | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 
 Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
 run keeps `test/counterexamples/` and `test/__traces__/`, where a broken
@@ -364,7 +369,9 @@ Studio test tasks so those integration journeys do not compete with it.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
 policy. A pull request keeps its own Turborepo results in the GitHub cache
-instead, which only that pull request reads, so its next push reuses them. Newer commits replace an older run of the same pull request.
+instead, which only that pull request reads, so its next push reuses them. Newer commits replace an older run of the same pull request. A branch push
+without a remote cache token also restores and saves its GitHub-local cache.
+Trusted publication jobs skip dependency and task-cache restoration.
 Every pushed commit can finish. Completed tasks are shared through the cache.
 Local `pnpm` task commands read the operator's cache credential from
 `~/.config/vibestack/turbo-cache.json`, outside the repository. Credentials

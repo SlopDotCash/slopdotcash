@@ -2,7 +2,7 @@ name: fuzz
 
 # The fixed nightly profile checks 20,000 values with seed 2; repeat it with
 # `pnpm all check -- --nightly`. The shrunk
-# counterexamples a failing run saves come back as a pull request into development.
+# counterexamples a failing run saves come back as a pull request into the default branch.
 on:
   schedule:
     - cron: "17 4 * * *"
@@ -10,6 +10,7 @@ on:
 
 jobs:
   fuzz:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: development
+          ref: ${{ github.sha }}
       - uses: ./.github/actions/setup
       # --nightly bypasses the inner verification cache and always exercises the real application.
       - run: pnpm all check --continue -- --nightly
@@ -28,13 +29,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: fuzz/${{ github.run_id }}
+          BASE: ${{ github.event.repository.default_branch }}
         run: |
-          git add ':(glob)**/test/counterexamples/**'
+          traces=':(glob)**/test/counterexamples/**'
+          [[ -n "$(git status --porcelain -- "$traces")" ]] || exit 0
+          git add -- "$traces"
           git diff --cached --quiet && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           git commit -m "Counterexamples from nightly profile run $GITHUB_RUN_ID"
           git push origin "$BRANCH"
-          gh pr create --base development --head "$BRANCH" --title "Fuzz counterexamples, nightly profile" \
+          gh pr create --base "$BASE" --head "$BRANCH" --title "Fuzz counterexamples, nightly profile" \
             --body "The nightly fuzz run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed and saved these shrunk traces. Each is a regression test: decide whether the application or the spec is wrong, fix that, and keep the trace."
