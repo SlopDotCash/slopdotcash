@@ -1,13 +1,25 @@
 import { expect, test } from "bun:test";
 import { canonicalJson } from "../src/lib/canonical-json";
+import { REGISTERED_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { sha256Hex } from "../src/lib/sha256";
-import { VALUE_RUBRIC_VERSION } from "../src/lib/value-assessment";
+import {
+  VALUE_RUBRIC_VERSION,
+  type ValueTier,
+} from "../src/lib/value-assessment";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
+import type { WorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import type {
   HistoricalAssessmentCatalog,
   JointAssessmentCatalogRow,
   LegacyAssessmentCatalogRow,
 } from "./historical-assessment-catalog";
-import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
+import {
+  classifyHistoricalAssessmentScope,
+  type HistoricalContextGitHub,
+  historicalClosedContextBindings,
+} from "./historical-assessment-reconciliation";
+import { rebindHistoricalStandaloneReview } from "./historical-closed-review-source";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
 
 const projectId = "eliza";
@@ -84,7 +96,7 @@ function legacy(
 
 function joint(
   sequence: number,
-  sources: (typeof member)[],
+  sources: WorkUnitRecord["sources"],
   legacyPredecessors: string[] = [],
   supersedes: string[] = [],
 ): JointAssessmentCatalogRow {
@@ -256,6 +268,389 @@ test("an active in-period record without exact audited identity never says empty
     expect(receipt.blockers).toEqual([finding]);
     expect(receipt.records[0].sources[0].finding).toBe(finding);
     expect(JSON.stringify(receipt)).not.toContain("PRIVATE");
+  }
+});
+
+test("closed joint context requires an audited merge anchor and matching GitHub lifecycle proofs", async () => {
+  const context = {
+    ...member,
+    pullRequestNodeId: "PR_context",
+    pullRequestNumber: 10,
+  };
+  const observed = {
+    __typename: "PullRequest",
+    id: context.pullRequestNodeId,
+    number: context.pullRequestNumber,
+    state: "CLOSED",
+    closed: true,
+    merged: false,
+    mergedAt: null,
+    mergeCommit: null,
+    closedAt: sourceTime,
+    headRefOid: context.headSha,
+    repository: {
+      id: audit.repositoryNodeId,
+      databaseId: context.repositoryDatabaseId,
+      isPrivate: false,
+      nameWithOwner: audit.repository,
+    },
+  };
+  const rest = {
+    number: context.pullRequestNumber,
+    node_id: context.pullRequestNodeId,
+    state: "closed",
+    merged: false,
+    merged_at: null,
+    merge_commit_sha: context.mergeSha,
+    closed_at: sourceTime,
+    head: { sha: context.headSha },
+    base: {
+      repo: {
+        node_id: audit.repositoryNodeId,
+        id: context.repositoryDatabaseId,
+        private: false,
+      },
+    },
+  };
+  const github = (
+    node: unknown = observed,
+    pull: unknown = rest,
+  ): HistoricalContextGitHub => ({
+    async graphql<T>(_query: string, variables: Record<string, unknown>) {
+      expect(variables.ids).toEqual([context.pullRequestNodeId]);
+      return { nodes: [node] } as T;
+    },
+    async get<T>(path: string) {
+      expect(path).toBe("/repos/elizaOS/eliza/pulls/10");
+      return pull as T;
+    },
+  });
+  const combined = catalog([], [joint(1, [member, context])]);
+  const receipt = await classifyHistoricalAssessmentScope(
+    combined,
+    audit,
+    projectId,
+    github(),
+  );
+  expect(receipt.status).toBe("requires-value-replay");
+  expect(receipt.counts.auditedSources).toBe(1);
+  expect(receipt.records[0].sources.map(({ finding }) => finding)).toEqual([
+    "audited-head",
+    "verified-closed-context",
+  ]);
+  for (const check of [
+    github(null),
+    github({ ...observed, state: "MERGED", merged: true }),
+    github({ ...observed, closedAt: "2026-10-19T15:00:00.000Z" }),
+    github(observed, null),
+    github(observed, { ...rest, merge_commit_sha: "0".repeat(40) }),
+    github(observed, { ...rest, merged: true }),
+  ]) {
+    expect(
+      await classifyHistoricalAssessmentScope(
+        combined,
+        audit,
+        projectId,
+        check,
+      ),
+    ).toMatchObject({
+      status: "incomplete",
+      blockers: ["missing-from-merged-audit"],
+    });
+  }
+  expect(
+    await classifyHistoricalAssessmentScope(
+      catalog([], [joint(1, [context])]),
+      audit,
+      projectId,
+      github(),
+    ),
+  ).toMatchObject({
+    status: "incomplete",
+    blockers: ["missing-from-merged-audit"],
+  });
+});
+
+test("standalone closure needs one exact review-only joint source and independent lifecycle reads", async () => {
+  const source = {
+    ...member,
+    pullRequestNodeId: "PR_closed_review",
+    pullRequestNumber: 10,
+    mergeSha: null,
+  };
+  const reviewId = "PRR_review";
+  const unit = {
+    claimIds: [],
+    workUnitId: `wu_${sha256Hex(JSON.stringify(["reviews", [reviewId]]))}`,
+    assessment: {
+      ...assessment,
+      status: "assessed",
+      tier: null as ValueTier | null,
+      reviews: [{ sourceId: reviewId, tier: "triage" }],
+    },
+  };
+  function reviewRecord(sources = [source], units = [unit]) {
+    const base = joint(1, sources);
+    const record_json = JSON.stringify({
+      ...JSON.parse(base.record_json),
+      units,
+    });
+    return { ...base, record_json, record_digest: sha256Hex(record_json) };
+  }
+  const observed = {
+    __typename: "PullRequest",
+    id: source.pullRequestNodeId,
+    number: source.pullRequestNumber,
+    state: "CLOSED",
+    closed: true,
+    merged: false,
+    mergedAt: null,
+    mergeCommit: null,
+    closedAt: sourceTime,
+    headRefOid: source.headSha,
+    repository: {
+      id: audit.repositoryNodeId,
+      databaseId: source.repositoryDatabaseId,
+      isPrivate: false,
+      nameWithOwner: audit.repository,
+    },
+  };
+  const rest = {
+    number: source.pullRequestNumber,
+    node_id: source.pullRequestNodeId,
+    state: "closed",
+    merged: false,
+    merged_at: null,
+    merge_commit_sha: null,
+    closed_at: sourceTime,
+    head: { sha: source.headSha },
+    base: {
+      repo: {
+        node_id: audit.repositoryNodeId,
+        id: source.repositoryDatabaseId,
+        private: false,
+      },
+    },
+  };
+  let reads = 0;
+  function github(
+    node: unknown = observed,
+    pull: unknown = rest,
+  ): HistoricalContextGitHub {
+    return {
+      async graphql<T>(_query: string, variables: Record<string, unknown>) {
+        expect(variables.ids).toEqual([source.pullRequestNodeId]);
+        reads++;
+        return { nodes: [node] } as T;
+      },
+      async get<T>(path: string) {
+        expect(path).toBe("/repos/elizaOS/eliza/pulls/10");
+        reads++;
+        return pull as T;
+      },
+    };
+  }
+  const candidate = reviewRecord();
+  const verified = await classifyHistoricalAssessmentScope(
+    catalog([], [candidate]),
+    audit,
+    projectId,
+    github(),
+  );
+  expect(reads).toBe(2);
+  expect(verified.status).toBe("requires-value-replay");
+  expect(verified.counts.auditedSources).toBe(1);
+  expect(verified.records[0].sources[0].finding).toBe(
+    "verified-standalone-closed-review",
+  );
+  expect(
+    historicalClosedContextBindings(verified).get(source.pullRequestNodeId),
+  ).toMatchObject({
+    digest: candidate.record_digest,
+    standaloneReview: true,
+  });
+  for (const check of [
+    github({ ...observed, headRefOid: "f".repeat(40) }),
+    github({ ...observed, merged: true }),
+    github({ ...observed, closedAt: "2026-10-19T15:00:00.000Z" }),
+    github(observed, null),
+    github(observed, { ...rest, merged_at: sourceTime }),
+  ]) {
+    expect(
+      await classifyHistoricalAssessmentScope(
+        catalog([], [candidate]),
+        audit,
+        projectId,
+        check,
+      ),
+    ).toMatchObject({
+      status: "incomplete",
+      blockers: ["missing-from-merged-audit"],
+    });
+  }
+  for (const refused of [
+    reviewRecord(
+      [source],
+      [{ ...unit, assessment: { ...unit.assessment, tier: "small" } }],
+    ),
+    reviewRecord([
+      source,
+      {
+        ...source,
+        pullRequestNodeId: "PR_other_closed",
+        pullRequestNumber: 11,
+      },
+    ]),
+  ]) {
+    reads = 0;
+    expect(
+      await classifyHistoricalAssessmentScope(
+        catalog([], [refused]),
+        audit,
+        projectId,
+        github(),
+      ),
+    ).toMatchObject({
+      status: "incomplete",
+      blockers: ["missing-from-merged-audit"],
+    });
+    expect(reads).toBe(0);
+  }
+});
+
+test("standalone replay subtracts only one strictly later verified public reference and binds both digests", async () => {
+  const repository = REGISTERED_REPOSITORIES.find(
+    (repo) => repo.projectId === projectId,
+  );
+  if (!repository) throw Error("Expected fixture repository");
+  const repositoryNodeId = repository.expectedNodeId ?? audit.repositoryNodeId;
+  const policy = { sha: member.policySha, text: "Review policy" };
+  const url = `https://github.com/${repository.id}/pull/10`;
+  const reference = {
+    repository: repository.id,
+    id: "PR_later",
+    number: 11,
+    url: `https://github.com/${repository.id}/pull/11`,
+  };
+  const earlier: WorkUnitSource = {
+    policy,
+    evidence: {
+      repository: repository.id,
+      repositoryNodeId,
+      repositoryDatabaseId: member.repositoryDatabaseId,
+      repositoryPolicy: repository,
+      collectedAt: recordedAt,
+      pull: {
+        node_id: "PR_closed_review",
+        number: 10,
+        html_url: url,
+        title: "One source",
+        body: null,
+        user: { node_id: "MDQ6VXNlcjE=", login: "one", type: "User" },
+        state: "closed",
+        merged_at: null,
+        closed_at: sourceTime,
+        merge_commit_sha: null,
+        updated_at: sourceTime,
+        merged_by: null,
+        head: { sha: member.headSha },
+        base: { sha: policy.sha, ref: repository.integrationBranch },
+        changed_files: 0,
+        comments: 0,
+        review_comments: 0,
+        commits: 0,
+      },
+      files: [],
+      mergeCommitEvidence: null,
+      commits: [],
+      reviews: [],
+      comments: [],
+      reviewComments: [],
+      limitations: [],
+      evidenceUrls: [url],
+      eligibleReviewIds: [],
+      implementationActorNodeIds: [],
+      commitAttribution: [],
+      relatedPullRequests: [],
+    },
+  };
+  const prepared = await prepareWorkUnitEvidence(
+    [earlier],
+    REGISTERED_REPOSITORIES,
+  );
+  const row = {
+    ...producer,
+    sources: [
+      {
+        ...member,
+        repository: repository.id,
+        repositoryNodeId,
+        pullRequestNodeId: earlier.evidence.pull.node_id,
+        pullRequestNumber: 10,
+        mergeSha: null,
+        sourceDigest: prepared.sourceDigests[0].digest,
+      },
+    ],
+    units: [
+      {
+        claimIds: [],
+        assessment: {
+          status: "assessed",
+          tier: null,
+          reviews: [{ sourceId: "PRR_review" }],
+        },
+      },
+    ],
+    claims: [],
+    sourceDigest: prepared.sourceDigest,
+  } as unknown as WorkUnitRecord;
+  const current = {
+    ...earlier,
+    evidence: {
+      ...earlier.evidence,
+      relatedPullRequests: [reference],
+      evidenceUrls: [url, reference.url],
+    },
+  };
+  const observed = {
+    __typename: "PullRequest",
+    id: reference.id,
+    number: reference.number,
+    url: reference.url,
+    createdAt: "2026-11-11T00:00:00Z",
+    repository: {
+      id: repositoryNodeId,
+      databaseId: member.repositoryDatabaseId,
+      isPrivate: false,
+      nameWithOwner: repository.id,
+    },
+  };
+  const github = (node = observed) => ({
+    async graphql<T>(query: string, variables: Record<string, unknown>) {
+      expect(query).toContain("createdAt");
+      expect(variables).toEqual({ id: reference.id });
+      return { node } as T;
+    },
+  });
+  await expect(
+    rebindHistoricalStandaloneReview(current, row, github()),
+  ).resolves.toEqual(earlier);
+  for (const wrong of [
+    { ...observed, id: "PR_other" },
+    { ...observed, createdAt: recordedAt },
+    { ...observed, repository: { ...observed.repository, isPrivate: true } },
+  ]) {
+    await expect(
+      rebindHistoricalStandaloneReview(current, row, github(wrong)),
+    ).resolves.toBe(current);
+  }
+  for (const wrong of [
+    { ...row, sourceDigest: "0".repeat(64) },
+    { ...row, sources: [{ ...row.sources[0], sourceDigest: "0".repeat(64) }] },
+  ]) {
+    await expect(
+      rebindHistoricalStandaloneReview(current, wrong, github()),
+    ).resolves.toBe(current);
   }
 });
 

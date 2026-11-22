@@ -9,6 +9,17 @@ import { applyPointsSnapshot, type PointsJournal } from "../src/lib/points";
 import { findRegisteredRepository } from "../src/lib/repositories.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 
+export type HistoricalClosedContextBindings = ReadonlyMap<
+  string,
+  {
+    digest: string;
+    number: number;
+    headSha: string;
+    occurredAt: string;
+    standaloneReview?: true;
+  }
+>;
+
 export class HistoricalClosedOutcomeError extends Error {
   constructor(
     readonly reason: "lifecycle" | "assessment" | "scored-work" | "projection",
@@ -49,17 +60,35 @@ function paymentLedger(snapshot: LeaderboardSnapshot) {
   return [...ledger.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** Keep a merged-only packet only when the complete canonical collection proves
- * omitting ordinary closed outcomes has no award or linked-provenance effect. */
+/** Keep only audited merges and approved closed review sources. Prove that
+ * omitting context-only outcomes preserves awards and linked provenance. */
 export function createMergedHistoricalReplaySnapshot(
   input: LeaderboardInput,
   scope: HistoricalLeaderboardScope,
   baseline: PointsJournal,
+  approvedContexts: HistoricalClosedContextBindings = new Map(),
 ): LeaderboardSnapshot {
   const closed = input.closedUnmergedPullRequests ?? [];
+  const closedById = new Map(closed.map((pull) => [pull.id, pull]));
+  for (const [id, binding] of approvedContexts) {
+    const pull = closedById.get(id);
+    const decision = input.jointValueDecisions?.get(id);
+    if (
+      !pull ||
+      pull.number !== binding.number ||
+      pull.headRefOid !== binding.headSha ||
+      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt) ||
+      !decision ||
+      decision.latestDigest !== binding.digest
+    )
+      throw new HistoricalClosedOutcomeError("lifecycle");
+    if (binding.standaloneReview && decision.status !== "assessed")
+      throw new HistoricalClosedOutcomeError("assessment");
+  }
   if (!closed.length) return createHistoricalLeaderboardSnapshot(input, scope);
-  const closedIds = new Set(closed.map(({ id }) => id));
-  const closedNumbers = new Set(closed.map(({ number }) => number));
+  const closedIds = new Set(closedById.keys());
+  const closedByNumber = new Map(closed.map((pull) => [pull.number, pull]));
+  const closedNumbers = new Set(closedByNumber.keys());
   if (
     closedIds.size !== closed.length ||
     closedNumbers.size !== closed.length ||
@@ -88,19 +117,32 @@ export function createMergedHistoricalReplaySnapshot(
     closedCoverage.some(
       (row) =>
         !closedNumbers.has(row.pullRequestNumber) ||
-        row.status !== "missing" ||
-        row.recordDigest !== null,
+        (approvedContexts.has(row.pullRequestId)
+          ? row.status === "missing" ||
+            row.status === "legacy-policy" ||
+            (row.recordDigest !==
+              approvedContexts.get(row.pullRequestId)?.digest &&
+              !(row.status === "incomplete" && row.recordDigest === null))
+          : row.status !== "missing" || row.recordDigest !== null),
     ) ||
-    closed.some((pull) => input.jointValueDecisions?.has(pull.id)) ||
+    closed.some(
+      (pull) =>
+        input.jointValueDecisions?.has(pull.id) &&
+        !approvedContexts.has(pull.id),
+    ) ||
     (complete.source.unavailableSources ?? []).some((source) =>
       closedIds.has(source.nodeId),
     ) ||
     (complete.source.heldWorkUnits ?? []).some((unit) =>
       unit.sourceNodeIds.some((id) => closedIds.has(id)),
     ) ||
-    (complete.reviewedImplementationUnits ?? []).some((unit) =>
-      closedIds.has(unit.pullRequestId),
-    )
+    (complete.reviewedImplementationUnits ?? []).some((unit) => {
+      const binding = approvedContexts.get(unit.pullRequestId);
+      return (
+        closedIds.has(unit.pullRequestId) &&
+        (!binding || (binding.standaloneReview && unit.units.length > 0))
+      );
+    })
   )
     throw new HistoricalClosedOutcomeError("assessment");
 
@@ -109,37 +151,84 @@ export function createMergedHistoricalReplaySnapshot(
     const match = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/u.exec(
       source.pathname,
     );
-    return (
-      source.origin === "https://github.com" &&
+    return source.origin === "https://github.com" &&
       match !== null &&
-      findRegisteredRepository(match[1], match[2])?.id === scope.repository &&
-      closedNumbers.has(Number(match[3]))
-    );
+      findRegisteredRepository(match[1], match[2])?.id === scope.repository
+      ? closedByNumber.get(Number(match[3]))
+      : undefined;
   }
   const completePayment = paymentLedger(complete);
-  if (
-    completePayment.some((event) => closedSource(event.source.url)) ||
-    complete.ledger.some((event) => closedSource(event.source.url)) ||
-    complete.penalties?.some((row) => closedIds.has(row.source.id))
-  )
+  const reviewSources = new Set<string>();
+  for (const event of [...complete.ledger, ...completePayment]) {
+    const pull = closedSource(event.source.url);
+    if (!pull) continue;
+    const binding = approvedContexts.get(pull.id);
+    if (
+      !binding ||
+      event.category !== "substantive-review" ||
+      event.source.kind !== "review" ||
+      event.source.number !== binding.number ||
+      event.actor.kind !== "User" ||
+      event.scoreDecisionSourceId !== `value:${binding.digest}` ||
+      Date.parse(event.occurredAt) >= Date.parse(binding.occurredAt) ||
+      !pull.reviews.some(
+        (review) =>
+          review.id === event.source.id &&
+          review.url === event.source.url &&
+          review.submittedAt === event.occurredAt &&
+          review.author?.id === event.actor.id,
+      )
+    )
+      throw new HistoricalClosedOutcomeError("scored-work");
+    reviewSources.add(pull.id);
+  }
+  if (complete.penalties?.some((row) => closedIds.has(row.source.id)))
     throw new HistoricalClosedOutcomeError("scored-work");
 
   const projected = createHistoricalLeaderboardSnapshot(
-    { ...input, closedUnmergedPullRequests: [] },
+    {
+      ...input,
+      closedUnmergedPullRequests: closed.filter((pull) =>
+        reviewSources.has(pull.id),
+      ),
+      valueContextPullRequests: [
+        ...(input.valueContextPullRequests ?? []),
+        ...closed.filter(
+          (pull) =>
+            approvedContexts.has(pull.id) &&
+            !reviewSources.has(pull.id) &&
+            input.jointValueDecisions?.get(pull.id)?.status === "assessed",
+        ),
+      ],
+    },
     scope,
   );
   function retainedProvenance(snapshot: LeaderboardSnapshot) {
     return {
       coverage: (snapshot.valueAssessmentCoverage ?? []).filter(
-        (row) => !closedIds.has(row.pullRequestId),
+        (row) =>
+          !closedIds.has(row.pullRequestId) ||
+          reviewSources.has(row.pullRequestId),
       ),
-      units: snapshot.reviewedImplementationUnits ?? [],
+      // A verified origin can have work-unit membership, but the wire
+      // format only emits membership rows for covered (merged) sources.
+      // Every retained merged member must keep its exact connected group.
+      units: (snapshot.reviewedImplementationUnits ?? []).filter(
+        (row) =>
+          !approvedContexts.has(row.pullRequestId) ||
+          reviewSources.has(row.pullRequestId),
+      ),
       reviews: (snapshot.reviewExclusions ?? []).filter(
-        (row) => !closedIds.has(row.pullRequestId),
+        (row) =>
+          !closedIds.has(row.pullRequestId) ||
+          reviewSources.has(row.pullRequestId),
       ),
-      attributions: snapshot.attributions.filter(
-        (row) => !closedIds.has(row.artifactId) && !closedSource(row.sourceUrl),
-      ),
+      attributions: snapshot.attributions.filter((row) => {
+        const closed = closedSource(row.sourceUrl);
+        return closed
+          ? reviewSources.has(closed.id)
+          : !closedIds.has(row.artifactId);
+      }),
       penalties: snapshot.penalties ?? [],
     };
   }

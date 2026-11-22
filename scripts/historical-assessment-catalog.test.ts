@@ -310,7 +310,10 @@ test("a reviewed replay reopens the exact donor heads and refuses relevant appen
       1,
       read,
     );
-  await expect(verify()).resolves.toEqual(catalog.heads);
+  await expect(verify()).resolves.toEqual({
+    heads: catalog.heads,
+    closedReviews: new Map(),
+  });
   await expect(
     verify(reviewed, { ...donor, sourceCommit: "3".repeat(40) }),
   ).rejects.toThrow("differs from the reviewed packet");
