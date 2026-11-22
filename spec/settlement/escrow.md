@@ -19,7 +19,8 @@ handlers `deposit`, `commit`, `pledge_month`, `expire_pledge`, `commit_monthly`,
 `pay` and `withdraw`. The contract units
 [EVM escrow](../contracts/evmEscrow.md) and [Solana escrow](../contracts/solanaEscrow.md)
 state the same pledge, cap and release rules per network.
-The unfinished `formal/drafts/monthly-reserve.md` was the starting point.
+It started from the EVM monthly reserve draft, retired from `formal/drafts/`
+once its rules were stated here and in the contract units (git history keeps it).
 The legacy V1 `commitMonthly` path, which commits every leaf in one call, is
 still callable on deployed EVM vaults; an independently signed V1
 transaction can win after V2 publication, so this unit applies it. The

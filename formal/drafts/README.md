@@ -10,9 +10,6 @@ before integrating it into that tree.
   gap coalescing and current-authority reads. The [partial report](assessment-inbox-partial.json)
   records 24 generated replays for an earlier draft. Rerun verification
   against the preserved revision before integration.
-- [EVM monthly reserve](monthly-reserve.md) drafts admission of a funded root,
-  partial leaf materialization and observed contract release. Proof and replay
-  certification is pending.
 - [Slopbot value history](../../spec/slopbot/valueHistory.md) is already on
   the branch. Its [partial report](value-history-partial.json) and
   [Quint witness](value-history-witness.qnt) preserve focused work.
