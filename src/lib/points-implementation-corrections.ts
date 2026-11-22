@@ -25,6 +25,7 @@ import type {
 import {
   implementationCreditActors,
   isCreditEligibleCommitAuthor,
+  isUnprovedZeroLinePromotion,
 } from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
 import {
@@ -1433,6 +1434,14 @@ function deriveProof(
     );
   };
   if (candidate.kind === "pull-request") {
+    if (
+      proof.originalContributor === undefined &&
+      isUnprovedZeroLinePromotion(
+        accepted.commits,
+        (commit) => commit.firstAcceptedSourceId === accepted.sourceId,
+      )
+    )
+      return null;
     for (const commit of accepted.commits)
       add(accepted, commit, commit.additions, commit.deletions, "*");
   } else {

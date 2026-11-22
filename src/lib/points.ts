@@ -1121,9 +1121,13 @@ export function applyPointsSnapshot(
       // its own record, so the merge is not credited twice.
       if (
         (!coverage ||
-          !["assessed", "human-ratified", "legacy-policy"].includes(
+          (!["assessed", "human-ratified", "legacy-policy"].includes(
             coverage.status,
-          )) &&
+          ) &&
+            !(
+              a.category === "substantive-review" &&
+              coverage.reviewAssessmentDigest !== undefined
+            ))) &&
         !invalidatedJointDecision &&
         !(
           a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&

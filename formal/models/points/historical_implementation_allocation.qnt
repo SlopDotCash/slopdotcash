@@ -32,6 +32,7 @@
 // An unresolved earlier claim holds only an affected allocation. Concrete
 // identity, raw-response replay, merge-object validation and SHA membership
 // for multiple candidates require the collector conformance tests.
+// An empty marker with no verified changed paths cannot allocate carried work.
 module historical_implementation_allocation {
   type Allocation = { carrier: int, first: int, second: int, source: int, occurred: int }
   pure val original: Allocation = { carrier: 3, first: 0, second: 0, source: 1, occurred: 1 }
@@ -47,12 +48,12 @@ module historical_implementation_allocation {
   var s: { phase: str, history: List[Allocation], captured: int, complete: bool,
     eligible: bool, protected: bool, applied: bool, importProtected: bool,
     importStale: bool, wasRevoked: bool, unrelatedAward: int, census: str,
-    affected: bool }
+    affected: bool, emptyPromotion: bool }
 
   action init = s' = { phase: "new", history: List(original), captured: 0,
     complete: false, eligible: false, protected: false, applied: false,
     importProtected: false, importStale: false, wasRevoked: false, unrelatedAward: 9,
-    census: "search-only", affected: false }
+    census: "search-only", affected: false, emptyPromotion: false }
 
   action requireSupplement(affected: bool): bool = all {
     s.phase == "new", s.census == "search-only",
@@ -64,9 +65,14 @@ module historical_implementation_allocation {
     s' = s.with("census", result)
   }
   val laterOwns = not(s.affected and s.census == "verified")
+  action bindEmptyPromotion = all {
+    s.phase == "new", not(s.emptyPromotion),
+    s' = s.with("emptyPromotion", true)
+  }
   action prepare(complete: bool, eligible: bool): bool = all {
     s.phase == "new", not(Set("pending", "failed").contains(s.census)),
-    val connectedProof = complete and not(s.affected and s.census == "unavailable")
+    val connectedProof = complete and not(s.emptyPromotion)
+      and not(s.affected and s.census == "unavailable")
     s' = s.with("phase", if (connectedProof and eligible) "ready" else "held")
       .with("captured", s.history.length()).with("complete", connectedProof)
       .with("eligible", eligible)
@@ -96,7 +102,7 @@ module historical_implementation_allocation {
       prepare(complete, eligible) },
     requireSupplement(false), requireSupplement(true),
     verifySupplement("verified"), verifySupplement("unavailable"), verifySupplement("failed"),
-    protect, atomicImport, revoke, replay, s' = s
+    bindEmptyPromotion, protect, atomicImport, revoke, replay, s' = s
   }
 
   val invariant = all {
@@ -107,6 +113,7 @@ module historical_implementation_allocation {
     not(laterOwns) implies s.affected and s.census == "verified",
     Set("pending", "failed").contains(s.census) implies s.phase == "new",
     (s.affected and s.census == "unavailable") implies not(s.applied),
+    s.emptyPromotion implies not(s.applied),
     s.applied implies all {
       s.complete, s.eligible, not(s.importProtected), not(s.importStale),
       s.history.length() >= 2, s.history.nth(1) == corrected
@@ -123,6 +130,10 @@ module historical_implementation_allocation {
     .expect(s.history == List(original, corrected) and invariant)
     .then(replay).expect(s.history.length() == 2 and invariant)
   run incompleteConnectedProofHeldTest = init.then(prepare(false, true))
+    .expect(s.phase == "held" and s.history == List(original) and invariant)
+    .then(atomicImport.fail())
+  run emptyPromotionCannotReallocateCarriedWorkTest = init.then(bindEmptyPromotion)
+    .then(prepare(true, true))
     .expect(s.phase == "held" and s.history == List(original) and invariant)
     .then(atomicImport.fail())
   run earlierAcceptanceRemovesLaterOwnershipTest = init

@@ -4116,10 +4116,28 @@ async function ordinaryRetainedProof(
   if (!originals.length) return { sources: [plain] };
   const sources: WorkUnitSource[] = [];
   for (const expected of [references.pull, ...originals]) {
+    const acceptedDirectly = expected === references.pull;
+    if (acceptedDirectly)
+      requireThat(
+        expected.merge_commit_sha && expected.merged_at,
+        "Historical allocation lacks direct acceptance",
+      );
     const evidence = await collectValueEvidence(
       github,
       plain.repository,
       expected.number,
+      undefined,
+      acceptedDirectly && expected.merge_commit_sha && expected.merged_at
+        ? {
+            repositoryNodeId: plain.repositoryNodeId,
+            pullRequestNodeId: plain.sourceId,
+            headSha: plain.headSha,
+            acceptedSha: expected.merge_commit_sha,
+            mergedAt: expected.merged_at,
+            baseSha: expected.base.sha,
+            baseRef: expected.base.ref,
+          }
+        : undefined,
     );
     requireThat(
       evidence.pull.node_id === expected.node_id &&
