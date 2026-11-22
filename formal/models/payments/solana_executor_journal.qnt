@@ -85,7 +85,7 @@ module solana_executor_journal {
   }
   action refresh(id: int, valid: bool): bool = {
     val request = s.requests.get(id)
-    val refuses = (s.role != "attester" and s.paid) or (s.role == "attester" and s.bound)
+    val refuses = s.paid or (s.role == "attester" and s.bound)
     all { request.phase == "refresh", s' = s.with("requests", s.requests.set(id,
       if (not(valid) or refuses) finish(request, "refresh-error") else request.with("phase", "quote"))) }
   }
@@ -191,6 +191,9 @@ module solana_executor_journal {
     .expect(s.archive.get(1).identity == 1 and s.active.generation == 3 and invariant)
   run refreshedPaidAwardRefusesReplacementTest = retained("relayer").then(advance).then(advance).then(pay)
     .then(begin(1, 1)).then(load(1)).then(status(1, "absent")).then(height(1, true)).then(refresh(1, true))
+    .expect(s.requests.get(1).result == "refresh-error" and s.active.identity == 1 and invariant)
+  run paidBetweenLoadAndRefreshRefusesAttesterTest = retained("attester").then(advance).then(advance)
+    .then(begin(1, 1)).then(load(1)).then(pay).then(status(1, "absent")).then(height(1, true)).then(refresh(1, true))
     .expect(s.requests.get(1).result == "refresh-error" and s.active.identity == 1 and invariant)
   run refreshedMatchingBindingRefusesReplacementTest = retained("attester").then(advance).then(advance).then(bind)
     .then(begin(1, 1)).then(load(1)).then(status(1, "absent")).then(height(1, true)).then(refresh(1, true))

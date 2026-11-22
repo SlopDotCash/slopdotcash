@@ -15888,7 +15888,7 @@
     },
     {
       "path": "formal/models/payments/solana_executor_journal.qnt",
-      "sha256": "213baba64c72d08fc53bc10297e1fa8d860b07a8f8fe57f0d5a41aef720022b8",
+      "sha256": "84fa5ef8f317c326a2c30648c7d8b1d0e5288ee9a519701198bbb61aca456599",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/payment-executor/solana.ts"
@@ -15910,6 +15910,7 @@
         "knownSignatureReturnsBeforeExpiryReadTest",
         "laterRetirementDoesNotEraseExistingSignedBytesTest",
         "lostCommitReplyRetainsSignedBytesTest",
+        "paidBetweenLoadAndRefreshRefusesAttesterTest",
         "pendingFailureCannotReplaceKeeperTest",
         "quoteMayExpireBeforeCommitTest",
         "refreshedMatchingBindingRefusesReplacementTest",
