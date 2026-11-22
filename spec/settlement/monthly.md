@@ -510,42 +510,43 @@ In the samples November 2026 ends at 1796083200, its cuts close at
 1796256000 while the default is on, and its cutoff is 1796342400; October
 2026 ends at 1793491200 and its cutoff is 1793750400.
 
-Discovered by simulation: a cut withdrawn by a later change was not reached
-in 50,000 sampled runs of 20 events, and only about one run in a
-thousand was ever proposed, because the clock usually passed the proposal
-window before the month observed its eligibility and revision; the clock is
-therefore tried least often and the proposal most often. Discovered by
-simulation: once a month observes eligibility revision 2, which it never
-leaves, every sampled authority fact was stale, so no change, cut or owner
-finalization could follow; an owner fact under revision 2 is sampled too.
-Discovered by simulation: a withdrawal needs a cut and then a change of that
-contributor back to the proposed amount before the month freezes, so changes
-and cuts are tried more often and owner finalization less often than other
-events; a month allows only as many changes as there are sampled expected
-sequences, so this cannot crowd out later events. Discovered by simulation:
-every copy of an event picks all its parameters on every step, so a run
-costs in proportion to the weights times the parameters picked; much higher
-weights reached a withdrawn cut no sooner for the same cost and made each
-fixed-size run of the whole check about thirteen times as long.
+Discovered by simulation: with the earlier weights few sampled runs of 20
+events ever proposed a month, because the clock usually passed the proposal
+window before the month observed its eligibility and revision; the clock is therefore tried least often and the proposal most
+often. Discovered by simulation: a withdrawal needs a cut and then a change of
+that contributor back to the proposed amount before the month freezes, so
+changes and cuts are tried more often than owner finalization; a month allows
+only as many changes as there are sampled expected sequences, so this cannot
+crowd out later events. Discovered by simulation: churn of the observed
+revision before the proposal left the proposal's revision stale, so revisions
+are observed no more often than other facts.
 
-Discovered by simulation: the search for a withdrawn cut still needed about
-a thousand runs of 20 events, so one search could outlast its hour on a
-loaded machine. A change back up can withdraw a cut only to the proposed
-amount, and a sole contributor is proposed the whole pool, which no sampled
-amount reached, so a sole contributor's cut could never be withdrawn; a
-change to the whole pool is sampled too. Discovered by
-simulation: after the first event of a November month most clock samples
-already closed its proposal window, and every clock sample after the first
-closed an October month's cut window; a second day of each month is sampled.
-Discovered by simulation: a month that observed eligibility revision 2 had
-only one authority fact that could change it, so a steward under revision 2
-is sampled too; no sampled eligibility was restricted, so a restricted
-project, which can still be proposed and changed but is frozen only by its
-pledge, is sampled too. Discovered by simulation: churn of the observed
-revision before the proposal left the proposal's revision stale, so it is
-tried no more often than other observations; with these samples, proposals,
-changes and cuts tried a third more often reach a withdrawn cut about four
-times as often as before, for about a quarter more cost per run.
+Discovered by simulation: every copy of an event picks all its parameters on
+every step, so a run costs in proportion to the total weight. Weights about
+six times as high for proposals, changes and cuts reached a withdrawn cut no
+sooner and made each run about three and a half times as long, so every
+event that is not favoured has weight 1 or 2, and the events after a freeze
+keep their order relative to one another.
+
+Discovered by simulation: a change back up can withdraw a cut only to the
+proposed amount, and a sole contributor is proposed the whole pool, which no
+sampled amount reached, so a sole contributor's cut could never be withdrawn;
+a change to the whole pool is sampled too. Discovered by simulation: after
+the first event of a November month most clock samples already closed its
+proposal window, and every clock sample after the first closed an October
+month's cut window; a second day of each month is sampled. Discovered by
+simulation: once a month observes eligibility revision 2, which it never
+leaves, every sampled authority fact was stale, so an owner and a steward
+under revision 2 are sampled too. Discovered by simulation: no sampled
+eligibility was restricted, so a restricted project is sampled too; it can
+still be proposed, changed, cut and finalized by hand, but the automatic
+cutoff freezes it only under its pledge.
+
+Discovered by simulation: with the earlier weights and samples a search for a
+withdrawn cut could outlast its hour on a loaded machine. With these, 200
+runs of 20 events take about as long as before, and the search reached a
+withdrawn cut within about a second and a half of processor time after
+start-up for each of three seeds.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -608,16 +609,16 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
 pure val weight_observeClock = 1
-pure val weight_propose = 40
+pure val weight_propose = 6
 pure val weight_observeRevision = 1
-pure val weight_adjust = 40
-pure val weight_cut = 16
-pure val weight_observeSettings = 2
-pure val weight_finalize = 3
-pure val weight_autoFreeze = 3
-pure val weight_noteUnderfunded = 4
-pure val weight_createObligations = 6
-pure val weight_recordReserved = 6
-pure val weight_recordPaid = 6
-pure val weight_recordConflict = 3
+pure val weight_adjust = 6
+pure val weight_cut = 3
+pure val weight_observeSettings = 1
+pure val weight_finalize = 1
+pure val weight_autoFreeze = 1
+pure val weight_noteUnderfunded = 1
+pure val weight_createObligations = 2
+pure val weight_recordReserved = 2
+pure val weight_recordPaid = 2
+pure val weight_recordConflict = 1
 ```
