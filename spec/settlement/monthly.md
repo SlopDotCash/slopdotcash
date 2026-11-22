@@ -507,7 +507,46 @@ pure def stepPeriodFixed(before: Monthly, after: Monthly): bool = before.phase !
 ### Proposals, changes, cuts, freezes, exclusions and payments are reachable
 
 In the samples November 2026 ends at 1796083200, its cuts close at
-1796256000 while the default is on, and its cutoff is 1796342400.
+1796256000 while the default is on, and its cutoff is 1796342400; October
+2026 ends at 1793491200 and its cutoff is 1793750400.
+
+Discovered by simulation: with the earlier weights few sampled runs of 20
+events ever proposed a month, because the clock usually passed the proposal
+window before the month observed its eligibility and revision; the clock is therefore tried least often and the proposal most
+often. Discovered by simulation: a withdrawal needs a cut and then a change of
+that contributor back to the proposed amount before the month freezes, so
+changes and cuts are tried more often than owner finalization; a month allows
+only as many changes as there are sampled expected sequences, so this cannot
+crowd out later events. Discovered by simulation: churn of the observed
+revision before the proposal left the proposal's revision stale, so revisions
+are observed no more often than other facts.
+
+Discovered by simulation: every copy of an event picks all its parameters on
+every step, so a run costs in proportion to the total weight. Weights about
+six times as high for proposals, changes and cuts reached a withdrawn cut no
+sooner and made each run about three and a half times as long, so every
+event that is not favoured has weight 1 or 2, and the events after a freeze
+keep their order relative to one another.
+
+Discovered by simulation: a change back up can withdraw a cut only to the
+proposed amount, and a sole contributor is proposed the whole pool, which no
+sampled amount reached, so a sole contributor's cut could never be withdrawn;
+a change to the whole pool is sampled too. Discovered by simulation: after
+the first event of a November month most clock samples already closed its
+proposal window, and every clock sample after the first closed an October
+month's cut window; a second day of each month is sampled. Discovered by
+simulation: once a month observes eligibility revision 2, which it never
+leaves, every sampled authority fact was stale, so an owner and a steward
+under revision 2 are sampled too. Discovered by simulation: no sampled
+eligibility was restricted, so a restricted project is sampled too; it can
+still be proposed, changed, cut and finalized by hand, but the automatic
+cutoff freezes it only under its pledge.
+
+Discovered by simulation: with the earlier weights and samples a search for a
+withdrawn cut could outlast its hour on a loaded machine. With these, 200
+runs of 20 events take about as long as before, and the search reached a
+withdrawn cut within about a second and a half of processor time after
+start-up for each of three seeds.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -534,11 +573,11 @@ pure def sometimesCutThenOwnerFinalized(m: Monthly): bool = m.trigger == OwnerTr
 pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTrigger and not(m.automatic)
 pure def sometimesLateCutHoldsDefaultOff(m: Monthly): bool = m.phase == Proposed and not(m.automatic) and cutNoticeOutlastsCutoff(m)
 pure val periodValues = Set(202611, 202610)
-pure val nowValues = Set(1793491300, 1796083300, 1796256100, 1796342400, 1796342600, 1796343000)
+pure val nowValues = Set(1793491300, 1793577600, 1796083300, 1796169600, 1796256100, 1796342400, 1796342600, 1796343000)
 pure val reasonLengthValues = Set(19, 20, 500)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
   retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
-pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
+pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 }, { ...eligible, restricted: true })
 pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128,
   rewardStartAt: 1790000000, vault: "vault", asset: "usdc", feePolicy: "v2", exclusions: List() }
 pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 },
@@ -551,10 +590,11 @@ pure val snapshotValues = Set(snapshotSample, { ...snapshotSample, rows: List() 
   { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2, 3)
-pure val amountValues = Set(List(0), List(2), List(5), List(6))
+pure val amountValues = Set(List(0), List(2), List(5), List(6), List(10))
 pure val expectedSequenceValues = Set(0, 1, 2)
 pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revision: 1 }, { actor: 2, role: Steward, banned: false, revision: 1 },
-  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 })
+  { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 },
+  { actor: 9, role: ProjectOwner, banned: false, revision: 2 }, { actor: 2, role: Steward, banned: false, revision: 2 })
 pure val automaticValues = Set(true, false)
 pure val settingsSequenceValues = Set(1, 2)
 pure val observationValues = Set({ observedAt: 1796342400, free: List(20), earlierUnreserved: List(0), otherOpenPledges: List(0) },
@@ -568,17 +608,17 @@ pure def awardFact(actor: int, gross: M::Amount, paid: bool): AwardFact =
 pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, List(2), true))).union(Set(awardFact(2, List(6), true)))
   .union(Set(awardFact(3, List(2), true))).union(Set(awardFact(1, List(3), true))).union(Set(awardFact(1, List(3), false)))
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
-pure val weight_observeClock = 6
+pure val weight_observeClock = 1
 pure val weight_propose = 6
-pure val weight_observeRevision = 2
-pure val weight_adjust = 5
-pure val weight_cut = 5
-pure val weight_observeSettings = 2
-pure val weight_finalize = 8
-pure val weight_autoFreeze = 3
-pure val weight_noteUnderfunded = 4
-pure val weight_createObligations = 6
-pure val weight_recordReserved = 6
-pure val weight_recordPaid = 6
-pure val weight_recordConflict = 3
+pure val weight_observeRevision = 1
+pure val weight_adjust = 6
+pure val weight_cut = 3
+pure val weight_observeSettings = 1
+pure val weight_finalize = 1
+pure val weight_autoFreeze = 1
+pure val weight_noteUnderfunded = 1
+pure val weight_createObligations = 2
+pure val weight_recordReserved = 2
+pure val weight_recordPaid = 2
+pure val weight_recordConflict = 1
 ```
