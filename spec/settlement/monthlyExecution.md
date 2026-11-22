@@ -429,6 +429,14 @@ no admitted root. A root is admitted only from the latest attempt, and the
 executor admits only while the row holds it (above). Once a root is
 admitted the row's root never changes. The cursor is read under the row's
 current root, so a replaced tree never inherits another root's progress.
+Here `attester` names the signing service's role, like `scheduler` and
+`publisher`, not one identity key: which key signs, and the hold of an
+attempt signed by a former authority after a rotation
+(`SignedByFormerAuthority`), belong to the journal, whose `canSignEvm`
+signs only with the view's current identity authority. This unit does not
+model signatures, so an attempt the contract would refuse for its signer is
+never admitted here either: a root counts as admitted only when finalized
+contract state in the row's [executor journal](./executorJournal.md) shows it.
 
 Discovered by simulation: one later source sequence is enough to sign,
 retain and admit a later attempt and to refuse a second one at the same

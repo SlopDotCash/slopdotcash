@@ -24813,7 +24813,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "f3df0a347570ced2de9dcaf34098e2bf56eb9b513f9b3a799e5b2bf75504d9ce",
+      "sha256": "be316ae46c2023867cf6bbf037f8e547efd5ace17995060411715423b53abb40",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -24826,7 +24826,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 359
+          "line": 364
         }
       ],
       "rules": [
@@ -24923,7 +24923,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 294,
+          "line": 299,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -24933,7 +24933,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 319,
+          "line": 324,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -24944,7 +24944,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 338,
+          "line": 343,
           "definitions": [
             "canComplete",
             "complete"
@@ -24952,7 +24952,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 349,
+          "line": 354,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -24960,7 +24960,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 361,
+          "line": 366,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -24973,7 +24973,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 382,
+          "line": 387,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -25011,7 +25011,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 449,
+          "line": 454,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -25064,7 +25064,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "c5308ece8f5169a508e32e38e0f934756f71aec1b601f5d6c2251b287c2b2f59",
+      "sha256": "ee77753fb9b599af6164045be31a576ad099a4881f5587b9a5c754b4b8a58c24",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -25216,7 +25216,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A wrong admitted total is held and never completes; only a finalized whole release ends it",
-          "line": 467,
+          "line": 475,
           "definitions": [
             "canObserveWrongTotal",
             "observeWrongTotal",
@@ -25233,7 +25233,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / An EVM month whose window closed unadmitted is refused and leaves the batch",
-          "line": 519,
+          "line": 527,
           "definitions": [
             "canRefuseUnadmitted",
             "refuseUnadmitted",
@@ -25244,7 +25244,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / Simulation samples are finalized journals of each sampled month",
-          "line": 547,
+          "line": 555,
           "definitions": [
             "entryOf",
             "snapshot",
@@ -25288,12 +25288,16 @@
           "line": 414
         },
         {
+          "target": "./executorJournal.md",
+          "line": 439
+        },
+        {
           "target": "./reserveRelease.md",
-          "line": 475
+          "line": 483
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 525
+          "line": 533
         }
       ]
     },
