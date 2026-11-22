@@ -42,15 +42,22 @@ const Started = Layer.effect(Journey, effect {
   return { env: { SLOP_DB: try promise(() => database(mf, "SLOP_DB")) } }
 })
 
-function manifestOf(projectId: string, monthlyCapMinor: string) {
+interface Shape {
+  readonly reward?: Readonly<Record<string, unknown>>
+  readonly authority?: Readonly<Record<string, unknown>>
+  readonly repositories?: ReadonlyArray<Readonly<Record<string, unknown>>>
+}
+
+function manifestOf(projectId: string, monthlyCapMinor: string, shape: Shape = {}) {
   return JSON.stringify({
     id: projectId,
     status: "active",
     name: projectId,
-    authority: { state: "verified" },
+    authority: { state: "verified", ...shape.authority },
     terms: { receiptPolicy: { state: "active" } },
-    reward: { kind: "monthly-pool", monthlyCapMinor, rewardStartAt: "2026-10-01T00:00:00.000Z" },
+    reward: { kind: "monthly-pool", monthlyCapMinor, rewardStartAt: "2026-10-01T00:00:00.000Z", ...shape.reward },
     escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "base-sepolia", vault, asset }] },
+    ...(shape.repositories === undefined ? {} : { repositories: shape.repositories }),
   })
 }
 
@@ -58,8 +65,8 @@ effect function seed(env: Env, text: string, ...params: ReadonlyArray<SqlValue>)
   try promise(() => env.SLOP_DB.prepare(text).bind(...params).run())
 }
 
-effect function registered(env: Env, projectId: string, monthlyCapMinor: string, view: Partial<ProjectView>) {
-  const manifest = manifestOf(projectId, monthlyCapMinor)
+effect function registered(env: Env, projectId: string, monthlyCapMinor: string, view: Partial<ProjectView>, shape: Shape = {}) {
+  const manifest = manifestOf(projectId, monthlyCapMinor, shape)
   const manifestSha256 = try sha256Hex(manifest)
   try seed(env, "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
   return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: "77", stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [], closureConsent: false, ...view } satisfies ProjectView
@@ -76,7 +83,28 @@ effect function ledgersOf(contributors: Readonly<Record<string, ReadonlyArray<Co
   return ledgers
 }
 
-function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly<Record<string, Ledger>>) {
+interface Asked {
+  readonly name?: string
+  readonly after?: string | null
+}
+
+type Answer = (asked: Asked) => unknown
+
+const asked: string[] = []
+const unasked: Answer = () => ({ errors: [{ type: "FORBIDDEN", message: "this month reads no maintainer decisions" }] })
+
+function githubOf(answer: Answer) {
+  return Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+    const sent = request.body
+    const text = sent._tag === "Uint8Array" ? new TextDecoder().decode(sent.body) : "{}"
+    const body = try orDie(Effect.try(() => JSON.parse(text) as { readonly variables?: Asked }))
+    const variables = body.variables ?? {}
+    asked.push(`${request.url} ${variables.name ?? ""}:${variables.after ?? ""}`)
+    return HttpClientResponse.fromWeb(request, new globalThis.Response(JSON.stringify(answer(variables)), { status: 200, headers: { "content-type": "application/json" } }))
+  }))
+}
+
+function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly<Record<string, Ledger>>, answer: Answer = unasked) {
   const registry = Layer.succeed(Registry, {
     project: (projectId) => effect { return views.find((view) => view.projectId === projectId) },
     byRepository: () => effect { return undefined },
@@ -98,7 +126,8 @@ function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly
       return ledger === undefined || month.period !== "2026-11" ? undefined : ledger
     },
   })
-  const base = Layer.mergeAll(d1(env.SLOP_DB), insideWindow.layer, registry, restrictions)
+  const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ GH_TOKEN: "monthly_rewards_token_0001" }))
+  const base = Layer.mergeAll(d1(env.SLOP_DB), insideWindow.layer, registry, restrictions, githubOf(answer), config)
   return Layer.provideMerge(Layer.merge(monthlyFacts(served), closed), base)
 }
 
@@ -113,6 +142,72 @@ effect function proposals(env: Env) {
 effect function proposedRows(env: Env, projectId: string) {
   const found = try promise(() => env.SLOP_DB.prepare("SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE project_id = ? AND period = '2026-11' ORDER BY github_user_id").bind(projectId).all())
   return try Schema.decodeUnknownEffect(Schema.Array(BaseRow))(found.results)
+}
+
+schema ShareRow { readonly basis_points: number; readonly pool_base: string; readonly decisions: string; readonly decisions_sha256: string }
+schema ShareRowPart { readonly github_user_id: string; readonly github_login: string; readonly decisions: number; readonly gross_base: string }
+schema ManifestRow { readonly manifest: string }
+
+effect function maintainerShareOf(env: Env, projectId: string) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT basis_points, pool_base, decisions, decisions_sha256 FROM monthly_maintainer_shares WHERE project_id = ? AND period = '2026-11'").bind(projectId).all())
+  return try Schema.decodeUnknownEffect(Schema.Array(ShareRow))(found.results)
+}
+
+effect function maintainerShareRowsOf(env: Env, projectId: string) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT github_user_id, github_login, decisions, gross_base FROM monthly_maintainer_share_rows WHERE project_id = ? AND period = '2026-11' ORDER BY github_user_id").bind(projectId).all())
+  return try Schema.decodeUnknownEffect(Schema.Array(ShareRowPart))(found.results)
+}
+
+effect function storedManifest(env: Env, projectId: string) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT manifest FROM monthly_reward_bases WHERE project_id = ? AND period = '2026-11'").bind(projectId).all())
+  return (try Schema.decodeUnknownEffect(Schema.Array(ManifestRow))(found.results)).map((row) => row.manifest)
+}
+
+interface DecisionText {
+  readonly repositories: ReadonlyArray<string>
+  readonly decisions: ReadonlyArray<{ readonly repository: string; readonly number: number; readonly login: string }>
+}
+
+interface Person {
+  readonly __typename: string
+  readonly login: string
+  readonly id?: string
+  readonly databaseId?: number
+}
+
+interface PullShape {
+  readonly mergedBy?: Person
+  readonly closer?: Person
+  readonly author?: string
+  readonly association?: string
+  readonly fork?: string | null
+  readonly updated?: string
+  readonly deletions?: ReadonlyArray<{ readonly login: string; readonly at: string }>
+}
+
+function person(id: number, login: string): Person {
+  return { __typename: "User", login, id: btoa(`04:User${id}`), databaseId: id }
+}
+
+function pull(number: number, at: string, shape: PullShape) {
+  return {
+    number,
+    updatedAt: shape.updated ?? at,
+    closedAt: at,
+    mergedAt: shape.mergedBy === undefined ? null : at,
+    authorAssociation: shape.association ?? "CONTRIBUTOR",
+    author: { __typename: "User", login: shape.author ?? "outsider" },
+    mergedBy: shape.mergedBy ?? null,
+    isCrossRepository: shape.fork !== undefined,
+    headRepository: shape.fork === null ? null : { id: "R_head" },
+    headRepositoryOwner: shape.fork === undefined || shape.fork === null ? null : { login: shape.fork },
+    timelineItems: { nodes: shape.closer === undefined ? [] : [{ createdAt: at, actor: shape.closer }] },
+    refDeletions: { nodes: (shape.deletions ?? []).map((entry) => ({ createdAt: entry.at, actor: { login: entry.login } })) },
+  }
+}
+
+function page(id: string, next: string | null, nodes: ReadonlyArray<unknown>) {
+  return { data: { repository: { id, pullRequests: { pageInfo: { hasNextPage: next !== null, endCursor: next }, nodes } } } }
 }
 
 effect function origin(projectId: string, actor: string) {
@@ -233,5 +328,105 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       ],
       outbound: [],
     })
+  })
+
+  it.effect(`Take the maintainer share out of the monthly amount (spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/settlement/maintainerShare.md, "Only another person's outside pull request, merged or closed by a person, is a decision"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project")`, () => effect {
+    const { env } = try Journey
+    const anna = person(11, "anna")
+    const ben = person(12, "ben")
+    const exclusion = { actorId: "13", nodeId: btoa("04:User13"), login: "cara", relationship: "owner", fromCycle: "2026-11", untilCycle: null }
+    const sharedShape: Shape = {
+      authority: { repositoryId: 501, repositoryNodeId: "R_app" },
+      reward: { maintainerShare: 2000, payoutExclusions: [exclusion] },
+      repositories: [{ id: "acme/app" }, { id: "acme/lib", githubId: "502", nodeId: "R_lib", countsFrom: "2026-11-01T00:00:00.000Z" }, { id: "acme/later", githubId: "503", nodeId: "R_later", countsFrom: "2026-12-01T00:00:00.000Z" }],
+    }
+    const shared = try registered(env, "shared", "1005", {}, sharedShape)
+    const flaky = try registered(env, "flaky", "1000", {}, { authority: { repositoryId: 601, repositoryNodeId: "R_flaky" }, reward: { maintainerShare: 1000 }, repositories: [{ id: "acme/flaky" }] })
+    const plainShape: Shape = { reward: { maintainerShareHistory: [{ throughCycle: "2026-11", basisPoints: 0 }], maintainerShare: 3000 }, repositories: [{ id: "acme/plain" }] }
+    const plain = try registered(env, "plain", "1000", {}, plainShape)
+    const ledgers = try ledgersOf({
+      shared: [{ githubId: "1001", login: "first", points: 3 }, { githubId: "12", login: "ben", points: 1 }],
+      flaky: [{ githubId: "1001", login: "first", points: 1 }],
+      plain: [{ githubId: "1001", login: "first", points: 1 }],
+    })
+    const pages: Readonly<Record<string, unknown>> = {
+      "app:": page("R_app", "c1", [
+        pull(1, "2026-11-05T10:00:00.000Z", { mergedBy: anna }),
+        pull(2, "2026-11-06T10:00:00.000Z", { closer: ben, deletions: [{ login: "ben", at: "2026-11-06T10:05:00.000Z" }] }),
+        pull(4, "2026-11-07T10:00:00.000Z", { closer: person(14, "dora"), fork: "Dora" }),
+        pull(5, "2026-11-08T12:00:00.000Z", { closer: person(15, "ed"), deletions: [{ login: "ED", at: "2026-11-08T11:59:30.000Z" }] }),
+        pull(7, "2026-11-09T10:00:00.000Z", { closer: person(16, "fay"), fork: null }),
+        pull(8, "2026-11-10T10:00:00.000Z", { closer: person(17, "gus"), author: "Gus" }),
+      ]),
+      "app:c1": page("R_app", "c2", [
+        pull(1, "2026-11-05T10:00:00.000Z", { mergedBy: anna }),
+        pull(3, "2026-11-11T10:00:00.000Z", { mergedBy: ben }),
+        pull(6, "2026-11-12T10:00:00.000Z", { mergedBy: person(13, "cara") }),
+        pull(9, "2026-11-13T10:00:00.000Z", { mergedBy: { __typename: "Bot", login: "slopbot" } }),
+        pull(10, "2026-11-14T10:00:00.000Z", { mergedBy: anna, association: "MEMBER" }),
+        pull(11, "2026-10-30T10:00:00.000Z", { mergedBy: anna, updated: "2026-11-02T10:00:00.000Z" }),
+        pull(12, "2026-10-20T10:00:00.000Z", { mergedBy: anna, updated: "2026-10-31T23:00:00.000Z" }),
+      ]),
+      "lib:": page("R_lib", null, [pull(1, "2026-11-20T10:00:00.000Z", { mergedBy: anna })]),
+    }
+    let flakyAnswers = false
+    const answer: Answer = (variables) => {
+      if (variables.name === "flaky") return flakyAnswers ? page("R_flaky", null, []) : { errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] }
+      return pages[`${variables.name}:${variables.after ?? ""}`] ?? { errors: [{ type: "NOT_FOUND", message: "unexpected page" }] }
+    }
+    asked.length = 0
+    provide services(env, [shared, flaky, plain], ledgers, answer) {
+      const refused = proposeMonth(["--cycle", "2026-11"]) catch effect (error) => {
+        return error._tag
+      }
+      const first = try proposals(env)
+      const sharedRows = try proposedRows(env, "shared")
+      const plainRows = try proposedRows(env, "plain")
+      const share = try maintainerShareOf(env, "shared")
+      const shareRows = try maintainerShareRowsOf(env, "shared")
+      const plainBase = try storedManifest(env, "plain")
+      const askedFirst = [...asked]
+      flakyAnswers = true
+      try proposeMonth(["--cycle", "2026-11"])
+      const again = try proposals(env)
+      const flakyRows = try proposedRows(env, "flaky")
+      const flakyShare = try maintainerShareOf(env, "flaky")
+      const flakyShareRows = try maintainerShareRowsOf(env, "flaky")
+      const plainShare = try maintainerShareOf(env, "plain")
+      const records = try orDie(Effect.try(() => share.map((row) => JSON.parse(row.decisions) as DecisionText)))
+      try same({
+        refused,
+        first: first.map((row) => [row.project_id, row.cap_base, row.recipient_count]),
+        sharedRows,
+        plainRows: plainRows.map((row) => [row.github_user_id, row.gross_base]),
+        share: share.map((row) => [row.basis_points, row.pool_base, row.decisions_sha256]),
+        decisions: records.map((record) => [record.repositories, record.decisions.map((entry) => [entry.repository, entry.number, entry.login])]),
+        shareRows,
+        plainManifest: plainBase,
+        askedFirst,
+        again: again.map((row) => [row.project_id, row.cap_base, row.recipient_count]),
+        askedAgain: asked.slice(askedFirst.length),
+        flaky: [flakyRows.map((row) => [row.github_user_id, row.gross_base]), flakyShare.map((row) => [row.basis_points, row.pool_base]), flakyShareRows],
+        plainShare,
+      }, {
+        refused: "ProposalsFailed",
+        first: [["plain", "1000", 1], ["shared", "1005", 3]],
+        sharedRows: [
+          { github_user_id: "1001", github_login: "first", gross_base: "603", source_digest: try origin("shared", "1001") },
+          { github_user_id: "11", github_login: "anna", gross_base: "101", source_digest: try origin("shared", "11") },
+          { github_user_id: "12", github_login: "ben", gross_base: "301", source_digest: try origin("shared", "12") },
+        ],
+        plainRows: [["1001", "1000"]],
+        share: [[2000, "201", try sha256Hex(share[0]?.decisions ?? "")]],
+        decisions: [[["acme/app", "acme/lib"], [["acme/app", 1, "anna"], ["acme/app", 2, "ben"], ["acme/app", 3, "ben"], ["acme/app", 6, "cara"], ["acme/lib", 1, "anna"]]]],
+        shareRows: [{ github_user_id: "11", github_login: "anna", decisions: 2, gross_base: "101" }, { github_user_id: "12", github_login: "ben", decisions: 2, gross_base: "100" }],
+        plainManifest: [manifestOf("plain", "1000", plainShape)],
+        askedFirst: ["https://api.github.com/graphql app:", "https://api.github.com/graphql app:c1", "https://api.github.com/graphql lib:", "https://api.github.com/graphql flaky:"],
+        again: [["flaky", "1000", 1], ["plain", "1000", 1], ["shared", "1005", 3]],
+        askedAgain: ["https://api.github.com/graphql flaky:"],
+        flaky: [[["1001", "1000"]], [[1000, "0"]], []],
+        plainShare: [],
+      })
+    }
   })
 })

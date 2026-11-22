@@ -1,0 +1,95 @@
+// spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type DecisionRecord, type Event, type ShareMonth, clock, decisionsBy, initial, machineOver, workflow } from "../../gen/settlement__maintainerShare.effect.vibe"
+import type { Exclusion } from "../../gen/settlement__payoutExclusions.ts"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { type Period, formatPeriod, periodStartSeconds } from "../kernels/calendar.ts"
+import { type CountedRepository, type DecisionsRead, DecisionsUnread, MaintainerDecisions } from "./maintainerDecisions.vibe"
+import type { MonthlyManifest, StoredShare, StoredShareRow } from "./store.vibe"
+
+export interface ShareSplit extends StoredShare {
+  readonly record: DecisionRecord
+}
+
+export interface ShareInput {
+  readonly projectId: string
+  readonly period: Period
+  readonly basisPoints: number
+  readonly amount: Amount
+  readonly exclusions: ReadonlyArray<Exclusion>
+  readonly repositories: ReadonlyArray<CountedRepository>
+}
+
+export function shareBasisPointsOf(manifest: MonthlyManifest, period: Period): number {
+  const reward = manifest.reward
+  if (reward.kind !== "monthly-pool") return 0
+  const cycle = formatPeriod(period)
+  const past = (reward.maintainerShareHistory ?? []).find((entry) => cycle <= entry.throughCycle)
+  return past === undefined ? reward.maintainerShare ?? 0 : past.basisPoints
+}
+
+function identityOf(manifest: MonthlyManifest, index: number): string | undefined {
+  if (index === 0) {
+    const authority = manifest.authority
+    return authority?.repositoryId !== undefined && authority.repositoryNodeId !== undefined && authority.repositoryNodeId !== "" ? authority.repositoryNodeId : undefined
+  }
+  const repository = manifest.repositories?.[index]
+  return repository?.githubId !== undefined && repository.githubId !== "" && repository.nodeId !== undefined && repository.nodeId !== "" ? repository.nodeId : undefined
+}
+
+export function countedRepositoriesOf(manifest: MonthlyManifest, period: Period): CountedRepository[] {
+  const start = periodStartSeconds(period) * 1000
+  return (manifest.repositories ?? [])
+    .map((repository, index) => ({ repository, nodeId: identityOf(manifest, index) }))
+    .filter(({ repository }) => repository.countsFrom === undefined || millisOf(repository.countsFrom) <= start)
+    .map(({ repository, nodeId }) => ({ id: repository.id, nodeId }))
+}
+
+export effect function shareMonth(start: ShareMonth = initial) {
+  const held = try Ref.make<ShareMonth>(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+function recordOf(read: DecisionsRead, period: Period, digest: string): DecisionRecord {
+  const deciders: number[] = []
+  for (const decision of read.decisions) if (!deciders.includes(decision.decider)) deciders.push(decision.decider)
+  return { period, repositories: read.file.repositories.map((_, index) => index + 1), deciders, decisions: [...read.decisions], digest }
+}
+
+function newestLogin(read: DecisionsRead, actor: number): string {
+  let login = ""
+  let at = ""
+  for (const decision of read.file.decisions) {
+    if (decision.githubUserId === String(actor) && decision.decidedAt > at) {
+      login = decision.login
+      at = decision.decidedAt
+    }
+  }
+  return login
+}
+
+export effect function splitMonth(input: ShareInput) {
+  const machine = try shareMonth({ ...initial, period: input.period, setting: input.basisPoints, monthShare: input.basisPoints })
+
+  effect function sent(event: Event, by: string) {
+    return machine.send(event, by) catch effect () => {
+      throw new DecisionsUnread({ reason: "Maintainer decision record is invalid" })
+    }
+  }
+
+  try sent({ type: "closeMonth", amount: input.amount, repositories: input.repositories.map((_, index) => index + 1), exclusions: [...input.exclusions] }, clock)
+  const read = (try MaintainerDecisions).read({ projectId: input.projectId, period: input.period, repositories: input.repositories }) catch effect (error) => {
+    try sent({ type: "readFails" }, workflow)
+    throw error
+  }
+  const text = JSON.stringify(read.file)
+  const sha256 = try sha256Hex(text)
+  const record = recordOf(read, input.period, sha256)
+  try sent({ type: "readCompletes", record }, workflow)
+  const proposed = try sent({ type: "propose" }, workflow)
+  const rows: StoredShareRow[] = proposed.maintainers
+    .map((share) => ({ actor: share.actor, login: newestLogin(read, share.actor), decisions: decisionsBy(record, share.actor), amount: share.amount }))
+    .sort((left, right) => left.actor - right.actor)
+  return { basisPoints: input.basisPoints, pool: proposed.pool, text, sha256, rows, record } satisfies ShareSplit
+}

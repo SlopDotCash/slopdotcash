@@ -4,8 +4,14 @@ import { copied, listing, origin, project, unlisted } from "./fixtures.ts";
 import type { InstallPanelProps } from "./InstallPanel.tsx";
 
 export const meta: ComponentMeta<InstallPanelProps> = {
-  args: { project, clearance: "ready", listing, origin, onCopy: copied },
-  examples: { Checking: { clearance: "loading" }, Blocked: { clearance: "blocked" }, Unchecked: { clearance: "error" }, NotListed: { clearance: "blocked", listing: unlisted } },
+  args: { project, clearance: "ready", listing, held: false, origin, onCopy: copied },
+  examples: {
+    Checking: { clearance: "loading" },
+    Blocked: { clearance: "blocked" },
+    Unchecked: { clearance: "error" },
+    NotListed: { clearance: "blocked", listing: unlisted },
+    Paused: { clearance: "blocked", listing: unlisted, held: true },
+  },
   play: {
     // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
     Blocked: async () => {
@@ -13,6 +19,10 @@ export const meta: ComponentMeta<InstallPanelProps> = {
     },
     // spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
     NotListed: async () => {
+      await expect(screen.queryByRole("link", { name: "Owner setup" })).toBeNull();
+    },
+    // spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
+    Paused: async () => {
       await expect(screen.queryByRole("link", { name: "Owner setup" })).toBeNull();
     },
     // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"

@@ -1,16 +1,21 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+import type { MergeRepository, WantedIssue } from "@repo/backend/client";
 import type { WorkItem, WorkQueue } from "@repo/points/client";
 import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { fromAmount, parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
-import type { ListingFacts } from "../../../gen/frontend__poolListing.ts";
+import { Result, Schema } from "effect";
+import type { StoredCount } from "../../../gen/backend__intakeCap.ts";
+import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
+import { intakeHeld, type ListingFacts } from "../../../gen/frontend__poolListing.ts";
 import { type PromiseFacts, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
+import { type WantedRead, wantedListed } from "../../../gen/frontend__views.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
 import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
-import { listingOf } from "../home/listing.ts";
+import type { Shown } from "../home/listing.ts";
 import { projectPromise } from "../home/promise.ts";
 import { poolReadOf, rowsValid, totalOf } from "./history.ts";
 import type { ShownProject } from "./project.schema.ts";
@@ -26,7 +31,25 @@ export interface DirectMonth {
   readonly count: number;
 }
 
+export type MergeRows = ReadonlyArray<MergeRepository>;
+
+export type MergeIndex = ReadonlyMap<string, MergeRows>;
+
+export interface ShownWanted extends WantedIssue {
+  readonly repository: string;
+}
+
 export const workShown = 10;
+
+const hourMs = 3_600_000;
+
+const SlopbotSettings = Schema.Struct({
+  slopbot: Schema.optional(Schema.Struct({ intakeCap: Schema.optional(Schema.Number), wantedIssues: Schema.optional(Schema.Boolean) })),
+});
+
+const decodeSlopbot = Schema.decodeUnknownResult(SlopbotSettings);
+
+const failedReads: ReadonlySet<ReadStatus> = new Set(["Denied", "Invalid", "Unavailable", "Failed", "Cancelled"]);
 
 export const historyShown = 3;
 
@@ -60,9 +83,70 @@ export function projectFunding({ project, read, networkPays, nowMs }: { project:
   });
 }
 
-/** The project page's listing facts for this month's pool funding. @throws {never} */
-export function projectListing({ project, funding }: { project: ShownProject; funding: PoolFunding }): ListingFacts {
-  return listingOf({ status: project.status, securityBounty: project.securityBounty, funding: funding.facts });
+/** The project page's listing facts this month, from the registry alone: the configured amount of the UTC month, never a funding read. @throws {RangeError} */
+export function projectListing({ project, networkPays, nowMs }: { project: ShownProject; networkPays: NetworkPays; nowMs: number }): ListingFacts {
+  const funding = projectFunding({ project, read: { status: "Idle", vaults: undefined }, networkPays, nowMs });
+  return { securityOpen: project.securityBounty?.status === "open", pool: funding.facts };
+}
+
+/** The owner's Slopbot settings of an active project: the intake cap, zero while off, and whether the wanted label is on. @throws {never} */
+export function slopbotSettings(project: Pick<ShownProject, "status" | "record">): { readonly active: boolean; readonly intakeCap: number; readonly wantedIssues: boolean } {
+  const decoded = decodeSlopbot(project.record);
+  const record = Result.isSuccess(decoded) ? decoded.success : undefined;
+  const cap = record?.slopbot?.intakeCap;
+  return { active: project.status === "active", intakeCap: cap !== undefined && Number.isSafeInteger(cap) ? cap : 0, wantedIssues: record?.slopbot?.wantedIssues === true };
+}
+
+/** One repository's stored count of open outside pull requests, in whole hours; a row read before the count existed holds nothing. @throws {never} */
+function storedCount(row: MergeRepository): StoredCount {
+  const observed = Date.parse(row.observedAt);
+  return row.openOutside === null || !Number.isFinite(observed) ? { read: false, count: 0, observedAt: 0 } : { read: true, count: row.openOutside, observedAt: Math.floor(observed / hourMs) };
+}
+
+/** @throws {never} */
+function counted(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+/** @throws {never} */
+function wantedIssueValid(issue: WantedIssue, repository: string): boolean {
+  return Number.isSafeInteger(issue.number) && issue.number > 0 && issue.url.toLowerCase() === `https://github.com/${repository}/issues/${issue.number}`.toLowerCase() && counted(issue.openPullRequests);
+}
+
+/** Whether every stored merge activity row is one the page may show: dated, counted in whole non-negative numbers, and each wanted issue an issue of its own repository. @throws {never} */
+export function mergeIndexValid(index: MergeIndex): boolean {
+  return [...index.values()].every((rows) =>
+    rows.every(
+      (row) =>
+        Number.isFinite(Date.parse(row.observedAt)) &&
+        (row.lastMergedAt === null || Number.isFinite(Date.parse(row.lastMergedAt))) &&
+        counted(row.waitingOutside) &&
+        counted(row.mergedOutsideLast30Days) &&
+        (row.openOutside === null || counted(row.openOutside)) &&
+        (row.medianHoursToMerge === null || row.medianHoursToMerge >= 0) &&
+        (row.wantedLabel === undefined) === (row.wantedIssues === undefined) &&
+        (row.wantedIssues ?? []).every((issue) => wantedIssueValid(issue, row.repository)),
+    ),
+  );
+}
+
+/** Whether the project is held at its intake cap by the merge activity read; a pending or failed read holds nothing. @throws {never} */
+export function projectHeld(project: Pick<ShownProject, "id" | "status" | "record">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+  if (merge.status !== "Current" && merge.status !== "Stale") return false;
+  const { active, intakeCap } = slopbotSettings(project);
+  return intakeHeld(intakeCap, active, (merge.value?.get(project.id) ?? []).map(storedCount), Math.floor(nowMs / hourMs));
+}
+
+/** The project's open wanted issues as the merge activity read supplies them, read only with the current label of an active project that turned it on. @throws {never} */
+export function wantedReadOf(project: Pick<ShownProject, "id" | "status" | "record">, merge: Shown<MergeIndex>): { readonly read: WantedRead; readonly issues: ReadonlyArray<ShownWanted> } {
+  const { active, wantedIssues } = slopbotSettings(project);
+  if (!active || !wantedIssues) return { read: { tag: "WantedReady", issues: [] }, issues: [] };
+  if (merge.status === "Loading" || merge.status === "Idle") return { read: { tag: "WantedPending" }, issues: [] };
+  if (failedReads.has(merge.status)) return { read: { tag: "WantedFailed" }, issues: [] };
+  const issues = (merge.value?.get(project.id) ?? []).flatMap((row) => (row.wantedLabel === wantedLabelName && row.wantedIssues ? row.wantedIssues.map((issue) => ({ ...issue, repository: row.repository })) : []));
+  const byUrl = new Map(issues.map((issue) => [issue.url, issue] as const));
+  const read: WantedRead = { tag: "WantedReady", issues: issues.map(({ url, openPullRequests }) => ({ url, openPulls: openPullRequests })) };
+  return { read, issues: wantedListed(read).flatMap(({ url }) => byUrl.get(url) ?? []) };
 }
 
 /** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */
@@ -98,10 +182,11 @@ export function projectPrompt(project: Pick<ShownProject, "repositories">, origi
   return repository === undefined ? bootstrapPrompt(origin) : `Read ${siteOrigin(origin)}/SKILL.md and follow it to contribute to github.com/${repository}.`;
 }
 
-/** The snapshot's suggested work in the project's repositories that nothing blocks. @throws {never} */
-export function suggestedWork(queue: WorkQueue, project: Pick<ShownProject, "repositories">): ReadonlyArray<WorkItem> {
+/** The snapshot's suggested work in the project's repositories that nothing blocks, without the wanted issues listed above it. @throws {never} */
+export function suggestedWork(queue: WorkQueue, project: Pick<ShownProject, "repositories">, wanted: ReadonlyArray<Pick<WantedIssue, "url">>): ReadonlyArray<WorkItem> {
   const repositories = new Set(project.repositories.map(({ id }) => id));
-  return [queue.issues, queue.pullRequests].flatMap((items) => items.filter((item) => repositories.has(item.repository) && item.selection.status === "candidate"));
+  const wantedUrls = new Set(wanted.map(({ url }) => url.toLowerCase()));
+  return [queue.issues, queue.pullRequests].flatMap((items) => items.filter((item) => repositories.has(item.repository) && item.selection.status === "candidate" && !wantedUrls.has(item.url.toLowerCase())));
 }
 
 /** Direct payments by contribution month, newest month first. @throws {never} */

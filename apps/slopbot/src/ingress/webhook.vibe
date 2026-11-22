@@ -1,4 +1,4 @@
-// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
 import { ConfigInvalid, idList, secret } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
 import { verifyWebhook } from "@repo/platform/github/webhook"
@@ -9,6 +9,7 @@ import { type RegistryObservation, slopbotScope } from "../../gen/slopbot__repos
 import { slopbotPostGithubWebhook as refusals } from "../client/refusals.vibe"
 import { servedProjects } from "../installation/notices.vibe"
 import type { Change } from "../installation/store.vibe"
+import { feeCheckWanted } from "../fee/dispatch.vibe"
 import { send } from "../jobs/job.vibe"
 import { readyLabelWanted } from "../ready/store.vibe"
 import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
@@ -147,6 +148,11 @@ effect function queuedReady(parsed: Parsed) {
   if (queuesReadyCheck(trigger, try readyLabelWanted(job))) try send(job)
 }
 
+effect function queuedFee(parsed: Parsed) {
+  const { fee } = parsed
+  if (fee !== undefined && (try feeCheckWanted(fee))) try send(fee)
+}
+
 function queueDelay(settings: WebhookSettings.Shape, eventName: string, payload: Readonly<Record<string, unknown>>, job: Parsed["job"]) {
   const pull = payload.pull_request
   const body = typeof pull === "object" && pull !== null && "body" in pull ? pull.body : undefined
@@ -158,6 +164,7 @@ effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delay
   const lookups = try valueLookups(claimed)
   const valued = try durable(context, claimed, { type: "inspectValue", requestId, ...lookups })
   try queuedReady(parsed)
+  try queuedFee(parsed)
   if (settled(valued)) return valued
   const job = qualifiedJob(parsed.body) === "NoJob" ? undefined : parsed.job
   const queueLookup = job === undefined ? { registration: unregistered, lookupOk: true } : try looked({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })

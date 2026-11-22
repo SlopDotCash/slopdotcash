@@ -1,15 +1,14 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/presentation.md, "Project tokens have one dollar prefix while native and approved stablecoin tickers have none"
 import { ExternalLink } from "@repo/ui";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod } from "@repo/settlement/kernels/calendar";
 import type { ReactNode } from "react";
-import { notListedText, showsNotListed } from "../../../gen/frontend__poolListing.ts";
 import { type PromiseFacts, promiseNoticeText, promiseText, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import { projectRewardSummaries, type RewardSummary as Summary } from "../../kernels/rewardSummary.ts";
 import { bountyFundingLabel, compactPrizeLabel } from "../home/listing.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { formatMonth, projectListing, shownPool } from "./summary.ts";
+import { formatMonth, shownPool } from "./summary.ts";
 
 export type RewardSummaryProps = {
   /** The project as the registry lists it. */
@@ -18,6 +17,8 @@ export type RewardSummaryProps = {
   funding: PoolFunding;
   /** The owner's honor-system facts this month. */
   promise: PromiseFacts;
+  /** The sentence for the maintainer share the registry publishes this month, or null when there is none. */
+  shareNotice: string | null;
 };
 
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
@@ -66,7 +67,7 @@ function lineOf(summary: Summary, project: ShownProject, promised: string): Reac
 }
 
 /** What the project rewards, in the words every registry reward model shares; an owner's promise reads as a promise. */
-export function RewardSummary({ project, funding, promise }: RewardSummaryProps) {
+export function RewardSummary({ project, funding, promise, shareNotice }: RewardSummaryProps) {
   const warning = promiseWarning(promise);
   const promised = warning !== "NoPromise";
   const shown = shownPool(project, funding, promise);
@@ -75,13 +76,13 @@ export function RewardSummary({ project, funding, promise }: RewardSummaryProps)
       {funding.display === "PoolWithdrawn" ? (
         <p className="font-medium text-warn">{`Funds were withdrawn from the vault during ${formatMonth(formatPeriod(funding.period))}; it no longer covers this month's amount.`}</p>
       ) : null}
-      {showsNotListed(projectListing({ project, funding }), promised) ? <p className={lineClass}>{notListedText}</p> : null}
       {projectRewardSummaries(shown).map((summary) => (
         <p key={summary.kind} className={lineClass}>
           {lineOf(summary, shown, promiseText(warning))}
         </p>
       ))}
       {promised ? <p className={lineClass}>{promiseNoticeText}</p> : null}
+      {shareNotice ? <p className={lineClass}>{shareNotice}</p> : null}
     </div>
   );
 }

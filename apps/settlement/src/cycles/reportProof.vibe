@@ -1,0 +1,180 @@
+// spec/settlement/unsafeDestinations.md, "An existing cycle manifest keeps its identity"; spec/settlement/unsafeDestinations.md, "A new or changed cycle row keeps every trusted unsafe-destination report as an append-only prefix"
+import { GitHub } from "@repo/platform/github"
+
+export error UnsafeDestinationRefused { message: string }
+
+export schema ClaimWallet {
+  readonly address: string
+  readonly chain: "solana" | "base" | "robinhood" | "ethereum"
+  readonly observedAt: string
+  readonly sourceActorId: string
+  readonly sourceClaimId: string
+  readonly sourceRecordSha256: string
+  readonly sourceUrl: string
+}
+
+export schema UnsafeDestinationReport {
+  readonly kind: "unsafe-destination"
+  readonly projectId: string
+  readonly cycleId: string
+  readonly intentId: string
+  readonly suggestedMinor: string
+  readonly carryMinor: string
+  readonly reportedAt: string
+  readonly verifiedAt: string
+  readonly wallet: ClaimWallet
+  readonly sourceRepository: string
+  readonly sourceCommit: string
+}
+
+const SignedCommitData = Schema.Struct({
+  repository: Schema.optionalKey(Schema.NullOr(Schema.Struct({ object: Schema.optionalKey(Schema.Unknown) }))),
+})
+
+const SignedCommit = Schema.Struct({
+  oid: Schema.optionalKey(Schema.Unknown),
+  message: Schema.optionalKey(Schema.Unknown),
+  signature: Schema.Struct({
+    isValid: Schema.optionalKey(Schema.Unknown),
+    state: Schema.optionalKey(Schema.Unknown),
+    signer: Schema.Struct({ id: Schema.optionalKey(Schema.Unknown), databaseId: Schema.optionalKey(Schema.Unknown) }),
+  }),
+})
+
+const signedCommitQuery = `query($owner:String!,$name:String!,$oid:String!){repository(owner:$owner,name:$name){object(expression:$oid){... on Commit{oid message signature{isValid state signer{id databaseId}}}}}}`
+const answerLimitBytes = 128 * 1024
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const canonicalUint = /^(?:0|[1-9]\d*)$/u
+const sha256Text = /^[0-9a-f]{64}$/u
+const commitText = /^[0-9a-f]{40}$/u
+const evmAccount = /^0x[0-9a-f]{40}$/u
+const zeroAccount = `0x${"0".repeat(40)}`
+const claimText = /^[A-Za-z0-9_-]+$/u
+const projectText = /^[a-z0-9][a-z0-9-]*$/u
+const cycleText = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const intentText = /^pay_[a-z0-9][a-z0-9_-]+$/u
+const repositoryText = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/u
+const base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+export function refusal(message: string) {
+  return new UnsafeDestinationRefused({ message })
+}
+
+function bounded(value: string, max: number, pattern?: RegExp) {
+  return value.length >= 1 && value.length <= max && (pattern === undefined || pattern.test(value))
+}
+
+export function notAbove(smaller: string, larger: string) {
+  return smaller.length < larger.length || (smaller.length === larger.length && smaller <= larger)
+}
+
+function base58Length(value: string) {
+  if (value.length < 32 || value.length > 44) return undefined
+  const bytes: number[] = []
+  for (const char of value) {
+    let carry = base58.indexOf(char)
+    if (carry < 0) return undefined
+    for (let index = 0; index < bytes.length; index++) {
+      carry += (bytes[index] ?? 0) * 58
+      bytes[index] = carry & 0xff
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff)
+      carry >>= 8
+    }
+  }
+  let leading = 0
+  while (value[leading] === "1") leading++
+  return leading + bytes.length
+}
+
+function addressValid(wallet: ClaimWallet) {
+  return wallet.chain === "solana" ? base58Length(wallet.address) === 32 : evmAccount.test(wallet.address) && wallet.address !== zeroAccount
+}
+
+function claimUrl(wallet: ClaimWallet) {
+  const url = URL.parse(wallet.sourceUrl)
+  return url !== null && url.protocol === "https:" && url.hostname === "api.slop.cash" && url.pathname === `/api/v1/wallet-claims/${wallet.sourceClaimId}`
+    && url.search === "" && url.hash === "" && url.username === "" && url.password === "" && url.port === ""
+}
+
+export effect function utc(value: string) {
+  if (!exactUtc.test(value)) return false
+  const time = Date.parse(value)
+  if (!Number.isFinite(time)) return false
+  const written = Effect.try(() => new Date(time).toISOString()) catch () => ""
+  return written === value
+}
+
+export function minorValid(value: string) {
+  return bounded(value, 512, canonicalUint)
+}
+
+export effect function reportOf(value: unknown, actorId: string, path: string) {
+  const report = Schema.decodeUnknownEffect(UnsafeDestinationReport)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw refusal(`${path} is not an unsafe destination report with an actor-bound Slop wallet claim`)
+  }
+  const wallet = report.wallet
+  if (!addressValid(wallet)) throw refusal(wallet.chain === "solana" ? `${path}.wallet.address is not a Solana public key` : `${path}.wallet.address is not a canonical EVM address`)
+  if (!bounded(wallet.sourceUrl, 512)) throw refusal(`${path}.wallet.sourceUrl is invalid`)
+  if (!bounded(wallet.sourceActorId, 128) || wallet.sourceActorId !== actorId) throw refusal(`${path}.wallet.sourceActorId does not match the contributor`)
+  if (!bounded(wallet.sourceClaimId, 128, claimText)) throw refusal(`${path}.wallet.sourceClaimId is invalid`)
+  if (!sha256Text.test(wallet.sourceRecordSha256)) throw refusal(`${path}.wallet.sourceRecordSha256 is invalid`)
+  if (!claimUrl(wallet)) throw refusal(`${path}.wallet.sourceUrl is not a canonical Slop wallet claim`)
+  if (!(try utc(wallet.observedAt))) throw refusal(`${path}.wallet.observedAt is not a timestamp`)
+  if (!(try utc(report.reportedAt))) throw refusal(`${path}.reportedAt is not a timestamp`)
+  if (!(try utc(report.verifiedAt))) throw refusal(`${path}.verifiedAt is not a timestamp`)
+  if (Date.parse(report.reportedAt) < Date.parse(wallet.observedAt) || Date.parse(report.verifiedAt) < Date.parse(report.reportedAt)) throw refusal(`${path} has impossible report timestamps`)
+  if (!minorValid(report.suggestedMinor)) throw refusal(`${path}.suggestedMinor is invalid`)
+  if (!minorValid(report.carryMinor)) throw refusal(`${path}.carryMinor is invalid`)
+  if (!notAbove(report.carryMinor, report.suggestedMinor)) throw refusal(`${path} carry exceeds the signed suggested amount`)
+  if (!bounded(report.projectId, 128, projectText)) throw refusal(`${path}.projectId is invalid`)
+  if (!bounded(report.cycleId, 512, cycleText)) throw refusal(`${path}.cycleId is invalid`)
+  if (!bounded(report.intentId, 160, intentText)) throw refusal(`${path}.intentId is invalid`)
+  if (!bounded(report.sourceRepository, 200, repositoryText)) throw refusal(`${path}.sourceRepository is invalid`)
+  if (!commitText.test(report.sourceCommit)) throw refusal(`${path}.sourceCommit is invalid`)
+  return report
+}
+
+export function reportMessage(report: UnsafeDestinationReport) {
+  const wallet = report.wallet
+  return `slop-unsafe-destination:v1\n${JSON.stringify({
+    projectId: report.projectId,
+    cycleId: report.cycleId,
+    intentId: report.intentId,
+    suggestedMinor: report.suggestedMinor,
+    carryMinor: report.carryMinor,
+    reportedAt: report.reportedAt,
+    wallet: {
+      address: wallet.address,
+      chain: wallet.chain,
+      observedAt: wallet.observedAt,
+      sourceActorId: wallet.sourceActorId,
+      sourceClaimId: wallet.sourceClaimId,
+      sourceRecordSha256: wallet.sourceRecordSha256,
+      sourceUrl: wallet.sourceUrl,
+    },
+  })}`
+}
+
+export effect function verifyReport(report: UnsafeDestinationReport) {
+  const github = try GitHub
+  const [owner = "", name = ""] = report.sourceRepository.split("/")
+  const data = github.graphql(signedCommitQuery, { owner, name, oid: report.sourceCommit }, SignedCommitData, { limitBytes: answerLimitBytes }) catch effect () => {
+    throw refusal("GitHub could not verify the signed wallet report")
+  }
+  const commit = Schema.decodeUnknownEffect(SignedCommit)(data.repository?.object) catch effect () => {
+    throw refusal("Signed wallet report evidence is missing")
+  }
+  const signer = commit.signature.signer
+  const actorId = report.wallet.sourceActorId
+  if (
+    commit.oid !== report.sourceCommit ||
+    commit.signature.isValid !== true ||
+    commit.signature.state !== "VALID" ||
+    (signer.id !== actorId && String(signer.databaseId) !== actorId) ||
+    typeof commit.message !== "string" ||
+    commit.message.replace(/\n$/u, "") !== reportMessage(report)
+  ) throw refusal("Signed wallet report does not bind the contributor and original destination")
+}

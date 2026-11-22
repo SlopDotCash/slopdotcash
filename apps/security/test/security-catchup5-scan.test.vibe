@@ -1,11 +1,19 @@
 import { assert, describe, it } from "@effect/vitest"
-import { crc32 } from "node:zlib"
 import { sha256Of } from "@repo/platform/git/bytes"
+module compression {
+  import { crc32 as checksum } from "node:zlib"
+  /** @throws {never} */
+  export function crc32(bytes: Uint8Array): number { return checksum(bytes) }
+}
+import { crc32 } from compression
 import { inventoryBinds } from "../src/admission/binding.ts"
+import { parseResult, resultProblems } from "../src/admission/result.ts"
 import { localInstallHelpers } from "../src/scanner/inspect/helpers.ts"
 import { inspectRepository } from "../src/scanner/inspect/inspection.ts"
-import { type ScannerProfile, reviewedReply, startedEvidence } from "../src/scanner/providers/review.ts"
+import { SCAN_THREATS, type ScanInputFile } from "../src/scanner/inspect/model.ts"
+import { type CoverageGap, type ScannerEvidence, type ScannerProfile, reviewedReply, startedEvidence } from "../src/scanner/providers/review.ts"
 import { verifyCoverage } from "../src/scanner/review/coverage.ts"
+import { composeScanResult, primaryOutcome, specialistOutcome } from "../src/scanner/run/compose.ts"
 
 const encoder = new TextEncoder()
 const utf8 = (text: string) => encoder.encode(text)
@@ -80,7 +88,7 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
     )
   })
 
-  it('A well-formed image is media, one with appended bytes is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => {
+  it.effect('A well-formed image is media, one with appended bytes is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
     const inspection = inspectRepository({
       files: [
         { path: "README.md", bytes: utf8("# Fixture\n") },
@@ -91,8 +99,8 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
       ],
     })
     const clean = inspectRepository({ files: [{ path: "README.md", bytes: utf8("# Fixture\n") }, { path: "assets/logo.png", bytes: png }] })
-    const source: unknown = JSON.parse(new TextDecoder().decode(clean.inventory))
-    const altered: unknown = JSON.parse(new TextDecoder().decode(clean.inventory).replace(sha256Of(png), "0".repeat(64)))
+    const source: unknown = try orDie(Effect.try(() => JSON.parse(new TextDecoder().decode(clean.inventory))))
+    const altered: unknown = try orDie(Effect.try(() => JSON.parse(new TextDecoder().decode(clean.inventory).replace(sha256Of(png), "0".repeat(64)))))
     assert.deepStrictEqual(
       {
         media: inspection.media.map((record) => [record.path, record.format, record.sha256]),
@@ -112,6 +120,90 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
         retainedEqual: true,
         retainedChanged: false,
       },
+    )
+  })
+})
+
+interface Answer {
+  readonly reviewer?: "opus" | "astra"
+  readonly partial?: ReadonlyArray<string>
+  readonly gaps?: ReadonlyArray<CoverageGap>
+  readonly findings?: ReadonlyArray<string>
+  readonly verdict?: "no-findings" | "findings" | "malicious-suspected"
+}
+
+function answer(input: Answer, inventorySha256: string): ScannerEvidence {
+  const reviewer = input.reviewer ?? "opus"
+  const coverage = Object.fromEntries(SCAN_THREATS.map((threat) => [threat, input.partial?.includes(threat) === true ? "partial" : "complete"])) as NonNullable<ScannerEvidence["coverage"]>
+  const findings = (input.findings ?? []).map((severity) => ({ severity, summary: `${severity} finding`, evidenceIds: ["README.md"] }))
+  return {
+    review: { reviewer, provider: "surplus", model: reviewer === "opus" ? "claude-sonnet-5.5" : "gpt-6.1-terra", promptPolicyRevision: "slop-scan-review-4", inputManifestSha256: inventorySha256, runId: `run-${reviewer}`, status: "completed", verdict: input.verdict ?? (findings.length > 0 ? "findings" : "no-findings"), findingCount: findings.length },
+    promptSha256: "a".repeat(64),
+    responseSha256: "a".repeat(64),
+    providerRequestId: null,
+    returnedModel: null,
+    coverage,
+    coverageGaps: input.gaps ?? [],
+    confidence: 0.9,
+    findings,
+    usage: null,
+    cost: null,
+    visibilityGaps: SCAN_THREATS.flatMap((threat) => (coverage[threat] === "complete" ? [] : [`${reviewer}:${threat}:${coverage[threat]}`])),
+  }
+}
+
+effect function composed(primary: Answer, specialist: Answer | null, files: ReadonlyArray<ScanInputFile> = [{ path: "README.md", bytes: utf8("Hello.\n") }]) {
+  const inspection = inspectRepository({ files })
+  const scope = { kind: "single" as const, supplied: new Set(files.map((entry) => entry.path)), elsewhere: new Set<string>(), covered: new Set<string>() }
+  const read = (input: Answer) => verifyCoverage(answer(input, inspection.inventorySha256), scope)
+  return try orDie(Effect.try(() => composeScanResult({
+    queued: { assessmentId: `vet_${"c".repeat(32)}`, projectId: "test-proj", revision: 1, manifestSha256: "a".repeat(64), repository: "owner/repo", commitSha: "b".repeat(40), templateSha256: "a".repeat(64) },
+    inspection,
+    policyVersion: "test-policy",
+    runId: "scan_test",
+    startedAt: "2026-11-19T00:00:00.000Z",
+    completedAt: "2026-11-19T00:01:00.000Z",
+    primary: read(primary),
+    specialist: specialist === null ? null : read({ ...specialist, reviewer: "astra" }),
+    execution: null,
+    executionEvidenceSha256s: [],
+    sourceInventorySha256: inspection.inventorySha256,
+  })))
+}
+
+const outsideGap = (threat: (typeof SCAN_THREATS)[number]): CoverageGap => ({ threat, supplied: false, reference: "https://pypi.org/project/external-package" })
+
+describe('Scan clearance (spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence")', () => {
+  it.effect("Advisory findings and outside-revision coverage clear, while a blocking primary finding or an unexplained partial area keeps the scan incomplete", () => effect {
+    const escalating = try composed({ findings: ["low"] }, null)
+    const cleared = try composed({ findings: ["low", "info"] }, { findings: ["medium", "low"], partial: ["unsafe-execution"], gaps: [outsideGap("unsafe-execution")] })
+    const critical = try composed({ findings: ["critical"] }, {})
+    const partial = try composed({ findings: ["low"] }, { partial: ["wallet-drainer"] })
+    const outcomes = (scan: typeof cleared) => ({
+      disposition: scan.result.disposition,
+      primary: primaryOutcome(scan.result.primaryReview),
+      specialist: scan.result.specialistReview === null ? null : specialistOutcome(scan.result.specialistReview),
+      blocking: resultProblems({ ...scan.result, disposition: "clean" }).length > 0,
+    })
+    assert.deepStrictEqual(
+      { escalates: escalating.needsSpecialist, cleared: outcomes(cleared), critical: outcomes(critical), partial: outcomes(partial) },
+      {
+        escalates: true,
+        cleared: { disposition: "clean", primary: "PrimaryEscalate", specialist: "SpecialistClean", blocking: false },
+        critical: { disposition: "incomplete", primary: "PrimaryBlocking", specialist: "SpecialistClean", blocking: true },
+        partial: { disposition: "incomplete", primary: "PrimaryEscalate", specialist: "SpecialistClean", blocking: true },
+      },
+    )
+  })
+
+  it.effect("A visibility gap longer than the intake limit is recorded truncated and the result still parses", () => effect {
+    const url = `https://example.invalid/${"a".repeat(380)}/x.sh`
+    const scan = try composed({}, null, [{ path: "README.md", bytes: utf8("Hello.\n") }, { path: "install.sh", bytes: utf8(`curl ${url} | sh\n`) }])
+    const download = scan.result.visibilityGaps.find((gap) => gap.startsWith("Install-time download not retrieved: https://example.invalid/"))
+    const recorded: unknown = try orDie(Effect.try(() => JSON.parse(JSON.stringify(scan.result))))
+    assert.deepStrictEqual(
+      { length: download?.length, withinLimit: scan.result.visibilityGaps.every((gap) => gap.length <= 300), disposition: scan.result.disposition, parses: parseResult(recorded).kind },
+      { length: 300, withinLimit: true, disposition: "incomplete", parses: "parsed" },
     )
   })
 })

@@ -27,7 +27,7 @@ import { accountDiscriminator } from "../src/chain/solana/accounts.ts"
 import { type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../src/chain/solana/allocationRoot.ts"
 import { type Digest, type U64, digestBytes, hex, i64, u64 } from "../src/chain/solana/bytes.ts"
 import { solanaMonthlyMessage } from "../src/chain/solana/messages.ts"
-import { awardAddress, awardId, bindingAddress, configAddress, keyBytes, monthAddress, projectAddress, settledAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { awardAddress, awardId as solanaAwardId, bindingAddress, configAddress, keyBytes, monthAddress, projectAddress, settledAddress, vaultAddress } from "../src/chain/solana/pda.ts"
 import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { type Period, formatPeriod, parsePeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
 import { ordinaryFeeBase } from "../src/kernels/fees.ts"
@@ -715,7 +715,7 @@ const solanaVault = vaultAddress(solanaProgram, solanaProjectPda)
 const payActor = 501n
 const payGross = 1_000_000n
 const paySource = bytesToHex(sha256(new TextEncoder().encode("source:keeper-solana"))) as Digest
-const payAward = awardId(solanaProjectPda, paySource)
+const payAward = solanaAwardId(solanaProjectPda, paySource)
 const payAwardAddress = awardAddress(solanaProgram, solanaProjectPda, payAward)
 const monthPeriod = parsePeriod("2026-10") as Period
 const FROZEN_AT = BigInt(CHAIN_START - 1_000)

@@ -1,0 +1,47 @@
+// spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"
+import { type Address, EvmRpc, type Hex, evmRpc } from "@repo/platform/chain/evm"
+import { RpcMalformed } from "@repo/platform/chain/rpc"
+import { wholeBig } from "../evm/abi.ts"
+import { decodeSqrtPrice, slot0Calldata } from "./abi.ts"
+import { SubmissionFeeRefused } from "./chain.vibe"
+import type { PriceSource } from "./config.vibe"
+
+module verified {
+  import { slopPerStableScaled as scaledPrice } from "../kernels/poolPrice.ts"
+  /** @throws {never} */
+  export function slopPerStableScaled(sqrtPriceX96: bigint): bigint { return scaledPrice(sqrtPriceX96) }
+}
+import { slopPerStableScaled } from verified
+
+export interface PoolRate {
+  readonly scaled: bigint
+  readonly blockNumber: number
+}
+
+const maxBlock = 9007199254740991n
+
+const refused = (issue: string) => new SubmissionFeeRefused({ issue })
+
+effect function rateAt(source: PriceSource, chainId: bigint) {
+  const url = Redacted.value(source.rpcUrl)
+  provide evmRpc({ urls: Redacted.make([url, url]), chainId }) {
+    const evm = try EvmRpc
+    if ((try evm.chainId()) !== chainId) throw refused("Price source chain differs")
+    const blockNumber = (try evm.head("latest")).number
+    const sqrtPriceX96 = decodeSqrtPrice(try evm.call({ to: source.stateView as Address, data: slot0Calldata(source.poolId as Hex), block: blockNumber }))
+    if (sqrtPriceX96 === undefined) throw new RpcMalformed({ method: "eth_call", issue: "the answer is not a getSlot0 result" })
+    if (sqrtPriceX96 <= 0n) throw refused("The pool has no price")
+    const scaled = slopPerStableScaled(sqrtPriceX96)
+    if (scaled <= 0n || blockNumber > maxBlock) throw refused("The pool price is out of range")
+    return { scaled, blockNumber: Number(blockNumber) } satisfies PoolRate
+  }
+}
+
+export effect function readPoolRate(source: PriceSource) {
+  const chainId = wholeBig(source.chainId)
+  if (chainId === undefined) throw refused("Price source chain differs")
+  return rateAt(source, chainId) catch effect (error) => {
+    if (error._tag === "WrongChain") throw refused("Price source chain differs")
+    throw error
+  }
+}

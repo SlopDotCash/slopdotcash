@@ -1,0 +1,154 @@
+// spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"
+import { isoAt } from "@repo/platform/clock"
+import type { SubmissionFeeItem } from "@repo/ports/slopbot"
+import { type FeeFacts, type FeeGate, type PullFacts, askInFlight, askStands, feeLive, settingOn, settlementFor } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { WebhookSettings } from "../ingress/webhook.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import type { ReviewJob, SubmissionFeeJob } from "../jobs/job.vibe"
+import { addLabels, removeLabel } from "../publish/labels.vibe"
+import { scopeAllows } from "../publish/scope.vibe"
+import { observe } from "../scope/facts.vibe"
+import { type CommentFacts, type FeeOutcomeNote, feeNeededComment, feePaidComment } from "./comments.ts"
+import { type FeePullRead, type FeeTarget, feePullOf, publishedWays, readFeePull, releaseFee, scopedOf, stepped, storedFeeSetting, waysAt, writeFeeComment } from "./gate.vibe"
+import { itemByPull, setDueOutcome } from "./items.vibe"
+import { type GateRow, SubmissionFeeMode, askLeaseMillis, feeNeededLabel, feeNeededReason, feePaidLabel, gateModel, gateRow, keepGate, secondsOf } from "./store.vibe"
+
+export interface FeeRefresh {
+  readonly outcome: string
+  readonly review: boolean
+}
+
+interface Checked {
+  readonly job: SubmissionFeeJob
+  readonly target: FeeTarget
+  readonly gate: GateRow
+  readonly item: SubmissionFeeItem
+  readonly model: FeeGate
+  readonly facts: FeeFacts
+  readonly pull: PullFacts
+  readonly nowMillis: number
+  readonly at: string
+}
+
+function done(outcome: string, review: boolean = false): FeeRefresh {
+  return { outcome, review }
+}
+
+function pullFactsOf(read: FeePullRead, contributorScope: boolean): PullFacts {
+  const merged = read.merged === true
+  return { readable: true, open: read.state === "open" && !merged, merged, draft: read.draft === true, closedAt: secondsOf(read.closed_at), contributorScope, installationActive: true }
+}
+
+function reviewable(pull: PullFacts) {
+  return pull.open && !pull.draft
+}
+
+function isoOfSeconds(seconds: number) {
+  return seconds > 0 ? new Date(seconds * 1000).toISOString() : null
+}
+
+effect function commentFactsOf(checked: Checked) {
+  const { job, item } = checked
+  const ways = try waysAt(item.stableMinor, checked.at)
+  return { owner: job.owner, repo: job.repo, number: job.number, repositoryId: job.repositoryId, item: item.item, stableMinor: item.stableMinor, ways } satisfies CommentFacts
+}
+
+effect function released(checked: Checked) {
+  const { target, gate, model, facts, pull, at } = checked
+  try releaseFee(target, gate, model, "setting-off", at, (commentId) => ({ type: "releaseChecked", facts, pull, commentId }))
+  return done("submission fee released: setting off", reviewable(pull))
+}
+
+effect function askedAgain(checked: Checked) {
+  const { target, gate, model, facts, pull, at } = checked
+  if (pull.contributorScope) {
+    try removeLabel(scopedOf(target), feePaidLabel)
+    if (pull.open) try addLabels(scopedOf(target), [feeNeededLabel])
+  }
+  const commentId = try writeFeeComment(target, gate.comment_id, feeNeededComment(try commentFactsOf(checked)))
+  try stepped(model, { type: "askAgain", facts, pull, commentId })
+  try keepGate(target.pull, { state: "asked", reason: `${feeNeededReason}: payment withdrawn`, commentId, nextCheckAt: null }, at)
+  return done("submission fee payment withdrawn; asked again")
+}
+
+effect function unpaid(checked: Checked) {
+  const { target, gate, model, facts, pull, at } = checked
+  if (askStands(model) && !settingOn(facts)) return try released(checked)
+  if (gate.state === "paid") return try askedAgain(checked)
+  try stepped(model, { type: "clearCheck", facts, pull })
+  try keepGate(target.pull, { state: gate.state, reason: gate.reason, commentId: gate.comment_id, nextCheckAt: null }, at)
+  return done("submission fee not paid")
+}
+
+function outcomeNoteOf(settlement: string, pull: PullFacts): FeeOutcomeNote | undefined {
+  if (settlement === "KeptDue") return { kind: "kept_due", why: "closed" }
+  if (settlement === "RefundDue") return { kind: "refund_due", why: pull.merged ? "merged" : "undecided" }
+  return undefined
+}
+
+effect function paid(checked: Checked) {
+  const { target, gate, item, model, facts, pull, at } = checked
+  const comment = try commentFactsOf(checked)
+  const paidFacts = { ...comment, paidNetwork: item.paidNetwork, paidDepositId: item.paidDepositId }
+  let commentId = gate.comment_id ?? 0
+  let review = false
+  if (gate.state !== "paid") {
+    if (pull.contributorScope) {
+      try removeLabel(scopedOf(target), feeNeededLabel)
+      try addLabels(scopedOf(target), [feePaidLabel])
+    }
+    commentId = try writeFeeComment(target, gate.comment_id, feePaidComment({ ...paidFacts, outcome: null }))
+    review = reviewable(pull)
+  }
+  let reason: string = item.outcome ?? "fee-paid"
+  let nextCheckAt: string | null = null
+  if (item.outcome === null) {
+    const decided = settlementFor(model.feeItem.paidAt, pull, model.now)
+    const note = outcomeNoteOf(decided.settlement, pull)
+    nextCheckAt = isoOfSeconds(decided.nextCheckAt)
+    if (note !== undefined && (try setDueOutcome(feePullOf(target.pull), note.kind, at))) {
+      reason = `${note.kind}: ${note.why}`
+      commentId = try writeFeeComment(target, commentId, feePaidComment({ ...paidFacts, outcome: note }))
+    }
+  }
+  try stepped(model, { type: "refreshPaid", facts, pull, commentId })
+  try keepGate(target.pull, { state: "paid", reason, commentId, nextCheckAt }, at)
+  return done(gate.state === "paid" ? `submission fee: ${reason}` : "submission fee paid", review)
+}
+
+effect function deferred(checked: Checked) {
+  const { target, gate, model, facts, pull, nowMillis } = checked
+  try stepped(model, { type: "deferCheck", facts, pull })
+  try keepGate(target.pull, { state: gate.state, reason: gate.reason, commentId: gate.comment_id, nextCheckAt: try isoAt(nowMillis + askLeaseMillis) }, gate.updated_at)
+  return done("submission fee ask in progress")
+}
+
+export effect function refreshSubmissionFee(job: SubmissionFeeJob) {
+  const { mode } = try SubmissionFeeMode
+  if (mode !== "FeeLive") return done("submission fee is not live")
+  if (publishedWays().length === 0) return done("no deposit contract is published")
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const item = try itemByPull({ repositoryId: job.repositoryId, pullNumber: job.number })
+  const gate = try gateRow(job)
+  if (item === null || gate === undefined) return done("no submission fee asked")
+  if (!(try activeInstallation(job.installationId))) return done("installation removed or suspended")
+  const read = try readFeePull(job)
+  if (read === undefined) return done("pull request not readable")
+  const { appUserId } = try WebhookSettings
+  const contributorScope = scopeAllows(try observe(job), item.projectId, "contributor")
+  const pull = pullFactsOf(read, contributorScope)
+  const feeSetting = try storedFeeSetting(item.projectId)
+  const facts: FeeFacts = { mode, contractPublished: true, feeSetting, settingSince: 0, openedAt: 0, exemption: "ExemptionUnknown", mayAsk: false }
+  const model = gateModel(gate, item, nowMillis)
+  const target: FeeTarget = { pull: job, projectId: item.projectId, itemNodeId: "", appUser: Number(appUserId) }
+  const checked: Checked = { job, target, gate, item, model, facts, pull, nowMillis, at }
+  if (!feeLive(facts)) return done("submission fee is not live")
+  if (item.paidAt === null) return try unpaid(checked)
+  if (askInFlight(model)) return try deferred(checked)
+  return try paid(checked)
+}
+
+export function feeReviewJob(job: SubmissionFeeJob, at: string): ReviewJob {
+  return { kind: "review", deliveryId: `fee-review:${job.repositoryId}:${job.number}:${at}`, installationId: job.installationId, repositoryId: job.repositoryId, owner: job.owner, repo: job.repo, itemKind: "pull_request", number: job.number }
+}

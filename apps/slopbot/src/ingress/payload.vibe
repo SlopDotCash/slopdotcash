@@ -1,11 +1,11 @@
-// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"
+// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { InstallEvent, InstallEventKind } from "../../gen/slopbot__installation.effect.vibe"
 import type { ReadyTrigger, TriggerAction, TriggerEvent } from "../../gen/slopbot__readyLabel.effect.vibe"
 import { type Body, type GithubEvent, type JobKind, type ReopenSource, type ValueSource, noBody, noChange, noReopen, noValue } from "../../gen/slopbot__webhookDelivery.effect.vibe"
 import type { Account } from "../installation/store.vibe"
-import { AppealJob, type Job, type ReadyLabelJob, appealCommands, readyJob } from "../jobs/job.vibe"
+import { AppealJob, type Job, type ReadyLabelJob, type SubmissionFeeJob, appealCommands, feeJob, readyJob } from "../jobs/job.vibe"
 
 export const qualityMarker = "<!-- slopbot:quality-evidence:v1 -->"
 
@@ -50,7 +50,10 @@ const jobKinds: Readonly<Record<Job["kind"], JobKind>> = {
   appeal_due: "NoJob",
   maintainer_hold: "NoJob",
   ready_label: "NoJob",
+  submission_fee: "NoJob",
 }
+
+const feeActions: ReadonlySet<string> = new Set(["closed", "reopened"])
 
 const triggerEvents: Readonly<Record<string, TriggerEvent>> = {
   pull_request: "PullRequestEvent",
@@ -112,6 +115,7 @@ export interface ReadyCheck {
 export interface Parsed {
   readonly body: Body
   readonly ready: ReadyCheck
+  readonly fee: SubmissionFeeJob | undefined
   readonly job: Job | undefined
   readonly reopen: string | undefined
   readonly strictSource: boolean
@@ -226,6 +230,13 @@ function readyOf(event: string, deliveryId: string, shape: Shape, appUserId: str
   }
 }
 
+function feeOf(event: string, deliveryId: string, shape: Shape): SubmissionFeeJob | undefined {
+  const number = shape.pull === undefined ? undefined : part(Numbered, shape.pull)?.number
+  const { installation, repository } = shape
+  if (event !== "pull_request" || !feeActions.has(shape.action ?? "") || installation === undefined || repository === undefined || repository.private !== false || number === undefined) return undefined
+  return feeJob({ deliveryId: `${deliveryId}:fee`, installationId: installation, repositoryId: repository.id, owner: repository.owner.login, repo: repository.name, number })
+}
+
 function valueSourceOf(request: ValueRequest | undefined): ValueSource {
   if (request === undefined) return noValue
   const named = /^[A-Za-z0-9-]+$/u.test(request.owner) && /^[A-Za-z0-9_.-]+$/u.test(request.repo)
@@ -297,5 +308,5 @@ export effect function parse(event: string, deliveryId: string, payload: Readonl
     qualityReceipt,
     change: installed?.change ?? noChange,
   }
-  return { body, ready: readyOf(event, deliveryId, shape, appUserId), job, reopen: reopen?.serialized, strictSource: reopen?.serialized !== undefined, installation: installed?.installation } satisfies Parsed
+  return { body, ready: readyOf(event, deliveryId, shape, appUserId), fee: feeOf(event, deliveryId, shape), job, reopen: reopen?.serialized, strictSource: reopen?.serialized !== undefined, installation: installed?.installation } satisfies Parsed
 }
