@@ -3183,7 +3183,7 @@ describe("the documents name what exists", () => {
       return new RegExp(pattern).test(`${title} `) === (kind === "name");
     });
     assert.deepEqual(Object.fromEntries(titles.map((title) => [title, ranBy(title)])), Object.fromEntries(titles.map((title) => [title, [elsewhere[title] ?? "selftest:tools:rest"]])));
-    assert.match(read(".github/workflows/ci.yml"), /^ +- run: pnpm verify --continue --summarize$/m);
+    assert.match(read(".github/workflows/ci.yml"), /^ +- run: pnpm verify --continue=dependencies-successful --summarize$/m);
     assert.ok(listed("verify").includes("//#formal:check"), "CI includes the Slop formal inventory");
     assert.match(read(".github/workflows/release.yml"), /^ +- run: pnpm selftest --concurrency=1$/m);
     const nightly = read(".github/workflows/fuzz.yml");

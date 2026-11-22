@@ -22,12 +22,12 @@ jobs:
     environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_CACHE: ${{ secrets.TURBO_TOKEN == '' && 'local:rw' || (github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r') }}
+      TURBO_CACHE: ${{ secrets.TURBO_TOKEN != '' && (github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r') || 'local:rw' }}
     steps:
       - uses: actions/checkout@v7
       - id: setup
         uses: ./.github/actions/setup
-      - run: pnpm verify --continue --summarize
+      - run: pnpm verify --continue=dependencies-successful --summarize
       - name: Report Turbo task timings
         if: ${{ !cancelled() }}
         run: |

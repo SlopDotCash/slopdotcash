@@ -364,11 +364,11 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 
 | When | Runs |
 |---|---|
-| Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
+| Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue=dependencies-successful --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
 | Native contract checks | Forge formatting and size checks, Foundry tests and SMT checks, locked Cargo tests, and a separate reproducible Solana artifact build |
 | Nightly on the default branch | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 
-Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
+Each row's budget is in [Seeds and budgets](#seeds-and-budgets). CI continues checks whose prerequisites pass. A failing
 run keeps `test/counterexamples/` and `test/__traces__/`, where a broken
 exploration is, as an artifact.
 
