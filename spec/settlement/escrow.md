@@ -74,7 +74,7 @@ type Escrow = { deployed: bool, vault: str, asset: AssetIdentity, purpose: Vault
   payoutFees: M::Amount, grossWithdrawn: M::Amount, withdrawalFees: M::Amount,
   accruedFees: M::Amount, claimedFees: M::Amount,
   months: List[MonthReserve], awards: List[Award], releasedLeaves: List[LeafPosition], withdrawals: List[Withdrawal], depositsWhilePending: int,
-  pledges: List[Pledge], pledged: M::Amount }
+  pledges: List[Pledge], pledged: M::Amount, admissionsWhileOff: int }
 pure val baseAsset: AssetIdentity = { network: Base, token: "usdc", decimals: 6, native: false, kind: M::Classic }
 pure val origin: ChainEvent = { block: 0, index: 0, time: 1793491200, transaction: "" }
 pure val initial: Escrow = { deployed: false, vault: "vault", asset: baseAsset, purpose: OrdinaryPurpose, owner: "owner",
@@ -85,7 +85,7 @@ pure val initial: Escrow = { deployed: false, vault: "vault", asset: baseAsset, 
   payoutFees: M::zero, grossWithdrawn: M::zero, withdrawalFees: M::zero,
   accruedFees: M::zero, claimedFees: M::zero,
   months: List(), awards: List(), releasedLeaves: List(), withdrawals: List(), depositsWhilePending: 0,
-  pledges: List(), pledged: M::zero }
+  pledges: List(), pledged: M::zero, admissionsWhileOff: 0 }
 pure def maxFor(network: Network): M::Amount = if (network == Solana) M::maxU64 else M::maxU128
 pure def inRange(e: Escrow, amount: M::Amount): bool = M::withinMaximum(amount, maxFor(e.asset.network))
 pure def positiveInRange(e: Escrow, amount: M::Amount): bool = inRange(e, amount) and M::positiveAmount(amount)
@@ -99,12 +99,13 @@ immutable-owner token accounts (owner decision of 26 October 2026); the mint
 facts come from the verified chain read at creation. Fee-on-transfer,
 rebasing and transfer-hook behavior are refused by that subset.
 Creation fixes the asset, purpose and binding delay and may turn monthly
-commitments on with a positive cap. It also records whether the deployed
-implementation is the reviewed release-capable one; an EVM vault deployed before
-it gains reserve release only through a finalized upgrade event. A Solana
-project here always runs the program's current build, whose
-`release_monthly_reserve` already accepts only the whole untouched reserve,
-so a Solana vault is created release-capable and never takes the upgrade. The contract accepts a binding delay
+commitments on with a positive cap. A vault is created on the implementation it was deployed with,
+and gains whole reserve release only through a finalized event showing the
+reviewed release-capable implementation: an EVM vault upgrade, or on Solana
+the reviewed program upgrade observed for this vault. The Solana source is
+not deployment evidence; the recorded mainnet program needs a separately
+reviewed and owner-approved upgrade (`packages/contracts/solana/README.md`,
+"Mainnet upgrade"), so no network is assumed release-capable at creation. The contract accepts a binding delay
 from zero through 30 days; the owner decision for Slop deployments is zero.
 A bounty vault never takes monthly commitments. Before creation no event
 applies.
@@ -120,10 +121,8 @@ pure def canDeploy(e: Escrow, asset: AssetIdentity, mint: MintFacts, purpose: Va
   not(e.deployed) and validAsset(asset, mint) and delay >= 0 and delay <= maxBindingDelay
     and M::withinMaximum(cap, maxFor(asset.network)) and (not(turnOn) or (purpose == OrdinaryPurpose and M::positiveAmount(cap)))
 pure def deploy(e: Escrow, asset: AssetIdentity, mint: MintFacts, purpose: VaultPurpose, delay: int, cap: M::Amount, turnOn: bool): Escrow =
-  { ...e, deployed: true, asset: asset, purpose: purpose, bindingDelay: delay, monthlyCap: cap, monthlyEnabled: turnOn,
-    implementation: if (asset.network == Solana) ReleaseCapable else e.implementation }
+  { ...e, deployed: true, asset: asset, purpose: purpose, bindingDelay: delay, monthlyCap: cap, monthlyEnabled: turnOn }
 pure def canUpgradeToRelease(e: Escrow, ev: ChainEvent): bool = later(e, ev) and e.implementation == PreRelease
-  and e.asset.network != Solana
 pure def upgradeToRelease(e: Escrow, ev: ChainEvent): Escrow = { ...advance(ev, e), implementation: ReleaseCapable }
 ```
 
@@ -272,12 +271,15 @@ an equal one is unchanged, and a higher one refuses (`PledgeTooLow`): nothing
 lowers or cancels a pledge. Every open pledge together must stay within the
 free balance (`InsufficientFreeBalance`). Funds do not move; the pledged
 total is held back from every other use of free funds until the pledge
-closes.
+closes, and the open pledges of every period but one are what that period's
+monthly funding holds back.
 
 ```quint
 pure val noPledge: Pledge = { period: 0, amount: M::zero, open: false }
 pure def pledgeOf(e: Escrow, period: int): Pledge = e.pledges.foldl(noPledge, (found, p) => if (p.period == period) p else found)
 pure def openPledged(pledges: List[Pledge]): M::Amount = pledges.foldl(M::zero, (t, p) => if (p.open) M::addAmounts(t, p.amount) else t)
+pure def otherOpenPledged(e: Escrow, period: int): M::Amount =
+  e.pledges.foldl(M::zero, (t, p) => if (p.open and p.period != period) M::addAmounts(t, p.amount) else t)
 pure def unpledgedCovers(e: Escrow, gross: M::Amount): bool =
   M::compareAmounts(e.free, gross) >= 0 and M::compareAmounts(M::subtractAmounts(e.free, gross), e.pledged) >= 0
 pure def openInWindowPledge(e: Escrow, time: int): bool = e.pledges.some(p => p.open and windowOpen(p.period, time))
@@ -346,7 +348,9 @@ an unnamed own pledge is treated as another period's and stays open. On EVM a co
 source sequence, so a root signed before it is stale. Solana signs the whole
 total and the freeze time `frozenAt` instead, which lies inside the window
 and not after admission. A period holds at most one root forever, even after
-its reserve is released.
+its reserve is released. The adapter counts the admissions made while monthly
+commitments were off; each was admitted by its own open pledge, under a cap
+of zero raised to that pledge.
 
 ```quint
 type RootAuthorization = { period: int, vault: str, network: Network, allocationDigest: str, root: str,
@@ -373,6 +377,7 @@ pure def capFor(e: Escrow, period: int, named: bool): M::Amount =
   if (p.open and M::compareAmounts(p.amount, cap) > 0) p.amount else cap
 pure def closeNamed(period: int, named: bool, e: Escrow): Escrow = if (named) closePledge(period, e) else e
 pure def admissionEnabled(e: Escrow, period: int, named: bool): bool = e.monthlyEnabled or namedPledge(e, period, named).open
+pure def offAdmission(e: Escrow): int = if (e.monthlyEnabled) e.admissionsWhileOff else e.admissionsWhileOff + 1
 pure def canAdmitRoot(e: Escrow, authorization: RootAuthorization, ev: ChainEvent): bool =
   val named = namesPledge(e, authorization)
   later(e, ev) and e.purpose == OrdinaryPurpose and admissionEnabled(e, authorization.period, named)
@@ -392,7 +397,7 @@ pure def admitRoot(e: Escrow, authorization: RootAuthorization, ev: ChainEvent):
   val amount = authorization.remainingGross
   val closed = closeNamed(authorization.period, namesPledge(e, authorization), advance(ev, e))
   { ...closed, free: M::subtractAmounts(e.free, amount), pending: M::addAmounts(e.pending, amount),
-    committed: M::addAmounts(e.committed, amount),
+    committed: M::addAmounts(e.committed, amount), admissionsWhileOff: offAdmission(e),
     months: e.months.append({ period: authorization.period, allocationDigest: authorization.allocationDigest,
       root: authorization.root, wholeGross: authorization.wholeGross, admittedGross: amount, remaining: amount,
       released: M::zero, leafCount: authorization.leafCount, admittedAt: ev.time,
@@ -438,6 +443,7 @@ pure def admitLegacyMonth(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent): 
   val added = legacy.entries.length()
   val newTotal = legacyNewTotal(e, legacy.entries)
   val withMonth = { ...closePledge(legacy.period, advance(ev, e)), free: M::subtractAmounts(e.free, newTotal), committed: M::addAmounts(e.committed, newTotal),
+    admissionsWhileOff: offAdmission(e),
     months: e.months.append({ period: legacy.period, allocationDigest: "v1", root: legacy.root, wholeGross: legacyTotal(legacy.entries),
       admittedGross: M::zero, remaining: M::zero, released: M::zero, leafCount: added, admittedAt: ev.time, frozenAt: ev.time }) }
   legacy.entries.foldl({ vault: withMonth, index: 0 }, (acc, x) => legacyStep(legacy.period, ev.time, acc, x)).vault
@@ -523,8 +529,12 @@ untouched wrong-total remainder under [reserve release](./reserveRelease.md),
 and both contracts accept only that: the whole remainder of a month with no
 committed or released leaf (`packages/contracts/README.md`, "Monthly reserve
 release"). An EVM month's released gross therefore always equals its admitted
-gross, with no remainder and no leaf award left beside it; on Solana a per-leaf
-release also counts as released, so the rule there is the guard itself.
+gross, with no remainder and no leaf award left beside it. On Solana a
+per-leaf release also counts as released, so the rule is stated for both
+networks over months without a released leaf: such a month's released gross
+is its whole admitted gross, with no remainder, no leaf award and no released
+leaf beside it. It rests on a month that a leaf has touched always holding
+less remainder than it admitted (a legacy V1 month admits no pool gross).
 
 ```quint
 type ReleaseAuthorization = { period: int, expectedRemaining: M::Amount, releasedGross: M::Amount, signer: str }
@@ -544,6 +554,13 @@ pure def releaseReserve(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent
 pure def alwaysEvmReleaseWhole(e: Escrow): bool = e.asset.network != Solana implies e.months.every(m =>
   M::positiveAmount(m.released) implies M::equalAmounts(m.released, m.admittedGross) and M::equalAmounts(m.remaining, M::zero)
     and not(e.awards.some(a => a.origin == MonthlyLeaf and a.period == m.period)))
+pure def leafTouched(e: Escrow, period: int): bool =
+  e.awards.some(a => a.origin == MonthlyLeaf and a.period == period) or e.releasedLeaves.some(l => l.period == period)
+pure def alwaysTouchedMonthsShrink(e: Escrow): bool = e.months.every(m => leafTouched(e, m.period) implies
+  (M::compareAmounts(m.remaining, m.admittedGross) < 0 or not(M::positiveAmount(m.admittedGross))))
+pure def alwaysReleaseWhole(e: Escrow): bool = e.months.every(m =>
+  (M::positiveAmount(m.released) and not(e.releasedLeaves.some(l => l.period == m.period))) implies
+    (M::equalAmounts(m.released, m.admittedGross) and M::equalAmounts(m.remaining, M::zero) and not(leafTouched(e, m.period))))
 pure def lawNoLeafAfterRelease(e: Escrow, proof: LeafProof, ev: ChainEvent): bool =
   M::positiveAmount(monthFor(e, proof.period).released) and M::equalAmounts(monthFor(e, proof.period).remaining, M::zero)
     implies not(canMaterialize(e, proof, ev))
@@ -681,7 +698,9 @@ a release of monthly pool gross: a whole reserve release, or on Solana one
 uncommittable leaf. A proven leaf, a payment, a fee claim and a pledge
 closing never credit free funds. A manual award never happens while pool
 gross is pending. A period's root is admitted only once. An open pledge stays
-open and never falls until its period is admitted or the pledge expires.
+open and never falls until its own period is admitted, or until it expires
+because its window has closed or, on Solana, because its month exists; an
+admission never closes or lowers another period's pledge.
 
 ```quint
 pure def stepIdentityFixed(before: Escrow, after: Escrow): bool =
@@ -711,9 +730,12 @@ pure def stepFreeLeavesOnlyByOwnerOrRoot(before: Escrow, via: str, after: Escrow
     or via == "admitLegacyMonth")
 pure def stepFreeEntersOnlyByDepositOrRelease(before: Escrow, via: str, after: Escrow): bool =
   M::compareAmounts(after.free, before.free) > 0 implies (via == "deposit" or via == "releaseReserve" or via == "releaseLeaf")
+pure def pledgeClosable(before: Escrow, via: str, after: Escrow, period: int): bool =
+  ((via == "admitRoot" or via == "admitLegacyMonth") and hasMonth(after, period) and not(hasMonth(before, period)))
+    or (via == "expirePledge" and (after.clock >= closesAt(period) or (before.asset.network == Solana and hasMonth(before, period))))
 pure def stepPledgeIrrevocable(before: Escrow, via: str, after: Escrow): bool = before.pledges.every(p => p.open implies
   (pledgeOf(after, p.period).open and M::compareAmounts(pledgeOf(after, p.period).amount, p.amount) >= 0)
-    or via == "admitRoot" or via == "admitLegacyMonth" or via == "expirePledge")
+    or pledgeClosable(before, via, after, p.period))
 pure def stepManualBlockedWhilePoolPending(before: Escrow, via: str, after: Escrow): bool =
   via == "commitAward" implies not(M::positiveAmount(before.pending))
 pure def stepOneRootPerPeriod(before: Escrow, via: str, after: Escrow): bool =
@@ -738,7 +760,7 @@ pure def sometimesWithdrawalFee(e: Escrow): bool = M::positiveAmount(e.withdrawa
 pure def sometimesFeesClaimed(e: Escrow): bool = M::positiveAmount(e.claimedFees) and M::positiveAmount(e.withdrawalFees)
 pure def sometimesManualAfterRelease(e: Escrow): bool = e.awards.some(a => a.origin == ManualAward)
   and e.months.some(m => M::positiveAmount(m.released))
-pure def sometimesPledgedAdmittedWhileOff(e: Escrow): bool = not(e.monthlyEnabled)
+pure def sometimesPledgedAdmittedWhileOff(e: Escrow): bool = not(e.monthlyEnabled) and e.admissionsWhileOff > 0
   and e.pledges.some(p => not(p.open) and hasMonth(e, p.period))
 pure def sometimesPledgeExpired(e: Escrow): bool = e.pledges.some(p => not(p.open) and not(hasMonth(e, p.period)))
 pure def sometimesLegacyMonthCountsExistingOnce(e: Escrow): bool = e.months.some(m => m.allocationDigest == "v1")
@@ -755,6 +777,14 @@ events in November 2026 (block 0) let a deposit and then a pledge for
 November or December 2026 happen before the November window opens, and the
 pledge samples reach a pledged admission with commitments off and an expired
 pledge after the window closes.
+Discovered by simulation: a pledge reaches admission only for a period with
+an open window or one just ended, so the pledge periods, the expiry periods
+and the first pledged period are November and December 2026; a count of two
+pledges both in one EVM call, and a count of twelve with an amount of one
+base unit reaches the twelve-period bound (November 2026 to October 2027)
+within two deposits, while thirteen is refused; amounts of five and eight
+reach a pledge above the monthly cap, which raises it, and a pledge as large
+as the free balance, which blocks other spending.
 
 ```quint
 pure val evValues = Set(
@@ -816,8 +846,8 @@ pure val weight_upgradeToRelease = 4
 pure val weight_pledgeMonths = 6
 pure val weight_expirePledge = 6
 pure val fromPeriodValues = Set(202611, 202612)
-pure val countValues = Set(1, 2)
-pure val amountValues = Set(List(5), List(8))
+pure val countValues = Set(1, 2, 12, 13)
+pure val amountValues = Set(List(1), List(5), List(8))
 pure val periodValues = Set(202611, 202612)
 pure val legacyValues = Set({ period: 202611, vault: "vault", root: "v1", signer: "attester",
   entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(4) }, { source: sampleKey(202611, 2), actor: 2, gross: List(1) }) },
