@@ -140,7 +140,7 @@ runs:
           turbo-${{ runner.os }}-${{ runner.arch }}-
     - id: gen-seed
       if: >-
-        inputs.job == 'verify' && inputs.verification == 'true' && inputs.cache-verification == 'true' &&
+        inputs.job == 'verify' && inputs.cache-verification == 'true' &&
         inputs.publication != 'true' &&
         env.TURBO_CACHE == 'local:rw' && steps.turbo-cache.outputs.key != ''
       shell: bash

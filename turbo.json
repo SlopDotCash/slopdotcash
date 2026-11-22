@@ -99,6 +99,7 @@
       "cache": false
     },
     "//#gen": {
+      "env": ["!VITE_*"],
       "inputs": [
         "spec/**",
         "apps/*/package.json",
@@ -347,6 +348,7 @@
       "outputs": []
     },
     "//#analyze": {
+      "dependsOn": ["//#gen", "@repo/design-system#build", "@repo/ui#gen", "vibestack-studio#gen"],
       "inputs": [
         "apps/**",
         "packages/**",

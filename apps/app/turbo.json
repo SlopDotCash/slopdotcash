@@ -1,0 +1,8 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": { "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"] },
+    "test": { "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"] },
+    "test:browser": { "inputs": ["$TURBO_DEFAULT$", ".env", ".env.*"] }
+  }
+}

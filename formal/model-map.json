@@ -14673,9 +14673,9 @@
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md",
         "spec/slopbot/workUnits.md",
-        "spec/slopbot/valueHistory.md"
-      ],
-      "noSuccessor": "No candidate successor names its actions (captureA, captureB, commitA, commitB, pause, quarantine, removeSecondary). spec/slopbot/workUnits.md, spec/slopbot/valueHistory.md cite its source but name none of those actions; its behaviour is mapped to spec/slopbot/ by domain only. The mapping stays by domain until a transition-level comparison is reviewed."
+        "spec/slopbot/valueHistory.md",
+        "spec/slopbot/valueInference.md"
+      ]
     },
     {
       "sourcePath": "formal/models/slopbot/bot_quality_receipt.qnt",
@@ -18279,9 +18279,9 @@
         "spec/settlement/recovery.md",
         "spec/security/terms.md",
         "spec/frontend/solanaBountyPrompt.md",
-        "spec/frontend/directBountyPrompt.md"
-      ],
-      "noSuccessor": "No candidate successor names its actions (initTracking, readCase, caseReply, replaceCase, failedRead, hidePrivateView, confirmActor, storageReply, reviewBeforePrompt, preflightRefused, recordBeforePrompt, walletReturns, walletUnknown, walletDeclined, chooseCaseReply, chooseCaseReplacement, chooseFailedRead, chooseStorageReply). spec/frontend/solanaBountyPrompt.md, spec/frontend/directBountyPrompt.md cite its source but name none of those actions; it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
+        "spec/frontend/directBountyPrompt.md",
+        "spec/frontend/requests.md"
+      ]
     },
     {
       "sourcePath": "formal/models/ui/ui_calendar_views.qnt",
@@ -20960,9 +20960,9 @@
         "spec/settlement/payment.md",
         "spec/settlement/recovery.md",
         "spec/security/terms.md",
-        "spec/frontend/reportDetails.md"
-      ],
-      "noSuccessor": "No candidate successor names its actions (paint, readCase, readReply, readError, startAction, commitAction, refuseStaleAction, actionReply, equalRevisionCallback, projectionChanges, depart) or cites its source (src/SecurityBounty.tsx, backend/security/handler.ts, backend/security/direct-payments.ts, backend/payments/wallet-registration.ts); it models a component lifecycle of the old React pages (mounts, effects, replies and timers), which the new React shell owns over the spec-backed Machine service. The mapping stays by domain until a transition-level comparison is reviewed."
+        "spec/frontend/reportDetails.md",
+        "spec/frontend/requests.md"
+      ]
     },
     {
       "sourcePath": "formal/models/ui/ui_private_intake.qnt",
