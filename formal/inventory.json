@@ -4948,13 +4948,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "2e9c1e6b4858d9341303070c3c79edfceb75054150537f39e8c954f2139acb04",
+      "sha256": "41f7e0e8479cfc5bdc9409ab5111b9aaf3eb7d0dfc3a3693d715d30b1a1b5753",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [218, 263, 329],
+      "candidateLines": [226, 271, 337],
       "review": "mapped-abstraction"
     },
     {
