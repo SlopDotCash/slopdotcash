@@ -565,6 +565,23 @@
         ".cache/test-result-*.json"
       ]
     },
+    "@repo/settlement#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "@repo/backend#build",
+        "@repo/operations#build",
+        "@repo/platform#build",
+        "@repo/points#build",
+        "@repo/ports#build",
+        "@repo/security#build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
+      ]
+    },
     "@repo/settlement#test": {
       "dependsOn": [
         "gen",
@@ -585,6 +602,22 @@
       ],
       "outputs": [
         ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/fees#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "@repo/backend#build",
+        "@repo/operations#build",
+        "@repo/platform#build",
+        "@repo/ports#build",
+        "@repo/settlement#build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
       ]
     },
     "@repo/fees#test": {

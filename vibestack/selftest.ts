@@ -3180,6 +3180,16 @@ describe("the documents name what exists", () => {
     const append = (file: string, text = "\nMore words.\n") => () => fs.appendFileSync(path.join(root, file), text);
     const vibeDeclared = ["apps/app", "packages/ui", "vibestack/studio"].filter((dir) => read(`${dir}/tsconfig.json`, root).includes(".vibe/declarations")).map((dir) => `${JSON.parse(read(`${dir}/package.json`, root)).name}#typecheck`);
     const [prose, selftest, fixture] = [await changedBy(append("spec/app/index.md")), await changedBy(append("vibestack/selftest.ts", "\n")), await changedBy(append("vibestack/fixtures/door.md"))];
+    for (const app of ["fees", "settlement"]) {
+      const { dependencies, devDependencies } = manifest(`apps/${app}`);
+      const workspaceBuilds = Object.entries({ ...dependencies, ...devDependencies })
+        .filter(([name, version]) => name.startsWith("@repo/") && name !== "@repo/contracts" && version.startsWith("workspace:"))
+        .map(([name]) => `${name}#build`).sort();
+      const builds = tasks.get(`@repo/${app}#build`)!.dependencies.filter((id) => id.endsWith("#build")).sort();
+      assert.deepEqual(builds, workspaceBuilds);
+      assert.ok(!reach(`@repo/${app}#build`).has("@repo/contracts#build"), "the bundle has no native contract build");
+      assert.ok(reach(`@repo/${app}#test`).has("@repo/contracts#build"), "tests still prepare the native contract artifacts");
+    }
     const nativeContracts = ["@repo/contracts#build", "@repo/contracts#test"];
     assert.deepEqual(nativeContracts.filter((task) => prose.includes(task)), []);
     assert.ok(prose.includes("@repo/contracts#typecheck"), "the TypeScript contract harness still reads generated models");

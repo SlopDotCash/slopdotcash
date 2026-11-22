@@ -381,7 +381,9 @@ The standalone native contract job invokes the same package test script
 with its native toolchain. Its setup omits application dependencies, browser
 tools and the formal model toolchain. Turborepo's native contract build and
 test tasks use contract inputs; the TypeScript contract harness still
-depends on generated models.
+depends on generated models. Settlement and fee bundles keep their workspace
+build dependencies without compiling the native contracts. Their tests
+still build the native artifacts and track the contracts workspace inputs.
 Every pushed commit can finish. Completed tasks are shared through the cache.
 Local `pnpm` task commands read the operator's cache credential from
 `~/.config/vibestack/turbo-cache.json`, outside the repository. Credentials
