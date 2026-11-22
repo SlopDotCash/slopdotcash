@@ -52,6 +52,7 @@ import {
   type HistoricalAcceptedSquash,
   type HistoricalPointsPacket,
   historicalProtectionQuery,
+  matchesCarriedAcceptance,
   reconstructHistoricalPoints,
 } from "./reviewed-historical-points";
 import { currentOwnerVerifier, octoberQueryRows } from "./run-october-rewards";
@@ -396,6 +397,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     const emptySquash = proof.emptySquash === true;
     const sharedMerge = proof.earlierMergeSha === proof.mergeSha;
     const survivingCarrier = proof.survivingCarrier === true;
+    const carried = proof.carriedAcceptance === true;
     if (
       !sha.test(proof.earlierMergeSha) ||
       !sha.test(proof.mergeSha) ||
@@ -406,6 +408,16 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       !/^[a-f0-9]{64}$/u.test(proof.diffSha256) ||
       (proof.survivingCarrier !== undefined &&
         (!survivingCarrier || emptySquash || sharedMerge)) ||
+      (proof.carriedAcceptance !== undefined &&
+        (!carried ||
+          emptySquash ||
+          sharedMerge ||
+          survivingCarrier ||
+          !matchesCarriedAcceptance(
+            retirement.source,
+            earlier,
+            proof.earlierMergeSha,
+          ))) ||
       (proof.emptySquash !== undefined && proof.emptySquash !== true)
     )
       throw Error("Reviewed identical change identity is invalid");
@@ -424,7 +436,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       >(`${root}/pulls/${audit.number}`);
       if (
         !pull ||
-        (survivingCarrier && !sameRepository(pull.base.repo)) ||
+        ((survivingCarrier || carried) && !sameRepository(pull.base.repo)) ||
         pull.node_id !== source.sourceId ||
         pull.number !== audit.number ||
         pull.head.sha !== source.headSha ||
@@ -434,7 +446,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         !pull.merged_at ||
         new Date(pull.merged_at).toISOString() !== source.occurredAt ||
         pull.commits !== source.commitCount ||
-        ((emptySquash || sharedMerge || survivingCarrier) &&
+        ((emptySquash || sharedMerge || survivingCarrier || carried) &&
           (pull.state !== "closed" ||
             pull.html_url !== source.sourceUrl ||
             pull.user?.node_id !== source.author?.id ||
@@ -451,6 +463,14 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
     );
     if (sharedMerge && checked[0].pull.base.sha !== checked[1].pull.base.sha)
       throw Error("Shared acceptance has differing submitted bases");
+    if (
+      carried &&
+      (!Number.isSafeInteger(checked[0].pull.changed_files) ||
+        checked[0].pull.changed_files < 1 ||
+        checked[0].pull.changed_files !== checked[1].pull.changed_files ||
+        proof.diffSha256 === sha256Hex(""))
+    )
+      throw Error("Carried merge has different or empty accepted changes");
     async function verifyOriginalAuthor() {
       const recorded = await github.get<{
         sha: string;
@@ -709,6 +729,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
               )
               .sort((a, b) => a[0].localeCompare(b[0])),
           );
+        let carriedBaseTree: string | undefined;
         for (const { pull, mergeSha, source } of checked) {
           const [commit, first, second, ...extra] = (
             await nativeGit("rev-list", "--parents", "-n", "1", mergeSha)
@@ -720,37 +741,81 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             !first ||
             !sha.test(first) ||
             ((sharedMerge || survivingCarrier) && first !== pull.base.sha) ||
-            (survivingCarrier && second === undefined) ||
+            ((survivingCarrier || carried) && second === undefined) ||
             (second !== undefined && second !== pull.head.sha) ||
             extra.length
           )
             throw Error("Identical change needs the complete accepted merge");
-          const range = new Map(
-            (
-              await nativeGit(
-                "rev-list",
-                "--parents",
-                pull.head.sha,
-                `^${pull.base.sha}`,
+          const matchesRange = async (base: string) => {
+            const range = new Map(
+              (
+                await nativeGit(
+                  "rev-list",
+                  "--parents",
+                  pull.head.sha,
+                  `^${base}`,
+                )
               )
-            )
-              .trim()
-              .split("\n")
-              .map((line) => {
-                const [id, ...parents] = line.split(" ");
-                return [id, parents] as const;
-              }),
-          );
+                .trim()
+                .split("\n")
+                .map((line) => {
+                  const [id, ...parents] = line.split(" ");
+                  return [id, parents] as const;
+                }),
+            );
+            return (
+              range.size === source.commits.length &&
+              range.size ===
+                new Set(source.commits.map(({ sha }) => sha)).size &&
+              source.commits.every(
+                (member) =>
+                  range.has(member.sha) &&
+                  hash(range.get(member.sha)) === hash(member.parentShas),
+              )
+            );
+          };
           if (
-            range.size !== source.commits.length ||
-            range.size !== new Set(source.commits.map(({ sha }) => sha)).size ||
-            source.commits.some(
-              (member) =>
-                !range.has(member.sha) ||
-                hash(range.get(member.sha)) !== hash(member.parentShas),
-            )
+            !(await matchesRange(pull.base.sha)) ||
+            (carried && first !== pull.base.sha && !(await matchesRange(first)))
           )
             throw Error("Identical change has incomplete submitted commits");
+          if (carried) {
+            const baseTree = (
+              await nativeGit("rev-parse", `${first}^{tree}`)
+            ).trim();
+            const headTree = (
+              await nativeGit("rev-parse", `${pull.head.sha}^{tree}`)
+            ).trim();
+            const acceptedTree = (
+              await nativeGit("rev-parse", `${mergeSha}^{tree}`)
+            ).trim();
+            if (
+              headTree !== acceptedTree ||
+              (carriedBaseTree !== undefined && carriedBaseTree !== baseTree)
+            )
+              throw Error("Carried merge has different base or accepted trees");
+            carriedBaseTree = baseTree;
+            if (
+              source === retirement.source &&
+              (
+                await nativeGit(
+                  "merge-tree",
+                  "--write-tree",
+                  "--no-messages",
+                  first,
+                  pull.head.sha,
+                )
+              ).trim() !== acceptedTree
+            )
+              throw Error("Carried merge has independent resolution changes");
+            // Both complete accepted code changes must match the reviewed raw diff.
+            if (
+              (await changeDigest(directory, first, mergeSha)) !==
+              proof.diffSha256
+            )
+              throw Error("Complete accepted changes differ");
+            continue;
+          }
           // This existing reader compares the full submitted and accepted
           // raw diffs before computing complete native file line counts.
           const readFiles = second

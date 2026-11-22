@@ -3850,6 +3850,74 @@ test("an independently verified identical accepted change retires only its later
   ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
 });
 
+test("a later PR carrying an earlier accepted merge retains the earlier ordinary award", () => {
+  const { packet, baseline, retirement, target } = identicalRetirementFixture();
+  const [earlier] = retirement.earlierSources;
+  const proof = retirement.identicalAcceptedChange;
+  if (!proof) throw Error("Fixture proof is missing");
+  proof.carriedAcceptance = true;
+  retirement.source.headSha = proof.earlierMergeSha;
+  packet.sourceAudit.sources[0].headSha = proof.earlierMergeSha;
+  retirement.source.commits = [
+    ...earlier.commits,
+    {
+      ...earlier.commits[0],
+      sha: proof.earlierMergeSha,
+      parentCount: 2,
+      parentShas: ["c".repeat(40), earlier.headSha],
+    },
+  ];
+  retirement.source.commitCount = retirement.source.commits.length;
+  retirement.evidence = JSON.stringify({
+    ...JSON.parse(retirement.evidence),
+    sourceSha256: hash(retirement.source),
+    identicalAcceptedChangeSha256: hash(proof),
+  });
+  retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+  const expected = appendPointAwards(
+    baseline,
+    [{ ...target, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        target.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  packet.candidateDigest = hash(expected);
+  expect(
+    reconstructHistoricalPoints(
+      packet,
+      baseline,
+      time,
+      new Map(),
+      new Set([hash(retirement)]),
+    ),
+  ).toEqual(expected);
+  retirement.source.commits.push({
+    ...earlier.commits[0],
+    sha: "4".repeat(40),
+  });
+  retirement.source.commitCount += 1;
+  expect(() =>
+    reconstructHistoricalPoints(
+      packet,
+      baseline,
+      time,
+      new Map(),
+      new Set([hash(retirement)]),
+    ),
+  ).toThrow("Identical accepted change lacks a verified earlier ordinary pool");
+});
+
 test("a verified surviving carrier retains the same original author's existing award", () => {
   const eligible = identicalRetirementFixture(true);
   expect(
