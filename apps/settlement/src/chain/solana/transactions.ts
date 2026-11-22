@@ -13,7 +13,7 @@ import {
   encodeTransaction,
   publicKey,
   signatureOf,
-} from "@repo/platform/chain/solana";
+} from "@repo/platform/chain/solanaWire";
 import { sameBytes } from "./bytes.ts";
 
 export interface AccountMeta {

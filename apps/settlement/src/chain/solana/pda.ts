@@ -1,6 +1,6 @@
 // spec/contracts/solanaEscrow.md, "The owner creates a token or native project with the Config's identity authority and fee recipient"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"
 import { sha256 } from "@noble/hashes/sha2.js";
-import { type Address, type ProgramAddress, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, associatedTokenAddress, findPda, publicKey } from "@repo/platform/chain/solana";
+import { type Address, type ProgramAddress, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, associatedTokenAddress, findPda, publicKey } from "@repo/platform/chain/solanaWire";
 import type { Period } from "../../kernels/calendar.ts";
 import { type Digest, type U64, concat, digestBytes, digestOf, u32le, u64le, utf8 } from "./bytes.ts";
 
