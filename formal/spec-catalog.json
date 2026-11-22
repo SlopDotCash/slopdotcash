@@ -3635,7 +3635,7 @@
     },
     {
       "path": "spec/contracts/solanaEscrow.md",
-      "sha256": "745511a25c8826748de26f0a0b6b28546be4f976e1eb6fd3fb521dc332b409aa",
+      "sha256": "c3255c48d3d62830be36f2ba2362a3cc074a9b230edd557fd4550ad6033a120d",
       "module": "contracts__solanaEscrow",
       "stories": [
         {
@@ -3644,39 +3644,39 @@
         },
         {
           "heading": "Story: Admit only the supported asset behavior",
-          "line": 103
+          "line": 96
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose",
-          "line": 129
+          "line": 122
         },
         {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority",
-          "line": 241
+          "line": 231
         },
         {
           "heading": "Story: Hold funds in one vault",
-          "line": 285
+          "line": 275
         },
         {
           "heading": "Story: Commit awards from free funds",
-          "line": 328
+          "line": 318
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap",
-          "line": 376
+          "line": 366
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably",
-          "line": 538
+          "line": 522
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet",
-          "line": 659
+          "line": 643
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly",
-          "line": 726
+          "line": 708
         }
       ],
       "rules": [
@@ -3692,10 +3692,6 @@
             "SolBinding",
             "Veto",
             "Pledge",
-            "Opening",
-            "MonthlyCommit",
-            "BindingRequest",
-            "PayRequest",
             "SolMonth",
             "Program",
             "maxDelay",
@@ -3716,14 +3712,14 @@
         },
         {
           "heading": "Story: Pin the program's authorities / Block time is positive",
-          "line": 93,
+          "line": 86,
           "definitions": [
             "alwaysClockStarted"
           ]
         },
         {
           "heading": "Story: Admit only the supported asset behavior / A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner",
-          "line": 105,
+          "line": 98,
           "definitions": [
             "admittedMint",
             "admittedAccount",
@@ -3733,12 +3729,10 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The owner creates a token or native project with the Config's identity authority and fee recipient",
-          "line": 131,
+          "line": 124,
           "definitions": [
             "projectKeysValid",
             "opened",
-            "openingValid",
-            "openedWith",
             "canInitialize",
             "initialize",
             "canInitializeNative",
@@ -3747,7 +3741,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The earlier build's project grows to the current layout with new counters at zero",
-          "line": 169,
+          "line": 159,
           "definitions": [
             "canCreateLegacyProject",
             "createLegacyProject",
@@ -3760,7 +3754,7 @@
         },
         {
           "heading": "Story: Create one project per owner, project ID and purpose / The pre-pledge build's 332-byte project grows to the current layout with no open pledges",
-          "line": 217,
+          "line": 207,
           "definitions": [
             "canCreatePrePledgeProject",
             "createPrePledgeProject",
@@ -3770,7 +3764,7 @@
         },
         {
           "heading": "Story: Rotate the identity authority with the owner and the rotation authority / The owner proposes, the rotation authority confirms and anyone executes after the delay",
-          "line": 243,
+          "line": 233,
           "definitions": [
             "live",
             "canProposeAuthorityRotation",
@@ -3788,7 +3782,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / Anyone deposits the exact amount, and only credited deposits enter the free balance",
-          "line": 287,
+          "line": 277,
           "definitions": [
             "free",
             "held",
@@ -3802,7 +3796,7 @@
         },
         {
           "heading": "Story: Hold funds in one vault / The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve",
-          "line": 310,
+          "line": 300,
           "definitions": [
             "alwaysVaultCovers",
             "alwaysFeesAccounted",
@@ -3812,7 +3806,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / The owner commits an ordinary award with the 2% fee or a bounty award with the 75/25 split",
-          "line": 330,
+          "line": 320,
           "definitions": [
             "recordable",
             "fundable",
@@ -3824,7 +3818,7 @@
         },
         {
           "heading": "Story: Commit awards from free funds / Reserves are exactly the unpaid awards plus outstanding monthly gross, and paid totals are exactly the paid awards",
-          "line": 358,
+          "line": 348,
           "definitions": [
             "alwaysReservedMatches",
             "alwaysPaidMatches",
@@ -3835,7 +3829,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner sets the cap and turns monthly commitments on or off",
-          "line": 378,
+          "line": 368,
           "definitions": [
             "canSetMonthlyCommitment",
             "setMonthlyCommitment"
@@ -3843,7 +3837,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone records a signed, fully funded allocation once per period inside its window",
-          "line": 390,
+          "line": 380,
           "definitions": [
             "noSolMonth",
             "hasMonth",
@@ -3859,7 +3853,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone commits a proved leaf from its month's reserve",
-          "line": 444,
+          "line": 428,
           "definitions": [
             "leafProves",
             "settleable",
@@ -3871,7 +3865,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Anyone returns a leaf that can never commit, and never a selective refund",
-          "line": 473,
+          "line": 457,
           "definitions": [
             "neverCommits",
             "canReleaseMonthlyAward",
@@ -3881,7 +3875,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / The owner releases the whole untouched reserve of a wrong-total month once, with the attester's signature",
-          "line": 494,
+          "line": 478,
           "definitions": [
             "canReleaseMonthlyReserve",
             "releaseMonthlyReserve",
@@ -3890,7 +3884,7 @@
         },
         {
           "heading": "Story: Admit one funded monthly allocation per period within the owner's cap / Each period has one month within the cap at admission, and outstanding gross is the sum of unsettled totals",
-          "line": 515,
+          "line": 499,
           "definitions": [
             "alwaysMonthsWellFormed",
             "alwaysOutstandingMatchesMonths",
@@ -3900,7 +3894,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering",
-          "line": 543,
+          "line": 527,
           "definitions": [
             "noPledge",
             "pledgeOf",
@@ -3916,7 +3910,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Anyone closes an open pledge once its period is committed or the period's window has closed",
-          "line": 585,
+          "line": 569,
           "definitions": [
             "closePledge",
             "canExpirePledge",
@@ -3926,7 +3920,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / The owner deletes a closed pledge account for its rent, and its ended period is never pledged again",
-          "line": 605,
+          "line": 589,
           "definitions": [
             "canCloseMonthPledge",
             "closeMonthPledge",
@@ -3935,7 +3929,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / Open pledges never exceed the free balance, and a closed pledge's period was committed or its window closed",
-          "line": 619,
+          "line": 603,
           "definitions": [
             "alwaysPledgesCovered",
             "alwaysClosedPledgeEnded",
@@ -3947,7 +3941,7 @@
         },
         {
           "heading": "Story: Pledge free funds to future months irrevocably / A pledge's open amount never falls, and only a commit, a lapse or the owner's deletion ends it",
-          "line": 644,
+          "line": 628,
           "definitions": [
             "stepPledgeIrrevocable",
             "stepPledgeRecordKept"
@@ -3955,7 +3949,7 @@
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The identity authority and the destination both sign a binding for the project's network",
-          "line": 661,
+          "line": 645,
           "definitions": [
             "noSolBinding",
             "hasBinding",
@@ -3968,7 +3962,7 @@
         },
         {
           "heading": "Story: Bind each actor's wallet with the attester and the wallet / The owner vetoes the latest unpaid binding version once, inside a review window and within the cap",
-          "line": 694,
+          "line": 676,
           "definitions": [
             "vetoed",
             "canVetoBinding",
@@ -3979,7 +3973,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone pays a matured obligation to its actor's latest unvetoed binding",
-          "line": 728,
+          "line": 710,
           "definitions": [
             "payable",
             "paidOut",
@@ -3996,7 +3990,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / The owner withdraws free funds to its own account less the 2% fee",
-          "line": 769,
+          "line": 751,
           "definitions": [
             "refundable",
             "refunded",
@@ -4009,7 +4003,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Anyone moves all accrued fees to the fee recipient",
-          "line": 795,
+          "line": 775,
           "definitions": [
             "feesClaimed",
             "canClaimFees",
@@ -4021,7 +4015,7 @@
         },
         {
           "heading": "Story: Pay, refund and claim fees exactly / Simulation samples cover admitted and refused assets, windows, allocations and signers",
-          "line": 812,
+          "line": 792,
           "definitions": [
             "byValues",
             "successorValues",
@@ -4032,7 +4026,6 @@
             "networkValues",
             "delayValues",
             "rotationDelayValues",
-            "openingValues",
             "rentValues",
             "mintValues",
             "accountValues",
@@ -4042,16 +4035,19 @@
             "grossValues",
             "capValues",
             "periodValues",
+            "rootValues",
+            "totalValues",
+            "frozenAtValues",
+            "leavesValues",
             "leafValues",
-            "monthlyCommitValues",
-            "bindingRequestValues",
-            "payRequestValues",
             "expectedUnsettledValues",
             "releasedAmountValues",
             "destinationValues",
             "expectedVersionValues",
             "versionValues",
             "obligationValues",
+            "claimValues",
+            "expiresAtValues",
             "timestampValues",
             "nowValues",
             "weight_upgradeProgram",
@@ -10531,7 +10527,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "eb8bb1e166619e3226d62988cee6515554fb90a756c3c7c468980264c52e8bd6",
+      "sha256": "13d1445b106d3aad0bf40e2298d85d17d41007b5296f057e66252e32681070da",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10557,6 +10553,10 @@
         {
           "heading": "Story: Let anyone fund a project from its public page and see who funded",
           "line": 441
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts",
+          "line": 558
         }
       ],
       "rules": [
@@ -10791,6 +10791,44 @@
             "accountValues",
             "otherAccountValues"
           ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent",
+          "line": 564,
+          "definitions": [
+            "AllocationRecipient",
+            "AllocationFile",
+            "AllocationWallet",
+            "AllocationDisplay",
+            "AllocationRow",
+            "noAllocationRecipient",
+            "allocationRecipient",
+            "allocationReadFailed",
+            "allocationRow",
+            "lawAllocationRowIsTheViewersOwn",
+            "allocationUnavailable",
+            "lawFailedAllocationReadIsUnavailable",
+            "lawWalletPromptOnlyWhileAwaiting",
+            "allocationValues",
+            "viewerValues",
+            "allocationWalletsValues",
+            "instantValues"
+          ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it",
+          "line": 623,
+          "definitions": [
+            "timelyAllocationWallet",
+            "allocationDisplay",
+            "allocationPresentation",
+            "lawRecordedTransferIsSent",
+            "lawClosedBatchWithoutTransferIsUnclaimed",
+            "lawScheduledNeedsATimelyAuthorizedWallet",
+            "lawNoWalletIsUnclaimedFromTheDeadline",
+            "lawAllocationStatesAreDistinguishable",
+            "recipientValues"
+          ]
         }
       ],
       "imports": [
@@ -10847,6 +10885,14 @@
         {
           "target": "../settlement/vaultDeposits.md",
           "line": 519
+        },
+        {
+          "target": "../settlement/contributorAllocation.md",
+          "line": 576
+        },
+        {
+          "target": "../ui/status.md",
+          "line": 633
         }
       ]
     },
@@ -32446,7 +32492,7 @@
     },
     {
       "path": "spec/ui/controls.md",
-      "sha256": "b9f60434ddea13248cdea71cefb863496f8d81239988b2835947eeefff3cf06b",
+      "sha256": "ef17ec5b09473ee208a3a33d9367ee958b27a41ffa7003fada2b9051c596e35c",
       "module": "ui__controls",
       "stories": [
         {
@@ -32522,8 +32568,29 @@
           ]
         },
         {
+          "heading": "Story: Move through links, details and dialogs by keyboard / A link to another site opens in a new tab and sends that site no referrer",
+          "line": 91,
+          "definitions": [
+            "LinkTarget",
+            "opensNewTab",
+            "sendsReferrer",
+            "lawOtherSiteGetsNoReferrer"
+          ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / An exact value scrolls rather than wraps, and the keyboard reaches it to scroll",
+          "line": 106,
+          "definitions": [
+            "ValueKind",
+            "wrapsValue",
+            "takesFocus",
+            "lawExactValueScrollsByKeyboard",
+            "lawWrappedValueTakesNoFocus"
+          ]
+        },
+        {
           "heading": "Story: Move through links, details and dialogs by keyboard / A disclosure opens and closes from its trigger and never hides what a decision rests on",
-          "line": 88,
+          "line": 125,
           "definitions": [
             "Detail",
             "mayHide",
@@ -32534,7 +32601,7 @@
         },
         {
           "heading": "Story: Move through links, details and dialogs by keyboard / A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed",
-          "line": 104,
+          "line": 141,
           "definitions": [
             "DialogFocus",
             "DialogKey",
@@ -32549,7 +32616,7 @@
       "references": [
         {
           "target": "./confirmation.md",
-          "line": 110
+          "line": 147
         }
       ]
     },
@@ -32597,7 +32664,7 @@
     },
     {
       "path": "spec/ui/index.md",
-      "sha256": "c5b9d5172aed1f43a01c302756be2f67c4880eabe6efcd6e3e6efee983de696c",
+      "sha256": "e3cd0435cc266a593aedef5ba178b29af2cf501f333130d228cb424931e6ad6f",
       "module": "ui",
       "stories": [
         {
@@ -32622,20 +32689,19 @@
             "Motion",
             "Focus",
             "Shown",
-            "initial",
-            "show",
-            "prefer",
-            "reach",
             "takesTyping",
             "moves",
             "showsRing",
-            "sometimesStillWithRing",
-            "sometimesPointerRingInField"
+            "lawReducedMotionStandsStill",
+            "lawKeyboardFocusShowsRing",
+            "lawPointerRingOnlyWhereTyping",
+            "lawUnfocusedShowsNoRing",
+            "sValues"
           ]
         },
         {
           "heading": "Story: One look for every control / Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square",
-          "line": 79,
+          "line": 80,
           "definitions": [
             "ControlSize",
             "targetPx",
@@ -32644,7 +32710,7 @@
         },
         {
           "heading": "Story: One look for every control / Colors are tokens, except another party's mark",
-          "line": 94,
+          "line": 95,
           "definitions": []
         }
       ],

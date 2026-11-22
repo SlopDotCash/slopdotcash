@@ -52,25 +52,26 @@ and is focused by the keyboard or by the pointer. Under reduced motion no
 control transitions or animates. Keyboard focus shows the `ring` token and no
 outline of the browser's own; pointer focus shows it only in a field that
 takes typing, a text field or a select, which a typed letter chooses in, as
-the browser keeps it for the keys that follow. `controls.browser.test.tsx`
-shows each primitive in these states in Chromium and compares its computed
-style with `moves` and `showsRing`.
+the browser keeps it for the keys that follow. The browser, not
+`@repo/ui`, holds the motion preference and the focus, so these are laws over
+every shown control rather than a machine. `controls.browser.test.tsx` shows
+each primitive in every motion and focus in Chromium and compares its
+computed style with `moves` and `showsRing`.
 
 ```quint
 type Motion = FullMotion | ReducedMotion
 type Focus = Unfocused | PointerFocus | KeyboardFocus
 type Shown = { kind: ControlKind, motion: Motion, focus: Focus }
 
-pure val initial: Shown = { kind: Action, motion: FullMotion, focus: Unfocused }
-pure def show(s: Shown, kind: ControlKind): Shown = { kind: kind, motion: s.motion, focus: Unfocused }
-pure def prefer(s: Shown, motion: Motion): Shown = { ...s, motion: motion }
-pure def reach(s: Shown, focus: Focus): Shown = { ...s, focus: focus }
-
 pure def takesTyping(kind: ControlKind): bool = kind == Text or kind == LongText or kind == Choice
 pure def moves(s: Shown): bool = s.motion == FullMotion
 pure def showsRing(s: Shown): bool = s.focus == KeyboardFocus or (s.focus == PointerFocus and takesTyping(s.kind))
-pure def sometimesStillWithRing(s: Shown): bool = s.motion == ReducedMotion and s.focus == KeyboardFocus and s.kind == Toggle
-pure def sometimesPointerRingInField(s: Shown): bool = s.focus == PointerFocus and showsRing(s)
+pure def lawReducedMotionStandsStill(s: Shown): bool = s.motion == ReducedMotion implies not(moves(s))
+pure def lawKeyboardFocusShowsRing(s: Shown): bool = s.focus == KeyboardFocus implies showsRing(s)
+pure def lawPointerRingOnlyWhereTyping(s: Shown): bool = s.focus == PointerFocus implies (showsRing(s) iff takesTyping(s.kind))
+pure def lawUnfocusedShowsNoRing(s: Shown): bool = s.focus == Unfocused implies not(showsRing(s))
+pure val sValues = tuples(Set(Action, Text, Choice, Toggle, Paging), Set(FullMotion, ReducedMotion), Set(Unfocused, PointerFocus, KeyboardFocus))
+  .map(((kind, motion, focus)) => { kind: kind, motion: motion, focus: focus })
 ```
 
 A spinner, a skeleton and a progress bar of unknown length stand still under

@@ -848,9 +848,10 @@ choice;
 and each refusal once or twice (no signature at an admitted freeze time, a
 freeze time before the window opens, a freeze time after the clock, a later
 or invalid period). Each actor, network and expected version is bound
-with a wallet or the attester as destination, every actor and network to a
-wallet at version 0 so that either Config identity can bind both actors,
-and each refusal (expired,
+with a wallet or the attester as destination, and every actor and network
+to a wallet at version 0 (actor 2's only version-0 Solana record named the
+attester as destination, which the guard refuses when the attester signs,
+so actor 2 was never bound there at version 0), and each refusal (expired,
 zero claim, the vault as destination, no wallet signature) on both actors
 and networks; each obligation source to a wallet through a classic and a
 Token-2022 account, some to the attester, and each refusal (stale version,
