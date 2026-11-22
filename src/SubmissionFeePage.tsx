@@ -6,6 +6,7 @@ import { networkLabel } from "./lib/network-names";
 import { transactionUrl } from "./lib/payments/contracts";
 import { findHistoricalProjectByRepositoryId } from "./lib/projects.mjs";
 import {
+  SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_RECLAIM_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
@@ -27,6 +28,7 @@ import {
 } from "./lib/submission-fee-page";
 import { feePageSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
+import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { formatDate, Spinner } from "./Presentation";
 import "./submission-fee.css";
 
@@ -218,7 +220,10 @@ function Terms({ ways }: { ways: readonly FeeWay[] }) {
         </li>
         <li>
           It is kept if the pull request is closed without a merge and stays
-          closed for {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days: {kept}.
+          closed for {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days: {kept}. If
+          the pull request closes an issue labelled {WANTED_LABEL} before it was
+          opened, it goes back instead, unless a maintainer adds{" "}
+          {SUBMISSION_FEE_KEEP_LABEL} in that time.
         </li>
         <li>
           If nothing settles a deposit, the wallet that paid it can take it back

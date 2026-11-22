@@ -10,6 +10,7 @@ import { findProject } from "../../src/lib/projects.mjs";
 import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_TO,
   SUBMISSION_FEE_TOKENS,
   submissionDepositCounts,
@@ -52,6 +53,7 @@ import {
   feeUnpaid,
   feeWays,
   refreshSubmissionFee,
+  wantedAtOpen,
 } from "./submission-fee";
 
 const { privateKey } = generateKeyPairSync("rsa", {
@@ -184,6 +186,13 @@ function world(options: WorldOptions = {}) {
     state: "open" as "open" | "closed",
     merged: false,
     closedAt: null as string | null,
+    /**
+     * Label events of the issue the pull request closes, or null when it
+     * closes none. `graphqlDown` makes the linked-issue read fail.
+     */
+    wantedEvents: null as { type: string; at: string; label: string }[] | null,
+    graphqlDown: false,
+    repoLabels: [] as string[],
     draft: options.draft ?? false,
     head: "b".repeat(40),
     labels: [] as string[],
@@ -341,6 +350,50 @@ function world(options: WorldOptions = {}) {
         if (method === "PATCH")
           comment.body = ((await request.json()) as { body: string }).body;
         return Response.json(comment);
+      }
+      if (path === "/graphql" && method === "POST") {
+        if (github.graphqlDown) return new Response(null, { status: 502 });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                createdAt: options.openedAt ?? OPENED_AFTER,
+                closingIssuesReferences: {
+                  nodes:
+                    github.wantedEvents === null
+                      ? []
+                      : [
+                          {
+                            repository: { databaseId: repositoryId },
+                            timelineItems: {
+                              nodes: github.wantedEvents.map((event) => ({
+                                __typename: event.type,
+                                createdAt: event.at,
+                                label: { name: event.label },
+                              })),
+                            },
+                          },
+                        ],
+                },
+              },
+            },
+          },
+        });
+      }
+      const repoLabel = new RegExp(
+        `^/repos/${owner}/${repo}/labels(?:/(.+))?$`,
+        "u",
+      ).exec(path);
+      if (repoLabel && method === "GET")
+        return github.repoLabels.includes(
+          decodeURIComponent(repoLabel[1] ?? ""),
+        )
+          ? Response.json({ name: repoLabel[1] })
+          : new Response(null, { status: 404 });
+      if (repoLabel && method === "POST") {
+        const { name } = (await request.json()) as { name: string };
+        github.repoLabels.push(name);
+        return Response.json({ name }, { status: 201 });
       }
       if (path.endsWith("/issues/5/labels") && method === "POST") {
         if (github.failures.label > 0) {
@@ -751,6 +804,75 @@ test("closed: a paid fee is kept only after 7 days still closed", async () => {
     );
     expect(w.item()).toMatchObject({ outcome: "kept_due" });
     expect(w.feeComments()[0].body).toContain("**Fee kept.**");
+  } finally {
+    w.close();
+  }
+});
+
+test("closed for a wanted issue: refunded unless a maintainer adds the keep label", async () => {
+  for (const marked of [false, true]) {
+    const w = world();
+    try {
+      await w.review();
+      const paid = new Date("2026-11-12T00:00:00.000Z");
+      w.pay(paid.toISOString());
+      await w.check(paid);
+      w.github.wantedEvents = [
+        {
+          type: "LabeledEvent",
+          at: "2026-11-01T00:00:00Z",
+          label: "slop-wanted",
+        },
+      ];
+      const closed = new Date(paid.getTime() + 2 * DAY);
+      w.github.state = "closed";
+      w.github.closedAt = closed.toISOString();
+      await w.check(new Date(closed.getTime() + DAY));
+      // The label exists for the maintainer to pick.
+      expect(w.github.repoLabels).toEqual([SUBMISSION_FEE_KEEP_LABEL]);
+      if (marked) w.github.labels.push(SUBMISSION_FEE_KEEP_LABEL);
+      const due = new Date(closed.getTime() + 7 * DAY);
+      expect((await w.check(due)).outcome).toBe(
+        marked
+          ? "submission fee: kept_due: marked"
+          : "submission fee: refund_due: wanted",
+      );
+      expect(w.item()).toMatchObject({
+        outcome: marked ? "kept_due" : "refund_due",
+      });
+      expect(w.feeComments()[0].body).toContain(
+        marked ? "**Fee kept.**" : "**Refund due.**",
+      );
+    } finally {
+      w.close();
+    }
+  }
+});
+
+test("closed for a wanted issue: an unreadable link decides nothing", async () => {
+  const w = world();
+  try {
+    await w.review();
+    const paid = new Date("2026-11-12T00:00:00.000Z");
+    w.pay(paid.toISOString());
+    await w.check(paid);
+    w.github.wantedEvents = [
+      {
+        type: "LabeledEvent",
+        at: "2026-11-01T00:00:00Z",
+        label: "slop-wanted",
+      },
+    ];
+    w.github.graphqlDown = true;
+    w.github.state = "closed";
+    const closed = new Date(paid.getTime() + DAY);
+    w.github.closedAt = closed.toISOString();
+    await w.check(new Date(closed.getTime() + 8 * DAY));
+    expect(w.item()).toMatchObject({ outcome: null });
+    w.github.graphqlDown = false;
+    expect((await w.check(new Date(closed.getTime() + 9 * DAY))).outcome).toBe(
+      "submission fee: refund_due: wanted",
+    );
   } finally {
     w.close();
   }
@@ -1410,7 +1532,14 @@ test("the outcome rule", () => {
   const paidAt = "2026-11-12T00:00:00.000Z";
   const paid = Date.parse(paidAt);
   const at = (days: number) => new Date(paid + days * DAY);
-  const open = { paidAt, merged: false, closed: false, closedAt: null };
+  const open = {
+    paidAt,
+    merged: false,
+    closed: false,
+    closedAt: null,
+    wanted: false,
+    keepMarked: false,
+  };
   expect(feeOutcome({ ...open, merged: true }, at(0))).toEqual({
     outcome: "refund_due",
     why: "merged",
@@ -1455,6 +1584,81 @@ test("the outcome rule", () => {
   expect(
     feeOutcome({ ...open, closed: true, closedAt: null }, at(40)).outcome,
   ).toBeNull();
+  // Invited work: a closed pull request for a wanted issue goes back unless
+  // a maintainer marked it, and an unreadable link waits a day.
+  expect(feeOutcome({ ...closed, wanted: true }, at(10))).toEqual({
+    outcome: "refund_due",
+    why: "wanted",
+    nextCheckAt: null,
+  });
+  expect(
+    feeOutcome({ ...closed, wanted: true, keepMarked: true }, at(10)),
+  ).toEqual({ outcome: "kept_due", why: "marked", nextCheckAt: null });
+  expect(feeOutcome({ ...closed, wanted: true }, at(9.9)).outcome).toBeNull();
+  expect(feeOutcome({ ...closed, wanted: null }, at(10))).toEqual({
+    outcome: null,
+    why: null,
+    nextCheckAt: at(11).toISOString(),
+  });
+  // The keep label on ordinary work changes nothing.
+  expect(feeOutcome({ ...closed, keepMarked: true }, at(10)).why).toBe(
+    "closed",
+  );
+});
+
+test("the wanted label counts only if it was on the issue when the pull request opened", () => {
+  const answer = (events: [string, string][]) => ({
+    repository: {
+      pullRequest: {
+        createdAt: "2026-11-20T00:00:00Z",
+        closingIssuesReferences: {
+          nodes: [
+            {
+              repository: { databaseId: 9 },
+              timelineItems: {
+                nodes: events.map(([type, at]) => ({
+                  __typename: type,
+                  createdAt: at,
+                  label: { name: "slop-wanted" },
+                })),
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  expect(
+    wantedAtOpen(answer([["LabeledEvent", "2026-11-19T00:00:00Z"]]), 9),
+  ).toBe(true);
+  // Labelled after the pull request was opened: not invited.
+  expect(
+    wantedAtOpen(answer([["LabeledEvent", "2026-11-21T00:00:00Z"]]), 9),
+  ).toBe(false);
+  // Removed before it was opened.
+  expect(
+    wantedAtOpen(
+      answer([
+        ["LabeledEvent", "2026-11-18T00:00:00Z"],
+        ["UnlabeledEvent", "2026-11-19T00:00:00Z"],
+      ]),
+      9,
+    ),
+  ).toBe(false);
+  // Removed after it was opened still counts.
+  expect(
+    wantedAtOpen(
+      answer([
+        ["LabeledEvent", "2026-11-18T00:00:00Z"],
+        ["UnlabeledEvent", "2026-11-25T00:00:00Z"],
+      ]),
+      9,
+    ),
+  ).toBe(true);
+  // An issue in another repository does not count.
+  expect(
+    wantedAtOpen(answer([["LabeledEvent", "2026-11-19T00:00:00Z"]]), 8),
+  ).toBe(false);
 });
 
 test("through the Worker: a deposit releases the review, and a merge event sets the refund", async () => {
