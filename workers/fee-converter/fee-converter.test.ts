@@ -194,8 +194,9 @@ test("provider diagnostics distinguish response parsing from authentication with
   });
   try {
     let status = 403;
+    let payload = sensitive;
     const refusal = (async () =>
-      new Response(sensitive, { status })) as unknown as typeof fetch;
+      new Response(payload, { status })) as unknown as typeof fetch;
     const solana = createSolanaClient({
       config: h.network,
       limits: h.deps.limits,
@@ -261,6 +262,28 @@ test("provider diagnostics distinguish response parsing from authentication with
       stage: "response-json",
       method: "routes",
       httpStatus: 403,
+    });
+    for (const [httpStatus, responseBody] of [
+      [401, JSON.stringify({ code: 6, message: sensitive })],
+      [403, JSON.stringify({ code: 8, message: sensitive })],
+      [403, "null"],
+    ] as const) {
+      status = httpStatus;
+      payload = responseBody;
+      const fault = await evm.quote(TOKEN, 1n).catch((error) => error);
+      expect(fault).toBeInstanceOf(Error);
+      expect(fault.message).toBe(`KyberSwap returned HTTP ${httpStatus}`);
+      expect(providerFailure(fault)).toEqual({
+        provider: "kyberswap",
+        stage: "response-json",
+        method: "routes",
+        httpStatus,
+      });
+    }
+    status = 404;
+    payload = JSON.stringify({ code: 9, message: "fixture no pool" });
+    expect(await evm.quote(TOKEN, 1n)).toEqual({
+      noRoute: "KyberSwap routes: fixture no pool",
     });
     expect(
       providerFailure(

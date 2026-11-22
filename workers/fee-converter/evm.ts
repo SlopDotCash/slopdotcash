@@ -368,6 +368,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     : null;
 
   async function kyber<T>(path: string, init?: RequestInit): Promise<T> {
+    const method = path.split("?")[0];
     const response = await doFetch(
       `${KYBER_API}/${definition.kyberChain}/api/v1/${path}`,
       {
@@ -382,28 +383,35 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     const text = await response.text();
     if (text.length > 2_000_000)
       throw new Error("KyberSwap response too large");
+    const failure = {
+      provider: "kyberswap",
+      stage: "response-json",
+      method,
+      httpStatus: response.status,
+    } as const;
     let body: { code?: number; message?: string; data?: unknown };
     try {
-      body = JSON.parse(text);
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new TypeError("Invalid KyberSwap response object");
+      body = parsed;
     } catch {
       throw noteProviderFailure(
         new Error(`KyberSwap returned HTTP ${response.status}`),
-        {
-          provider: "kyberswap",
-          stage: "response-json",
-          method: path.split("?")[0],
-          httpStatus: response.status,
-        },
+        failure,
       );
     }
     if (!response.ok || body.code !== 0 || body.data === undefined) {
+      const authentication = response.status === 401 || response.status === 403;
       const error = new Error(
-        `KyberSwap ${path.split("?")[0]}: ${String(body.message ?? response.status).slice(0, 200)}`,
+        authentication
+          ? `KyberSwap returned HTTP ${response.status}`
+          : `KyberSwap ${method}: ${String(body.message ?? response.status).slice(0, 200)}`,
       );
       (error as Error & { status?: number; code?: number }).status =
         response.status;
       (error as Error & { code?: number }).code = body.code;
-      throw error;
+      throw authentication ? noteProviderFailure(error, failure) : error;
     }
     return body.data as T;
   }
@@ -972,8 +980,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       route = await kyberRoute(token, amount, target);
     } catch (error) {
       const status = (error as { status?: number }).status;
-      // 4xx: no pool or an unsupported token. Anything else is a fault.
-      if (status !== undefined && status >= 400 && status < 500)
+      // Authentication is a provider fault, not evidence of a missing pool.
+      if (
+        status !== undefined &&
+        status >= 400 &&
+        status < 500 &&
+        status !== 401 &&
+        status !== 403
+      )
         return { noRoute: (error as Error).message };
       throw error;
     }
