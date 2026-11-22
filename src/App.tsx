@@ -150,6 +150,7 @@ const SecurityProgramPage = lazy(() =>
 );
 const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
 const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
+const RequestedReposPage = lazy(() => import("./RequestedRepos"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -207,7 +208,8 @@ type PageRouteKind =
   | "admin"
   | "new-project"
   | "vetting-evidence"
-  | "security-cases";
+  | "security-cases"
+  | "requested";
 type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
@@ -269,6 +271,8 @@ const ROUTES: Record<
   fee: { snapshot: false, registry: "cached" },
   // The record names no project, so the page needs no registry.
   "report-deposit": { snapshot: false, registry: "independent" },
+  // Repositories not on Slop: the page reads no project registry.
+  requested: { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -283,6 +287,7 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["how-it-works", "how-it-works"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
+  ["requested", "requested"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
@@ -504,6 +509,7 @@ function Footer({ marketing }: { marketing: boolean }) {
             LinkedIn
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
+          <Link href="/requested">Requested repos</Link>
         </nav>
       </div>
     </footer>
@@ -1954,6 +1960,7 @@ function AppContent({ route }: { route: Route }) {
         number={route.number}
       />
     );
+  else if (route.kind === "requested") content = <RequestedReposPage />;
   else if (route.kind === "report-deposit")
     content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
   else content = <NotFound />;
