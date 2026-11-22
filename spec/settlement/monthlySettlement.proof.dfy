@@ -667,7 +667,7 @@ lemma openMonth_ensures(s: MonthlySettlement, period: int)
   if inv(s) && canOpenMonth(s, period) {
     var after := openMonth(s, period);
     MsChildInv(s);
-    settlement__monthly_openMonth_ensures(s.month, period);
+    settlement__monthly_openMonth_ensures(s.month, s.month.project, period);
     MsOpenMonth(s, period);
     MsChildInvBack(s, after);
     MsOneAward(after);
@@ -920,7 +920,7 @@ lemma propose_ensures(s: MonthlySettlement, snapshot: settlement__payoutExclusio
   if inv(s) && canPropose(s, snapshot, exclusions, revision) {
     var after := propose(s, snapshot, exclusions, revision);
     MsChildInv(s);
-    settlement__monthly_propose_ensures(s.month, snapshot, exclusions, revision);
+    settlement__monthly_propose_ensures(s.month, snapshot, exclusions, revision, 0, settlement__monthly_noShareRecord);
     MsFrame(s, after);
     MsChildInvBack(s, after);
     MsOneAward(after);

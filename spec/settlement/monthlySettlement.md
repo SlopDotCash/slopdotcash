@@ -623,10 +623,10 @@ is also sampled as signed after one such award. Finally the events every
 funded month needs once (deploying, opening, observing the revision,
 proposing, freezing, creating the obligations, the root, its leaves, the
 cursor and the release) were drawn no more often than events that can
-repeat at every step, so each of them is now drawn about ten times as often
+repeat at every step, so each of them was then drawn about ten times as often
 as a repeatable event; events that only a found award enables (paying it and
 observing it reserved, paid or conflicting) and the underfunded notice,
-which only an uncovered fresh head enables, are drawn about six times as
+which only an uncovered fresh head enables, about six times as
 often, since they waste no step while disabled. The release is drawn a
 little more often than a leaf, since it applies only to an untouched month.
 The owner may also turn automatic payment on again, since the sampled
@@ -637,7 +637,7 @@ event at every step, so weights summing to 205 had already made a run of
 2500 traces outlast its hour, and the shares above, at about ten and six
 times a repeatable event, summed to 417: the search for a witness of
 `canObserveExistingAward` was stopped after an hour. The weights now keep
-the same order at a sixth of the size, summing to 78, so a once-only event
+the same order at about a sixth of that size, summing to 78, so a once-only event
 is drawn five times as often as a repeatable one and a found-award event
 twice. The month observed an existing award only after a hand award of this
 month's key with its obligation's own actor and gross, one in twelve of the
