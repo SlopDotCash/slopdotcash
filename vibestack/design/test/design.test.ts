@@ -223,7 +223,10 @@ test("a build that changes nothing rewrites nothing, and the ESLint config flags
     [1, literal], [3, restricted], [4, restricted], [5, literal], [6, literal],
     ...Array.from({ length: 10 }, (_, i) => [8 + i, restricted]), [18, literal], [19, literal],
   ])
-  expect(await lint("good.tsx")).toEqual([])
+  const good = readFileSync(here("fixtures/good.tsx"), "utf8")
+  const [layer = "50"] = Object.keys(tokens.z)
+  const withProjectLayer = await eslint.lintText(good.replace("z-50", `z-${layer}`), { filePath: "good.tsx" })
+  expect(withProjectLayer[0]!.messages).toEqual([])
   expect(await lint("good.tsx", empty)).toEqual([])
   expect((await lint("scales.tsx", withScales)).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId]))
     .toEqual(Array.from({ length: 12 }, (_, i) => [3 + i, restricted]))
