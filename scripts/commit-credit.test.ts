@@ -210,7 +210,9 @@ test("distinct accepted identity needs an earlier complete census in the same re
     { ...earlier, url: "https://github.com/eliza-research/thenetwork/pull/1" },
     { ...earlier, mergedAt: "2026-11-11T00:00:00.000Z" },
   ]) {
-    expect(commitCreditOwners([unattested, later], true).get(key)).toBe(later.id);
+    expect(commitCreditOwners([unattested, later], true).get(key)).toBe(
+      later.id,
+    );
   }
 });
 
