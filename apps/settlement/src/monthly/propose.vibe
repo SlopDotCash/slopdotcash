@@ -1,11 +1,12 @@
-// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
+// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
 import { nowSeconds } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
 import { ClosedMonth, type PointWeight } from "@repo/ports/points"
 import type { WorkRow, WorkSnapshot } from "../../gen/settlement__payoutExclusions.ts"
-import { type Event, type Monthly, apply, canCloseProposalWindow, closeProposalWindow, projectMayPropose, proposalWindowOpen } from "../../gen/settlement__monthly.effect.vibe"
+import { type Event, type Monthly, apply, canCloseProposalWindow, closeProposalWindow, noShareRecord, projectMayPropose, proposalWindowOpen } from "../../gen/settlement__monthly.effect.vibe"
 import { fromAmount } from "../kernels/amounts.ts"
 import { formatPeriod } from "../kernels/calendar.ts"
+import { type ShareSplit, countedRepositoriesOf, shareBasisPointsOf, splitMonth } from "./maintainerShare.vibe"
 import { type MonthKey, MonthlyFacts, amountOf, manifestOf, proposalWrites, readRows, reviewBudgetActive, stateOf, unproposed } from "./store.vibe"
 
 export type Skip = "NotEligible" | "Unfunded" | "WindowPassed" | "WindowNotOpen" | "ReviewBudget"
@@ -18,6 +19,7 @@ export type Proposed =
   | { readonly kind: "Incomplete"; readonly projectId: string }
   | { readonly kind: "Skipped"; readonly projectId: string; readonly reason: Skip }
   | { readonly kind: "Failed"; readonly projectId: string; readonly reason: Failure }
+  | { readonly kind: "Unread"; readonly projectId: string; readonly reason: string }
 
 function skipped(projectId: string, reason: Skip): Proposed {
   return { kind: "Skipped", projectId, reason }
@@ -62,15 +64,25 @@ export effect function proposeProject(key: MonthKey) {
     workRows.push(row)
     logins.set(row.actor, weight.login)
   }
+  const revision = opened.currentRevision
+  const basisPoints = shareBasisPointsOf(manifest, key.period)
+  let share: ShareSplit | undefined = undefined
+  if (basisPoints > 0) {
+    if (!projectMayPropose(opened.eligibility, revision)) return skipped(projectId, "NotEligible")
+    if (fromAmount(revision.monthlyAmount) === 0n) return skipped(projectId, "Unfunded")
+    const split = splitMonth({ projectId, period: key.period, basisPoints, amount: revision.monthlyAmount, exclusions: revision.exclusions, repositories: countedRepositoriesOf(manifest, key.period) }) catch (error) => error.reason
+    if (typeof split === "string") return { kind: "Unread", projectId, reason: split } satisfies Proposed
+    share = split
+    for (const row of split.rows) if (!logins.has(row.actor)) logins.set(row.actor, row.login)
+  }
   const snapshot: WorkSnapshot = { project: projectId, period: key.period, digest: ledger.sha256, coverage: "CompleteCoverage", rows: workRows }
-  const event: Event = { type: "propose", snapshot, exclusions: opened.currentRevision.exclusions, revision: opened.currentRevision }
+  const event: Event = { type: "propose", snapshot, exclusions: revision.exclusions, revision, basisPoints: share?.basisPoints ?? 0, record: share?.record ?? noShareRecord }
   const next = apply(opened, event) catch () => undefined
   if (next === undefined) {
-    if (!projectMayPropose(opened.eligibility, opened.currentRevision)) return skipped(projectId, "NotEligible")
-    return fromAmount(opened.currentRevision.monthlyAmount) === 0n ? skipped(projectId, "Unfunded") : failed(projectId, "Refused")
+    if (!projectMayPropose(opened.eligibility, revision)) return skipped(projectId, "NotEligible")
+    return fromAmount(revision.monthlyAmount) === 0n ? skipped(projectId, "Unfunded") : failed(projectId, "Refused")
   }
-  const db = try D1
-  for (const statement of try proposalWrites(key, next, current, ledger.sha256, logins)) try db.run(statement)
+  try (try D1).batch(try proposalWrites(key, next, current, ledger.sha256, logins, share))
   const stored = try readRows(key)
   if (stored.base === undefined || stored.base.source_snapshot_sha256 !== ledger.sha256 || stored.proposed.length !== stored.base.recipient_count) return { kind: "Incomplete", projectId } satisfies Proposed
   return { kind: "Proposed", projectId, recipients: next.proposedShares.length, snapshotSha256: ledger.sha256 } satisfies Proposed

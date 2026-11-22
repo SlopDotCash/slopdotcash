@@ -72,7 +72,7 @@ export const managing: OwnerMonthly = {
   lifetime: 1,
   now: secondsOf("2026-12-02T12:00:00.000Z"),
   loaded: true,
-  month: { sequence: 3, automatic: true, cutoffAt: secondsOf(cutoffAt), latestCutAt: 0, frozen: false },
+  month: { sequence: 3, automatic: true, cutoffAt: secondsOf(cutoffAt), latestCutAt: 0, frozen: false, fixed: false },
 };
 
 export const cutsClosed: OwnerMonthly = { ...managing, now: secondsOf("2026-12-03T06:00:00.000Z") };

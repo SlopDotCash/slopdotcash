@@ -84,7 +84,7 @@ function cutoffOf(view: MonthlyOwnerView): number {
 }
 
 export function monthOf(view: MonthlyOwnerView): MonthView {
-  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: cutoffOf(view), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null }
+  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: cutoffOf(view), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null, fixed: view.proposal?.earlyCloseAt !== undefined }
 }
 
 export function saveResultOf(failure: CallFailure): SaveResult {

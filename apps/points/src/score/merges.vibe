@@ -485,8 +485,9 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     creditActors.set(pull.id, outcomeActors.get(pull.id) ?? new Set())
     if (attributionHeld.has(pull.id) || held.some((entry) => entry.sourceId === pull.id)) continue
     const decision = joint.get(pull.id)
-    const jointWithheld = ratification === null && decision !== undefined && !decision.spans
-    if (jointWithheld && !withheldMember(membership(pull.id))) continue
+    const jointMember = ratification === null && decision !== undefined
+    const byUnit = jointMember && decision !== undefined && !decision.spans
+    if (byUnit && !withheldMember(membership(pull.id))) continue
     const observations = observedCommits.get(pull.id) ?? []
     const found = recipientsOf(observations, eligibleAuthor(pull.author, actors))
     if (found === "synchronization-only") {
@@ -497,8 +498,8 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     if (assessment !== null && ratification === null && assessment.head !== pull.headRefOid) throw new FactsRefused({ reason: "Current value decision does not match the collected accepted outcome", sourceId: pull.id })
     const outcome = try scoredSource({ key: pull.id, unit: index + 1, project: pull.project, head: pull.headRefOid, acceptedAt: pull.mergedAt, assessment, ratification }, actors)
     if (outcome.assessed) assessed.add(pull.id)
-    const scored = jointWithheld && canWithholdJoint(outcome.scored, membership(pull.id)) ? try (try Sources).send(pull.id, { type: "withholdJoint", membership: membership(pull.id) }) : outcome.scored
-    if (jointWithheld && !scored.jointWithheld) continue
+    const scored = jointMember && canWithholdJoint(outcome.scored, membership(pull.id)) ? try (try Sources).send(pull.id, { type: "withholdJoint", membership: membership(pull.id) }) : outcome.scored
+    if (byUnit && !scored.jointWithheld) continue
     if (valueAssessed(scored) && assessment !== null && assessment.tier !== "none" && (pull.commits ?? []).some((commit) => {
       const owner = owners.get(commitKey(pull, commit.oid))
       return owner !== undefined && owner.id !== pull.id

@@ -17,9 +17,11 @@ import { createRoot } from "react-dom/client";
 import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, pad, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { editorOpen } from "../../gen/frontend__ownerMonthly.ts";
 import type { PoolFacts } from "../../gen/frontend__projections.ts";
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { type FundingVault, unreadLocks } from "../../src/kernels/poolFunding.ts";
+import { monthBounds } from "../../src/screens/funding/awards/month.ts";
 import { type LockConnection, connectCard, lockDesk, lockMachine, readCard, releaseCard, reviewCard, sendCard, sendsDeposit, watchCard } from "../../src/screens/funding/vault/monthLock.vibe";
 import { useFollowed } from "../../src/screens/funding/vault/VaultActions.tsx";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
@@ -28,6 +30,7 @@ import { connectSolana } from "../../src/wallets/core/solana.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
+import { ownerMonthlyPage } from "../../src/wallets/owner/ownerMonthly.vibe";
 import { type Answer, type OwnerVaultPage, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
 import { provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe";
 
@@ -743,5 +746,57 @@ describe('Check registration and transfers automatically without retiring the ow
       return { phase: stopped.creation.phase, stopped: stopped.creation.stopped, refusals: stopped.creation.refusals, notice: stopped.notice, kept: sessionStorage.getItem(keys.creation) !== null };
     }));
     expect({ ...result, asks }).toEqual({ phase: "Sent", stopped: true, refusals: 3, notice: "CheckFailed", kept: true, asks: 3 });
+  });
+});
+
+describe('Close ASI\'s November month early from its owner awards (spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change")', () => {
+  it("after the cutoff November is the closeout project's last reachable month and other projects stop at October, its fixed allocations are never edited or saved, and Finalize sends the sequence it read and freezes the month", async () => {
+    const monthPath = "/api/v1/payments/projects/asi/monthly/2026-11";
+    const allocation = { githubUserId: "1", login: "fixture-contributor", grossBase: "150000000", proposedGrossBase: "150000000", sourceDigest: "c".repeat(64) };
+    const view = {
+      projectId: "asi",
+      period: "2026-11",
+      manifestSha256: "a".repeat(64),
+      automatic: false,
+      canManage: true,
+      cutoffAt: "2026-12-04T00:00:00.000Z",
+      deployment: null,
+      asset: { network: "robinhood-mainnet", assetAddress: `0x${"1".repeat(40)}`, assetDecimals: 6, symbol: "USDG" },
+      proposal: { earlyCloseAt: "2026-11-19T00:00:00.000Z", capBase: "150000000", allocationSequence: 0, allocations: [allocation], latestCutAt: null },
+      run: null,
+    };
+    const run = { trigger: "owner", frozenAt: "2026-11-19T12:00:00.000Z", snapshotSha256: "d".repeat(64), totalGrossBase: "150000000", network: "robinhood-mainnet", vault: `0x${"2".repeat(40)}`, funded: true, awards: [{ githubUserId: "1", login: "fixture-contributor", grossBase: "150000000", feeBase: "1500000", netBase: "148500000", state: "awaiting-reservation" }] };
+    const asked: Array<readonly [string, string, unknown]> = [];
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), location.origin).pathname;
+      const method = init?.method ?? "GET";
+      const body = init?.body;
+      asked.push([method, path, body === undefined || body === null ? null : JSON.parse(body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body))]);
+      const answer = path === `${monthPath}/finalize` ? { ...view, run } : view;
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const runtime = ManagedRuntime.make(Layer.mergeAll(webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch)));
+    cleanups.push(() => void runtime.dispose());
+    const viewedAt = Date.parse("2026-11-22T00:00:00.000Z");
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      const page = yield* ownerMonthlyPage(sessionSlots(), { commitment: "slop:award-commitment:v2:asi:2026-11", setting: "slop:vault-monthly:v1:robinhood-mainnet:asi", release: "slop:monthly-release:v1:asi:2026-11" }, "asi", "2026-11");
+      yield* page.follow(actor, "123", true);
+      const read = yield* page.readMonth();
+      const edit = yield* tagOf(page.editDraft(false, ""));
+      const save = yield* tagOf(page.save("1", "100000000", ""));
+      const done = yield* page.finalize();
+      return { fixed: read.state.month.fixed, editor: editorOpen(read.state), edit, save, frozen: (yield* page.machine.get()).month.frozen, final: "view" in done && done.view !== undefined ? done.view.run?.awards.map((award) => award.netBase) : undefined };
+    }));
+    expect({ ...result, closeout: monthBounds("asi", [], viewedAt), other: monthBounds("slop", [], viewedAt).last, asked }).toEqual({
+      fixed: true,
+      editor: false,
+      edit: "MonthlyRefused",
+      save: "MonthlyRefused",
+      frozen: true,
+      final: ["148500000"],
+      closeout: { first: "2026-11", last: "2026-11", start: "2026-11" },
+      other: "2026-10",
+      asked: [["GET", monthPath, null], ["POST", `${monthPath}/finalize`, { expectedSequence: 0 }]],
+    });
   });
 });

@@ -1,7 +1,7 @@
 // spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "A production fee-converter release keeps the RPC rotation of every active version"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"
 import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
 import { gitBytes } from "@repo/platform/git"
-import { type Environment, type FeeVersion, type FeeVersions, type ListedDeployment, type Service, canBeginPublication, canFailMovedHead, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseInheritance, canRefuseRewrite, canSupersede, headAhead, inheritsRotation, legacyAnchor, serviceAt } from "../../../gen/operations__release.effect.vibe"
+import { type Environment, type FeeVersion, type FeeVersions, type ListedDeployment, type Service, canBeginPublication, canFailMovedHead, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseInheritance, canRefuseRewrite, canSupersede, headAhead, inheritsRotation, legacyAnchor, reviewedSubmissionFee, serviceAt } from "../../../gen/operations__release.effect.vibe"
 import { type ReleaseWrite, mayWrite } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { observeLock } from "../../publicationLock/group.vibe"
 import { thisRun } from "../../publicationLock/lock.vibe"
@@ -13,7 +13,7 @@ import { githubDigest, registryDigest } from "./collect.vibe"
 import { type RunFacts, environmentOf } from "./facts.vibe"
 import { type Heads, branchHeads, isAncestor } from "./heads.vibe"
 import { stagingHistory } from "./history.vibe"
-import { type FeeVersionRead, type FeeVersionsRead, Publisher, type Target } from "./publisher.vibe"
+import { type FeeVersionRead, type FeeVersionsRead, Publisher, type SubmissionFeeReview, type Target } from "./publisher.vibe"
 import { type GateReceipts, readReceipts } from "./receipts.vibe"
 import { type Run, startRun } from "./run.vibe"
 
@@ -170,17 +170,19 @@ effect function publishServices(run: Run, heads: Heads, target: Target, root: st
     const inherited = service === "FeeConverter" && run.environment === "Production"
     const settings = service === "FeeConverter" ? (publisher.feeSettings(target) catch () => undefined) : undefined
     const feeConfig: WorkerConfig = settings === undefined ? inertFee : { ...settings, source: state.source }
+    const unread = (message: string) => ({ config: { ...reviewedSubmissionFee, mode: "FeeUnknown" }, refusal: `${service} publication failed: ${message}` }) satisfies SubmissionFeeReview
+    const submissionFee: SubmissionFeeReview = service === "SubmissionFee" ? (publisher.submissionFee(target) catch (error) => unread(error.message)) : { config: reviewedSubmissionFee, refusal: undefined }
     const before = try versionsAt(run, inherited, "PartiallyPublished", service)
-    if (!canPublishService(state, service, feeConfig, state.source, before)) {
+    if (!canPublishService(state, service, feeConfig, state.source, before, submissionFee.config)) {
       try run.send({ type: "failService", service })
-      return try stop(run, "PartiallyPublished", inherited && !inheritsRotation(before) ? inheritanceRefusal(before) : `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
+      return try stop(run, "PartiallyPublished", inherited && !inheritsRotation(before) ? inheritanceRefusal(before) : submissionFee.refusal ?? `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
     }
     const tag = publisher.publish(service, target) catch effect (error) => {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} publication failed: ${error.message}`, "abandon")
     }
     const versions = try versionsAt(run, inherited, "PartiallyPublished", service)
-    const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0, versions }) catch () => undefined
+    const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0, versions, submissionFeeConfig: submissionFee.config }) catch () => undefined
     if (accepted === undefined) {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} does not serve the tested source ${target.sourceSha} under its reviewed configuration`, "abandon")

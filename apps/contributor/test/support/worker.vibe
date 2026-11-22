@@ -3,7 +3,7 @@ import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { handle } from "@repo/platform/http"
+import { handle, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { area, pages } from "@repo/platform/worker"
@@ -13,7 +13,7 @@ import { IntakeHealthLive } from "@repo/operations/live"
 import { Restrictions } from "@repo/ports/backend"
 import { RunEvidence } from "@repo/ports/contributor"
 import { EnforcementRows } from "@repo/ports/security"
-import { contributor, siteAssets, traceObjects, traceServices } from "../../src/live.vibe"
+import { contributor, githubReadToken, siteAssets, traceObjects, traceServices } from "../../src/live.vibe"
 import { planRoutes, plannedClosure, plannedIntake, plannedSecurity } from "./plans.vibe"
 
 interface Env {
@@ -70,6 +70,8 @@ export default pages({
   services: (env: Env) => Layer.mergeAll(
     d1(env.SLOP_DB),
     webCrypto,
+    outbound,
+    githubReadToken(undefined),
     deploymentTier(env.SLOP_ENVIRONMENT),
     siteAssets(env.ASSETS),
     Layer.provide(traceServices(env), Layer.merge(rolesFrom(env), webCrypto)),

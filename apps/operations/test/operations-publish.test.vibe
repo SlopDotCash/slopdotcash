@@ -8,10 +8,13 @@ import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { Response } from "miniflare"
 import { createPagesManifest } from "../src/release/manifest/pages.vibe"
+import { ConfigRefused, pagesOf, readReviewed } from "../src/release/publish/config.vibe"
+import { type Publication, configsFor } from "../src/release/publish/order.vibe"
 import { publisher } from "../src/release/publish/publisher.vibe"
+import { publishSubmissionFee } from "../src/release/publish/submissionFee.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
 import { identityApp } from "../src/release/verify/probes.vibe"
-import { ToolFailed, pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
+import { ToolFailed, cloudflare, pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
 
 const accountId = "0123456789abcdef0123456789abcdef"
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
@@ -55,6 +58,29 @@ function notifyConfig(name: string, environment: string, databaseId: string) {
     expectedSecrets: ["NOTIFY_UNSUBSCRIBE_KEY"],
   }
 }
+
+const feeWorker = "slop-submission-fee"
+const feeCrons = ["*/5 * * * *", "7 * * * *"]
+const feeVars = { SLOP_ENVIRONMENT: "production", SUBMISSION_FEE_MODE: "dry_run", SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "200000000000000", SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "2000000000000000" }
+
+function submissionFeeConfig(vars: Readonly<Record<string, string>>, changes: Readonly<Record<string, unknown>> = {}) {
+  return {
+    name: feeWorker,
+    main: "../dist/submissionFee.js",
+    no_bundle: true,
+    compatibility_date: "2026-07-30",
+    workers_dev: false,
+    preview_urls: false,
+    triggers: { crons: feeCrons },
+    d1_databases: [{ binding: "SUBMISSION_FEE_DB", database_name: "slop-private", database_id: productionDatabase, migrations_dir: "../../../migrations" }],
+    vars: { ...feeVars, ...vars },
+    expectedSecrets: [],
+    optionalSecrets: ["SUBMISSION_FEE_RESOLVER_KEY", "RPC_URL_SUBMISSION_FEE_BASE", "RPC_URL_SUBMISSION_FEE_ROBINHOOD"],
+    ...changes,
+  }
+}
+
+const privateSite = { ...siteConfig, d1_databases: [{ binding: "SLOP_DB", database_name: "slop-private", database_id: productionDatabase }] }
 
 interface Site {
   readonly files: ReadonlyMap<string, Uint8Array>
@@ -135,6 +161,7 @@ function retryClock(lookupFiber: number) {
 function described(error: unknown) {
   if (error instanceof PublicationFailed) return `${error.stage}: ${error.message}`
   if (error instanceof ToolFailed) return `${error.step}: ${error.message}`
+  if (error instanceof ConfigRefused) return error.message
   return error instanceof Error ? error.name : String(error)
 }
 
@@ -156,8 +183,8 @@ effect function routed<A, E, R>(program: A!E!R, fetch: typeof globalThis.fetch) 
   }
 }
 
-effect function secret(served: Served, method: "PUT" | "DELETE", name: string) {
-  const base = `${served.url}/client/v4/accounts/${accountId}/workers/scripts/slop-notify/secrets`
+effect function secret(served: Served, method: "PUT" | "DELETE", name: string, script = "slop-notify") {
+  const base = `${served.url}/client/v4/accounts/${accountId}/workers/scripts/${script}/secrets`
   const authorized = { authorization: "Bearer journey" }
   const request = method === "PUT"
     ? HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.put(base, { headers: authorized }), { name, text: "stray", type: "secret_text" })
@@ -167,7 +194,7 @@ effect function secret(served: Served, method: "PUT" | "DELETE", name: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('Publish Workers then the site and verify served bytes (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source"; spec/operations/identityApp.md, "Story: Contributors can still find the unchanged Slop Identity App"; spec/operations/identityApp.md, "The public App lookup is retried on refusal and its contract fields must match exactly")', () => scoped(effect {
+  it.effect('Publish Workers then the site and verify served bytes (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source"; spec/operations/identityApp.md, "Story: Contributors can still find the unchanged Slop Identity App"; spec/operations/identityApp.md, "The public App lookup is retried on refusal and its contract fields must match exactly")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const api = cloudflareFake({ accountId })
@@ -186,6 +213,13 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try written(files.join(bundle, "apps/operations/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
     const disclosures = files.join(directory, "disclosures.jsonl")
     try written(files.join(bundle, "apps/settlement/dist/programs/main.js"), `require("node:fs").appendFileSync(${JSON.stringify(disclosures)}, JSON.stringify({ args: process.argv.slice(2), account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN !== undefined }) + "\\n")\n`)
+    const feeRoot = files.join(directory, "fee-checkout")
+    const feeWorkspace = files.join(directory, "fee-workspace")
+    try fs.makeDirectory(feeWorkspace, { recursive: true })
+    try fs.makeDirectory(feeRoot, { recursive: true })
+    try fs.symlink(migrationsDir, files.join(feeRoot, "migrations"))
+    try written(files.join(feeRoot, "apps/app/wrangler/pages.production.jsonc"), `${JSON.stringify(privateSite, null, 2)}\n`)
+    try written(files.join(bundle, "apps/fees/dist/submissionFee.js"), "export default { scheduled: () => undefined }\n")
     try written(files.join(bundle, "apps/app/dist/_worker.js"), "export default { fetch: (request, env) => env.ASSETS.fetch(request) }\n")
     try written(files.join(site, "index.html"), "<!doctype html><title>slop.cash</title>\n")
     try written(files.join(site, "skill-manifest.json"), "{}\n")
@@ -206,7 +240,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       return edges(request)
     }
     const searchPath = try Config.withDefault(Config.String("PATH"), "")
-    const config = ConfigProvider.layer(ConfigProvider.fromUnknown({
+    const releaseEnv = {
       CLOUDFLARE_ACCOUNT_ID: accountId,
       CLOUDFLARE_API_TOKEN: "journey-token",
       CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
@@ -216,7 +250,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       SLOPBOT_RELEASE: "",
       SLOP_VETTING_RETENTION_RELEASE: "off",
       SLOP_VETTING_SIGNING_JWK: scannerJwk,
-    }))
+    }
+    const config = ConfigProvider.layer(ConfigProvider.fromUnknown(releaseEnv))
     const target = { environment: "Production", sourceSha, bundle, manifestSha256: try sha256Hex(pagesManifest) } satisfies Target
 
     const journey = effect {
@@ -260,6 +295,42 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         const verdict = provideService(identityApp(clientId), Clock.Clock, paced.clock) catch (error) => described(error)
         return { verdict, waits: [...paced.waits], asked: [...identity.asked] }
       }
+      effect function feeRelease(vars: Readonly<Record<string, string>>, changes: Readonly<Record<string, unknown>> = {}, rpcUrls?: string) {
+        try written(files.join(feeRoot, "apps/fees/wrangler/submissionFee.production.jsonc"), `${JSON.stringify(submissionFeeConfig(vars, changes), null, 2)}\n`)
+        const reviewed = try readReviewed(feeRoot)
+        const pages = pagesOf(reviewed, "Production")
+        const found = configsFor(reviewed, "SubmissionFee", "Production")
+        if (typeof found === "string") return { outcome: found, uploads: 0 }
+        if (typeof pages === "string") return { outcome: pages, uploads: 0 }
+        const [worker] = found
+        if (worker === undefined) return { outcome: "unreviewed", uploads: 0 }
+        const publication = { root: feeRoot, bundle, workspace: feeWorkspace, sourceSha, environment: "Production" } satisfies Publication
+        const before = (api.state.versions[feeWorker] ?? []).length
+        const env = ConfigProvider.layer(ConfigProvider.fromUnknown(rpcUrls === undefined ? releaseEnv : { ...releaseEnv, PAYMENT_RPC_URLS: rpcUrls }))
+        const outcome = Effect.provide(publishSubmissionFee(worker, pages, publication), env) catch (error) => described(error)
+        return { outcome, uploads: (api.state.versions[feeWorker] ?? []).length - before }
+      }
+      const live = { SUBMISSION_FEE_MODE: "live" }
+      const keyedBase = "https://base.rpc.example/journey-key"
+      const feeOrder = publishing.order.indexOf("SubmissionFee") - publishing.order.indexOf("Referral")
+      const liveWithoutKey = try feeRelease(live)
+      const dryRun = try feeRelease({})
+      const otherDatabase = try feeRelease(live, { d1_databases: [{ binding: "SUBMISSION_FEE_DB", database_name: "slop-private", database_id: stagingDatabase }] })
+      const routedFee = try feeRelease({}, { routes: [{ pattern: "fees.slop.cash/*" }] })
+      const oneCron = try feeRelease({}, { triggers: { crons: ["*/5 * * * *"] } })
+      const keyInVars = try feeRelease({ RPC_URL_SUBMISSION_FEE_BASE: keyedBase })
+      const unknownMode = try feeRelease({ SUBMISSION_FEE_MODE: "on" })
+      const notJson = try feeRelease({}, {}, `{"base-mainnet": ${keyedBase}`)
+      const notObject = try feeRelease({}, {}, JSON.stringify([keyedBase]))
+      const plainHttp = try feeRelease({}, {}, JSON.stringify({ "base-mainnet": "http://base.rpc.example/journey-key" }))
+      try secret(served, "PUT", "SUBMISSION_FEE_RESOLVER_KEY", feeWorker)
+      const liveKeyed = try feeRelease(live, {}, JSON.stringify({ "base-mainnet": keyedBase }))
+      const feeSecrets = [...api.state.secrets[feeWorker] ?? []].sort()
+      const [feeServing] = api.state.deployments[feeWorker]?.at(-1)?.versions ?? []
+      const feeVersion = (api.state.versions[feeWorker] ?? []).find((candidate) => candidate.id === feeServing?.versionId)
+      try secret(served, "PUT", "STRAY_SECRET", feeWorker)
+      const liveStray = try feeRelease(live)
+      const submissionFee = { feeOrder, liveWithoutKey, dryRun, otherDatabase, routedFee, oneCron, keyInVars, unknownMode, notJson, notObject, plainHttp, liveKeyed, feeSecrets, feeServing: { percentage: feeServing?.percentage, tag: feeVersion?.tag }, schedules: [...api.state.schedules[feeWorker] ?? []].sort(), liveStray }
       const spent = { status: 429 }
       const exhausted = { status: 403, headers: { "x-ratelimit-remaining": "0" } }
       const forbidden = { status: 403 }
@@ -288,10 +359,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         honest: typeof honest === "object" ? { matches: honest.artifactSha256 === target.manifestSha256, environment: honest.environment, dnsTlsHeaders: honest.dnsTlsHeaders } : honest,
         tampered: typeof tampered === "object" ? { matches: tampered.artifactSha256 === target.manifestSha256, served: tampered.artifactSha256.startsWith("served:") } : tampered,
         identityChecks,
+        submissionFee,
       }
     }
-    const live = Layer.provideMerge(publisher({ root, wrangler: pinnedWrangler(repoRoot), patience: { rounds: 1, delaySeconds: 0 } }), config)
-    const observed = try routed(Effect.provide(journey, live), asFetch(outbound))
+    const services = Layer.provideMerge(Layer.mergeAll(publisher({ root, wrangler: pinnedWrangler(repoRoot), patience: { rounds: 1, delaySeconds: 0 } }), cloudflare({ root: feeRoot, wrangler: pinnedWrangler(repoRoot) })), config)
+    const observed = try routed(Effect.provide(journey, services), asFetch(outbound))
     const migrations = (try fs.readDirectory(migrationsDir)).length
 
     try Effect.try(() => assert.deepStrictEqual(observed, {
@@ -317,6 +389,24 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", waits: [15_000, 30_000, 45_000], asked: ["api", "api", "api", "api"] },
         recovered: { verdict: "IdentityVerified", waits: [15_000], asked: ["api", "api"] },
         drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", waits: [], asked: ["api"] },
+      },
+      submissionFee: {
+        feeOrder: 1,
+        liveWithoutKey: { outcome: "Submission fee resolver secret inventory is not ready", uploads: 0 },
+        dryRun: { outcome: sourceSha, uploads: 1 },
+        otherDatabase: { outcome: "Submission fee release must use the private production database", uploads: 0 },
+        routedFee: { outcome: "Submission fee release must use the private production database", uploads: 0 },
+        oneCron: { outcome: "Submission fee release must use the private production database", uploads: 0 },
+        keyInVars: { outcome: "Submission fee secrets must not be in wrangler.toml", uploads: 0 },
+        unknownMode: { outcome: "SUBMISSION_FEE_MODE must be off, dry_run or live", uploads: 0 },
+        notJson: { outcome: "PAYMENT_RPC_URLS is not JSON", uploads: 0 },
+        notObject: { outcome: "PAYMENT_RPC_URLS is not a JSON object", uploads: 0 },
+        plainHttp: { outcome: "PAYMENT_RPC_URLS has no https URL for base-mainnet", uploads: 0 },
+        liveKeyed: { outcome: sourceSha, uploads: 1 },
+        feeSecrets: ["RPC_URL_SUBMISSION_FEE_BASE", "SUBMISSION_FEE_RESOLVER_KEY"],
+        feeServing: { percentage: 100, tag: sourceSha },
+        schedules: [...feeCrons].sort(),
+        liveStray: { outcome: "Submission fee resolver secret inventory is not ready", uploads: 0 },
       },
     }))
   }))

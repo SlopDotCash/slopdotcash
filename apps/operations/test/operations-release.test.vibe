@@ -69,6 +69,205 @@ module stagedGitHub {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
 }
+module actionsWorld {
+  import { Clock, Duration, Effect } from "effect"
+
+  export type Inputs = Readonly<Record<string, string>>
+
+  export interface ActionStep { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly started_at?: string }
+  export interface ActionJob { readonly name: string; readonly status: string; readonly conclusion: string | null; readonly steps?: ReadonlyArray<ActionStep> }
+
+  export interface ActionRun {
+    readonly id: number
+    readonly status: string
+    readonly conclusion: string | null
+    readonly event: string
+    readonly head_branch: string
+    readonly head_sha: string
+    readonly path: string
+    readonly run_attempt: number
+    readonly created_at: string
+    readonly repository: { readonly full_name: string }
+    readonly head_repository: { readonly full_name: string } | null
+  }
+
+  export interface Shape {
+    readonly collect?: string | null
+    readonly profilesAt?: string
+    readonly restore?: string
+    readonly published?: boolean
+    readonly prepare?: string
+  }
+
+  export interface Outcome { readonly conclusion: string; readonly published: boolean; readonly afterRerun?: boolean }
+
+  export interface WorldOptions {
+    readonly runs?: ReadonlyArray<ActionRun>
+    readonly jobs?: Readonly<Record<number, ReadonlyArray<ActionJob>>>
+    readonly artifacts?: Readonly<Record<number, ReadonlyArray<{ readonly name: string; readonly expired: boolean }>>>
+    readonly monthly?: ReadonlyArray<ActionRun>
+    readonly live?: string
+    readonly outcomes?: ReadonlyArray<Outcome>
+    readonly returnRunId?: boolean
+    readonly prepareDoneAfter?: { readonly id: number; readonly reads: number }
+    readonly liveFrom?: { readonly read: number; readonly generatedAt: string }
+    readonly unavailableOnce?: string
+  }
+
+  export interface World {
+    readonly fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+    readonly clock: Clock.Clock
+    readonly dispatched: Inputs[]
+    readonly reruns: number[]
+    readonly credentials: string[]
+    readonly retried: string[]
+  }
+
+  export const actionsRepository = "SlopDotCash/slopdotcash"
+  export const dayStart = Date.parse("2026-11-19T07:17:00Z")
+  export const checkpoint = [{ name: "leaderboard-discussions-1", expired: false }]
+
+  /** @throws {never} */
+  export function actionRun(id: number, extra: Partial<ActionRun> = {}): ActionRun {
+    return {
+      id,
+      status: "completed",
+      conclusion: "success",
+      event: "workflow_dispatch",
+      head_branch: "main",
+      head_sha: "a".repeat(40),
+      path: ".github/workflows/deploy.yml",
+      run_attempt: 1,
+      created_at: new Date(dayStart).toISOString(),
+      repository: { full_name: actionsRepository },
+      head_repository: { full_name: actionsRepository },
+      ...extra,
+    }
+  }
+
+  /** @throws {never} */
+  export function actionJobs(shape: Shape): ReadonlyArray<ActionJob> {
+    const prepare = shape.prepare ?? "completed"
+    const list: ActionJob[] = [
+      {
+        name: "Prepare checked browser bundle",
+        status: prepare,
+        conclusion: prepare !== "completed" ? null : shape.collect === "failure" ? "failure" : "success",
+        steps: [
+          { name: "Generate live contribution data", status: "completed", conclusion: shape.collect === undefined ? "success" : shape.collect },
+          { name: "Generate live contributor profiles", status: "completed", conclusion: "success", started_at: shape.profilesAt ?? "2026-11-19T10:00:00Z" },
+        ],
+      },
+      {
+        name: "Deploy trusted production bundle",
+        status: "completed",
+        conclusion: "success",
+        steps: [{ name: "Verify Cloudflare deployment commit metadata", status: "completed", conclusion: shape.published === true ? "success" : "skipped" }],
+      },
+    ]
+    if (shape.restore !== undefined) list.push({ name: "Restore trusted production discussion reads", status: "completed", conclusion: shape.restore })
+    return list
+  }
+
+  /** @throws {never} */
+  export function actionsWorld(options: WorldOptions): World {
+    let now = dayStart
+    let nextId = 900
+    let jobReads = 0
+    let liveReads = 0
+    let unavailable = options.unavailableOnce
+    const runs = new Map((options.runs ?? []).map((run) => [run.id, run]))
+    const pending = new Map<number, Outcome>()
+    const afterRerun = new Map<number, boolean>()
+    const jobs = new Map(Object.entries(options.jobs ?? {}).map(([id, list]) => [Number(id), list]))
+    const outcomes = [...(options.outcomes ?? [])]
+    const world: World = {
+      dispatched: [],
+      reruns: [],
+      credentials: [],
+      retried: [],
+      clock: {
+        currentTimeMillisUnsafe: () => now,
+        currentTimeMillis: Effect.sync(() => now),
+        currentTimeNanosUnsafe: () => BigInt(now) * 1_000_000n,
+        currentTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n),
+        monotonicTimeNanosUnsafe: () => BigInt(now) * 1_000_000n,
+        monotonicTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n),
+        sleep: (duration) => {
+          const millis = Duration.toMillis(duration)
+          return millis >= 15_000 ? Effect.sync(() => { now += millis }) : Clock.Clock.defaultValue().sleep(duration)
+        },
+      },
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input))
+        const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+        if (url.host === "slop.cash") {
+          liveReads += 1
+          if (options.liveFrom !== undefined && liveReads >= options.liveFrom.read) return json({ generatedAt: options.liveFrom.generatedAt })
+          return options.live === undefined ? new Response("", { status: 503 }) : json({ generatedAt: options.live })
+        }
+        world.credentials.push(new Headers(init?.headers).get("authorization") ?? "")
+        const path = url.pathname.replace(`/repos/${actionsRepository}`, "")
+        if (unavailable !== undefined && path.endsWith(unavailable)) {
+          unavailable = undefined
+          world.retried.push(path)
+          return json({ message: "Server Error" }, 503)
+        }
+        if (path.endsWith("/dispatches")) {
+          const text = typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array)
+          const body = JSON.parse(text) as { readonly ref: string; readonly inputs: Inputs }
+          if (body.ref !== "main") return json({ message: "Not main" }, 422)
+          world.dispatched.push(body.inputs)
+          const id = nextId++
+          const outcome = outcomes.shift() ?? { conclusion: "success", published: true }
+          runs.set(id, actionRun(id, { status: "in_progress", conclusion: null, created_at: new Date(now).toISOString() }))
+          jobs.set(id, actionJobs({ collect: "skipped", published: outcome.published }))
+          pending.set(id, outcome)
+          if (outcome.afterRerun !== undefined) afterRerun.set(id, outcome.afterRerun)
+          return options.returnRunId === false ? new Response(null, { status: 204 }) : json({ workflow_run_id: id })
+        }
+        const rerun = /^\/actions\/runs\/(\d+)\/rerun-failed-jobs$/u.exec(path)
+        if (rerun !== null) {
+          const id = Number(rerun[1])
+          world.reruns.push(id)
+          const published = afterRerun.get(id) ?? false
+          const current = runs.get(id)
+          if (current !== undefined) runs.set(id, { ...current, status: "in_progress", conclusion: null })
+          pending.set(id, { conclusion: "failure", published })
+          jobs.set(id, actionJobs({ collect: "skipped", published }))
+          return new Response(null, { status: 201 })
+        }
+        const listed = /^\/actions\/workflows\/([\w.-]+)\/runs$/u.exec(path)
+        if (listed !== null) {
+          const source = listed[1] === "monthly-rewards.yml" ? (options.monthly ?? []) : [...runs.values()]
+          const event = url.searchParams.get("event")
+          return json({ workflow_runs: source.filter((run) => event === null || run.event === event) })
+        }
+        const one = /^\/actions\/runs\/(\d+)(\/jobs|\/artifacts)?$/u.exec(path)
+        if (one !== null) {
+          const id = Number(one[1])
+          if (one[2] === "/jobs") {
+            jobReads += 1
+            if (options.prepareDoneAfter?.id === id && jobReads >= options.prepareDoneAfter.reads) jobs.set(id, actionJobs({ prepare: "completed" }))
+            return json({ jobs: jobs.get(id) ?? [] })
+          }
+          if (one[2] === "/artifacts") return json({ artifacts: options.artifacts?.[id] ?? [] })
+          const current = runs.get(id)
+          if (current === undefined) return json({ message: "Not Found" }, 404)
+          const finishing = pending.get(id)
+          if (finishing !== undefined) {
+            pending.delete(id)
+            runs.set(id, { ...current, status: "completed", conclusion: finishing.conclusion })
+          }
+          return json(current)
+        }
+        return json({ message: `Unexpected request ${path}` }, 404)
+      },
+    }
+    return world
+  }
+}
+import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsWorld
 import { type StagedProducer, type StagedRecord, advanceBranch, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
@@ -167,6 +366,7 @@ function recorder(calls: string[], afterFirstWorker?: void!!) {
     publish: (service, target) => afterFirstWorker === undefined ? refused(`publish ${service}`) : published(service, target),
     feeSettings: () => refused("feeSettings"),
     feeVersions: () => refused("feeVersions"),
+    submissionFee: () => refused("submissionFee"),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),
@@ -577,4 +777,111 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       coverage: { maintainerSkill: "pages=true", contributorSkill: "pages=true", readme: "pages=false" },
     }))
   }))
+  it.effect('Keep published contribution data fresh without a person watching it (spec/operations/dailyCollection.md, "Story: Keep published contribution data fresh without a person watching it"; spec/operations/dailyCollection.md, "A daily tick starts one fresh collection only when none runs"; spec/operations/dailyCollection.md, "A superseded collection is published by a retained-data release at most three times and never replaces newer data"; spec/operations/dailyCollection.md, "A failed collection with a checkpoint is resumed once, never a resume of a resume"; spec/operations/dailyCollection.md, "A follow-up acts only on a completed trusted main release, and publishes before it resumes"; spec/operations/dailyCollection.md, "Live data older than 48 hours fails the daily run")', () => effect {
+    const fresh = "2026-11-19T01:00:00Z"
+    const stale = "2026-11-07T12:34:00Z"
+    const fast = { skip_proofs: "true", skip_browser_tests: "true" }
+    const publishing = { ...fast, use_published_data: "true", data_from_run: "1" }
+    const superseded: Outcome = { conclusion: "success", published: false }
+    effect function daily(options: WorldOptions, args: ReadonlyArray<string>) {
+      const world = actionsWorld(options)
+      const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REPOSITORY: actionsRepository, GITHUB_TOKEN: "ghs_dailyCollectionFallback0000" }))
+      const ended = try exit(provideService(provideService(Effect.provide(release(["daily", ...args]), config), FetchHttpClient.Fetch, world.fetch), Clock.Clock, world.clock))
+      return { code: Exit.isSuccess(ended) ? 0 : 1, world }
+    }
+    effect function followed(run: ActionRun, shape: Shape, artifacts = checkpoint) {
+      const { code, world } = try daily({ runs: [run], jobs: { [run.id]: actionJobs(shape) }, artifacts: { [run.id]: artifacts }, live: stale }, ["follow-up", String(run.id)])
+      return { code, dispatched: world.dispatched.map((inputs) => inputs.data_from_run !== undefined ? "publish" : inputs.discussion_resume_run !== undefined ? "resume" : "fresh") }
+    }
+    const none = { code: 0, dispatched: [] }
+    const decided = {
+      publishes: try followed(actionRun(1), {}, []),
+      published: try followed(actionRun(1), { published: true }, []),
+      resumes: try followed(actionRun(1), { collect: "failure" }),
+      resumedAgain: try followed(actionRun(1), { collect: "failure", restore: "success" }),
+      noCheckpoint: try followed(actionRun(1), { collect: "failure" }, []),
+      expiredCheckpoint: try followed(actionRun(1), { collect: "failure" }, [{ name: "leaderboard-discussions-1", expired: true }]),
+      retained: try followed(actionRun(1), { collect: "skipped" }, []),
+      unknownStep: try followed(actionRun(1), { collect: null }, []),
+      pullRequest: try followed(actionRun(1, { event: "pull_request" }), {}),
+      otherBranch: try followed(actionRun(1, { head_branch: "development" }), {}),
+      fork: try followed(actionRun(1, { head_repository: { full_name: "someone/slopdotcash" } }), {}),
+      otherWorkflow: try followed(actionRun(1, { path: ".github/workflows/formal.yml" }), {}),
+      running: try followed(actionRun(1, { status: "in_progress" }), {}),
+    }
+    const started = try daily({ live: fresh }, ["start"])
+    const waited = try daily({ runs: [actionRun(5, { status: "in_progress", conclusion: null })], jobs: { 5: actionJobs({ prepare: "in_progress" }) }, prepareDoneAfter: { id: 5, reads: 3 }, live: fresh }, ["start"])
+    const collecting = try daily({ runs: [actionRun(5, { status: "in_progress", conclusion: null, event: "push" })], jobs: { 5: actionJobs({ prepare: "in_progress" }) }, live: fresh }, ["start"])
+    const queued = try daily({ runs: [actionRun(6, { status: "queued", conclusion: null })], live: fresh }, ["start"])
+    const monthly = try daily({ monthly: [actionRun(7, { status: "in_progress", path: ".github/workflows/monthly-rewards.yml" })], live: fresh }, ["start"])
+    const prepared = try daily({ runs: [actionRun(8, { status: "in_progress", conclusion: null })], jobs: { 8: actionJobs({ prepare: "completed" }) }, live: fresh }, ["start"])
+    const staleStart = try daily({ live: stale }, ["start"])
+    const unreadable = try daily({}, ["start"])
+    const retriedStart = try daily({ live: fresh, unavailableOnce: "/actions/workflows/monthly-rewards.yml/runs" }, ["start"])
+    const publishedAgain = try daily({ runs: [actionRun(1, { event: "push" })], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [superseded, { conclusion: "success", published: true }] }, ["follow-up", "1"])
+    const withoutRunId = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, returnRunId: false }, ["follow-up", "1"])
+    const threeSuperseded = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [superseded, superseded, superseded] }, ["follow-up", "1"])
+    const recovered = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [{ conclusion: "failure", published: false, afterRerun: true }] }, ["follow-up", "1"])
+    const failedTwice = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, outcomes: [{ conclusion: "failure", published: false, afterRerun: false }] }, ["follow-up", "1"])
+    const alreadyServed = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({ profilesAt: "2026-11-19T10:00:00Z" }) }, live: "2026-11-19T10:05:00Z" }, ["follow-up", "1"])
+    const newerMeanwhile = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({}) }, live: stale, liveFrom: { read: 2, generatedAt: "2026-11-19T12:00:00Z" }, outcomes: [{ conclusion: "failure", published: false }] }, ["follow-up", "1"])
+    const resumed = try daily({ runs: [actionRun(1)], jobs: { 1: actionJobs({ collect: "failure" }) }, artifacts: { 1: checkpoint } }, ["follow-up", "1"])
+    const busyResume = try daily({ runs: [actionRun(3), actionRun(4, { status: "in_progress", conclusion: null, event: "push" })], jobs: { 3: actionJobs({ collect: "failure" }), 4: actionJobs({ prepare: "in_progress" }) }, artifacts: { 3: checkpoint } }, ["follow-up", "3"])
+    const count = (ran: { readonly code: number; readonly world: World }) => ({ code: ran.code, dispatched: ran.world.dispatched.length, reruns: ran.world.reruns })
+    assert.deepStrictEqual({
+      decided,
+      started: { code: started.code, dispatched: started.world.dispatched, credentials: [...new Set(started.world.credentials)] },
+      waited: count(waited),
+      collecting: count(collecting),
+      queued: count(queued),
+      monthly: count(monthly),
+      prepared: count(prepared),
+      staleStart: count(staleStart),
+      unreadable: count(unreadable),
+      retriedStart: { ...count(retriedStart), retried: retriedStart.world.retried },
+      publishedAgain: { code: publishedAgain.code, dispatched: publishedAgain.world.dispatched },
+      withoutRunId: count(withoutRunId),
+      threeSuperseded: count(threeSuperseded),
+      recovered: count(recovered),
+      failedTwice: count(failedTwice),
+      alreadyServed: count(alreadyServed),
+      newerMeanwhile: count(newerMeanwhile),
+      resumed: { code: resumed.code, dispatched: resumed.world.dispatched },
+      busyResume: count(busyResume),
+    }, {
+      decided: {
+        publishes: { code: 0, dispatched: ["publish"] },
+        published: none,
+        resumes: { code: 0, dispatched: ["resume"] },
+        resumedAgain: none,
+        noCheckpoint: none,
+        expiredCheckpoint: none,
+        retained: none,
+        unknownStep: none,
+        pullRequest: none,
+        otherBranch: none,
+        fork: none,
+        otherWorkflow: none,
+        running: none,
+      },
+      started: { code: 0, dispatched: [fast], credentials: ["Bearer ghs_dailyCollectionFallback0000"] },
+      waited: { code: 0, dispatched: 1, reruns: [] },
+      collecting: { code: 0, dispatched: 0, reruns: [] },
+      queued: { code: 0, dispatched: 0, reruns: [] },
+      monthly: { code: 0, dispatched: 0, reruns: [] },
+      prepared: { code: 0, dispatched: 1, reruns: [] },
+      staleStart: { code: 1, dispatched: 1, reruns: [] },
+      unreadable: { code: 1, dispatched: 1, reruns: [] },
+      retriedStart: { code: 0, dispatched: 1, reruns: [], retried: ["/actions/workflows/monthly-rewards.yml/runs"] },
+      publishedAgain: { code: 0, dispatched: [publishing, publishing] },
+      withoutRunId: { code: 0, dispatched: 1, reruns: [] },
+      threeSuperseded: { code: 1, dispatched: 3, reruns: [] },
+      recovered: { code: 0, dispatched: 1, reruns: [900] },
+      failedTwice: { code: 1, dispatched: 1, reruns: [900] },
+      alreadyServed: { code: 0, dispatched: 0, reruns: [] },
+      newerMeanwhile: { code: 0, dispatched: 1, reruns: [] },
+      resumed: { code: 0, dispatched: [{ ...fast, discussion_resume_run: "1" }] },
+      busyResume: { code: 1, dispatched: 0, reruns: [] },
+    })
+  })
 })

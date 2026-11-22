@@ -1,0 +1,224 @@
+// spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"
+import { submissionFeeItem, submissionFeeOptions, submissionFeeSettingOf } from "@repo/backend/client"
+import { isoAt } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { RegistryManifests, type SlopRate, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
+import type { FeePull } from "@repo/ports/slopbot"
+import { type StoredFeeSetting, feeSettingAbsent, feeSettingOn } from "../../gen/backend__submissionFeeSettings.effect.vibe"
+import { defaultMinor } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { type Event, type FeeExemption, type FeeFacts, type FeeGate, type FeeMode, apply, askStands, feeStep, settingAmount, settingOn } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { absentOn404 } from "../context/load.vibe"
+import { addLabels, removeLabel } from "../publish/labels.vibe"
+import { type ScopedItem, requireScope } from "../publish/scope.vibe"
+import { type FeeReleaseWhy, feeMarker, feeNeededComment, feeReleasedComment, feeWays } from "./comments.ts"
+import { askItem, itemByPull, releaseItem } from "./items.vibe"
+import { type GateRow, type PullRef, SubmissionFeeMode, askLeaseMillis, claimAsk, feeNeededLabel, gateModel, gateRow, handBackLease, keepGate, markAsked, recordOnly, secondsOf } from "./store.vibe"
+
+export error SubmissionFeeGateError { reason: string }
+export error FeeCommentFailed { status: number; write: string }
+
+export interface FeeTarget {
+  readonly pull: PullRef
+  readonly projectId: string
+  readonly itemNodeId: string
+  readonly appUser: number
+}
+
+export interface FeeAsk {
+  readonly target: FeeTarget
+  readonly exemption: FeeExemption
+  readonly mayAsk: boolean
+}
+
+export schema FeePullRead {
+  readonly number: number
+  readonly state: string
+  readonly draft?: boolean
+  readonly merged?: boolean
+  readonly closed_at?: string | null
+  readonly created_at?: string
+}
+
+schema FeeCommentAuthor { readonly id: number; readonly type: string }
+schema FeeCommentRead { readonly id: number; readonly body: string | null; readonly user: FeeCommentAuthor | null }
+schema FeeCommentWritten { readonly id: number }
+
+const feeCommentPage = Schema.Array(FeeCommentRead)
+const pageSize = 100
+const pageLimit = 100
+const noRates: ReadonlyArray<SlopRate> = []
+const termsInstant = "2026-01-01T00:00:00.000Z"
+
+export function feePullOf(pull: PullRef): FeePull {
+  return { repositoryId: pull.repositoryId, pullNumber: pull.number }
+}
+
+export function scopedOf(target: FeeTarget): ScopedItem {
+  return { ref: target.pull, projectId: target.projectId, number: target.pull.number, itemNodeId: target.itemNodeId }
+}
+
+export function publishedWays() {
+  return feeWays(submissionFeeOptions(String(defaultMinor), noRates, termsInstant))
+}
+
+export effect function waysAt(stableMinor: string, at: string) {
+  const rates = try SubmissionFeeRates
+  const found = rates.all() catch () => noRates
+  return feeWays(submissionFeeOptions(stableMinor, found, at))
+}
+
+export effect function stepped(model: FeeGate, event: Event) {
+  return try orDie(apply(model, event))
+}
+
+function recordOf(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+export function storedSettingOf(manifest: unknown): StoredFeeSetting {
+  const setting = submissionFeeSettingOf(recordOf(recordOf(manifest)?.slopbot)?.submissionFee)
+  return setting === null ? feeSettingAbsent : { present: true, exactShape: true, enabled: true, amountGiven: true, amountWellFormed: true, amountMinor: Number(setting.amountMinor) }
+}
+
+export function parsedManifest(text: string) {
+  return Effect.try(() => JSON.parse(text) as unknown)
+}
+
+export effect function storedFeeSetting(projectId: string) {
+  const registered = try (try RegistryManifests).project(projectId)
+  if (registered === undefined) return feeSettingAbsent
+  const manifest = parsedManifest(registered.manifest) catch () => undefined
+  return storedSettingOf(manifest)
+}
+
+export effect function readFeePull(pull: PullRef) {
+  const github = try GitHub
+  return try absentOn404(github.json(`/repositories/${pull.repositoryId}/pulls/${pull.number}`, FeePullRead))
+}
+
+effect function feeFacts(ask: FeeAsk, mode: FeeMode) {
+  const { target } = ask
+  const feeSetting = try storedFeeSetting(target.projectId)
+  let since: string | null = null
+  let opened: string | undefined
+  if (feeSettingOn(feeSetting)) since = try (try SubmissionFeeSetting).since(target.projectId)
+  if (since !== null) opened = (try readFeePull(target.pull))?.created_at
+  return { mode, contractPublished: true, feeSetting, settingSince: secondsOf(since), openedAt: secondsOf(opened), exemption: ask.exemption, mayAsk: ask.mayAsk } satisfies FeeFacts
+}
+
+function ownsFeeMarker(body: string | null) {
+  return body !== null && (body === feeMarker || body.startsWith(`${feeMarker}\n`))
+}
+
+effect function findFeeComment(target: FeeTarget) {
+  const github = try GitHub
+  let found: number | undefined
+  for (let page = 1; page <= pageLimit; page++) {
+    const read = try github.json(`/repositories/${target.pull.repositoryId}/issues/${target.pull.number}/comments?per_page=${pageSize}&page=${page}`, feeCommentPage)
+    if (read.length > pageSize) throw new FeeCommentFailed({ status: 200, write: "comment history" })
+    for (const comment of read) {
+      if (!Number.isSafeInteger(comment.id) || comment.id <= 0) throw new FeeCommentFailed({ status: 200, write: "comment identity" })
+      if (comment.user?.type === "Bot" && comment.user.id === target.appUser && ownsFeeMarker(comment.body)) {
+        if (found !== undefined && found !== comment.id) throw new FeeCommentFailed({ status: 409, write: "comment reconciliation" })
+        found = comment.id
+      }
+    }
+    if (read.length < pageSize) return found
+  }
+  throw new FeeCommentFailed({ status: 200, write: "comment history" })
+}
+
+export effect function writeFeeComment(target: FeeTarget, storedId: number | null, body: string) {
+  const github = try GitHub
+  let id: number | undefined = storedId === null ? undefined : storedId
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (id === undefined) id = try findFeeComment(target)
+    if (id === undefined) break
+    const updated = github.send("PATCH", `/repositories/${target.pull.repositoryId}/issues/comments/${id}`, { body }, FeeCommentWritten) catch effect (error) => {
+      if (error._tag === "NotFound") return undefined
+      throw error
+    }
+    if (updated !== undefined && updated.status === 200 && updated.value?.id === id) return id
+    if (updated !== undefined) throw new FeeCommentFailed({ status: updated.status, write: "comment update" })
+    id = undefined
+  }
+  const created = try github.send("POST", `/repositories/${target.pull.repositoryId}/issues/${target.pull.number}/comments`, { body }, FeeCommentWritten)
+  const createdId = created.value?.id ?? 0
+  if (created.status !== 201 || !Number.isSafeInteger(createdId) || createdId <= 0) throw new FeeCommentFailed({ status: created.status, write: "comment creation" })
+  return createdId
+}
+
+export effect function releaseFee(target: FeeTarget, gate: GateRow, model: FeeGate, why: FeeReleaseWhy, at: string, event: (commentId: number) => Event) {
+  try removeLabel(scopedOf(target), feeNeededLabel)
+  const commentId = try writeFeeComment(target, gate.comment_id, feeReleasedComment(why))
+  try stepped(model, event(commentId))
+  try keepGate(target.pull, { state: "released", reason: why, commentId, nextCheckAt: null }, at)
+  try (try D1).run(releaseItem(feePullOf(target.pull)))
+}
+
+effect function postedAsk(target: FeeTarget, storedId: number | null, body: string) {
+  const commentId = try writeFeeComment(target, storedId, body)
+  try addLabels(scopedOf(target), [feeNeededLabel])
+  return commentId
+}
+
+effect function firstAsk(target: FeeTarget, model: FeeGate, facts: FeeFacts, gate: GateRow | undefined, nowMillis: number) {
+  const { pull } = target
+  const at = try isoAt(nowMillis)
+  const leaseBefore = try isoAt(nowMillis - askLeaseMillis)
+  const claimed = try stepped(model, { type: "claimAsk", facts })
+  if (!(try claimAsk(pull, at, leaseBefore))) return true
+  const stableMinor = String(settingAmount(facts))
+  const item = submissionFeeItem(pull.repositoryId, pull.number)
+  if (item === undefined) throw new SubmissionFeeGateError({ reason: "pull request identity has no fee item" })
+  try (try D1).run(askItem({ pull: feePullOf(pull), projectId: target.projectId, item, stableMinor, askedAt: at }))
+  try requireScope(scopedOf(target), "contributor")
+  const ways = try waysAt(stableMinor, at)
+  const body = feeNeededComment({ owner: pull.owner, repo: pull.repo, number: pull.number, repositoryId: pull.repositoryId, item, stableMinor, ways })
+  const commentId = postedAsk(target, gate?.comment_id ?? null, body) catch effect (error) => {
+    const _handedBack = handBackLease(pull, at, leaseBefore) catch () => undefined
+    throw error
+  }
+  try stepped(claimed, { type: "confirmAsk", commentId })
+  try markAsked(pull, commentId, at)
+  return true
+}
+
+export effect function releaseExemptFee(target: FeeTarget) {
+  const { mode } = try SubmissionFeeMode
+  if (mode !== "FeeLive" || publishedWays().length === 0) return false
+  const nowMillis = try Clock.currentTimeMillis
+  const gate = try gateRow(target.pull)
+  const item = try itemByPull(feePullOf(target.pull))
+  const model = gateModel(gate, item, nowMillis)
+  if (gate === undefined || !askStands(model) || item === null || item.paidAt !== null) return false
+  const facts: FeeFacts = { mode, contractPublished: true, feeSetting: try storedFeeSetting(target.projectId), settingSince: 0, openedAt: 0, exemption: "Exempt", mayAsk: false }
+  try releaseFee(target, gate, model, "author-exempt", try isoAt(nowMillis), (commentId) => ({ type: "release", facts, commentId }))
+  return true
+}
+
+export effect function gateSubmissionFee(ask: FeeAsk) {
+  const { mode } = try SubmissionFeeMode
+  if (mode === "FeeOff" || publishedWays().length === 0) return false
+  const { pull } = ask.target
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const item = try itemByPull(feePullOf(pull))
+  const gate = try gateRow(pull)
+  if (mode === "FeeLive" && item !== null && item.paidAt !== null) return false
+  const facts = try feeFacts(ask, mode)
+  const model = gateModel(gate, item, nowMillis)
+  const step = feeStep(model, facts)
+  if (step === "FeeRecords") {
+    try stepped(model, { type: "record", facts })
+    try recordOnly(pull, at)
+    return false
+  }
+  if (step === "FeeReleases" && gate !== undefined) {
+    try releaseFee(ask.target, gate, model, settingOn(facts) ? "author-exempt" : "setting-off", at, (commentId) => ({ type: "release", facts, commentId }))
+    return false
+  }
+  if (step === "FeeClaims") return try firstAsk(ask.target, model, facts, gate, nowMillis)
+  return step === "FeeWaits"
+}

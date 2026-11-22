@@ -1,15 +1,17 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"
 import { randomId } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
 import { Registry } from "@repo/ports/backend"
 import { securityCategory } from "../../gen/slopbot__categories.effect.vibe"
 import { type AssessedVerdict, type GroundingCheck, type RelatedItemCheck, type ReviewIdentity, type Verdict as ClosureVerdict, assess } from "../../gen/slopbot__closure.effect.vibe"
 import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
-import { type CallKind, type Verdict as ModelVerdict, canAdmitMonthly } from "../../gen/slopbot__review.effect.vibe"
+import { type CallKind, type Review, type Verdict as ModelVerdict, canAdmitMonthly, canSkipForFee, canSkipForIntake } from "../../gen/slopbot__review.effect.vibe"
 import { monthlyReviewCapReason } from "../../gen/slopbot__reviewCap.effect.vibe"
 import { type Route, reviews } from "../../gen/slopbot__routing.effect.vibe"
 import { type ModeName } from "../context/policyFile.vibe"
 import { type RelatedOpenItem, type ReviewContext, type ReviewTarget, loadContext, matchingOpenItem, reviewKeyOf, reviewRowOf, sameReviewEvidence } from "../context/load.vibe"
+import { type FeeTarget, SubmissionFeeGateError, gateSubmissionFee, releaseExemptFee } from "../fee/gate.vibe"
+import { feeNeededReason } from "../fee/store.vibe"
 import { activeInstallation } from "../installation/store.vibe"
 import type { ReviewJob } from "../jobs/job.vibe"
 import { ReviewBusy } from "../jobs/retry.vibe"
@@ -21,7 +23,8 @@ import { type WriteScope, requireScope } from "../publish/scope.vibe"
 import { type CallRecord, runStructuredRoute, triageRoute } from "../route/route.vibe"
 import { type Routed, routeItem } from "../routing/route.vibe"
 import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
-import { admitMonth } from "./cap.vibe"
+import { admitMonth, monthlyReviewOpen } from "./cap.vibe"
+import { intakeCapReason, intakeFacts } from "./intake.vibe"
 import { buildPrompt, effortOf, modelItemText } from "./prompt.vibe"
 import { type Answer, type Attempt, admitAttempt, attemptControl, bindAttempt, blockAttempt, completeAttempt, finishAttempt, keepCalls, openAttempt, refuseAttempt, startCalls } from "./store.vibe"
 import { type CategoryName, type Verdict, findingOf, hundredths, reviewedOf, validateVerdict, verdictSchema } from "./verdict.vibe"
@@ -306,8 +309,13 @@ export effect function modelReview(session: Session, kind: CallKind) {
   return { kind: "answered", assessed: assessVerdict(session, outcome.verdict, callId, outcome.servedBy, false) } satisfies Modelled
 }
 
+function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "Error"
+}
+
 function reasonOf(error: unknown) {
   if (error instanceof ReviewFailed) return `Error: ${error.reason}`
+  if (error instanceof SubmissionFeeGateError) return error.reason
   const tag = typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "Error"
   return tag.slice(0, reasonLimit)
 }
@@ -330,7 +338,7 @@ effect function publishFailure(session: Session) {
 }
 
 export effect function settleFailure(session: Session, error: unknown) {
-  if (reviews(session.routed.route) && !session.target.securityOnly) publishFailure(session) catch () => undefined
+  if (reviews(session.routed.route) && !session.target.securityOnly && !(error instanceof SubmissionFeeGateError)) publishFailure(session) catch () => undefined
   try failReview(session, { skipReason: reasonOf(error).slice(0, reasonLimit) })
 }
 
@@ -371,16 +379,60 @@ effect function decided(session: Session, assessed: Assessed) {
   return { kind: "finding", finding: { session, triage, mode, scope: scopeOf(session) } } satisfies ReviewOutcome
 }
 
+function feeTargetOf(session: Session): FeeTarget | undefined {
+  const { target, ref } = session
+  if (target.securityOnly || target.itemKind !== "pull_request") return undefined
+  return {
+    pull: { installationId: target.installationId, repositoryId: target.repositoryId, owner: ref.owner, repo: ref.repo, number: target.number },
+    projectId: target.projectId,
+    itemNodeId: session.context.issue.node_id,
+    appUser: commentTargetOf(session).appUser,
+  }
+}
+
+effect function feeStep<A, E, R>(step: A!E!R) {
+  const value: A = step catch effect (error) => {
+    throw new SubmissionFeeGateError({ reason: `Submission fee step did not finish: ${tagOf(error)}`.slice(0, reasonLimit) })
+  }
+  return value
+}
+
+effect function skipAttempt(session: Session, reason: string) {
+  try finishAttempt(session.attempt, "skipped", { skipReason: reason })
+  return settled(reason)
+}
+
+effect function heldBeforeAdmission(session: Session, bound: Review, fee: FeeTarget) {
+  const { context, routed, target } = session
+  const outsidePull = routed.exemption === "NotExempt"
+  const intake = try intakeFacts({ projectId: target.projectId, repositoryId: target.repositoryId, authorId: context.issue.user.id, number: target.number })
+  if (canSkipForIntake(bound, intake.paused, outsidePull, intake.reviewedBefore)) {
+    try session.attempt.review.send({ type: "skipForIntake", paused: intake.paused, outsidePull, reviewedBefore: intake.reviewedBefore })
+    return try skipAttempt(session, intakeCapReason)
+  }
+  const mayAsk = try monthlyReviewOpen(target)
+  const feeWaits = try feeStep(gateSubmissionFee({ target: fee, exemption: routed.exemption, mayAsk }))
+  if (!canSkipForFee(bound, feeWaits)) return undefined
+  try session.attempt.review.send({ type: "skipForFee", feeWaits })
+  return try skipAttempt(session, feeNeededReason)
+}
+
 effect function runReview<E, R>(session: Session, onSkip: (session: Session) => void!E!R) {
   const { context, routed } = session
   try guardedWrite(session)
   const bound = try bindAttempt(session.attempt, routed.route, { requested: context.revision, fetched: context.revision, isolation: "ApprovedIsolation" })
+  const fee = feeTargetOf(session)
+  if (fee !== undefined && routed.exemption === "Exempt") try feeStep(releaseExemptFee(fee))
   const reason = skipReason(routed.route)
   if (reason !== undefined || bound.status === "Skipped") {
     const skipped = reason ?? "review source binding failed"
     try onSkip(session)
     try finishAttempt(session.attempt, "skipped", { skipReason: skipped })
     return settled(skipped)
+  }
+  if (fee !== undefined) {
+    const held = try heldBeforeAdmission(session, bound, fee)
+    if (held !== undefined) return held
   }
   const admission = try admitMonth(session.target)
   if (canAdmitMonthly(bound, admission.alreadyAdmitted, admission.usedThisMonth)) try admitAttempt(session.attempt, admission)

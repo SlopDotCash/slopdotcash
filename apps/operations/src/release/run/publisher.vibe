@@ -1,5 +1,5 @@
 // spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "A production fee-converter release keeps the RPC rotation of every active version"
-import type { Environment, Service } from "../../../gen/operations__release.effect.vibe"
+import type { Environment, Service, SubmissionFeeConfig } from "../../../gen/operations__release.effect.vibe"
 import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
 
 export error PublicationFailed { stage: string; message: string }
@@ -35,12 +35,18 @@ export interface FeeVersionsRead {
   readonly activeVersions: ReadonlyArray<FeeVersionRead>
 }
 
+export interface SubmissionFeeReview {
+  readonly config: SubmissionFeeConfig
+  readonly refusal: string | undefined
+}
+
 export service Publisher {
   readonly order: ReadonlyArray<Service>
   prepare(target: Target): void!PublicationFailed
   publish(service: Service, target: Target): string!PublicationFailed
   feeSettings(target: Target): FeeSettings!PublicationFailed
   feeVersions(): FeeVersionsRead!PublicationFailed
+  submissionFee(target: Target): SubmissionFeeReview!PublicationFailed
   site(target: Target): void!PublicationFailed
   deployments(target: Target, sinceMillis: number): ReadonlyArray<ListedSite>!PublicationFailed
   served(target: Target, deploymentId: string): ServedSite!PublicationFailed

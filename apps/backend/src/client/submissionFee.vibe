@@ -1,5 +1,5 @@
 // spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"
-import { keccak_256 } from "@noble/hashes/sha3.js"
+import { keccak } from "@repo/platform/chain/evm"
 import type { SlopRate } from "@repo/ports/backend"
 import { feeSettingAmount } from "../../gen/backend__submissionFeeSettings.effect.vibe"
 import { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keptAfterClosedDays, keptToFor, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, ratesAt, rateInForce, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
@@ -69,7 +69,7 @@ export function submissionFeeItem(repositoryId: string | number | bigint, pullNu
   const view = new DataView(packed.buffer)
   view.setBigUint64(tag.length, repository, false)
   view.setBigUint64(tag.length + 8, pull, false)
-  return `0x${[...keccak_256(packed)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
+  return keccak(packed).toLowerCase()
 }
 
 export function validStableFee(stableMinor: string) {
@@ -133,7 +133,7 @@ export function slopFeeDueAt(stableMinor: string, rates: ReadonlyArray<SlopRate>
   if (now === undefined) return null
   if (inForce.previous === null) return now
   const before = slopFeeBase(stableMinor, inForce.previous.slopPerUsd)
-  return before === undefined ? now : lowerAmount(BigInt(before), BigInt(now)).toString()
+  return before === undefined ? null : lowerAmount(BigInt(before), BigInt(now)).toString()
 }
 
 export function submissionFeeTokenKind(network: string, token: string): FeeTokenKind | null {
@@ -173,7 +173,7 @@ export function submissionFeeSettingOf(value: unknown): SubmissionFeeSetting | n
     present: value !== undefined,
     exactShape: (keys === "enabled" || keys === "amountMinor,enabled") && typeof record?.enabled === "boolean",
     enabled: record?.enabled === true,
-    amountGiven: given !== undefined,
+    amountGiven: given !== undefined && given !== null,
     amountWellFormed: wellFormed,
     amountMinor: wellFormed ? Number(given) : 0,
   })

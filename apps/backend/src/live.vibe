@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/wallets.md, "Claim and proof history remains bound to one partition"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/wallets.md, "Claim and proof history remains bound to one partition"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"
 import { area } from "@repo/platform/worker"
 import { AccountRoutes } from "./accounts/routes/index.vibe"
 import { MembersLive } from "./accounts/members.vibe"
@@ -8,19 +8,25 @@ import { CallerLive } from "./caller/live.vibe"
 import { api } from "./client/index.vibe"
 import { EmailConsentLive, EmailEnrollmentLive } from "./email/live.vibe"
 import { EnforcementRoutes } from "./projects/enforcement/routes.vibe"
+import { IntakePauseLive, SubmissionFeeSettingLive } from "./projects/feeGateReads.vibe"
 import { ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive } from "./projects/live.vibe"
+import { IntakeCountsLive } from "./projects/mergeActivity/intakeCounts.vibe"
 import { OwnerProjectRoutes } from "./projects/owner/routes.vibe"
+import { ProjectParticipationLive } from "./projects/participation.vibe"
 import { RegistryReadRoutes } from "./projects/public/routes.vibe"
 import { ReferralAttributionsLive } from "./referrals/attributions.vibe"
 import { ReferralRoutes } from "./referrals/routes.vibe"
+import { SubmissionFeeRatesLive } from "./submissionFee/rates.vibe"
 import { WalletsLive } from "./wallets/live.vibe"
 import { WalletRoutes } from "./wallets/routes.vibe"
 
+export { slopbotAccess } from "./authority/live.vibe"
+export { refreshMergeActivity } from "./projects/mergeActivity/job.vibe"
 export { type BackendVars, backendServices } from "./services.vibe"
 
 export const backend = area({
   name: "backend",
   api,
   routes: Layer.mergeAll(AccountRoutes, RegistryReadRoutes, OwnerProjectRoutes, EnforcementRoutes, WalletRoutes, BindingRoutes, ReferralRoutes),
-  provides: Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive),
+  provides: Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive, Layer.provideMerge(IntakePauseLive, IntakeCountsLive), SubmissionFeeSettingLive, SubmissionFeeRatesLive, ProjectParticipationLive),
 })

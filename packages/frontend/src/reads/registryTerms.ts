@@ -1,6 +1,7 @@
 // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import type { RegisteredRepository, RepositoryRegistry } from "@repo/points/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
+import { parsePeriod } from "@repo/settlement/kernels/calendar";
 import { Result, Schema } from "effect";
 import type { ProjectTerms } from "../projections/projectView.ts";
 import { historicalProjects, listedProjects, type RegistryBoot, type RegistryProject } from "./registry.vibe";
@@ -46,6 +47,8 @@ const Terms = Schema.Struct({
     cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
     payoutExclusions: Schema.optional(Schema.Array(Exclusion)),
     externalOpportunity: Schema.optional(Schema.Struct({ name: Schema.String, advertisedAmountDisplay: Schema.String })),
+    maintainerShare: Schema.optional(Schema.Number),
+    maintainerShareHistory: Schema.optional(Schema.Array(Schema.Struct({ throughCycle: Schema.String, basisPoints: Schema.Number }))),
   }),
 });
 
@@ -126,6 +129,13 @@ function termsOf(project: RegistryProject): ProjectTerms | undefined {
       cycleCaps: caps.map((cap, index) => ({ cycleId: cap.cycleId, monthlyCapMinor: capMinors[index] ?? 0n })),
       fundingState: reward.fundingState,
       escrow,
+      maintainerShare: {
+        setting: reward.maintainerShare ?? 0,
+        history: (reward.maintainerShareHistory ?? []).flatMap((entry) => {
+          const throughMonth = parsePeriod(entry.throughCycle);
+          return throughMonth === undefined ? [] : [{ throughMonth, basisPoints: entry.basisPoints }];
+        }),
+      },
     },
   };
 }
