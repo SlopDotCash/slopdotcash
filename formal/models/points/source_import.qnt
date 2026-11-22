@@ -83,9 +83,9 @@ module source_import {
     p.pathCommit == p.squashOutput or p.submitted.contains(p.pathCommit),
   }
   pure def pathRole(p: MixedProof): int = if (p.pathCommit == p.squashOutput) 2 else 1
-  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str,assessmentCurrent:bool,baselineCurrent:bool,qualifiedReplay:bool,historicalPublished:bool,sharedAcceptance:bool,sharedDuplicateRetired:bool}
+  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int,failurePhase:str,assessmentCurrent:bool,baselineCurrent:bool,qualifiedReplay:bool,historicalPublished:bool,sharedAcceptance:bool,sharedDuplicateRetired:bool,carrierTip:int,verifiedCarrierTip:int}
   var s:S
-  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:"",assessmentCurrent:true,baselineCurrent:true,qualifiedReplay:false,historicalPublished:false,sharedAcceptance:false,sharedDuplicateRetired:false}
+  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0,failurePhase:"",assessmentCurrent:true,baselineCurrent:true,qualifiedReplay:false,historicalPublished:false,sharedAcceptance:false,sharedDuplicateRetired:false,carrierTip:1,verifiedCarrierTip:0}
   action reportRefusal(phase: str): bool = all {
     publicationFailurePhases.contains(phase),
     s' = s.with("failurePhase", phase),
@@ -152,8 +152,28 @@ module source_import {
     not(earlierCarriesMerge),
     s' = s.with("published", true).with("historicalPublished", true),
   }
+  action verifyInitialCarrierTip = all {
+    not(s.published),
+    s.carrierTip == 1,
+    s.verifiedCarrierTip == 0,
+    s' = s.with("verifiedCarrierTip", s.carrierTip),
+  }
+  action advanceCarrierTip = all {
+    not(s.published),
+    s.carrierTip < 3,
+    s' = s.with("carrierTip", s.carrierTip + 1),
+  }
+  action refreshCarrierTip(firstParentAdvance: bool, excludesRetiringMerge: bool): bool = all {
+    not(s.published),
+    s.verifiedCarrierTip == 1,
+    s.carrierTip > s.verifiedCarrierTip,
+    firstParentAdvance,
+    excludesRetiringMerge,
+    s' = s.with("verifiedCarrierTip", s.carrierTip),
+  }
   action retireSurvivingCarrier(publishedFirstParent: bool, exactSameChange: bool, sameOriginalAward: bool): bool = all {
     canPublishHistorical,
+    s.verifiedCarrierTip == s.carrierTip,
     publishedFirstParent,
     exactSameChange,
     sameOriginalAward,
@@ -169,6 +189,7 @@ module source_import {
     retireDistinctDuplicate(true,false),
     retireDistinctDuplicate(true,true),
     retireDistinctDuplicate(false,false),
+    verifyInitialCarrierTip,advanceCarrierTip,refreshCarrierTip(true,true),
     retireSurvivingCarrier(true,true,true),
     retireSurvivingCarrier(false,true,true),
     retireSurvivingCarrier(true,false,true),
@@ -187,6 +208,7 @@ module source_import {
     s.published implies(s.valid and s.complete and s.assessmentCurrent and s.baselineCurrent),
     s.historicalPublished implies(s.published and s.qualifiedReplay),
     s.sharedDuplicateRetired implies(s.sharedAcceptance and s.historicalPublished),
+    s.verifiedCarrierTip <= s.carrierTip,
     not(s.verifiedPaid),
     s.identity==1,
     s.role != 0 implies mixedBound(s.mixedProof),
@@ -240,12 +262,24 @@ module source_import {
   run missingDistinctDuplicateAncestryRefusesTest = init.then(part(1)).then(part(2)).then(validate)
     .then(qualifyReplay(true)).then(retireDistinctDuplicate(false,false).fail())
   run survivingCarrierPreservesOriginalAwardTest = init.then(part(1)).then(part(2)).then(validate)
-    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,true,true))
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(retireSurvivingCarrier(true,true,true))
     .expect(s.historicalPublished and invariant)
   run carrierSideParentRefusesTest = init.then(part(1)).then(part(2)).then(validate)
-    .then(qualifyReplay(true)).then(retireSurvivingCarrier(false,true,true).fail())
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(retireSurvivingCarrier(false,true,true).fail())
   run carrierDifferentResultRefusesTest = init.then(part(1)).then(part(2)).then(validate)
-    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,false,true).fail())
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(retireSurvivingCarrier(true,false,true).fail())
   run carrierDifferentAwardRefusesTest = init.then(part(1)).then(part(2)).then(validate)
-    .then(qualifyReplay(true)).then(retireSurvivingCarrier(true,true,false).fail())
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(retireSurvivingCarrier(true,true,false).fail())
+  run verifiedCarrierAdvancePreservesOriginalAwardTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(advanceCarrierTip)
+    .then(refreshCarrierTip(true,true)).then(retireSurvivingCarrier(true,true,true))
+    .expect(s.historicalPublished and invariant)
+  run carrierRewriteRefusesRefreshTest = init.then(verifyInitialCarrierTip).then(advanceCarrierTip)
+    .then(refreshCarrierTip(false,true).fail())
+  run reintroducedRetiringMergeRefusesRefreshTest = init.then(verifyInitialCarrierTip).then(advanceCarrierTip)
+    .then(refreshCarrierTip(true,false).fail())
+  run lateCarrierAdvanceRefusesPublicationTest = init.then(part(1)).then(part(2)).then(validate)
+    .then(qualifyReplay(true)).then(verifyInitialCarrierTip).then(advanceCarrierTip)
+    .then(refreshCarrierTip(true,true)).then(advanceCarrierTip)
+    .then(retireSurvivingCarrier(true,true,true).fail())
 }

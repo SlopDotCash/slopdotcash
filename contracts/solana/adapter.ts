@@ -10,11 +10,7 @@ import {
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
 import type { VaultTotals } from "../vault-totals";
-import {
-  nativeLamportDeltas,
-  SOLANA_NATIVE_ASSET,
-  SOLANA_NATIVE_DECIMALS,
-} from "./native";
+import { SOLANA_NATIVE_ASSET, SOLANA_NATIVE_DECIMALS } from "./native";
 
 export { SOLANA_NATIVE_ASSET } from "./native";
 
@@ -694,6 +690,90 @@ export function escrowInvocations(
   return found;
 }
 
+/** Anchor discriminator of the `WalletBinding` account. */
+export const BINDING_DISCRIMINATOR = hex(
+  sha256(encoder.encode("account:WalletBinding")).slice(0, 8),
+);
+/**
+ * The wallet an SPL `pay` paid, taken from the finalized wallet binding. `pay` pays
+ * only the canonical associated token account of the binding's wallet at the version
+ * named in its data, and refuses any other destination. The destination's token
+ * balances are not used: a recipient can create the account, receive the payout, move
+ * it on and close the account in one transaction, which leaves it in neither list.
+ *
+ * Once the actor has bound a newer wallet, the binding no longer names the wallet that
+ * was paid. The associated account address is a program-derived hash of the wallet,
+ * token program and mint, so the paid wallet is then the one account in the
+ * transaction (creating the account needs the wallet) or among the token balance
+ * owners whose associated account is the destination.
+ */
+async function payoutWallet(input: {
+  config: SolanaEscrowConfig;
+  tx: Obj;
+  actor: bigint;
+  expectedVersion: bigint;
+  bindingAccount: string;
+  destinationAccount: string;
+  tokenProgram: string;
+}): Promise<string> {
+  const { config, tx, destinationAccount } = input;
+  const actorSeed = new Uint8Array(8);
+  new DataView(actorSeed.buffer).setBigUint64(0, input.actor, true);
+  const bindingAddress = programAddress(config.programId, [
+    encoder.encode("wallet"),
+    publicKeyBytes(config.projectPda),
+    actorSeed,
+  ]);
+  if (input.bindingAccount !== bindingAddress || input.expectedVersion === 0n)
+    throw new Error("Payment differs from award");
+  const response = object(
+    await rpc(config, "getAccountInfo", [
+      bindingAddress,
+      { commitment: "finalized", encoding: "base64" },
+    ]),
+  );
+  if (response.value === null) throw new Error("Wallet binding missing");
+  const binding = account(
+    response.value,
+    config.programId,
+    BINDING_SIZE,
+    BINDING_DISCRIMINATOR,
+  );
+  const version = uint(binding, 144);
+  if (uint(binding, 72) !== input.actor || version < input.expectedVersion)
+    throw new Error("Wallet binding differs from payment");
+  const pays = (wallet: string) => {
+    try {
+      return (
+        solanaAssociatedTokenAddress(
+          config.mint,
+          wallet,
+          input.tokenProgram,
+        ) === destinationAccount
+      );
+    } catch {
+      return false;
+    }
+  };
+  if (version === input.expectedVersion) {
+    const wallet = pubkey(binding, 112);
+    if (!pays(wallet))
+      throw new Error("Payout destination is not the bound wallet's account");
+    return wallet;
+  }
+  const meta = object(tx.meta);
+  const candidates = new Set<string>(
+    list(object(object(tx.transaction).message).accountKeys).map((entry) =>
+      string(object(entry).pubkey),
+    ),
+  );
+  for (const balances of [meta.preTokenBalances, meta.postTokenBalances])
+    for (const item of list(balances ?? []).map(object))
+      if (typeof item.owner === "string") candidates.add(item.owner);
+  for (const wallet of candidates) if (pays(wallet)) return wallet;
+  throw new Error("Payout destination is not the bound wallet's account");
+}
+
 /** Verifies the exact escrow instruction and its own token transfers, not the whole transaction. */
 export function solanaPaymentAdapter(
   config: SolanaEscrowConfig,
@@ -847,20 +927,16 @@ export function solanaPaymentAdapter(
         )
           throw new Error("Payment differs from award");
         if (config.mint === SOLANA_NATIVE_ASSET) {
-          // Native payout is a direct lamport move by the verified program. There is no
-          // wrapped token account or token CPI. Reconcile the exact vault and destination,
-          // normalizing the network fee if the recipient also paid the transaction fee.
+          // Native payout is a direct lamport move by the verified program, with no
+          // token CPI to inspect. `pay_native` moves exactly the award's principal from
+          // the vault to `binding.destination` (its `address` constraint) or fails the
+          // whole transaction. Lamport balances are per transaction, not per
+          // instruction: any other transfer, a second payout or a deposit in the same
+          // transaction changes them, so they cannot attest this one instruction.
           if (children.length !== 0)
             throw new Error("Unexpected native payout instructions");
-          const keys = list(object(transaction.message).accountKeys).map(
-            (entry) => string(object(entry).pubkey),
-          );
-          const deltas = nativeLamportDeltas(meta, keys);
-          if (
-            deltas.get(config.vault) !== -net ||
-            deltas.get(accounts[4]) !== net
-          )
-            throw new Error("Native payout balances differ from award");
+          if (accounts[4] === config.vault || accounts[4] === config.projectPda)
+            throw new Error("Native payout destination differs from award");
           destination = accounts[4];
         } else {
           // The fee accrues in the vault; a zero-net award makes no token transfer.
@@ -886,35 +962,15 @@ export function solanaPaymentAdapter(
             )
               throw new Error("Payout transfer differs from award");
           });
-          const keys = list(object(transaction.message).accountKeys).map(
-            (entry) => string(object(entry).pubkey),
-          );
-          const ownerOf = (address: string) => {
-            const index = keys.indexOf(address);
-            // A recipient can spend the payout and close its token account later
-            // in this transaction. The post-state then omits the closed account,
-            // but the finalized pre-state still attests to its mint and owner.
-            const balances = [meta.postTokenBalances, meta.preTokenBalances]
-              .flatMap(list)
-              .map(object);
-            // The escrow pays only the bound wallet's canonical associated
-            // account. Token ownership can change within the transaction, so an
-            // endpoint owner alone does not prove who received the payout.
-            const balance = balances.find(
-              (item) =>
-                item.accountIndex === index &&
-                item.mint === config.mint &&
-                solanaAssociatedTokenAddress(
-                  config.mint,
-                  string(item.owner),
-                  mintReading.program,
-                ) === address,
-            );
-            if (index < 0 || !balance || balance.mint !== config.mint)
-              throw new Error("Payout account balance missing");
-            return string(balance.owner);
-          };
-          destination = ownerOf(accounts[5]);
+          destination = await payoutWallet({
+            config,
+            tx,
+            actor,
+            expectedVersion: uint(data, 8),
+            bindingAccount: accounts[2],
+            destinationAccount: accounts[5],
+            tokenProgram: mintReading.program,
+          });
         }
       }
       const block = object(

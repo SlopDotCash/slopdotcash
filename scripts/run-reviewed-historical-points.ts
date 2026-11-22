@@ -335,6 +335,11 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
   options?: {
     integrationBranch: string;
     beforeImportChecks: (() => Promise<void>)[];
+    fetchBranchTip?: (
+      directory: string,
+      previous: string,
+      current: string,
+    ) => Promise<void>;
   },
 ): Promise<ReadonlySet<string>> {
   const candidates = (packet.duplicateRetirements ?? []).filter(
@@ -350,7 +355,10 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
   )
     throw Error("Reviewed identical change repository changed");
   const objects = new Set<string>();
-  const branchTips = new Map<string, string>();
+  const branches = new Map<
+    string,
+    { tip: string; retiringMerges: Set<string> }
+  >();
   const sha = /^[a-f0-9]{40}$/u;
   function sameRepository(other: PublicMergeRepository | null | undefined) {
     return (
@@ -485,11 +493,16 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       )
         throw Error("Surviving carrier needs the original author's commit");
       await verifyOriginalAuthor();
-      branchTip = branchTips.get(base.ref);
-      if (!branchTip) {
-        branchTip = await readBranchTip(base.ref);
-        branchTips.set(base.ref, branchTip);
+      let branch = branches.get(base.ref);
+      if (!branch) {
+        branch = {
+          tip: await readBranchTip(base.ref),
+          retiringMerges: new Set(),
+        };
+        branches.set(base.ref, branch);
       }
+      branch.retiringMerges.add(proof.mergeSha);
+      branchTip = branch.tip;
       objects.add(branchTip);
     }
     for (const { mergeSha, pull } of checked) {
@@ -791,20 +804,75 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
       },
     });
   }
-  // Every proof is for the same verified repository. Fetch and check its full
-  // object graph once, then independently re-read every PR after native checks.
+  async function recheckSources() {
+    for (const check of checks) await check.recheck();
+  }
+  const branchChecks: (() => Promise<void>)[] = [];
+  const refreshed = false;
+  // Keep the verified graph available when checking a mutable carrier branch.
   await withObjects(repository, [...objects], async (directory) => {
     for (const check of checks) await check.verifyNative(directory);
+    if (!branches.size) return;
+    await recheckSources();
+    for (const [ref, { tip, retiringMerges }] of branches) {
+      const current = await readBranchTip(ref);
+      const verifyTip = async () => {
+        if ((await readBranchTip(ref)) !== current)
+          throw Error("Surviving carrier integration branch changed");
+      };
+      if (current !== tip) {
+        if (options?.fetchBranchTip) {
+          await options.fetchBranchTip(directory, tip, current);
+        } else {
+          // Keep the same verified repository and secure Git options. The
+          // previous tip lets Git transfer only objects missing from this graph.
+          const acquisition = publicGitProcess(directory, [
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            `--negotiation-tip=${tip}`,
+            `https://github.com/${repository.full_name}.git`,
+            current,
+          ]);
+          await execute(acquisition.file, acquisition.args, {
+            ...acquisition.options,
+            timeout: 1_800_000,
+          });
+        }
+        const command = publicGitProcess(directory, [
+          "rev-list",
+          "--parents",
+          "--first-parent",
+          "--exclude-first-parent-only",
+          current,
+          `^${tip}`,
+        ]);
+        const { stdout } = await execute(
+          command.file,
+          command.args,
+          command.options,
+        );
+        const added = stdout
+          .trim()
+          .split("\n")
+          .map((row) => row.split(" "));
+        // The oldest added commit must extend the proved first-parent chain.
+        if (
+          added.at(-1)?.[1] !== tip ||
+          added.some(([commit]) => retiringMerges.has(commit))
+        )
+          throw Error("Surviving carrier integration branch changed");
+        await verifyTip();
+      }
+      options?.beforeImportChecks.push(verifyTip);
+    }
   });
-  for (const check of checks) await check.recheck();
-  for (const [ref, tip] of branchTips) {
-    const verifyTip = async () => {
-      if ((await readBranchTip(ref)) !== tip)
-        throw Error("Surviving carrier integration branch changed");
-    };
-    await verifyTip();
-    options?.beforeImportChecks.push(verifyTip);
+  if (!branches.size || refreshed) await recheckSources();
+  if (refreshed) {
+    for (const verifyTip of branchChecks) await verifyTip();
   }
+  options?.beforeImportChecks.push(...branchChecks);
   return new Set(checks.map(({ digest }) => digest));
 }
 

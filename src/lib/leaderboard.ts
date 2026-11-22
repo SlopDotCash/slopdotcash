@@ -3,6 +3,7 @@ import {
   implementationCreditActors,
   implementationLineWeights,
   isCreditEligibleCommitAuthor,
+  isUnprovedZeroLinePromotion,
 } from "./commit-credit";
 import {
   assertExternalSourceEvidence,
@@ -3879,6 +3880,12 @@ function createSnapshotWithReviewCutoff(
       v2 &&
       input.valueDecisions !== undefined &&
       (pullRequest.emptyAcceptanceMarker ||
+        isUnprovedZeroLinePromotion(
+          pullRequest.commits ?? [],
+          (commit) =>
+            commitOwners.get(`${repositoryId.toLowerCase()}\0${commit.oid}`) ===
+            pullRequest.id,
+        ) ||
         input.unresolvedImplementationSources?.has(pullRequest.id) ||
         (acceptanceKey !== null &&
           scoredImplementationDigests.has(acceptanceKey))) &&

@@ -48,6 +48,36 @@ export function implementationCreditActors<
   );
 }
 
+/** A carried diff cannot be assigned to an empty commit's author. Zero-line
+ * commits with verified changed paths can still provide independent evidence. */
+export function isUnprovedZeroLinePromotion<
+  Commit extends {
+    parentCount?: number;
+    additions?: number | null;
+    deletions?: number | null;
+    files?: readonly unknown[];
+  },
+>(commits: readonly Commit[], owns: (commit: Commit) => boolean): boolean {
+  let emptyMarker = false;
+  let carriedChanges = false;
+  for (const commit of commits) {
+    if (commit.parentCount === undefined) return false;
+    if (commit.parentCount > 1) continue;
+    if (owns(commit)) {
+      if (
+        commit.additions !== 0 ||
+        commit.deletions !== 0 ||
+        commit.files?.length
+      )
+        return false;
+      emptyMarker = true;
+    } else if ((commit.additions ?? 0) > 0 || (commit.deletions ?? 0) > 0) {
+      carriedChanges = true;
+    }
+  }
+  return emptyMarker && carriedChanges;
+}
+
 /** Complete GitHub additions/deletions are allocation weights, never value.
  * Callers provide each first-accepted, non-merge commit once and substitute a
  * verified original author before calling this for retained copies.
