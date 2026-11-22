@@ -194,7 +194,11 @@ revision or a flag pause included, an administrator exception is accepted
 only when it keeps the project paused and retired (`enforcedManifest`): it
 lands a pending restriction revision, and a project a moderator restriction
 had not yet retired is retired by that restriction. With no restriction, an
-administrator exception may list an owner-removed or delisted project again. Removal is refused too while the
+administrator exception may list an owner-removed or delisted project again. An administrator exception that
+appends repositories checks each against the registry as an owner's append does (`appendReads`) and records
+them on the security side in the same batch, unassessed, so its clearance input is the clearance of the
+repositories it lists afterwards and an appended repository keeps the result paused until it clears
+(`vettingClearance` reads the replacement manifest). Removal is refused too while the
 project's own restriction is in force, a pending restriction revision
 included: 409 `project_restricted`, "The project is <state>; request
 reinstatement before removing it", checked after the authority recheck and
@@ -247,16 +251,23 @@ pure def canRemove(c: Registry, by: int, removal: P::Removal): bool =
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   val p = P::remove(c.project, by, removal)
   { ...c, project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
-pure def canAdminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): bool =
+pure def exceptionAppendsFree(c: Registry, exception: P::Exception, appendReads: List[RegistryRead]): bool =
+  exception.appended.every(s => E::canAppendRepository(c.security, s.repositoryId) and
+    appendReads.some(r => repositoryFree(s.repositoryId, r)))
+pure def withExceptionAppends(exception: P::Exception, e: E::Enforcement): E::Enforcement =
+  exception.appended.foldl(e, (s, a) => E::appendRepository(s, a.repositoryId))
+pure def canAdminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): bool =
   P::canAdminRevise(c.project, by, exception) and
   (c.security.restriction == E::Clear or (exception.status == P::Paused and exception.tier == P::Retired)) and
-  exception.clearance == clearanceOf(c.security) and exclusionsMayBecome(c, exclusions) and
-  (exclusions != c.exclusions implies exception.financial)
-pure def adminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion]): Registry =
+  exception.clearance == clearanceOf(withExceptionAppends(exception, c.security)) and exceptionAppendsFree(c, exception, appendReads) and
+  exclusionsMayBecome(c, exclusions) and (exclusions != c.exclusions implies exception.financial)
+pure def adminRevise(c: Registry, by: int, exception: P::Exception, exclusions: List[X::Exclusion],
+  appendReads: List[RegistryRead]): Registry =
   val replaced = P::adminRevise(c.project, by, exception)
   val restricted = c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine
   val p = if (restricted and c.project.retirement == P::NotRetired) { ...replaced, retirement: P::RestrictionRetired } else replaced
-  { project: p, security: E::withRevisionLanded(restricted, sync(p, c.security)), exclusions: exclusions }
+  { project: p, security: E::withRevisionLanded(restricted, sync(p, withExceptionAppends(exception, c.security))), exclusions: exclusions }
 pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.project, by, tier) and c.security.restriction == E::Clear
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
   val p = P::place(c.project, by, tier)
@@ -286,7 +297,16 @@ revision and sequence its preview confirmed. An account appeal, an account
 denial and an account reinstatement are journaled on the project's
 enforcement record, in the same write as the decision of
 [account bans across participation](./accessComposition.md); they change
-no registry revision.
+no registry revision. Each account decision is one decision written in one D1 batch on both
+sides: the shell sends the security side's `journalAccountAppeal(by)`,
+`journalAccountDenial(fence)`, `journalAccountReinstatement(fence, accounts)`
+and `decideMalice(fence, accounts)` of this machine together with [participation restrictions](./access.md)'s
+`appeal(project)`, `denyAppeal(project, decision, projectRequest)`,
+`reinstateAccounts(decision, project, targets, projectRequest)` and
+`decideProjectBan(project, decision, accounts)`, with `accounts == targets`,
+and `projectRequest` read from the same enforcement record whose open project
+appeal the security side reads; a refusal of either refuses both (shell
+obligation).
 
 ```quint
 pure def canFlag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): bool =
@@ -579,6 +599,9 @@ pure val observedValues = tuples(1.to(3), Set(0), 1.to(3)).map(x => { revision: 
 pure val exceptionValues = Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n })
   .union(Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n, steward: 4 }))
   .union(Set(2, 3).map(n => { ...P::exception1, expectedRevision: n, tier: P::Retired }))
+  .union(Set(2, 3).map(n => { ...P::exception1, expectedRevision: n, executable: true, clearance: P::ClearanceMissing,
+    appended: List({ repositoryId: 2, month: 202612 }) }))
+  .union(Set(2, 3).map(n => { ...P::exception1, expectedRevision: n, consent: C::Enabled }))
 pure val revokeValues = Set({ grant: 11, decision: 1, reason: 1, confirmed: true })
 pure val identityValues = Set(2)
 pure val cValues = Set(initial)

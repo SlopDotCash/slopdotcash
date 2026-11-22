@@ -5,7 +5,7 @@ import { Registry } from "@repo/ports/backend"
 import { securityCategory } from "../../gen/slopbot__categories.effect.vibe"
 import { type AssessedVerdict, type GroundingCheck, type RelatedItemCheck, type ReviewIdentity, type Verdict as ClosureVerdict, assess } from "../../gen/slopbot__closure.effect.vibe"
 import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
-import { type CallKind, type Verdict as ModelVerdict, canAdmitMonthly, canRefuseMonthlyCap } from "../../gen/slopbot__review.effect.vibe"
+import { type CallKind, type Verdict as ModelVerdict, canAdmitMonthly } from "../../gen/slopbot__review.effect.vibe"
 import { monthlyReviewCapReason } from "../../gen/slopbot__reviewCap.effect.vibe"
 import { type Route, reviews } from "../../gen/slopbot__routing.effect.vibe"
 import { type ModeName } from "../context/policyFile.vibe"
@@ -361,12 +361,9 @@ effect function runReview<E, R>(session: Session, onSkip: (session: Session) => 
   }
   const admission = try admitMonth(session.target)
   if (canAdmitMonthly(bound, admission.alreadyAdmitted, admission.usedThisMonth)) try admitAttempt(session.attempt, admission)
-  else if (canRefuseMonthlyCap(bound, admission.alreadyAdmitted, admission.usedThisMonth)) {
+  else {
     try refuseAttempt(session.attempt, admission)
     try finishAttempt(session.attempt, "skipped", { skipReason: monthlyReviewCapReason })
-    return settled(monthlyReviewCapReason)
-  } else {
-    try failReview(session, { skipReason: monthlyReviewCapReason })
     return settled(monthlyReviewCapReason)
   }
   const limited = context.limitations.length > 0

@@ -24,20 +24,6 @@ lemma lawReallocationPreservesPool_ensures(manifest: Manifest)
   }
 }
 
-lemma lawReplayPreservesRevocation_ensures(manifest: Manifest)
-  ensures (lawReplayPreservesRevocation(manifest) == true)
-{
-  if manifest == readyManifest {
-    ReadyManifestAllocates();
-    var committed := commit(prepare(initial, manifest), false, Actor.TrustedWorkflow);
-    assert committed.phase.Applied? && manifest.digest in committed.applied;
-    var revoked := revoke(committed, readyRevocation);
-    assert manifest.digest in revoked.applied;
-    assert prepare(revoked, manifest).phase.Replayed?;
-    assert prepare(revoked, manifest).history == revoked.history;
-  }
-}
-
 lemma ReadyManifestAllocates()
   ensures completeCorrection(initial, readyManifest)
   ensures predecessorMatches(initial, readyManifest)

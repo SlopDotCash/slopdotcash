@@ -1,4 +1,4 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"
 import { Effect } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { outcome } from "@repo/platform/testing/area";

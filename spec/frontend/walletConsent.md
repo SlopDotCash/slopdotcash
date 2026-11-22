@@ -101,7 +101,8 @@ When the account already has a different saved payout wallet, Account
 wallets asks whether to replace it ("Register" or "Keep saved"). Keeping the
 saved wallet ends the review with nothing changed; only an explicit
 confirmation continues. The payout consent dialog never registers or
-replaces a wallet: a connected wallet, or a wallet account change, whose
+replaces a wallet, and its accepted post leaves the account's saved wallet as
+it was: a connected wallet, or a wallet account change, whose
 address is not the claim's is refused ("Wrong address. Connect <claim>." or
 "The wallet account changed. Connect and review again.") and nothing is
 prepared, signed or posted for it (development `src/PayoutConsent.tsx`
@@ -181,7 +182,8 @@ pure def post(c: Consent, by: int): Consent = { ...c, phase: Posting, request: c
 pure def canPostReply(c: Consent, request: int, result: PostResult, by: int): bool = by == server and request == c.request
   and c.phase == Posting
 pure def postReply(c: Consent, request: int, result: PostResult, by: int): Consent =
-  if (result == PostAccepted) { ...c, phase: Accepted, savedWallet: c.walletAccount }
+  if (result == PostAccepted) { ...c, phase: Accepted,
+    savedWallet: if (c.surface == PayoutDialog) c.savedWallet else c.walletAccount }
   else if (result == PostUnauthorized) { ...c, phase: SignInAgain } else { ...c, phase: Refused }
 pure def canClose(c: Consent, by: int): bool = by == c.actor and c.actor > 0 and c.phase != Closed and c.request < 9007199254740991
 pure def close(c: Consent, by: int): Consent = { ...c, phase: Closed, request: c.request + 1 }
@@ -207,7 +209,11 @@ pure def alwaysDialogConnectsOnlyTheClaim(c: Consent): bool = c.surface == Payou
   (c.claimWallet != "" and ((activePhase(c.phase) or c.phase == Replacing) implies c.walletAccount == c.claimWallet))
 pure def stepSavedWalletOnlyFromAcceptedPost(before: Consent, via: str, after: Consent): bool =
   (after.savedWallet != before.savedWallet and after.actor == before.actor) implies via == "postReply"
+pure def stepDialogNeverChangesSavedWallet(before: Consent, after: Consent): bool =
+  (before.surface == PayoutDialog and after.surface == PayoutDialog and after.actor == before.actor)
+    implies after.savedWallet == before.savedWallet
 pure def sometimesAccepted(c: Consent): bool = c.phase == Accepted and c.savedWallet != ""
+pure def sometimesDialogAccepted(c: Consent): bool = c.surface == PayoutDialog and c.phase == Accepted
 pure def sometimesKeptSaved(c: Consent): bool = c.phase == KeptSaved
 pure def sometimesDialogRefusesAnotherWallet(c: Consent): bool = c.surface == PayoutDialog and c.phase == Refused
   and c.walletAccount != "" and c.walletAccount != c.claimWallet

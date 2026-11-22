@@ -23,7 +23,7 @@ import { type MonthlyEntry, type MonthlyReservation, type SumTree, SOURCE_SEQUEN
 import { walletTypedData } from "../src/chain/evm/typedData.ts"
 import { type U64, concat, digestBytes, i64, i64le, u64, u64le } from "../src/chain/solana/bytes.ts"
 import { anchorData, meta } from "../src/chain/solana/instructions.ts"
-import { PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { type Purpose, PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
 import { type Instruction, compileLegacy, unsignedTransaction, withSignature } from "../src/chain/solana/transactions.ts"
 import type { NetworkKey } from "../src/kernels/networks.ts"
 import { checkMonthLock, lockedFunds, reviewLock, reviewRelease } from "../src/owner/monthLock.vibe"
@@ -37,7 +37,7 @@ import { registryDeployments } from "../src/vault/deployments.vibe"
 import type { SolanaDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
 import { type Deployment, escrowDeployment, pledgeCurrentMonth } from "./support/solana/escrow.ts"
-import { type Keypair, submit, submitWire } from "./support/solana/program.ts"
+import { type Keypair, keypair, submit, submitWire } from "./support/solana/program.ts"
 
 service Escrow {
   readonly deployment: Deployment
@@ -67,26 +67,26 @@ effect function amount(value: bigint) {
   return parsed
 }
 
-effect function opened(projectId: string) {
+effect function opened(projectId: string, purpose: Purpose = "Ordinary") {
   const { deployment } = try Escrow
   const { chain } = deployment
   const owner = chain.holder
   const noDelay = i64(0n)
   if (noDelay === undefined) return try die(new Error("zero is outside i64"))
   const digest = registryProjectDigest(projectId)
-  const project = projectAddress(chain.program, owner.address, digest, "Ordinary")
+  const project = projectAddress(chain.program, owner.address, digest, purpose)
   const vault = vaultAddress(chain.program, project)
   const initialize: Instruction = {
     program: chain.program,
     accounts: [meta(owner.address, true, true), meta(project, true), meta(chain.mints.classic, false), meta(vault, true), meta(TOKEN_PROGRAM, false), meta(SYSTEM_PROGRAM, false), meta(configAddress(chain.program), false)],
-    data: anchorData("initialize", digestBytes(digest), digestBytes(deployment.network), keyBytes(deployment.identity.address), keyBytes(deployment.feeRecipient.address), i64le(noDelay), i64le(noDelay), Uint8Array.of(PURPOSE_BYTE.Ordinary)),
+    data: anchorData("initialize", digestBytes(digest), digestBytes(deployment.network), keyBytes(deployment.identity.address), keyBytes(deployment.feeRecipient.address), i64le(noDelay), i64le(noDelay), Uint8Array.of(PURPOSE_BYTE[purpose])),
   }
   const created = try promise(() => submit(chain, owner, [initialize]))
   const programData = try (try SolanaRpc).account(programDataAddress(chain.program), "finalized")
   if (programData === undefined) return try die(new Error("program data missing"))
   const record: SolanaDeployment = {
     projectId,
-    scope: "ordinary",
+    scope: purpose === "Ordinary" ? "ordinary" : "security-bounty",
     network: "solana-devnet",
     vault,
     asset: chain.mints.classic,
@@ -155,7 +155,7 @@ const mismatch = "WalletActionRefused: This transaction does not match the pendi
 const lockedFundsRefusal = "WalletActionRefused: These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
 
 layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, a withdrawal of a pledged month\'s funds is refused before the wallet step, and the owner locks three months once, never lower, and cannot release an unpledged month (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, a withdrawal of a pledged month\'s funds is refused before the wallet step, and the owner locks three months once, never lower, cannot release an unpledged month and cannot lock a bounty vault (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
     const { verified, owner } = try opened("owner-funding-journey")
     const deposit = intentOf("deposit", owner, try amount(1_000_000n))
     const depositPlan = try reviewFunding(verified, deposit, capture, depositFacts)
@@ -189,7 +189,10 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const lockChecked = try checkMonthLock({ verified: locking.verified, wallet: locking.owner.address, check: { action: "lock", periods: lockPlan.periods, amount: 200_000n }, blockhash: lockPlan.transaction.blockhash as Blockhash, transactionId: lockSent, capture })
     const relock = try reviewLock({ ...planned, count: 3, amount: 200_000n, nowSeconds })
     const lowered = try refusalOf(reviewLock({ ...planned, count: 1, amount: 100_000n, nowSeconds }))
+    const strangerLock = try refusalOf(reviewLock({ ...planned, wallet: keypair().address, count: 3, amount: 200_000n, nowSeconds }))
     const unpledged = try refusalOf(reviewRelease({ ...planned, period: months[5] ?? 0 }))
+    const bounty = try opened("owner-month-lock-bounty", "Bounty")
+    const notOrdinary = try refusalOf(reviewLock({ deployment: bounty.record, verified: bounty.verified, wallet: bounty.owner.address, capture, count: 1, amount: 200_000n, nowSeconds }))
     const takesLocked = try lockedFunds(locking.record, 500_000n)
     const aboveLocked = try lockedFunds(locking.record, 400_000n)
     try same({
@@ -205,7 +208,9 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
         checked: lockChecked,
         relock: { periods: relock.periods, transaction: relock.transaction },
         lowered,
+        strangerLock,
         unpledged,
+        notOrdinary,
         withdrawals: [takesLocked, aboveLocked],
       },
     }, {
@@ -221,7 +226,9 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
         checked: "finalized",
         relock: { periods: [], transaction: null },
         lowered: `WalletActionRefused: A locked month can only be raised: ${months[0]}.`,
+        strangerLock: "WalletActionRefused: Only the vault owner can pledge months",
         unpledged: "WalletActionRefused: This month has no open pledge.",
+        notOrdinary: "WalletActionRefused: Only an ordinary project vault takes month pledges.",
         withdrawals: [true, false],
       },
     })

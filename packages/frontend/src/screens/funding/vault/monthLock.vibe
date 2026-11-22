@@ -124,7 +124,7 @@ export effect function readCard(row: FundingVault | undefined, free: bigint | nu
   if (canReadVault(try lock.get(), supported, ownerSender, freeAmount, locked, reader)) try sent({ type: "readVault", supported, owner: ownerSender, free: freeAmount, locked }, reader)
   for (const pledge of row?.pledges ?? []) {
     const month = try chainPledge(pledge)
-    if (lockedLine(month, nowSeconds) !== "ReleasableMonth") continue
+    if ((try orDie(Effect.try(() => lockedLine(month, nowSeconds)))) !== "ReleasableMonth") continue
     if (canLapse(try lock.get(), month.amount, reader)) try sent({ type: "lapse", monthAmount: month.amount }, reader)
   }
   return try lock.get()
@@ -154,8 +154,7 @@ function shownOf(reviewed: Reviewed): LockReview {
     return { periods: facts.periods, amountMinor: facts.amountMinor, decimals: facts.decimals, depositGross: facts.depositGross, existing: facts.existing, alreadyLocked: false }
   }
   const { plan } = reviewed
-  const existing = plan.requested.map((period) => (plan.periods.includes(period) ? { period, amount: 0n, open: false } : { period, amount: plan.amountMinor, open: true }))
-  return { periods: plan.requested, amountMinor: plan.amountMinor, decimals: plan.decimals, depositGross: 0n, existing, alreadyLocked: plan.transaction === null }
+  return { periods: plan.requested, amountMinor: plan.amountMinor, decimals: plan.decimals, depositGross: 0n, existing: plan.current, alreadyLocked: plan.transaction === null }
 }
 
 export effect function reviewCard(connection: LockConnection, count: number, amount: string, deposit: string, monthlyMinor: bigint) {
@@ -180,7 +179,7 @@ effect function answered(reply: LockReply) {
   if (canWalletAnswer(try lock.get(), reply, adapter)) try sent({ type: "walletAnswer", reply }, adapter)
 }
 
-effect function prompted<A, E extends { readonly _tag: string }>(work: A!E) {
+effect function prompted<A, E extends { readonly _tag: string }, R>(work: A!E!R) {
   const lock = try Machine
   const result: A | undefined = work catch effect (error) => {
     if ((try lock.get()).phase !== "LockAwaiting") throw error
@@ -199,7 +198,7 @@ export effect function sendCard(connection: LockConnection) {
   if (reviewed === undefined) throw stopped(lockMessages.reviewAgain)
   const before = effect {
     if (!canRequestLock(try lock.get(), id)) throw stopped(lockMessages.reviewAgain)
-    try sent({ type: "requestLock" }, id)
+    try orDie(lock.send({ type: "requestLock" }, id))
   }
   let next: Sent | undefined
   if (reviewed.kind === "evm") {
@@ -223,7 +222,7 @@ export effect function releaseCard(connection: LockConnection, period: number, m
   if ((try lock.get()).wallet !== id) throw stopped(lockMessages.connect)
   const before = effect {
     if (!canRequestRelease(try lock.get(), monthAmount, id)) throw stopped(lockMessages.reviewAgain)
-    try sent({ type: "requestRelease", monthAmount }, id)
+    try orDie(lock.send({ type: "requestRelease", monthAmount }, id))
   }
   let next: Sent | undefined
   if (connection.family === "evm") {

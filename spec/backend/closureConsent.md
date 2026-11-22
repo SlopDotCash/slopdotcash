@@ -9,7 +9,9 @@ records it from the new-project form, and only an owner revision
 (`publishOwnerRevision`, alone or with other changes of the same save), at
 the expected revision under a current authority read on
 an unrestricted project whose acting account is not banned
-([composition](./projectComposition.md)), changes it. The
+([composition](./projectComposition.md)), or an administrator exception,
+which replaces the whole manifest and records its saved value as it stands
+(`PUT /api/v1/admin/projects/:id/manifest`), changes it. The
 [Slopbot closure decision](../slopbot/closure.md) consumes the saved value of
 the current revision and checks its own review, production and scope gates
 (composition obligation recorded in the area report).

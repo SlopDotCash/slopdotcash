@@ -255,7 +255,7 @@ effect function walletLocks(connection: EvmConnection, evm: EvmVault, cachedSupp
 
 effect function guarded(operation: "deposit" | "withdraw", pool: PoolFacts | undefined, locks: VaultLocks) {
   const { monthlyPool, unreadPool } = try VaultDesk
-  if (operation === "withdraw" && monthlyPool && pool === undefined && pageGuardApplies(unreadPool, locks)) throw stopped(fundingMessages.promiseUnread)
+  if (operation === "withdraw" && monthlyPool && pool === undefined && (try orDie(Effect.try(() => pageGuardApplies(unreadPool, locks))))) throw stopped(fundingMessages.promiseUnread)
 }
 
 export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean) {

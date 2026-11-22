@@ -38,9 +38,9 @@ type RotationRequest = { trustedMain: bool, verifiedTls: bool, manualDispatch: b
   expectedVersion: int, runnerPaths: bool, source: int }
 type CandidateUrl = { https: bool, credentials: bool, fragment: bool, trimmed: bool, referenceOrigin: bool }
 type RobinhoodRotation = { phase: RobinhoodPhase, source: int, expected: int, deployment: int, qualified: bool,
-  candidate: int, activated: int }
+  candidate: int, activated: int, uploadAttempted: bool }
 pure val initial: RobinhoodRotation = { phase: NotStarted, source: 0, expected: 0, deployment: 0, qualified: false,
-  candidate: 0, activated: 0 }
+  candidate: 0, activated: 0, uploadAttempted: false }
 pure def stopAt(nextPhase: RobinhoodPhase, r: RobinhoodRotation): RobinhoodRotation = { ...r, phase: nextPhase }
 pure def admissible(request: RotationRequest): bool =
   request.trustedMain and request.verifiedTls and request.manualDispatch and request.releaseEnabled
@@ -136,7 +136,9 @@ and the latest upload, in the same deployment, and `main` must still be the
 source. The upload carries only the candidate secret, the source tag and the
 message `slop.cash release <source>`, the retained rotation markers and `;
 Robinhood RPC rotation from <expected>`, and must report exactly one new
-version that is not the expected one. Before activation the candidate must
+version that is not the expected one; once the upload command has run the
+run counts as having written, even when its output binds no candidate.
+Before activation the candidate must
 be the expected version's immediate successor, tagged with the source, with
 the same script etag, runtime and other bindings; the journal must still be
 quiet; the expected version must still be the only active one, in the same
@@ -158,7 +160,8 @@ pure def recheckBeforeUpload(r: RobinhoodRotation, boundary: Boundary): Robinhoo
   else stopAt(Refused, r)
 pure def canUpload(r: RobinhoodRotation, uploaded: int): bool = r.phase == ReadyToUpload
 pure def upload(r: RobinhoodRotation, uploaded: int): RobinhoodRotation =
-  if (uploaded > 0 and uploaded != r.expected) { ...r, phase: Uploaded, candidate: uploaded } else stopAt(Refused, r)
+  if (uploaded > 0 and uploaded != r.expected) { ...r, phase: Uploaded, candidate: uploaded, uploadAttempted: true }
+  else { ...r, phase: Refused, uploadAttempted: true }
 pure def canRecheckBeforeDeploy(r: RobinhoodRotation, boundary: Boundary, version: CandidateCheck, journal: FeeJournal): bool =
   r.phase == Uploaded
 pure def recheckBeforeDeploy(r: RobinhoodRotation, boundary: Boundary, version: CandidateCheck, journal: FeeJournal): RobinhoodRotation =
@@ -182,7 +185,9 @@ pure def alwaysUploadNeedsQualifiedPin(r: RobinhoodRotation): bool =
 pure def alwaysActivationOnlyAfterRecheck(r: RobinhoodRotation): bool =
   ((r.phase == Deployed or r.phase == Confirmed or r.phase == Uncertain) iff r.activated > 0)
     and (r.activated > 0 implies r.activated == r.candidate and r.candidate > 0)
+pure def alwaysUploadAttemptRecorded(r: RobinhoodRotation): bool = r.candidate > 0 implies r.uploadAttempted
 pure def sometimesRefusedAfterUpload(r: RobinhoodRotation): bool = r.phase == Refused and r.candidate > 0
+pure def sometimesRefusedAtUpload(r: RobinhoodRotation): bool = r.phase == Refused and r.uploadAttempted and r.candidate == 0
 ```
 
 ### Only a readback of the same Worker at the candidate with the release message confirms the rotation
@@ -194,7 +199,8 @@ same Worker as the expected version. Anything else leaves the activation
 uncertain: the run fails, and only a reconciliation of the live version
 settles it. A confirmed rotation is the rotation run's confirmed verdict; a
 run refused before any upload has failed with nothing written; a refused
-run that uploaded a candidate, or an uncertain one, is a partial failure.
+run whose upload command ran, whether or not it bound a candidate, or an
+uncertain one, is a partial failure.
 `verdict` is the run's verdict once the machine has ended.
 
 ```quint
@@ -209,13 +215,13 @@ pure def confirmReadback(r: RobinhoodRotation, readback: Readback): RobinhoodRot
   else stopAt(Uncertain, r)
 pure def endPhase(r: RobinhoodRotation): SR::RotationPhase =
   if (r.phase == Confirmed) SR::Verified else if (r.phase == Uncertain) SR::Uncertain else SR::Refused
-pure def verdict(r: RobinhoodRotation): RR::RunVerdict = RR::rotationVerdict(endPhase(r), r.candidate > 0)
+pure def verdict(r: RobinhoodRotation): RR::RunVerdict = RR::rotationVerdict(endPhase(r), r.candidate > 0 or r.uploadAttempted)
 pure def alwaysConfirmedIsTheUploadedCandidate(r: RobinhoodRotation): bool =
   r.phase == Confirmed implies (r.activated == r.candidate and r.candidate > 0 and r.candidate != r.expected)
 pure def alwaysVerdictMatchesEnd(r: RobinhoodRotation): bool =
   (verdict(r) == RR::RunRpcConfirmed iff r.phase == Confirmed)
-    and ((r.phase == Refused and r.candidate == 0) implies verdict(r) == RR::RunFailed)
-    and ((r.phase == Uncertain or (r.phase == Refused and r.candidate > 0)) implies verdict(r) == RR::RunPartialFailure)
+    and ((r.phase == Refused and not(r.uploadAttempted)) implies verdict(r) == RR::RunFailed)
+    and ((r.phase == Uncertain or (r.phase == Refused and r.uploadAttempted)) implies verdict(r) == RR::RunPartialFailure)
 pure def stepEndsAreFinal(before: RobinhoodRotation, after: RobinhoodRotation): bool =
   (before.phase == Confirmed or before.phase == Refused or before.phase == Uncertain) implies after == before
 pure def sometimesConfirmed(r: RobinhoodRotation): bool = r.phase == Confirmed

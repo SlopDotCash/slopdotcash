@@ -491,19 +491,22 @@ send is imported only while no unsettled signed send of the journal holds
 its nonce. An imported send is then reconciled like any
 other. Development also imports the worst case of a recorded send whose row
 already settled, to charge its receipt's fee; a settled row is loaded as it
-is, and only an open one is imported here. The journal store brings each
+is, and only an open one is imported here. Each send is imported under the
+fee wallet its record names, so a send of an earlier fee wallet stays that
+wallet's: no receipt read for the current wallet settles it, and it keeps
+its token blocked. The journal store brings each
 such open row in through this event, the row and its reservation together,
 so a loaded journal never holds an open send without a reservation.
 
 ```quint
 type RecordedSend = { token: int, kind: SendKind, tx: int, nonce: int, gasLimit: int, fees: EvmFees, amountIn: int, valueMicro: int,
-  minimumOutput: int, deadline: int }
+  minimumOutput: int, deadline: int, wallet: int }
 pure def recordedMaximum(f: Fee, recorded: RecordedSend): int = recorded.gasLimit * recorded.fees.maxFee + additionalReserve(f.network)
 pure def canImportRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sender): bool =
   val h = holding(f, recorded.token)
   by == R::Worker and leaseHeld(f, runId) and f.network != R::Solana and validToken(f, recorded.token)
     and openRows(f, recorded.token) == 0 and pendingIntent(f, runId).id == 0 and ownReservation(f, runId).id == 0
-    and recorded.tx > 0 and not(txUsed(f, recorded.tx)) and not(f.rows.some(r => landedIn(r, recorded.tx)))
+    and recorded.wallet > 0 and recorded.tx > 0 and not(txUsed(f, recorded.tx)) and not(f.rows.some(r => landedIn(r, recorded.tx)))
     and not(f.gas.some(g => g.state == Signed and not(g.settled) and g.nonce == recorded.nonce)) and recorded.nonce >= 0 and recorded.gasLimit > 0 and recorded.fees.maxFee > 0 and recorded.fees.priority >= 0
     and recorded.fees.priority <= recorded.fees.maxFee and recorded.amountIn > 0 and recorded.valueMicro >= 0
     and (recorded.kind == Conversion implies evaluated(f, recorded.token) and recorded.amountIn <= spendable(f, recorded.token)
@@ -513,7 +516,7 @@ pure def importRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sende
   val id = f.rows.length() + 1
   val h = holding(f, recorded.token)
   { ...f, rows: f.rows.append({ ...noRow, id: id, token: recorded.token, kind: recorded.kind, live: true, state: Submitted, runId: runId,
-      wallet: wallet(f), amountIn: recorded.amountIn, valueMicro: recorded.valueMicro,
+      wallet: recorded.wallet, amountIn: recorded.amountIn, valueMicro: recorded.valueMicro,
       minimumOutput: if (recorded.kind == Conversion) recorded.minimumOutput else 0, nonce: recorded.nonce, gasLimit: recorded.gasLimit,
       deadline: recorded.deadline, createdAt: f.clock,
       attempts: List({ tx: recorded.tx, maxFee: recorded.fees.maxFee, priority: recorded.fees.priority, at: f.clock }) }),
@@ -522,15 +525,18 @@ pure def importRecorded(f: Fee, runId: int, recorded: RecordedSend, by: R::Sende
     holdings: if (recorded.kind == Claim) withHolding(recorded.token, { ...h, accrued: h.accrued - recorded.amountIn }, f) else f.holdings }
 pure def sometimesImportedAboveCeiling(f: Fee): bool = f.gas.some(g => g.imported and g.maximum > R::transactionCeilingOf(f.network))
 pure def sometimesImportedSettled(f: Fee): bool = f.gas.some(g => g.imported and g.settled)
+pure def sometimesImportedForeignWalletOpen(f: Fee): bool = f.rows.some(r => isOpen(r) and r.wallet != wallet(f))
 pure val recordedValues = Set(
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 100000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Approval, tx: 12, nonce: 1, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 0, deadline: 9000000000 },
+    valueMicro: 450000000, minimumOutput: 0, deadline: 9000000000, wallet: 1 },
   { token: 1, kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 60000 }, amountIn: 500000000,
-    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000 })
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 1 },
+  { token: 1, kind: Conversion, tx: 13, nonce: 0, gasLimit: 1000, fees: { maxFee: 50000, priority: 2000 }, amountIn: 500000000,
+    valueMicro: 450000000, minimumOutput: 445500000, deadline: 9000000000, wallet: 9 })
 pure val weight_importRecorded = 4
 ```
 

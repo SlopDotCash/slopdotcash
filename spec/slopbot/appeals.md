@@ -151,7 +151,8 @@ type AuthorityCheck = { actor: int, item: str, role: ActorRole }
 pure def mayAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool = by > 0 and
   (by == a.appellant or (authority.actor == by and authority.item == a.subject.item and authority.role == CurrentMaintainer))
 pure def answerable(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.draft != NoDraft
-pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority)
+pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority) and
+  a.ban == NotBanned
 pure def reject(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(DraftRejected, a)
 pure def canEscalateBanAtAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool =
   unresolved(a) and not(escalated(a)) and a.ban == Banned and mayAnswer(a, by, authority)

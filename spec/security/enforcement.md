@@ -327,11 +327,13 @@ and mirrors each new registry revision, its steward and the listing account
 never grows to an appended repository. The project API's repository read
 observes a new node id for a listed repository id (deleted and recreated, or
 transferred) as a new identity epoch; the earlier identity's assessments and
-grants then control nothing.
+grants then control nothing. A restricted project gains a repository only
+through an administrator's exception that keeps it paused and retired; the
+composition refuses every owner append while it is restricted.
 
 ```quint
 pure def canAppendRepository(e: Enforcement, repository: int): bool =
-  repository > 0 and not(e.repositories.includes(repository)) and e.restriction == Clear
+  repository > 0 and not(e.repositories.includes(repository))
 pure def appendRepository(e: Enforcement, repository: int): Enforcement =
   { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed) }
 pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool =

@@ -9,7 +9,8 @@ share of fees received on Robinhood Chain joins it. Its run cap, rolling
 24-hour cap, burn minimum and rounding apply once, across every source.
 
 Values are integer USDG micro-units; SLOP quantities are full-width Amount
-limbs. Clock values are UTC epoch milliseconds from the trusted Worker clock.
+limbs. Clock values are UTC epoch milliseconds from the trusted Worker clock,
+and only the Worker sends the pool's clock, evidence, decisions and signatures.
 Evidence records name their verified source: `ArrivalCredit` is a retained
 `OrderArrived` outcome of a bridge leg (a composition obligation binds it to
 that leg's `outcomes`), `RobinhoodFee` and `SlopFee` are finalized fee
@@ -68,23 +69,23 @@ pure def withCredit(c: AssetCredit, p: Pool): List[AssetCredit] =
   if (p.credits.some(x => x.asset == c.asset)) p.credits.listMap(x => if (x.asset == c.asset) c else x) else p.credits.append(c)
 pure def acquired(p: Pool): M::Amount = M::addAmounts(p.purchased, p.localSlopCommitted)
 pure def arrivalSeen(p: Pool, arrival: ArrivalCredit): bool = p.arrivals.some(a => a.network == arrival.network and a.order == arrival.order)
-pure def canAdvanceClock(p: Pool, now: int): bool = now > p.clock
-pure def advanceClock(p: Pool, now: int): Pool = { ...p, clock: now }
-pure def canCreditArrival(p: Pool, arrival: ArrivalCredit): bool = arrival.network != R::Robinhood and arrival.order > 0
+pure def canAdvanceClock(p: Pool, now: int, by: R::Sender): bool = by == R::Worker and now > p.clock
+pure def advanceClock(p: Pool, now: int, by: R::Sender): Pool = { ...p, clock: now }
+pure def canCreditArrival(p: Pool, arrival: ArrivalCredit, by: R::Sender): bool = by == R::Worker and arrival.network != R::Robinhood and arrival.order > 0
   and arrival.takeAmount > 0 and arrival.takeAmount <= 1000000000 and arrival.height > 0 and not(arrivalSeen(p, arrival))
-pure def creditArrival(p: Pool, arrival: ArrivalCredit): Pool =
+pure def creditArrival(p: Pool, arrival: ArrivalCredit, by: R::Sender): Pool =
   val c = creditOf(p, usdg)
   { ...p, arrivals: p.arrivals.append(arrival), credits: withCredit({ ...c, credit: c.credit + arrival.takeAmount }, p) }
-pure def canRecordRobinhoodFee(p: Pool, robinhoodFee: RobinhoodFee): bool = robinhoodFee.receipt > 0 and robinhoodFee.asset > 0
+pure def canRecordRobinhoodFee(p: Pool, robinhoodFee: RobinhoodFee, by: R::Sender): bool = by == R::Worker and robinhoodFee.receipt > 0 and robinhoodFee.asset > 0
   and not(p.rhReceipts.includes(robinhoodFee.receipt)) and robinhoodFee.amount > 0
   and robinhoodFee.chainTime >= B::buybackStart and robinhoodFee.chainTime <= p.clock
-pure def recordRobinhoodFee(p: Pool, robinhoodFee: RobinhoodFee): Pool =
+pure def recordRobinhoodFee(p: Pool, robinhoodFee: RobinhoodFee, by: R::Sender): Pool =
   val c = creditOf(p, robinhoodFee.asset)
   { ...p, credits: withCredit({ ...c, income: M::addAmounts(c.income, M::smallAmount(robinhoodFee.amount)) }, p),
     rhReceipts: p.rhReceipts.append(robinhoodFee.receipt) }
-pure def canReserveLocalShare(p: Pool, asset: int, amount: int): bool = asset > 0 and amount > 0
+pure def canReserveLocalShare(p: Pool, asset: int, amount: int, by: R::Sender): bool = by == R::Worker and asset > 0 and amount > 0
   and M::compareAmounts(M::addAmounts(creditOf(p, asset).committed, M::smallAmount(amount)), H::half(creditOf(p, asset).income).quotient) <= 0
-pure def reserveLocalShare(p: Pool, asset: int, amount: int): Pool =
+pure def reserveLocalShare(p: Pool, asset: int, amount: int, by: R::Sender): Pool =
   val c = creditOf(p, asset)
   { ...p, credits: withCredit({ ...c, committed: M::addAmounts(c.committed, M::smallAmount(amount)), credit: c.credit + amount }, p) }
 pure def arrivedCredit(p: Pool): int = p.arrivals.foldl(0, (t, a) => t + a.takeAmount)
@@ -180,18 +181,18 @@ pure def note(d: PoolDecision, p: Pool): Pool =
   val previous = lastDecision(p, d.leg)
   if (previous.state == d.state and previous.reason == d.reason and previous.value == d.value and previous.live == d.live) p
   else { ...p, decisions: p.decisions.append(d) }
-pure def canBeginRun(p: Pool): bool = R::runs(p.runtime) and p.runtime.buybackMode != R::Off
-pure def beginRun(p: Pool): Pool = { ...p, runNumber: p.runNumber + 1, runSpent: 0 }
-pure def canDecidePurchase(p: Pool, quote: PurchaseQuote): bool =
-  p.runNumber > 0 and p.runtime.buybackMode != R::Off and not(B::openSend(p.purchase)) and quoteShaped(p, quote)
+pure def canBeginRun(p: Pool, by: R::Sender): bool = by == R::Worker and R::runs(p.runtime) and p.runtime.buybackMode != R::Off
+pure def beginRun(p: Pool, by: R::Sender): Pool = { ...p, runNumber: p.runNumber + 1, runSpent: 0 }
+pure def canDecidePurchase(p: Pool, quote: PurchaseQuote, by: R::Sender): bool =
+  by == R::Worker and p.runNumber > 0 and p.runtime.buybackMode != R::Off and not(B::openSend(p.purchase)) and quoteShaped(p, quote)
     and quote.gasValue >= 0 and withinUsdgBalance(quote) and (purchaseDecision(p, quote).state != Quoted or p.runtime.buybackMode == R::DryRun)
-pure def decidePurchase(p: Pool, quote: PurchaseQuote): Pool = note(purchaseDecision(p, quote), p)
-pure def canPurchase(p: Pool, quote: PurchaseQuote): bool =
-  signs(p) and p.runNumber > 0 and not(B::openSend(p.purchase)) and purchaseDecision(p, quote).state == Quoted
+pure def decidePurchase(p: Pool, quote: PurchaseQuote, by: R::Sender): Pool = note(purchaseDecision(p, quote), p)
+pure def canPurchase(p: Pool, quote: PurchaseQuote, by: R::Sender): bool =
+  by == R::Worker and signs(p) and p.runNumber > 0 and not(B::openSend(p.purchase)) and purchaseDecision(p, quote).state == Quoted
     and quote.tx > 0 and not(p.txs.includes(quote.tx)) and quoteShaped(p, quote)
     and M::validAmount(quote.minimum) and M::positiveAmount(quote.minimum)
     and quote.receiver == "fees" and not(quote.tokenPaused) and withinUsdgBalance(quote)
-pure def purchase(p: Pool, quote: PurchaseQuote): Pool =
+pure def purchase(p: Pool, quote: PurchaseQuote, by: R::Sender): Pool =
   val c = creditOf(p, quote.asset)
   { ...p, credits: withCredit({ ...c, credit: c.credit - quote.amountIn }, p), runSpent: p.runSpent + quote.spent,
     purchase: { tx: quote.tx, phase: B::Submitted, amount: quote.amountIn }, purchaseAsset: quote.asset,
@@ -228,13 +229,13 @@ rolling exposure; the run total is not returned.
 ```quint
 type SwapReceipt = { tx: int, succeeded: bool, finalized: bool, output: M::Amount, toFeeWallet: bool, slopToken: bool }
 type SendReceipt = { tx: int, succeeded: bool, finalized: bool }
-pure def canLoseSend(p: Pool, tx: int): bool =
-  (p.purchase.tx == tx and p.purchase.phase == B::Submitted) or (p.burn.tx == tx and p.burn.phase == B::Submitted)
-pure def loseSend(p: Pool, tx: int): Pool = { ...p, purchase: B::loseResponse(p.purchase, tx), burn: B::loseResponse(p.burn, tx) }
-pure def canSettlePurchase(p: Pool, swap: SwapReceipt): bool =
-  B::openSend(p.purchase) and swap.tx == p.purchase.tx and swap.finalized
+pure def canLoseSend(p: Pool, tx: int, by: R::Sender): bool =
+  by == R::Worker and ((p.purchase.tx == tx and p.purchase.phase == B::Submitted) or (p.burn.tx == tx and p.burn.phase == B::Submitted))
+pure def loseSend(p: Pool, tx: int, by: R::Sender): Pool = { ...p, purchase: B::loseResponse(p.purchase, tx), burn: B::loseResponse(p.burn, tx) }
+pure def canSettlePurchase(p: Pool, swap: SwapReceipt, by: R::Sender): bool =
+  by == R::Worker and B::openSend(p.purchase) and swap.tx == p.purchase.tx and swap.finalized
     and (swap.succeeded implies M::validAmount(swap.output) and M::positiveAmount(swap.output) and swap.toFeeWallet and swap.slopToken)
-pure def settlePurchase(p: Pool, swap: SwapReceipt): Pool =
+pure def settlePurchase(p: Pool, swap: SwapReceipt, by: R::Sender): Pool =
   if (swap.succeeded) { ...p, purchase: { ...p.purchase, phase: B::Finalized }, purchased: M::addAmounts(p.purchased, swap.output) }
   else { ...p, purchase: { ...p.purchase, phase: B::Failed },
     credits: withCredit({ ...creditOf(p, p.purchaseAsset), credit: creditOf(p, p.purchaseAsset).credit + p.purchase.amount }, p),
@@ -259,9 +260,9 @@ decreasing.
 
 ```quint
 type BurnRequest = { tx: int, quantity: M::Amount, value: int, gasValue: int, destination: str, tokenPaused: bool }
-pure def canReceiveSlopFee(p: Pool, fee: SlopFee): bool = fee.receipt > 0 and not(p.slopReceipts.includes(fee.receipt))
+pure def canReceiveSlopFee(p: Pool, fee: SlopFee, by: R::Sender): bool = by == R::Worker and fee.receipt > 0 and not(p.slopReceipts.includes(fee.receipt))
   and M::validAmount(fee.quantity) and M::positiveAmount(fee.quantity) and fee.chainTime >= B::buybackStart and fee.chainTime <= p.clock
-pure def receiveSlopFee(p: Pool, fee: SlopFee): Pool =
+pure def receiveSlopFee(p: Pool, fee: SlopFee, by: R::Sender): Pool =
   val total = M::addAmounts(p.localSlopIncome, fee.quantity)
   { ...p, localSlopIncome: total, localSlopCommitted: H::half(total).quotient, slopReceipts: p.slopReceipts.append(fee.receipt) }
 pure def burnDue(p: Pool): M::Amount = M::subtractAmounts(H::half(acquired(p)).quotient, p.burnCommitted)
@@ -272,24 +273,24 @@ pure def burnDecision(p: Pool, request: BurnRequest): PoolDecision =
   else if (request.value < request.gasValue * 10) { ...base, reason: BelowGasMultiple }
   else if (request.value > maximumSafeValue) { ...base, state: Skipped, reason: UnsafeValue }
   else { ...base, state: Quoted }
-pure def canDecideBurn(p: Pool, burnRequest: BurnRequest): bool =
-  p.runNumber > 0 and p.runtime.buybackMode != R::Off and not(B::openSend(p.burn)) and burnRequest.value >= 0 and burnRequest.gasValue >= 0
+pure def canDecideBurn(p: Pool, burnRequest: BurnRequest, by: R::Sender): bool =
+  by == R::Worker and p.runNumber > 0 and p.runtime.buybackMode != R::Off and not(B::openSend(p.burn)) and burnRequest.value >= 0 and burnRequest.gasValue >= 0
     and M::validAmount(burnRequest.quantity) and M::positiveAmount(burnRequest.quantity)
     and M::compareAmounts(p.burnCommitted, H::half(acquired(p)).quotient) <= 0 and M::equalAmounts(burnRequest.quantity, burnDue(p))
     and (burnDecision(p, burnRequest).state != Quoted or p.runtime.buybackMode == R::DryRun)
-pure def decideBurn(p: Pool, burnRequest: BurnRequest): Pool = note(burnDecision(p, burnRequest), p)
-pure def canBurn(p: Pool, burnRequest: BurnRequest): bool =
-  signs(p) and p.runNumber > 0 and not(B::openSend(p.burn)) and burnRequest.tx > 0 and not(p.txs.includes(burnRequest.tx))
+pure def decideBurn(p: Pool, burnRequest: BurnRequest, by: R::Sender): Pool = note(burnDecision(p, burnRequest), p)
+pure def canBurn(p: Pool, burnRequest: BurnRequest, by: R::Sender): bool =
+  by == R::Worker and signs(p) and p.runNumber > 0 and not(B::openSend(p.burn)) and burnRequest.tx > 0 and not(p.txs.includes(burnRequest.tx))
     and M::validAmount(burnRequest.quantity) and M::positiveAmount(burnRequest.quantity)
     and M::compareAmounts(p.burnCommitted, H::half(acquired(p)).quotient) <= 0
     and M::equalAmounts(burnRequest.quantity, burnDue(p)) and burnDecision(p, burnRequest).state == Quoted
     and burnRequest.destination == B::deadAddress
-pure def burn(p: Pool, burnRequest: BurnRequest): Pool =
+pure def burn(p: Pool, burnRequest: BurnRequest, by: R::Sender): Pool =
   { ...p, burnCommitted: M::addAmounts(p.burnCommitted, burnRequest.quantity), burnQuantity: burnRequest.quantity,
     burn: { tx: burnRequest.tx, phase: B::Submitted, amount: 0 }, txs: p.txs.append(burnRequest.tx) }
-pure def canSettleBurn(p: Pool, receipt: SendReceipt): bool =
-  B::openSend(p.burn) and receipt.tx == p.burn.tx and receipt.finalized
-pure def settleBurn(p: Pool, receipt: SendReceipt): Pool =
+pure def canSettleBurn(p: Pool, receipt: SendReceipt, by: R::Sender): bool =
+  by == R::Worker and B::openSend(p.burn) and receipt.tx == p.burn.tx and receipt.finalized
+pure def settleBurn(p: Pool, receipt: SendReceipt, by: R::Sender): Pool =
   val burnedTotal = M::addAmounts(p.burned, p.burnQuantity)
   if (receipt.succeeded) { ...p, burn: { ...p.burn, phase: B::Finalized }, burned: burnedTotal, burnCommitted: burnedTotal, burnQuantity: M::zero }
   else { ...p, burn: { ...p.burn, phase: B::Failed }, burnCommitted: p.burned, burnQuantity: M::zero }
@@ -344,7 +345,7 @@ pure val assetValues = Set(1, 2)
 pure val amountValues = Set(25000000, 50000000)
 pure val feeValues = Set({ receipt: 5, quantity: List(4), chainTime: B::buybackStart }, { receipt: 6, quantity: List(2), chainTime: B::buybackStart })
 pure val variableValues = Set(true)
-pure val byValues = Set(R::ReleaseWorkflow, R::Owner)
+pure val byValues = Set(R::Worker, R::ReleaseWorkflow, R::Owner)
 pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::DryRun })
 pure val quoteValues = Set(
   { route: RouteFound, tx: 24, asset: 1, amountIn: 25000000, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
