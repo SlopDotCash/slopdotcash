@@ -331,19 +331,19 @@ effect function unpaidReceipts(assessed: Assessed.Shape) {
   try qualify(world, h.id)
   fake.reply(about(reportH.summary), { text: proposal("Withdrawals round the share price up.", []) })
   try assessQualified({ caseId: h.caseId, version: 1 })
-  const unlinedRun = fake.calls.at(-1)
+  const unscopedRun = fake.calls.at(-1)
   const scopeOf = (call: ProviderCall | undefined) => (jsonValue(said(call)) as { readonly programScope?: unknown } | undefined)?.programScope
   try same({
     paused: scopeOf(pausedRun),
     pausedExclusions: try caseExclusions(g.caseId),
-    unlined: scopeOf(unlinedRun),
-    unlinedExclusions: try caseExclusions(h.caseId),
+    unscoped: scopeOf(unscopedRun),
+    unscopedExclusions: try caseExclusions(h.caseId),
     rows: [...(try attempts(world, g.caseId)), ...(try attempts(world, h.caseId))].map((row) => [row.attempt, row.state]),
   }, {
     paused: { includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, pausedLine] },
     pausedExclusions: { defaults: 10, owner: [pausedLine.length] },
-    unlined: null,
-    unlinedExclusions: { defaults: 10, owner: [] },
+    unscoped: null,
+    unscopedExclusions: { defaults: 0, owner: [] },
     rows: [[1, "complete"], [1, "complete"]],
   })
 }
@@ -455,7 +455,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }
   })
 
-  it.effect('Assessment runs carry the receipt-time "does not qualify" lines, for every version, under the current prompt revision; a paused program\'s receipt is scoped, with its owner lines when its scope lists them and with the default lines alone when it lists none (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
+  it.effect('Assessment runs carry the receipt-time "does not qualify" lines, for every version, under the current prompt revision; a paused program\'s receipt carries its owner lines and a receipt without a scope carries none (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
     const assessed = try Assessed
     provide shellOf(assessed) {
       try receiptScopeKept(assessed)

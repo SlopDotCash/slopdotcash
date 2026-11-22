@@ -66,7 +66,7 @@ export function projectListing({ project, funding }: { project: ShownProject; fu
 }
 
 /** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */
-export function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
+function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
   const zeroed = zeroedPoolCap(
     { monthlyPool: project.reward.kind === "monthly-pool", monthlyCapMinor: project.reward.monthlyCapMinor, hasCycleCaps: project.reward.cycleCaps.length > 0, assetKind: project.rewardAsset?.kind },
     funding,

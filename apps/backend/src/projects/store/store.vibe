@@ -1,4 +1,4 @@
-// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"
+// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type ConstraintViolation, type Statement, sql } from "@repo/platform/d1"
@@ -30,8 +30,6 @@ export interface Action {
   readonly revision?: Recorded
   readonly referrer?: Actor
   readonly alongside?: ReadonlyArray<Statement>
-  // The stored revision the action's manifest text was built from; a different revision at the write refuses it, so
-  // a revision built on an earlier read never replaces a later one.
   readonly basedOn?: number
 }
 
@@ -109,9 +107,6 @@ function appendedKeys(manifest: Manifest, held: ReadonlySet<string>, repository:
   return entry === undefined ? [] : [entry.id, ...(entry.aliases ?? [])].map((path) => path.toLowerCase()).filter((key) => !held.has(key))
 }
 
-// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project": the exception is the
-// replaced manifest's registry facts, read from the submitted manifest and never from the client. The administrator
-// route builds its event from these facts, and trusted reads them again from the stored revision text.
 export function exceptionFacts(manifest: Manifest, rows: ProjectRows) {
   const reward = manifest.reward
   return {

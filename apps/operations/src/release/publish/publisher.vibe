@@ -480,7 +480,7 @@ export function publisher(options: PublisherOptions) {
       return try identityClientId(origin)
     }
 
-    effect function feeVersions(target: Target) {
+    effect function feeVersions() {
       const state = try workerState()
       const latest = try inspectVersion(state.latest.id)
       const activeVersions: FeeVersionRead[] = []
@@ -518,7 +518,7 @@ export function publisher(options: PublisherOptions) {
       prepare: (target: Target) => staged("prepare", Effect.provide(prepare(target), services)),
       publish: (service: Service, target: Target) => staged(`publish ${service}`, Effect.provide(publishService(service, target), services)),
       feeSettings: (target: Target) => staged("fee settings", Effect.provide(feeSettings(target), services)),
-      feeVersions: (target: Target) => staged("fee versions", Effect.provide(feeVersions(target), services)),
+      feeVersions: () => staged("fee versions", Effect.provide(feeVersions(), services)),
       site: (target: Target) => staged("site", Effect.provide(site(target), services)),
       deployments: (target: Target, sinceMillis: number) => staged("deployments", Effect.provide(deployments(target, sinceMillis), services)),
       served: (target: Target, deploymentId: string) => staged("served", Effect.provide(served(target, deploymentId), services)),

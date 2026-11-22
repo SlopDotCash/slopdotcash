@@ -7,7 +7,7 @@ import { type Access, type Event as AccessEvent, type ProjectRequestRead, Reject
 import { type Event, type Registry, apply, canReinstate } from "../../../gen/backend__projectComposition.effect.vibe"
 import { type Enforcement, accountAppealOpenFor, accountsIndependent, independent, openAccountAppeals, platform } from "../../../gen/security__enforcement.effect.vibe"
 import { AccessRoutes, projectContract } from "../../access/routes.vibe"
-import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, dryRun, loadAccess, maliceDecision, projectAppeal, recordIdFor, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
+import { type Context, AccountDecisionUnrecordable, DecisionNotNext, type GithubActor, type Loaded, activeBans, dryRun, loadAccess, maliceDecision, projectAppeal, recordIdFor, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
 import { AppealRequest, EnforcementRequest, enforcementDecision, enforcementPreview, projectAppeals } from "../../client/admin.vibe"
 import { postAdminProjectsByIdEnforcement, postProjectAppeals } from "../../client/refusals.vibe"
 import { AdminRoutes } from "../admin/routes.vibe"
@@ -155,10 +155,9 @@ function accessRefusal(a: Access, event: AccessEvent, by: number): Refused | und
     }
     case "denyAppeal": {
       const open = openAppealsOf(a, event.project)
-      if (!projectRestricted(a, event.project)) return refused(decisionRows.noOpenAppeal)
-      if (latestRecord(a, event.project).role === "VettingRole") return refused(decisionRows.maliciousDecisionRequired)
-      if (open.length === 0) return refused(decisionRows.noOpenAppeal)
-      return open.some((appeal) => !independentOf(a, by, event.project, appeal.target)) ? refused(decisionRows.independentReviewRequiredAccount) : undefined
+      if (!projectRestricted(a, event.project) || open.length === 0) return refused(decisionRows.noOpenAppeal)
+      if (open.some((appeal) => !independentOf(a, by, event.project, appeal.target))) return refused(decisionRows.independentReviewRequiredAccount)
+      return latestRecord(a, event.project).role === "VettingRole" ? refused(decisionRows.maliciousDecisionRequired) : undefined
     }
     default: return undefined
   }
@@ -167,7 +166,7 @@ function accessRefusal(a: Access, event: AccessEvent, by: number): Refused | und
 effect function accessAfter(access: Loaded, event: AccessEvent, by: number) {
   return dryRun(access, event, by) catch effect (error) => match (error) {
     when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
-    when DenialUnrecordable: throw accessRefusal(access.state, event, by) ?? new Refused(admission.rejected);
+    when AccountDecisionUnrecordable: throw accessRefusal(access.state, event, by) ?? new Refused(admission.rejected);
     when AccessRejected: throw accessRefusal(access.state, event, by) ?? error;
     default: throw error;
   }
@@ -362,7 +361,7 @@ effect function decided(request: Request, preview: boolean) {
   const plan = try planOf(request, row, registry, access)
   if (preview) return json({ preview: plan.preview }, 200, projectContract)
   const recordId = commit(plan) catch effect (error) => match (error) {
-    when DenialUnrecordable: throw new Refused(admission.rejected);
+    when AccountDecisionUnrecordable: throw new Refused(admission.rejected);
     when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
     when Conflict: throw refused(decisionRows.staleEnforcement);
     default: throw error;

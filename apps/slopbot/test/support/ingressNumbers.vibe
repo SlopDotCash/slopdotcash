@@ -1,4 +1,2 @@
-// Pull request numbers the ingress test worker treats specially. They live outside the worker module because the
-// Workers runtime accepts only handlers as named exports of a worker entry.
 export const busyNumber = 999
 export const lostQueueNumber = 4040
