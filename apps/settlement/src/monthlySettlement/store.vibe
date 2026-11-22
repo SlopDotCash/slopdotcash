@@ -215,13 +215,13 @@ export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
 export type Decided = Extract<Event, { readonly type: "createObligations" | "noteUnderfunded" | "autoFreeze" | "finalize" | "adjust" }>
 
 export function monthObservation(settlement: Settlement, earlierUnreserved: Amount) {
-  return { ...observation(settlement.state, earlierUnreserved), otherOpenPledges: settlement.otherOpenPledges }
+  return observation(settlement.state, earlierUnreserved, settlement.otherOpenPledges)
 }
 
 function monthEventOf(settlement: Settlement, event: Decided) {
   switch (event.type) {
-    case "createObligations": return { type: "createObligations" as const, observation: monthObservation(settlement, event.earlierUnreserved), bans: event.bans }
-    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: monthObservation(settlement, event.earlierUnreserved), bans: event.bans }
+    case "createObligations": return { type: "createObligations" as const, observation: observation(settlement.state, event.earlierUnreserved, event.otherOpenPledges), bans: event.bans }
+    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: observation(settlement.state, event.earlierUnreserved, event.otherOpenPledges), bans: event.bans }
     case "autoFreeze": return event
     case "finalize": return event
     case "adjust": return event

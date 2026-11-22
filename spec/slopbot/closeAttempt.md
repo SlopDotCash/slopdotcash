@@ -12,7 +12,7 @@ by retry) and CLAUDE.md "Automatic closure". Source
 One instance is one item revision that [the closure decision](./closure.md)
 recorded as a close candidate. It starts from that decision (its identity,
 both assessed verdicts and the observation sequence it was decided on) and
-owns the close attempt journal, the label that replaces a blocked close, the
+owns the close attempt journal, the comment update that replaces a blocked close, the
 moderator notices of a confirmed scam close and Slopbot's reopen of its own
 close. Its inputs are typed observations from named verified services:
 
@@ -55,7 +55,7 @@ type Attempt = { state: AttemptState, id: int, requests: int, closedAt: int, com
   leaseToken: int, fence: ProjectFence, reservedSeq: int }
 type BlockReason = NotBlocked | GatesChanged | CapacityRefused
 type CloseAttempt = { candidate: Candidate, recheck: Recheck, attempt: Attempt, rejected: List[int],
-  blocked: BlockReason, findingLabel: bool, moderatorNotices: Set[int], moderatorLabel: bool,
+  blocked: BlockReason, blockedCommented: bool, moderatorNotices: Set[int], moderatorLabel: bool,
   maintainerReopened: bool, authorAppealed: bool, appealUpheld: bool, itemNow: CurrentItemState,
   slopbotReopened: bool }
 pure val noFence: ProjectFence = { project: 0, projectRevision: 0, manifestDigest: "", enforcementPosition: 0 }
@@ -123,13 +123,17 @@ pure def sometimesPendingAfterLeaseLost(c: CloseAttempt): bool =
 
 ### A close that a later recheck or capacity refuses is labeled instead and never retried for this revision
 
-Source `runReview`: when the final check fails the worker posts the label
-comment "source, policy, evidence or eligibility changed before closure";
-when capacity refuses (daily cap, reopen breaker, another pending close of
-the item, or a changed fence) it posts "closure authority changed, the daily
-cap was reached, or a close is already pending". Either finishes the review
-as labeled, so the block is final for this revision. The label is posted only
-while ordinary review actions are still allowed, under the current lease.
+Source `runReview`: [the closure decision](./closure.md) has already
+labeled the candidate with its category label (`labelFinding`) before the
+close is reserved, so a blocked close adds no label; it only has its
+category-label comment updated (`upsertComment` with `labelComment`). When
+the final check fails that comment says "source, policy, evidence or
+eligibility changed before closure"; when capacity refuses (daily cap,
+reopen breaker, another pending close of the item, or a changed fence) it
+says "closure authority changed, the daily cap was reached, or a close is
+already pending". Either finishes the review as labeled, so the block is
+final for this revision. The comment is updated only while ordinary review
+actions are still allowed, under the current lease.
 
 ```quint
 type RefusalReason = CapReached | BreakerTripped | ItemPending | FenceChanged | LeaseLost
@@ -146,17 +150,17 @@ pure def canBlockForCapacity(c: CloseAttempt, capacityRefusal: CapacityRefusal):
   capacityRefusal.revision == c.candidate.identity.revision and capacityRefusal.observedSeq == c.recheck.gate.seq and
   capacityRefusal.leaseToken == c.recheck.lease.token and capacityRefusal.reason != LeaseLost
 pure def blockForCapacity(c: CloseAttempt, capacityRefusal: CapacityRefusal): CloseAttempt = { ...c, blocked: CapacityRefused }
-pure def canLabelBlocked(c: CloseAttempt): bool =
-  c.blocked != NotBlocked and not(c.findingLabel) and not(disputed(c)) and leaseHeld(c.recheck.lease) and
+pure def canCommentBlocked(c: CloseAttempt): bool =
+  c.blocked != NotBlocked and not(c.blockedCommented) and not(disputed(c)) and leaseHeld(c.recheck.lease) and
   C::mayActOrdinaryFor(c.recheck.gate.source, c.candidate.identity) and
   C::effectiveMode(c.recheck.gate.source, c.candidate.triage.verdict.category) != C::ModeOff
-pure def labelBlocked(c: CloseAttempt): CloseAttempt = { ...c, findingLabel: true }
+pure def commentBlocked(c: CloseAttempt): CloseAttempt = { ...c, blockedCommented: true }
 pure def alwaysBlockedNeverAttempts(c: CloseAttempt): bool = c.blocked != NotBlocked implies c.attempt.state == NoAttempt
-pure def alwaysLabelOnlyAfterBlock(c: CloseAttempt): bool = c.findingLabel implies c.blocked != NotBlocked
+pure def alwaysBlockedCommentOnlyAfterBlock(c: CloseAttempt): bool = c.blockedCommented implies c.blocked != NotBlocked
 pure def stepBlockIsFinal(before: CloseAttempt, after: CloseAttempt): bool =
   before.blocked != NotBlocked implies after.blocked == before.blocked
-pure def sometimesBlockedAndLabeled(c: CloseAttempt): bool = c.blocked == GatesChanged and c.findingLabel
-pure def sometimesCapacityRefusedAndLabeled(c: CloseAttempt): bool = c.blocked == CapacityRefused and c.findingLabel
+pure def sometimesBlockedAndCommented(c: CloseAttempt): bool = c.blocked == GatesChanged and c.blockedCommented
+pure def sometimesCapacityRefusedAndCommented(c: CloseAttempt): bool = c.blocked == CapacityRefused and c.blockedCommented
 ```
 
 ## Story: Confirm or release an attempt only on GitHub's evidence
@@ -337,7 +341,7 @@ pure val heldLease: LeaseView = { token: 11, running: true, expiresAt: 100, obse
 pure val scamGate: C::GateObservation = { ...C::eligibleGate, activation: { ...C::activeSpam, category: F::Scam } }
 pure val initial: CloseAttempt = { candidate: decidedCandidate,
   recheck: { gate: scamGate, fence: currentFence, lease: noLease }, attempt: noAttempt, rejected: List(),
-  blocked: NotBlocked, findingLabel: false, moderatorNotices: Set(), moderatorLabel: false,
+  blocked: NotBlocked, blockedCommented: false, moderatorNotices: Set(), moderatorLabel: false,
   maintainerReopened: false, authorAppealed: false, appealUpheld: false, itemNow: unreadItem, slopbotReopened: false }
 pure val freshRecheck: Recheck = { gate: { ...scamGate, seq: 2 }, fence: currentFence, lease: heldLease }
 pure val recheckValues = Set(freshRecheck, { ...freshRecheck, gate: { ...scamGate, seq: 3 } },
@@ -368,6 +372,6 @@ pure val weight_confirmClose = 8
 pure val weight_rejectClose = 4
 pure val weight_confirmCloseComment = 6
 pure val weight_notifyModerator = 6
-pure val weight_labelBlocked = 6
+pure val weight_commentBlocked = 6
 pure val weight_reopenOwnClose = 8
 ```

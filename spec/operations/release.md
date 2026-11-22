@@ -419,9 +419,10 @@ pure def serviceAt(r: Release, service: Service): ServiceRow =
   r.services.foldl({ service: service, enabled: false, phase: ServiceSkipped }, (found, s) => if (s.service == service) s else found)
 pure def setService(r: Release, service: Service, phase: ServicePhase): List[ServiceRow] =
   r.services.listMap(s => if (s.service == service and s.phase == ServicePending) { ...s, phase: phase } else s)
-pure def canBeginPublication(r: Release): bool =
+pure def canBeginPublication(r: Release, versions: FeeVersions): bool =
   r.phase == Checked and lockHeld(r) and mayPublishSource(r) and validData(r)
-pure def beginPublication(r: Release): Release =
+    and ((r.environment == Production and r.fee.variableEnabled) implies inheritsRotation(versions))
+pure def beginPublication(r: Release, versions: FeeVersions): Release =
   { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1,
     lock: { ...r.lock, attempted: recordedAttempts(r, r.checkedSource) } }
 pure def canPublishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int,
@@ -469,7 +470,11 @@ fee-converter versions have different RPC rotations." The uploaded version's
 message is `slop.cash release <source>` followed by those retained markers,
 so a normal release never drops an earlier rotation. A rotation lineage of 0
 is a version without markers. Staging's dry-run converter carries
-`slop.cash staging <source>` and no rotation.
+`slop.cash staging <source>` and no rotation. The check runs once before
+publication begins, when production has `SLOP_FEE_CONVERTER_RELEASE`
+enabled and the tested source may still be published, and again at the
+upload: a failure of the first publishes nothing and refuses the run; a
+failure at the upload leaves the release partially published.
 
 ```quint
 type FeeVersion = { versionId: int, rotationLineage: int }
@@ -480,10 +485,17 @@ pure def inheritsRotation(versions: FeeVersions): bool = versions.activeVersions
   and versions.activeVersions.every(a => a.versionId == versions.latestUpload.versionId
     or a.rotationLineage == versions.latestUpload.rotationLineage)
   and versions.activeVersions.every(a => a.rotationLineage == inheritedRotation(versions))
+pure def canRefuseInheritance(r: Release, versions: FeeVersions): bool =
+  r.phase == Checked and lockHeld(r) and mayPublishSource(r) and r.environment == Production and r.fee.variableEnabled
+    and not(inheritsRotation(versions))
+pure def refuseInheritance(r: Release, versions: FeeVersions): Release = { ...r, phase: Refused, lock: released(r) }
 pure def alwaysFeeRotationOnlyProduction(r: Release): bool =
   r.feeRotation != 0 implies (r.configured and r.environment == Production)
 pure def sometimesFeeRotationInherited(r: Release): bool =
   r.feeRotation > 0 and serviceAt(r, FeeConverter).phase == ServiceBound
+pure def sometimesInheritanceRefused(r: Release): bool =
+  r.phase == Refused and r.environment == Production and r.anchored and r.artifactDigest > 0 and r.attempt == 0
+    and r.lock.lineage.includes(r.checkedSource)
 ```
 
 ### The static site publishes last and a lost response is reconciled from the provider

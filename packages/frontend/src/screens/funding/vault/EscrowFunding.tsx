@@ -10,7 +10,7 @@ import { loginHrefFor, useSession } from "../../../app/useSession.ts";
 import { viewActor } from "../../../session/session.vibe";
 import type { FundingVault } from "../../../kernels/poolFunding.ts";
 import { AutomaticMonthlyPayment } from "./AutomaticMonthlyPayment.tsx";
-import { type Connection, type TotalsRuntime, type VaultTotals, totalsRuntime } from "./funding.vibe";
+import { type Connection, type TotalsRuntime, type VaultTotals as TotalsRead, totalsRuntime } from "./funding.vibe";
 import { reloadTotalsOf, useTotals } from "./hooks.ts";
 import { deploymentsOf, type FundingDeployment, type FundingProject, monthlyCapAt } from "./project.schema.ts";
 import { periodOf } from "./savedPlans.ts";
@@ -58,7 +58,7 @@ type DeploymentProps = {
   loginHref: string;
   pool: PoolFacts | undefined;
   row: FundingVault | undefined;
-  totals: VaultTotals | undefined;
+  totals: TotalsRead | undefined;
   onFinalized: () => void;
   onLocked: () => void;
 };
@@ -115,7 +115,7 @@ export function EscrowFunding({ runtime, project, readOnly = false, pool, vaults
       </h2>
       {deployments.length === 0 ? (
         <Alert variant="warn" announcement="Polite">
-          The project vault is not set up. Payments disbursed by the project maintainer are not guaranteed.
+          No vault yet. Payments are not guaranteed.
         </Alert>
       ) : (
         <>

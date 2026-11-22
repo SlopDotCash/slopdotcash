@@ -1,19 +1,30 @@
+import { base58Encode, base64Encode } from "@repo/platform/chain/solana";
 import { webCrypto } from "@repo/platform/crypto";
 import { PLEDGED_FUNDS_SELECTOR, escrowAbi, evmAddress, factoryAbi } from "@repo/settlement/chain/evm/abi";
+import { expirePledgeCalldata, pledgeMonthsCalldata } from "@repo/settlement/chain/evm/actions";
 import { EVENT_TOPICS } from "@repo/settlement/chain/evm/events";
 import { vaultKey } from "@repo/settlement/chain/evm/factories";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { pledgeMonthInstructions } from "@repo/settlement/chain/solana/instructions";
+import { compileLegacy } from "@repo/settlement/chain/solana/transactions";
+import { toAmount } from "@repo/settlement/kernels/amounts";
+import { type Period, isPeriod, periodContaining } from "@repo/settlement/kernels/calendar";
+import { getWallets } from "@wallet-standard/app";
+import type { Wallet, WalletAccount } from "@wallet-standard/base";
+import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { type Hex, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, pad, toFunctionSelector } from "viem";
+import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodeFunctionResult, pad, toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { PoolFacts } from "../../gen/frontend__projections.ts";
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
-import { unreadLocks } from "../../src/kernels/poolFunding.ts";
+import { type FundingVault, unreadLocks } from "../../src/kernels/poolFunding.ts";
+import { type LockConnection, connectCard, lockDesk, lockMachine, readCard, releaseCard, reviewCard, sendCard, sendsDeposit, watchCard } from "../../src/screens/funding/vault/monthLock.vibe";
 import { useFollowed } from "../../src/screens/funding/vault/VaultActions.tsx";
 import { WalletChoice, walletChoiceServices } from "../../src/wallets/core/discovery.vibe";
 import { connectEvm } from "../../src/wallets/core/evm.vibe";
+import { connectSolana } from "../../src/wallets/core/solana.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
@@ -58,6 +69,7 @@ afterEach(() => {
 
 interface Mined {
   readonly hash: string;
+  readonly from: string;
   readonly to: string;
   readonly input: string;
   readonly value: string;
@@ -73,7 +85,14 @@ function addressOf(text: string) {
 
 const vaultKeys = [nativeVault, tokenVault].map((vault) => ({ vault, key: vaultKey({ owner: addressOf(owner), projectId: projectWord as never, asset: addressOf(vault.asset), purpose: "OrdinaryPurpose" }) }));
 
-function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown } }) {
+type Pledges = Map<number, { amount: bigint; open: boolean }>;
+
+const monthAfter = (period: number, months: number) => {
+  const index = Math.floor(period / 100) * 12 + (period % 100) - 1 + months;
+  return Math.floor(index / 12) * 100 + (index % 12) + 1;
+};
+
+function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | "unclear"; readonly approved?: boolean; readonly estimateReverts?: { readonly call: string; readonly error: unknown }; readonly pledges?: Pledges; readonly current?: number; readonly failReceipts?: boolean; readonly wallet?: string }) {
   const free = 10n ** 19n;
   const mined: Mined[] = [];
   const seen: string[] = [];
@@ -98,19 +117,34 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     if (name.name === "bindingDelay") return encodeFunctionResult({ abi: escrowAbi, functionName: "bindingDelay", result: 0n });
     if (name.name === "purpose") return encodeFunctionResult({ abi: escrowAbi, functionName: "purpose", result: 0 });
     if (name.name === "projectId") return encodeFunctionResult({ abi: escrowAbi, functionName: "projectId", result: projectWord });
+    const pledges = options.pledges;
+    if (pledges !== undefined && name.name === "currentPeriod") return encodeFunctionResult({ abi: escrowAbi, functionName: "currentPeriod", result: options.current ?? 0 });
+    if (pledges !== undefined && name.name === "openPledgedGross") return encodeFunctionResult({ abi: escrowAbi, functionName: "openPledgedGross", result: [...pledges.values()].reduce((sum, pledge) => (pledge.open ? sum + pledge.amount : sum), 0n) });
+    if (pledges !== undefined && name.name === "monthPledges") {
+      const [period] = decodeFunctionData({ abi: escrowAbi, data: data as Hex }).args as unknown as [number];
+      const found = pledges.get(period);
+      return encodeFunctionResult({ abi: escrowAbi, functionName: "monthPledges", result: [found?.amount ?? 0n, found?.open ?? false] });
+    }
+    if (pledges === undefined && ["currentPeriod", "openPledgedGross", "monthPledges"].includes(name.name)) throw Object.assign(new Error("execution reverted"), { code: 3, data: "0x" });
     throw new Error(`unexpected getter ${name.name}`);
   };
-  const mine = (transaction: { to: string; data: string; value?: string }) => {
+  const mine = (transaction: { from?: string; to: string; data: string; value?: string }) => {
     const block = BigInt(mined.length + 10);
+    if (options.pledges !== undefined && options.failReceipts !== true && (transaction.data.startsWith(selector("pledgeMonths")) || transaction.data.startsWith(selector("expirePledge")))) {
+      const decoded = decodeFunctionData({ abi: escrowAbi, data: transaction.data as Hex });
+      const args = decoded.args as unknown as ReadonlyArray<number | bigint>;
+      if (decoded.functionName === "pledgeMonths") for (let index = 0; index < Number(args[1]); index++) options.pledges.set(monthAfter(Number(args[0]), index), { amount: BigInt(args[2] ?? 0n), open: true });
+      else options.pledges.set(Number(args[0]), { amount: options.pledges.get(Number(args[0]))?.amount ?? 0n, open: false });
+    }
     const vault = vaultOf(transaction.to);
     const amount = transaction.data.startsWith(selector("deposit")) ? BigInt(`0x${transaction.data.slice(10)}`) : 0n;
     const logs = vault === undefined || amount === 0n ? [] : [{ address: vault.vault, topics: [EVENT_TOPICS.Deposited, pad(owner as Hex)], data: encodeAbiParameters([{ type: "uint128" }], [amount]) }];
-    const entry = { hash: hash((mined.length + 1).toString(16)), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, logs };
+    const entry = { hash: hash((mined.length + 1).toString(16)), from: (transaction.from ?? options.wallet ?? owner).toLowerCase(), to: transaction.to, input: transaction.data, value: transaction.value ?? "0x0", block, logs };
     mined.push(entry);
     return entry;
   };
   const receipt = (entry: Mined) => ({
-    status: "0x1",
+    status: options.failReceipts === true ? "0x0" : "0x1",
     transactionHash: entry.hash,
     blockNumber: quantity(entry.block),
     blockHash: blockHash(entry.block),
@@ -120,7 +154,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
     async request({ method, params = [] }: { method: string; params?: ReadonlyArray<unknown> }) {
       seen.push(method);
       const [first] = params as ReadonlyArray<Record<string, string>>;
-      if (method === "eth_requestAccounts" || method === "eth_accounts") return [account.address];
+      if (method === "eth_requestAccounts" || method === "eth_accounts") return [options.wallet ?? account.address];
       if (method === "eth_chainId") return quantity(BigInt(chainId));
       if (method === "eth_call") return read(String(first?.to), String(first?.data));
       if (method === "eth_getBalance") return quantity(free);
@@ -145,7 +179,7 @@ function fakeChain(options: { readonly atomic: boolean; readonly send: "mine" | 
       }
       if (method === "eth_getTransactionByHash") {
         const entry = mined.find((item) => item.hash === params[0]);
-        return entry === undefined ? null : { from: owner, to: entry.to, input: entry.input, value: entry.value };
+        return entry === undefined ? null : { from: entry.from, to: entry.to, input: entry.input, value: entry.value };
       }
       if (method === "eth_getBlockByNumber") return params[0] === "finalized" ? { number: quantity(finalized), hash: blockHash(finalized) } : { number: params[0], hash: blockHash(BigInt(String(params[0]))) };
       if (method === "eth_getCode") return runtimeCode;
@@ -363,5 +397,256 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       cleared: null,
       sends: 1,
     });
+  });
+});
+
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const current = Number(periodContaining(nowSeconds()));
+const ether = 10n ** 18n;
+const otherAccount = privateKeyToAccount("0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
+
+function asPeriod(value: number): Period {
+  if (!isPeriod(value)) throw new Error(`not a period ${value}`);
+  return value;
+}
+
+function rowOf(vault: { readonly network: string; readonly vault: string }, pledges: Pledges | undefined, free: bigint): FundingVault {
+  if (pledges === undefined) return { network: vault.network, vault: vault.vault, freeBalance: free, openPledgedGross: null, pledges: [] };
+  const open = [...pledges].filter(([, pledge]) => pledge.open);
+  return { network: vault.network, vault: vault.vault, freeBalance: free, openPledgedGross: open.reduce((sum, [, pledge]) => sum + pledge.amount, 0n), pledges: open.map(([period, pledge]) => ({ period: asPeriod(period), amount: pledge.amount, open: true })) };
+}
+
+function cardRuntime(terms: Parameters<typeof lockDesk>[0], fetch: typeof globalThis.fetch = globalThis.fetch) {
+  const runtime = ManagedRuntime.make(Layer.mergeAll(walletChoiceServices, webCrypto, FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, fetch), lockDesk(terms)));
+  cleanups.push(() => void runtime.dispose());
+  return runtime;
+}
+
+const cardState = Effect.flatMap(lockMachine(), (lock) => lock.get());
+const evmCard = Effect.map(connected, (evm): LockConnection => ({ family: "evm", address: evm.address, evm }));
+const tagOf = <A, E extends { readonly _tag: string }, R>(work: Effect.Effect<A, E, R>) => Effect.match(work, { onFailure: (error) => error._tag, onSuccess: () => "done" });
+
+describe('Lock months from the owner\'s wallet (spec/frontend/monthLock.md, "Story: Lock months from the owner\'s wallet"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/monthLock.md, "A review runs the lock refusals against the card\'s own read, and only the owner\'s accepted review can be sent"; spec/frontend/monthLock.md, "A lapsed month stays locked until any connected wallet sends its release"; spec/frontend/monthLock.md, "A declined or unclear wallet request sends nothing new, and a sent one is checked every five seconds at most 720 times"; spec/frontend/monthLock.md, "A failed transaction locks or releases nothing, and an included one waits for the finalized read before the card shows it"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault\'s current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it")', () => {
+  it("a vault without pledge support shows no card, and the owner locks three months from the vault's month with one exact pledgeMonths transaction that shows only after the reloaded finalized read", async () => {
+    const pledges: Pledges = new Map();
+    const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
+    const unsupported = cardRuntime({ owner, evm: nativeVault, solana: undefined });
+    const hidden = await unsupported.runPromise(readCard(rowOf(nativeVault, undefined, 10n * ether), 10n * ether, nowSeconds()));
+    const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
+    let reloads = 0;
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", chain.provider);
+      const connection = yield* evmCard;
+      const shown = yield* readCard(rowOf(nativeVault, pledges, 10n * ether), 10n * ether, nowSeconds());
+      yield* connectCard(connection);
+      const review = yield* reviewCard(connection, 3, "2", "", ether);
+      const sent = yield* sendCard(connection);
+      yield* watchCard(connection, Effect.sync(() => { reloads += 1; }));
+      const included = yield* cardState;
+      const beforeRead = [included.phase, included.shownLocked];
+      const after = yield* readCard(rowOf(nativeVault, pledges, 4n * ether), 4n * ether, nowSeconds());
+      return { shown: shown.phase, months: review.periods, sent: sent.phase, beforeRead, after: [after.phase, after.notice, after.shownLocked] };
+    }));
+    expect({ hidden: hidden.phase, ...result, reloads, calls: chain.mined.map((entry) => entry.input), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length }).toEqual({
+      hidden: "LockHidden",
+      shown: "LockIdle",
+      months: [current, monthAfter(current, 1), monthAfter(current, 2)],
+      sent: "LockChecking",
+      beforeRead: ["LockIncluded", toAmount(0n)],
+      after: ["LockIdle", "LockedNotice", toAmount(6n * ether)],
+      reloads: 1,
+      calls: [pledgeMonthsCalldata(current, 3, 2n * ether)],
+      sends: 1,
+    });
+  }, 20_000);
+
+  it(`a count other than 1, 3, 6 or 12, an amount below the monthly amount, a lowered month, short free funds and a deposit the wallet cannot batch are refused in that order and nothing is sent (spec/frontend/vaultLocks.md, "A lock review refuses a count other than 1, 3, 6 or 12, another wallet, an amount below the monthly amount, a lowered month, short free funds and an unbatchable deposit, in that order"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount")`, async () => {
+    const pledges: Pledges = new Map([[current, { amount: 3n * ether, open: true }]]);
+    const chain = fakeChain({ atomic: false, send: "mine", pledges, current });
+    const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
+    const refusals = await runtime.runPromise(Effect.gen(function* () {
+      announce("2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e", chain.provider);
+      const connection = yield* evmCard;
+      yield* readCard(rowOf(nativeVault, pledges, 10n * ether), 10n * ether, nowSeconds());
+      yield* connectCard(connection);
+      const seen: string[] = [];
+      for (const [count, amount, deposit] of [[2, "4", ""], [1, "0.5", ""], [1, "2", ""], [6, "4", ""], [1, "4", "1"]] as const) {
+        yield* reviewCard(connection, count, amount, deposit, ether);
+        seen.push((yield* cardState).refusal);
+      }
+      return seen;
+    }));
+    expect({ refusals, sends: chain.seen.filter((method) => method === "eth_sendTransaction" || method === "wallet_sendCalls").length }).toEqual({
+      refusals: ["LockCountRefused", "BelowMonthlyAmount", "LowersLockedMonth", "FreeFundsShort", "DepositNotBatched"],
+      sends: 0,
+    });
+  });
+
+  it(`a deposit and lock go to the wallet as one request, an included batch keeps checking until its finalized deposit, and a failed receipt locks nothing (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending")`, async () => {
+    const batched = async (failReceipts: boolean, uuid: string) => {
+      const pledges: Pledges = new Map();
+      const chain = fakeChain({ atomic: true, send: "mine", pledges, current, failReceipts });
+      const runtime = cardRuntime({ owner, evm: tokenVault, solana: undefined });
+      let reloads = 0;
+      const result = await runtime.runPromise(Effect.gen(function* () {
+        announce(uuid, chain.provider);
+        const connection = yield* evmCard;
+        yield* readCard(rowOf(tokenVault, pledges, 10_000_000n), 10_000_000n, nowSeconds());
+        yield* connectCard(connection);
+        const review = yield* reviewCard(connection, 1, "2", "3", 1_000_000n);
+        yield* sendCard(connection);
+        const included = failReceipts ? undefined : (yield* Effect.timeoutOption(watchCard(connection, Effect.void), "6 seconds"), (yield* cardState).phase);
+        chain.finalize();
+        yield* watchCard(connection, Effect.sync(() => { reloads += 1; }));
+        const state = yield* cardState;
+        return { deposit: review.depositGross, included, phase: state.phase, notice: state.notice, withDeposit: sendsDeposit(state), last: chain.mined.at(-1)?.input };
+      }));
+      return { ...result, reloads, locked: [...pledges.values()], batches: chain.seen.filter((method) => method === "wallet_sendCalls").length, transactions: chain.seen.filter((method) => method === "eth_sendTransaction").length };
+    };
+    const shared = { deposit: 3_000_000n, last: pledgeMonthsCalldata(current, 1, 2_000_000n), batches: 1, transactions: 0 };
+    expect(await batched(false, "4d5e6f7a-8b9c-4dae-8f01-3b4c5d6e7f8a")).toMatchObject({ ...shared, included: "LockChecking", phase: "LockIncluded", reloads: 1, locked: [{ amount: 2_000_000n, open: true }] });
+    expect(await batched(true, "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f")).toEqual({ ...shared, included: undefined, phase: "LockFailed", notice: "LockFailedNotice", withDeposit: true, reloads: 0, locked: [] });
+  }, 40_000);
+
+  it("a lapsed month is released with expirePledge by a connected wallet that is not the owner's, whose own lock review is refused", async () => {
+    const lapsed = monthAfter(current, -3);
+    const pledges: Pledges = new Map([[lapsed, { amount: ether, open: true }]]);
+    const other = otherAccount.address.toLowerCase();
+    const chain = fakeChain({ atomic: false, send: "mine", pledges, current, wallet: otherAccount.address });
+    const runtime = cardRuntime({ owner, evm: nativeVault, solana: undefined });
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("4d5e6f7a-8b9c-4d0e-9f1a-3b4c5d6e7f8a", chain.provider);
+      const connection = yield* evmCard;
+      yield* readCard(rowOf(nativeVault, pledges, 10n * ether), 10n * ether, nowSeconds());
+      yield* connectCard(connection);
+      yield* reviewCard(connection, 1, "1", "", ether);
+      const refused = (yield* cardState).refusal;
+      yield* releaseCard(connection, lapsed, ether);
+      yield* watchCard(connection, Effect.void);
+      const state = yield* cardState;
+      return { refused, kind: state.kind, notice: state.notice };
+    }));
+    expect({ ...result, mined: chain.mined.map((entry) => [entry.from, entry.input]), open: pledges.get(lapsed)?.open }).toEqual({
+      refused: "NotVaultOwner",
+      kind: "ReleasingMonth",
+      notice: "ReleasedNotice",
+      mined: [[other, expirePledgeCalldata(lapsed)]],
+      open: false,
+    });
+  }, 20_000);
+
+  it("the Solana lock review rebuilds the prepared message from the reviewed months and sends it through the wallet, and a prepared transaction that differs is refused before the wallet is asked", async () => {
+    const pair = async () => {
+      const keys = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
+      return { address: base58Encode(raw), raw, sign: async (message: Uint8Array) => new Uint8Array(await crypto.subtle.sign("Ed25519", keys.privateKey, Uint8Array.from(message))) };
+    };
+    const [wallet, program, project] = await Promise.all([pair(), pair(), pair()]);
+    const blockhash = base58Encode(new Uint8Array(32).fill(9));
+    const periods = [current, monthAfter(current, 1), monthAfter(current, 2)];
+    const built = pledgeMonthInstructions({ program: program.address as never, project: project.address as never, owner: wallet.address as never, periods, amount: 2_000_000n });
+    if (built.kind !== "built") throw new Error("pledge instructions refused");
+    const compiled = compileLegacy({ payer: wallet.address as never, blockhash: blockhash as never, instructions: built.value });
+    if (compiled.kind !== "compiled") throw new Error("message refused");
+    const unsigned = new Uint8Array(65 + compiled.bytes.length);
+    unsigned[0] = 1;
+    unsigned.set(compiled.bytes, 65);
+    const account: WalletAccount = { address: wallet.address, publicKey: wallet.raw, chains: ["solana:devnet"], features: ["solana:signAndSendTransaction"] };
+    const signed: Uint8Array[] = [];
+    const solanaWallet = {
+      version: "1.0.0",
+      name: "Lock Solana",
+      icon: "data:image/svg+xml,<svg/>",
+      chains: ["solana:devnet"],
+      accounts: [account],
+      features: {
+        "standard:connect": { version: "1.0.0", connect: async () => ({ accounts: [account] }) },
+        "solana:signAndSendTransaction": {
+          version: "1.0.0",
+          supportedTransactionVersions: ["legacy"],
+          signAndSendTransaction: async ({ transaction }: { transaction: Uint8Array }) => {
+            signed.push(transaction);
+            return [{ signature: await wallet.sign(transaction.slice(65)) }];
+          },
+        },
+      },
+    } as unknown as Wallet;
+    cleanups.push(getWallets().register(solanaWallet));
+    const run = async (wire: Uint8Array) => {
+      const asked: unknown[] = [];
+      const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        asked.push(body);
+        const answer = body.step === "check"
+          ? { status: "finalized" }
+          : { plan: { wallet: wallet.address, periods, requested: periods, amountMinor: "2000000", decimals: 6, current: periods.map((period) => ({ period, amountMinor: "0", open: false })), transaction: { blockhash, lastValidBlockHeight: 100, transaction: base64Encode(wire), networkFeeLamports: "5000" } } };
+        return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      const solana = { projectId: "slop", network: "solana-devnet", vault: project.address, terms: { program: program.address, project: project.address, owner: wallet.address, mint: null, tokenProgram: null } };
+      const runtime = cardRuntime({ owner: wallet.address, evm: undefined, solana }, fetch as typeof globalThis.fetch);
+      const outcome = await runtime.runPromise(Effect.gen(function* () {
+        const choice = yield* WalletChoice;
+        const id = (yield* choice.current()).find((offer) => offer.name === "Lock Solana")?.id ?? 0;
+        const solanaConnection = yield* connectSolana(id);
+        const connection: LockConnection = { family: "solana", address: solanaConnection.address, solana: solanaConnection };
+        yield* readCard({ network: "solana-devnet", vault: project.address, freeBalance: 10_000_000n, openPledgedGross: 0n, pledges: [] }, 10_000_000n, nowSeconds());
+        yield* connectCard(connection);
+        const reviewed = yield* tagOf(reviewCard(connection, 3, "2", "", 1_000_000n));
+        if (reviewed !== "done") return { reviewed, phase: (yield* cardState).phase };
+        yield* sendCard(connection);
+        yield* watchCard(connection, Effect.void);
+        return { reviewed, phase: (yield* cardState).phase };
+      }));
+      return { ...outcome, steps: asked.map((body) => (body as { step: string }).step) };
+    };
+    const altered = Uint8Array.from(unsigned);
+    altered[altered.length - 1] = (altered[altered.length - 1] ?? 0) ^ 1;
+    const honest = await run(unsigned);
+    const sentWires = signed.length;
+    const changed = await run(altered);
+    expect({ honest, sentWires, changed, signedAfter: signed.length, sameWire: signed[0]?.every((byte, index) => byte === unsigned[index]) }).toEqual({
+      honest: { reviewed: "done", phase: "LockIncluded", steps: ["review", "check"] },
+      sentWires: 1,
+      changed: { reviewed: "MonthLockRefused", phase: "LockIdle", steps: ["review"] },
+      signedAfter: 1,
+      sameWire: true,
+    });
+  }, 20_000);
+});
+
+describe('Withdraw only funds the month\'s promise or locks leave free (spec/frontend/vaultLocks.md, "Story: Withdraw only funds the month\'s promise or locks leave free"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop\'s own guard applies only to a vault without them"; spec/frontend/ownerVault.md, "A withdrawal that would break the month\'s promise is refused on Slop\'s pages"; spec/frontend/projections.md, "Slop\'s pages refuse a withdrawal below the promised amount"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold")', () => {
+  it("an upgraded vault with 700 free and 500 locked lets a 200 withdrawal through, refuses 201 with the locked-funds text before the wallet is asked, and skips the page's promise guard", async () => {
+    const promisePool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(700n) };
+    const locks = { cachedSupport: true, walletRead: true, freeKnown: true, free: toAmount(700n), locked: toAmount(500n) };
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      const allowed = yield* page.review("Transfer", 200n, promisePool, locks);
+      const refused = yield* Effect.match(page.review("Transfer", 201n, promisePool, locks), { onFailure: (error) => error.message, onSuccess: (state) => state.notice });
+      return { allowed: [allowed.notice, allowed.transfer.phase], refused, saved: sessionStorage.getItem(keys.transfer) };
+    }));
+    expect(result).toEqual({ allowed: ["Quiet", "Reviewed"], refused: lockedFundsText, saved: null });
+  });
+});
+
+describe('Check registration and transfers automatically without retiring the owner (spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing")', () => {
+  it("in a hidden tab a saved transfer is not checked automatically and spends none of its automatic asks", async () => {
+    const chain = fakeChain({ atomic: false, send: "mine" });
+    const runtime = started();
+    let asks = 0;
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("5e6f7a8b-9c0d-4e1f-8a2b-4c5d6e7f8a9b", chain.provider);
+      const connection = yield* connected;
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks);
+      yield* page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt));
+      yield* page.tabHidden(true);
+      const waited = yield* Effect.timeoutOption(page.autoCheck("Transfer", 5, () => Effect.sync((): Answer => { asks += 1; return "StillPending"; })), "200 millis");
+      const state = yield* page.machine.get();
+      return { waited: Option.isNone(waited), phase: state.transfer.phase, autoAsks: state.transfer.autoAsks, hiddenAsks: state.transfer.hiddenAsks, kept: sessionStorage.getItem(keys.transfer) !== null };
+    }));
+    expect({ ...result, asks }).toEqual({ waited: true, phase: "Sent", autoAsks: 0, hiddenAsks: 0, kept: true, asks: 0 });
   });
 });

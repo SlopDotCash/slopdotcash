@@ -137,7 +137,7 @@ pure def stepBansOnlyByDecision(before: Access, via: str, after: Access): bool =
   after.bans.length() > before.bans.length() implies via == "decideProjectBan"
 ```
 
-### One moderator decision reinstates selected accounts, each on its own appeal
+### One moderator decision reinstates selected accounts, each on its own appeal or the project's open request
 
 A reinstatement decision names one project and the accounts to release
 (migration 0072, `reinstate_accounts`; none selected is 400). For each
@@ -149,9 +149,22 @@ moderator may not have decided any of those bans, nor be a selected account
 (403 `independent_review_required`). One decision may therefore release
 several accounts and several bans; every other unreleased ban stays in force.
 While the project's own reinstatement request is open in the
-[enforcement](../security/enforcement.md) area, development lets that request
-stand for the selected accounts' appeals; this machine does not hold project
-requests and asks each account's own.
+[enforcement](../security/enforcement.md) area, that request stands for the
+selected accounts' own appeals (`reinstate_accounts` in
+`backend/projects/verified-enforcement.ts` asks each account's appeal only
+when no project appeal is open). This machine does not hold project requests:
+`projectRequest` is the enforcement record's read, never a request field,
+and `ProjectRequestOpen` stands in for each target's open appeal. Each account decision is one decision written in one D1 batch on both
+sides: the shell sends the security side's `journalAccountAppeal(by)`,
+`journalAccountDenial(fence)`, `journalAccountReinstatement(fence, accounts)`
+and `decideMalice(fence, accounts)` of this project's
+[composition](./projectComposition.md) together with this machine's
+`appeal(project)`, `denyAppeal(project, decision, projectRequest)`,
+`reinstateAccounts(decision, project, targets, projectRequest)` and
+`decideProjectBan(project, decision, accounts)`, with `accounts == targets`,
+and `projectRequest` read from the same enforcement record whose open project
+appeal the security side reads; a refusal of either refuses both (shell
+obligation).
 
 ```quint
 pure def selectedBans(a: Access, project: int, targets: List[int]): List[Ban] =
@@ -160,11 +173,15 @@ pure def openAppeal(a: Access, project: int, target: int): bool =
   a.appeals.some(p => p.project == project and p.target == target and p.status == AppealOpen)
 pure def independentOf(a: Access, by: int, project: int, target: int): bool =
   by != target and not(a.bans.some(b => b.project == project and b.target == target and not(released(a, b)) and b.decidedBy == by))
-pure def canReinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int]): bool =
+type ProjectRequestRead = ProjectRequestOpen | NoProjectRequest
+pure def canReinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: ProjectRequestRead): bool =
   isModerator(a, by) and freshDecision(a, decision) and project > 0 and targets.length() > 0
     and targets.every(t => t > 0 and targets.select(u => u == t).length() == 1
-      and selectedBans(a, project, List(t)).length() > 0 and openAppeal(a, project, t) and independentOf(a, by, project, t))
-pure def reinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int]): Access =
+      and selectedBans(a, project, List(t)).length() > 0
+      and (projectRequest == ProjectRequestOpen or openAppeal(a, project, t)) and independentOf(a, by, project, t))
+pure def reinstateAccounts(a: Access, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: ProjectRequestRead): Access =
   { ...a, decisions: a.decisions.append(decision),
     releases: a.releases.concat(selectedBans(a, project, targets).listMap(b =>
       { decision: decision, enforcement: b.enforcement, target: b.target, decidedBy: by })),
@@ -178,15 +195,19 @@ pure def alwaysReleasesIndependent(a: Access): bool = a.releases.every(r =>
     and a.decisions.includes(r.decision)
     and a.releases.every(o => o.decision == r.decision implies o.decidedBy == r.decidedBy)
     and a.releases.select(o => o.enforcement == r.enforcement and o.target == r.target).length() == 1)
-pure def lawReinstatementKeepsOtherProjectBans(a: Access, by: int, decision: int, project: int, targets: List[int], actor: int): bool =
-  (alwaysBansDecidedOnConfirmedMalice(a) and canReinstateAccounts(a, by, decision, project, targets)
+pure def lawReinstatementKeepsOtherProjectBans(a: Access, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: ProjectRequestRead, actor: int): bool =
+  (alwaysBansDecidedOnConfirmedMalice(a) and canReinstateAccounts(a, by, decision, project, targets, projectRequest)
     and a.bans.some(b => b.target == actor and b.project != project and not(released(a, b))))
-    implies banned(reinstateAccounts(a, by, decision, project, targets), actor)
-pure def lawUnselectedAccountStaysBanned(a: Access, by: int, decision: int, project: int, targets: List[int], actor: int): bool =
-  (canReinstateAccounts(a, by, decision, project, targets) and not(targets.includes(actor)) and banned(a, actor))
-    implies banned(reinstateAccounts(a, by, decision, project, targets), actor)
-pure def lawReinstatementNeedsEachAccountsAppeal(a: Access, by: int, decision: int, project: int, targets: List[int]): bool =
-  canReinstateAccounts(a, by, decision, project, targets) implies targets.every(t => openAppeal(a, project, t))
+    implies banned(reinstateAccounts(a, by, decision, project, targets, projectRequest), actor)
+pure def lawUnselectedAccountStaysBanned(a: Access, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: ProjectRequestRead, actor: int): bool =
+  (canReinstateAccounts(a, by, decision, project, targets, projectRequest) and not(targets.includes(actor)) and banned(a, actor))
+    implies banned(reinstateAccounts(a, by, decision, project, targets, projectRequest), actor)
+pure def lawReinstatementNeedsAnOpenAppeal(a: Access, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: ProjectRequestRead): bool =
+  canReinstateAccounts(a, by, decision, project, targets, projectRequest) implies
+    (projectRequest == ProjectRequestOpen or targets.every(t => openAppeal(a, project, t)))
 ```
 
 ### A banned account keeps its appeal and an independent moderator decides it
@@ -196,7 +217,9 @@ A banned account appeals once per project (`request_reinstatement` with
 account from that project, needs no other permission, survives project
 transfer, and is refused while one is open (409 `appeal_open`). A moderator
 decides it directly. A grant is the reinstatement decision above. A denial
-(`deny_reinstatement` while the project has no open project request) closes
+(`deny_reinstatement` while the project has no open project request: with one
+open it is the project denial of [enforcement](../security/enforcement.md) and
+leaves the account appeals open) closes
 every open account appeal of the project at once and keeps the bans; it
 needs a restricted project (409 `no_open_appeal` while the project is clear)
 and a moderator who banned none of those accounts and is none of them (403
@@ -215,11 +238,11 @@ pure def appeal(a: Access, by: int, project: int): Access =
 pure def projectRestricted(a: Access, project: int): bool = latestRecord(a, project).stateAfter == ProjectBanned
 pure def openAppealsOf(a: Access, project: int): List[BanAppeal] =
   a.appeals.select(p => p.project == project and p.status == AppealOpen)
-pure def canDenyAppeal(a: Access, by: int, project: int, decision: int): bool =
+pure def canDenyAppeal(a: Access, by: int, project: int, decision: int, projectRequest: ProjectRequestRead): bool =
   isModerator(a, by) and project > 0 and freshDecision(a, decision) and projectRestricted(a, project)
-    and latestRecord(a, project).role == ModeratorRole
+    and projectRequest == NoProjectRequest and latestRecord(a, project).role == ModeratorRole
     and openAppealsOf(a, project).length() > 0 and openAppealsOf(a, project).every(p => independentOf(a, by, project, p.target))
-pure def denyAppeal(a: Access, by: int, project: int, decision: int): Access =
+pure def denyAppeal(a: Access, by: int, project: int, decision: int, projectRequest: ProjectRequestRead): Access =
   { ...a, decisions: a.decisions.append(decision),
     appeals: a.appeals.listMap(p => if (p.status == AppealOpen and p.project == project) { ...p, status: AppealDenied, decidedBy: by } else p) }
 pure def appealAccess(a: Access, actor: int): bool = a.bans.some(b => b.target == actor)
@@ -235,10 +258,12 @@ pure def alwaysBanAppealsDecidedIndependently(a: Access): bool = a.appeals.every
 pure def lawEveryBannedAccountCanAppealOrHasOpenAppeal(a: Access, actor: int, project: int): bool =
   (actor > 0 and project > 0 and a.bans.some(b => b.project == project and b.target == actor and not(released(a, b))))
     implies (canAppeal(a, actor, project) or openAppeal(a, project, actor))
-pure def lawDenialNeedsRestrictedProject(a: Access, by: int, project: int, decision: int): bool =
-  not(projectRestricted(a, project)) implies not(canDenyAppeal(a, by, project, decision))
-pure def lawDenialWaitsForMaliceDecision(a: Access, by: int, project: int, decision: int): bool =
-  latestRecord(a, project).role == VettingRole implies not(canDenyAppeal(a, by, project, decision))
+pure def lawDenialNeedsRestrictedProject(a: Access, by: int, project: int, decision: int, projectRequest: ProjectRequestRead): bool =
+  not(projectRestricted(a, project)) implies not(canDenyAppeal(a, by, project, decision, projectRequest))
+pure def lawDenialWaitsForMaliceDecision(a: Access, by: int, project: int, decision: int, projectRequest: ProjectRequestRead): bool =
+  latestRecord(a, project).role == VettingRole implies not(canDenyAppeal(a, by, project, decision, projectRequest))
+pure def lawOpenProjectRequestLeavesAccountAppealsOpen(a: Access, by: int, project: int, decision: int): bool =
+  not(canDenyAppeal(a, by, project, decision, ProjectRequestOpen))
 ```
 
 ### A ban blocks new awards while funded awards stay payable
@@ -297,12 +322,15 @@ pure def sometimesOneDenialClosesTwo(a: Access): bool =
   a.appeals.some(p => p.status == AppealDenied and a.appeals.some(o => o.id != p.id and o.status == AppealDenied and o.decidedBy == p.decidedBy
     and o.project == p.project))
 pure def sometimesAppealGranted(a: Access): bool = a.appeals.some(p => p.status == AppealGranted)
+pure def sometimesReleasedOnProjectRequest(a: Access): bool =
+  a.releases.some(r => not(a.appeals.some(p => p.target == r.target and p.project == banFor(a, r.enforcement, r.target).project)))
 pure def sometimesPaidWhileBanned(a: Access): bool = a.awards.some(w => w.recipient == 7 and w.paid) and banned(a, 7)
 pure val byValues = Set(18633264, 202660855, 7, vettingService, allocationService)
 pure val projectValues = Set(1, 2)
 pure val decisionValues = Set(1, 2, 3, 4, 5, 6, 7)
 pure val accountsValues = Set(List(), List(7), List(8), List(7, 8), List(7, 7), List(18633264))
 pure val targetsValues = Set(List(7), List(8), List(7, 8), List(7, 7))
+pure val projectRequestValues = Set(ProjectRequestOpen, NoProjectRequest)
 pure val actorValues = Set(7, 8)
 pure val awardIdValues = Set(1, 2)
 pure val recipientValues = Set(7, 8)

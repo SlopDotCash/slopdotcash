@@ -26,7 +26,9 @@ obligation, this bounty vault and the case's receipt-time asset. Only a
 committed standard 75/25 case holds that obligation, and every hold keeps
 matching its case. The bounty's reserved total is exactly what the vault
 holds in reserve. A confirmed award stays pending without a reservation while
-vault funds are short.
+vault funds are short. A case received through a reporter's claim, a
+technical approver's attestation or link verification, or the GitHub receipt
+service settling a claim enters the award the same way as one Slop received.
 
 ```quint
 import money as M from "./money"
@@ -71,6 +73,23 @@ pure def canReceive(s: PrivateAward, id: int, source: C::ReceiptSource, terms: T
   B::canReceive(s.bounty, id, source, terms, reportVersion)
 pure def receive(s: PrivateAward, id: int, source: C::ReceiptSource, terms: T::ReceiptTerms, reportVersion: int): PrivateAward =
   withBounty(B::receive(s.bounty, id, source, terms, reportVersion), s)
+pure def canClaim(s: PrivateAward, id: int, by: int): bool = B::canClaim(s.bounty, id, by)
+pure def claim(s: PrivateAward, id: int, by: int): PrivateAward = withBounty(B::claim(s.bounty, id, by), s)
+pure def canVerifyLink(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): bool =
+  B::canVerifyLink(s.bounty, id, by, checkedEpoch, terms)
+pure def verifyLink(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms): PrivateAward =
+  withBounty(B::verifyLink(s.bounty, id, by, checkedEpoch, terms), s)
+pure def canRejectLink(s: PrivateAward, id: int, by: int, checkedEpoch: int): bool = B::canRejectLink(s.bounty, id, by, checkedEpoch)
+pure def rejectLink(s: PrivateAward, id: int, by: int, checkedEpoch: int): PrivateAward =
+  withBounty(B::rejectLink(s.bounty, id, by, checkedEpoch), s)
+pure def canRecordAttested(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): bool =
+  B::canRecordAttested(s.bounty, id, by, checkedEpoch, terms, confirmed)
+pure def recordAttested(s: PrivateAward, id: int, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): PrivateAward =
+  withBounty(B::recordAttested(s.bounty, id, by, checkedEpoch, terms, confirmed), s)
+pure def canSettleClaim(s: PrivateAward, id: int, by: int, listed: bool, terms: T::ReceiptTerms): bool =
+  B::canSettleClaim(s.bounty, id, by, listed, terms)
+pure def settleClaim(s: PrivateAward, id: int, by: int, listed: bool, terms: T::ReceiptTerms): PrivateAward =
+  withBounty(B::settleClaim(s.bounty, id, by, listed, terms), s)
 pure def canObserveAuthority(s: PrivateAward, snapshot: C::Authority): bool = B::canObserveAuthority(s.bounty, snapshot)
 pure def observeAuthority(s: PrivateAward, snapshot: C::Authority): PrivateAward = withBounty(B::observeAuthority(s.bounty, snapshot), s)
 pure def canDecide(s: PrivateAward, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): bool =
@@ -334,7 +353,7 @@ pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, financial: List
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
-pure val byValues = Set(1, 2, 5)
+pure val byValues = Set(-1, 1, 2, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))
 pure val grossValues = Set(List(4))

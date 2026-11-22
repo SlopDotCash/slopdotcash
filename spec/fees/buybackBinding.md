@@ -88,7 +88,7 @@ pure def arrivalFromLeg(leg: B::Buyback, arrival: P::ArrivalCredit): bool =
     and o.order == arrival.order and o.takeAmount == arrival.takeAmount and o.height == arrival.height)
 pure def lawBoundArrivalCreditedOnce(leg: B::Buyback, arrival: P::ArrivalCredit, pool: P::Pool): bool =
   (B::alwaysOutcomesOfOrders(leg) and B::alwaysRuntimeSound(leg) and arrivalFromLeg(leg, arrival))
-    implies (P::canCreditArrival(pool, arrival) iff not(P::arrivalSeen(pool, arrival)))
+    implies (P::canCreditArrival(pool, arrival, R::Worker) iff not(P::arrivalSeen(pool, arrival)))
 pure val arrivedLeg: B::Buyback = { ...B::initial, orders: List(1),
   outcomes: List({ order: 1, amount: 500000000, takeAmount: 495000000, result: B::OrderArrived, height: 2 }) }
 pure val legValues = Set(B::initial).union(Set(arrivedLeg)).union(Set({ ...arrivedLeg, source: R::Solana }))

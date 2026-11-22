@@ -73,7 +73,10 @@ pure def alwaysWritesTimed(c: Composed): bool =
 
 Each wrapped decision runs under its own guard. Each ban a moderator's
 decision records starts at the time of that decision; a released ban no
-longer gates the account.
+longer gates the account. The project's open reinstatement request
+(`projectRequest`) is the enforcement record's read, and each decision is
+written with its journal row on the project's security side in one batch, as
+[participation restrictions](./access.md) states.
 
 ```quint
 pure def canRecordVettingBan(c: Composed, by: int, project: int, decision: int): bool =
@@ -87,13 +90,16 @@ pure def decideProjectBan(c: Composed, by: int, project: int, decision: int, acc
     banStarts: c.banStarts.concat(accounts.listMap(t => { enforcement: decision, target: t, at: c.now })) }
 pure def canAppeal(c: Composed, by: int, project: int): bool = AC::canAppeal(c.access, by, project)
 pure def appeal(c: Composed, by: int, project: int): Composed = { ...c, access: AC::appeal(c.access, by, project) }
-pure def canDenyAppeal(c: Composed, by: int, project: int, decision: int): bool = AC::canDenyAppeal(c.access, by, project, decision)
-pure def denyAppeal(c: Composed, by: int, project: int, decision: int): Composed =
-  { ...c, access: AC::denyAppeal(c.access, by, project, decision) }
-pure def canReinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int]): bool =
-  AC::canReinstateAccounts(c.access, by, decision, project, targets)
-pure def reinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int]): Composed =
-  { ...c, access: AC::reinstateAccounts(c.access, by, decision, project, targets) }
+pure def canDenyAppeal(c: Composed, by: int, project: int, decision: int, projectRequest: AC::ProjectRequestRead): bool =
+  AC::canDenyAppeal(c.access, by, project, decision, projectRequest)
+pure def denyAppeal(c: Composed, by: int, project: int, decision: int, projectRequest: AC::ProjectRequestRead): Composed =
+  { ...c, access: AC::denyAppeal(c.access, by, project, decision, projectRequest) }
+pure def canReinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: AC::ProjectRequestRead): bool =
+  AC::canReinstateAccounts(c.access, by, decision, project, targets, projectRequest)
+pure def reinstateAccounts(c: Composed, by: int, decision: int, project: int, targets: List[int],
+  projectRequest: AC::ProjectRequestRead): Composed =
+  { ...c, access: AC::reinstateAccounts(c.access, by, decision, project, targets, projectRequest) }
 pure def canAdvanceTime(c: Composed, by: int, at: int): bool = by == scheduler and at > c.now
 pure def advanceTime(c: Composed, by: int, at: int): Composed = { ...c, now: at }
 ```
@@ -154,6 +160,7 @@ pure val projectValues = Set(1)
 pure val decisionValues = Set(1, 2, 3)
 pure val accountsValues = Set(List(7))
 pure val targetsValues = Set(List(7))
+pure val projectRequestValues = Set(AC::ProjectRequestOpen, AC::NoProjectRequest)
 pure val actorValues = Set(7)
 pure val atValues = Set(1, 2, 3)
 pure val restrictionValues = Set(E::Clear, E::FlagQuarantine, E::ModeratorQuarantine, E::ServiceBan, E::ModeratorBan)

@@ -413,14 +413,18 @@ pure def repositoryEligible(p: Project, repositoryId: int, period: int): bool =
   p.starts.some(start => start.repositoryId == repositoryId and period >= start.month)
 ```
 
-### Automatic-closure consent changes only by an owner revision
+### Automatic-closure consent changes only by an owner revision or an administrator exception
 
 Editing appends a revision at the expected revision under current authority.
 Unchecking an explicit Yes records No; an untouched missing setting stays
 absent. A write that would change nothing is refused. The consent is part of
 `slopbot`, a presentation field, so a save may carry it together with other
 changes in one owner revision (above); a save whose only change is the
-consent records a `ConsentChanged` revision and keeps status and tier.
+consent records a `ConsentChanged` revision and keeps status and tier. An
+administrator exception replaces the whole manifest, `slopbot` included, so it
+records the replacement's saved value as it stands, `slopbot.automaticClosure`
+true, false or absent (below; `replaceProjectManifest` in
+`backend/projects/handler.ts` checks no consent transition).
 
 ```quint
 pure def lawConsentOnlySaveRecordsConsentChange(p: Project, by: int, change: OwnerChange): bool =
@@ -428,8 +432,9 @@ pure def lawConsentOnlySaveRecordsConsentChange(p: Project, by: int, change: Own
     (currentRevision(publishOwnerRevision(p, by, change)).kind == ConsentChanged and
      publishOwnerRevision(p, by, change).status == p.status and publishOwnerRevision(p, by, change).tier == p.tier and
      publishOwnerRevision(p, by, change).consent == consentAfter(p.consent, change.consent))
-pure def stepConsentChangesOnlyByOwnerRevision(before: Project, via: str, after: Project): bool =
-  (before.revision > 0 and after.consent != before.consent) implies (via == "publishOwnerRevision" or via == "publishUpdate")
+pure def stepConsentChangesOnlyByOwnerOrAdministratorRevision(before: Project, via: str, after: Project): bool =
+  (before.revision > 0 and after.consent != before.consent) implies
+    (via == "publishOwnerRevision" or via == "publishUpdate" or via == "adminRevise")
 ```
 
 ### A current maintainer removes a project and a lost reply can be retried
@@ -537,7 +542,16 @@ differs), `executable`, `otherFields` (any other field differs) and
 `funded` (the replacement's committed funding state, positive committed
 amount, enabled payments, recorded escrow deployment, funding address or
 funding commitment) from the stored and the submitted manifest; a client
-never supplies them. The revision passes every registry check a revision
+never supplies them. The replacement's closure consent (`consent`, the saved
+`slopbot.automaticClosure`, absent when the manifest has none) and the
+repositories it appends after the listed ones (`appended`, each with the
+exact UTC month it counts from, `countsFrom`) are read from the submitted
+manifest too. Listed repositories keep their ids and start months
+(`assertRepositoryTransition`: the inventory only grows), at most 20 are
+listed, and an appended repository changes executable inputs; unlike an
+owner's append it needs no authority read on the new repository and may
+count from any month the administrator names. The registry checks it as it
+checks any appended repository. The revision passes every registry check a revision
 passes: a project that a restriction retired keeps a paused, retired
 revision (the composition requires one under any restriction); restricted
 repositories, policy transitions (a funded project keeps its network, asset
@@ -565,13 +579,18 @@ administrator decision and never depends on funding. The manifest's
 ```quint
 type Exception = { expectedRevision: int, reason: int, status: Status, tier: Tier, steward: int, participation: Participation,
   fieldsComplete: bool, network: int, asset: int, financial: bool, executable: bool, otherFields: bool, funded: bool,
-  vaults: VaultRecords, reward: RewardPromise, clearance: Clearance, license: License }
+  vaults: VaultRecords, reward: RewardPromise, clearance: Clearance, license: License, consent: C::SavedConsent,
+  appended: List[RepositoryStart] }
+pure def exceptionAppendsValid(p: Project, appended: List[RepositoryStart]): bool =
+  p.repositories.length() + appended.length() <= 20 and
+  appended.every(s => s.repositoryId > 0 and s.month >= 0 and not(p.repositories.includes(s.repositoryId)) and
+    appended.select(t => t.repositoryId == s.repositoryId).length() == 1)
 pure def exceptionChanges(p: Project, exception: Exception): bool =
   exception.status != p.status or exception.tier != p.tier or exception.steward != p.steward or
   exception.participation != p.participation or exception.fieldsComplete != p.fieldsComplete or exception.financial or
   exception.executable or exception.otherFields or exception.network != p.network or exception.asset != p.asset or
   exception.funded != p.funded or exception.vaults != p.vaults or honorChanged(p, exception.reward) or
-  exception.license != p.license
+  exception.license != p.license or exception.consent != p.consent or exception.appended.length() > 0
 pure def exceptionKind(p: Project, exception: Exception): RevisionKind =
   if (exception.tier == Retired and p.tier != Retired) AdminDelist
   else if (exception.status == Paused and p.status == Active and exception == holdOf(p, exception)) AdminHold
@@ -579,12 +598,14 @@ pure def exceptionKind(p: Project, exception: Exception): RevisionKind =
 pure def holdOf(p: Project, exception: Exception): Exception =
   { ...exception, status: Paused, tier: p.tier, steward: p.steward, participation: p.participation, fieldsComplete: p.fieldsComplete,
     network: p.network, asset: p.asset, financial: false, executable: false, otherFields: false, funded: p.funded, vaults: p.vaults,
-    reward: { ...exception.reward, honor: if (p.honorSystem) HonorTrue else HonorOmitted }, license: p.license }
+    reward: { ...exception.reward, honor: if (p.honorSystem) HonorTrue else HonorOmitted }, license: p.license,
+    consent: p.consent, appended: List() }
 pure def canAdminRevise(p: Project, by: int, exception: Exception): bool =
   p.administrators.includes(by) and p.revision > 0 and
   exception.expectedRevision == p.revision and exception.reason > 0 and exceptionChanges(p, exception) and
   exception.steward > 0 and exception.network > 0 and exception.asset > 0 and honorSystemValid(exception.reward) and
-  licenseValid(exception.license) and
+  licenseValid(exception.license) and exceptionAppendsValid(p, exception.appended) and
+  (exception.appended.length() > 0 implies exception.executable) and
   (p.retirement == RestrictionRetired implies exception.status == Paused and exception.tier == Retired) and
   (exception.tier == Retired implies exception.status == Paused) and
   (exception.participation != OpenParticipation implies exception.status == Paused) and
@@ -599,21 +620,28 @@ pure def adminRevise(p: Project, by: int, exception: Exception): Project =
     retirement: if (exception.tier != Retired) NotRetired else if (p.retirement == NotRetired) AdminDelisted else p.retirement,
     steward: exception.steward, license: exception.license, participation: exception.participation, fieldsComplete: exception.fieldsComplete,
     network: exception.network, asset: exception.asset, funded: exception.funded, vaults: exception.vaults,
-    honorSystem: exception.reward.honor == HonorTrue,
+    honorSystem: exception.reward.honor == HonorTrue, consent: exception.consent,
+    repositories: p.repositories.concat(exception.appended.listMap(s => s.repositoryId)), starts: p.starts.concat(exception.appended),
     economic: if (exception.financial) p.economic.append({ fromMonth: p.month + 1, revision: p.revision + 1 }) else p.economic }
 pure def canPlace(p: Project, by: int, tier: Tier): bool =
   p.administrators.includes(by) and p.revision > 0 and p.retirement == NotRetired and tier != Retired and tier != p.tier
 pure def place(p: Project, by: int, tier: Tier): Project = revised(Placement, by, p.status, tier, p)
 pure val exception1: Exception = { expectedRevision: 2, reason: 1, status: Paused, tier: Community, steward: 1,
   participation: OpenParticipation, fieldsComplete: true, network: 1, asset: 1, financial: false, executable: false,
-  otherFields: false, funded: false, vaults: noVaults, reward: noPromise, clearance: ClearanceRetained, license: license1 }
+  otherFields: false, funded: false, vaults: noVaults, reward: noPromise, clearance: ClearanceRetained, license: license1,
+  consent: C::Absent, appended: List() }
 pure val exceptionValues = tuples(Set(1, 2, 3), Set(exception1, { ...exception1, tier: Retired }, { ...exception1, steward: 4 },
   { ...exception1, participation: Archived }, { ...exception1, participation: PermissionRequired },
   { ...exception1, status: Active }, { ...exception1, status: Active, executable: true, clearance: ClearanceMissing },
   { ...exception1, financial: true, funded: true, vaults: { ordinary: true, bounty: false } },
   { ...exception1, financial: true, network: 2 }, { ...exception1, otherFields: true },
   { ...exception1, status: Active, participation: Archived }, { ...exception1, license: noLicense },
-  { ...exception1, status: Active, license: noLicense }, { ...exception1, license: { ...noLicense, url: 1 } }))
+  { ...exception1, status: Active, license: noLicense }, { ...exception1, license: { ...noLicense, url: 1 } },
+  { ...exception1, consent: C::Disabled }, { ...exception1, consent: C::Enabled },
+  { ...exception1, executable: true, appended: List({ repositoryId: 2, month: 202612 }) },
+  { ...exception1, executable: true, appended: List({ repositoryId: 2, month: 202610 }) },
+  { ...exception1, appended: List({ repositoryId: 2, month: 202612 }) },
+  { ...exception1, executable: true, appended: List({ repositoryId: 1, month: 202612 }) }))
   .map(x => { ...x._2, expectedRevision: x._1 }).union(Set({ ...exception1, steward: 4, reason: 0 }))
 pure def alwaysRestrictedParticipationPaused(p: Project): bool = p.participation != OpenParticipation implies p.status == Paused
 pure def alwaysRetirementConsistent(p: Project): bool =
@@ -708,6 +736,10 @@ pure def sometimesCombinedOwnerRevision(p: Project): bool =
 pure def sometimesAdminReplacedFinancialTerms(p: Project): bool = p.history.some(r => r.kind == AdminException) and p.economic.length() > 0
 pure def sometimesConsentOnlyRevision(p: Project): bool = p.history.some(r => r.kind == ConsentChanged) and p.consent == C::Enabled
 pure def sometimesRelistedByAdministrator(p: Project): bool = p.retirement == NotRetired and p.history.some(r => r.kind == Removed)
+pure def sometimesAdministratorSetConsent(p: Project): bool =
+  p.consent == C::Disabled and not(p.history.some(r => r.kind == ConsentChanged or r.kind == RepositoryAppended or r.kind == OwnerUpdate))
+pure def sometimesAdministratorAppendedRepository(p: Project): bool =
+  p.repositories.length() == 2 and not(p.history.some(r => r.kind == RepositoryAppended))
 pure val byValues = Set(-2, -1, 0, 1, 2, 5)
 pure val pValues = Set(initial, { ...initial, application: ApplicationDecidedLegacy },
   { ...initial, revision: 1, creator: 1, steward: 1, branch: 1, license: license1, tier: Retired, retirement: RestrictionRetired,

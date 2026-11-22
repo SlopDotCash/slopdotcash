@@ -146,9 +146,9 @@ pure def finishInstallation(w: Webhook, requestId: int, committed: bool): Webhoo
     answer(r, 202, Ignored, { ...w, installationProcessed: true, install: I::deliver(w.install, change) })
   else if (committed and I::canDeliver(w.install, change)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, change) })
   else answer(r, 503, Failed, w)
-pure def releaseOrdinary(w: Webhook): Webhook =
-  if (w.reopen != noReopen or w.value != noValue) w
-  else { ...w, receipt: NoReceipt, exists: false, installationProcessed: false, firstEvent: Other }
+pure def releaseOrdinary(r: Request, w: Webhook): Webhook =
+  answer(r, 503, Failed, if (w.reopen != noReopen or w.value != noValue) w
+    else { ...w, receipt: NoReceipt, exists: false, installationProcessed: false, firstEvent: Other })
 ```
 
 ### Current registration determines valuation and queue scope
@@ -178,7 +178,7 @@ pure def inspectValue(w: Webhook, requestId: int, registration: RS::RegistryObse
   val value = r.body.value
   val conflict = wants and (not(w.exists) or RS::slopbotScope(writeRegistration) != RS::Contributor or not(validValue(value))
     or (w.value != noValue and w.value != value))
-  if (not(lookupOk) or conflict) answer(r, 503, Failed, releaseOrdinary(w))
+  if (not(lookupOk) or conflict) releaseOrdinary(r, w)
   else updateRequest({ ...r, phase: InspectQueue, valued: wants },
     { ...w, value: if (wants) value else w.value })
 pure def qualifiedJob(body: Body): JobKind =
@@ -197,7 +197,7 @@ pure def inspectQueue(w: Webhook, requestId: int, registration: RS::RegistryObse
   val scope = queueScope(job, RS::slopbotScope(registration))
   if (job == NoJob) updateRequest({ ...r, phase: AwaitCompletion,
     completion: if (r.valued) ValuationPending else Ignored }, w)
-  else if (not(lookupOk)) answer(r, 503, Failed, releaseOrdinary(w))
+  else if (not(lookupOk)) releaseOrdinary(r, w)
   else if (scope == NoScope) updateRequest({ ...r, phase: AwaitCompletion, completion: NotRegistered }, w)
   else updateRequest({ ...r, scope: scope, completion: Queued, phase: if (job == HumanReopen) PersistReopen else SendQueue }, w)
 ```
@@ -229,20 +229,20 @@ pure def bindReopen(w: Webhook, requestId: int, strictSource: bool): Webhook =
   val r = request(w, requestId)
   val source = r.body.reopen
   if (not(strictSource) or not(validReopen(source))) updateRequest({ ...r, phase: AwaitCompletion, completion: ReopenUnavailable }, w)
-  else if (not(w.exists) or (w.reopen != noReopen and w.reopen != source)) answer(r, 503, Failed, releaseOrdinary(w))
+  else if (not(w.exists) or (w.reopen != noReopen and w.reopen != source)) releaseOrdinary(r, w)
   else updateRequest({ ...r, phase: SendQueue }, { ...w, reopen: source })
 pure def canSend(w: Webhook, requestId: int): bool = request(w, requestId).phase == SendQueue
 pure def send(w: Webhook, requestId: int, ack: Ack): Webhook =
   val r = request(w, requestId)
   val sent = { ...w, sends: w.sends + (if (ack == QueueRejected) 0 else 1) }
   if (ack == QueuedAndAcked) updateRequest({ ...r, phase: AwaitCompletion }, sent)
-  else answer(r, 503, Failed, releaseOrdinary(sent))
+  else releaseOrdinary(r, sent)
 pure def canComplete(w: Webhook, requestId: int): bool = request(w, requestId).phase == AwaitCompletion
 pure def complete(w: Webhook, requestId: int, committed: bool): Webhook =
   val r = request(w, requestId)
   if (committed) answer(r, 202, r.completion,
     if (w.exists) { ...w, receipt: ProcessedReceipt } else w)
-  else answer(r, 503, Failed, releaseOrdinary(w))
+  else releaseOrdinary(r, w)
 ```
 
 ### A downstream reopen decision rechecks the exact retained source

@@ -118,10 +118,13 @@ const ports = Layer.mergeAll(
   Layer.succeed(Notices, {
     statements: (batch) => effect { return batch.notices.map((notice) => sql`INSERT OR IGNORE INTO journey_notices (event_key, recipient, kind) VALUES (${notice.eventKey}, ${notice.recipientGithubId}, ${notice.kind})`) },
     fanout: () => effect { return [] },
-    payoutRecipient: (project) => effect { return project.stewardGithubId },
+    payoutRecipient: (project) => effect {
+      const lister = project.listing.fromApplication ? project.listing.applicantGithubId : project.listing.firstActorGithubId
+      return project.stewardAccount === "OrganizationSteward" && lister !== undefined ? lister : project.stewardGithubId
+    },
   }),
   Layer.succeed(Registry, {
-    project: (projectId) => effect { return { projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active" as const, manifestStatus: "Active" as const, listingTier: "Community" as const, retirement: "NotRetired" as const, stewardGithubId: "7", stewardAccount: "UserSteward" as const, listing: { fromApplication: false }, repositories: [], closureConsent: false } },
+    project: (projectId) => effect { return { projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active" as const, manifestStatus: "Active" as const, listingTier: "Community" as const, retirement: "NotRetired" as const, stewardGithubId: "7", stewardAccount: "OrganizationSteward" as const, listing: { fromApplication: true, applicantGithubId: "88" }, repositories: [], closureConsent: false } },
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
@@ -585,7 +588,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   })
 
-  it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, a refused cancellation leaves the attempt unknown, and reconciliation selects only the served networks, reporting and holding an attempt whose vault is not reviewed (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+  it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, a refused cancellation leaves the attempt unknown, and reconciliation selects only the served networks, reporting and holding an attempt whose vault is not reviewed, and a newer wallet parks the uncertain attempt held with its payout exception sent to the payout audience (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
     const { escrow, script } = try Journey
     const { vault, deployment, asset } = try opened(14n, escrow.roles.owner.address)
     try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
@@ -628,7 +631,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const refusedCancel = shell(recoverUncertainAttempts([{ deployment, asset }])) catch (error) => failureTag(error)
     const afterRefusal = try shell(rows(Schema.Struct({ state: Schema.String, transaction_id: Schema.NullOr(Schema.String) }), sql`SELECT state, transaction_id FROM payment_attempts WHERE id = ${pending}`))
     const refusalFailures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT attempt_id FROM payment_attempt_failures WHERE attempt_id = ${pending}`))
-    try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, proven, strays, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures }, {
+    const parkedDispatch = try shell(dispatchPayment(deployment, asset, second.id))
+    const heldOutbox = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_outbox WHERE obligation_id = ${second.id}`))
+    const heldNotices = try shell(rows(Schema.Struct({ kind: Schema.String, recipient: Schema.String }), sql`SELECT kind, recipient FROM journey_notices WHERE event_key LIKE ${`%${second.id}%`} AND kind IN ('PayoutHeld', 'PayoutException') ORDER BY kind`))
+    try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, proven, strays, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures, parkedDispatch, heldOutbox, heldNotices }, {
       lost: "ExecutorUnavailable",
       afterLoss: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
       resent: "Submitted",
@@ -645,6 +651,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       refusedCancel: "RecoveryFailed",
       afterRefusal: [{ state: "unknown", transaction_id: null }],
       refusalFailures: [],
+      parkedDispatch: "Unavailable",
+      heldOutbox: [{ state: "held" }],
+      heldNotices: [{ kind: "PayoutException", recipient: "88" }, { kind: "PayoutHeld", recipient: "51" }],
     })
   })
 

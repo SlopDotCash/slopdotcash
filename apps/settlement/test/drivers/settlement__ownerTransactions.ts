@@ -26,4 +26,4 @@ export const driver: Driver & AsyncDisposable = {
   },
 };
 
-export const options: Options = { keys: ["deposit", "withdrawal"], walks: 20, steps: 12 };
+export const options: Options = { keys: ["deposit", "withdrawal", "lock", "release"], walks: 20, steps: 12 };
