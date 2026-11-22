@@ -442,7 +442,7 @@ pure def shareValid(reward: RewardPromise): bool =
   reward.share == 0 or (reward.monthlyPool and reward.share >= 1 and reward.share <= maxShareBasisPoints)
 pure def shareHistoryValid(history: List[ShareEntry]): bool =
   history.every(e => e.basisPoints >= 0 and e.basisPoints <= maxShareBasisPoints and e.throughMonth > 0) and
-  history.foldl(0, (last, e) => if (last >= 0 and e.throughMonth > last) e.throughMonth else -1) >= 0
+  history.foldl(0, (priorMonth, e) => if (priorMonth >= 0 and e.throughMonth > priorMonth) e.throughMonth else -1) >= 0
 pure def prospectiveShare(p: Project, share: int): List[ShareEntry] =
   if (share == p.share or p.shareHistory.some(e => e.throughMonth >= p.month)) p.shareHistory
   else p.shareHistory.append({ throughMonth: p.month, basisPoints: p.share })
