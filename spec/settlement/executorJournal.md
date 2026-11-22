@@ -174,6 +174,21 @@ when that leaf is committed and this signer holds no live attempt for it, and
 never passes the root's leaf count. A month's root is settled when it is
 admitted and neither root key of the month holds a live attempt.
 
+This cursor is stricter than the source's zero-remaining branch. When an
+admitted month's remainder is zero, development `submitEvmMonthlyReserve`
+and vibestack `submitReserve` (`if (state.remaining === 0n)`) pass each
+remaining leaf on its journaled nonce alone, with no committed leaf, so a
+wholly released month's cursor reaches its leaf count; [monthly
+settlement](./monthlySettlement.md) states that branch
+(`canAdvanceZeroRemaining`). This journal does not: its cursor passes only
+committed leaves (`alwaysCursorBacked`), so the cursor of a wholly released
+month stays where the release found it. [Monthly
+execution](./monthlyExecution.md) never completes a released month from
+this cursor, because whether a released month counts as complete is an
+open owner decision; until it is decided the two units differ here on
+purpose, and the source's completion of a released month is a source gap
+there.
+
 Discovered by simulation: one period, the two roots a month can name (a
 version 2 root and a V1 root) and the month's two root keys and first two
 leaves are sampled, which is every key a two-leaf month uses.
