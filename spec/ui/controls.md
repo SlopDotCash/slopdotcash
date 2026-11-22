@@ -66,7 +66,10 @@ leaves the row. They are links, not an ARIA tab list, so arrow keys do
 nothing. A navigation tab is current when it leads to the page shown, so two
 tabs to different pages are never both current. PRD section 7 keeps keyboard
 navigation; development's `SectionNav` in `src/Presentation.tsx` marks the
-page shown with `aria-current="page"` (commit 7acb6d13c).
+page shown with `aria-current="page"` (commit 7acb6d13c). The links of a
+`SiteFooter`, the home link, navigation and account control of a
+`SiteHeader`, a list of `ProjectCard`s, each card one link as a `Card` with
+`asChild` is, and the way back of `NotFound` are rows of the same kind.
 
 ```quint
 pure def nextInRow(at: int, links: int, forward: bool): int =
@@ -83,6 +86,40 @@ pure val linksValues = Set(0, 1, 3)
 pure val tabValues = Set("overview", "rewards")
 pure val otherValues = Set("overview", "history")
 pure val shownValues = Set("overview", "history")
+```
+
+### A link to another site opens in a new tab and sends that site no referrer
+
+`ExternalLink` leads to another site, such as a profile on GitHub, in a new
+tab, so the page a person was reading stays open, and without a referrer, so
+the other site never learns which page of Slop linked to it. It is named by
+what it shows, or by `label` where it shows an icon or a short handle.
+
+```quint
+type LinkTarget = SameSite | OtherSite
+pure def opensNewTab(target: LinkTarget): bool = target == OtherSite
+pure def sendsReferrer(target: LinkTarget): bool = target == SameSite
+pure def lawOtherSiteGetsNoReferrer(target: LinkTarget): bool =
+  target == OtherSite implies opensNewTab(target) and not(sendsReferrer(target))
+```
+
+### An exact value scrolls rather than wraps, and the keyboard reaches it to scroll
+
+A command, an address or an amount that has a place of its own is shown
+whole on one line. Where it is wider than its place, it scrolls, and it takes
+keyboard focus so a person without a pointer can scroll it: the code of a
+`CommandBlock`, the value of an `Address` and the exact values of a
+`CompareChange`, which names each value `Current` or `Proposed` for a screen
+reader. An exact value beside others, such as what a `Checklist` check found,
+wraps whole instead, and prose wraps; neither takes focus.
+
+```quint
+type ValueKind = ScrolledValue | WrappedValue | ProseValue
+pure def wrapsValue(kind: ValueKind): bool = kind != ScrolledValue
+pure def takesFocus(kind: ValueKind): bool = kind == ScrolledValue
+pure def lawExactValueScrollsByKeyboard(kind: ValueKind): bool =
+  kind == ScrolledValue implies not(wrapsValue(kind)) and takesFocus(kind)
+pure def lawWrappedValueTakesNoFocus(kind: ValueKind): bool = wrapsValue(kind) implies not(takesFocus(kind))
 ```
 
 ### A disclosure opens and closes from its trigger and never hides what a decision rests on

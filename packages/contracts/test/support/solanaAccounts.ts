@@ -3,7 +3,7 @@
 // a mint or token account with exactly the facts an event names, and an earlier build's project.
 import type { AccountFacts, MintFacts } from "../../gen/contracts__solanaEscrow.ts";
 import type { Purpose } from "../../gen/contracts__ledger.ts";
-import { findPda } from "./solanaWire.ts";
+import { findPda } from "@repo/platform/chain/solanaWire";
 import {
   type Address,
   type GenesisAccount,
