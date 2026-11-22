@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   ME,
   OTHER,
@@ -228,8 +229,18 @@ test("a repeated close writes no second closure event", async () => {
   try {
     h.setting(ME.github);
     h.licence(h.run(ME.github), ME.github);
-    await h.close(h.tokens.me);
-    await h.close(h.tokens.meOther).catch(() => null);
+    expect((await h.close(h.tokens.me)).status).toBe(200);
+    // Closing deleted every session; give the closed member a fresh one so
+    // the second request reaches the close batch itself.
+    const again = "z".repeat(48);
+    h.sqlite
+      .query(
+        "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,'2027-01-01T00:00:00.000Z')",
+      )
+      .run(await sha256Hex(again), ME.actor);
+    const second = await h.close(again);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ closed: true });
     expect(
       h.rows(
         "SELECT kind FROM trace_licensing_events WHERE github_id = ?",
