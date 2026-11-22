@@ -1,9 +1,5 @@
 name: ci
 
-# Every run is `pnpm verify`, the tools' own self-test included; Turborepo and
-# spec skip what the change does not reach, from the cache of the last run.
-# The fixed normal profile is the same locally and in CI. The self-test also
-# installs and checks each standalone example.
 on:
   pull_request:
     branches: [vibestack, development, main]
@@ -26,23 +22,52 @@ jobs:
     environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-      TURBO_CACHE: ${{ github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r' }}
+      TURBO_CACHE: ${{ secrets.TURBO_TOKEN != '' && (github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r') || 'local:rw' }}
     steps:
       - uses: actions/checkout@v7
       - id: setup
         uses: ./.github/actions/setup
-      - run: pnpm verify --continue --summarize
+      - run: pnpm verify --continue=dependencies-successful --summarize
+      - name: Report Turbo task timings
+        if: ${{ !cancelled() }}
+        run: |
+          for report in .turbo/runs/*.json; do
+            [[ -f "$report" ]] || continue
+            jq -r '
+              select(.version == "1" and (.tasks | type == "array"))
+              | .execution as $run
+              | select([$run.startTime, $run.endTime, $run.cached, $run.attempted] | all(type == "number"))
+              | "### Turbo task timings", "",
+                "Wall time \(($run.endTime - $run.startTime) / 1000) s. Cache hits \($run.cached) of \($run.attempted) attempted tasks.",
+                "",
+                "| Task | Wall time (s) | Cache | Exit code |",
+                "| --- | ---: | --- | ---: |",
+                ([.tasks[]
+                  | select([.execution.startTime, .execution.endTime] | all(type == "number"))
+                  | {id: .taskId, elapsed: ((.execution.endTime - .execution.startTime) / 1000), cache: .cache.status, exit: .execution.exitCode}]
+                  | sort_by(-.elapsed) | .[]
+                  | "| \(.id) | \(.elapsed) | \(.cache // "-") | \(.exit // "-") |"),
+                ""
+            ' "$report" >> "$GITHUB_STEP_SUMMARY" || echo "::warning::Could not read the Turbo run summary"
+          done
       - if: always() && steps.setup.outputs.spec-cache-key != ''
         uses: actions/cache/save@v6
         with:
           path: ${{ steps.setup.outputs.spec-cache-path }}
           key: ${{ steps.setup.outputs.spec-cache-key }}
-      - if: always() && steps.setup.outputs.turbo-cache-key != ''
+      - id: prune-turbo-cache
+        if: always() && steps.setup.outputs.turbo-cache-key != ''
         run: |
-          mkdir -p .turbo/cache
+          [[ -d .turbo/cache ]] || exit 0
           cat .turbo/runs/*.json 2>/dev/null | jq -r '.tasks[] | select(.cache.status == "HIT") | .hash' | while read -r hash; do find .turbo/cache -name "$hash*" -exec touch {} +; done
           find .turbo/cache -type f -mtime +7 -delete
-      - if: always() && steps.setup.outputs.turbo-cache-key != ''
+          for archive in .turbo/cache/*.tar.zst; do
+            metadata="${archive%.tar.zst}-meta.json"
+            [[ -f "$archive" && -s "$archive" && -f "$metadata" && -s "$metadata" ]] || continue
+            echo "populated=true" >> "$GITHUB_OUTPUT"
+            break
+          done
+      - if: always() && steps.prune-turbo-cache.outputs.populated == 'true'
         uses: actions/cache/save@v6
         with:
           path: .turbo/cache
