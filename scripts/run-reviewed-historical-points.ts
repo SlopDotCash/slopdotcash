@@ -26,13 +26,18 @@ import {
   readHistoricalAssessmentCatalog,
   readHistoricalAssessmentJournalHeads,
 } from "./historical-assessment-catalog";
-import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
+import {
+  classifyHistoricalAssessmentScope,
+  historicalClosedContextBindings,
+} from "./historical-assessment-reconciliation";
 import {
   type HistoricalReplayReceipt,
   verifyHistoricalReplayQualification,
 } from "./historical-replay-qualification";
 import {
   projectHistoricalValueChanges,
+  type VerifiedClosedReviews,
+  verifyHistoricalClosedReviews,
   verifyHistoricalValueReplay,
 } from "./historical-value-replay";
 import {
@@ -1624,6 +1629,7 @@ async function auditHistoricalAssessments(
     catalog,
     sourceAudit,
     projectId,
+    github,
   );
   const report = {
     schemaVersion: "1",
@@ -1666,6 +1672,7 @@ async function auditHistoricalAssessments(
         audit: sourceAudit,
         catalog,
         baseline,
+        closedContexts: historicalClosedContextBindings(receipt),
       },
       {
         evidenceToken: token,
@@ -1687,28 +1694,27 @@ async function auditHistoricalAssessments(
       baselineDigest: expectedPointsDigest,
       baselineRevisionCount: baseline.revisions.length,
     };
-    // The read-only replay can report additional closed rows. The current
-    // reviewed packet admits an exact merged-source scope only.
-    let qualificationSha256: string | null = null;
-    if (closedUnmergedCoverageCount === 0) {
-      const allocation = projectHistoricalValueChanges(
-        binding,
-        baseline,
-        snapshot,
-      );
-      valueSnapshot = snapshot;
-      valueKeys = allocation.rows.map((row) => row.award.key);
-      qualificationSha256 = verifyHistoricalValueReplay(
-        {
-          ...binding,
-          valueSnapshot,
-          valueKeys,
-        },
-        baseline,
-        receipt,
-        snapshot,
-      );
-    }
+    const closedReviews = await verifyHistoricalClosedReviews(
+      snapshot,
+      receipt,
+      catalog,
+      github,
+    );
+    const allocation = projectHistoricalValueChanges(
+      binding,
+      baseline,
+      snapshot,
+      closedReviews,
+    );
+    valueSnapshot = snapshot;
+    valueKeys = allocation.rows.map((row) => row.award.key);
+    const qualificationSha256 = verifyHistoricalValueReplay(
+      { ...binding, valueSnapshot, valueKeys },
+      baseline,
+      receipt,
+      snapshot,
+      closedReviews,
+    );
     replayResult = {
       snapshotSha256: hash(snapshot),
       valueCoverageCount: snapshot.valueAssessmentCoverage?.length ?? 0,
@@ -1979,6 +1985,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     return;
   }
   let assessmentHeads: HistoricalAssessmentJournalHeads;
+  let closedReviews: VerifiedClosedReviews | undefined;
   if (packet.replayQualification) {
     setPhase("trusted replay receipt read");
     const donor = await readTrustedHistoricalReplay(
@@ -1986,14 +1993,16 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
       checkout,
     );
     setPhase("assessment qualification match");
-    assessmentHeads = await verifyHistoricalReplayQualification(
-      packet,
-      baseline,
-      donor,
-      checkout,
-      generation,
-      query,
-    );
+    ({ heads: assessmentHeads, closedReviews } =
+      await verifyHistoricalReplayQualification(
+        packet,
+        baseline,
+        donor,
+        checkout,
+        generation,
+        query,
+        github,
+      ));
   } else {
     setPhase("assessment journal checkpoint read");
     if (process.env.HISTORICAL_POINTS_APPLY === "true")
@@ -2015,6 +2024,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     new Date().toISOString(),
     bans,
     verifiedIdenticalAcceptedChanges,
+    closedReviews,
   );
   setPhase("import preparation");
   const directory = join(

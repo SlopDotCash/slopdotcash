@@ -1,6 +1,9 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { createHistoricalLeaderboardSnapshot } from "../src/lib/leaderboard";
-import type { LeaderboardInput } from "../src/lib/leaderboard-types";
+import type {
+  LeaderboardInput,
+  ScoreEvent,
+} from "../src/lib/leaderboard-types";
 import {
   appendPointAwards,
   emptyPointsJournal,
@@ -25,6 +28,7 @@ import type { LegacyAssessmentCatalogRow } from "./historical-assessment-catalog
 import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
 import {
   projectHistoricalValueChanges,
+  verifyHistoricalClosedReviews,
   verifyHistoricalValueReplay,
 } from "./historical-value-replay";
 import { HISTORICAL_POINTS_AUDIT_WINDOW } from "./reviewed-historical-points";
@@ -438,4 +442,156 @@ test("the canonical checkpoint and implementation occurrence cannot drift", asyn
       f.snapshot,
     ),
   ).toThrow("Point history moved");
+});
+
+test("closed review proof binds the assessed review and authenticated pre-close actor", async () => {
+  const f = fixture();
+  const { receipt } = await f.review(empty());
+  const accepted = receipt.records[0].sources[0];
+  const parent = {
+    id: "PR_closed",
+    number: 8,
+    headSha: "c".repeat(40),
+    auditedHeadSha: null,
+    occurredAt: "2026-10-24T10:00:00.000Z",
+    finding: "verified-closed-context" as const,
+  };
+  const occurredAt = "2026-10-22T10:00:00.000Z";
+  const actor = {
+    id: "MDQ6VXNlcjE=",
+    login: "reviewer",
+    kind: "User" as const,
+    url: "https://github.com/reviewer",
+    avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+  };
+  const source = {
+    id: "PRR_closed",
+    kind: "review" as const,
+    number: parent.number,
+    url: `https://github.com/${repository}/pull/8#pullrequestreview-10`,
+    title: "A verified formal review",
+  };
+  const record_json = JSON.stringify({
+    sources: [
+      {
+        pullRequestNodeId: parent.id,
+        pullRequestNumber: parent.number,
+        headSha: parent.headSha,
+        repositoryNodeId: scope.repositoryNodeId,
+        occurredAt: parent.occurredAt,
+      },
+    ],
+    units: [
+      {
+        assessment: {
+          status: "assessed",
+          reviews: [{ sourceId: source.id, tier: "standard" }],
+        },
+      },
+    ],
+  });
+  const digest = sha256Hex(record_json);
+  const contexts = {
+    ...receipt,
+    records: [
+      {
+        journal: "joint" as const,
+        sequence: 1,
+        digest,
+        sources: [accepted, parent],
+      },
+    ],
+  };
+  const candidate: ScoreEvent = {
+    id: `${parent.id}:value-review:${source.id}`,
+    actor,
+    category: "substantive-review",
+    points: 1,
+    scoreThirds: 3,
+    scoreDecisionSourceId: `value:${digest}`,
+    occurredAt,
+    repository,
+    source,
+    reason: "One source-bound standard review",
+  };
+  const historical = { ...f.snapshot, ledger: [candidate] };
+  const catalog = {
+    joint: [
+      {
+        sequence: 1,
+        recorded_at: assessedAt,
+        record_digest: digest,
+        record_json,
+        project_id: scope.projectId,
+        source_digest: "a".repeat(64),
+        source_keys_json: "[]",
+      },
+    ],
+  };
+  const official = {
+    id: 10,
+    node_id: source.id,
+    html_url: source.url,
+    submitted_at: occurredAt,
+    user: { id: 1, node_id: actor.id, type: "User" },
+  };
+  const github = (row: unknown = official) => ({
+    async get<T>(path: string) {
+      expect(path).toBe("/repos/elizaOS/eliza/pulls/8/reviews/10");
+      return row as T;
+    },
+  });
+  await expect(
+    verifyHistoricalClosedReviews(historical, contexts, catalog, github()),
+  ).resolves.toEqual(
+    new Map([
+      [
+        source.id,
+        {
+          parentId: parent.id,
+          parentNumber: parent.number,
+          actorNodeId: actor.id,
+          sourceUrl: source.url,
+          recordDigest: digest,
+          occurredAt,
+        },
+      ],
+    ]),
+  );
+  for (const row of [
+    null,
+    { ...official, submitted_at: parent.occurredAt },
+    { ...official, node_id: "PRR_different" },
+    { ...official, user: { ...official.user, id: 2 } },
+  ]) {
+    await expect(
+      verifyHistoricalClosedReviews(historical, contexts, catalog, github(row)),
+    ).rejects.toThrow("review identity or timing changed");
+  }
+  for (const event of [
+    { ...candidate, category: "merged-pull-request" as const },
+    {
+      ...candidate,
+      source: { ...source, url: source.url.replace("-10", "-11") },
+    },
+    { ...candidate, occurredAt: parent.occurredAt },
+    { ...candidate, id: "duplicated-noncanonical-key" },
+  ]) {
+    await expect(
+      verifyHistoricalClosedReviews(
+        { ...historical, ledger: [event] },
+        contexts,
+        catalog,
+        github(),
+      ),
+    ).rejects.toThrow();
+  }
+  await expect(
+    verifyHistoricalClosedReviews(
+      historical,
+      { ...contexts, records: [{ ...contexts.records[0], sources: [parent] }] },
+      catalog,
+      github(),
+    ),
+  ).rejects.toThrow("absent from the assessed work unit");
 });
