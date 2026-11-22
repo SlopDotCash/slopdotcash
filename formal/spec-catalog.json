@@ -375,7 +375,7 @@
     },
     {
       "path": "spec/backend/accounts.md",
-      "sha256": "9e248f39d5bb043a024cd85ed45d7ae46fae282c25d0359fffaa3e8bfd3989ec",
+      "sha256": "5a61ee392a9fe5d60df7e070f0cf79a95d63ca6c83343a6ff372c8fdc5e4f881",
       "module": "backend__accounts",
       "stories": [
         {
@@ -384,15 +384,15 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history",
-          "line": 272
+          "line": 297
         },
         {
           "heading": "Story: Connect an optional public X profile",
-          "line": 327
+          "line": 352
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account",
-          "line": 387
+          "line": 412
         }
       ],
       "rules": [
@@ -429,7 +429,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / A web sign-in consumes one web assertion and opens a public membership",
-          "line": 108,
+          "line": 110,
           "definitions": [
             "assertedGithub",
             "actorKeyFor",
@@ -453,8 +453,18 @@
           ]
         },
         {
+          "heading": "Story: Sign in with GitHub and keep one immutable account / Only the configured owner, while a current administrator, gets a seven-day session",
+          "line": 173,
+          "definitions": [
+            "ownerSessionLifetime",
+            "lifetimeFor",
+            "stepSessionLifetimeFixedAtSignIn",
+            "sometimesOwnerWeekSession"
+          ]
+        },
+        {
           "heading": "Story: Sign in with GitHub and keep one immutable account / An ordinary sign-in cannot reopen a closed account; explicit reopening can",
-          "line": 170,
+          "line": 195,
           "definitions": [
             "canRefuseClosedSignIn",
             "refuseClosedSignIn",
@@ -467,7 +477,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Sign-out ends only the caller's session and revocation never reaches another account",
-          "line": 195,
+          "line": 220,
           "definitions": [
             "canSignOut",
             "signOut",
@@ -484,7 +494,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Active memberships are public and a hide request is refused",
-          "line": 231,
+          "line": 256,
           "definitions": [
             "canPublishMembership",
             "publishMembership",
@@ -494,7 +504,7 @@
         },
         {
           "heading": "Story: Sign in with GitHub and keep one immutable account / Public reads show only public open members and never publish anything",
-          "line": 246,
+          "line": 271,
           "definitions": [
             "publicPeople",
             "memberLookup",
@@ -508,7 +518,7 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents",
-          "line": 277,
+          "line": 302,
           "definitions": [
             "canClose",
             "close",
@@ -520,14 +530,14 @@
         },
         {
           "heading": "Story: Close and reopen an account without losing history / Telegram stays retired and historical participation awards stay frozen",
-          "line": 312,
+          "line": 337,
           "definitions": [
             "stepTelegramFrozen"
           ]
         },
         {
           "heading": "Story: Connect an optional public X profile / The X flow is started by a live session and committed only while that session lives",
-          "line": 331,
+          "line": 356,
           "definitions": [
             "canStartX",
             "startX",
@@ -551,7 +561,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change",
-          "line": 393,
+          "line": 418,
           "definitions": [
             "otherAccountsRecent",
             "senderMember",
@@ -583,7 +593,7 @@
         },
         {
           "heading": "Story: Keep mail consent tied to the signed-in account / Every account outcome is reachable from the launch state",
-          "line": 478,
+          "line": 503,
           "definitions": [
             "identityStart",
             "canIdentityStart",
@@ -689,7 +699,7 @@
         },
         {
           "target": "./email.md",
-          "line": 397
+          "line": 422
         }
       ]
     },
@@ -10527,7 +10537,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "eb8bb1e166619e3226d62988cee6515554fb90a756c3c7c468980264c52e8bd6",
+      "sha256": "13d1445b106d3aad0bf40e2298d85d17d41007b5296f057e66252e32681070da",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10553,6 +10563,10 @@
         {
           "heading": "Story: Let anyone fund a project from its public page and see who funded",
           "line": 441
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts",
+          "line": 558
         }
       ],
       "rules": [
@@ -10787,6 +10801,44 @@
             "accountValues",
             "otherAccountValues"
           ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent",
+          "line": 564,
+          "definitions": [
+            "AllocationRecipient",
+            "AllocationFile",
+            "AllocationWallet",
+            "AllocationDisplay",
+            "AllocationRow",
+            "noAllocationRecipient",
+            "allocationRecipient",
+            "allocationReadFailed",
+            "allocationRow",
+            "lawAllocationRowIsTheViewersOwn",
+            "allocationUnavailable",
+            "lawFailedAllocationReadIsUnavailable",
+            "lawWalletPromptOnlyWhileAwaiting",
+            "allocationValues",
+            "viewerValues",
+            "allocationWalletsValues",
+            "instantValues"
+          ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it",
+          "line": 623,
+          "definitions": [
+            "timelyAllocationWallet",
+            "allocationDisplay",
+            "allocationPresentation",
+            "lawRecordedTransferIsSent",
+            "lawClosedBatchWithoutTransferIsUnclaimed",
+            "lawScheduledNeedsATimelyAuthorizedWallet",
+            "lawNoWalletIsUnclaimedFromTheDeadline",
+            "lawAllocationStatesAreDistinguishable",
+            "recipientValues"
+          ]
         }
       ],
       "imports": [
@@ -10843,6 +10895,14 @@
         {
           "target": "../settlement/vaultDeposits.md",
           "line": 519
+        },
+        {
+          "target": "../settlement/contributorAllocation.md",
+          "line": 576
+        },
+        {
+          "target": "../ui/status.md",
+          "line": 633
         }
       ]
     },
@@ -32740,7 +32800,7 @@
     },
     {
       "path": "spec/ui/controls.md",
-      "sha256": "b9f60434ddea13248cdea71cefb863496f8d81239988b2835947eeefff3cf06b",
+      "sha256": "ef17ec5b09473ee208a3a33d9367ee958b27a41ffa7003fada2b9051c596e35c",
       "module": "ui__controls",
       "stories": [
         {
@@ -32816,8 +32876,29 @@
           ]
         },
         {
+          "heading": "Story: Move through links, details and dialogs by keyboard / A link to another site opens in a new tab and sends that site no referrer",
+          "line": 91,
+          "definitions": [
+            "LinkTarget",
+            "opensNewTab",
+            "sendsReferrer",
+            "lawOtherSiteGetsNoReferrer"
+          ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / An exact value scrolls rather than wraps, and the keyboard reaches it to scroll",
+          "line": 106,
+          "definitions": [
+            "ValueKind",
+            "wrapsValue",
+            "takesFocus",
+            "lawExactValueScrollsByKeyboard",
+            "lawWrappedValueTakesNoFocus"
+          ]
+        },
+        {
           "heading": "Story: Move through links, details and dialogs by keyboard / A disclosure opens and closes from its trigger and never hides what a decision rests on",
-          "line": 88,
+          "line": 125,
           "definitions": [
             "Detail",
             "mayHide",
@@ -32828,7 +32909,7 @@
         },
         {
           "heading": "Story: Move through links, details and dialogs by keyboard / A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed",
-          "line": 104,
+          "line": 141,
           "definitions": [
             "DialogFocus",
             "DialogKey",
@@ -32843,7 +32924,7 @@
       "references": [
         {
           "target": "./confirmation.md",
-          "line": 110
+          "line": 147
         }
       ]
     },
@@ -32891,7 +32972,7 @@
     },
     {
       "path": "spec/ui/index.md",
-      "sha256": "c5b9d5172aed1f43a01c302756be2f67c4880eabe6efcd6e3e6efee983de696c",
+      "sha256": "e3cd0435cc266a593aedef5ba178b29af2cf501f333130d228cb424931e6ad6f",
       "module": "ui",
       "stories": [
         {
@@ -32916,20 +32997,19 @@
             "Motion",
             "Focus",
             "Shown",
-            "initial",
-            "show",
-            "prefer",
-            "reach",
             "takesTyping",
             "moves",
             "showsRing",
-            "sometimesStillWithRing",
-            "sometimesPointerRingInField"
+            "lawReducedMotionStandsStill",
+            "lawKeyboardFocusShowsRing",
+            "lawPointerRingOnlyWhereTyping",
+            "lawUnfocusedShowsNoRing",
+            "sValues"
           ]
         },
         {
           "heading": "Story: One look for every control / Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square",
-          "line": 79,
+          "line": 80,
           "definitions": [
             "ControlSize",
             "targetPx",
@@ -32938,7 +33018,7 @@
         },
         {
           "heading": "Story: One look for every control / Colors are tokens, except another party's mark",
-          "line": 94,
+          "line": 95,
           "definitions": []
         }
       ],
