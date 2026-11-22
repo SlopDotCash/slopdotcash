@@ -4399,7 +4399,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "0d3a9965b0a04703fa6ead999163226f5d4aeca77536000423f39de93403753c",
+      "sha256": "ec30aaf0183873fd913fe5398ee4cfbb80eca6d39bac8a76c8e58f7b4b3fcf54",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4407,6 +4407,7 @@
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -4417,12 +4418,12 @@
         868, 896, 987, 1020, 1029, 1041, 1077, 1174, 1370, 1605, 1667, 1675,
         1733, 1786, 1789, 1982, 1991, 1996, 2003, 2086, 2087, 2253, 2254, 2337,
         2370, 2398, 2400, 2404, 2414, 2416, 2428, 2438, 2448, 2473, 2476, 2477,
-        2480, 2482, 2507, 2559, 2856, 2859, 3159, 3279, 3400, 3413, 3424, 3425,
-        3612, 3613, 3804, 3820, 3832, 3839, 3865, 3875, 3879, 3883, 3887, 3942,
-        3961, 3988, 4005, 4039, 4040, 4042, 4058, 4075, 4076, 4077, 4086, 4091,
-        4271, 4629, 4651, 4660, 4710, 4745, 4751, 4758, 4827, 4897, 5027, 5146,
-        5338, 5497, 5832, 5842, 5844, 5857, 5890, 5892, 5893, 5897, 5901, 5957,
-        6020, 6073, 6076, 6165, 6213, 6293, 6303, 6310
+        2480, 2482, 2507, 2559, 2864, 2867, 3167, 3287, 3408, 3421, 3432, 3433,
+        3620, 3621, 3812, 3828, 3840, 3847, 3873, 3883, 3887, 3891, 3895, 3950,
+        3969, 3996, 4013, 4047, 4048, 4050, 4066, 4083, 4084, 4085, 4094, 4099,
+        4279, 4637, 4659, 4668, 4718, 4753, 4759, 4766, 4835, 4905, 5035, 5154,
+        5346, 5505, 5840, 5850, 5852, 5865, 5898, 5900, 5901, 5905, 5909, 5965,
+        6028, 6081, 6084, 6173, 6221, 6301, 6311, 6318
       ],
       "review": "mapped-abstraction"
     },
@@ -7104,17 +7105,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "1678ef4ad191762acd1ce0ffcf9452abc48906dccbaa234af13a4ca66d0e188a",
+      "sha256": "299de1b1c021772bdedab19b1659a2e7a77ae4c894dc12abf1e6eb14394d3d7d",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 279, 301, 349, 381, 439, 500, 508, 515, 555, 664, 695, 800, 827
+        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 802, 829
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "d7f209d152a17cd6ef1463b83521d77f1494b540be4bfe8f4df1a109ecaf8493",
+      "sha256": "1cfc91eb1c2c8c93216fc4d2f1146fb1e5e9d37c47ce6ad652bfd52d9077053f",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7132,14 +7133,14 @@
         267, 268, 292, 298, 963, 1026, 1052, 1263, 1325, 1335, 1341, 1343, 1345,
         1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
         2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
-        2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2930, 2983,
-        3149, 3250, 3269, 3324, 3500, 3695, 3720, 3769, 3855, 3875, 4030, 4111,
-        4508, 4519, 4553, 4616, 4630, 4953, 5166, 5367, 5480, 5505, 5636, 5645,
-        5650, 5717, 5731, 6494, 6496, 6519, 6523, 6527, 6532, 6678, 6687, 6697,
-        6698, 6756, 6791, 6797, 6817, 6822, 6829, 6837, 6839, 6865, 6868, 6882,
-        6884, 6905, 6907, 6911, 6914, 6919, 7111, 7113, 7372, 7416, 7479, 7480,
-        8359, 8360, 8361, 8362, 8379, 8389, 8400, 8416, 8505, 8576, 8577, 8604,
-        8811
+        2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2940, 2993,
+        3159, 3260, 3279, 3334, 3510, 3708, 3733, 3782, 3868, 3888, 4043, 4124,
+        4521, 4532, 4566, 4629, 4643, 4966, 5179, 5380, 5493, 5518, 5649, 5658,
+        5663, 5730, 5744, 6507, 6509, 6532, 6536, 6540, 6545, 6691, 6700, 6710,
+        6711, 6769, 6804, 6810, 6830, 6835, 6842, 6850, 6852, 6878, 6881, 6895,
+        6897, 6918, 6920, 6924, 6927, 6932, 7124, 7126, 7385, 7429, 7492, 7493,
+        8372, 8373, 8374, 8375, 8392, 8402, 8413, 8429, 8518, 8589, 8590, 8617,
+        8824
       ],
       "review": "mapped-abstraction"
     },
@@ -15872,17 +15873,21 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "78f771444858d973ec4a317dd3eaddab4a3828e8a47a39d46b2c3a0ba14effb8",
+      "sha256": "d7d9b9ea892069d261111923d86e4847084bb86f9eec668339488b73dc2123cd",
       "sources": [
+        "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
         "src/lib/commit-credit.ts",
         "src/lib/leaderboard.ts"
       ],
       "scenarios": [
+        "acceptedSquashDoesNotSuppressIndependentWorkTest",
+        "carriedSquashAcceptanceGetsNoNewCreditTest",
         "completeDuplicateGetsNoNewCreditTest",
         "emptyPromotionKeepsPriorPointsTest",
         "heldSourceKeepsPriorPointsTest",
+        "missingOrCrossRepositorySquashIdentityCanScoreTest",
         "missingOwnershipIsNotDuplicateProofTest",
         "noCommitRowsHoldFreshCreditTest",
         "noRowsInHistoricalReplayKeepsFallbackTest",

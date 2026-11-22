@@ -164,6 +164,8 @@ export interface MergedPullRequestOutcome {
   headRefOid?: string;
   /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
   emptyAcceptanceMarker?: true;
+  /** Nonempty one-parent acceptance emitted by GitHub, used only to recognize copies. */
+  acceptedOrdinaryCommitOid?: string;
   id: string;
   number: number;
   title: string;

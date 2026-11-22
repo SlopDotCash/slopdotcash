@@ -2728,22 +2728,31 @@ export function parseSearchReference(
     ),
     commits: parseOutcomeCommits(node.commits, `${path}.commits`),
   };
-  if (
-    commitPage.totalCount === 1 &&
-    !commitPage.pageInfo.hasNextPage &&
-    commitPage.commits.length === 1 &&
-    commitPage.commits[0].oid === commitPage.headRefOid &&
-    commitPage.commits[0].parentCount === 1 &&
-    node.mergeCommit != null
-  ) {
-    const acceptance = readImplementationAcceptance(
-      outcome.id,
-      commitPage.headRefOid,
-      node.mergeCommit,
-      path,
-    );
-    if (acceptance && acceptance !== "ineligible") {
-      if (acceptance.mergeTreeSha !== acceptance.firstParentTreeSha) {
+  const acceptance =
+    node.mergeCommit == null
+      ? null
+      : readImplementationAcceptance(
+          outcome.id,
+          commitPage.headRefOid,
+          node.mergeCommit,
+          path,
+        );
+  if (acceptance && acceptance !== "ineligible") {
+    const changed = acceptance.mergeTreeSha !== acceptance.firstParentTreeSha;
+    const separateOrdinaryCommit =
+      acceptance.mergeParentShas.length === 1 &&
+      acceptance.mergeSha !== commitPage.headRefOid;
+    if (changed && separateOrdinaryCommit && commitPage.totalCount > 0) {
+      outcome.acceptedOrdinaryCommitOid = acceptance.mergeSha;
+    }
+    if (
+      commitPage.totalCount === 1 &&
+      !commitPage.pageInfo.hasNextPage &&
+      commitPage.commits.length === 1 &&
+      commitPage.commits[0].oid === commitPage.headRefOid &&
+      commitPage.commits[0].parentCount === 1
+    ) {
+      if (changed) {
         if (
           typeof node.changedFiles === "number" &&
           Number.isSafeInteger(node.changedFiles) &&
@@ -2755,8 +2764,7 @@ export function parseSearchReference(
           };
       } else if (
         outcome.additions + outcome.deletions > 0 &&
-        acceptance.mergeParentShas.length === 1 &&
-        acceptance.mergeSha !== commitPage.headRefOid
+        separateOrdinaryCommit
       ) {
         outcome.emptyAcceptanceMarker = true;
       }

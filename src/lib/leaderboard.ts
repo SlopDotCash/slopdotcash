@@ -2771,13 +2771,13 @@ function latestSourceUpdate(input: LeaderboardInput): string {
 }
 
 /**
- * Assigns each commit SHA to the earliest merged pull request that lists it,
- * whatever its base branch, so a later consolidation or promotion pull
- * request cannot score the same commits again. Every branch shares credit
- * with the implementation authors of the commits it owns (SCR-04).
+ * Assigns a commit SHA to its earliest listed or verified accepted source,
+ * regardless of the base branch. An accepted squash SHA identifies a
+ * later copy but never supplies new authors or changed lines (SCR-04).
  */
 export function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
+  includeAcceptedOrdinaryCommits = false,
 ): Map<string, string> {
   const owners = new Map<string, string>();
   const ordered = sortWithParsedTimes(
@@ -2787,10 +2787,20 @@ export function commitCreditOwners(
       leftTime - rightTime || compareCodeUnits(left.id, right.id),
   );
   for (const pullRequest of ordered) {
-    const repositoryId = repositoryIdFromUrl(pullRequest.url);
+    const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
     if (pullRequest.commits === null) continue;
     for (const commit of pullRequest.commits) {
-      const key = `${repositoryId.toLowerCase()}\0${commit.oid}`;
+      const key = `${repositoryId}\0${commit.oid}`;
+      if (!owners.has(key)) owners.set(key, pullRequest.id);
+    }
+    const accepted = pullRequest.acceptedOrdinaryCommitOid;
+    if (
+      includeAcceptedOrdinaryCommits &&
+      accepted &&
+      pullRequest.commits.every((commit) => commit.parentCount !== undefined) &&
+      pullRequest.commits.some((commit) => commit.parentCount === 1)
+    ) {
+      const key = `${repositoryId}\0${accepted}`;
       if (!owners.has(key)) owners.set(key, pullRequest.id);
     }
   }
@@ -3507,7 +3517,10 @@ function createSnapshotWithReviewCutoff(
     ...mergedPullRequests,
     ...valueContexts.filter((source) => source.mergedAt !== null),
   ];
-  const commitOwners = commitCreditOwners(mergedPullRequestOutcomes);
+  const commitOwners = commitCreditOwners(
+    mergedPullRequestOutcomes,
+    mode === "rolling",
+  );
   const outcomeById = new Map(
     mergedPullRequestOutcomes.map((pullRequest) => [
       pullRequest.id,

@@ -515,6 +515,50 @@ test("only a complete changed single-commit submission can have an empty accepta
   }
 });
 
+test("collection records a distinct nonempty one-parent acceptance for a multi-commit submission", () => {
+  const firstParent = { oid: "2".repeat(40), tree: { oid: "1".repeat(40) } };
+  const tree = { oid: "4".repeat(40) };
+  const accepted = {
+    oid: "3".repeat(40),
+    tree,
+    parents: { totalCount: 1, nodes: [firstParent] },
+  };
+  const reference = nodeFor(retained);
+  const node = {
+    ...reference,
+    commits: connection([
+      { commit: { ...reference.commits.nodes[0].commit, oid: "5".repeat(40) } },
+      ...reference.commits.nodes,
+    ]),
+    mergeCommit: accepted,
+  };
+  const parse = (row: unknown) =>
+    parseSearchReference(row, "merged source", "PullRequest").outcome;
+  expect(parse(node)).toMatchObject({
+    acceptedOrdinaryCommitOid: accepted.oid,
+    commits: null,
+  });
+  for (const other of [
+    reference,
+    { ...node, mergeCommit: { oid: accepted.oid } },
+    { ...node, mergeCommit: { ...accepted, tree: firstParent.tree } },
+    { ...node, mergeCommit: { ...accepted, oid: node.headRefOid } },
+    {
+      ...node,
+      mergeCommit: {
+        ...accepted,
+        parents: {
+          totalCount: 2,
+          nodes: [firstParent, { oid: node.headRefOid, tree }],
+        },
+      },
+    },
+    { ...node, commits: connection([]) },
+  ]) {
+    expect(parse(other)?.acceptedOrdinaryCommitOid).toBeUndefined();
+  }
+});
+
 test("line and file totals select native proof candidates without establishing duplication", () => {
   const tree = { oid: "1".repeat(40) };
   const earlier = {

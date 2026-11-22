@@ -2,11 +2,14 @@
 // @source src/lib/commit-credit.ts
 // @source scripts/value-ingestion.ts
 // @source scripts/retained-commit-credit.ts
+// @source scripts/generate-leaderboard.ts
 // @evidence scripts/retained-attribution-hold.test.ts
 // @evidence scripts/commit-credit.test.ts
 // Finite selection gate for one accepted source. A complete first-owner proof
 // can show all ordinary commits already credited. An attribution proof gap is
 // distinct from transport/identity failure and never revokes retained Points.
+// The single-parent acceptance identity is an authenticated input, not an author
+// or a changed-line weight. The model abstracts transport and Git tree evidence.
 module implementation_credit_gate {
   var s: { selected: bool, complete: bool, duplicate: bool, held: bool,
     fatal: bool, credited: bool, retained: int }
@@ -20,6 +23,8 @@ module implementation_credit_gate {
     selectSource(true, false, carriesEarlierWork and not(hasIndependentPaths), false)
   action selectCommitCensus(rollingFallback: bool, hasCommitRows: bool): bool =
     selectSource(hasCommitRows, false, rollingFallback and not(hasCommitRows), false)
+  action selectPromotedAcceptance(earlierAcceptance: bool, sameRepository: bool, independentWork: bool): bool =
+    selectSource(true, earlierAcceptance and sameRepository and not(independentWork), false, false)
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -36,6 +41,15 @@ module implementation_credit_gate {
     .expect(s.retained == 10 and invariant).then(credit.fail())
   run completeDuplicateGetsNoNewCreditTest = init.then(selectSource(true, true, false, false))
     .expect(invariant).then(credit.fail())
+  run carriedSquashAcceptanceGetsNoNewCreditTest = init.then(selectPromotedAcceptance(true, true, false))
+    .expect(invariant).then(credit.fail())
+  run acceptedSquashDoesNotSuppressIndependentWorkTest = init.then(selectPromotedAcceptance(true, true, true))
+    .then(credit).expect(s.credited and invariant)
+  run missingOrCrossRepositorySquashIdentityCanScoreTest =
+    init.then(selectPromotedAcceptance(false, true, false)).then(credit)
+      .expect(s.credited and invariant)
+    .then(init).then(selectPromotedAcceptance(true, false, false)).then(credit)
+      .expect(s.credited and invariant)
   run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
     .expect(s.retained == 10 and invariant).then(credit.fail())
   run noCommitRowsHoldFreshCreditTest = init.then(selectCommitCensus(true, false))
