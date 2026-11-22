@@ -578,7 +578,7 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
-    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    localInstallHelpers: "literal-shell-exec-wrapper-closure-v2",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
     imageFormats: "png-jpeg-gif-webp-whole-structure-v1",
     templateReview: "queued-canonical-template-deterministic-only-v1",
