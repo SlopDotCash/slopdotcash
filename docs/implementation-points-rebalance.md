@@ -63,6 +63,12 @@ observations to the census digest. A verified distinct squash SHA prevents
 duplicate credit in later PRs without adding line weights to the earlier pool.
 Unavailable evidence holds the source and any proven conflicting later claim.
 
+A rolling standalone assessment that overlaps verified earlier accepted
+commits holds its implementation credit for joint review. Its qualifying
+reviews keep their own assessment binding. Use a release reader that supports
+this coverage when reusing the snapshot or a retained donor. Earlier validators
+refuse this coverage before Points generation.
+
 An ordinary PR uses its accepted commit changes. A grouped work unit requires
 the exact retained valuation decision and claim paths. A retained-copy fallback
 requires the canonical verified original-source binding; a description link

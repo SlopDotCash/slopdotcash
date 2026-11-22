@@ -1,5 +1,5 @@
 {
-  "source": "8660a61214a6427a4e66c540c7dc73d50cc7790b",
+  "source": "7f71c6ce9708be892d485286dc2f3f4a0166bea5",
   "ignore": [
     "migrations/**",
     "skills/**",
@@ -46,9 +46,9 @@
     "data/who-builds/2026-09-17/METHOD.md": "a07169ceafa95402379dd3a4180c43ab90b0198019e027e65da95255eb458be6",
     "data/who-builds/2026-09-17/snapshot.json": "edc05b350e371c50e0b5f72d01c92ea626ed03e23474febd5ddaf0f85c7df306",
     "disclosures/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "docs/implementation-points-rebalance.md": "fdf4d532cdc2a0e8cbd09d8e106dce5b69cff8e481527f63847ccec48b32ca3e",
-    "docs/october-payout-proposal-import.md": "0c2711a104fe0daee3028c42c879c33daa3322b39801b49143ee27fdb4f11f04",
-    "docs/reviewed-historical-points.md": "d68424ba04c37c1940306d35640f7e270ed23e0e062c44db5a30ca89ceff6405",
+    "docs/implementation-points-rebalance.md": "6597ccf41e78762f1b47d2014454f8bf705ba0694b4a0cba7fb4a1cbe4727e1b",
+    "docs/october-payout-proposal-import.md": "05d70c88c94fe5026481b098f845fe445580b18d78af3996d77b4a73a9b28aab",
+    "docs/reviewed-historical-points.md": "3d81613a486aba6b6b6f6f9fc87dc0d5670932f8bbd96718960c7a4cd933b8cf",
     "docs/slop-buyback.md": "1dc343a629afbd4b8acb06e422fd59ddd1aac8dc76912f80cc52a1c903e08d40",
     "funding/preparations/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "migrations/0001_private_trace_backend.sql": "947da3f407ce20472a8a1be34bb5b6c2c3f2ccff117b32bd1ff6f6fe9c9a5f04",
