@@ -25832,7 +25832,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "307a3fb105bc859c35b6b7a74eb600e98da72ccc4308e587906a6281828b1094",
+      "sha256": "be54e0b2c85761350c731dd90f8b0d4a153559f481738d53a98ba89369223ce5",
       "module": "settlement__privateAward",
       "stories": [
         {

@@ -349,8 +349,8 @@ reservation instead of the direct rail, so deposits and fund observations
 are rarer, authority snapshots are observed less often, and the direct
 admission, wallet, consent, preparation, recording and recovery events are
 weighted above the events that are open in most states. A recovery is
-weighted far above the rest because few of its sampled arguments match the
-prepared request.
+weighted with admission and preparation, the heaviest, because few of its
+sampled arguments match the prepared request.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
