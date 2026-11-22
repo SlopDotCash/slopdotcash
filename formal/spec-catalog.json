@@ -10527,7 +10527,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "eb8bb1e166619e3226d62988cee6515554fb90a756c3c7c468980264c52e8bd6",
+      "sha256": "13d1445b106d3aad0bf40e2298d85d17d41007b5296f057e66252e32681070da",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10553,6 +10553,10 @@
         {
           "heading": "Story: Let anyone fund a project from its public page and see who funded",
           "line": 441
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts",
+          "line": 558
         }
       ],
       "rules": [
@@ -10787,6 +10791,44 @@
             "accountValues",
             "otherAccountValues"
           ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent",
+          "line": 564,
+          "definitions": [
+            "AllocationRecipient",
+            "AllocationFile",
+            "AllocationWallet",
+            "AllocationDisplay",
+            "AllocationRow",
+            "noAllocationRecipient",
+            "allocationRecipient",
+            "allocationReadFailed",
+            "allocationRow",
+            "lawAllocationRowIsTheViewersOwn",
+            "allocationUnavailable",
+            "lawFailedAllocationReadIsUnavailable",
+            "lawWalletPromptOnlyWhileAwaiting",
+            "allocationValues",
+            "viewerValues",
+            "allocationWalletsValues",
+            "instantValues"
+          ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it",
+          "line": 623,
+          "definitions": [
+            "timelyAllocationWallet",
+            "allocationDisplay",
+            "allocationPresentation",
+            "lawRecordedTransferIsSent",
+            "lawClosedBatchWithoutTransferIsUnclaimed",
+            "lawScheduledNeedsATimelyAuthorizedWallet",
+            "lawNoWalletIsUnclaimedFromTheDeadline",
+            "lawAllocationStatesAreDistinguishable",
+            "recipientValues"
+          ]
         }
       ],
       "imports": [
@@ -10843,6 +10885,14 @@
         {
           "target": "../settlement/vaultDeposits.md",
           "line": 519
+        },
+        {
+          "target": "../settlement/contributorAllocation.md",
+          "line": 576
+        },
+        {
+          "target": "../ui/status.md",
+          "line": 633
         }
       ]
     },

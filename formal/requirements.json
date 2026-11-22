@@ -1597,6 +1597,12 @@
           "rules": [
             "Story: Register before the deadline and receive at most one send"
           ]
+        },
+        {
+          "spec": "spec/frontend/projections.md",
+          "rules": [
+            "Story: See my contributor allocation on Payouts"
+          ]
         }
       ],
       "status": "source-preserved-domain-mapped",
