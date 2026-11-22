@@ -554,3 +554,116 @@ pure val accountValues = Set({ login: "alice", publicAccount: true, closed: fals
   { login: "carol", publicAccount: true, closed: true })
 pure val otherAccountValues = accountValues
 ```
+
+## Story: See my contributor allocation on Payouts
+
+> As a contributor named in the published contributor allocation, I want
+> Payouts to show my own row, its state and what I still need to do, and a
+> failed read to say so rather than hide my allocation.
+
+### Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent
+
+Payouts reads the published allocation file (`/contributor-allocation.json`,
+bounded and uncached). While it loads, when it publishes no distribution, and
+when it has no row for the signed-in account's GitHub ID, the section is
+absent. A failed, invalid or timed-out read shows "Allocation unavailable"
+with Retry. Otherwise "Contributor allocation" shows the one row whose GitHub
+ID is the signed-in account's: the amount in the token's decimals and symbol,
+its state, "View transfer" when a transfer is recorded and, while a wallet is
+awaited, "Add <network> wallet" to `/account#wallets` with the registration
+deadline. Another account's row or transfer never appears, and an account
+change selects the new account's row. Slop only displays the row; Slop Cash
+S.P. sends the [allocation](../settlement/contributorAllocation.md) from its
+own wallet (development `src/ContributorAllocation.tsx` in `src/Earnings.tsx`
+at `24885ae9e`; legacy model `ui_contributor_allocation`).
+
+```quint
+type AllocationRecipient = { actor: int, transfer: str }
+type AllocationFile = { chain: str, deadline: int, closed: bool, recipients: List[AllocationRecipient] }
+type AllocationWallet = { chain: str, authorized: bool, firstAuthorizedAt: int }
+type AllocationDisplay = AllocationSent | AllocationScheduled | AllocationAwaitingWallet | AllocationUnclaimed
+type AllocationRow = AllocationHidden | AllocationUnavailable
+  | AllocationShown({ display: AllocationDisplay, walletPrompt: bool, transferLink: bool })
+pure val noAllocationRecipient: AllocationRecipient = { actor: 0, transfer: "" }
+pure def allocationRecipient(allocation: AllocationFile, viewer: int): AllocationRecipient =
+  if (viewer > 0) allocation.recipients.select(r => r.actor == viewer).nthOr(0, noAllocationRecipient) else noAllocationRecipient
+pure def allocationReadFailed(status: R::ReadStatus): bool =
+  status == R::Failed or status == R::Invalid or status == R::Unavailable or status == R::Denied
+pure def allocationRow(status: R::ReadStatus, allocation: AllocationFile, viewer: int, allocationWallets: List[AllocationWallet],
+  instant: int): AllocationRow =
+  val recipient = allocationRecipient(allocation, viewer)
+  val display = allocationDisplay(allocation, recipient, allocationWallets, instant)
+  if (allocationReadFailed(status)) AllocationUnavailable
+  else if (status != R::Current or recipient.actor <= 0) AllocationHidden
+  else AllocationShown({ display: display, walletPrompt: display == AllocationAwaitingWallet, transferLink: recipient.transfer != "" })
+pure def lawAllocationRowIsTheViewersOwn(status: R::ReadStatus, allocation: AllocationFile, viewer: int,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  val row = allocationRow(status, allocation, viewer, allocationWallets, instant)
+  match row { | AllocationShown(x) => viewer > 0 and allocation.recipients.some(r => r.actor == viewer) | _ => true }
+pure def allocationUnavailable(allocationView: AllocationRow): bool = match allocationView { | AllocationUnavailable => true | _ => false }
+pure def lawFailedAllocationReadIsUnavailable(status: R::ReadStatus, allocation: AllocationFile, viewer: int,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  allocationReadFailed(status) iff allocationUnavailable(allocationRow(status, allocation, viewer, allocationWallets, instant))
+pure def lawWalletPromptOnlyWhileAwaiting(status: R::ReadStatus, allocation: AllocationFile, viewer: int,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  val row = allocationRow(status, allocation, viewer, allocationWallets, instant)
+  match row { | AllocationShown(x) => x.walletPrompt implies (instant < allocation.deadline and not(x.transferLink)) | _ => true }
+pure val allocationValues = Set(
+  { chain: "robinhood", deadline: 4, closed: false, recipients: List({ actor: 1, transfer: "" }, { actor: 2, transfer: "tx" }) },
+  { chain: "robinhood", deadline: 4, closed: true, recipients: List({ actor: 1, transfer: "" }) },
+  { chain: "robinhood", deadline: 4, closed: false, recipients: List({ actor: 1, transfer: "tx" }) },
+  { chain: "robinhood", deadline: 4, closed: false, recipients: List() })
+pure val viewerValues = Set(0, 1, 2, 3)
+pure val allocationWalletsValues = Set(List(), List({ chain: "robinhood", authorized: true, firstAuthorizedAt: 3 }),
+  List({ chain: "robinhood", authorized: true, firstAuthorizedAt: 4 }), List({ chain: "robinhood", authorized: false, firstAuthorizedAt: 3 }),
+  List({ chain: "base", authorized: true, firstAuthorizedAt: 1 }, { chain: "robinhood", authorized: true, firstAuthorizedAt: 2 }))
+pure val instantValues = Set(1, 3, 4, 5)
+```
+
+### The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it
+
+A recorded transfer is Sent. Otherwise a closed final batch is Unclaimed.
+Otherwise the row is Scheduled when the account has a currently authorized
+wallet on the allocation's chain whose first authorization was strictly
+before the deadline; a later replacement keeps that first time, and a revoked
+wallet stops counting. Otherwise it is Awaiting wallet before the deadline and
+Unclaimed from it, and the row changes at the deadline without a reload
+(`contributorAllocationState` in `src/lib/contributor-allocation.ts` and
+`allocationDisposition` in `src/lib/verified-frontend.ts`). Each state is a
+[status presentation](../ui/status.md).
+
+```quint
+pure def timelyAllocationWallet(allocation: AllocationFile, allocationWallets: List[AllocationWallet]): bool =
+  allocationWallets.some(w => w.chain == allocation.chain and w.authorized and w.firstAuthorizedAt > 0
+    and w.firstAuthorizedAt < allocation.deadline)
+pure def allocationDisplay(allocation: AllocationFile, recipient: AllocationRecipient, allocationWallets: List[AllocationWallet],
+  instant: int): AllocationDisplay =
+  if (recipient.transfer != "") AllocationSent
+  else if (allocation.closed) AllocationUnclaimed
+  else if (timelyAllocationWallet(allocation, allocationWallets)) AllocationScheduled
+  else if (instant < allocation.deadline) AllocationAwaitingWallet
+  else AllocationUnclaimed
+pure def allocationPresentation(display: AllocationDisplay): U::Presentation =
+  if (display == AllocationSent) U::shown(D::Positive, U::Check, "Sent")
+  else if (display == AllocationScheduled) U::shown(D::Neutral, U::Clock, "Scheduled")
+  else if (display == AllocationAwaitingWallet) U::shown(D::Notice, U::Wallet, "Awaiting wallet")
+  else U::shown(D::Neutral, U::Alert, "Unclaimed")
+pure def lawRecordedTransferIsSent(allocation: AllocationFile, recipient: AllocationRecipient,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  (allocationDisplay(allocation, recipient, allocationWallets, instant) == AllocationSent) iff recipient.transfer != ""
+pure def lawClosedBatchWithoutTransferIsUnclaimed(allocation: AllocationFile, recipient: AllocationRecipient,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  (allocation.closed and recipient.transfer == "")
+    implies allocationDisplay(allocation, recipient, allocationWallets, instant) == AllocationUnclaimed
+pure def lawScheduledNeedsATimelyAuthorizedWallet(allocation: AllocationFile, recipient: AllocationRecipient,
+  allocationWallets: List[AllocationWallet], instant: int): bool =
+  allocationDisplay(allocation, recipient, allocationWallets, instant) == AllocationScheduled implies
+    allocationWallets.some(w => w.authorized and w.chain == allocation.chain and w.firstAuthorizedAt > 0
+      and w.firstAuthorizedAt < allocation.deadline)
+pure def lawNoWalletIsUnclaimedFromTheDeadline(allocation: AllocationFile, recipient: AllocationRecipient, instant: int): bool =
+  (recipient.transfer == "" and instant >= allocation.deadline)
+    implies allocationDisplay(allocation, recipient, List(), instant) == AllocationUnclaimed
+pure def lawAllocationStatesAreDistinguishable(a: AllocationDisplay, b: AllocationDisplay): bool =
+  a != b implies U::distinguishable(allocationPresentation(a), allocationPresentation(b))
+pure val recipientValues = Set({ actor: 1, transfer: "" }, { actor: 1, transfer: "tx" })
+```
