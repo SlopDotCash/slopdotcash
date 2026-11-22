@@ -5396,14 +5396,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "66aa84c90e985690168f28e21be30f3c2b16ab4e04251dbaf674a05fe7ee5bbc",
+      "sha256": "6437c31c9f111e9ef65bf004c3b56251b8229d1d489bc5b1b9cd82f4e11e3d02",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 238, 239, 240, 241, 243, 248, 291, 306, 307, 313, 314, 430, 1213,
-        1233, 1442, 1460, 1467, 1594, 1689, 1836
+        3, 238, 239, 240, 241, 243, 248, 291, 306, 307, 313, 314, 438, 1281,
+        1301, 1510, 1528, 1535, 1662, 1757, 1904
       ],
       "review": "mapped-abstraction"
     },
@@ -16127,7 +16127,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "c10f044b5317580fa36358fbcf726413af9971d51be6616476de5f19e3544599",
+      "sha256": "ec87412d80b10e289c0f8d0edec7fec411bd57327b20ca4e0d5911c613585f42",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -16147,12 +16147,14 @@
         "applicableAssessmentAppendRefusesPublicationTest",
         "carrierDifferentAwardRefusesTest",
         "carrierDifferentResultRefusesTest",
+        "carrierRewriteRefusesRefreshTest",
         "carrierSideParentRefusesTest",
         "changedPointsCheckpointRefusesPublicationTest",
         "conflictingImportTest",
         "disclosedNotVerifiedTest",
         "earlierCarrierContainsRetiringMergeRefusesTest",
         "exactReplayRequiredForHistoricalPublicationTest",
+        "lateCarrierAdvanceRefusesPublicationTest",
         "missingDistinctDuplicateAncestryRefusesTest",
         "mixedAcceptedOutputMustAgreeTest",
         "mixedEarlierContextRequiredTest",
@@ -16164,6 +16166,7 @@
         "partialRefusedTest",
         "privateErrorIsNotAPhaseTest",
         "refusalReportsFixedPhaseWithoutGrantingPublicationTest",
+        "reintroducedRetiringMergeRefusesRefreshTest",
         "relevantAppendRefusesQualifiedHistoricalPublicationTest",
         "sharedAcceptanceRequiresEarlierAwardTest",
         "sharedAcceptanceRequiresMatchedScopeTest",
@@ -16172,6 +16175,7 @@
         "unrelatedAppendPreservesHistoricalQualificationTest",
         "unrelatedAssessmentAppendAllowsPublicationTest",
         "validatedMixedEvidenceCannotChangeTest",
+        "verifiedCarrierAdvancePreservesOriginalAwardTest",
         "verifiedDistinctDuplicateRetiresLaterPoolTest",
         "verifiedSharedAcceptanceRetiresLaterPoolTest"
       ]

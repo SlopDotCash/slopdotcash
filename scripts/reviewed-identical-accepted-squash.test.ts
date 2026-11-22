@@ -276,35 +276,47 @@ for (const scenario of [
       }
       if (surviving) {
         const beforeImportChecks: (() => Promise<void>)[] = [];
-        const verify = (duringNative?: () => void) =>
+        const fetched: { previous: string; current: string }[] = [];
+        const verify = (advanceTo?: string) =>
           verifyHistoricalIdenticalAcceptedChanges(
             packet,
             github,
             async (_repository, objects, read) => {
               if (retirement.identicalAcceptedChange?.survivingCarrier)
                 expect(objects).toContain(branchTip);
-              const result = await read(directory);
-              duringNative?.();
-              return result;
+              if (advanceTo) branchTip = advanceTo;
+              return read(directory);
             },
-            { integrationBranch: "develop", beforeImportChecks },
+            {
+              integrationBranch: "develop",
+              beforeImportChecks,
+              async fetchBranchTip(workingDirectory, previous, current) {
+                expect(workingDirectory).toBe(directory);
+                fetched.push({ previous, current });
+              },
+            },
           );
         const published = branchTip;
-        const moved = commit("carrier as side parent", changed, [
-          laterMerge,
-          earlierMerge,
+        const advanced = commit("ordinary next integration", changed, [
+          published,
         ]);
-        await expect(verify()).resolves.toHaveProperty("size", 1);
+        const moved = commit("carrier and old tip as side parents", changed, [
+          laterMerge,
+          published,
+        ]);
+        await expect(verify(advanced)).resolves.toHaveProperty("size", 1);
+        expect(fetched).toEqual([{ previous: published, current: advanced }]);
         expect(beforeImportChecks).toHaveLength(1);
-        await expect(
-          verify(() => {
-            branchTip = moved;
-          }),
-        ).rejects.toThrow("integration branch changed");
+        await expect(beforeImportChecks[0]()).resolves.toBeUndefined();
+        branchTip = published;
         await expect(beforeImportChecks[0]()).rejects.toThrow(
           "integration branch changed",
         );
+        await expect(verify(moved)).rejects.toThrow(
+          "integration branch changed",
+        );
         await expect(verify()).rejects.toThrow("published first-parent edge");
+        expect(beforeImportChecks).toHaveLength(1);
         branchTip = published;
         commitAuthor = "other_actor";
         await expect(verify()).rejects.toThrow(
