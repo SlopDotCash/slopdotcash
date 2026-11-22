@@ -13,6 +13,9 @@ export const meta: ComponentMeta<AddressProps> = {
   play: {
     // spec/ui/copy.md, "Copying starts from ready and reports the browser's answer": the whole value is copied.
     Default: async ({ args, canvasElement }: Context) => {
+      // spec/ui/controls.md, "An exact value scrolls rather than wraps, and the keyboard reaches it to scroll"
+      await userEvent.tab();
+      await expect(document.activeElement).toBe(within(canvasElement).getByRole("group", { name: "Vault address" }));
       await userEvent.click(within(canvasElement).getByRole("button", { name: "Copy address" }));
       await expect(args.onCopy).toHaveBeenCalledWith(value);
     },

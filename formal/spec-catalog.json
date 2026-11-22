@@ -10527,7 +10527,7 @@
     },
     {
       "path": "spec/frontend/projections.md",
-      "sha256": "eb8bb1e166619e3226d62988cee6515554fb90a756c3c7c468980264c52e8bd6",
+      "sha256": "13d1445b106d3aad0bf40e2298d85d17d41007b5296f057e66252e32681070da",
       "module": "frontend__projections",
       "stories": [
         {
@@ -10553,6 +10553,10 @@
         {
           "heading": "Story: Let anyone fund a project from its public page and see who funded",
           "line": 441
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts",
+          "line": 558
         }
       ],
       "rules": [
@@ -10787,6 +10791,44 @@
             "accountValues",
             "otherAccountValues"
           ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / Payouts shows only the signed-in account's allocation row, and a failed read is unavailable, never absent",
+          "line": 564,
+          "definitions": [
+            "AllocationRecipient",
+            "AllocationFile",
+            "AllocationWallet",
+            "AllocationDisplay",
+            "AllocationRow",
+            "noAllocationRecipient",
+            "allocationRecipient",
+            "allocationReadFailed",
+            "allocationRow",
+            "lawAllocationRowIsTheViewersOwn",
+            "allocationUnavailable",
+            "lawFailedAllocationReadIsUnavailable",
+            "lawWalletPromptOnlyWhileAwaiting",
+            "allocationValues",
+            "viewerValues",
+            "allocationWalletsValues",
+            "instantValues"
+          ]
+        },
+        {
+          "heading": "Story: See my contributor allocation on Payouts / The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it",
+          "line": 623,
+          "definitions": [
+            "timelyAllocationWallet",
+            "allocationDisplay",
+            "allocationPresentation",
+            "lawRecordedTransferIsSent",
+            "lawClosedBatchWithoutTransferIsUnclaimed",
+            "lawScheduledNeedsATimelyAuthorizedWallet",
+            "lawNoWalletIsUnclaimedFromTheDeadline",
+            "lawAllocationStatesAreDistinguishable",
+            "recipientValues"
+          ]
         }
       ],
       "imports": [
@@ -10843,6 +10885,14 @@
         {
           "target": "../settlement/vaultDeposits.md",
           "line": 519
+        },
+        {
+          "target": "../settlement/contributorAllocation.md",
+          "line": 576
+        },
+        {
+          "target": "../ui/status.md",
+          "line": 633
         }
       ]
     },
@@ -32442,7 +32492,7 @@
     },
     {
       "path": "spec/ui/controls.md",
-      "sha256": "b9f60434ddea13248cdea71cefb863496f8d81239988b2835947eeefff3cf06b",
+      "sha256": "ef17ec5b09473ee208a3a33d9367ee958b27a41ffa7003fada2b9051c596e35c",
       "module": "ui__controls",
       "stories": [
         {
@@ -32518,8 +32568,29 @@
           ]
         },
         {
+          "heading": "Story: Move through links, details and dialogs by keyboard / A link to another site opens in a new tab and sends that site no referrer",
+          "line": 91,
+          "definitions": [
+            "LinkTarget",
+            "opensNewTab",
+            "sendsReferrer",
+            "lawOtherSiteGetsNoReferrer"
+          ]
+        },
+        {
+          "heading": "Story: Move through links, details and dialogs by keyboard / An exact value scrolls rather than wraps, and the keyboard reaches it to scroll",
+          "line": 106,
+          "definitions": [
+            "ValueKind",
+            "wrapsValue",
+            "takesFocus",
+            "lawExactValueScrollsByKeyboard",
+            "lawWrappedValueTakesNoFocus"
+          ]
+        },
+        {
           "heading": "Story: Move through links, details and dialogs by keyboard / A disclosure opens and closes from its trigger and never hides what a decision rests on",
-          "line": 88,
+          "line": 125,
           "definitions": [
             "Detail",
             "mayHide",
@@ -32530,7 +32601,7 @@
         },
         {
           "heading": "Story: Move through links, details and dialogs by keyboard / A dialog takes focus when it opens, keeps it inside, and gives it back to its trigger when dismissed",
-          "line": 104,
+          "line": 141,
           "definitions": [
             "DialogFocus",
             "DialogKey",
@@ -32545,7 +32616,7 @@
       "references": [
         {
           "target": "./confirmation.md",
-          "line": 110
+          "line": 147
         }
       ]
     },
@@ -32593,7 +32664,7 @@
     },
     {
       "path": "spec/ui/index.md",
-      "sha256": "c5b9d5172aed1f43a01c302756be2f67c4880eabe6efcd6e3e6efee983de696c",
+      "sha256": "e3cd0435cc266a593aedef5ba178b29af2cf501f333130d228cb424931e6ad6f",
       "module": "ui",
       "stories": [
         {
@@ -32618,20 +32689,19 @@
             "Motion",
             "Focus",
             "Shown",
-            "initial",
-            "show",
-            "prefer",
-            "reach",
             "takesTyping",
             "moves",
             "showsRing",
-            "sometimesStillWithRing",
-            "sometimesPointerRingInField"
+            "lawReducedMotionStandsStill",
+            "lawKeyboardFocusShowsRing",
+            "lawPointerRingOnlyWhereTyping",
+            "lawUnfocusedShowsNoRing",
+            "sValues"
           ]
         },
         {
           "heading": "Story: One look for every control / Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square",
-          "line": 79,
+          "line": 80,
           "definitions": [
             "ControlSize",
             "targetPx",
@@ -32640,7 +32710,7 @@
         },
         {
           "heading": "Story: One look for every control / Colors are tokens, except another party's mark",
-          "line": 94,
+          "line": 95,
           "definitions": []
         }
       ],
