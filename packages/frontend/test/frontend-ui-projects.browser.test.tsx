@@ -247,7 +247,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: false, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20 } });
   });
 
-  it('one Publish carries consent and headline as revision 2, revoking consent is revision 3, and a draft older than an administrator's later revision blocks Publish until kept (spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
+  it('one Publish carries consent and headline as revision 2, revoking consent is revision 3, and a draft older than an administrator\'s later revision blocks Publish until kept (spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
     await site.allow(refusedLoads);
     const fullName = await repository(users.sam, "consent");
     const id = await createProject(users.sam, fullName, "Consent");
