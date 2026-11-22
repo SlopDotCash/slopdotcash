@@ -6974,17 +6974,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "95e2e5dfda875c64e3412acf9326986cbe015f0fe32b516006bd8b407a0bebd6",
+      "sha256": "cf0671970a59ed048c4eb453382a4956a547c655f3fdc0c474982fa2854b9f2f",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 779, 806
+        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 781, 808
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "084e21b40da4a4c52f07e98e9e10343b364ac252ac474dbf3191f6104b40da01",
+      "sha256": "546b4f612044cf8774dc18d55b093eb0882a81b0fc131457e28b91d1429dd04f",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -7006,7 +7006,7 @@
         6184, 6186, 6209, 6213, 6217, 6222, 6368, 6377, 6387, 6388, 6446, 6481,
         6487, 6507, 6512, 6519, 6527, 6529, 6555, 6558, 6572, 6574, 6595, 6597,
         6601, 6604, 6609, 6801, 6803, 7062, 7106, 7169, 7170, 7991, 7992, 7993,
-        7994, 8011, 8021, 8032, 8048, 8137, 8203, 8204, 8231, 8438
+        7994, 7995, 8012, 8022, 8033, 8037, 8060, 8149, 8223, 8224, 8252, 8459
       ],
       "review": "mapped-abstraction"
     },
@@ -7257,7 +7257,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "47e3007f89c0055efb0b939eb5f547056e45a655378ad243c50f2f1098620934",
+      "sha256": "66bb7be84000c2f296f2f9f0269d928f642fcb85a575b6272a9656266ad7ec7c",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
