@@ -1,12 +1,14 @@
 // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"
 import type { CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
-import { Alert, Button, ExternalLink, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { Button, ExternalLink, Status, Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui";
+import { ExternalLink as ExternalLinkIcon, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
+import { cycleLifecyclePresentation } from "../cycles/labels.ts";
 import type { Shown } from "../home/listing.ts";
-import { cycleLabel, directMonths, formatDate, formatMonth, historyShown } from "./summary.ts";
+import { directMonths, formatMonth, historyShown } from "./summary.ts";
 
 export type PaymentHistoryProps = {
   /** The project whose cycles and direct payments these are. */
@@ -30,6 +32,17 @@ function usdc(minor: string): string {
   return formatRewardMinor(parseBaseUnits(minor) ?? 0n);
 }
 
+function Unavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p role="status" className="flex items-center gap-2 text-muted-foreground">
+      Payments unavailable
+      <Button variant="outline" size="sm" aria-label="Retry" title="Retry" onClick={onRetry}>
+        <RotateCcw aria-hidden className="size-4" />
+      </Button>
+    </p>
+  );
+}
+
 /** The project's closed cycles and the direct payments made for each month's work; loading never reads as an empty history. */
 export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistoryProps) {
   const [showHistory, setShowHistory] = useState(false);
@@ -42,50 +55,31 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
   const directFailed = !externalPrize && !settled.has(direct.status) && !pending.has(direct.status);
   if (!cyclesFailed && listed.length === 0 && months.length === 0 && (externalPrize || settled.has(direct.status))) return null;
   const limited = months.length > historyShown || listed.length > historyShown;
+  const heading = externalPrize ? "Cycle history" : "Payment history";
   return (
-    <section aria-label={externalPrize ? "Cycle history" : "Payment history"} className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold text-foreground">{externalPrize ? "Cycle history" : "Payment history"}</h2>
-      {cyclesFailed ? (
-        <Alert
-          variant="warn"
-          announcement="Polite"
-          action={
-            <Button variant="outline" size="sm" onClick={cycles.onRetry}>
-              Retry cycle history
-            </Button>
-          }
-        >
-          Cycle history unavailable.
-        </Alert>
+    <section aria-label={heading} className="flex flex-col gap-4">
+      <h2 className="text-xl font-semibold text-foreground">{heading}</h2>
+      {cyclesFailed || directFailed ? (
+        <Unavailable
+          onRetry={() => {
+            if (cyclesFailed) cycles.onRetry?.();
+            if (directFailed) direct.onRetry?.();
+          }}
+        />
       ) : null}
-      {directFailed ? (
-        <Alert
-          variant="warn"
-          announcement="Polite"
-          action={
-            <Button variant="outline" size="sm" onClick={direct.onRetry}>
-              Retry direct payments
-            </Button>
-          }
-        >
-          Direct payments unavailable.
-        </Alert>
-      ) : null}
-      {directLoading ? <Status presentation={{ tone: "Neutral", icon: "Spinner", label: "Loading direct payments…" }} /> : null}
+      {directLoading ? <Status role="status" presentation={{ tone: "Neutral", icon: "Spinner", label: "Loading direct payments…" }} /> : null}
       {(showHistory ? months : months.slice(0, historyShown)).map((month) => (
         <p key={month.month} className="flex flex-col gap-1">
-          <strong className="font-mono font-medium tabular-nums">{formatRewardMinor(month.amountMicro)} paid directly</strong>
-          <span className="text-sm text-muted-foreground">
-            Paid {formatDate(month.paidOn)} for {formatMonth(month.month)} work · {month.count} transfers ·{" "}
-            <ExternalLink href={`/api/v1/payments/projects/${encodeURIComponent(project.id)}/direct-transfers`} className={linkClass}>
-              Disclosure
+          <strong className="font-mono font-medium tabular-nums">{formatRewardMinor(month.amountMicro)}</strong>
+          <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+            {formatMonth(month.month)} · {month.count} transfers ·{" "}
+            <ExternalLink href={`/api/v1/payments/projects/${encodeURIComponent(project.id)}/direct-transfers`} label="Disclosure" title="Disclosure" className={linkClass}>
+              <ExternalLinkIcon aria-hidden className="size-4" />
             </ExternalLink>
           </span>
         </p>
       ))}
-      {cyclesFailed ? null : listed.length === 0 ? (
-        directLoading ? null : <p className="text-muted-foreground">No cycles have closed yet.</p>
-      ) : (
+      {listed.length === 0 ? null : (
         <Table label={`${project.name} cycles`}>
           <TableCaption visuallyHidden>{project.name} cycles</TableCaption>
           <TableHeader>
@@ -116,7 +110,9 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
                     <TableCell className="text-right font-mono tabular-nums">{usdc(cycle.reward.paidMinor)}</TableCell>
                   </>
                 )}
-                <TableCell>{cycleLabel(cycle, nowMs)}</TableCell>
+                <TableCell>
+                  <Status presentation={cycleLifecyclePresentation(cycle, nowMs)} />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -124,7 +120,7 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
       )}
       {limited ? (
         <Button variant="outline" className="self-start" aria-expanded={showHistory} onClick={() => setShowHistory((value) => !value)}>
-          {showHistory ? "Show recent history" : `Show complete ${externalPrize ? "cycle" : "payment"} history`}
+          {showHistory ? "Show less" : "Show all"}
         </Button>
       ) : null}
     </section>

@@ -6,7 +6,7 @@ import { GitMerge, Wrench } from "lucide-react";
 import type { Shown } from "../home/listing.ts";
 import { pageRows, usePages } from "./pages.ts";
 import { type ListedPerson, listedPeople, peoplePageSize } from "./peopleRows.ts";
-import { lifetimeTotals, matching, type StandingHistory } from "./standings.ts";
+import { matching } from "./standings.ts";
 
 export type PeopleMembers = { readonly kind: "preview"; readonly site: string } | { readonly kind: "read"; readonly people: Shown<ReadonlyArray<Person>> };
 
@@ -15,8 +15,6 @@ export type PeopleProps = {
   census: Shown<ProfileIndex>;
   /** Public members, read only on Slop's own origins. */
   members: PeopleMembers;
-  /** Points earned, from the journal. */
-  history: Shown<StandingHistory>;
   /** Project names by the GitHub node id of their verified steward. */
   stewards: ReadonlyMap<string, ReadonlyArray<string>>;
   /** Part of a login; only matching people are listed. */
@@ -34,11 +32,7 @@ export function XAccountLink({ account }: { account: XProfile }) {
   );
 }
 
-type Earned = ReadonlyMap<string, number> | undefined;
-
-function PersonRow({ person, totals, stewards }: { person: ListedPerson; totals: Earned } & Pick<PeopleProps, "stewards">) {
-  const earned = totals === undefined ? null : (totals.get(person.id) ?? 0);
-  const participation = person.member ? person.member.welcome + person.member.socialPoints : 0;
+function PersonRow({ person, stewards }: { person: ListedPerson } & Pick<PeopleProps, "stewards">) {
   const maintains = stewards.get(person.id) ?? [];
   return (
     <li className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3">
@@ -49,15 +43,6 @@ function PersonRow({ person, totals, stewards }: { person: ListedPerson; totals:
         <GitMerge aria-hidden className="size-3.5" />
         {person.merged === null ? "—" : person.merged.toLocaleString("en-US")}
         <span className="sr-only">{person.merged === null ? " PR count unavailable" : " merged PRs"}</span>
-      </span>
-      <span className="font-mono text-sm tabular-nums" title={earned === null ? "Points unavailable" : undefined}>
-        {earned === null ? (
-          <>
-            —<span className="sr-only"> Points unavailable</span>
-          </>
-        ) : (
-          `${(earned + participation).toLocaleString("en-US")} pts`
-        )}
       </span>
       {maintains.length > 0 ? (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 text-xs text-muted-foreground" title="Project maintainer">
@@ -71,14 +56,14 @@ function PersonRow({ person, totals, stewards }: { person: ListedPerson; totals:
   );
 }
 
-function List({ people, ...rest }: { people: ReadonlyArray<ListedPerson>; totals: Earned } & Pick<PeopleProps, "stewards">) {
+function List({ people, stewards }: { people: ReadonlyArray<ListedPerson> } & Pick<PeopleProps, "stewards">) {
   const [pages, send] = usePages(1, people.length, peoplePageSize);
   return (
     <>
       <p>{people.length.toLocaleString("en-US")} people</p>
       <ul className="flex flex-col divide-y divide-border">
         {pageRows(people, pages, peoplePageSize).map((person) => (
-          <PersonRow key={person.id} person={person} {...rest} />
+          <PersonRow key={person.id} person={person} stewards={stewards} />
         ))}
       </ul>
       {people.length === 0 ? <p className="text-muted-foreground">No matches.</p> : null}
@@ -87,12 +72,11 @@ function List({ people, ...rest }: { people: ReadonlyArray<ListedPerson>; totals
   );
 }
 
-/** One people view: public members and everyone with a recorded pull request; people without Points are listed without a rank. */
-export function People({ census, members, history, stewards, query }: PeopleProps) {
+/** The contributor directory: public members and everyone with a recorded pull request, in login order and without a rank. */
+export function People({ census, members, stewards, query }: PeopleProps) {
   const read = members.kind === "read" ? members.people : undefined;
   const people = listedPeople(census.value, read?.value);
   const shown = census.value !== undefined || read?.value !== undefined;
-  const totals = history.value === undefined ? undefined : lifetimeTotals(history.value);
   return (
     <section id="people" aria-labelledby="people-heading" className="flex flex-col gap-4">
       <h2 id="people-heading" className="text-xl font-semibold text-foreground">
@@ -108,7 +92,7 @@ export function People({ census, members, history, stewards, query }: PeopleProp
       ) : (
         <DataState status={members.people.status} onRetry={members.people.onRetry} retryLabel="Retry members" />
       )}
-      {shown ? <List key={query} people={matching(people, query.trim(), (person) => person.login)} totals={totals} stewards={stewards} /> : null}
+      {shown ? <List key={query} people={matching(people, query.trim(), (person) => person.login)} stewards={stewards} /> : null}
     </section>
   );
 }

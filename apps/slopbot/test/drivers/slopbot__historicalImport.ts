@@ -19,6 +19,7 @@ import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.ts"
 import { type Admit, type AdmittedImport, HistoricalPublication, type PreparedFacts, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
 import { type Numbered, deliver, installationState } from "../../src/installation/store.vibe";
 import { appendValueRecord } from "../../src/value/history/store.vibe";
+import { subscriptionCutoff } from "../../src/value/inference/settings.vibe";
 
 type Observed = Omit<Imports, "install"> & { readonly install: Pick<Imports["install"], "known" | "suspended" | "removed" | "sourceTime"> };
 
@@ -59,9 +60,8 @@ const enforcements: ReadonlyArray<{ readonly restriction: RegistryObservation["r
 ];
 
 let generation = 0;
-// 1 November 2026 UTC in seconds, the value API start and the cutoff without a configured start.
-const apiStart = Date.UTC(2026, 10, 1) / 1000;
-let cutoff = apiStart;
+const apiCutoff = subscriptionCutoff(undefined);
+let cutoff = apiCutoff;
 let installs: number[] = [];
 let records: ImportedRecord[] = [];
 let last: Imports["last"] = "NoImport";
@@ -241,24 +241,22 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
     revisionReason: admitted.revisionReason,
   });
   const recordDigest = sha256(recordJson);
-  const changed = yield* (yield* D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at)
-    VALUES (${recordDigest}, ${admitted.assessmentKey}, ${source.projectId}, ${String(admitted.result["sourceDigest"])}, ${recordJson}, ${assessedAt})`);
-  if (changed !== 1) return yield* Effect.fail(new PublicationFailed());
-  const stored = yield* first(Schema.Struct({ sequence: Schema.Number }), sql`SELECT sequence FROM slopbot_work_unit_journal WHERE record_digest = ${recordDigest}`);
+  yield* (yield* D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at)
+    SELECT ${recordDigest}, ${admitted.assessmentKey}, ${source.projectId}, ${String(admitted.result["sourceDigest"])}, ${recordJson}, ${assessedAt}
+    WHERE NOT EXISTS (SELECT 1 FROM slopbot_work_unit_journal WHERE assessment_key = ${admitted.assessmentKey})`);
+  const stored = yield* first(Schema.Struct({ sequence: Schema.Number, record_digest: Schema.String }), sql`SELECT sequence, record_digest FROM slopbot_work_unit_journal WHERE assessment_key = ${admitted.assessmentKey}`);
   if (stored === undefined) return yield* Effect.fail(new PublicationFailed());
-  const sequence = stored.sequence;
-  return { recordDigest, sequence };
+  return { recordDigest: stored.record_digest, sequence: stored.sequence };
 });
 
 type Base = Layer.Success<typeof webCrypto> | D1 | Registry;
 
-// The publication prepares the work-unit evidence; the driver's evidence is the model request's own limitation and
-// claim counts and each source's indirect acceptance and claims.
 let submitted: ImportRequest | undefined;
 
 function preparedOf(admitted: AdmittedImport): PreparedFacts | undefined {
   const request = submitted;
   if (request === undefined || admitted.mode !== "work-unit") return undefined;
+  if ((request.claims === 0) !== request.sources.every((source) => !source.claimed)) unrealizable("a claim credits or carries a source of its own group");
   return {
     limitations: request.limitations,
     claims: request.claims,
@@ -314,6 +312,17 @@ function actorOf(request: ImportRequest) {
   return request.admin.verifiedAdministrator ? administrator : "8";
 }
 
+const JournalSize = Schema.Struct({ n: Schema.Number });
+
+async function journalSize() {
+  const found = await runtime.runPromise(first(JournalSize, sql`SELECT (SELECT COUNT(*) FROM slopbot_value_journal) + (SELECT COUNT(*) FROM slopbot_work_unit_journal) AS n`));
+  return found?.n ?? 0;
+}
+
+function cutoffVars() {
+  return cutoff === apiCutoff ? {} : { SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_VALUE_START_AT: new Date(cutoff * 1000).toISOString() };
+}
+
 async function submit(request: ImportRequest) {
   const fake = worldOf(request);
   const revision = request.producerRevision === "" ? "" : hex(`revision-${generation}-${request.producerRevision}`, 40);
@@ -323,15 +332,20 @@ async function submit(request: ImportRequest) {
     http,
     Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), userAgent: "slopbot" }), http),
     rolesFrom({ ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: "" }),
-    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...cutoff !== apiStart ? { SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_VALUE_START_AT: new Date(cutoff * 1000).toISOString() } : {} }),
+    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...cutoffVars() }),
     registry,
     Layer.provide(recordingPublication, registry),
   );
   published.length = 0;
   submitted = request;
   const envelope = envelopeOf(request, await heads(request, fake));
+  const before = await journalSize();
   const exit = await runtime.runPromiseExit(Effect.provide(publishSubscription(actorOf(request), envelope, undefined), services));
   const [admitted] = published;
+  if (Exit.isSuccess(exit) && admitted !== undefined && (await journalSize()) === before) {
+    last = "Replayed";
+    return "accepted" as const;
+  }
   if (Exit.isSuccess(exit) && admitted !== undefined) {
     const key = keyOfDigest.get(String(admitted.result["sourceDigest"])) ?? 0;
     records = [...records, { key, producer: producerOf(admitted.result["provenance"]), sources: admitted.sources.map((source) => ({ repository: source.repositoryDatabaseId - repositoryBase(), pull: source.number })) }];
@@ -353,7 +367,8 @@ function view(state: Imports): Observed {
 export const driver: Driver<Observed> & AsyncDisposable = {
   reset: () => {
     generation++;
-    cutoff = apiStart;
+    cutoff = apiCutoff;
+    submitted = undefined;
     installs = [];
     records = [];
     last = "NoImport";
@@ -363,8 +378,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   dispatch: async (_key, event: Event) => {
     switch (event.type) {
       case "recordCutoff": {
-        // The configured start is read again for every import; the driver sets the consumer's configuration.
-        if (event.cutoff < apiStart || event.cutoff === cutoff) return "refused";
+        if (event.cutoff < apiCutoff || event.cutoff === cutoff) return "refused";
         cutoff = event.cutoff;
         return "accepted";
       }

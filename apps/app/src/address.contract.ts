@@ -1,5 +1,4 @@
-// What address.ts promises, checked by the tests `pnpm test` derives: a path made from segments opens those segments,
-// whatever they hold, slashes and percent signs included.
+// spec/app/index.md, "The shell shows one route, opened from the address"
 import { Arbitrary, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { pathTo, segmentsOf } from "./address.ts";

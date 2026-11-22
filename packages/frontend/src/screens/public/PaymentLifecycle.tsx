@@ -30,13 +30,6 @@ export function Milestones({ label, milestones }: MilestonesProps) {
   );
 }
 
-const awardMilestones: ReadonlyArray<Milestone> = [
-  { name: "Projected", detail: "An estimate, not an approved award." },
-  { name: "Under review", detail: "The amount may change before the monthly cutoff." },
-  { name: "Approved", detail: "The award amount is approved." },
-  { name: "Paid", detail: "The finalized payment matches the award." },
-];
-
 export const payoutTimeline: ReadonlyArray<Milestone> = [
   { name: "Month ends", detail: "UTC" },
   { name: "72h review", detail: "Owner adjusts" },
@@ -46,5 +39,5 @@ export const payoutTimeline: ReadonlyArray<Milestone> = [
 
 /** An ordinary award's milestones, from projection to finalized payment. */
 export function PaymentLifecycle() {
-  return <Milestones label="Ordinary award and payment milestones" milestones={awardMilestones} />;
+  return <Stepper aria-label="Ordinary award and payment milestones" steps={["Projected", "Under review", "Approved", "Paid"]} />;
 }

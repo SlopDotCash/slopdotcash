@@ -37,6 +37,16 @@ every other fee asset holds its own share in its own base units
 (`buyback.ts` `buy`: `entitlement(arrivedCredit(token), feeIncome(token),
 shareBps, committed(token))` per asset).
 
+A kept USDG submission fee that the [submission deposit
+contract](./submissionFeeDeposits.md) sent to the Robinhood Chain fee wallet
+is a `RobinhoodFee` of USDG too, read from the submission-fee Worker's
+finalized kept rows (`buyback-store.ts` `keptSubmissionFees`). Its receipt
+key is its deposit, not the resolving transaction, because one
+`resolveMany` transaction settles up to twenty deposits, and its time is
+its finalized resolution. Kept SLOP goes to the burn address, never to the
+fee wallet, so it never enters `localSlopIncome`; a refund or a reclaim
+never counts.
+
 ```quint
 import money as M from "../settlement/money"
 import half as H from "../settlement/half"

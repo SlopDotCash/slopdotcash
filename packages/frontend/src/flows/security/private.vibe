@@ -1,6 +1,7 @@
 // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { Access, Route } from "@repo/platform/route"
+import { ProofOfConcept } from "@repo/security/client"
 import { type CallFailure, type CallInput, call } from "../../platform/api.vibe"
 import { BrowserSession } from "../../session/browserSession.vibe"
 import { Session, actorNumber } from "../../session/session.vibe"
@@ -21,9 +22,11 @@ export interface ReportDraft {
   readonly severity: string
   readonly cvss: string
   readonly cwe: string
+  readonly proofName: string
+  readonly proofText: string
 }
 
-export const emptyReport: ReportDraft = { summary: "", description: "", severity: "", cvss: "", cwe: "" }
+export const emptyReport: ReportDraft = { summary: "", description: "", severity: "", cvss: "", cwe: "", proofName: "", proofText: "" }
 
 export schema ReportBody {
   summary: string
@@ -31,6 +34,7 @@ export schema ReportBody {
   severity?: string
   cvssVectorString?: string
   cweIds?: ReadonlyArray<string>
+  proofOfConcept?: ProofOfConcept
 }
 
 export function reportBody(draft: ReportDraft): ReportBody {
@@ -41,6 +45,7 @@ export function reportBody(draft: ReportDraft): ReportBody {
     description: draft.description.trim(),
     ...(vector !== "" ? { cvssVectorString: vector } : draft.severity !== "" ? { severity: draft.severity } : {}),
     ...(cweIds.length > 0 ? { cweIds } : {}),
+    ...(draft.proofName !== "" && draft.proofText !== "" ? { proofOfConcept: { fileName: draft.proofName, patch: draft.proofText } } : {}),
   }
 }
 

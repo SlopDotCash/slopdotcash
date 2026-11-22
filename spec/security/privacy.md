@@ -12,7 +12,9 @@ One read concerns one representative received [case](./cases.md). Its
 reporter and the current case roles of the latest verified authority
 snapshot may read the report body: technical approvers, assigned triagers,
 and moderators while an appeal or related-party review is open. Financial
-approvers and website administrators read no body. Scanner evidence is
+approvers and website administrators read no body. While the case waits for
+its [deposit](./reportDeposit.md), only its reporter reads it; any other
+read answers not found ([case rule](./cases.md), `heldFor`). Scanner evidence is
 readable only by `lalalune` (18633264) and `drew-dot-com` (202660855), whose
 policy `lalalune` owns, through grants that expire after fifteen minutes. A
 read records its audit before any byte is delivered. A role change or grant

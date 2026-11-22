@@ -15,6 +15,7 @@ current authority and human approval remain separate facts.
 - [Private report screening and routing](./screening.md)
 - [Case decisions, awards and appeals](./cases.md)
 - [Routine decisions on private reports](./routineDecisions.md)
+- [Refundable report deposit](./reportDeposit.md)
 - [Remediation, disclosure and recognition](./remediation.md)
 - [Project bounty exclusivity and funding](./bounty.md)
 - [Private bounty program terms](./program.md)

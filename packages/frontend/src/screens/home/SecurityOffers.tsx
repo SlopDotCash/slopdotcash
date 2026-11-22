@@ -1,8 +1,8 @@
 // spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
-import { Button, DataState, ProjectCard } from "@repo/ui";
-import { Plus } from "lucide-react";
+import { Button, Card, CardTitle, cn, DataState, focusRing } from "@repo/ui";
+import { Plus, Shield } from "lucide-react";
 import { securityBountyAmountLabel } from "../../kernels/rewardSummary.ts";
-import { bountyFundingLabel, eligibilityWord, imageOf, type ListedProject, offerHref, openOffers, type Shown } from "./listing.ts";
+import { eligibilityWord, imageOf, type ListedProject, offerHref, openOffers, type Shown } from "./listing.ts";
 
 export type SecurityOffersProps = {
   /** The registry read the offers come from; a failed or loading read shows no offer. */
@@ -15,18 +15,23 @@ function OfferCards({ offers }: { offers: ReadonlyArray<ListedProject> }) {
       {offers.flatMap((project) => {
         const terms = project.securityBounty;
         if (!terms) return [];
+        const image = imageOf(project);
         return [
           <li key={project.id} className="flex">
-            <ProjectCard
-              className="flex-1"
-              name={project.name}
-              image={imageOf(project)}
-              description={terms.eligibility === "critical-loss-of-funds" ? `Find a critical security vulnerability in ${project.name}` : `Find a security vulnerability in ${project.name}`}
-              amount={`${securityBountyAmountLabel(terms)} / ${eligibilityWord(terms)}`}
-              note={bountyFundingLabel(terms)}
-            >
-              <a href={offerHref(project)} />
-            </ProjectCard>
+            <Card asChild className={cn("flex-1 gap-3", focusRing, "hover:bg-accent motion-safe:transition-colors motion-safe:duration-fast")}>
+              <a href={offerHref(project)}>
+                <div className="flex items-center gap-3">
+                  {image ? <img src={image} alt="" loading="lazy" className="size-10 shrink-0 rounded-md bg-muted" /> : null}
+                  <CardTitle className="flex min-w-0 items-center gap-2 break-words">
+                    <span role="img" aria-label="Security bounty" title="Security bounty">
+                      <Shield aria-hidden className="size-5" />
+                    </span>
+                    {project.name}
+                  </CardTitle>
+                </div>
+                <p className="font-mono text-lg font-medium tabular-nums">{`${securityBountyAmountLabel(terms)} / ${eligibilityWord(terms)}`}</p>
+              </a>
+            </Card>
           </li>,
         ];
       })}
@@ -49,15 +54,18 @@ export function SecurityOffers({ projects }: SecurityOffersProps) {
           </a>
         </Button>
       </div>
-      <p className="text-muted-foreground">
-        {projects.status === "Current" && offers.length === 0 ? "No paid security bounties are open. " : null}
-        <a href="#projects" className="text-primary underline underline-offset-4 hover:decoration-2">
-          Choose a project
-        </a>{" "}
-        to report a security issue privately without a promised award.
-      </p>
       <DataState status={projects.status} onRetry={projects.onRetry}>
-        {offers.length > 0 ? <OfferCards offers={offers} /> : null}
+        {offers.length > 0 ? (
+          <OfferCards offers={offers} />
+        ) : (
+          <p className="text-muted-foreground">
+            No open bounties.{" "}
+            <a href="#projects" className="text-primary underline underline-offset-4 hover:decoration-2">
+              Report privately
+            </a>{" "}
+            on any project.
+          </p>
+        )}
       </DataState>
     </section>
   );

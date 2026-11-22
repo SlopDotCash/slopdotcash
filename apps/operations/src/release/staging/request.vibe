@@ -7,6 +7,7 @@ export interface Answer {
   readonly status: number
   readonly headers: Readonly<Record<string, string | undefined>>
   readonly bytes: Uint8Array
+  readonly cookies: Readonly<Record<string, string>>
 }
 
 const attempts = 3
@@ -21,7 +22,8 @@ effect function attempt(request: HttpClientRequest.HttpClientRequest, millis: nu
     provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
       const response = try HttpClient.execute(request)
       const bytes = try boundedBytes(response, bodyLimit, "the staging acceptance answer")
-      return { status: response.status, headers: response.headers, bytes } satisfies Answer
+      const cookies = Object.fromEntries(Object.entries(response.cookies.cookies).map(([name, cookie]) => [name, cookie.valueEncoded]))
+      return { status: response.status, headers: response.headers, bytes, cookies } satisfies Answer
     }
   }, Duration.millis(millis)) catch effect (error) => {
     if (error._tag === "BodyTooLarge") throw new StagingRefused({ message: `${request.url} answered more than ${bodyLimit} bytes` })

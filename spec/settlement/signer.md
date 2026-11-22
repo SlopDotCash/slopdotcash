@@ -28,7 +28,7 @@ verification adapter.
 ```quint
 type BindingPhase = Unbound | Authorized | BindingPending | CancellationPending | Bound | Cancelled | Retired
 type WalletSignature = { wallet: str, signer: str, intent: int }
-type FinalizedOutcome = { attempt: int, reverted: bool, block: int, canonicalBlock: int }
+type FinalizedOutcome = { attempt: int, reverted: bool, block: int, canonicalBlock: int, bindingLanded: bool }
 type Binding = { phase: BindingPhase, actor: int, wallet: str, authority: int, intent: int, latestIntent: int,
   signedAuthority: int, nonce: int, bindingAttempt: int, cancellationAttempt: int,
   canonical: int, finalizedHeight: int, retired: List[int], consentExpiry: int, finalizedTime: int }
@@ -161,10 +161,19 @@ pure val evidenceValues = Set(winnerSample, { ...winnerSample, gasUsed: 20999 },
 ### A bind transaction retires only after its revert is finalized at the canonical block
 
 A Base bind transaction signed by a rotated-out authority, or with a stale
-expected version, reverts on chain. The journal retires it only from a
-finalized reverted receipt whose block is the canonical block, and keeps the
-retired attempt identity so it is never reused. Pending or ambiguous results
-remain held. A fresh intent may then authorize a new binding. This is the
+expected version, reverts on chain, and a Solana binding transaction of the
+attester fails when its expected version was raced or its submission window
+closed before inclusion. The journal retires either only from a finalized
+reverted or failed result whose block (for Solana, its finalized slot or the
+finalized height past the attempt's last valid height) is the canonical
+block, and keeps the retired attempt identity so it is never reused: the
+failed Solana attempt stays in the journal under its expired key. Before a
+Solana attempt retires, the finalized binding account is read again; when it
+already holds this destination and claim the attempt is not retired and
+finalized receipt reconciliation is required (`bindingLanded`). An EVM
+receipt reports `bindingLanded` false. Pending or ambiguous results, and a
+failure short of finality, remain held (development `8660a6121`,
+`workers/payment-executor/solana.ts` `prepareBinding`). A fresh intent may then authorize a new binding. This is the
 retirement rule of the [executor journal](./executorJournal.md): a revert
 retires an attempt only once it is finalized, here at the canonical block,
 and the retired identity is retained.
@@ -174,6 +183,7 @@ import executorJournal as J from "./executorJournal"
 pure def canRetireReverted(b: Binding, receipt: FinalizedOutcome): bool =
   b.phase == BindingPending and receipt.attempt == b.bindingAttempt
     and J::finalizedRevert(receipt.reverted, receipt.block > 0 and receipt.block == receipt.canonicalBlock)
+    and not(receipt.bindingLanded)
 pure def retireReverted(b: Binding, receipt: FinalizedOutcome): Binding =
   { ...b, phase: Retired, retired: b.retired.append(b.bindingAttempt), finalizedHeight: receipt.block }
 ```
@@ -413,6 +423,9 @@ pure val intentValues = Set(1, 2, 3)
 pure val signatureValues = Set({ wallet: "wallet", signer: "wallet", intent: 1 }, { wallet: "wallet", signer: "wallet", intent: 2 },
   { wallet: "wallet", signer: "other", intent: 1 }, { wallet: "wrong", signer: "wrong", intent: 1 })
 pure val expiresAtValues = Set(0, 5)
-pure val receiptValues = Set({ attempt: 1, reverted: true, block: 5, canonicalBlock: 5 }, { attempt: 1, reverted: true, block: 5, canonicalBlock: 6 },
-  { attempt: 1, reverted: false, block: 5, canonicalBlock: 5 }, { attempt: 2, reverted: true, block: 5, canonicalBlock: 5 })
+pure val receiptValues = Set({ attempt: 1, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: false },
+  { attempt: 1, reverted: true, block: 5, canonicalBlock: 6, bindingLanded: false },
+  { attempt: 1, reverted: false, block: 5, canonicalBlock: 5, bindingLanded: false },
+  { attempt: 2, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: false },
+  { attempt: 1, reverted: true, block: 5, canonicalBlock: 5, bindingLanded: true })
 ```

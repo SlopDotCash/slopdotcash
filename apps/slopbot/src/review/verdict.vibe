@@ -1,4 +1,4 @@
-// spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions"; spec/slopbot/categories.md, "Confidence uses hundredths and closure requires at least ninety"
+// spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions"; spec/slopbot/categories.md, "Confidence uses hundredths and closure requires at least ninety"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
 import type { Category as Finding } from "../../gen/slopbot__categories.effect.vibe"
 import { validConfidence } from "../../gen/slopbot__categories.effect.vibe"
 import type { Category as Reviewed } from "../../gen/slopbot__review.effect.vibe"
@@ -94,6 +94,15 @@ export function hundredths(confidence: number) {
   return Math.min(100, Math.max(0, Math.floor(confidence * 100)))
 }
 
+export function explainVerdict(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  const value = raw as Readonly<Record<string, unknown>>
+  if (typeof value.confidence === "number" && !(value.confidence >= 0 && value.confidence <= 1)) return "field confidence is outside 0 to 1"
+  if (value.summary === "") return "field summary is empty"
+  if (typeof value.objective_defect === "string" && !objectiveDefectId.test(value.objective_defect)) return "field objective_defect is not a 64-character hex digest"
+  return undefined
+}
+
 export function validateVerdict(raw: unknown): Verdict | undefined {
   if (!Schema.is(VerdictWire)(raw)) return undefined
   const category = categoryOf(raw.category)
@@ -112,4 +121,4 @@ export function validateVerdict(raw: unknown): Verdict | undefined {
   }
 }
 
-export const verdictOutput = { schema: verdictSchema, validate: validateVerdict }
+export const verdictOutput = { schema: verdictSchema, validate: validateVerdict, explain: explainVerdict }

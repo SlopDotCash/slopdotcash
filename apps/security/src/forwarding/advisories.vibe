@@ -1,8 +1,9 @@
-// spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"
+// spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type Exchange, exchanged, githubJson, manualRedirects, parsed } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
 import { canonicalJson } from "../admission/binding.ts"
+import { forwardedDescription } from "../client/proof.ts"
 import type { ReportInput } from "../intake/report.vibe"
 import type { IntakeAppConfig, ReporterGrant } from "./grant.vibe"
 
@@ -117,7 +118,7 @@ effect function exchangeOf(app: IntakeAppConfig) {
 function reportBody(report: ReportInput, marker: string) {
   return {
     summary: report.summary,
-    description: `${report.description}\n\n${marker}`,
+    description: `${forwardedDescription(report.description, report.proofOfConcept)}\n\n${marker}`,
     ...report.severity === undefined ? {} : { severity: report.severity },
     ...report.cvssVectorString === undefined ? {} : { cvss_vector_string: report.cvssVectorString },
     ...report.cweIds === undefined ? {} : { cwe_ids: report.cweIds },

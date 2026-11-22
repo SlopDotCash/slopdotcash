@@ -1,4 +1,4 @@
-// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
+// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer"; spec/slopbot/reportingReadiness.md, "A paused project without the App installed is a recorded state, never a refresh failure"
 import { D1, type Statement, first, list, rows, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import { type Json, type Network, ProjectAudience, type ProjectListing, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions, type VaultRegistered, type VaultRegistration, VaultRegistrationRefused } from "@repo/ports/backend"
@@ -11,7 +11,7 @@ import { registerOwnerVault } from "./vault/register.vibe"
 import { activeBans, unbanned, unbannedFence } from "./store/facts.vibe"
 import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from "./store/rows.vibe"
 
-schema ListingFacts { steward_type: string | null; from_application: number; applicant_github_id: string | null; first_actor_github_id: string | null }
+schema ListingFacts { steward_type: string | null; from_application: number; applicant_github_id: string | null; first_actor_github_id: string | null; intake_repository: string | null }
 schema KeyHolder { project_id: string }
 schema ProjectId { id: string }
 schema ManifestRow { id: string; status: "active" | "paused"; revision: number; manifest: string; manifest_sha256: string; updated_at: string }
@@ -59,7 +59,7 @@ effect function projectView(projectId: string) {
   const revisions = try revisionsOf(projectId, revisionRows?.rows ?? [])
   const listing = tierOf(manifest.listingTier)
   const retirement = retirementOf(revisions)
-  const facts = try first(ListingFacts, sql`SELECT json_extract(p.manifest, '$.steward.github.type') AS steward_type, p.source_application_id IS NOT NULL AS from_application, a.applicant_github_id, r.actor_github_id AS first_actor_github_id FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE p.id = ${projectId}`)
+  const facts = try first(ListingFacts, sql`SELECT json_extract(p.manifest, '$.steward.github.type') AS steward_type, p.source_application_id IS NOT NULL AS from_application, a.applicant_github_id, r.actor_github_id AS first_actor_github_id, CASE WHEN json_type(p.manifest, '$.securityBounty.intake.repository') = 'text' THEN json_extract(p.manifest, '$.securityBounty.intake.repository') END AS intake_repository FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE p.id = ${projectId}`)
   return {
     projectId,
     revision: row.revision,
@@ -75,6 +75,7 @@ effect function projectView(projectId: string) {
     network: networkOf(manifest),
     asset: assetAddressOf(manifest),
     closureConsent: manifest.slopbot?.automaticClosure === true,
+    ...facts === undefined || facts.intake_repository === null ? {} : { securityIntakeRepository: facts.intake_repository },
   } satisfies ProjectView
 }
 
@@ -106,7 +107,7 @@ effect function active() {
 
 effect function pausedProjects() {
   const views: ProjectView[] = []
-  for (const { id } of try rows(ProjectId, sql`SELECT id FROM projects WHERE status = 'paused' ORDER BY id`)) {
+  for (const { id } of try rows(ProjectId, sql`SELECT id FROM projects WHERE json_extract(manifest, '$.listingTier') <> 'retired' AND NOT (status = 'active' AND json_extract(manifest, '$.status') = 'active') ORDER BY id`)) {
     const view = try projectView(id)
     if (view !== undefined) views.push(view)
   }
@@ -119,10 +120,6 @@ export function registryFence(pin: RegistryPin): Statement {
   return sql`EXISTS (SELECT 1 FROM projects p WHERE p.id = ${pin.projectId} AND p.revision = ${pin.revision} AND p.manifest_sha256 = ${pin.manifestSha256} AND p.status = 'active' AND json_extract(p.manifest, '$.status') = 'active' AND json_extract(p.manifest, '$.listingTier') <> 'retired' AND ${present})`
 }
 
-// spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer":
-// the registration is a project write. The registry layer cannot require the enforcement rows (security builds them
-// from this registry), so the write runs with the services of the worker that asks for it, and a worker composed
-// without them fails loudly rather than registering nothing.
 type VaultServices = D1 | Roles | Notices | EnforcementRows | Experimental.Crypto.Crypto | SlopbotAccess
 
 effect function vaultServices(built: Context.Context<never>) {

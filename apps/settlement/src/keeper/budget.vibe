@@ -1,16 +1,19 @@
 // spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block"; spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"
 import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
 import { jsonRpc } from "@repo/platform/chain/rpc"
+import { type Address as SolanaAddress, SolanaRpc, base58Encode, base64Decode, base64Encode, decodeMessage, isSignature } from "@repo/platform/chain/solana"
 import { isoAt } from "@repo/platform/clock"
 import { decoded, sql } from "@repo/platform/d1"
 import type { SqlTx } from "@repo/platform/journal"
 import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
-import { apply } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type Lifecycle, apply } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { PROJECT_SIZE } from "../chain/solana/accounts.ts"
+import { MAX_LEGACY_ACCOUNTS } from "../chain/solana/transactions.ts"
 import { executionGasCost, nativeFeeTotal, withinBudget } from "../kernels/budget.ts"
-import type { KeeperConfig } from "./config.vibe"
+import type { EvmKeeperConfig, KeeperConfig, SolanaKeeperConfig } from "./config.vibe"
 import { classifyFailure } from "./diagnostics.vibe"
 import { type GroupWork, type KeeperCore, bytesOf, withGroup } from "./lifecycle.vibe"
-import { inTransaction } from "./store.vibe"
+import { RecordInvalid, inTransaction } from "./store.vibe"
 import { decimal, exact, quantityOf, widen } from "./units.ts"
 
 export error BudgetRefused { reason: string; classified?: ClassifiedError }
@@ -19,6 +22,14 @@ export interface GasScope {
   readonly config: KeeperConfig
   readonly core: KeeperCore
   readonly runId: number
+}
+
+export interface EvmGasScope extends GasScope {
+  readonly config: EvmKeeperConfig
+}
+
+export interface SolanaGasScope extends GasScope {
+  readonly config: SolanaKeeperConfig
 }
 
 const BASE_GAS_PRICE_ORACLE = "0x420000000000000000000000000000000000000f"
@@ -110,7 +121,7 @@ effect function oracleFee(selector: string, amount: bigint, block: bigint) {
   return fee
 }
 
-export effect function additionalFee(config: KeeperConfig, gas: bigint, unsignedBytes: number) {
+export effect function additionalFee(config: EvmKeeperConfig, gas: bigint, unsignedBytes: number) {
   if (!config.base) return 0n
   const block = ((try EvmRpc).head("latest") catch effect (error) => { throw new BudgetRefused({ reason: "Base quote block unavailable", classified: classifyFailure(error) }) }).number
   const extra = (try oracleFee(L1_FEE_UPPER_BOUND, widen(unsignedBytes), block)) + (try oracleFee(OPERATOR_FEE, gas, block))
@@ -122,7 +133,7 @@ schema L1Receipt {
   readonly l1Fee?: string
 }
 
-effect function l1FeeOf(config: KeeperConfig, transactionId: string) {
+effect function l1FeeOf(config: EvmKeeperConfig, transactionId: string) {
   const raw = try jsonRpc({ urls: Redacted.make([Redacted.value(config.rpcUrl)]), timeoutMs: 20_000, maxBytes: 16 * 1024 * 1024 })
   const receipt = try raw.call("eth_getTransactionReceipt", [transactionId], Schema.NullOr(L1Receipt))
   const fee = receipt?.l1Fee === undefined ? undefined : quantityOf(receipt.l1Fee)
@@ -151,7 +162,7 @@ effect function settleGroup(scope: GasScope, row: GasRow, actual: bigint, settle
   })
 }
 
-export effect function reconcileGas(scope: GasScope) {
+export effect function reconcileGas(scope: EvmGasScope) {
   const config = scope.config
   const rpc = try EvmRpc
   const millis = try Clock.currentTimeMillis
@@ -174,6 +185,108 @@ export effect function reconcileGas(scope: GasScope) {
     if (receipt.effectiveGasPrice === undefined) throw new BudgetRefused({ reason: "Finalized gas price unavailable" })
     const actual = nativeFeeTotal(executionGasCost(receipt.gasUsed, receipt.effectiveGasPrice), 0n, l1, operator)
     if (try settleGroup(scope, row, actual, block.timestamp, millis)) settled += 1
+    else exceeded += 1
+  }
+  if (exceeded > 0) throw new BudgetRefused({ reason: "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge" })
+  return settled
+}
+
+schema SignedAttemptRow {
+  readonly raw?: string
+  readonly lastValidBlockHeight?: number
+}
+
+schema JournalValue { readonly value: string }
+
+export function solanaReservationId(message: Uint8Array) {
+  return `solana:${base64Encode(message)}`
+}
+
+export effect function solanaMaximum(message: Uint8Array, signer: SolanaAddress) {
+  const decoded = decodeMessage(message)
+  if (decoded.kind !== "decoded" || decoded.value.version !== "legacy") throw new BudgetRefused({ reason: "Unexpected keeper message format" })
+  const { header, accountKeys } = decoded.value
+  const count = accountKeys.length
+  if (count < 1 || count > MAX_LEGACY_ACCOUNTS || header.requiredSignatures !== 1 || header.readonlySigned !== 0 || header.readonlyUnsigned >= count)
+    throw new BudgetRefused({ reason: "Unexpected keeper message format" })
+  if (accountKeys[0] !== signer) throw new BudgetRefused({ reason: "Keeper message has another fee payer or cosigner" })
+  const rpc = try SolanaRpc
+  const fee = try rpc.feeForMessage(message, "confirmed")
+  if (fee === undefined || fee < 0n) throw new BudgetRefused({ reason: "Solana fee quote unavailable" })
+  const writable = accountKeys.slice(1, count - header.readonlyUnsigned)
+  const state = try rpc.accounts(writable, "confirmed")
+  if (state.value.length !== writable.length) throw new BudgetRefused({ reason: "Solana account quote unavailable" })
+  const rent = try rpc.rentExemption(PROJECT_SIZE, "confirmed")
+  if (rent < 0n) throw new BudgetRefused({ reason: "Solana rent quote unavailable" })
+  return fee + widen(state.value.filter((entry) => entry === undefined).length) * rent
+}
+
+export effect function reserveSolanaSend(tx: SqlTx, state: Lifecycle, scope: SolanaGasScope, id: string, maximum: bigint, signature: string, millis: number) {
+  const exactMaximum = exact(maximum)
+  if (exactMaximum === undefined) throw new BudgetRefused({ reason: "Operator gas budget reached; signed unknown transactions remain reserved" })
+  try reserveGas(tx, scope.config, id, maximum, signature, millis)
+  const candidate = { bytes: 1, maxFee: exactMaximum, priorityFee: 0, signedAt: Math.floor(millis / 1000), extraFee: 0 }
+  const staged = try apply(state, { type: "stageAttempt", runId: scope.runId, attempt: candidate, signer: { wallet: scope.config.signer, expectedWallet: scope.config.signer } })
+  return try apply(staged, { type: "commitAttempt", runId: scope.runId, storageCommitted: true })
+}
+
+effect function expiredSolanaReserve(row: GasRow) {
+  const rpc = try SolanaRpc
+  const attempts = try inTransaction((tx) => effect {
+    return try decoded(JournalValue, try tx.all(sql`SELECT value FROM journal WHERE json_extract(value, '$.transactionId') = ${row.transaction_id}`), "keeper journal")
+  })
+  if (attempts.length === 0 || !isSignature(row.transaction_id)) return
+  const signature = row.transaction_id
+  let lastValidBlockHeight: number | undefined = undefined
+  for (const entry of attempts) {
+    const parsed = Effect.try(() => JSON.parse(entry.value) as unknown) catch effect () => { throw new RecordInvalid({ key: row.transaction_id }) }
+    const attempt = Schema.decodeUnknownEffect(SignedAttemptRow)(parsed) catch () => undefined
+    const height = attempt?.lastValidBlockHeight
+    if (attempt?.raw === undefined || height === undefined || !Number.isSafeInteger(height) || height < 0) return
+    const raw = base64Decode(attempt.raw)
+    if (raw === undefined || raw[0] !== 1 || raw.length < 100 || base58Encode(raw.subarray(1, 65)) !== row.transaction_id
+      || solanaReservationId(raw.subarray(65)) !== row.id || (lastValidBlockHeight !== undefined && lastValidBlockHeight !== height))
+      throw new BudgetRefused({ reason: "Gas expiry evidence does not match the signed transaction" })
+    lastValidBlockHeight = height
+  }
+  if (lastValidBlockHeight === undefined) return
+  const height = rpc.blockHeight("finalized") catch effect () => { throw new BudgetRefused({ reason: "Finalized expiry height unavailable" }) }
+  if (height <= lastValidBlockHeight) return
+  const [status] = try rpc.signatureStatuses([signature])
+  if (status !== undefined) return
+  const slot = rpc.slot("finalized") catch effect () => { throw new BudgetRefused({ reason: "Finalized expiry slot unavailable" }) }
+  const timestamp = try rpc.blockTime(slot)
+  if (timestamp === undefined || !Number.isSafeInteger(timestamp) || timestamp < 0) throw new BudgetRefused({ reason: "Finalized expiry time unavailable" })
+  const evidence = JSON.stringify({ kind: "expired-upper-bound", transactionId: row.transaction_id, lastValidBlockHeight, finalizedBlockHeight: height, finalizedSlot: slot, blockTime: timestamp, receipt: "unavailable", signatureStatus: null })
+  const day = try utcDay(timestamp * 1000)
+  try inTransaction((tx) => tx.run(sql`UPDATE gas SET settled_day = ${day}, expiry_evidence = ${evidence} WHERE id = ${row.id} AND actual IS NULL AND expiry_evidence IS NULL`))
+}
+
+export effect function reconcileSolanaGas(scope: SolanaGasScope) {
+  const rpc = try SolanaRpc
+  const millis = try Clock.currentTimeMillis
+  const open = try inTransaction((tx) => effect {
+    return (try gasRows(tx)).filter((entry) => entry.actual === undefined).map((entry) => entry.row)
+  })
+  let exceeded = 0
+  let settled = 0
+  for (const row of open) {
+    if (row.transaction_id === "unsigned") throw new BudgetRefused({ reason: "Incomplete signing transaction in gas journal" })
+    if (!isSignature(row.transaction_id)) throw new BudgetRefused({ reason: "Gas receipt identity mismatch" })
+    const fetched = try rpc.transaction(row.transaction_id, "finalized")
+    if (fetched === undefined) {
+      if (row.expiry_evidence === null) try expiredSolanaReserve(row)
+      continue
+    }
+    const [first] = fetched.transaction.signatures
+    if (first === undefined || base58Encode(first) !== row.transaction_id || fetched.transaction.message.accountKeys[0] !== scope.config.signer)
+      throw new BudgetRefused({ reason: "Gas receipt identity mismatch" })
+    const before = fetched.meta.preBalances[0]
+    const after = fetched.meta.postBalances[0]
+    if (before === undefined || after === undefined || before < after) throw new BudgetRefused({ reason: "Unreconciled native balance change" })
+    if (fetched.blockTime === undefined) throw new BudgetRefused({ reason: "Finalized gas receipt time unavailable" })
+    if (!Number.isSafeInteger(fetched.blockTime) || fetched.blockTime < 0) throw new BudgetRefused({ reason: "Invalid finalized receipt time" })
+    if (try settleGroup(scope, row, before - after, fetched.blockTime, millis)) settled += 1
     else exceeded += 1
   }
   if (exceeded > 0) throw new BudgetRefused({ reason: "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge" })

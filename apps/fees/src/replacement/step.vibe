@@ -1,7 +1,7 @@
 // spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
-import { type Event, type Fee, type NetworkFeeObservation, latestAttempt, replacementFees, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
+import { type Event, type Fee, type NetworkFeeObservation, type Row, canReplace, latestAttempt, pricedWithin, replacementDeadlineMarginMs, replacementFees, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
 import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { exactNumber, parsedType2, wholeBig } from "../evm/abi.ts"
 import { type Broadcast, baseFee, broadcast } from "../evm/client.vibe"
@@ -14,16 +14,15 @@ import type { EvmNetwork, EvmReplacement, FirstEvmIntent, PreparationAttempt } f
 module verified {
   import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
   /** @throws {never} */
-  export function gweiCeiling(value: bigint): bigint { return units(value, false) }
+  export function megaweiCeiling(value: bigint): bigint { return units(value, false) }
   /** @throws {never} */
-  export function weiOfGwei(value: bigint): bigint { return wei(value, false) }
+  export function weiOfMegawei(value: bigint): bigint { return wei(value, false) }
 }
-import { gweiCeiling, weiOfGwei } from verified
-
-const replacementDeadlineMarginMs = 120_000
+import { megaweiCeiling, weiOfMegawei } from verified
 
 export interface ReplacementInput {
   readonly fee: Fee
+  readonly epoch: number
   readonly runId: number
   readonly rowId: number
   readonly recorded: FirstEvmIntent
@@ -50,7 +49,18 @@ function wait(reason: string): ReplacementPlan {
 
 function withinUnit(target: bigint, units: number) {
   const ceiling = wholeBig(units)
-  return ceiling !== undefined && ceiling > 0n && target > weiOfGwei(ceiling - 1n) && target <= weiOfGwei(ceiling)
+  return ceiling !== undefined && ceiling > 0n && target > weiOfMegawei(ceiling - 1n) && target <= weiOfMegawei(ceiling)
+}
+
+function unusedTx(fee: Fee) {
+  return Math.max(0, ...fee.rows.flatMap((row) => row.attempts.map((attempt) => attempt.tx)), ...fee.gas.map((entry) => entry.tx)) + 1
+}
+
+function refusedReason(fee: Fee, row: Row, networkFee: NetworkFeeObservation) {
+  if (row.kind === "Conversion" && fee.clock + replacementDeadlineMarginMs >= row.deadline) return "router deadline too close; a same-nonce replacement would revert"
+  if (row.valueMicro <= 0) return "the send has no recorded value to bound its fee"
+  if (!pricedWithin(fee, networkFee.pricedFeeMicro, row.valueMicro)) return "Final prepared native fee exceeds the gas-cost multiple or cannot be priced"
+  return "the replacement is outside the bounded fee step"
 }
 
 effect function claimVerified<E, R>(recorded: FirstEvmIntent, verifyClaim: ClaimCheck<E, R>) {
@@ -70,9 +80,14 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   const original = parsedType2(attempts[0])
   const previous = parsedType2(attempts[attempts.length - 1] ?? attempts[0])
   if (original === undefined || previous === undefined) return wait("the journaled bytes are not a replaceable EVM send")
-  const current = try baseFee()
+  const current = baseFee() catch effect (error) => {
+    if (error._tag === "ChainRefused") return undefined
+    throw error
+  }
+  const observedAt = (try Clock.currentTimeMillis) - input.epoch
+  if (current === undefined) return wait("the current network base fee is unavailable")
   if (current <= previous.maxFeePerGas) return wait("the signed fee covers the current network fee")
-  const maxFeeNeeded = exactNumber(gweiCeiling(current))
+  const maxFeeNeeded = exactNumber(megaweiCeiling(current))
   if (maxFeeNeeded === undefined) return wait("the current network fee is outside the journal's exact range")
   const stepped = replacementFees(fee, row)
   if (!stepped.ok) return wait("fee replacement cap reached")
@@ -84,17 +99,15 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   if (target.kind === "Keep") return wait("fee replacement cap reached")
   const { maxFeePerGas, maxPriorityFeePerGas } = target.fees
   if (!withinUnit(maxFeePerGas, stepped.maxFee) || !withinUnit(maxPriorityFeePerGas, stepped.priorityFee)) return wait("the stepped fees cannot be signed within the bounded step")
-  const priced = try nativeValue(network, original.gas * maxFeePerGas + settings.limits.additionalFeeReserve, settings.kyber)
-  const valueMicro = wholeBig(row.valueMicro)
-  if (valueMicro === undefined) return wait("the send has no recorded value to bound its fee")
-  if (priced === undefined || priced * 10n > valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
-  const pricedFeeMicro = exactNumber(priced)
-  if (pricedFeeMicro === undefined) return wait("the priced replacement fee exceeds the journal's exact range")
+  const priced = nativeValue(network, original.gas * maxFeePerGas + settings.limits.additionalFeeReserve, settings.kyber) catch () => undefined
+  const networkFee = { maxFeeNeeded, observedAt, pricedFeeMicro: priced === undefined ? -1 : exactNumber(priced) ?? -1 } satisfies NetworkFeeObservation
+  const observed = { ...fee, clock: Math.max(fee.clock, observedAt) }
+  if (!canReplace(observed, input.runId, rowId, unusedTx(fee), networkFee, "Worker")) return wait(refusedReason(observed, row, networkFee))
   try claimVerified(recorded, verifyClaim)
   return {
     kind: "Replace",
-    intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro, preparation },
-    networkFee: { maxFeeNeeded, observedAt: fee.clock, pricedFeeMicro },
+    intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro: wholeBig(row.valueMicro) ?? 0n, preparation },
+    networkFee,
   } satisfies ReplacementPlan
 }
 

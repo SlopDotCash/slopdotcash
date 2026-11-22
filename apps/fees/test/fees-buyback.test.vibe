@@ -268,7 +268,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee")', () => effect {
+  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee")', () => effect {
     const { db } = try Fixture
     try seed(db, 1, "1a", "conversion", usdc, "900000000", start - dayMs)
     try seed(db, 1, "1b", "conversion", usdc, "1200000000", start + hour)

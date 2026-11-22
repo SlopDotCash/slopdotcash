@@ -10,14 +10,14 @@ const tierLabels = { micro: "Micro", small: "Small", medium: "Medium", large: "L
 interface PenaltyRow {
   readonly label: string;
   readonly category: Category;
-  readonly actionNote?: string;
 }
 
 const penaltyRows: ReadonlyArray<PenaltyRow> = [
   { label: "Spam", category: "Spam" },
   { label: "Scam or malicious", category: "Scam" },
   { label: "Clear violation of a quoted project rule", category: "Busywork" },
-  { label: "Low quality", category: "LowQuality", actionNote: " (closure-eligible authors only)" },
+  { label: "Required evidence missing from a signed Slop PR", category: "MissingEvidence" },
+  { label: "Low quality", category: "LowQuality" },
   { label: "Duplicate", category: "Duplicate" },
   { label: "Out of scope", category: "OutOfScope" },
 ];
@@ -25,8 +25,8 @@ const penaltyRows: ReadonlyArray<PenaltyRow> = [
 const points = (value: number) => value.toLocaleString("en-US");
 
 /** @throws {never} */
-function penaltyAction({ category, actionNote }: PenaltyRow): string {
-  return (permittedAction(category) === "CloseAllowed" ? "Close" : "Label") + (moderatorReview(category) ? "; moderator reviews the account" : "") + (actionNote ?? "");
+function penaltyAction(category: Category): string {
+  return (permittedAction(category) === "CloseAllowed" ? "Close" : "Label") + (moderatorReview(category) ? " + account review" : "");
 }
 
 /** The contribution tiers Slopbot sizes accepted work with, in Points. */
@@ -58,12 +58,11 @@ export function ContributionPointTiers() {
 export function PenaltyPointTable() {
   return (
     <Table label="Penalty table">
-      <TableCaption>Published penalty table</TableCaption>
       <TableHeader>
         <TableRow>
-          <TableHead>Slopbot category</TableHead>
+          <TableHead>Category</TableHead>
           <TableHead>Action</TableHead>
-          <TableHead className="text-right">Debit (points)</TableHead>
+          <TableHead className="text-right">Points</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -72,7 +71,7 @@ export function PenaltyPointTable() {
             <TableHead scope="row" className="text-foreground">
               {row.label}
             </TableHead>
-            <TableCell>{penaltyAction(row)}</TableCell>
+            <TableCell>{penaltyAction(row.category)}</TableCell>
             <TableCell className="text-right font-mono tabular-nums">{points(debitFor(currentTableVersion, row.category))}</TableCell>
           </TableRow>
         ))}

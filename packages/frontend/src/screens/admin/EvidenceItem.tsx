@@ -2,7 +2,7 @@
 import type { ObjectView } from "@repo/security/client";
 import { Alert, Button, Field, Input, Status, Textarea } from "@repo/ui";
 import { CircleCheck, Download, Eye } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import type { EvidenceRun } from "../../flows/projects/vetting.vibe";
 import { inspectEvidence } from "./actions.vibe";
@@ -51,6 +51,7 @@ export function EvidenceItem({ runtime, run, object, actorId }: EvidenceItemProp
   const [status, setStatus] = useState<ReadStatus>("");
   const [text, setText] = useState<string | null>(null);
   const attempts = useRef(0);
+  const headingId = useId();
   const verifiedCopy = useRef<string | null>(null);
   const download = object.streamed || object.contentType === binaryType;
   const inspect = async (event: FormEvent) => {
@@ -75,9 +76,9 @@ export function EvidenceItem({ runtime, run, object, actorId }: EvidenceItemProp
     startDownload(verifiedCopy.current, `${object.sha256}.bin`);
   };
   return (
-    <article className="flex flex-col gap-4 rounded-md border border-border p-4">
+    <article aria-labelledby={headingId} className="flex flex-col gap-4 rounded-md border border-border p-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-semibold text-foreground">{object.label}</h3>
+        <h3 id={headingId} className="font-semibold text-foreground">{object.label}</h3>
         <Status presentation={{ tone: "Caution", icon: "Lock", label: evidenceStateLabel(object.state) }} />
       </header>
       <Facts>

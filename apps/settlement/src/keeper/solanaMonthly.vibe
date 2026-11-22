@@ -1,0 +1,130 @@
+// spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/escrow.md, "Anyone may admit an attester-signed root once per period inside its window"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import type { Address } from "@repo/platform/chain/solana"
+import { sha256Hex } from "@repo/platform/crypto"
+import { decodeAward, decodeMarker, decodeMonth, decodeMonthPledgePresence, decodeOrigin, isInitialized } from "../chain/solana/accounts.ts"
+import { type MonthlyEntry, solanaAllocationRoot } from "../chain/solana/allocationRoot.ts"
+import { digest, hex, i64, u64 } from "../chain/solana/bytes.ts"
+import { type LeafArguments, commitMonthly, commitMonthlyAward, releaseMonthlyAward } from "../chain/solana/instructions.ts"
+import { admitMonth, solanaMonthlyMessage } from "../chain/solana/messages.ts"
+import { monthAddress, monthPledgeAddress, originAddress, settledAddress } from "../chain/solana/pda.ts"
+import type { Instruction } from "../chain/solana/transactions.ts"
+import { parsePeriod } from "../kernels/calendar.ts"
+import { ordinaryFeeBase } from "../kernels/fees.ts"
+import { finalizedAccount, finalizedProject } from "../signer/solana.vibe"
+import { finalizedAccounts } from "../signer/solanaMonthly.vibe"
+import { AttemptRefused } from "./attempts.vibe"
+import type { Authorization, MonthlySubmission } from "./monthly.vibe"
+import { type SolanaContext, sendSolana } from "./solana.vibe"
+import { decimal } from "./units.ts"
+
+const PERIOD_TEXT = /^[2-9][0-9]{3}-(0[1-9]|1[0-2])$/u
+const UNIT = /^(0|[1-9][0-9]{0,19})$/u
+
+function refused(reason: string) {
+  return new AttemptRefused({ reason })
+}
+
+function unit(text: string) {
+  const value = UNIT.test(text) ? decimal(text) : undefined
+  return value === undefined ? undefined : u64(value)
+}
+
+effect function entriesOf(authorization: Authorization) {
+  const entries: MonthlyEntry[] = []
+  for (const entry of authorization.plan.entries) {
+    const actor = unit(entry.githubUserId)
+    const gross = unit(entry.grossMicro)
+    const source = digest(entry.sourceDigest.replace(/^0x/u, "").toLowerCase())
+    if (actor === undefined || gross === undefined || source === undefined) throw refused("Monthly allocation mismatch")
+    entries.push({ actor, gross, source })
+  }
+  return entries
+}
+
+function paysActor(recorded: { readonly actor: bigint; readonly gross: bigint; readonly principal: bigint }, entry: MonthlyEntry) {
+  return recorded.actor === entry.actor && recorded.gross >= entry.gross && recorded.principal >= entry.gross - ordinaryFeeBase(entry.gross)
+}
+
+const unchanged = () => effect {}
+
+effect function sent(context: SolanaContext, key: string, instructions: ReadonlyArray<Instruction>) {
+  const { verified, config } = context
+  const described = instructions.map((instruction) => ({ program: instruction.program, accounts: instruction.accounts, data: hex(instruction.data) }))
+  const fingerprint = try sha256Hex(JSON.stringify([verified.program, verified.project, config.signer, described]))
+  return try sendSolana(context, { key, fingerprint, kind: "Monthly", renew: unchanged }, instructions)
+}
+
+export effect function submitSolanaMonthly(context: SolanaContext, authorization: Authorization, admit: boolean, limit: number) {
+  const { plan, signatureHex } = authorization
+  const { deployment, verified, config } = context
+  if (plan.family !== "solana") throw refused("Wrong monthly family")
+  if (!Number.isSafeInteger(limit) || limit < 1) throw refused("Invalid monthly transaction limit")
+  const frozenText = plan.frozenAt ?? ""
+  if (!/^[1-9][0-9]{0,15}$/u.test(frozenText)) throw refused("Monthly freeze time missing")
+  const period = PERIOD_TEXT.test(plan.request.period) ? parsePeriod(plan.request.period) : undefined
+  if (period === undefined || deployment.projectId !== plan.request.projectId || deployment.asset !== plan.deployment.asset) throw refused("Wrong monthly deployment")
+  const entries = try entriesOf(authorization)
+  const built = solanaAllocationRoot(entries)
+  const frozenValue = decimal(frozenText)
+  const frozenAt = frozenValue === undefined ? undefined : i64(frozenValue)
+  if (built.kind === "refused" || frozenAt === undefined) throw refused("Monthly allocation mismatch")
+  const { tree } = built
+  const project = try finalizedProject(verified)
+  const attestation = { program: verified.program, project: verified.project, period, root: tree.root, total: tree.total, frozenAt, network: project.network }
+  if (tree.root !== plan.allocationRoot || tree.total.toString() !== plan.totalGrossBase || hex(solanaMonthlyMessage(attestation)) !== plan.messageHex) throw refused("Monthly allocation mismatch")
+  const month = monthAddress(verified.program, verified.project, period)
+  const journal = `solana:monthly:${deployment.network}:${month}`
+  const account = try finalizedAccount(month)
+  if (account === undefined) {
+    if (!admit) return { transactionId: null, alreadyCommitted: false, notAdmitted: true } satisfies MonthlySubmission
+    if (project.identityAuthority === config.signer) throw refused("Monthly gas signer must be separate from attester")
+    if (!/^[0-9a-f]{128}$/u.test(signatureHex)) throw refused("Invalid monthly signature")
+    const signature = try Effect.try({ try: () => hexToBytes(signatureHex), catch: () => refused("Invalid monthly signature") })
+    const admission = admitMonth({ payer: config.signer, authority: project.identityAuthority, signature, attestation })
+    if (admission.kind === "refused") throw refused(admission.issue === "payerIsAuthority" ? "Monthly gas signer must be separate from attester" : "Invalid monthly authority")
+    const pledge = monthPledgeAddress(verified.program, verified.project, period)
+    const pledged = decodeMonthPledgePresence(try finalizedAccount(pledge), verified.program)
+    if (pledged.kind === "malformed") throw refused("Month pledge account layout mismatch")
+    const instructions = pledged.value ? [...admission.value.slice(0, -1), commitMonthly({ ...attestation, payer: config.signer, monthPledge: pledge })] : admission.value
+    const transactionId = try sent(context, `${journal}:root`, instructions)
+    return { transactionId, alreadyCommitted: false } satisfies MonthlySubmission
+  }
+  const record = decodeMonth(account, verified.program)
+  if (record.kind !== "decoded" || record.value.project !== verified.project || record.value.period !== period || record.value.allocationRoot !== tree.root || record.value.total !== tree.total || record.value.frozenAt !== frozenAt)
+    throw refused("Conflicting monthly reservation")
+  if (record.value.committed === tree.total) return { transactionId: null, alreadyCommitted: true } satisfies MonthlySubmission
+  const markers = try finalizedAccounts(entries.map((entry) => settledAddress(verified.program, month, entry.source)))
+  const transactionIds: string[] = []
+  let stranded = 0
+  for (const [index, entry] of entries.entries()) {
+    if (transactionIds.length >= limit) break
+    if (decodeMarker(markers.values[index], verified.program).kind === "decoded") continue
+    let release = entry.actor === 0n
+    let obligation: Address | undefined = undefined
+    const origin = release ? undefined : try finalizedAccount(originAddress(verified.program, verified.project, entry.source))
+    if (!release && isInitialized(origin, verified.program)) {
+      const pointer = decodeOrigin(origin, verified.program)
+      if (pointer.kind !== "decoded") throw refused("Origin obligation missing")
+      const recorded = decodeAward(try finalizedAccount(pointer.value.obligation), verified.program)
+      if (recorded.kind !== "decoded") throw refused("Origin obligation missing")
+      if (!paysActor(recorded.value, entry) && recorded.value.committedAt >= frozenAt) {
+        stranded += 1
+        continue
+      }
+      obligation = pointer.value.obligation
+      release = true
+    }
+    const proof = try Effect.try({ try: () => tree.proof(index) ?? [], catch: () => refused("Monthly allocation mismatch") })
+    const leaf: LeafArguments = { period, source: entry.source, actor: entry.actor, gross: entry.gross, index, count: tree.count, proof }
+    const instruction = release
+      ? releaseMonthlyAward({ program: verified.program, project: verified.project, payer: config.signer, leaf, obligation })
+      : commitMonthlyAward({ program: verified.program, project: verified.project, payer: config.signer, leaf })
+    if (instruction.kind === "refused") throw refused("Monthly allocation mismatch")
+    transactionIds.push(try sent(context, `${journal}:${index}:${release ? "release" : "commit"}`, [instruction.value]))
+  }
+  const last = transactionIds.at(-1)
+  if (last !== undefined) return { transactionId: last, transactionIds, alreadyCommitted: false } satisfies MonthlySubmission
+  if (stranded > 0) throw refused("Post-freeze source conflict remains reserved; reconciliation required")
+  throw refused("Monthly reservation counters disagree with settled leaves")
+}

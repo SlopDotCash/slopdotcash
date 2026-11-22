@@ -48,6 +48,7 @@ export schema EventRow {
   readonly delivery_id: string
   readonly state: string
   readonly evidence_reference: string | null
+  readonly attempt: number | null
 }
 
 export schema ConsentRow {
@@ -110,7 +111,6 @@ export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "Not
   exhausted: "Exhausted",
   ambiguous: "Ambiguous",
 }
-
 
 export const storedStates = {
   Queued: "queued",
@@ -195,6 +195,10 @@ effect function stateOf(row: NoticeRow) {
   return state
 }
 
+function preparedNow(state: DeliveryState, attempts: number, events: ReadonlyArray<EventRow>): boolean {
+  return state === "Sending" && events.some((event) => event.state === "prepared" && event.attempt === attempts)
+}
+
 function deliveryOf(row: NoticeRow): Delivery | undefined {
   return row.channel === null || row.outbox_id === null ? undefined : { channel: row.channel, id: row.outbox_id, caseId: row.case_id }
 }
@@ -250,7 +254,7 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
       attempts: row.attempts ?? 0,
       nextAt: row.next_attempt_at === null ? createdAt : millisOf(row.next_attempt_at),
       claimedAt: moment(row.claimed_at),
-      prepared: state === "Sending" && row.destination_digest !== null,
+      prepared: preparedNow(state, row.attempts ?? 0, events),
       boundVersion: row.destination_version === null ? 0 : interned(versions, row.destination_version),
       digest: digestNumber(row.destination_digest, versions, pilots),
       providerSuppressed: state === "Suppressed" && events.some((event) => event.state === "suppressed" && event.evidence_reference !== null),

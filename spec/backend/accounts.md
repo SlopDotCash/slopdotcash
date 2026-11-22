@@ -100,6 +100,7 @@ pure def alwaysIdentityStoreValid(s: Accounts): bool =
     and I::alwaysIssuedOnce(s.identity) and I::alwaysIssuedFlowsClosed(s.identity) and I::alwaysConsumedOnce(s.identity)
     and I::alwaysIdentityAfterCallback(s.identity) and I::alwaysAssertionsMatchTheirFlow(s.identity)
     and I::alwaysVerifierOnlyWhilePending(s.identity) and I::alwaysLocalFlowsHaveNoAssertion(s.identity)
+    and I::alwaysBoundOnlyForWebsite(s.identity)
 pure def stepMembersPermanent(before: Accounts, after: Accounts): bool = before.members.every(m =>
   after.members.some(n => n.actor == m.actor and n.githubId == m.githubId and n.joinedAt == m.joinedAt))
 pure def stepSessionIdsFresh(before: Accounts, after: Accounts): bool =
@@ -507,13 +508,17 @@ private X link, a historical Telegram link, a historical X award and an
 activity-pilot destination, plus issued assertions: two web assertions for
 that member under a re-spelled node ID, one web assertion for a new GitHub
 account and one contributor-session assertion that web sign-in must refuse. The
-full identity flow is also reachable through the wrapped identity events.
+full identity flow is also reachable through the wrapped identity events:
+web sign-in starts from Slop's own page and is polled by the browser that
+started it, so the wrapped start carries a browser origin and the wrapped
+poll the flow's browser binding ([identity](./identity.md), "A website flow
+belongs to the browser that started it").
 The sample sets bound simulation only.
 
 ```quint
 pure def identityStart(s: Accounts, client: int, audience: I::Audience): Accounts =
-  { ...s, identity: I::start(s.identity, client, audience, I::Production) }
-pure def canIdentityStart(s: Accounts, client: int, audience: I::Audience): bool = I::canStart(s.identity, client, audience, I::Production)
+  { ...s, identity: I::start(s.identity, client, audience, I::Production, true) }
+pure def canIdentityStart(s: Accounts, client: int, audience: I::Audience): bool = I::canStart(s.identity, client, audience, I::Production, true)
 pure def canIdentityClaimCallback(s: Accounts, oauthState: int, cookie: int): bool = I::canClaimCallback(s.identity, oauthState, cookie)
 pure def identityClaimCallback(s: Accounts, oauthState: int, cookie: int): Accounts = { ...s, identity: I::claimCallback(s.identity, oauthState, cookie) }
 pure def canIdentityFailCallback(s: Accounts, by: int, flowId: int): bool = I::canFailCallback(s.identity, by, flowId)
@@ -523,21 +528,22 @@ pure def canIdentityCompleteCallback(s: Accounts, by: int, flowId: int, github: 
 pure def identityCompleteCallback(s: Accounts, by: int, flowId: int, github: I::GitHubIdentity): Accounts =
   { ...s, identity: I::completeCallback(s.identity, by, flowId, github) }
 pure def canIdentityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): bool =
-  I::canStoreAssertion(s.identity, client, flowId, capability, audience)
-    and I::canIssueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience)
+  I::canStoreAssertion(s.identity, client, flowId, capability, audience, true)
+    and I::canIssueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience, true), flowId, capability, audience, true)
 pure def identityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): Accounts =
-  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience) }
+  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience, true), flowId, capability,
+    audience, true) }
 pure val launchGithubOld: I::GitHubIdentity = { actor: 11, login: "octo", nodeId: 1102 }
 pure val launchGithubNew: I::GitHubIdentity = { actor: 22, login: "newcomer", nodeId: 2201 }
 pure val launchIdentity: I::Identity = { now: launchClock, lastFlow: 4, windows: List(),
   flows: List({ id: 1, oauthState: 1, capability: 1, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 2, oauthState: 2, capability: 2, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 3, oauthState: 3, capability: 3, audience: I::PointsWeb, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime },
+      pkceStored: false, github: launchGithubOld, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: true },
     { id: 4, oauthState: 4, capability: 4, audience: I::PrivateTrace, mode: I::Production, status: I::AssertionIssued,
-      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime }),
+      pkceStored: false, github: launchGithubNew, createdAt: launchClock, expiresAt: launchClock + I::flowLifetime, bound: false }),
   assertions: List({ token: 1, audience: I::PointsWeb, github: launchGithubOld, createdAt: launchClock,
       expiresAt: launchClock + I::assertionLifetime, consumed: false, consumedAt: 0 },
     { token: 2, audience: I::PointsWeb, github: launchGithubNew, createdAt: launchClock,

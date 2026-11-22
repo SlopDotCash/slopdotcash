@@ -1,4 +1,4 @@
-// spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
+// spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
 import { Effect, ManagedRuntime } from "effect";
 import { outcome } from "@repo/platform/testing/area";
 import type { Driver, Options } from "../../gen/frontend__walletConsent.conformance.ts";

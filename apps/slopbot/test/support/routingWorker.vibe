@@ -60,8 +60,6 @@ effect function routed() {
     const context = try loadContext(target, { observation: registry, projectId: routingProject })
     if (context === undefined) return json({ readable: false })
     const reviewKey = try reviewKeyOf(context, target, "", [])
-    // Eligibility comes from the production closure composition (src/closure/participation.vibe): only an author whose
-    // own Slop run recorded pull_request_opened for this exact item is eligible (spec/slopbot/routing.md).
     const closureEligible = try closureEligibility(target, context)
     const decided = try routeItem({ target, context, reviewKey, registry, appUserId, closureEligible })
     const claim = ask.claim === undefined || !reviews(decided.route) ? undefined : try claimReview(reviewRowOf(target, context, reviewKey), { token: ask.claim, route: decided.route, history: decided.history })

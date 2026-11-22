@@ -3,7 +3,7 @@ import { rows, sql } from "@repo/platform/d1"
 import { Conflict } from "@repo/platform/stored"
 import { Registry } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
-import { type Monthly, Rejected as MonthRejected, canAutoFreeze, cutNoticeElapsed, cutoff, financialTermsSame, firstAutomaticPeriod, pledgeKeepsMonth } from "../../gen/settlement__monthly.effect.vibe"
+import { type Monthly, Rejected as MonthRejected, canAutoFreeze, cutoff, financialTermsSame, firstAutomaticPeriod, pledgeKeepsMonth } from "../../gen/settlement__monthly.effect.vibe"
 import { Rejected, canCreateObligations, canNoteUnderfunded } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
 import { type Settlement, loadSettlement, settle } from "../monthlySettlement/store.vibe"
@@ -13,7 +13,7 @@ const coordinator = "coordinator"
 
 export type Funding = "Created" | "AlreadyCreated" | "Underfunded" | "StaleFunding" | "NotFrozen"
 
-type Freezing = "Frozen" | "BeforeCutoff" | "BeforeFirstPeriod" | "AutomaticOff" | "ProjectRestricted" | "VaultNotServed" | "CutNoticePending" | "FinancialPolicyChanged" | "ProjectChanged" | "AlreadyFrozen"
+type Freezing = "Frozen" | "BeforeCutoff" | "BeforeFirstPeriod" | "AutomaticOff" | "ProjectRestricted" | "VaultNotServed" | "FinancialPolicyChanged" | "ProjectChanged" | "AlreadyFrozen"
 
 export interface Waiting {
   readonly key: string
@@ -87,7 +87,6 @@ function waitingReason(month: Monthly): Freezing {
   if (!pledged && !month.automatic) return "AutomaticOff"
   if (!pledged && (month.eligibility.paused || month.eligibility.restricted)) return "ProjectRestricted"
   if (!month.eligibility.networkServed) return "VaultNotServed"
-  if (pledged && !cutNoticeElapsed(month)) return "CutNoticePending"
   if (!financialTermsSame(month.revision, month.currentRevision)) return "FinancialPolicyChanged"
   return "ProjectChanged"
 }
@@ -111,7 +110,6 @@ const kebab: Readonly<Record<Exclude<Freezing, "Frozen" | "BeforeCutoff" | "Alre
   AutomaticOff: "automatic-off",
   ProjectRestricted: "project-restricted",
   VaultNotServed: "vault-not-served",
-  CutNoticePending: "cut-notice-pending",
   FinancialPolicyChanged: "financial-policy-changed",
   ProjectChanged: "project-changed",
 }

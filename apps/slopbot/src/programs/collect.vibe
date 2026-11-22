@@ -1,0 +1,60 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"
+import { github } from "@repo/platform/github"
+import { temporaryFailure } from "@repo/platform/program"
+import { actionsToken, collectArguments, collectSnapshot, collectedTargets, fetchRegistry, graphqlClient } from "@repo/points/collect"
+import { collectValueInputs } from "../value/collect/inputs.vibe"
+import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
+import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
+
+export error DiscussionCheckpointInvalid { message: string }
+
+const deferredTags: ReadonlyArray<string> = ["ValueFeedUnavailable", "CollectDeferred"]
+
+export interface DiscussionCheckpoint {
+  readonly directory: string
+  readonly deadlineMs: number
+}
+
+effect function setting(name: string) {
+  return (try Config.withDefault(Config.String(name), "")).trim()
+}
+
+export effect function discussionCheckpoint() {
+  const directory = try setting("SLOP_DISCUSSION_CHECKPOINT")
+  const deadline = try setting("SLOP_DISCUSSION_DEADLINE_MS")
+  if (directory === "" && deadline === "") return undefined
+  const deadlineMs = Number(deadline)
+  const trusted = (try setting("GITHUB_ACTIONS")) === "true" && (try setting("GITHUB_REF")) === "refs/heads/main" && ["push", "workflow_dispatch"].includes(try setting("GITHUB_EVENT_NAME"))
+  if (!trusted || directory === "" || !Number.isSafeInteger(deadlineMs) || deadlineMs <= (try Clock.currentTimeMillis))
+    throw new DiscussionCheckpointInvalid({ message: "Invalid trusted production discussion checkpoint settings" })
+  return { directory, deadlineMs } satisfies DiscussionCheckpoint
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  const fields: Readonly<Record<string, unknown>> = { ...error }
+  const message = fields["message"]
+  return typeof message === "string" && message !== "" ? message : error._tag
+}
+
+effect function written(args: ReadonlyArray<string>) {
+  const options = try collectArguments(args)
+  const checkpoint = try discussionCheckpoint()
+  const token = try actionsToken()
+  const repositories = try collectedTargets(try fetchRegistry())
+  const rest = github({ token, userAgent: "slopbot" })
+  const graph = graphqlClient({ token })
+  const reads = Layer.mergeAll(rest, graph, acceptanceWith(collectRetainedMergeReferences))
+  const inputs = Layer.provide(collectValueInputs({ repositories, ...(checkpoint === undefined ? {} : { discussionDeadlineMs: checkpoint.deadlineMs }) }), reads)
+  provide Layer.mergeAll(rest, graph, inputs) {
+    try collectSnapshot({ ...options, ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }) })
+  }
+}
+
+export effect function collect(args: ReadonlyArray<string>) {
+  const deferred = (written(args) catch effect (error) => {
+    if (!deferredTags.includes(error._tag)) throw error
+    try Console.error(`[slop.cash] ${messageOf(error)}; no snapshot written`)
+    return temporaryFailure
+  })
+  return deferred === temporaryFailure ? temporaryFailure : undefined
+}

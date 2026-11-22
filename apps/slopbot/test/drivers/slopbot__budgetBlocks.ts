@@ -1,4 +1,4 @@
-// spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"
+// spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1, sql } from "@repo/platform/d1";
@@ -127,7 +127,7 @@ function dispatched(key: string, event: Event) {
       return finish(key, event.token, event.status);
     case "recordBlock":
       at(key);
-      return outcome(recordBudgetBlock({ reviewKey: reviewKeyOf(key), token: tokenText(key, event.token) }, jobOf(key), { ...event.d, resetAt: millis(event.d.resetAt) }), runtime);
+      return outcome(recordBudgetBlock({ reviewKey: reviewKeyOf(key), token: tokenText(key, event.token) }, jobOf(key), { ...event.d, resetAt: event.d.resetAt > 0 ? millis(event.d.resetAt) : event.d.resetAt }), runtime);
     case "sendResume":
       at(key);
       return outcome(sendBudgetResume(reviewKeyOf(key)), runtime);

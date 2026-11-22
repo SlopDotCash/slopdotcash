@@ -218,7 +218,6 @@ export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number)
     minimumOutput: Number(ready.minimumOutput),
     deadline: maximumSafeValue,
     blockhashSlot: ready.blockhashSlot,
-    // A Jupiter route is the network's pinned router, and a Solana token account has no allowance to approve.
     toPinnedRouter: true,
     approvedAmount: 0,
     allowance: 0,

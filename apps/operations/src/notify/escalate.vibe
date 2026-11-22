@@ -1,17 +1,26 @@
 // spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"
 import { isoNow } from "@repo/platform/clock"
 import { D1, rows, sql } from "@repo/platform/d1"
+import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
 import { type AccessCheck, Rejected, allowed, failedDelivery, overdue } from "../../gen/operations__notifications.effect.vibe"
 import type { Release } from "../notifications/rows.vibe"
 import { send } from "../notifications/store.vibe"
 import { type Located, OutboxRow, located } from "./claim.vibe"
-import { caseAccess, heldNotice } from "./prepare.vibe"
+import { accessCheckOf, heldNotice } from "./prepare.vibe"
 
 const escalationBatch = 100
 
 function backupOf(release: Release, recipient: string): string | undefined {
   const backup = release.routes.find((route) => route.recipientGithubId === recipient)?.backupGithubId
   return backup !== undefined && backup !== recipient && release.routes.some((route) => route.recipientGithubId === backup) ? backup : undefined
+}
+
+effect function currentAccess(caseId: string, githubId: string) {
+  const access = (try SecurityNoticeAccess).forCase({ caseId, githubId }) catch effect (error) => match (error) {
+    when AuthorityUnavailable: undefined;
+    default: throw error;
+  }
+  return accessCheckOf(access)
 }
 
 export function caseOf(found: Located): string {
@@ -21,7 +30,7 @@ export function caseOf(found: Located): string {
 export effect function escalateNotice(found: Located, primaryAccess: AccessCheck, release: Release) {
   const backup = backupOf(release, found.recipient)
   if (backup === undefined || !allowed(primaryAccess)) return false
-  const backupAccess = try caseAccess(caseOf(found), backup)
+  const backupAccess = try currentAccess(caseOf(found), backup)
   if (!allowed(backupAccess)) return false
   const escalated = send(found.scope, { type: "escalate", id: found.id, primaryAccess, backupAccess }, "", release) catch effect (error) => match (error) {
     when Rejected: undefined;
@@ -45,7 +54,7 @@ export effect function escalationScan(release: Release) {
   for (const row of try waitingNotices()) {
     try db.run(sql`UPDATE security_notification_outbox SET escalation_checked_at = ${try isoNow()} WHERE id = ${row.id}`)
     const found = try located("security", row, release)
-    const access = try caseAccess(caseOf(found), found.recipient)
+    const access = try currentAccess(caseOf(found), found.recipient)
     if (!allowed(access)) continue
     const held = heldNotice(found.projection, found.id)
     if (!failedDelivery(held) && !overdue(found.projection.inbox, held, access)) continue

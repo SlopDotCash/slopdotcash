@@ -1,6 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { D1, d1, sql } from "@repo/platform/d1";
+import { rolesFrom } from "@repo/platform/roles";
 import { database, migrate, startWorker } from "@repo/platform/testing";
 import { outcome } from "@repo/platform/testing/area";
 import { migrationsDir } from "@repo/platform/testing/paths";
@@ -44,9 +45,9 @@ const journalOverD1 = Layer.succeed(AccessJournal, {
   ]),
 });
 
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto, journalOverD1));
-
 const moderators = new Set([18633264, 202660855]);
+const moderatorIds = [...moderators].join(",");
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto, journalOverD1, rolesFrom({ ADMIN_GITHUB_IDS: moderatorIds, PROJECT_MODERATOR_GITHUB_IDS: moderatorIds })));
 let generation = 0;
 const projects = new Map<number, { id: string; row: number }>();
 const decisions = new Map<number, number>();
@@ -127,8 +128,14 @@ const context = (by: number) => ({
 
 const vettingIssuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "driver-assessment", policyVersion: "1", rule: "confirmed-malicious" });
 
-function recordOf(event: Extract<Event, { type: "recordVettingBan" | "decideProjectBan" | "reinstateProject" }>, by: number): Written {
-  const projectId = [...projects.values()].find((project) => project.row === event.project)?.id ?? "";
+type Recorded = Extract<Event, { type: "recordVettingBan" | "decideProjectBan" | "reinstateProject" }>;
+
+function projectIdOf(row: number): string {
+  return [...projects.values()].find((project) => project.row === row)?.id ?? "";
+}
+
+function recordOf(event: Recorded, by: number): Written {
+  const projectId = projectIdOf(event.project);
   const at = new Date(0).toISOString();
   const id = `enf_driver${event.decision}`;
   if (event.type === "recordVettingBan") return { id, projectId, action: "ban", stateAfter: "banned", appealAfter: "none", actor: null, role: "vetting-service", source: "standing-rule", issuer: vettingIssuer, at };
@@ -143,8 +150,7 @@ function decided(real: Event, sender: number) {
     yield* admitted(real, sender);
     const db = yield* D1;
     const record = recordOf(real, sender);
-    // The moderator's decision on confirmed malice bans each named account in the same record.
-    const bans = real.type === "decideProjectBan" ? real.accounts.map((target) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${record.id}, ${String(target)}, ${`account-${modelActorOf(target)}`})`) : [];
+    const bans = real.type === "decideProjectBan" ? [...new Set(real.accounts)].map((target) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${record.id}, ${String(target)}, ${`account-${modelActorOf(target)}`})`) : [];
     yield* db.batch([written(record), ...bans]);
   });
 }

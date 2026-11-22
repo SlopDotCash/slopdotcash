@@ -12,7 +12,6 @@ import type { Appeal, AppealSubject, BanStatus, Event } from "../../gen/slopbot_
 import { dueJobOf } from "../../src/appeals/due.vibe";
 import { claimPublication, releasePublication } from "../../src/appeals/publication.vibe";
 import { type Step, appealKeyOf, categoryNameOf, commitAppeal, loadAppeal, postEventOf } from "../../src/appeals/store.vibe";
-import { penaltyTableVersion } from "../../src/closeAttempt/penalty.vibe";
 import { settled } from "../support/settled.ts";
 
 const mf = startWorker({ d1: { SLOPBOT_DB: "appeal-conformance" } });
@@ -59,6 +58,7 @@ function translated(event: Event): Event {
       return { ...event, subject: { ...event.subject, item: event.subject.item === "pr" ? node() : event.subject.item, revision: revision(event.subject.revision) } };
     case "accept":
     case "reject":
+    case "escalateBanAtAnswer":
       return { ...event, authority: { ...event.authority, item: event.authority.item === "pr" ? node() : event.authority.item } };
     case "maintainerReopen":
       return { ...event, decision: { ...event.decision, item: event.decision.item === "pr" ? node() : event.decision.item, revision: revision(event.decision.revision) } };
@@ -76,7 +76,7 @@ async function seed(subject: AppealSubject) {
       VALUES (?, 1, 1, 'pull_request', 1, ?, ?, ?, 'content', 'policy', 'completed', ?, 'label', ?, ?)`).bind(reviewKey, subject.item, subject.author, subject.revision, JSON.stringify({ category: name }), at, at).run();
   if (subject.debit > 0)
     await db.prepare(`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
-      VALUES (?, 1, 'appeal-project', ?, ?, ?, ?, ?, ?, ?, ?)`).bind(subject.item, String(subject.author), name, subject.tableVersion === 1 ? penaltyTableVersion : `slopbot-penalties-v${subject.tableVersion}`,
+      VALUES (?, 1, 'appeal-project', ?, ?, ?, ?, ?, ?, ?, ?)`).bind(subject.item, String(subject.author), name, `slopbot-penalties-v${subject.tableVersion}`,
       Math.round(subject.debit / 10), at.slice(0, 7), subject.category === "Scam" ? 1 : 0, reviewKey, at).run();
 }
 

@@ -23,10 +23,10 @@ export interface ContentsFile {
   readonly bytes: Uint8Array
 }
 
-export effect function contentsFile(repository: string, ref: string, path: string) {
+export effect function contentsFile(repository: string, ref: string, path: string, limitBytes = contentsLimitBytes) {
   const location = contentsPath(repository, path, ref)
   if (location === undefined) return undefined
-  const file = fields(try fetched(location, contentsLimitBytes))
+  const file = fields(try fetched(location, limitBytes))
   const content = text(file, "content")
   const size = count(file, "size")
   const sha = text(file, "sha")

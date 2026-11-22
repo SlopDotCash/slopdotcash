@@ -1,0 +1,92 @@
+// spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { assert, it } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
+import { webCrypto } from "@repo/platform/crypto"
+import { outboundVia } from "@repo/platform/http"
+import { type Handler, internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { graphqlClient } from "@repo/points/collect"
+import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { collectValueInputs } from "../src/value/collect/inputs.vibe"
+import { attributionSourceChanged } from "../src/value/collect/discussion.vibe"
+import { type Seeded, acceptanceRecorder, githubOver, mergedAt, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
+
+const feedHost = "slopbot.slop.cash"
+
+interface Feed {
+  readonly status: number
+  readonly asked: string[]
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function emptyHistory(feed: Feed): Handler {
+  return (request) => {
+    const url = new URL(request.url)
+    feed.asked.push(`${url.pathname}?${url.searchParams.toString()}`)
+    if (feed.status !== 200) return new WebResponse("unavailable", { status: feed.status })
+    const joint = url.pathname === "/v1/work-unit-assessments"
+    return WebResponse.json({
+      schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
+      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
+      pullRequestNumber: Number(url.searchParams.get("pull")),
+      records: [],
+      nextAfter: null,
+      ...(joint ? { throughSequence: 0, totalRecords: 0 } : {}),
+    })
+  }
+}
+
+function inputsOver(world: Seeded, feed: Feed) {
+  const net = internet({ github: world.fake.handler, hosts: { [feedHost]: emptyHistory(feed) } })
+  const outbound = outboundVia({ fetch: asFetch(net.handler) })
+  const reads = Layer.mergeAll(githubOver(world), Layer.provide(graphqlClient({ token: Redacted.make(world.token) }), outbound), acceptanceRecorder().layer)
+  return Layer.provide(collectValueInputs({ repositories: [policyOf(world)] }), Layer.mergeAll(reads, outbound, webCrypto))
+}
+
+effect function outcomeOf(world: Seeded, overrides: Partial<CensusOutcome> = {}) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, 1))
+  return { id: pull.nodeId, url: `https://github.com/${repository}/pull/1`, number: 1, headRefOid: world.head, updatedAt: pull.updatedAt, mergedAt, closedAt: null, commits: [], ...overrides } satisfies CensusOutcome
+}
+
+effect function loaded(census: ValueCensus) {
+  const read = Effect.map((try ValueInputs).load(census), (inputs) => ({ kind: "loaded" as const, inputs }))
+  return read catch (error) => ({ kind: error._tag, message: error.message })
+}
+
+it.live('A changed attribution source fails the run before any retained-copy proof (spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof")', () => effect {
+  const world = try seeded()
+  const feed: Feed = { status: 200, asked: [] }
+  const stale = try outcomeOf(world, { updatedAt: "2026-11-01T00:00:00Z", commits: [{ oid: world.head, author: null, parentCount: 1 }] })
+  provide inputsOver(world, feed) {
+    try same(try loaded({ value: [], attribution: [stale] }), { kind: "ValueEvidenceRefused", message: attributionSourceChanged })
+  }
+  try same({ pull: requested(world, /^GET \/repos\/ada\/widgets\/pulls\/1$/u), commitPages: requested(world, /^GET \/repos\/ada\/widgets\/commits\//u), feed: feed.asked.length }, { pull: 1, commitPages: 0, feed: 0 })
+})
+
+it.live('A census source without recorded history is decided missing, and a feed outage keeps the previous window (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
+  const world = try seeded()
+  const feed: Feed = { status: 200, asked: [] }
+  const outcome = try outcomeOf(world)
+  provide inputsOver(world, feed) {
+    try same(try loaded({ value: [outcome], attribution: [outcome] }), {
+      kind: "loaded",
+      inputs: {
+        valueDecisions: [{ sourceId: outcome.id, decision: { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] } }],
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: [],
+      },
+    })
+    try same(try loaded({ value: [outcome, outcome], attribution: [] }), { kind: "ValueEvidenceRefused", message: "Value census repeats a source" })
+  }
+  const unavailable: Feed = { status: 503, asked: [] }
+  provide inputsOver(world, unavailable) {
+    try same(try loaded({ value: [outcome], attribution: [] }), { kind: "ValueFeedUnavailable", message: "The hosted value feed is unavailable" })
+  }
+  try same({ answered: feed.asked.length, outage: unavailable.asked.length > 0 }, { answered: 2, outage: true })
+})

@@ -1,4 +1,4 @@
-// spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision"
+// spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"
 import { type FundingChoice, type SavedConsent, newProjectConsent, savedEdit } from "../../gen/backend__closureConsent.effect.vibe"
 
 type Json = { readonly [key: string]: unknown }

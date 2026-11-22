@@ -1,7 +1,7 @@
-// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"
 import { collectedTargets, fetchRegistry } from "../census/projects.vibe"
 import { graphqlClient } from "../ingestion/graphql.vibe"
-import { actionsToken } from "../ingestion/token.vibe"
+import { actionsToken, collectorRenewal } from "../ingestion/token.vibe"
 import { collectProfileCensus } from "../profiles/census.vibe"
 import { extendPublishedProfiles } from "../profiles/extend.vibe"
 import { repositoryIdentity } from "../profiles/identity.vibe"
@@ -63,8 +63,10 @@ export effect function profiles(args: ReadonlyArray<string>) {
   const [command, first = "", second = "", ...flags] = args
   if (command === "collect" && args.length === 3) {
     const token = try actionsToken()
-    provide graphqlClient({ token }) {
-      try collectProfiles(first, second)
+    provide collectorRenewal() {
+      provide graphqlClient({ token }) {
+        try collectProfiles(first, second)
+      }
     }
     return
   }

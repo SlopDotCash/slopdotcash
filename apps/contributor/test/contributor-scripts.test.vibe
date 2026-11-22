@@ -57,7 +57,7 @@ it.effect('Ordinary disclosure refuses placeholder identity and keeps the legacy
   try Effect.tryPromise(() => discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers())
 }, slow)
 
-it.effect.skipIf(!posix)('live-report --json reads GitHub through gh, reports the closing-keyword blocker and retries one complete snapshot after the inventory changes mid-read (spec/contributor/workflow.md, "Work selection records blockers, the project projection and live observation epochs"; spec/contributor/discoverySnapshot.md, "A changed inventory retries the whole snapshot once and a failed read never publishes")', () => effect {
+it.effect.skipIf(!posix)('live-report --json reads GitHub through gh, reports the closing-keyword blocker, puts an unclaimed slop-wanted issue under Priority 0 and retries one complete snapshot after the inventory changes mid-read (spec/contributor/workflow.md, "Work selection records blockers, the project projection and live observation epochs"; spec/contributor/discoverySnapshot.md, "A changed inventory retries the whole snapshot once and a failed read never publishes")', () => effect {
   try Effect.tryPromise(() => theLiveReportRunsThroughGhAndRetriesAChangedInventory())
 }, slow)
 

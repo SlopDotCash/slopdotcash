@@ -1,15 +1,17 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
 import { Alert, Button, DataState, NotFound, PageHeader } from "@repo/ui";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
+import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
 import type { PageProps } from "../../app/pages.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
+import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { hasBountyOverview } from "../../kernels/rewardSummary.ts";
 import { pageOrigin } from "../../platform/environment.ts";
 import type { RegistryBoot } from "../../reads/registry.vibe";
 import { BountyFunding, BountyIntroduction, bountyProjectOf } from "../funding/awards/index.ts";
 import { ProjectStandings } from "../points/index.ts";
-import { reviewBudgetLabel } from "../home/listing.ts";
+import { FundedMeter } from "../cycles/CycleAllocation.tsx";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
 import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
@@ -25,7 +27,7 @@ import { ProjectWork, type WorkShown } from "./ProjectWork.tsx";
 import type { ShownProject } from "./project.schema.ts";
 import { loadProject, loadWork, type ProjectRuntime, projectName, projectReads, projectRuntime, type RepositoryRegistryOf, type Work } from "./reads.vibe";
 import { RewardSummary } from "./RewardSummary.tsx";
-import { awardMonths, projectCycles, projectFunding, projectListing, suggestedWork } from "./summary.ts";
+import { awardMonths, projectCycles, projectFunding, projectListing, projectPromiseOf, suggestedWork } from "./summary.ts";
 
 export type ProjectPageProps = PageProps & {
   /** Whether payments run on a network: only vaults on paying networks hold a pool's monthly amount. */
@@ -97,8 +99,9 @@ export function ProjectsUnavailable({ message }: { message: string }) {
 
 function PoolSummary({ project, reads, networkPays }: Pick<Found, "project" | "reads" | "networkPays">) {
   const pool = useShownRead(reads.pool, "all");
-  const funding = projectFunding({ project, read: { status: pool.status, vaults: pool.value?.get(project.id) }, networkPays, nowMs: Date.now() });
-  return <RewardSummary project={project} funding={funding} />;
+  const read = { status: pool.status, vaults: pool.value?.get(project.id) };
+  const funding = projectFunding({ project, read, networkPays, nowMs: Date.now() });
+  return <RewardSummary project={project} funding={funding} promise={projectPromiseOf({ project, funding, read, networkPays })} />;
 }
 
 function MergeLine({ project, reads }: Pick<Found, "project" | "reads">) {
@@ -182,7 +185,11 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
         <PoolSummary project={project} reads={reads} networkPays={networkPays} />
         <ProjectLinks record={project.record} />
         {active ? <MergeLine project={project} reads={reads} /> : null}
-        {budget ? <p>{reviewBudgetLabel(budget)}</p> : null}
+        {budget && reviewBudgetShown(budget.fundingState === "committed") ? (
+          <p>
+            <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
+          </p>
+        ) : null}
         <Participation project={project} successorName={successor} install={<Install runtime={runtime} project={project} reads={reads} networkPays={networkPays} />} />
       </section>
       {active ? <SuggestedWork section={section} project={project} boot={boot} repositoryRegistry={repositoryRegistry} /> : null}

@@ -1,5 +1,6 @@
-// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
 import { type Actor, refuse } from "@repo/platform/http"
+import { later } from "@repo/platform/worker"
 import { Rejected, canStartOwnerRun, initial, retryable } from "../../gen/security__assessment.effect.vibe"
 import { mayReadBody } from "../../gen/security__cases.effect.vibe"
 import { jsonValue } from "../analysis/prompts.ts"
@@ -131,4 +132,12 @@ export effect function assessQualified(input: { readonly caseId: string; readonl
   if (run === undefined) return { kind: "skipped" } satisfies Automatic
   const finished = try attempted(run, Math.min(input.timeoutMs ?? backgroundBudgetMs, backgroundBudgetMs))
   return { kind: "finished", analysis: viewOf(finished, try Clock.currentTimeMillis) } satisfies Automatic
+}
+
+export effect function scheduleReceiptAnalysis(caseId: string) {
+  try later(effect {
+    assessQualified({ caseId, version: 1 }) catch effect () => {
+      try Effect.logError("security receipt analysis failed", { caseId })
+    }
+  })
 }

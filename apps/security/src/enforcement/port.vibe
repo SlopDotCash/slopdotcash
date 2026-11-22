@@ -90,9 +90,6 @@ effect function reinstatementRead(projectId: string) {
   } satisfies ReinstatementRead
 }
 
-// A reinstatement read also needs the retained evidence bucket, the live skill template and GitHub. Workers that never
-// decide a reinstatement (Slopbot, for one) are composed without them, so the read takes them from the worker that
-// asks and fails loudly when they are absent.
 effect function reinstatementServices(services: Context.Context<D1 | Roles | Notices | ContributorAudience | Registry | RegistryManifests | Experimental.Crypto.Crypto>, built: Context.Context<never>) {
   const merged = Context.merge(Context.merge(built, try Effect.context<never>()), services)
   const missing = [

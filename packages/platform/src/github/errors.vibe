@@ -1,7 +1,9 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+import { boundedBytes } from "../browser.vibe"
+
 export error NotFound { path: string }
-export error GitHubRefused { status: RefusalStatus; path: string; message: string }
-export error RateLimited { status: number; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error GitHubRefused { status: RefusalStatus; path: string; message: string; remaining: number | null }
+export error RateLimited { status: number; remaining: number | null; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
 export error GitHubUnavailable { status?: number; path: string }
 export error GitHubMalformed { path: string; issue: string }
 
@@ -19,12 +21,39 @@ export interface RateLimitHints {
 }
 
 const digits = /^\d{1,15}$/u
+const integerHeader = /^\d{1,16}$/u
+const refusalMessageLimitBytes = 4096
+const refusalMessageTimeoutMs = 250
+const messageLength = 300
 const maxReportedSeconds = 60 * 60
 const unhintedWait = 60_000
 const secondaryLimit = /secondary rate limit|abuse detection/iu
 
 export function secondaryLimitMessage(message: unknown): boolean {
   return typeof message === "string" && secondaryLimit.test(message)
+}
+
+export function remainingOf(headers: ResponseHeaders): number | null {
+  const value = headers["x-ratelimit-remaining"] ?? ""
+  if (!integerHeader.test(value)) return null
+  const remaining = Number(value)
+  return Number.isSafeInteger(remaining) ? remaining : null
+}
+
+effect function messageOf(response: HttpClientResponse.HttpClientResponse) {
+  const bytes = try boundedBytes(response, refusalMessageLimitBytes, "GitHub refusal")
+  const body: unknown = try Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+  const message = typeof body === "object" && body !== null && "message" in body ? body.message : undefined
+  return typeof message === "string" ? message : ""
+}
+
+export effect function refusalMessage(response: HttpClientResponse.HttpClientResponse) {
+  if (!(response.headers["content-type"] ?? "").startsWith("application/json")) return ""
+  return timeout(messageOf(response), Duration.millis(refusalMessageTimeoutMs)) catch () => ""
+}
+
+export function refused(status: RefusalStatus, path: string, headers: ResponseHeaders, message: string): GitHubRefused {
+  return new GitHubRefused({ status, path, message: message.slice(0, messageLength), remaining: remainingOf(headers) })
 }
 
 export function isRefusal(status: number): status is RefusalStatus {
@@ -61,6 +90,7 @@ export function rateLimited(status: number, headers: ResponseHeaders, nowMillis:
   const delay = Math.max(hints.primaryDelay, hints.retryAfter)
   return new RateLimited({
     status,
+    remaining: remainingOf(headers),
     ...hints,
     ...(delay > 0 ? { wait: delay } : status === 429 || secondaryMessage ? { wait: unhintedWait } : {}),
     ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(delay / 1_000)) } : {}),

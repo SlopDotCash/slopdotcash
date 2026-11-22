@@ -1,12 +1,14 @@
-// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"; spec/operations/dailyCollection.md, "Story: Keep published contribution data fresh without a person watching it"
 import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { releaseCoverage, writeOutputs } from "../release/coverage/options.vibe"
 import { pullRequestScope } from "../release/coverage/scope.vibe"
+import { DailyCollectionFailed, dailyAccess, followUpDaily, startDaily } from "../release/daily/controller.vibe"
 import { bundleSite, createPagesManifest, verifyPagesManifest } from "../release/manifest/pages.vibe"
 import { type EnvironmentName, createReleaseManifest, verifyBundle } from "../release/manifest/release.vibe"
 import { collect } from "../release/run/collect.vibe"
 import { environmentOf, runFacts } from "../release/run/facts.vibe"
+import { restoreCollected } from "../release/run/restore.vibe"
 import { publisher } from "../release/publish/publisher.vibe"
 import { isAncestor } from "../release/run/heads.vibe"
 import { historyAnchor, release as publishRelease } from "../release/run/publish.vibe"
@@ -17,18 +19,45 @@ const usage = [
   "release coverage production|staging",
   "release scope [root]",
   "release collect production|staging <bundle> [--retained]",
+  "release restore-collection <run id> <out dir> [root]",
   "release manifest production|staging <bundle>",
   "release verify-bundle <bundle>",
   "release publish production|staging <bundle> <receipts> [root]",
+  "release daily start",
+  "release daily follow-up <run id>",
 ].join(" | ")
 
 function nameOf(text: string | undefined): EnvironmentName | undefined {
   return text === "production" || text === "staging" ? text : undefined
 }
 
-effect function githubAccess() {
-  const token = Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
-  return github({ token, userAgent: "slop-release" })
+const runId = /^[1-9]\d{0,17}$/u
+const repositoryName = /^[\w.-]+\/[\w.-]+$/u
+
+effect function githubToken() {
+  return Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
+}
+
+effect function trimmed(name: string) {
+  const value = Option.getOrUndefined(try Config.option(Config.String(name)))?.trim()
+  return value === undefined || value === "" ? undefined : value
+}
+
+effect function dispatchApp() {
+  const clientId = try trimmed("DISPATCH_APP_CLIENT_ID")
+  const installation = try trimmed("DISPATCH_APP_INSTALLATION_ID")
+  const privateKey = Option.getOrUndefined(try Config.option(Config.Redacted("DISPATCH_APP_PRIVATE_KEY")))
+  if (clientId === undefined || installation === undefined || privateKey === undefined || Redacted.value(privateKey) === "") return undefined
+  return { clientId, installation, privateKey }
+}
+
+effect function daily(follow: string | undefined) {
+  const repository = (try trimmed("GITHUB_REPOSITORY")) ?? ""
+  if (!repositoryName.test(repository)) throw new DailyCollectionFailed({ message: "GITHUB_REPOSITORY is required" })
+  provide dailyAccess({ repository, fallback: try githubToken(), app: try dispatchApp() }) {
+    if (follow === undefined) try startDaily(repository)
+    else try followUpDaily(repository, Number(follow))
+  }
 }
 
 export effect function release(args: ReadonlyArray<string>) {
@@ -36,8 +65,6 @@ export effect function release(args: ReadonlyArray<string>) {
   const environment = environmentOf(first ?? "")
   const name = nameOf(first)
   if (command === "coverage" && environment !== undefined && third === undefined) {
-    // A production release must contain the last commit of the previous application history; the coverage run reads it
-    // from the checkout (the second argument, default ".").
     const facts = try runFacts()
     provide systemGit {
       const anchored = environment !== "Production" || (try isAncestor(second ?? ".", historyAnchor, facts.sha))
@@ -57,6 +84,18 @@ export effect function release(args: ReadonlyArray<string>) {
     try Console.log(`[Slop] collected the ${name} registry and GitHub data at ${collected.collection.recordedAt}`)
     return
   }
+  if (command === "restore-collection" && first !== undefined && second !== undefined && fourth === undefined) {
+    const facts = try runFacts()
+    const token = try githubToken()
+    provide Layer.mergeAll(github({ token, userAgent: "slop-release" }), systemGit) {
+      try restoreCollected({ facts, dataRun: first, out: second, root: third ?? ".", anchor: historyAnchor, token })
+    }
+    return
+  }
+  if (command === "daily" && ((first === "start" && second === undefined) || (first === "follow-up" && runId.test(second ?? ""))) && third === undefined) {
+    try daily(first === "start" ? undefined : second)
+    return
+  }
   if (command === "manifest" && name !== undefined && second !== undefined && third === undefined) {
     const sha = try Config.String("GITHUB_SHA")
     try createPagesManifest(try bundleSite(second))
@@ -72,7 +111,7 @@ export effect function release(args: ReadonlyArray<string>) {
   }
   if (command === "publish" && environment !== undefined && second !== undefined && third !== undefined && rest.length === 0) {
     const facts = try runFacts()
-    const access = try githubAccess()
+    const access = github({ token: try githubToken(), userAgent: "slop-release" })
     const root = fourth ?? "."
     provide Layer.mergeAll(access, systemGit, publisher({ root })) {
       const released = try publishRelease({ environment, facts, bundle: second, receipts: third, root, anchor: historyAnchor })

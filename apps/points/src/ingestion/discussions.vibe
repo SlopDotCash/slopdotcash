@@ -1,10 +1,12 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
 import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
 
-export const maxDiscussionEntries = 24_000
-export const maxDiscussionBytes = 256 * 1024 * 1024
+export const maxDiscussionEntries = 100_000
+export const maxDiscussionBytes = 1024 * 1024 * 1024
 export const maxDiscussionAgeMs = 48 * 60 * 60 * 1_000
 export const maxDiscussionBodyBytes = 2 * 1024 * 1024
+export const maxImmutableBodyBytes = 8 * 1024 * 1024
+export const discussionReserveBytes = 256 * 1024 * 1024
 export const maxMetadataBytes = 2_048
 export const entryName = /^[a-f0-9]{64}\.bin$/u
 
@@ -13,6 +15,10 @@ const repositoryNode = /^[A-Za-z0-9_=-]{1,128}$/u
 const etagPattern = /^(?:W\/)?"[!#-~]{1,256}"$/u
 const discussionPath = /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(pulls|issues)\/([1-9]\d*)(?:\/(comments|reviews))?$/u
 const collectionPage = /^\?per_page=100&page=[1-9]\d{0,5}$/u
+const repositoryRead = /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(.+)$/u
+const commitRead = /^commits\/([a-f0-9]{40})$/u
+const compareRead = /^compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})$/u
+const objectRead = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u
 const bearer = /^Bearer \S+$/u
 const allowedHeaders = ["accept", "authorization", "user-agent", "x-github-api-version"]
 const accept = "application/vnd.github+json"
@@ -51,6 +57,16 @@ export interface DiscussionCheckpoint {
   readonly deadlineMs: number
 }
 
+interface Admission {
+  readonly nodeId: string
+  readonly href: string
+  readonly maxBody: number
+  readonly reserve: number
+  valid(value: unknown): boolean
+  admitted(): boolean
+  observe(): void
+}
+
 type Fragment = "pullrequestreview-" | "issuecomment-" | "discussion_r" | undefined
 
 function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
@@ -65,6 +81,28 @@ function listed(value: unknown, pullUrl: string, fragment: Exclude<Fragment, und
     if (fragment === "pullrequestreview-" && (typeof data.submitted_at !== "string" || !Number.isFinite(Date.parse(data.submitted_at)) || !submittedReviewStates.includes(data.state))) return false
     return typeof data.html_url === "string" && data.html_url.toLowerCase().startsWith(`${pullUrl}#${fragment}`) && decimal.test(data.html_url.slice(pullUrl.length + 1 + fragment.length))
   })
+}
+
+function immutableValidator(path: string, search: string): ((value: unknown) => boolean) | undefined {
+  const commit = commitRead.exec(path)
+  if (commit !== null) {
+    if (!collectionPage.test(search)) return undefined
+    return (value) => {
+      const data = record(value)
+      return data?.sha === commit[1] && Array.isArray(data.files) && data.files.length <= 100
+    }
+  }
+  const compare = compareRead.exec(path)
+  if (compare !== null) {
+    if (search !== "" && !collectionPage.test(search)) return undefined
+    return (value) => {
+      const data = record(value)
+      return record(data?.base_commit)?.sha === compare[1] && typeof data?.status === "string" && Array.isArray(data.commits)
+    }
+  }
+  const gitObject = objectRead.exec(path)
+  if (gitObject === null || (search !== "" && !(gitObject[1] === "trees" && search === "?recursive=1"))) return undefined
+  return (value) => record(value)?.sha === gitObject[2]
 }
 
 function matchesDiscussion(value: unknown, number: number, pullUrl: string, repository: string, nodeId: string, fragment: Fragment) {
@@ -142,43 +180,24 @@ export effect function discussionCache(options: DiscussionCacheOptions) {
     return try provideService(sha256Hex(data), Experimental.Crypto.Crypto, crypto)
   }
 
-  function entry(url: string, headers: Readonly<Record<string, string>>): DiscussionEntry | undefined {
-    const parsed = URL.parse(url)
-    const match = parsed === null ? null : discussionPath.exec(parsed.pathname)
-    if (parsed === null || match === null || parsed.origin !== "https://api.github.com" || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "") return undefined
-    const [, rawRepo = "", section = "", rawNumber = "", collection] = match
-    const repository = rawRepo.toLowerCase()
-    const nodeId = repositories.get(repository)
-    const number = Number(rawNumber)
-    const names = Object.keys(headers)
-    if (
-      nodeId === undefined || !Number.isSafeInteger(number) ||
-      (section === "issues" && collection !== "comments") ||
-      (collection === undefined ? parsed.search !== "" : !collectionPage.test(parsed.search)) ||
-      headers.accept !== accept || headers["x-github-api-version"] !== apiVersion || headers["user-agent"] !== "slopbot" ||
-      !bearer.test(headers.authorization ?? "") || names.some((name) => !allowedHeaders.includes(name))
-    ) return undefined
-    const fragment: Fragment = collection === "reviews" ? "pullrequestreview-" : collection === "comments" ? section === "issues" ? "issuecomment-" : "discussion_r" : undefined
-    const pullUrl = `https://github.com/${repository}/pull/${number}`
-    if (fragment !== undefined && !publicPulls.has(pullUrl)) return undefined
-    if (fragment === undefined) publicPulls.delete(pullUrl)
-    const href = parsed.href
+  function cached(admission: Admission): DiscussionEntry {
+    const { nodeId, href, maxBody, reserve } = admission
 
     effect function name() {
       return `${try digest(JSON.stringify(["1", nodeId, href, accept, apiVersion]))}.bin`
     }
 
     effect function validBody(bytes: Uint8Array) {
-      if (bytes.length === 0 || bytes.length > maxDiscussionBodyBytes) return false
+      if (bytes.length === 0 || bytes.length > maxBody) return false
       const value = try parsedJson(bytes)
-      return value !== undefined && matchesDiscussion(value, number, pullUrl, repository, nodeId ?? "", fragment)
+      return value !== undefined && admission.valid(value)
     }
 
-    effect function stored(file: string, key: string) {
+    effect function stored(file: string) {
       return try scoped(effect {
         const handle = try fs.open(`${directory}/${file}`, { flag: "r", noFollow: true })
         const info = try handle.stat
-        if (info.type !== "File" || Number(info.size) > maxDiscussionBodyBytes + maxMetadataBytes) return undefined
+        if (info.type !== "File" || Number(info.size) > maxBody + maxMetadataBytes) return undefined
         const raw = Option.getOrUndefined(try handle.readAlloc(Number(info.size))) ?? new Uint8Array(0)
         const line = raw.indexOf(10)
         if (line < 1 || line >= maxMetadataBytes) return undefined
@@ -187,7 +206,7 @@ export effect function discussionCache(options: DiscussionCacheOptions) {
         const now = try Clock.currentTimeMillis
         const observedAt = metadata?.observedAt
         if (
-          metadata?.version !== 1 || metadata.key !== key ||
+          metadata?.version !== 1 || metadata.key !== file ||
           typeof metadata.etag !== "string" || !etagPattern.test(metadata.etag) ||
           typeof observedAt !== "number" || !Number.isSafeInteger(observedAt) || observedAt > now || now - observedAt > maxDiscussionAgeMs ||
           metadata.digest !== try digest(bytes) || !(try validBody(bytes))
@@ -200,18 +219,18 @@ export effect function discussionCache(options: DiscussionCacheOptions) {
       read: () => effect {
         const file = try name()
         if (!sizes.has(file)) return undefined
-        return stored(file, file) catch () => undefined
+        return stored(file) catch () => undefined
       },
       save: (etag, bytes) => effect {
-        if (fragment !== undefined && !publicPulls.has(pullUrl)) return
+        if (!admission.admitted()) return
         if (!(try validBody(bytes))) return
-        if (fragment === undefined && publicPulls.size < maxDiscussionEntries) publicPulls.add(pullUrl)
+        admission.observe()
         if (!etagPattern.test(etag)) return
         const file = try name()
         const metadata = utf8(`${JSON.stringify({ version: 1, key: file, etag, observedAt: try Clock.currentTimeMillis, digest: try digest(bytes) })}\n`)
         const size = metadata.length + bytes.length
         const previous = sizes.get(file) ?? 0
-        if ((previous === 0 && sizes.size >= maxDiscussionEntries) || totalBytes + size - previous > maxDiscussionBytes || writing.has(file)) return
+        if ((previous === 0 && sizes.size >= maxDiscussionEntries) || totalBytes + size - previous > maxDiscussionBytes - reserve || writing.has(file)) return
         const temporary = `${directory}/${file}.${try provideService(randomId(), Experimental.Crypto.Crypto, crypto)}.tmp`
         const content = new Uint8Array(size)
         content.set(metadata, 0)
@@ -233,6 +252,50 @@ export effect function discussionCache(options: DiscussionCacheOptions) {
         writing.delete(file)
       },
     }
+  }
+
+  function headersMatch(headers: Readonly<Record<string, string>>) {
+    return headers.accept === accept && headers["x-github-api-version"] === apiVersion && headers["user-agent"] === "slopbot" &&
+      bearer.test(headers.authorization ?? "") && Object.keys(headers).every((name) => allowedHeaders.includes(name))
+  }
+
+  function entry(url: string, headers: Readonly<Record<string, string>>): DiscussionEntry | undefined {
+    const parsed = URL.parse(url)
+    if (parsed === null || parsed.origin !== "https://api.github.com" || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "" || !headersMatch(headers)) return undefined
+    const href = parsed.href
+    const read = repositoryRead.exec(parsed.pathname)
+    const validator = read === null ? undefined : immutableValidator(read[2] ?? "", parsed.search)
+    if (read !== null && validator !== undefined) {
+      const nodeId = repositories.get((read[1] ?? "").toLowerCase())
+      if (nodeId === undefined) return undefined
+      return cached({ nodeId, href, maxBody: maxImmutableBodyBytes, reserve: discussionReserveBytes, valid: validator, admitted: () => true, observe: () => undefined })
+    }
+    const match = discussionPath.exec(parsed.pathname)
+    if (match === null) return undefined
+    const [, rawRepo = "", section = "", rawNumber = "", collection] = match
+    const repository = rawRepo.toLowerCase()
+    const nodeId = repositories.get(repository)
+    const number = Number(rawNumber)
+    if (
+      nodeId === undefined || !Number.isSafeInteger(number) ||
+      (section === "issues" && collection !== "comments") ||
+      (collection === undefined ? parsed.search !== "" : !collectionPage.test(parsed.search))
+    ) return undefined
+    const fragment: Fragment = collection === "reviews" ? "pullrequestreview-" : collection === "comments" ? section === "issues" ? "issuecomment-" : "discussion_r" : undefined
+    const pullUrl = `https://github.com/${repository}/pull/${number}`
+    if (fragment !== undefined && !publicPulls.has(pullUrl)) return undefined
+    if (fragment === undefined) publicPulls.delete(pullUrl)
+    return cached({
+      nodeId,
+      href,
+      maxBody: maxDiscussionBodyBytes,
+      reserve: 0,
+      valid: (value) => matchesDiscussion(value, number, pullUrl, repository, nodeId, fragment),
+      admitted: () => fragment === undefined || publicPulls.has(pullUrl),
+      observe: () => {
+        if (fragment === undefined && publicPulls.size < maxDiscussionEntries) publicPulls.add(pullUrl)
+      },
+    })
   }
 
   return { entry } satisfies DiscussionCache

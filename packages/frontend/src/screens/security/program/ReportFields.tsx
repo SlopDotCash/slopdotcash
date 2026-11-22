@@ -1,7 +1,9 @@
-// spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"
+// spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"
 import { Disclosure, Field, Input, Select, Textarea } from "@repo/ui";
 import { useState } from "react";
 import type { ReportDraft } from "../../../flows/security/private.vibe";
+import { descriptionLimit } from "../../../flows/security/reportFile.vibe";
+import { ReportProofFields } from "./ReportProofFields.tsx";
 
 export type ReportFieldsProps = {
   draft: ReportDraft;
@@ -26,8 +28,16 @@ export function ReportFields({ draft, onChange, disabled = false }: ReportFields
         <Input autoComplete="off" disabled={disabled} maxLength={1024} minLength={8} required value={draft.summary} onChange={(event) => set("summary")(event.target.value)} />
       </Field>
       <Field label="Description">
-        <Textarea disabled={disabled} maxLength={65000} minLength={20} placeholder="Revision, impact, repro steps" required rows={10} value={draft.description} onChange={(event) => set("description")(event.target.value)} />
+        <Textarea disabled={disabled} maxLength={descriptionLimit} minLength={20} placeholder="Revision, impact, repro steps" required rows={10} value={draft.description} onChange={(event) => set("description")(event.target.value)} />
       </Field>
+      <ReportProofFields
+        description={draft.description}
+        proofName={draft.proofName}
+        proofText={draft.proofText}
+        disabled={disabled}
+        onDescription={(description) => onChange({ ...draft, description })}
+        onProof={(proofName, proofText) => onChange({ ...draft, proofName, proofText })}
+      />
       <Disclosure summary="Classification" open={classified} onOpenChange={setClassified}>
         <div className="flex flex-col gap-4 pt-2">
           <Field label="Severity">

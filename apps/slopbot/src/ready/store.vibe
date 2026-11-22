@@ -1,0 +1,124 @@
+// spec/slopbot/readyLabel.md, "A refresh rewrites the row from facts read at the head, and writes only while the head is unmoved"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { type PullStatus, type ReadyPull, type RowState, apply, initial, readyCheckWanted, readyDispatchBatch } from "../../gen/slopbot__readyLabel.effect.vibe"
+import { type ReadyLabelJob, readyJob, send } from "../jobs/job.vibe"
+import { type ReadyItem, readySetting } from "./facts.vibe"
+
+schema StoredRow {
+  readonly state: "ready" | "not-ready" | "off"
+  readonly head_sha: string | null
+  readonly first_seen_at: string
+  readonly next_check_at: string | null
+}
+
+schema DueRow {
+  readonly repository_id: number
+  readonly pull_number: number
+  readonly installation_id: number
+  readonly owner: string
+  readonly repo: string
+  readonly state: "ready" | "not-ready" | "off"
+  readonly next_check_at: string
+}
+
+export type ReadyRowRead = typeof StoredRow.Type
+export type StoredState = ReadyRowRead["state"]
+
+export interface PullSeen {
+  readonly status: PullStatus
+  readonly head: string
+  readonly labelled: boolean
+}
+
+export interface SavedRow {
+  readonly headSha: string
+  readonly state: StoredState
+  readonly reason: string
+  readonly firstSeenAt: string
+  readonly nextCheckAt: string | null
+}
+
+export const seenHead = 2
+
+const rowStates: Readonly<Record<StoredState, RowState>> = { ready: "ReadyRow", "not-ready": "NotReadyRow", off: "OffRow" }
+const storedStates: Readonly<Record<Exclude<RowState, "NoReadyRow">, StoredState>> = { ReadyRow: "ready", NotReadyRow: "not-ready", OffRow: "off" }
+
+export function storedState(row: Exclude<RowState, "NoReadyRow">): StoredState {
+  return storedStates[row]
+}
+
+export function rowStateOf(row: ReadyRowRead | undefined): RowState {
+  return row === undefined ? "NoReadyRow" : rowStates[row.state]
+}
+
+export function secondsOf(millis: number) {
+  return Math.max(1, Math.floor(millis / 1000))
+}
+
+function storedSeconds(iso: string | null) {
+  if (iso === null) return 0
+  const millis = millisOf(iso)
+  return Number.isSafeInteger(millis) && millis > 0 ? secondsOf(millis) : 0
+}
+
+export function modelOf(row: ReadyRowRead | undefined, seen: PullSeen, nowMillis: number): ReadyPull {
+  const state = rowStateOf(row)
+  const parked = state === "NoReadyRow" || state === "OffRow"
+  return {
+    ...initial,
+    now: secondsOf(nowMillis),
+    pr: seen.status,
+    pullHead: seenHead,
+    row: state,
+    rowHead: row === undefined ? 0 : row.head_sha === seen.head ? seenHead : seenHead - 1,
+    firstSeenAt: row === undefined ? 0 : storedSeconds(row.first_seen_at),
+    nextCheckAt: parked ? 0 : storedSeconds(row?.next_check_at ?? null),
+    labelled: seen.labelled,
+  }
+}
+
+export effect function timeAfter(nowMillis: number, model: ReadyPull, seconds: number) {
+  return seconds === 0 ? null : try isoAt(nowMillis + (seconds - model.now) * 1000)
+}
+
+export effect function readyRow(item: ReadyItem) {
+  const row: ReadyRowRead | undefined = try first(StoredRow, sql`SELECT state, head_sha, first_seen_at, next_check_at FROM slopbot_ready_labels WHERE repository_id = ${item.repositoryId} AND pull_number = ${item.number}`)
+  return row
+}
+
+export effect function saveRow(job: ReadyLabelJob, row: SavedRow, at: string) {
+  try (try D1).run(sql`INSERT INTO slopbot_ready_labels (repository_id, pull_number, installation_id, owner, repo, head_sha, state, reason, first_seen_at, updated_at, next_check_at)
+    VALUES (${job.repositoryId}, ${job.number}, ${job.installationId}, ${job.owner}, ${job.repo}, ${row.headSha}, ${row.state}, ${row.reason.slice(0, 500)}, ${row.firstSeenAt}, ${at}, ${row.nextCheckAt})
+    ON CONFLICT(repository_id, pull_number) DO UPDATE SET
+      installation_id = excluded.installation_id, owner = excluded.owner, repo = excluded.repo,
+      head_sha = excluded.head_sha, state = excluded.state, reason = excluded.reason,
+      first_seen_at = excluded.first_seen_at, updated_at = excluded.updated_at,
+      next_check_at = excluded.next_check_at`)
+}
+
+export effect function readyLabelWanted(item: ReadyItem) {
+  const { labelOn } = try readySetting(item)
+  const row = labelOn ? undefined : try readyRow(item)
+  return readyCheckWanted(labelOn, rowStateOf(row))
+}
+
+export effect function dispatchReadyChecks() {
+  const nowMillis = try Clock.currentTimeMillis
+  const at = try isoAt(nowMillis)
+  const due = try rows(DueRow, sql`SELECT repository_id, pull_number, installation_id, owner, repo, state, next_check_at
+    FROM slopbot_ready_labels WHERE next_check_at IS NOT NULL AND next_check_at <= ${at}
+    ORDER BY next_check_at LIMIT ${readyDispatchBatch}`)
+  let sent = 0
+  for (const row of due) {
+    const before: ReadyPull = { ...initial, now: secondsOf(nowMillis), row: rowStates[row.state], rowHead: initial.pullHead, nextCheckAt: storedSeconds(row.next_check_at), labelled: row.state === "ready" }
+    const claimed = try orDie(apply(before, { type: "claimDue" }))
+    const next = try timeAfter(nowMillis, before, claimed.nextCheckAt)
+    const changed = try (try D1).run(sql`UPDATE slopbot_ready_labels SET next_check_at = ${next}
+      WHERE repository_id = ${row.repository_id} AND pull_number = ${row.pull_number} AND next_check_at = ${row.next_check_at}`)
+    if (changed !== 1) continue
+    try send(readyJob({ deliveryId: `ready:${row.repository_id}:${row.pull_number}:${at}`, installationId: row.installation_id, repositoryId: row.repository_id, owner: row.owner, repo: row.repo, number: row.pull_number }))
+    sent++
+  }
+  return sent
+}

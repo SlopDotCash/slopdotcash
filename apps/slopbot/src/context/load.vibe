@@ -263,7 +263,7 @@ export effect function loadContext(target: ReviewTarget, current: Observed) {
   } satisfies ReviewContext
 }
 
-export effect function reviewKeyOf(context: ReviewContext, target: ReviewTarget, verifierKey: string, qualityIds: ReadonlyArray<string>) {
+export effect function reviewKeyOf(context: ReviewContext, target: ReviewTarget, verifierKey: string, qualityIds: ReadonlyArray<string>, evidenceParts: ReadonlyArray<string>) {
   return try sha256Hex(reviewKeyPreimage({
     itemNode: context.issue.node_id,
     revision: context.revision,
@@ -271,6 +271,7 @@ export effect function reviewKeyOf(context: ReviewContext, target: ReviewTarget,
     itemDigest: context.contentDigest,
     verifierKey,
     sortedQualityIds: [...qualityIds].sort(),
+    evidenceParts: [...evidenceParts],
     securityOnly: target.securityOnly,
   }))
 }

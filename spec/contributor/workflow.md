@@ -33,6 +33,7 @@ import projections as F from "../frontend/projections"
 import prOpened as PO from "./prOpened"
 import evidence as E from "./evidence"
 import intakeHealth as IH from "../operations/intakeHealth"
+import closure as SC from "../slopbot/closure"
 type Blocker = Clear | Assigned | MaintainerClaim | DraftPR | ActiveReview | Approved | ChangesRequested
   | SecurityLabel | HumanGate | Epic | LinkedOpenPR | OutsideScope
 type ContributionPhase = Browsing | Selected | Working | Tested | Submitted | Accepted | Closed | Stopped
@@ -52,7 +53,8 @@ type Contribution = { contributor: int, project: int, repository: str, phase: Co
   usefulResult: bool, testEvidence: bool, banned: bool, credited: bool, closedBy: Closer,
   standingEpoch: int, closures: int, reopenedByMaintainer: bool, appeals: int, changesRequested: bool, runRecorded: bool,
   evidence: E::EvidencePhase, traceReady: bool, writes: List[GitHubWrite], refusedWrites: List[GitHubWrite],
-  reviewer: int, reviewerRecommendation: str, reviewCreditable: bool }
+  reviewer: int, reviewerRecommendation: str, reviewCreditable: bool,
+  changeTypes: Set[SC::ChangeType], evidenceFields: Set[SC::EvidenceField], guideRequiresScreenshots: bool }
 pure val githubCollector = -1
 pure val standingService = -2
 pure val slopServer = -3
@@ -62,7 +64,8 @@ pure val initial: Contribution = { contributor: 1, project: 1, repository: "o/r"
   inspection: NotInspected, riskReported: false, cleanScan: 0, riskAtScan: -1, provider: "", model: "", client: "", attributionLine: false,
   usefulResult: false, testEvidence: false, banned: false, credited: false, closedBy: NoCloser,
   standingEpoch: 0, closures: 0, reopenedByMaintainer: false, appeals: 0, changesRequested: false, runRecorded: false,
-  evidence: E::Undecided, traceReady: false, writes: List(), refusedWrites: List(), reviewer: 0, reviewerRecommendation: "", reviewCreditable: false }
+  evidence: E::Undecided, traceReady: false, writes: List(), refusedWrites: List(), reviewer: 0, reviewerRecommendation: "", reviewCreditable: false,
+  changeTypes: Set(), evidenceFields: Set(), guideRequiresScreenshots: false }
 pure def policyPermits(policy: PolicyCheck): bool = policy.approvedScope and policy.instructionsFollowed and policy.privateReportingRoute
 pure def active(c: Contribution): bool = c.phase == Selected or c.phase == Working or c.phase == Tested
 ```
@@ -100,7 +103,8 @@ pure def beginWork(c: Contribution, by: int): Contribution = { ...c, phase: Work
 pure def canRecordTests(c: Contribution, by: int, usefulResult: bool, testEvidence: bool): bool =
   by == c.contributor and c.phase == Working and c.available and usefulResult and testEvidence
 pure def recordTests(c: Contribution, by: int, usefulResult: bool, testEvidence: bool): Contribution =
-  { ...c, phase: Tested, usefulResult: true, testEvidence: true }
+  { ...c, phase: Tested, usefulResult: true, testEvidence: true,
+    evidenceFields: c.evidenceFields.union(SC::commonEvidence) }
 pure def canAbandon(c: Contribution, by: int): bool = by == c.contributor and (active(c) or c.phase == Stopped)
 pure def abandon(c: Contribution, by: int): Contribution =
   { ...initial, contributor: c.contributor, project: c.project, repository: c.repository, banned: c.banned,
@@ -198,7 +202,7 @@ pure def confirmSubmissionRead(c: Contribution, by: int): Contribution = { ...c,
 pure def attributed(c: Contribution): bool = c.provider != "" and c.model != "" and c.client != "" and c.attributionLine
 pure def canSubmit(c: Contribution, by: int, prNode: str): bool = by == c.contributor and c.phase == Tested and prNode != "" and
   c.submissionEpoch == c.liveEpoch and c.submissionEpoch > c.selectedEpoch and permitted(c)
-  and c.usefulResult and c.testEvidence and attributed(c)
+  and c.usefulResult and c.testEvidence and attributed(c) and evidenceComplete(c)
 pure def submit(c: Contribution, by: int, prNode: str): Contribution = { ...c, phase: Submitted, prNode: prNode, head: 1 }
 pure def submitted(c: Contribution): bool = c.phase == Submitted or c.phase == Accepted or c.phase == Closed
 pure def alwaysSubmissionEvidence(c: Contribution): bool =
@@ -212,6 +216,49 @@ pure def stepSubmittedAttributionStable(before: Contribution, after: Contributio
     and before.prNode == after.prNode
 pure def lawSubmissionIgnoresStarsForksAndRuns(c: Contribution, by: int, prNode: str): bool =
   canSubmit(c, by, prNode) == canSubmit({ ...c, writes: List(), runRecorded: false }, by, prNode)
+```
+
+### Submission carries the evidence its declared change types require
+
+Before opening the pull request the run writes an `## Evidence` block in its
+body, outside a code fence (`skills/project-contributor-template/SKILL.md`,
+`skills/slop-contributor/SKILL.md`): a `Change types:` line naming every
+applicable type among `non-ui`, `ui`, `performance` and `hardware`, or
+`docs` alone for documentation-only work, then one line per field. Test
+results and proof of change are always required and come from the recorded
+tests; the declared types add runtime logs, a UI video, UI screenshots when
+the target repository's contribution guide requires them, benchmarks or
+on-device results, as the field table of
+[Slopbot's evidence check](../slopbot/closure.md) states. Missing required
+evidence is resolved before the pull request is opened. The closure and the
+debit for a signed submission that lacks it are Slopbot's and Points'.
+
+```quint
+pure def evidenceComplete(c: Contribution): bool =
+  SC::validChangeTypes(c.changeTypes, false)
+  and SC::requiredEvidence(c.changeTypes, c.guideRequiresScreenshots).subseteq(c.evidenceFields)
+pure def canReadContributionGuide(c: Contribution, by: int, requiresScreenshots: bool): bool =
+  by == c.contributor and active(c)
+pure def readContributionGuide(c: Contribution, by: int, requiresScreenshots: bool): Contribution =
+  { ...c, guideRequiresScreenshots: requiresScreenshots }
+pure def canDeclareChangeType(c: Contribution, by: int, changeType: SC::ChangeType): bool =
+  by == c.contributor and c.phase == Tested and not(c.changeTypes.contains(changeType))
+  and not(c.changeTypes.contains(SC::Docs)) and (changeType == SC::Docs implies c.changeTypes.size() == 0)
+pure def declareChangeType(c: Contribution, by: int, changeType: SC::ChangeType): Contribution =
+  { ...c, changeTypes: c.changeTypes.union(Set(changeType)) }
+pure def canRecordEvidenceField(c: Contribution, by: int, evidenceField: SC::EvidenceField): bool =
+  by == c.contributor and c.phase == Tested and not(c.evidenceFields.contains(evidenceField))
+pure def recordEvidenceField(c: Contribution, by: int, evidenceField: SC::EvidenceField): Contribution =
+  { ...c, evidenceFields: c.evidenceFields.union(Set(evidenceField)) }
+pure def alwaysSubmittedEvidenceComplete(c: Contribution): bool = submitted(c) implies evidenceComplete(c)
+pure def alwaysDocsStandsAlone(c: Contribution): bool =
+  c.changeTypes.contains(SC::Docs) implies c.changeTypes.subseteq(Set(SC::Docs))
+pure def lawDocsNeedsOnlyTestsAndProof(c: Contribution): bool =
+  evidenceComplete({ ...c, changeTypes: Set(SC::Docs), evidenceFields: Set(SC::TestResults, SC::ProofOfChange) })
+pure def lawUndeclaredChangeTypesNeverSubmit(c: Contribution, by: int, prNode: str): bool =
+  not(canSubmit({ ...c, changeTypes: Set() }, by, prNode))
+pure def sometimesSubmittedNonUiWithLogs(c: Contribution): bool =
+  submitted(c) and c.changeTypes.contains(SC::NonUi) and c.evidenceFields.contains(SC::RuntimeLogs)
 ```
 
 ### Trace evidence and private-intake health never block submission
@@ -416,7 +463,8 @@ pure val byMaintainerValues = Set(true, false)
 pure val viewValues = Set(openView, { ...openView, paused: true })
 pure val testedState: Contribution = { ...initial, phase: Tested, itemId: 1, available: true, policyPermits: true, bounded: true,
   liveEpoch: 2, selectedEpoch: 1, submissionEpoch: 2, usefulResult: true, testEvidence: true, inspection: InspectClear,
-  provider: "a", model: "a", client: "a", attributionLine: true }
+  provider: "a", model: "a", client: "a", attributionLine: true,
+  changeTypes: Set(SC::Docs), evidenceFields: Set(SC::TestResults, SC::ProofOfChange) }
 pure val cValues = Set(initial, testedState, { ...testedState, writes: List(StarRepository), runRecorded: true })
 pure val clientValues = Set("", "a")
 pure val modelValues = Set("", "a")
@@ -450,4 +498,6 @@ pure val weight_review = 20
 pure val weight_observeEvidence = 2
 pure val weight_requestChanges = 30
 pure val weight_pushUpdate = 20
+pure val weight_declareChangeType = 40
+pure val weight_recordEvidenceField = 40
 ```

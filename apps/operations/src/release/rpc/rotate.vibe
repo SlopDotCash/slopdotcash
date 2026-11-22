@@ -1,36 +1,39 @@
-// spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+// spec/operations/robinhoodRpcRotation.md, "Story: Rotate the fee converter's Robinhood RPC only to a qualified, independent endpoint from the pinned version"; spec/operations/robinhoodRpcRotation.md, "A rotation is admitted only on trusted main from a manual dispatch with the release enabled and an exact expected version"; spec/operations/robinhoodRpcRotation.md, "The expected version is the only active version, tagged with this source and published without a rotation"; spec/operations/robinhoodRpcRotation.md, "Upload binds exactly one new version with only the candidate secret, rechecks the pin, the quiet journal and live main, and activates it at 100%"; spec/operations/robinhoodRpcRotation.md, "Only a readback of the same Worker at the candidate with the release message confirms the rotation"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/fees/solanaRpcRotation.md, "A candidate changes only the two Solana RPC secrets of the exact pinned version, and only that candidate is activated"
 import { gitBytes } from "@repo/platform/git"
 import type { RefKind, RunRef } from "../../../gen/operations__release.effect.vibe"
 import { preflightPasses } from "../../../gen/fees__runtime.effect.vibe"
+import { type Boundary, type CandidateCheck, type Event, type FeeJournal, type PinRead, type Readback, type RobinhoodRotation, initial, journalQuiet, machineOver, sameWorker } from "../../../gen/operations__robinhoodRpcRotation.effect.vibe"
 import { rotationAdmitted } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { readReviewed } from "../publish/config.vibe"
 import { type SecretValues, configsFor, feeSettingsOf, withSecretsFile } from "../publish/order.vibe"
 import { Cloudflare, type CommandFailure } from "../wrangler/cloudflare.vibe"
 import { releaseMessage } from "../wrangler/outputs.vibe"
-import { RotationRefused } from "./qualify.vibe"
+import { type ContractProbe, RotationRefused, candidateUrl, readFinalized } from "./qualify.vibe"
 import {
   type RotationKind,
+  type WorkerState,
   type WorkerVersion,
+  bindingOf,
   feeConverterWorker,
   inheritedSuffix,
   inspectVersion,
+  lineage,
   normalizedBindings,
   onRotationBase,
-  requireQuietJournal,
   requireRotationBase,
   requireSameWorker,
   rotationMessage,
   secretNamesOf,
-  bindingOf,
+  unresolvedFeeWork,
   workerState,
 } from "./worker.vibe"
 
-export interface Rotation<A, E, R> {
-  readonly root: string
-  readonly kind: RotationKind
-  readonly secrets: SecretValues
-  readonly inputRefusal?: string
-  readonly qualify: A!E!R
+export error RotationRejected { step: string; phase: string }
+
+export interface RotationRun {
+  state(): RobinhoodRotation!!
+  send(event: Event): RobinhoodRotation!RotationRejected
+  opaque(value: string): number
 }
 
 export interface PinRequest {
@@ -56,24 +59,46 @@ export type Confirmation =
   | { readonly outcome: "Confirmed" }
   | { readonly outcome: "Uncertain" | "Refused"; readonly reason: string | undefined }
 
-export type EndPhase = "Verified" | "Uncertain" | "Refused"
-
 export interface RotationEnd {
-  readonly phase: EndPhase
-  readonly uploaded: boolean
-  readonly reason: string | undefined
   readonly candidate: string
-  readonly summary: { readonly path: string; readonly line: string } | undefined
+  readonly summary: { readonly path: string; readonly line: string }
+}
+
+interface Admitted {
+  readonly sha: string
+  readonly expected: string
+  readonly summary: string
+  readonly runnerTemp: string
+  readonly url: string
+}
+
+interface ReviewedFacts {
+  readonly database: string | undefined
+  readonly live: boolean
+}
+
+const Row = Schema.Record(Schema.String, Schema.Unknown)
+
+schema QueryResult {
+  readonly success: boolean
+  readonly results: ReadonlyArray<Row>
 }
 
 const sourceSha = /^[a-f0-9]{40}$/u
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
 const canonicalRepository = "https://github.com/SlopDotCash/slopdotcash.git"
-const expectedVersions: { readonly [K in RotationKind]: string } = { robinhood: "SLOP_ROBINHOOD_RPC_EXPECTED_VERSION", solana: "SLOP_SOLANA_RPC_EXPECTED_VERSION" }
-const titles: { readonly [K in RotationKind]: string } = { robinhood: "Robinhood RPC", solana: "Solana public-pair" }
 const eventKinds: ReadonlyMap<string, RefKind> = new Map([["workflow_dispatch", "WorkflowDispatch"], ["push", "BranchPush"], ["schedule", "ScheduledRef"], ["pull_request", "PullRequestRef"], ["pull_request_target", "PullRequestRef"]])
 const unbound = "Could not bind a candidate fee-converter version."
+const pinnedChanged = "The pinned fee-converter deployment or latest upload changed."
+const metadataUnavailable = "Fee-converter version metadata is unavailable."
+const unconfigured = "The reviewed production buyback configuration is unavailable."
+const notSuccessor = "The candidate is not the immediate successor of the pinned fee-converter version."
+const differs = "The uploaded fee-converter code, runtime or bindings differ from the pinned version."
+const checkFailed = "Fee-converter RPC release check failed."
 const unreported: CommandFailure = { category: "command-failed", exitCode: null, providerCode: null }
+const unreadJournal: FeeJournal = { reviewedDatabase: false, readable: false, openSends: 0, openBridgeOrders: 0, openRobinhoodGas: 0 }
+const unreadBoundary: Boundary = { onlyActive: 0, latest: 0, deployment: 0, liveMain: false }
+const unreadVersion: CandidateCheck = { successor: false, tagged: false, lineage: false, sameCode: false, sameRuntime: false, sameBindings: false }
 
 function refused(message: string) {
   return new RotationRefused({ message })
@@ -81,6 +106,38 @@ function refused(message: string) {
 
 export function reasonOf(error: unknown) {
   return error instanceof RotationRefused ? error.message : undefined
+}
+
+export effect function startRotation() {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  const ids = new Map<string, number>()
+  function opaque(value: string) {
+    const known = ids.get(value)
+    if (known !== undefined) return known
+    ids.set(value, ids.size + 1)
+    return ids.size
+  }
+  effect function send(event: Event) {
+    return machine.send(event) catch effect (error) => {
+      throw new RotationRejected({ step: event.type, phase: error.state.phase })
+    }
+  }
+  return { state: () => machine.get(), send, opaque } satisfies RotationRun
+}
+
+effect function advance(run: RotationRun, event: Event, refusal: string) {
+  const next = try run.send(event)
+  if (next.phase === "Refused" || next.phase === "Uncertain") throw refused(refusal)
+  return next
+}
+
+effect function reading<A, E, R>(run: RotationRun, read: A!E!R, refusedBy: Event) {
+  return read catch effect (error) => {
+    const reason = reasonOf(error) ?? metadataUnavailable
+    try advance(run, refusedBy, reason)
+    throw refused(reason)
+  }
 }
 
 effect function text(name: string) {
@@ -119,27 +176,10 @@ export effect function inheritedMessage() {
   return `${releaseMessage(sha)}${suffix}`
 }
 
-effect function reviewedConverter(root: string, before: WorkerVersion, kind: RotationKind) {
-  const reviewed = try reviewedConfig(root)
-  const settings = feeSettingsOf(reviewed, secretNamesOf(before)) catch effect () => {
-    throw refused("The reviewed production buyback configuration is unavailable.")
-  }
-  const live = kind === "solana" || (settings.converterMode === "Live" && settings.buybackMode === "Live" && settings.networks.includes("Robinhood"))
-  if (!live || !preflightPasses("Production", { ...settings, source: 1 })) throw refused("The reviewed production buyback configuration is unavailable.")
-  const database = databaseOf(reviewed)
-  if (kind === "solana") {
-    const networks = (reviewed.file.vars?.FEE_CONVERTER_NETWORKS ?? "").split(",").map((name) => name.trim()).filter((name) => name !== "")
-    const enabled = bindingOf(before, "FEE_CONVERTER_NETWORKS")
-    if (networks.includes("solana") || enabled?.type !== "plain_text" || enabled.text !== networks.join(",")) throw refused("Solana must remain disabled while its RPC bindings are qualified.")
-    if (bindingOf(before, "FEE_WALLET_KEY_SOLANA")?.type !== "secret_text") throw refused("The existing Solana fee key is unavailable.")
-  }
-  return database
-}
-
 effect function reviewedConfig(root: string) {
   const found = configsFor(try readReviewed(root), "FeeConverter", "Production")
   const [reviewed, ...others] = typeof found === "string" ? [] : found
-  if (reviewed === undefined || others.length > 0) throw refused("The reviewed production buyback configuration is unavailable.")
+  if (reviewed === undefined || others.length > 0) throw refused(unconfigured)
   return reviewed
 }
 
@@ -147,24 +187,166 @@ function databaseOf(reviewed: { readonly file: { readonly d1_databases?: Readonl
   return (reviewed.file.d1_databases ?? []).find((entry) => entry.binding === "FEE_DB")?.database_id ?? ""
 }
 
-effect function rotationInputs(kind: RotationKind) {
-  const sha = try trustedMain()
-  const expected = try text(expectedVersions[kind])
+effect function reviewedFacts(root: string, before: WorkerVersion) {
+  const found = try exit(reviewedConfig(root))
+  if (Exit.isFailure(found)) {
+    const missing: ReviewedFacts = { database: undefined, live: false }
+    return missing
+  }
+  const settings = feeSettingsOf(found.value, secretNamesOf(before)) catch () => undefined
+  const facts: ReviewedFacts = {
+    database: databaseOf(found.value),
+    live: settings !== undefined && settings.converterMode === "Live" && settings.buybackMode === "Live" && settings.networks.includes("Robinhood") && preflightPasses("Production", { ...settings, source: 1 }),
+  }
+  return facts
+}
+
+function onlyActive(run: RotationRun, state: WorkerState) {
+  const [only, ...others] = state.active.versions
+  return only !== undefined && others.length === 0 && only.percentage === 100 ? run.opaque(only.version_id) : 0
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, stable(entry)]))
+  }
+  return value
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(stable(left)) === JSON.stringify(stable(right))
+}
+
+effect function candidateCheck(before: WorkerVersion, after: WorkerVersion, sha: string) {
+  const markers = try exit(all([lineage(after.annotations, "robinhood"), lineage(after.annotations, "solana"), lineage(before.annotations, "solana")]))
+  const bindings = try exit(all([normalizedBindings(before, "robinhood"), normalizedBindings(after, "robinhood")]))
+  const etag = before.resources?.script?.etag ?? ""
+  const runtime = before.resources?.script_runtime
+  const check: CandidateCheck = {
+    successor: Number.isSafeInteger(before.number) && before.number > 0 && after.number === before.number + 1,
+    tagged: after.annotations?.["workers/tag"] === sha,
+    lineage: Exit.isSuccess(markers) && markers.value[0] === before.id && markers.value[1] === markers.value[2],
+    sameCode: etag !== "" && etag === after.resources?.script?.etag,
+    sameRuntime: runtime !== undefined && sameJson(runtime, after.resources?.script_runtime),
+    sameBindings: Exit.isSuccess(bindings) && sameJson(bindings.value[0], bindings.value[1]),
+  }
+  return check
+}
+
+function versionRefusal(version: CandidateCheck) {
+  return version.successor ? differs : notSuccessor
+}
+
+function count(row: Readonly<Record<string, unknown>>, column: string) {
+  const value = row[column]
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+effect function journalRow(database: string) {
+  const cloudflare = try Cloudflare
+  const answer = cloudflare.write("fee-converter journal", "POST", `/d1/database/${database}/query`, { sql: unresolvedFeeWork }) catch () => undefined
+  if (answer === undefined) return undefined
+  const results = Schema.decodeUnknownEffect(Schema.Array(QueryResult))(answer) catch () => undefined
+  const [result, ...others] = results ?? []
+  const [row, ...more] = result?.results ?? []
+  return result !== undefined && others.length === 0 && result.success && more.length === 0 ? row : undefined
+}
+
+effect function feeJournal(version: WorkerVersion, database: string | undefined) {
+  const binding = bindingOf(version, "FEE_DB")
+  const bound = binding?.database_id ?? binding?.id
+  if (database === undefined || !uuid.test(database) || binding?.type !== "d1" || bound !== database) {
+    const unmatched: { readonly journal: FeeJournal; readonly refusal: string } = { journal: unreadJournal, refusal: database === undefined ? unconfigured : "The active fee-converter D1 binding differs from the reviewed database." }
+    return unmatched
+  }
+  const row = try journalRow(database)
+  const counts = row === undefined ? [] : ["openSends", "openBridgeOrders", "openRobinhoodGas"].map((column) => count(row, column))
+  const [openSends, openBridgeOrders, openRobinhoodGas] = counts
+  const readable = openSends !== undefined && openBridgeOrders !== undefined && openRobinhoodGas !== undefined
+  const read: { readonly journal: FeeJournal; readonly refusal: string } = {
+    journal: { reviewedDatabase: true, readable, openSends: openSends ?? 0, openBridgeOrders: openBridgeOrders ?? 0, openRobinhoodGas: openRobinhoodGas ?? 0 },
+    refusal: readable ? "The fee-converter journal has unresolved sends, bridge orders or Robinhood gas. Review recovery before rotating." : "Could not verify the bound fee-converter journal.",
+  }
+  return read
+}
+
+effect function boundaryOf(run: RotationRun, pin: Pin, latest: string) {
+  const listed = try exit(workerState())
+  if (Exit.isFailure(listed)) {
+    const unread: { readonly boundary: Boundary; readonly refusal: string } = { boundary: unreadBoundary, refusal: reasonOf(Cause.squash(listed.cause)) ?? metadataUnavailable }
+    return unread
+  }
+  const state = listed.value
+  const observed: Boundary = { onlyActive: onlyActive(run, state), latest: run.opaque(state.latest.id), deployment: run.opaque(state.active.id), liveMain: false }
+  const moved: { readonly boundary: Boundary; readonly refusal: string } = { boundary: observed, refusal: pinnedChanged }
+  if (!onRotationBase(state, pin.expected, latest, pin.deploymentId)) return moved
+  const live = try exit(requireLiveMain(pin.root, pin.sha))
+  const read: { readonly boundary: Boundary; readonly refusal: string } = { boundary: { ...observed, liveMain: Exit.isSuccess(live) }, refusal: "Main advanced before the fee-converter rotation." }
+  return read
+}
+
+effect function admitRun(run: RotationRun) {
+  const files = try Path.Path
+  const sha = try text("GITHUB_SHA")
   const ref = try text("GITHUB_REF")
-  const run: RunRef = {
+  const expected = try text("SLOP_ROBINHOOD_RPC_EXPECTED_VERSION")
+  const summary = try text("GITHUB_STEP_SUMMARY")
+  const runnerTemp = try text("RUNNER_TEMP")
+  const replacement = try Config.withDefault(Config.Redacted("SLOP_ROBINHOOD_RPC_REPLACEMENT"), Redacted.make(""))
+  const candidate = candidateUrl(Redacted.value(replacement))
+  const runRef: RunRef = {
     kind: eventKinds.get(try text("GITHUB_EVENT_NAME")) ?? "LocalTree",
     branch: ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "",
     repository: try text("GITHUB_REPOSITORY"),
     githubEnvironment: "",
   }
-  if (!rotationAdmitted("RpcRotationRun", run) || (try text("SLOP_FEE_CONVERTER_RELEASE")) !== "enabled" || !uuid.test(expected)) {
-    throw refused("Use manual main rotation with the expected active version and the fee-converter release enabled.")
+  const trustedMain = sourceSha.test(sha) && ref === "refs/heads/main"
+  const verifiedTls = (try text("NODE_TLS_REJECT_UNAUTHORIZED")) !== "0"
+  const manualDispatch = rotationAdmitted("RpcRotationRun", runRef)
+  const releaseEnabled = (try text("SLOP_FEE_CONVERTER_RELEASE")) === "enabled"
+  const runnerPaths = files.isAbsolute(summary) && files.isAbsolute(runnerTemp)
+  const order = [
+    { passed: trustedMain && verifiedTls, message: "The fee-converter release requires trusted main and verified TLS." },
+    { passed: manualDispatch && releaseEnabled && uuid.test(expected), message: "Use manual main rotation with the expected active version and the fee-converter release enabled." },
+    { passed: runnerPaths, message: "The protected release runner and summary paths are unavailable." },
+  ]
+  const request = {
+    trustedMain,
+    verifiedTls,
+    manualDispatch,
+    releaseEnabled,
+    expectedVersion: uuid.test(expected) ? run.opaque(expected) : 0,
+    runnerPaths,
+    source: sourceSha.test(sha) ? run.opaque(sha) : 0,
   }
-  const summary = try text("GITHUB_STEP_SUMMARY")
-  const runnerTemp = try text("RUNNER_TEMP")
-  const files = try Path.Path
-  if (!files.isAbsolute(summary) || !files.isAbsolute(runnerTemp)) throw refused("The protected release runner and summary paths are unavailable.")
-  return { sha, expected, summary, runnerTemp }
+  try advance(run, { type: "admit", request, candidate: candidate.facts }, order.find((stage) => !stage.passed)?.message ?? candidate.refusal)
+  return { sha, expected, summary, runnerTemp, url: candidate.url ?? "" } satisfies Admitted
+}
+
+effect function pinRun(run: RotationRun, root: string, inputs: Admitted) {
+  const none: PinRead = { onlyActive: 0, latest: 0, deployment: 0, tag: 0, releaseMessage: false, reviewedBindings: false }
+  const state = try reading(run, workerState(), { type: "readPin", observed: none })
+  const based: PinRead = { ...none, onlyActive: onlyActive(run, state), latest: run.opaque(state.latest.id), deployment: run.opaque(state.active.id) }
+  if (!onRotationBase(state, inputs.expected)) {
+    try advance(run, { type: "readPin", observed: based }, pinnedChanged)
+  }
+  const before = try reading(run, inspectVersion(inputs.expected), { type: "readPin", observed: based })
+  const tag = before.annotations?.["workers/tag"] ?? ""
+  const published = tag === inputs.sha && state.active.annotations?.["workers/message"] === releaseMessage(inputs.sha)
+  const inventory = try exit(normalizedBindings(before, undefined))
+  const observed: PinRead = {
+    ...based,
+    tag: tag === "" ? 0 : run.opaque(tag),
+    releaseMessage: state.active.annotations?.["workers/message"] === releaseMessage(inputs.sha),
+    reviewedBindings: Exit.isSuccess(inventory),
+  }
+  try advance(run, { type: "readPin", observed }, published ? "The active fee-converter binding inventory did not match the live program." : "First publish this main revision without a rotation input.")
+  const reviewed = try reviewedFacts(root, before)
+  const quiet = try feeJournal(before, reviewed.database)
+  try advance(run, { type: "checkJournal", journal: quiet.journal }, quiet.refusal)
+  const pin: Pin = { root, kind: "robinhood", sha: inputs.sha, pinnedSource: inputs.sha, expected: inputs.expected, runnerTemp: inputs.runnerTemp, deploymentId: state.active.id, before, database: reviewed.database ?? "" }
+  return { pin, live: reviewed.live }
 }
 
 effect function promotionConfig(pin: PinRequest) {
@@ -180,16 +362,20 @@ effect function promotionConfig(pin: PinRequest) {
   return { workspace, promotion }
 }
 
-effect function releasePin(request: PinRequest) {
-  const state = try workerState()
-  try requireRotationBase(state, request.expected)
-  const before = try inspectVersion(request.expected)
-  if (before.annotations?.["workers/tag"] !== request.pinnedSource || state.active.annotations?.["workers/message"] !== releaseMessage(request.sha)) {
-    throw refused("First publish this main revision without a rotation input.")
-  }
-  try normalizedBindings(before, undefined)
-  const database = try reviewedConverter(request.root, before, request.kind)
-  return { ...request, deploymentId: state.active.id, before, database } satisfies Pin
+effect function uploadCommand(pin: Pin, secrets: SecretValues, workspace: string, promotion: string, message: string) {
+  const cloudflare = try Cloudflare
+  try withSecretsFile(workspace, "fee-converter-rotation", secrets, (path) => cloudflare.wrangler("fee-converter rotation upload", {
+    args: ["versions", "secret", "bulk", path, "--name", feeConverterWorker, "--config", promotion, `--tag=${pin.sha}`, `--message=${message}`],
+  }))
+}
+
+effect function deployCommand(pin: Pin, candidate: string, promotion: string) {
+  const cloudflare = try Cloudflare
+  const deployed = cloudflare.wrangler("fee-converter rotation deploy", {
+    args: ["versions", "deploy", "--config", promotion, "--name", feeConverterWorker, `--version-id=${candidate}`, "--percentage=100", `--message=${releaseMessage(pin.sha)}`, "--yes"],
+  }) catch (error) => error.command ?? unreported
+  const activation: Activation = typeof deployed === "string" ? { activation: "Requested" } : { activation: "Unknown", command: deployed }
+  return activation
 }
 
 effect function solanaPin(request: PinRequest) {
@@ -205,20 +391,17 @@ effect function solanaPin(request: PinRequest) {
   return { ...request, deploymentId: state.active.id, before, database } satisfies Pin
 }
 
-export effect function pinActive(request: PinRequest) {
-  return try (request.kind === "robinhood" ? releasePin(request) : solanaPin(request))
+export effect function pinActive(request: PinRequest & { readonly kind: "solana" }) {
+  return try solanaPin(request)
 }
 
 export effect function uploadCandidate(pin: Pin, secrets: SecretValues) {
-  const cloudflare = try Cloudflare
   return try scoped(effect {
     const { workspace, promotion } = try promotionConfig(pin)
     try requireRotationBase(try workerState(), pin.expected, pin.expected, pin.deploymentId)
     try requireLiveMain(pin.root, pin.sha)
     const message = try rotationMessage(pin.sha, pin.before, pin.kind)
-    withSecretsFile(workspace, "fee-converter-rotation", secrets, (path) => cloudflare.wrangler("fee-converter rotation upload", {
-      args: ["versions", "secret", "bulk", path, "--name", feeConverterWorker, "--config", promotion, `--tag=${pin.sha}`, `--message=${message}`],
-    })) catch effect () => {
+    uploadCommand(pin, secrets, workspace, promotion, message) catch effect () => {
       throw refused(unbound)
     }
     const uploaded = (try workerState()).latest
@@ -229,16 +412,11 @@ export effect function uploadCandidate(pin: Pin, secrets: SecretValues) {
 }
 
 export effect function activateCandidate(pin: Pin, candidate: string) {
-  const cloudflare = try Cloudflare
   return try scoped(effect {
     const { promotion } = try promotionConfig(pin)
     try requireRotationBase(try workerState(), pin.expected, candidate, pin.deploymentId)
     try requireLiveMain(pin.root, pin.sha)
-    const deployed = cloudflare.wrangler("fee-converter rotation deploy", {
-      args: ["versions", "deploy", "--config", promotion, "--name", feeConverterWorker, `--version-id=${candidate}`, "--percentage=100", `--message=${releaseMessage(pin.sha)}`, "--yes"],
-    }) catch (error) => error.command ?? unreported
-    const activation: Activation = typeof deployed === "string" ? { activation: "Requested" } : { activation: "Unknown", command: deployed }
-    return activation
+    return try deployCommand(pin, candidate, promotion)
   })
 }
 
@@ -255,15 +433,15 @@ effect function confirmedOnce(pin: Pin, candidate: string) {
   }
   const { deployed, immutable } = read.value
   if (!onRotationBase(deployed, candidate)) {
-    const moved: Confirmation = { outcome: "Refused", reason: "The pinned fee-converter deployment or latest upload changed." }
+    const moved: Confirmation = { outcome: "Refused", reason: pinnedChanged }
     return moved
   }
   if (deployed.active.annotations?.["workers/message"] !== releaseMessage(pin.sha)) {
     const untagged: Confirmation = { outcome: "Refused", reason: "The active deployment source tag could not be verified after rotation." }
     return untagged
   }
-  const differs = requireSameWorker(pin.before, immutable, pin.sha, pin.kind) catch (error) => error.message
-  const confirmation: Confirmation = typeof differs === "string" ? { outcome: "Refused", reason: differs } : { outcome: "Confirmed" }
+  const same = try exit(requireSameWorker(pin.before, immutable, pin.sha, pin.kind))
+  const confirmation: Confirmation = Exit.isFailure(same) ? { outcome: "Refused", reason: reasonOf(Cause.squash(same.cause)) } : { outcome: "Confirmed" }
   return confirmation
 }
 
@@ -276,33 +454,59 @@ export effect function confirmActivation(pin: Pin, candidate: string, attempts: 
   return last
 }
 
-effect function activated(pin: Pin, candidate: string) {
-  try requireSameWorker(pin.before, try inspectVersion(candidate), pin.sha, pin.kind)
-  try requireQuietJournal(pin.before, pin.database, pin.kind)
-  if ((try activateCandidate(pin, candidate)).activation === "Unknown") {
-    const unknown: { readonly phase: EndPhase; readonly reason: string | undefined } = { phase: "Uncertain", reason: undefined }
-    return unknown
-  }
-  const confirmation = try confirmActivation(pin, candidate)
-  const settled: { readonly phase: EndPhase; readonly reason: string | undefined } = confirmation.outcome === "Confirmed"
-    ? { phase: "Verified", reason: undefined }
-    : { phase: confirmation.outcome, reason: confirmation.reason }
-  return settled
+effect function latestUpload() {
+  const listed = try exit(workerState())
+  return Exit.isSuccess(listed) ? listed.value.latest.id : ""
 }
 
-export effect function rotateFeeConverterRpc<A, E, R>(rotation: Rotation<A, E, R>) {
-  const { kind, root } = rotation
-  const inputs = try rotationInputs(kind)
-  if (rotation.inputRefusal !== undefined) throw refused(rotation.inputRefusal)
-  const pin = try releasePin({ root, kind, sha: inputs.sha, pinnedSource: inputs.sha, expected: inputs.expected, runnerTemp: inputs.runnerTemp })
-  try requireQuietJournal(pin.before, pin.database, kind)
-  try rotation.qualify
-  const candidate = try uploadCandidate(pin, rotation.secrets)
-  const settled = activated(pin, candidate) catch (error) => ({ phase: "Refused" as const, reason: reasonOf(error) })
+effect function releaseCandidate(run: RotationRun, pin: Pin, url: string) {
+  const { workspace, promotion } = try promotionConfig(pin)
+  const ready = try boundaryOf(run, pin, pin.expected)
+  try advance(run, { type: "recheckBeforeUpload", boundary: ready.boundary }, ready.refusal)
+  const message = try rotationMessage(pin.sha, pin.before, "robinhood")
+  const sent = try exit(uploadCommand(pin, { RPC_URL_ROBINHOOD: Redacted.make(url) }, workspace, promotion, message))
+  let candidate = ""
+  if (Exit.isSuccess(sent)) {
+    candidate = try latestUpload()
+  }
+  try advance(run, { type: "upload", uploaded: candidate === "" ? 0 : run.opaque(candidate) }, Exit.isSuccess(sent) ? unbound : checkFailed)
+  try Console.log(JSON.stringify({ event: "robinhood_rpc_version_uploaded", source: pin.sha, previousVersion: pin.expected, candidate }))
+  const after = try reading(run, inspectVersion(candidate), { type: "recheckBeforeDeploy", boundary: unreadBoundary, version: unreadVersion, journal: unreadJournal })
+  const version = try candidateCheck(pin.before, after, pin.sha)
+  if (!sameWorker(version)) {
+    try advance(run, { type: "recheckBeforeDeploy", boundary: unreadBoundary, version, journal: unreadJournal }, versionRefusal(version))
+  }
+  const quiet = try feeJournal(pin.before, pin.database)
+  if (!journalQuiet(quiet.journal)) {
+    try advance(run, { type: "recheckBeforeDeploy", boundary: unreadBoundary, version, journal: quiet.journal }, quiet.refusal)
+  }
+  const unchanged = try boundaryOf(run, pin, candidate)
+  try advance(run, { type: "recheckBeforeDeploy", boundary: unchanged.boundary, version, journal: quiet.journal }, unchanged.refusal)
+  const deployed = try deployCommand(pin, candidate, promotion)
+  try advance(run, { type: "deploy", completed: deployed.activation === "Requested" }, checkFailed)
+  return candidate
+}
+
+effect function readback(run: RotationRun, pin: Pin, candidate: string) {
+  const unread: Readback = { onlyActive: 0, latest: 0, releaseMessage: false, version: unreadVersion }
+  const { deployed, immutable } = try reading(run, activationReads(candidate), { type: "confirmReadback", readback: unread })
+  const version = try candidateCheck(pin.before, immutable, pin.sha)
+  const tagged = deployed.active.annotations?.["workers/message"] === releaseMessage(pin.sha)
+  const observed: Readback = { onlyActive: onlyActive(run, deployed), latest: run.opaque(deployed.latest.id), releaseMessage: tagged, version }
+  const refusal = !onRotationBase(deployed, candidate) ? pinnedChanged : !tagged ? "The active deployment source tag could not be verified after rotation." : versionRefusal(version)
+  try advance(run, { type: "confirmReadback", readback: observed }, refusal)
+}
+
+export effect function rotateRobinhoodVersion(run: RotationRun, root: string, probe: ContractProbe) {
+  const inputs = try admitRun(run)
+  const { pin, live } = try pinRun(run, root, inputs)
+  const qualifying = try readFinalized(inputs.url, probe, live, run.opaque)
+  try advance(run, { type: "qualify", finalized: qualifying.finalized }, qualifying.refusal)
+  try Console.log(JSON.stringify({ event: "robinhood_rpc_candidate_verified", status: "verified", ...qualifying.observed }))
+  const candidate = try scoped(releaseCandidate(run, pin, inputs.url))
+  try readback(run, pin, candidate)
   return {
-    ...settled,
-    uploaded: true,
     candidate,
-    summary: { path: inputs.summary, line: `Fee converter ${titles[kind]} rotation from ${pin.expected} to ${candidate} at 100% on ${pin.sha}.` },
+    summary: { path: inputs.summary, line: `Fee converter Robinhood RPC rotation from ${pin.expected} to ${candidate} at 100% on ${pin.sha}.` },
   } satisfies RotationEnd
 }

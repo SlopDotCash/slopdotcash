@@ -45,8 +45,6 @@ function isAssessedUnit(value: unknown): value is AssessedUnit {
     && Array.isArray(reviews) && reviews.every((review: unknown) => typeof fieldsOf(review)?.["sourceId"] === "string")
 }
 
-// The subscription intake covers work accepted before the import cutoff; a joint import may also carry a later
-// closed, unmerged source as context, which its admission then checks against the prepared evidence.
 function intakeSource(evidence: Evidence, cutoff: number, joint: boolean) {
   if (evidence.pull.state !== "closed") return false
   const occurred = Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? "")
@@ -54,7 +52,6 @@ function intakeSource(evidence: Evidence, cutoff: number, joint: boolean) {
   return occurred < cutoff * 1000 || (joint && evidence.pull.merged_at === null)
 }
 
-// spec/slopbot/historicalImport.md historicalWork: what the admission needs from the prepared work-unit evidence.
 function preparedFacts(prepared: WorkUnitEvidence): PreparedFacts {
   return {
     limitations: prepared.limitations.length,

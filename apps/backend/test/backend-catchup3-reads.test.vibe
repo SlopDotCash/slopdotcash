@@ -1,0 +1,192 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+
+const projectsPath = "/api/v1/referrals/projects"
+const sessionsPath = "/api/v1/points/sessions"
+const origin = "http://localhost:8787"
+const later = "2099-01-01T00:00:00.000Z"
+const latest = "2099-02-01T00:00:00.000Z"
+const past = "2020-01-01T00:00:00.000Z"
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => github.world.addUser({ id: 5000, login: "slop-reader" })))
+  return { github, net: internet({ github: github.handler }) }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const { github, net } = try World
+  const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
+  return areaLayer({
+    root: new URL("..", import.meta.url).pathname,
+    entry: "worker",
+    origin,
+    d1: { SLOP_DB: "slop-private" },
+    vars: {
+      ADMIN_GITHUB_IDS: "7",
+      PROJECT_MODERATOR_GITHUB_IDS: "",
+      SLOP_ENVIRONMENT: "local",
+      PAYMENTS_ALLOWED_ORIGIN: origin,
+      SLOP_GITHUB_READ_TOKEN: reader,
+      TRACE_AUTH_SECRET: "trace-auth-secret-for-the-reads-journey-00001",
+    },
+    internet: net,
+  })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function refused(answer: Answer) {
+  const body = answer.body
+  const error = typeof body === "object" && body !== null ? (body as Record<string, unknown>).error : undefined
+  return [answer.status, error, (answer.headers["set-cookie"] ?? "").includes("Max-Age=0")]
+}
+
+function manifest(id: string, status: string, listingTier: string, repositoryId: number) {
+  return JSON.stringify({
+    id,
+    status,
+    listingTier,
+    steward: { github: { actorId: "41", nodeId: "U_41", login: "member-41" } },
+    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
+    terms: { repositoryLicense: { state: "absent", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    repositories: [{ id: `owner/${id}` }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "none" },
+    funding: {},
+  })
+}
+
+effect function project(id: string, status: string, listingTier: string, createdAt: string, repositoryId: number, referrer: readonly [string, string] | undefined) {
+  const area = try Area
+  const text = manifest(id, status, listingTier, repositoryId)
+  const digest = try sha256Hex(text)
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, ?, ?)", id, text, digest, "Registered", createdAt)
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, referrer_github_id, referrer_github_login) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)", id, status, text, digest, createdAt, createdAt, referrer?.[0] ?? null, referrer?.[1] ?? null)
+  return digest
+}
+
+effect function vettingBan(id: string, repositoryId: number, digest: string) {
+  const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "reads-assessment-1", policyVersion: "1", rule: "confirmed-malice" })
+  try (try Area).sql(
+    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'confirmed malice', 'reads-scan-1', ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, NULL, NULL, 'no_revision_needed', '2026-11-02T00:00:00.000Z')",
+    `enf_${id.replaceAll("-", "")}vetting`, id, String(repositoryId), JSON.stringify([`github:${repositoryId}`]), issuer, digest,
+  )
+}
+
+effect function member(githubId: string) {
+  const actorId = `actor-${githubId}`
+  try (try Area).sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actorId, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  return actorId
+}
+
+effect function session(githubId: string, name: string, expiresAt: string) {
+  const token = `reads-session-${githubId}-${name}-`.padEnd(48, "x")
+  const hash = try sha256Hex(token)
+  try (try Area).sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", hash, `actor-${githubId}`, expiresAt)
+  return { session: { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session, id: hash.slice(0, 24) }
+}
+
+effect function listed(as?: Session, headers: Readonly<Record<string, string>> = {}) {
+  return try (try Area).request(sessionsPath, { headers, ...as === undefined ? {} : { as } })
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Retired and restricted registrations with complete attribution stay listed, in registry order (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable")', () => effect {
+    const area = try Area
+    try project("reads-active", "active", "featured", "2026-10-01T00:00:00.000Z", 8001, ["41", "member-41"])
+    try project("reads-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 8002, ["42", "member-42"])
+    const restricted = try project("reads-restricted", "paused", "community", "2026-10-20T00:00:00.000Z", 8003, ["41", "member-41"])
+    try vettingBan("reads-restricted", 8003, restricted)
+    try project("reads-unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 8004, undefined)
+
+    const answer = try area.request(projectsPath)
+    try same([answer.status, answer.body], [200, {
+      schema: "slop-referred-projects-v1",
+      projects: [
+        { projectId: "reads-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        { projectId: "reads-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+        { projectId: "reads-restricted", status: "paused", listedAt: "2026-10-20T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+      ],
+    }])
+  })
+
+  it.effect('A live session lists its own account\'s unexpired sessions, newest expiry first, and revoking a listed ID removes only that session (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs")', () => effect {
+    const area = try Area
+    try member("61")
+    try member("62")
+    const older = try session("61", "older", later)
+    const newer = try session("61", "newer", latest)
+    const lapsed = try session("61", "lapsed", past)
+    const other = try session("62", "only", later)
+
+    const before = try listed(older.session)
+    const theirs = try listed(other.session)
+    const revoked = try area.request("/api/v1/points/sessions/revoke", { json: { id: newer.id }, as: older.session })
+    const after = try listed(older.session)
+    const theirsAfter = try listed(other.session)
+
+    try same({
+      before: [before.status, before.body],
+      theirs: theirs.body,
+      revoked: [revoked.status, revoked.body],
+      after: after.body,
+      theirsAfter: theirsAfter.body,
+      anonymous: refused(try listed()),
+      malformed: refused(try listed(undefined, { cookie: "__Host-slop_points=short" })),
+      expired: refused(try listed(lapsed.session)),
+      revokedOne: refused(try listed(newer.session)),
+    }, {
+      before: [200, { sessions: [{ id: newer.id, expiresAt: latest, current: false }, { id: older.id, expiresAt: later, current: true }] }],
+      theirs: { sessions: [{ id: other.id, expiresAt: later, current: true }] },
+      revoked: [200, { revoked: true }],
+      after: { sessions: [{ id: older.id, expiresAt: later, current: true }] },
+      theirsAfter: { sessions: [{ id: other.id, expiresAt: later, current: true }] },
+      anonymous: [401, "not_signed_in", false],
+      malformed: [401, "not_signed_in", false],
+      expired: [401, "session_expired", true],
+      revokedOne: [401, "session_expired", true],
+    })
+  })
+
+  it.effect('Closure withdraws both email consents and cancels pending verification in one batch, so the stored triggers suppress waiting notices and nothing new is queued (spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")', () => effect {
+    const area = try Area
+    try member("71")
+    const closing = try session("71", "closing", later)
+    const version = "d".repeat(64)
+    const at = "2026-11-02T00:00:00.000Z"
+    try area.sql("INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES ('71', 'member-71@example.test', ?, ?)", version, at)
+    try area.sql("INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES ('71', 1, 1, ?, ?)", version, at)
+    try area.sql("INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at) VALUES ('reads-verification', '71', 'reads-request', 'member-71@example.test', 'reads-address', ?, 1, 1, 'queued', ?, ?)", "e".repeat(64), at, later)
+    try area.sql("INSERT INTO activity_notification_outbox (event_key, recipient_github_id, essential, destination_version, next_attempt_at, created_at, updated_at) VALUES ('reads-activity', '71', 0, ?, ?, ?, ?)", version, at, at, at)
+    try area.sql("INSERT INTO activity_notification_outbox (event_key, recipient_github_id, essential, destination_version, next_attempt_at, created_at, updated_at) VALUES ('reads-essential', '71', 1, ?, ?, ?, ?)", version, at, at, at)
+
+    const closed = try area.request("/api/v1/points/account/close", { json: { login: "member-71" }, as: closing.session })
+    const preferences = (try area.sql("SELECT enabled, security_enabled, destination_version FROM notification_email_preferences WHERE github_id = '71'")).map((row) => [row.enabled, row.security_enabled, row.destination_version])
+    const verifications = (try area.sql("SELECT cancelled_at IS NOT NULL AS cancelled FROM notification_email_verifications WHERE github_id = '71'")).map((row) => row.cancelled)
+    const outbox = (try area.sql("SELECT event_key, state FROM activity_notification_outbox WHERE recipient_github_id = '71' ORDER BY event_key")).map((row) => [row.event_key, row.state])
+
+    try same({
+      closed: [closed.status, (closed.headers["set-cookie"] ?? "").includes("Max-Age=0")],
+      preferences,
+      verifications,
+      outbox,
+      sessions: refused(try listed(closing.session)),
+    }, {
+      closed: [200, true],
+      preferences: [[0, 0, ""]],
+      verifications: [1],
+      outbox: [["reads-activity", "suppressed"], ["reads-essential", "suppressed"]],
+      sessions: [401, "session_expired", true],
+    })
+  })
+})

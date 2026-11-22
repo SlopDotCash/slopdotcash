@@ -1,9 +1,10 @@
-// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"
+// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project's open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Access, type BanAppeal, type Event, apply, decodeEvent, initial, latestRecord, vettingService } from "../../gen/backend__access.effect.vibe"
+import { type Access, type Event, type ProjectRequestRead, apply, canAppeal, decodeEvent, initial, latestRecord, openAppealsOf, vettingService } from "../../gen/backend__access.effect.vibe"
 import { type HistoryRow, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from "../projects/enforcement/reducers.vibe"
 import { AccessJournal, type AccountAction, JournalRow } from "@repo/ports/security"
 
@@ -37,12 +38,12 @@ export interface Context {
 export interface Settled {
   readonly before: Access
   readonly after: Access
-  readonly recordId: string | undefined
+  readonly recordId: string
 }
 
 export error RecordedByEnforcement { event: string }
 export error AwardsUnobserved { event: string }
-export error DenialUnrecordable { projectId: string; reason: string }
+export error AccountDecisionUnrecordable { projectId: string; reason: string }
 export error DecisionNotNext { decision: number; next: number }
 export error ProjectUnknown { project: number }
 
@@ -89,22 +90,18 @@ interface Sent {
   readonly by: number
 }
 
-function unreleasedBan(state: Access, project: number, target: number): boolean {
-  return state.bans.some((ban) => ban.project === project && ban.target === target && !state.releases.some((release) => release.enforcement === ban.enforcement && release.target === target))
-}
-
-export function openAccountAppealsOf(state: Access, project: number): ReadonlyArray<BanAppeal> {
-  return state.appeals.filter((appeal) => appeal.status === "AppealOpen" && appeal.project === project)
-}
-
-function accountAppealable(state: Access, project: number, target: number): boolean {
-  return unreleasedBan(state, project, target) && !state.appeals.some((appeal) => appeal.project === project && appeal.target === target && appeal.status === "AppealOpen")
-}
-
 interface Journal {
   readonly bans: ReadonlyMap<string, ReadonlyArray<BanRow>>
   readonly releases: ReadonlyMap<string, ReadonlyArray<ReleaseRow>>
   readonly history: Pick<Loaded, "journal" | "bans" | "releases">
+}
+
+function accountsOf<R extends { readonly github_id: string }>(rows: ReadonlyArray<R>): number[] {
+  return [...new Set(rows.map((entry) => numberOf(entry.github_id)))]
+}
+
+function projectRequestAt(journal: Journal, row: JournalRow): ProjectRequestRead {
+  return openProjectAppeals(historyOf(journal.history, row.project_id, row.sequence), false, row.sequence).length > 0 ? "ProjectRequestOpen" : "NoProjectRequest"
 }
 
 effect function sentFor(state: Access, journal: Journal, row: JournalRow, project: number) {
@@ -115,14 +112,12 @@ effect function sentFor(state: Access, journal: Journal, row: JournalRow, projec
   const confirming = row.action === "ban" && row.actor_role === "project-moderator" && latest.role === "VettingRole" && latest.kind === "BanAction" && latest.stateAfter === "ProjectBanned"
   if (recordBans.length > 0 && !confirming) throw new RowMismatch({ text: "maintainer bans", issue: `record ${row.id} bans accounts without a confirmed-malice decision` })
   if (row.action === "ban" && row.actor_role === "vetting-service") return [{ event: { type: "recordVettingBan", project, decision }, by: vettingService }] satisfies ReadonlyArray<Sent>
-  if (confirming) return [{ event: { type: "decideProjectBan", project, decision, accounts: recordBans.map((ban) => numberOf(ban.github_id)) }, by: actor }] satisfies ReadonlyArray<Sent>
+  if (confirming) return [{ event: { type: "decideProjectBan", project, decision, accounts: accountsOf(recordBans) }, by: actor }] satisfies ReadonlyArray<Sent>
   if (row.action === "reinstate" && row.actor_role === "project-moderator" && latest.stateAfter === "ProjectBanned") return [{ event: { type: "reinstateProject", project, decision }, by: actor }] satisfies ReadonlyArray<Sent>
-  // One account appeal per project covers every unreleased ban of the account there; a request while one is open,
-  // or by an account without an unreleased ban there, records no account appeal.
-  if (row.action === "request_reinstatement" && row.actor_role === "banned-account") return accountAppealable(state, project, actor) ? [{ event: { type: "appeal", project }, by: actor }] satisfies ReadonlyArray<Sent> : [] satisfies ReadonlyArray<Sent>
-  if (row.action === "reinstate_accounts") return [{ event: { type: "reinstateAccounts", decision, project, targets: [...new Set((journal.releases.get(row.id) ?? []).map((release) => numberOf(release.github_id)))] }, by: actor }] satisfies ReadonlyArray<Sent>
-  if (row.action === "deny_reinstatement" && row.actor_role === "project-moderator" && openProjectAppeals(historyOf(journal.history, row.project_id, row.sequence), false, row.sequence).length === 0) {
-    return openAccountAppealsOf(state, project).length > 0 ? [{ event: { type: "denyAppeal", project, decision }, by: actor }] satisfies ReadonlyArray<Sent> : [] satisfies ReadonlyArray<Sent>
+  if (row.action === "request_reinstatement" && row.actor_role === "banned-account" && canAppeal(state, actor, project)) return [{ event: { type: "appeal", project }, by: actor }] satisfies ReadonlyArray<Sent>
+  if (row.action === "reinstate_accounts") return [{ event: { type: "reinstateAccounts", decision, project, targets: accountsOf(journal.releases.get(row.id) ?? []), projectRequest: projectRequestAt(journal, row) }, by: actor }] satisfies ReadonlyArray<Sent>
+  if (row.action === "deny_reinstatement" && row.actor_role === "project-moderator" && projectRequestAt(journal, row) === "NoProjectRequest" && openAppealsOf(state, project).length > 0) {
+    return [{ event: { type: "denyAppeal", project, decision, projectRequest: "NoProjectRequest" }, by: actor }] satisfies ReadonlyArray<Sent>
   }
   return [] satisfies ReadonlyArray<Sent>
 }
@@ -135,7 +130,7 @@ effect function replayed(state: Access, sent: Sent, row: JournalRow) {
   return apply(state, sent.event, sent.by) catch effect () => { throw new RowMismatch({ text: "access journal", issue: `record ${row.id} is not a ${sent.event.type} the rules admit` }) }
 }
 
-export effect function accessOf([journalRows, projectRows, banRows, releaseRows, tablesRows]: ReadonlyArray<Rows>) {
+export effect function accessOf([journalRows, projectRows, banRows, releaseRows, tablesRows]: ReadonlyArray<Rows>, configured: ReadonlyArray<number>) {
   const rows = (try decoded(JournalRow, journalRows ?? [], "access journal")).toSorted((left, right) => left.row - right.row)
   const projects = try decoded(ProjectNumber, projectRows ?? [], "project numbers")
   const bans = try decoded(BanRow, banRows ?? [], "maintainer bans")
@@ -144,7 +139,8 @@ export effect function accessOf([journalRows, projectRows, banRows, releaseRows,
   const numbers = new Map(projects.map((project) => [project.id, project.row]))
   const byId = new Map(rows.map((row) => [row.id, row]))
   const journal: Journal = { bans: grouped(bans), releases: grouped(releases), history: { journal: rows, bans, releases } }
-  let state = initial
+  const deciders = rows.filter((row) => row.actor_role === "project-moderator").map((row) => numberOf(row.actor_github_id)).filter((id) => id > 0)
+  let state: Access = { ...initial, moderators: [...new Set([...configured, ...deciders])] }
   for (const row of rows) {
     const project = numbers.get(row.project_id)
     if (project === undefined) throw new RowMismatch({ text: "access journal", issue: `record ${row.id} names an unknown project` })
@@ -154,11 +150,12 @@ export effect function accessOf([journalRows, projectRows, banRows, releaseRows,
     if (stored.join(",") !== releasedBy(state, decisionOf(row.row)).join(",")) throw new RowMismatch({ text: "account reinstatements", issue: `record ${row.id} releases other bans than its decision` })
   }
   const nextRow = rows.reduce((highest, row) => Math.max(highest, row.row), 0) + 1
-  return { state, journal: rows, numbers, bans, releases, tables: tables?.tables ?? "", nextDecision: decisionOf(nextRow) } satisfies Loaded
+  return { state: { ...state, moderators: [...configured] }, journal: rows, numbers, bans, releases, tables: tables?.tables ?? "", nextDecision: decisionOf(nextRow) } satisfies Loaded
 }
 
 effect function aggregate() {
   const journal = try AccessJournal
+  const configured = (try (try Roles).snapshot("moderator")).map(numberOf).filter((id) => id > 0)
   return {
     name: "account bans and appeals",
     version: sql`SELECT ${tablesVersion} || '#' || coalesce(${try journal.version()}, '') AS version`,
@@ -169,7 +166,7 @@ effect function aggregate() {
       sql`SELECT enforcement_id, ban_enforcement_id, github_id FROM project_account_reinstatements ORDER BY rowid`,
       sql`SELECT ${tablesVersion} AS tables`,
     ],
-    decode: accessOf,
+    decode: (rows: ReadonlyArray<Rows>) => accessOf(rows, configured),
   }
 }
 
@@ -177,8 +174,8 @@ export effect function loadAccess() {
   return (try load(try aggregate())).state
 }
 
-function projectIdOf(loaded: Loaded, project: number): string | undefined {
-  return [...loaded.numbers].find(([, number]) => number === project)?.[0]
+function projectIdOf(loaded: Loaded, project: number): string {
+  return [...loaded.numbers].find(([, number]) => number === project)?.[0] ?? ""
 }
 
 function nextSequence(loaded: Loaded, projectId: string): number {
@@ -189,68 +186,65 @@ export function restrictionStateOf(loaded: Pick<Loaded, "journal" | "bans" | "re
   return foldRestriction(historyOf(loaded, projectId)).state
 }
 
-function recordIdOf(enforcement: number, loaded: Loaded): string | undefined {
-  return loaded.journal.find((row) => decisionOf(row.row) === enforcement)?.id
+function recordIdOf(enforcement: number, loaded: Loaded): string {
+  return loaded.journal.find((row) => decisionOf(row.row) === enforcement)?.id ?? ""
 }
 
 interface Planned {
-  readonly events: ReadonlyArray<Event>
   readonly projectId: string
   readonly action: AccountAction
 }
 
-effect function planned(loaded: Loaded, event: Event, by: number) {
-  const state = loaded.state
+effect function planned(loaded: Loaded, event: Event) {
   switch (event.type) {
     case "recordVettingBan": throw new RecordedByEnforcement({ event: event.type })
     case "decideProjectBan": throw new RecordedByEnforcement({ event: event.type })
     case "reinstateProject": throw new RecordedByEnforcement({ event: event.type })
     case "reserveAward": throw new AwardsUnobserved({ event: event.type })
     case "payAward": throw new AwardsUnobserved({ event: event.type })
-    case "appeal": return { events: [event], projectId: projectIdOf(loaded, event.project) ?? "", action: "request_reinstatement" } satisfies Planned
+    case "appeal": return { projectId: projectIdOf(loaded, event.project), action: "request_reinstatement" } satisfies Planned
     case "reinstateAccounts": {
-      if (event.decision > 0 && !state.decisions.includes(event.decision) && event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
-      return { events: [event], projectId: projectIdOf(loaded, event.project) ?? "", action: "reinstate_accounts" } satisfies Planned
+      if (event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
+      const projectId = projectIdOf(loaded, event.project)
+      const projectRequestOpen = restrictionStateOf(loaded, projectId) !== "clear" && openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0
+      if ((event.projectRequest === "ProjectRequestOpen") !== projectRequestOpen) throw new AccountDecisionUnrecordable({ projectId, reason: "the project request read differs from the enforcement journal" })
+      return { projectId, action: "reinstate_accounts" } satisfies Planned
     }
     case "denyAppeal": {
-      if (event.decision > 0 && !state.decisions.includes(event.decision) && event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
-      const projectId = projectIdOf(loaded, event.project) ?? ""
-      if (openAccountAppealsOf(state, event.project).length === 0 || state.decisions.includes(event.decision)) return { events: [event], projectId, action: "deny_reinstatement" } satisfies Planned
-      if (restrictionStateOf(loaded, projectId) === "clear") throw new DenialUnrecordable({ projectId, reason: "the project is clear" })
-      if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new DenialUnrecordable({ projectId, reason: "a project appeal is open" })
-      return { events: [event], projectId, action: "deny_reinstatement" } satisfies Planned
+      if (event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
+      const projectId = projectIdOf(loaded, event.project)
+      if (restrictionStateOf(loaded, projectId) === "clear") throw new AccountDecisionUnrecordable({ projectId, reason: "the project is clear" })
+      if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new AccountDecisionUnrecordable({ projectId, reason: "a project appeal is open" })
+      return { projectId, action: "deny_reinstatement" } satisfies Planned
     }
   }
-}
-
-effect function applied(state: Access, events: ReadonlyArray<Event>, by: number) {
-  let next = state
-  for (const event of events) next = try apply(next, event, by)
-  return next
 }
 
 function appealAfter(loaded: Loaded, projectId: string, after: Access, action: AccountAction): string {
   if (action === "request_reinstatement") return "requested"
   if (action === "deny_reinstatement") return "denied"
-  const project = loaded.numbers.get(projectId) ?? 0
   const projectAppealKept = restrictionStateOf(loaded, projectId) !== "clear" && openProjectAppeals(historyOf(loaded, projectId), true, 0).length > 0
-  return projectAppealKept || openAccountAppealsOf(after, project).length > 0 ? "requested" : "granted"
+  return projectAppealKept || openAppealsOf(after, loaded.numbers.get(projectId) ?? 0).length > 0 ? "requested" : "granted"
 }
 
 function reviewersOf(loaded: Loaded, projectId: string, context: Context): ReadonlyArray<string> {
   const banners = new Set(activeBans(loaded).filter((ban) => ban.projectId === projectId && ban.githubId === context.actor.githubId).map((ban) => ban.bannedBy))
-  return context.moderators.filter((moderator) => !banners.has(moderator))
+  return context.moderators.filter((moderator) => !banners.has(moderator) && moderator !== context.actor.githubId)
 }
 
 export effect function dryRun(loaded: Loaded, event: Event, by: number) {
-  const plan = try planned(loaded, event, by)
-  return try applied(loaded.state, plan.events, by)
+  try planned(loaded, event)
+  return try apply(loaded.state, event, by)
+}
+
+export effect function recordIdFor() {
+  return `enf_${(try randomId()).replaceAll("-", "")}`
 }
 
 effect function decide(loaded: Loaded, event: Event, by: number, context: Context) {
-  const plan = try planned(loaded, event, by)
-  const after = try applied(loaded.state, plan.events, by)
-  const recordId = `enf_${(try randomId()).replaceAll("-", "")}`
+  const plan = try planned(loaded, event)
+  const after = try apply(loaded.state, event, by)
+  const recordId = try recordIdFor()
   const record = try (try AccessJournal).append({
     id: recordId,
     projectId: plan.projectId,
@@ -266,7 +260,7 @@ effect function decide(loaded: Loaded, event: Event, by: number, context: Contex
     at: try isoNow(),
   })
   const releases = event.type === "reinstateAccounts"
-    ? after.releases.filter((release) => release.decision === event.decision).map((release) => sql`INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES (${recordId}, ${recordIdOf(release.enforcement, loaded) ?? ""}, ${String(release.target)})`)
+    ? after.releases.filter((release) => release.decision === event.decision).map((release) => sql`INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES (${recordId}, ${recordIdOf(release.enforcement, loaded)}, ${String(release.target)})`)
     : []
   return { value: { before: loaded.state, after, recordId }, writes: [...record, ...releases] } satisfies Decision<Settled>
 }
@@ -280,7 +274,7 @@ export effect function eventOf(input: unknown) {
 }
 
 export effect function admitted(event: Event, by: number) {
-  const loaded = (try load(try aggregate())).state
+  const loaded = try loadAccess()
   try apply(loaded.state, event, by)
   return loaded
 }
@@ -293,9 +287,7 @@ export interface Malice {
 export effect function maliceDecision(loaded: Loaded, by: number, projectId: string, sequence: number, accounts: ReadonlyArray<GithubActor>) {
   const project = loaded.numbers.get(projectId)
   if (project === undefined) throw new ProjectUnknown({ project: 0 })
-  const decision = loaded.nextDecision
-  const events: ReadonlyArray<Event> = [{ type: "decideProjectBan", project, decision, accounts: accounts.map((account) => numberOf(account.githubId)) }]
-  const after = try applied(loaded.state, events, by)
+  const after = try apply(loaded.state, { type: "decideProjectBan", project, decision: loaded.nextDecision, accounts: accounts.map((account) => numberOf(account.githubId)) }, by)
   const record = try (try AccessJournal).recordAt(projectId, sequence)
   return {
     after,

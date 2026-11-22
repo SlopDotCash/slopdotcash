@@ -1,7 +1,7 @@
 // spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
 import { isoAt, millisOf } from "@repo/platform/clock"
-import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
 import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
+import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
 import { instantOf } from "../kernels/records/instants.ts"
 import type { Category as PenaltyCategory } from "../../gen/slopbot__categories.ts"
 import type { ReviewState } from "../kernels/scoring/reviewBody.ts"
@@ -15,20 +15,22 @@ export interface Actor {
   readonly kind: string
 }
 
-// spec/points/referenceDiscussion.md: a retained-copy binding is taken only with the counted discussion read of the
-// merged pull request's references, bound to the outcome census source.
 export interface Retained {
   readonly actor: Actor
   readonly originalPullRequestUrl: string
   readonly discussion: ReferenceDiscussion
 }
 
-// spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge
-// resolution": the line counts of each reviewed merge resolution recorded for a merge commit. Absent when they were
-// not collected, which leaves the commit's credited actor set unknown.
-export interface ResolutionLines {
+export interface ChangedFile {
+  readonly filename: string
+  readonly previousFilename: string | null
   readonly additions: number
   readonly deletions: number
+}
+
+export interface FileAttribution {
+  readonly limited: boolean
+  readonly files: ReadonlyArray<ChangedFile>
 }
 
 export interface Commit {
@@ -38,7 +40,22 @@ export interface Commit {
   readonly retained: Retained | null
   readonly additions: number
   readonly deletions: number
-  readonly mergeResolutions?: ReadonlyArray<ResolutionLines>
+  readonly attributions: ReadonlyArray<FileAttribution>
+  readonly resolutions: ReadonlyArray<ReadonlyArray<ChangedFile>>
+}
+
+export interface RetainedCopyClaim {
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly verified: boolean
+}
+
+export interface JointClaim {
+  readonly id: string
+  readonly sourceId: string
+  readonly commitOid: string
+  readonly path: string
+  readonly copy: RetainedCopyClaim | null
 }
 
 export interface Review {
@@ -156,15 +173,9 @@ export interface JointUnit {
   readonly rationale: string
   readonly sources: ReadonlyArray<string>
   readonly carriers: ReadonlyArray<string>
-  readonly commits: ReadonlyArray<string>
+  readonly claims: ReadonlyArray<JointClaim>
   readonly retainedOriginal: string | null
   readonly reviewValues: ReadonlyArray<ReviewValue>
-  // The merge resolutions the decision's evidence records for the unit's merge commits, each named by its commit.
-  readonly mergeResolutions?: ReadonlyArray<UnitResolution>
-}
-
-export interface UnitResolution extends ResolutionLines {
-  readonly commit: string
 }
 
 export interface JointDecision {

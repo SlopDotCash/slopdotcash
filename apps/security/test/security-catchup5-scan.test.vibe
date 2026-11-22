@@ -1,0 +1,117 @@
+import { assert, describe, it } from "@effect/vitest"
+import { crc32 } from "node:zlib"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { inventoryBinds } from "../src/admission/binding.ts"
+import { localInstallHelpers } from "../src/scanner/inspect/helpers.ts"
+import { inspectRepository } from "../src/scanner/inspect/inspection.ts"
+import { type ScannerProfile, reviewedReply, startedEvidence } from "../src/scanner/providers/review.ts"
+import { verifyCoverage } from "../src/scanner/review/coverage.ts"
+
+const encoder = new TextEncoder()
+const utf8 = (text: string) => encoder.encode(text)
+
+function chunk(type: string, data: ReadonlyArray<number>): number[] {
+  const body = [...utf8(type), ...data]
+  const length = data.length
+  const crc = crc32(Uint8Array.from(body))
+  return [length >>> 24, (length >>> 16) & 0xff, (length >>> 8) & 0xff, length & 0xff, ...body, crc >>> 24, (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff]
+}
+
+const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...chunk("IHDR", [0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]), ...chunk("IDAT", [0x78, 0x9c, 0x63, 0, 0, 0, 2, 0, 1]), ...chunk("IEND", [])])
+
+const profile: ScannerProfile = {
+  reviewer: "opus",
+  transport: "anthropic-messages",
+  model: "claude-sonnet-5.5",
+  maxOutputTokens: 4096,
+  rateCard: { uncachedInputNanoUsdPerToken: "3000", cachedInputNanoUsdPerToken: "300", cacheCreationNanoUsdPerToken: "3750", outputNanoUsdPerToken: "15000" },
+}
+
+function reviewed(gaps: ReadonlyArray<unknown>) {
+  const coverage = { "wallet-drainer": "complete", "credential-theft": "complete", "secret-exfiltration": "complete", "unsafe-execution": "complete", "prompt-injection": "partial" }
+  const text = JSON.stringify({ verdict: "no-findings", confidence: 0.9, coverage, findings: [], gaps })
+  const bundle = { items: [{ id: "src/index.js", text: "export {}\n", sha256: sha256Of("export {}\n") }], visibilityGaps: [] }
+  const started = startedEvidence({ profile, inputSha256: "0".repeat(64), runId: "run-1", synthesis: false, gaps: [] })
+  const evidence = reviewedReply(started, profile, bundle, { text, model: profile.model, usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, responseId: "response-1", responseSha256: "1".repeat(64) })
+  const verified = verifyCoverage(evidence, { kind: "single", supplied: new Set(["src/index.js"]), elsewhere: new Set(), covered: new Set(["assets/logo.png"]) })
+  return { status: verified.review.status, failure: verified.failure, area: verified.verifiedCoverage?.["prompt-injection"], gaps: verified.visibilityGaps }
+}
+
+describe('Scanner on verified evidence (spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist")', () => {
+  it("A reviewer's reason for partial coverage is checked against what the scan supplied", () => {
+    const outside = (reference: string) => [{ threat: "prompt-injection", supplied: false, reference }]
+    assert.deepStrictEqual(
+      {
+        download: reviewed(outside("https://example.test/installer.sh")),
+        suppliedItem: reviewed([{ threat: "prompt-injection", supplied: true, reference: "src/index.js" }]),
+        suppliedButDenied: reviewed(outside("src/index.js:3")),
+        coveredImage: reviewed(outside("./assets/logo.png")),
+        noReason: reviewed([]),
+        unknownThreat: reviewed([{ threat: "phishing", supplied: false, reference: "x" }]).failure,
+      },
+      {
+        download: { status: "completed", failure: undefined, area: "outside-revision", gaps: ["opus:prompt-injection:outside-revision"] },
+        suppliedItem: { status: "completed", failure: undefined, area: "partial", gaps: ["opus:prompt-injection:partial"] },
+        suppliedButDenied: { status: "completed", failure: undefined, area: "partial", gaps: ["opus:prompt-injection:partial"] },
+        coveredImage: { status: "completed", failure: undefined, area: "complete", gaps: [] },
+        noReason: { status: "completed", failure: undefined, area: "partial", gaps: ["opus:prompt-injection:partial"] },
+        unknownThreat: "invalid-review",
+      },
+    )
+  })
+
+  it("An exec-wrapped lifecycle helper is followed or is a gap", () => {
+    const files = [{ path: "package.json", text: "{}" }, { path: "scripts/setup.sh", text: "#!/bin/sh\necho ready\n" }]
+    const followed = (command: string) => {
+      const helpers = localInstallHelpers(files, [{ path: "package.json#scripts.postinstall", text: command, directory: "" }])
+      return { included: [...helpers.included], gap: helpers.unacquired.length > 0 }
+    }
+    assert.deepStrictEqual(
+      ["sudo -E env FOO=1 nice -n 5 sh scripts/setup.sh", "timeout 30 sh scripts/setup.sh", "su - builder -c 'sh scripts/setup.sh'", "sudo --frobnicate sh scripts/setup.sh", "mytool sh scripts/setup.sh", "echo sh scripts/setup.sh", "xargs sh"].map(followed),
+      [
+        { included: ["scripts/setup.sh"], gap: false },
+        { included: ["scripts/setup.sh"], gap: false },
+        { included: ["scripts/setup.sh"], gap: false },
+        { included: [], gap: true },
+        { included: [], gap: true },
+        { included: [], gap: false },
+        { included: [], gap: true },
+      ],
+    )
+  })
+
+  it('A well-formed image is media, one with appended bytes is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => {
+    const inspection = inspectRepository({
+      files: [
+        { path: "README.md", bytes: utf8("# Fixture\n") },
+        { path: "assets/logo.png", bytes: png },
+        { path: "assets/broken.png", bytes: Uint8Array.from([...png, 0]) },
+        { path: "slop-skill-template/SKILL.md", bytes: utf8("# Not the template\n") },
+        { path: "slop-skill-template/contributor/SKILL.md", bytes: utf8("# Contributor skill\n"), templateInput: true },
+      ],
+    })
+    const clean = inspectRepository({ files: [{ path: "README.md", bytes: utf8("# Fixture\n") }, { path: "assets/logo.png", bytes: png }] })
+    const source: unknown = JSON.parse(new TextDecoder().decode(clean.inventory))
+    const altered: unknown = JSON.parse(new TextDecoder().decode(clean.inventory).replace(sha256Of(png), "0".repeat(64)))
+    assert.deepStrictEqual(
+      {
+        media: inspection.media.map((record) => [record.path, record.format, record.sha256]),
+        artifacts: inspection.artifacts.map((artifact) => [artifact.path, artifact.state]),
+        deterministic: inspection.deterministic.map((record) => [record.path, record.class]),
+        items: inspection.items.map((item) => item.id).filter((id) => id.startsWith("assets/") || id.startsWith("slop-skill-template/")),
+        reserved: inspection.visibilityGaps.filter((gap) => gap.startsWith("Repository path in the reserved template namespace")),
+        retainedEqual: inventoryBinds(source, source, { artifacts: clean.artifacts }, []),
+        retainedChanged: inventoryBinds(source, altered, { artifacts: clean.artifacts }, []),
+      },
+      {
+        media: [["assets/logo.png", "png", sha256Of(png)]],
+        artifacts: [["assets/broken.png", "quarantined"]],
+        deterministic: [["slop-skill-template/contributor/SKILL.md", "template"]],
+        items: ["slop-skill-template/SKILL.md"],
+        reserved: ["Repository path in the reserved template namespace: slop-skill-template/SKILL.md"],
+        retainedEqual: true,
+        retainedChanged: false,
+      },
+    )
+  })
+})

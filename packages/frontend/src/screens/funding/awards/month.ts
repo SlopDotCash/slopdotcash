@@ -3,9 +3,10 @@ import { decodeBytes32, escrowAbi } from "@repo/settlement/chain/evm/abi";
 import { commitAwardCalldata } from "@repo/settlement/chain/evm/actions";
 import type { MonthlyAsset, MonthlyAwardState } from "@repo/settlement/client";
 import { decimalRefusalMessage, formatBaseUnits, parseDecimalAmount } from "@repo/settlement/kernels/amounts";
-import { FIRST_PERIOD, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "@repo/settlement/kernels/calendar";
+import { FIRST_PERIOD, formatPeriod, isPeriod, parsePeriod, shiftPeriod } from "@repo/settlement/kernels/calendar";
 import type { StatusProps } from "@repo/ui";
 import { decodeFunctionData } from "viem";
+import { lastReachableMonth } from "../../../../gen/frontend__ownerMonthly.ts";
 import { type AwardDisplay, type AwardFacts, awardPresentation as decisionPresentation, paymentDisplay, paymentPresentation } from "../../../../gen/frontend__projections.ts";
 import { assetSymbol, knownAssetSymbol } from "../../../kernels/assetText.ts";
 import { storageKeys } from "../../../platform/storage.vibe";
@@ -17,7 +18,7 @@ export type Presentation = StatusProps["presentation"];
 
 export interface MonthBounds {
   readonly first: string;
-  readonly lastClosed: string;
+  readonly last: string;
   readonly start: string;
 }
 
@@ -50,18 +51,20 @@ export function shiftMonth(period: string, months: number): string {
   }
 }
 
-/** The months an owner may review: from the first monthly period, or an older public month, to the last closed month. @throws {never} */
-export function monthBounds(publicMonths: ReadonlyArray<string>, nowMs: number): MonthBounds {
+/** The months an owner may review: from the first monthly period, or an older public month, to the last reachable month. @throws {never} */
+export function monthBounds(projectId: string, publicMonths: ReadonlyArray<string>, nowMs: number): MonthBounds {
   const months = [...new Set(publicMonths.filter((month) => parsePeriod(month) !== undefined))].sort();
   const firstPeriod = formatPeriod(FIRST_PERIOD);
   const earliest = months[0];
   const latest = months.at(-1);
   const current = parsePeriod(new Date(nowMs).toISOString().slice(0, 7));
   const lastClosed = current === undefined ? firstPeriod : shiftMonth(formatPeriod(current), -1);
+  const reachable = lastReachableMonth(projectId, Math.floor(nowMs / 1000), parsePeriod(lastClosed) ?? FIRST_PERIOD);
+  const last = isPeriod(reachable) ? formatPeriod(reachable) : lastClosed;
   return {
     first: earliest !== undefined && earliest < firstPeriod ? earliest : firstPeriod,
-    lastClosed,
-    start: latest !== undefined && latest > lastClosed ? latest : lastClosed,
+    last,
+    start: latest !== undefined && latest > last ? latest : last,
   };
 }
 

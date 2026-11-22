@@ -236,7 +236,7 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const connection = yield* connected;
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* page.follow(actor);
-      yield* page.review("Transfer", 0n, quietPool, unreadLocks);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
       let savedBeforePrompt: string | null = null;
       const sent = yield* page.submit("Transfer", (beforePrompt) =>
         sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", (plan) => Effect.tap(beforePrompt(plan), () => Effect.sync(() => { savedBeforePrompt = sessionStorage.getItem(keys.transfer); }))));
@@ -249,7 +249,7 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
     const signedOut = await follow(0);
     const back = await follow(actor);
     chain.finalize();
-    const final = await runtime.runPromise(page.autoCheck("Transfer", 0, check));
+    const final = await runtime.runPromise(page.autoCheck("Transfer", () => 0, check));
     expect(result.sent).toBe(chain.mined[0]?.hash);
     const savedRecord = JSON.parse(String(result.savedBeforePrompt));
     expect(savedRecord).toMatchObject({ account: actor, request: "transfer" });
@@ -278,14 +278,14 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const connection = yield* connected;
       const first = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* first.follow(actor);
-      yield* first.review("Transfer", 0n, quietPool, unreadLocks);
+      yield* first.review("Transfer", 0n, quietPool, unreadLocks, "");
       const send = (page: typeof first) => Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt)), { onFailure: (error) => error._tag, onSuccess: () => "sent" });
       const unclear = yield* send(first);
       const reloaded = yield* ownerVaultPage(sessionSlots(), keys, true);
       const other = yield* reloaded.follow(actor + 1);
       const none = yield* reloaded.follow(0);
       const same = yield* reloaded.follow(actor);
-      const resend = yield* Effect.match(reloaded.review("Transfer", 0n, quietPool, unreadLocks), { onFailure: (error) => error._tag, onSuccess: (state) => state.transfer.phase });
+      const resend = yield* Effect.match(reloaded.review("Transfer", 0n, quietPool, unreadLocks, ""), { onFailure: (error) => error._tag, onSuccess: (state) => state.transfer.phase });
       const unsent = yield* reloaded.confirmUnsent("Transfer");
       return { unclear, otherPhase: other.transfer.phase, nonePhase: none.transfer.phase, samePhase: same.transfer.phase, resend, afterConfirm: [unsent.transfer.phase, sessionStorage.getItem(keys.transfer)], sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));
@@ -301,7 +301,7 @@ describe('Create and register the vault without asking the wallet twice (spec/fr
       const connection = yield* connected;
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* page.follow(actor);
-      yield* page.review("Transfer", 10n ** 18n, quietPool, unreadLocks);
+      yield* page.review("Transfer", 10n ** 18n, quietPool, unreadLocks, "");
       const refused = yield* Effect.match(page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "withdraw", "send", "1", "finalized", beforePrompt)), { onFailure: (error) => error.message, onSuccess: () => "sent" });
       return { refused, saved: sessionStorage.getItem(keys.transfer), phase: (yield* page.machine.get()).transfer.phase, prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length };
     }));
@@ -339,6 +339,38 @@ describe('Offer one atomic request only on a wallet that already supports it (sp
       };
     }));
     expect(result).toEqual({ capability: true, phases: ["WalletReference", "WalletReference", "HashKnown", "HashKnown", "Verified"], sameReference: true, again: "BatchStopped", savedIntent: true, cleared: null, batches: 1 });
+  });
+
+  it('a separate approval included in a canonical block that is not final lets the owner review the deposit against the live allowance, and the deposit counts only at its finalized event (spec/frontend/batchedDeposit.md, "A separate approval proceeds at canonical inclusion and never counts as funding"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', async () => {
+    const options = { atomic: false, send: "mine" as const, approved: false };
+    const chain = fakeChain(options);
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e", chain.provider);
+      const connection = yield* connected;
+      const page = yield* ownerVaultPage(sessionSlots(), { creation: keys.creation, transfer: batchKey }, true);
+      yield* page.follow(actor);
+      const first = yield* reviewTransfer(connection, tokenVault, "deposit", "2", "finalized");
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
+      yield* page.submit("Transfer", (beforePrompt) => sendTransfer(connection, tokenVault, "deposit", "approve", "2", "finalized", beforePrompt));
+      const checkStep = (step: "approve" | "send") => (saved: Saved) => Effect.map(checkTransfer(connection, tokenVault, "deposit", step, 2_000_000n, saved.plan, saved.attempt.hash), (status): Answer => (status === "finalized" || status === "approvalConfirmed" ? "FinalRead" : status === "received" ? "IncludedRead" : status === "failed" || status === "noVault" ? "Reverted" : "StillPending")).pipe(Effect.orElseSucceed((): Answer => "ReadFailed"));
+      const approved = yield* page.ask("Transfer", "OwnerCheck", checkStep("approve"));
+      options.approved = true;
+      const second = yield* reviewTransfer(connection, tokenVault, "deposit", "2", "finalized");
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
+      yield* page.submit("Transfer", (beforePrompt) => sendTransfer(connection, tokenVault, "deposit", "send", "2", "finalized", beforePrompt));
+      const included = yield* page.ask("Transfer", "OwnerCheck", checkStep("send"));
+      chain.finalize();
+      const counted = yield* page.autoCheck("Transfer", () => 0, checkStep("send"));
+      return {
+        needed: [first.approvalNeeded, second.approvalNeeded],
+        approved: [approved.notice, approved.transfer.phase],
+        included: [included.notice, included.transfer.phase],
+        counted: [counted.notice, counted.transfer.phase, sessionStorage.getItem(batchKey)],
+        prompts: chain.seen.filter((method) => method === "eth_sendTransaction").length,
+      };
+    }));
+    expect(result).toEqual({ needed: [true, false], approved: ["Counted", "Done"], included: ["Received", "Sent"], counted: ["Counted", "Done", null], prompts: 2 });
   });
 
   it("a deposit whose allowance already covers the amount asks the wallet for the deposit alone, with no approval", async () => {
@@ -622,15 +654,34 @@ describe('Withdraw only funds the month\'s promise or locks leave free (spec/fro
     const result = await runtime.runPromise(Effect.gen(function* () {
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* page.follow(actor);
-      const allowed = yield* page.review("Transfer", 200n, promisePool, locks);
-      const refused = yield* Effect.match(page.review("Transfer", 201n, promisePool, locks), { onFailure: (error) => error.message, onSuccess: (state) => state.notice });
+      const allowed = yield* page.review("Transfer", 200n, promisePool, locks, "");
+      const refused = yield* Effect.match(page.review("Transfer", 201n, promisePool, locks, ""), { onFailure: (error) => error.message, onSuccess: (state) => state.notice });
       return { allowed: [allowed.notice, allowed.transfer.phase], refused, saved: sessionStorage.getItem(keys.transfer) };
     }));
     expect(result).toEqual({ allowed: ["Quiet", "Reviewed"], refused: lockedFundsText, saved: null });
   });
+
+  it("with two vaults, a withdrawal that would leave this vault's freshly reviewed free balance below the owed amount is refused before the wallet is asked although the pool's cached total covers it, and a review without a free balance skips the page's guard", async () => {
+    const pool: PoolFacts = { ...quietPool, monthlyPool: true, amount: toAmount(1000n), freeNow: toAmount(5000n) };
+    const reviewed = { cachedSupport: false, walletRead: false, freeKnown: true, free: toAmount(1100n), locked: toAmount(0n) };
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* page.follow(actor);
+      const shown = "promise";
+      const refused = yield* Effect.match(page.review("Transfer", 200n, pool, reviewed, shown), { onFailure: (error) => [error._tag, error.notice, error.message === shown], onSuccess: (state) => [state.notice] });
+      const phase = (yield* page.machine.get()).transfer.phase;
+      const above = yield* page.review("Transfer", 100n, pool, reviewed, shown);
+      const other = yield* ownerVaultPage(sessionSlots(), keys, true);
+      yield* other.follow(actor);
+      const unread = yield* other.review("Transfer", 5000n, pool, { ...reviewed, freeKnown: false }, shown);
+      return { refused, phase, above: above.transfer.phase, unread: unread.transfer.phase, saved: sessionStorage.getItem(keys.transfer) };
+    }));
+    expect(result).toEqual({ refused: ["VaultRefused", "WithdrawalRefused", true], phase: "Idle", above: "Reviewed", unread: "Reviewed", saved: null });
+  });
 });
 
-describe('Check registration and transfers automatically without retiring the owner (spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing")', () => {
+describe('Check registration and transfers automatically without retiring the owner (spec/frontend/ownerVault.md, "Story: Check registration and transfers automatically without retiring the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request")', () => {
   it("in a hidden tab a saved transfer is not checked automatically and spends none of its automatic asks", async () => {
     const chain = fakeChain({ atomic: false, send: "mine" });
     const runtime = started();
@@ -640,13 +691,57 @@ describe('Check registration and transfers automatically without retiring the ow
       const connection = yield* connected;
       const page = yield* ownerVaultPage(sessionSlots(), keys, true);
       yield* page.follow(actor);
-      yield* page.review("Transfer", 0n, quietPool, unreadLocks);
+      yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
       yield* page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt));
       yield* page.tabHidden(true);
-      const waited = yield* Effect.timeoutOption(page.autoCheck("Transfer", 5, () => Effect.sync((): Answer => { asks += 1; return "StillPending"; })), "200 millis");
+      const waited = yield* Effect.timeoutOption(page.autoCheck("Transfer", () => 5, () => Effect.sync((): Answer => { asks += 1; return "StillPending"; })), "200 millis");
       const state = yield* page.machine.get();
       return { waited: Option.isNone(waited), phase: state.transfer.phase, autoAsks: state.transfer.autoAsks, hiddenAsks: state.transfer.hiddenAsks, kept: sessionStorage.getItem(keys.transfer) !== null };
     }));
     expect({ ...result, asks }).toEqual({ waited: true, phase: "Sent", autoAsks: 0, hiddenAsks: 0, kept: true, asks: 0 });
+  });
+
+  it("a saved deposit keeps being checked after failed reads and stops only at 240 asks or at a final answer", async () => {
+    const chain = fakeChain({ atomic: false, send: "mine" });
+    const runtime = started();
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      announce("3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f", chain.provider);
+      const connection = yield* connected;
+      const sentPage = Effect.gen(function* () {
+        sessionStorage.clear();
+        const page = yield* ownerVaultPage(sessionSlots(), keys, true);
+        yield* page.follow(actor);
+        yield* page.review("Transfer", 0n, quietPool, unreadLocks, "");
+        yield* page.submit("Transfer", (beforePrompt) => sendTransfer(connection, nativeVault, "deposit", "send", "5", "finalized", beforePrompt));
+        return page;
+      });
+      let asks = 0;
+      const failing = yield* sentPage;
+      const limited = yield* failing.autoCheck("Transfer", () => 0, () => Effect.sync((): Answer => (++asks <= 3 ? "ReadFailed" : "StillPending")));
+      const limitedAsks = asks;
+      asks = 0;
+      const answered = yield* sentPage;
+      const final = yield* answered.autoCheck("Transfer", () => 0, () => Effect.sync((): Answer => (++asks <= 3 ? "Refused" : "FinalRead")));
+      return {
+        limited: [limitedAsks, limited.transfer.phase, limited.transfer.autoAsks, limited.transfer.stopped, limited.notice],
+        final: [asks, final.transfer.phase, final.notice],
+      };
+    }));
+    expect(result).toEqual({ limited: [240, "Sent", 240, false, "Quiet"], final: [4, "Done", "Counted"] });
+  });
+
+  it("a saved creation stops being checked after three failed checks in a row and keeps its saved request", async () => {
+    const runtime = started();
+    let asks = 0;
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      const page = yield* ownerVaultPage(sessionSlots(), keys, false);
+      yield* page.follow(actor);
+      yield* page.review("Creation", 0n, quietPool, unreadLocks, "");
+      const plan = { kind: "evmCall" as const, from: owner, chainId: quantity(BigInt(chainId)), to: factory, data: "0x", value: "0x0" };
+      yield* page.submit("Creation", (beforePrompt) => Effect.as(beforePrompt(plan), hash("c")));
+      const stopped = yield* page.autoCheck("Creation", () => 0, () => Effect.sync((): Answer => { asks += 1; return "Refused"; }));
+      return { phase: stopped.creation.phase, stopped: stopped.creation.stopped, refusals: stopped.creation.refusals, notice: stopped.notice, kept: sessionStorage.getItem(keys.creation) !== null };
+    }));
+    expect({ ...result, asks }).toEqual({ phase: "Sent", stopped: true, refusals: 3, notice: "CheckFailed", kept: true, asks: 3 });
   });
 });

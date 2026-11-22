@@ -1,15 +1,17 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
 import type { WorkItem, WorkQueue } from "@repo/points/client";
 import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
-import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
+import { fromAmount, parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
 import type { ListingFacts } from "../../../gen/frontend__poolListing.ts";
-import { promiseText, promiseWarning } from "../../../gen/frontend__projections.ts";
+import { type PromiseFacts, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
+import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
 import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
 import { listingOf } from "../home/listing.ts";
+import { projectPromise } from "../home/promise.ts";
 import { poolReadOf, rowsValid, totalOf } from "./history.ts";
 import type { ShownProject } from "./project.schema.ts";
 
@@ -22,22 +24,11 @@ export interface DirectMonth {
   readonly month: string;
   readonly amountMicro: bigint;
   readonly count: number;
-  readonly paidOn: string;
 }
 
 export const workShown = 10;
 
 export const historyShown = 3;
-
-const cycleStates: Readonly<Record<CycleIndexEntry["state"], string>> = {
-  "closed-no-awards": "Closed, no awards",
-  "external-provisional": "Provisional external shares",
-  review: "Under review",
-  "payment-ready": "Approved",
-  "settlement-planned": "Approved, payment ready",
-  paid: "Paid",
-  "wound-up": "Approved, payment held",
-};
 
 const dayFormat = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", timeZone: "UTC", year: "numeric" });
 const monthFormat = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC", year: "numeric" });
@@ -74,31 +65,25 @@ export function projectListing({ project, funding }: { project: ShownProject; fu
   return listingOf({ status: project.status, securityBounty: project.securityBounty, funding: funding.facts });
 }
 
-/**
- * Whether an owner's honor-system promise shows for this month (spec/frontend/projections.md, "An owner's honor-system
- * promise shows this month's amount as promised, never as vault-backed"). The promise replaces the not-listed notice.
- * @throws {never}
- */
-export function promised(project: ShownProject, funding: PoolFunding): boolean {
-  return promise(project, funding) !== "";
-}
-
-/** The summary line's promise warning, "Promised · Not vaulted" or "Promised · Vault funding unverified", or "". @throws {never} */
-export function promise(project: ShownProject, funding: PoolFunding): string {
-  return promiseText(promiseWarning({ pool: funding.facts, honorSystem: project.reward.honorSystem === true, vaultUnread: funding.vaultUnread }));
-}
-
-/**
- * The project as its reward summary may show it: an unfunded pool's cap reads as zero, except that an owner's
- * promise shows this month's amount. @throws {never}
- */
-export function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
-  if (promised(project, funding)) return { ...project, reward: { ...project.reward, monthlyCapMinor: capOf(project, funding.period), cycleCaps: [] } };
+/** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */
+function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
   const zeroed = zeroedPoolCap(
     { monthlyPool: project.reward.kind === "monthly-pool", monthlyCapMinor: project.reward.monthlyCapMinor, hasCycleCaps: project.reward.cycleCaps.length > 0, assetKind: project.rewardAsset?.kind },
     funding,
   );
   return zeroed === undefined ? project : { ...project, reward: { ...project.reward, ...zeroed, cycleCaps: [] } };
+}
+
+/** The owner's honor-system facts this month, from the project's recorded paying vaults and the cached vault reads. @throws {never} */
+export function projectPromiseOf({ project, funding, read, networkPays }: { project: ShownProject; funding: PoolFunding; read: FundingVaults; networkPays: NetworkPays }): PromiseFacts {
+  return projectPromise({ pool: funding.facts, honorSystem: project.reward.honorSystem === true, deployments: project.deployments, vaults: read.vaults ?? [], networkPays });
+}
+
+/** The project as its reward line shows it: a promised month keeps this month's amount, an unfunded pool otherwise reads as zero. @throws {RangeError} */
+export function shownPool(project: ShownProject, funding: PoolFunding, promise: PromiseFacts): ShownProject {
+  if (promiseWarning(promise) === "NoPromise") return shownReward(project, funding);
+  const month = fromAmount(funding.facts.amount);
+  return { ...project, reward: { ...project.reward, monthlyCapMinor: month, monthlyCapDisplay: formatRewardMinor(month, project.rewardAsset), cycleCaps: [] } };
 }
 
 /** The repository the prompt names: its current path after a transfer. @throws {never} */
@@ -128,7 +113,6 @@ export function directMonths(transfers: ReadonlyArray<DirectTransfer>): Readonly
       month,
       amountMicro: totalOf(paid.map((transfer) => parseBaseUnits(transfer.amountMicro) ?? 0n)),
       count: paid.length,
-      paidOn: paid.reduce((latest, transfer) => (transfer.blockTime > latest ? transfer.blockTime : latest), ""),
     }))
     .sort((left, right) => right.month.localeCompare(left.month));
 }
@@ -162,10 +146,4 @@ export function projectCycles(cycles: ReadonlyArray<CycleIndexEntry>, projectId:
 /** The months whose monthly-pool cycle lists contributors, for the owner's award review. @throws {never} */
 export function awardMonths(cycles: ReadonlyArray<CycleIndexEntry>, projectId: string): ReadonlyArray<string> {
   return cycles.filter((cycle) => cycle.projectId === projectId && cycle.kind === "monthly-pool" && cycle.contributors.length > 0).map((cycle) => cycle.cycleId);
-}
-
-/** @throws {never} */
-export function cycleLabel(cycle: Pick<CycleIndexEntry, "approvedAt" | "reviewEndsAt" | "state">, nowMs: number): string {
-  const awaiting = cycle.state === "review" && cycle.approvedAt === null && cycle.reviewEndsAt !== null && Date.parse(cycle.reviewEndsAt) <= nowMs;
-  return awaiting ? "Under review, awaiting approval" : cycleStates[cycle.state];
 }

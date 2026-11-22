@@ -20,7 +20,7 @@ const inlinedTemplatePaths = {
 
 effect function frontmatterValue(source: string, field: keyof typeof frontmatterPatterns) {
   const match = frontmatterPatterns[field].exec(source)
-  if (match === null) throw refused(`a global skill omitted ${field}`)
+  if (match === null) throw refused(`global skill omitted ${field}`)
   const value = (match[1] ?? "").trim()
   if (value.startsWith('"')) {
     const parsed: unknown = Effect.try(() => JSON.parse(value) as unknown) catch () => undefined
@@ -28,7 +28,7 @@ effect function frontmatterValue(source: string, field: keyof typeof frontmatter
   } else if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)) {
     return value
   }
-  throw refused(`a global skill has invalid ${field}`)
+  throw refused(`global skill has invalid ${field}`)
 }
 
 effect function templatePathsAgree(root: string) {
@@ -40,8 +40,8 @@ effect function templatePathsAgree(root: string) {
 }
 
 function llmsText(outputs: ReadonlyArray<GlobalOutput>, descriptions: ReadonlyMap<GlobalRole, string>): string {
-  const lines = outputs.map((output) => `- [${roleLabel(output.role)}](${publicSiteOrigin}/${rolePath(output.role)}): ${descriptions.get(output.role) ?? ""} SHA-256: ${output.llmsDigest}. Source revision ${output.revision} (${statusText(output.status)}).`)
-  return `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n${lines.join("\n")}\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n- [Skill manifest](${publicSiteOrigin}/skill-manifest.json): The build commit and the source status of each global skill.\n\nThese skills never authorize wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`
+  const lines = outputs.map((output) => `- [${roleLabel(output.role)}](${publicSiteOrigin}/${rolePath(output.role)}): ${descriptions.get(output.role) ?? ""} SHA-256: ${output.llmsDigest}. Source revision: ${output.revision} (${statusText(output.status)}).`)
+  return `# Slop\n\n> Contribute to or maintain open source with your agent. GitHub remains the authority for repository work.\n\n## Agent onboarding\n\n${lines.join("\n")}\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n- [Skill source manifest](${publicSiteOrigin}/skill-manifest.json): Source paths and revision status for each global skill.\n\nChecksums detect corruption; they do not prove source identity or grant authority. Skills never authorize credential, private-key, private trace, or raw conversation disclosure.\n`
 }
 
 interface Read {
@@ -51,8 +51,6 @@ interface Read {
   readonly source: GlobalSource
 }
 
-// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same
-// digest": every role is read and validated before any file is produced, so one refused source publishes nothing.
 effect function readRole(root: string, role: GlobalRole, commit: string) {
   const name = roleName(role)
   const directory = `skills/${name}`
@@ -60,9 +58,11 @@ effect function readRole(root: string, role: GlobalRole, commit: string) {
   const validated = (try validateSkill(root, directory)).outcome === "Valid"
   const listing = try regularFiles(root, directory)
   const files = listing.irregular === undefined ? [...listing.paths] : []
+  if (files.length !== 1 || files[0] !== "SKILL.md") throw refused(`${name} must remain one reviewable SKILL.md`)
   const bytes = try sourceBytes(root, sourcePath)
   const text = try utf8Text(bytes, sourcePath)
   const named = try frontmatterValue(text, "name")
+  if (named !== name) throw refused(`global skill must be named ${name}`)
   const description = try frontmatterValue(text, "description")
   const committed = (try committedDigests(root, commit, [sourcePath])).get(sourcePath) ?? ""
   const source: GlobalSource = { role, files, name: named, validated, bytes: { path: sourcePath, working: sha256Hex(bytes), committed } }

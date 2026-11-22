@@ -16,7 +16,7 @@ const projectId = "appeals-project"
 const moderators = [18633264, 202660855]
 const day = 86_400_000
 const week = 7 * day
-const authors = ["lia", "sam", "rex", "ban", "old", "kim", "jo", "pat", "aro", "mar"] as const
+const authors = ["lia", "sam", "rex", "ban", "old", "kim", "jo", "pat", "aro", "mar", "nod"] as const
 const scamText = "Send your wallet seed phrase to claim the airdrop now."
 const scamQuote = "Send your wallet seed phrase"
 const moderatorLabel = "slopbot: moderator"
@@ -215,11 +215,11 @@ const draftHeader = "**Slopbot appeal triage**"
 const upheldBy = (role: string) => `**Appeal upheld** (decided by the ${role}).`
 
 layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('An appeal is drafted first, a low-stakes draft resolves on acceptance, and a scam finding, a rejected draft, a ban or seven days send it to a moderator who alone decides; an upheld appeal reopens, removes the label and reverses the debit once (spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/slopbot/appeals.md, "The scheduled dispatcher escalates an appeal still unresolved seven days after it opened"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit")', () => effect {
+  it.effect('An appeal is drafted first, a low-stakes draft resolves on acceptance, and a scam finding, a rejected draft, a ban (even one found before any draft) or seven days send it to a moderator who alone decides; an upheld appeal reopens, removes the label and reverses the debit once (spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/slopbot/appeals.md, "The scheduled dispatcher escalates an appeal still unresolved seven days after it opened"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit")', () => effect {
     const area = try Area
     const { fake, items, net, providers } = try World
     try installed(area)
-    for (const login of ["lia", "rex", "ban", "old"] as const) try found(area, login, "spam")
+    for (const login of ["lia", "rex", "ban", "old", "nod"] as const) try found(area, login, "spam")
     try found(area, "sam", "scam")
     try closedForScam(area, "sam")
     try area.sql("INSERT INTO appeal_bans (github_id) VALUES (?)", String(idOf("ban")))
@@ -233,6 +233,7 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       rex: try appealComment("rex", "please look again"),
       ban: try appealComment("ban", "not spam"),
       old: try appealComment("old", "wrong label"),
+      nod: try appealComment("nod", "not spam either"),
     }
     const signals = {
       lia: try signal(area, "lia", "appeal", idOf("lia"), comments.lia),
@@ -240,8 +241,10 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       rex: try signal(area, "rex", "appeal", idOf("rex"), comments.rex),
       ban: try signal(area, "ban", "appeal", idOf("ban"), comments.ban),
       old: try signal(area, "old", "appeal", idOf("old"), comments.old),
+      nod: try signal(area, "nod", "appeal", idOf("nod"), comments.nod),
       stranger: try signal(area, "lia", "appeal", idOf("kim")),
     }
+    try area.sql("INSERT INTO appeal_bans (github_id) VALUES (?)", String(idOf("nod")))
     const commands = {
       liaAccept: try command(area, "lia", "accept", idOf("lia")),
       liaReplay: try command(area, "lia", "accept", idOf("lia")),
@@ -250,6 +253,7 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       samModerator: try command(area, "sam", "uphold", moderators[0] ?? 0),
       samReplay: try command(area, "sam", "deny", moderators[1] ?? 0),
       rexReject: try command(area, "rex", "reject", idOf("rex")),
+      nodBannedBeforeDraft: try command(area, "nod", "accept", idOf("nod")),
     }
     const opened = try openedAt(area, "old")
     const early = (try area.post("/test/appeals/dispatch", { now: opened + week - 1000 })).body
@@ -263,8 +267,8 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
     try same({
       signals,
       commands,
-      rows: { lia: try appealRow(area, "lia"), sam: try appealRow(area, "sam"), rex: try appealRow(area, "rex"), ban: try appealRow(area, "ban"), old: try appealRow(area, "old") },
-      notices: { lia: try noticeCount(area, "lia"), sam: try noticeCount(area, "sam"), rex: try noticeCount(area, "rex"), ban: try noticeCount(area, "ban"), old: try noticeCount(area, "old") },
+      rows: { lia: try appealRow(area, "lia"), sam: try appealRow(area, "sam"), rex: try appealRow(area, "rex"), ban: try appealRow(area, "ban"), old: try appealRow(area, "old"), nod: try appealRow(area, "nod") },
+      notices: { lia: try noticeCount(area, "lia"), sam: try noticeCount(area, "sam"), rex: try noticeCount(area, "rex"), ban: try noticeCount(area, "ban"), old: try noticeCount(area, "old"), nod: try noticeCount(area, "nod") },
       dispatch: { early, due, queued: queued.length, overdue, overdueReplay, later },
       written: { lia: try written("lia"), sam: try written("sam"), rex: try written("rex") },
       penalty,
@@ -277,6 +281,7 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         rex: { result: "appeal drafted (uphold)" },
         ban: { result: "appeal escalated: the appellant has an active participation ban" },
         old: { failed: "AppealFailed" },
+        nod: { failed: "AppealFailed" },
         stranger: { result: "only the author can appeal" },
       },
       commands: {
@@ -287,6 +292,7 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         samModerator: { result: "appeal upheld by the moderator" },
         samReplay: { result: "appeal already resolved" },
         rexReject: { result: "appeal escalated: the appellant rejected the draft" },
+        nodBannedBeforeDraft: { result: "a Slop moderator decides this appeal" },
       },
       rows: {
         lia: { draft: "uphold", escalation: null, resolution: "upheld", resolved_by: "appellant" },
@@ -294,8 +300,9 @@ layer(Appealing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         rex: { draft: "uphold", escalation: "the appellant rejected the draft", resolution: null, resolved_by: null },
         ban: { draft: "uphold", escalation: "the appellant has an active participation ban", resolution: null, resolved_by: null },
         old: { draft: null, escalation: "the appeal is unresolved 7 days after it opened", resolution: null, resolved_by: null },
+        nod: { draft: null, escalation: "the appellant has an active participation ban", resolution: null, resolved_by: null },
       },
-      notices: { lia: 0, sam: 2, rex: 2, ban: 2, old: 2 },
+      notices: { lia: 0, sam: 2, rex: 2, ban: 2, old: 2, nod: 2 },
       dispatch: {
         early: { dispatched: 0 },
         due: { dispatched: 1 },

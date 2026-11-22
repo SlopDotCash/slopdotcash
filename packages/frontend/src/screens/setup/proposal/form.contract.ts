@@ -2,7 +2,7 @@
 import { emptyProposal, type Proposal } from "../../../flows/projects/proposal.ts";
 import { privateBountyCriteria, privateBountyTesting } from "../../../flows/security/program.vibe";
 import { vectors } from "../../../kernels/vectors.ts";
-import { facts, filled, monthly } from "./fixtures.ts";
+import { facts, filled, monthly, promised } from "./fixtures.ts";
 import { defaultCriteria, type Lookup, lookupKey, proposalErrors, restoredWizard, setupErrors, withFacts, withField, withLookup, withReferrer, withRepository } from "./form.ts";
 import { draftManifest } from "./manifest.ts";
 
@@ -139,5 +139,21 @@ export const theProjectStepRefusesAnInvalidWebsiteOrXAccount = vectors<Proposal,
   (proposal) => {
     const errors = proposalErrors(proposal);
     return [errors.website, errors.x] as const;
+  },
+);
+
+export const thePromiseStartsOffAndIsPublishedOnlyOnAChosenMonthlyPool = vectors<readonly [string | null, Partial<Proposal>], readonly [string, unknown]>(
+  [
+    [[null, {}], ["false", undefined]],
+    [[saved({ fundingMode: "monthly", monthlyPool: "1500" }), {}], ["false", undefined]],
+    [[saved(promised), {}], ["true", true]],
+    [[saved(promised), { fundingMode: "none" }], ["false", undefined]],
+    [[saved(promised), { fundingMode: "bounty" }], ["false", undefined]],
+  ],
+  ([text, change]) => {
+    const restored = restoredWizard(text, "");
+    const wizard = change.fundingMode === undefined ? restored : withField(restored, "fundingMode", change.fundingMode, facts);
+    const reward = draftManifest({ proposal: wizard.proposal, actor: undefined, valid: true, now }).manifest.reward as { honorSystem?: unknown };
+    return [wizard.proposal.honorSystem, reward.honorSystem] as const;
   },
 );

@@ -1,0 +1,423 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"
+import { isoAt } from "@repo/platform/clock"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import { gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
+import { parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { Journal } from "../../kernels/records/canonical.ts"
+import { batchDigest } from "../../kernels/records/ids.vibe"
+import { importStatements } from "../../publication/import.vibe"
+import { protectionEvidence } from "../../publication/protection.vibe"
+import { batchRecorded, isExtension } from "../apply/apply.vibe"
+import type { FreezeEvidence } from "../../../gen/points__periods.ts"
+import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
+import { instantOf } from "../../kernels/records/instants.ts"
+import { type AuditedSource, type HistoricalPacket, type PacketSquash, digestPattern, githubIdPattern, refusal, require } from "./packet.vibe"
+
+schema CensusRepository { readonly id: string }
+schema CensusNode { readonly id: string; readonly number: number; readonly headRefOid: string; readonly mergedAt: string; readonly repository: CensusRepository }
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema CensusSearch { readonly issueCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<CensusNode> }
+schema CensusPage { readonly search: CensusSearch }
+schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
+schema PullUser { readonly node_id: string; readonly type: string }
+schema PullRef { readonly sha: string }
+schema Pull {
+  readonly node_id: string
+  readonly user: PullUser
+  readonly head: PullRef
+  readonly base: PullRef
+  readonly commits: number
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+}
+schema CommitAuthor { readonly node_id: string; readonly type: string }
+schema PullCommit { readonly sha: string; readonly parents: ReadonlyArray<PullRef>; readonly author: CommitAuthor | null }
+schema ComparePage { readonly total_commits: number; readonly commits: ReadonlyArray<PullCommit> }
+schema MergeCommitOid { readonly oid: string }
+schema PromotionNode { readonly id: string; readonly headRefOid: string; readonly mergedAt: string; readonly repository: CensusRepository; readonly mergeCommit: MergeCommitOid | null }
+schema PromotionAnswer { readonly node: PromotionNode | null }
+schema SquashActor { readonly __typename: string; readonly login: string; readonly id?: string }
+schema SquashAuthor { readonly user: SquashActor | null }
+schema ParentNodes { readonly nodes: ReadonlyArray<MergeCommitOid>; readonly pageInfo: PageInfoNext }
+schema PageInfoNext { readonly hasNextPage: boolean }
+schema SquashMerge { readonly oid: string; readonly author: SquashAuthor; readonly parents: ParentNodes }
+schema NamedRepository { readonly id: string; readonly nameWithOwner: string }
+schema SquashNode {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly merged: boolean
+  readonly mergedAt: string
+  readonly headRefOid: string
+  readonly repository: NamedRepository
+  readonly author: SquashActor | null
+  readonly mergeCommit: SquashMerge | null
+}
+schema SquashAnswer { readonly nodes: ReadonlyArray<SquashNode | null> }
+schema GitHubUser { readonly id: number; readonly node_id: string; readonly login: string }
+schema PermissionUser { readonly id: number }
+schema PermissionAnswer { readonly permission: string; readonly user: PermissionUser }
+schema StewardAccount { readonly type: string; readonly actorId: string; readonly nodeId: string; readonly login: string }
+schema Steward { readonly github: StewardAccount }
+schema AuthorityRepository { readonly repositoryId: string; readonly repositoryNodeId: string }
+schema PolicyRepository { readonly githubUrl: string }
+schema OwnerPolicy { readonly steward: Steward; readonly authority: AuthorityRepository; readonly repositories: ReadonlyArray<PolicyRepository> }
+schema RepositoryOwner { readonly id: number; readonly node_id: string; readonly type: string; readonly login: string }
+schema RepositoryFacts { readonly id: number; readonly node_id: string; readonly full_name: string; readonly private: boolean; readonly owner: RepositoryOwner }
+schema Generation { readonly generation: number }
+schema RecordRow { readonly record_json: string; readonly record_digest: string }
+
+export const historicalMonths: ReadonlyArray<string> = ["2026-09", "2026-10"]
+
+const censusQuery = "query HistoricalPointsCensus($query:String!,$after:String){search(query:$query,type:ISSUE,first:100,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{...on PullRequest{id number headRefOid mergedAt repository{id}}}}}"
+const promotionQuery = "query HistoricalPromotionMerge($id:ID!){node(id:$id){...on PullRequest{id headRefOid mergedAt repository{id} mergeCommit{oid}}}}"
+const squashQuery = "query HistoricalAcceptedSquashes($ids:[ID!]!){nodes(ids:$ids){...on PullRequest{id number url merged mergedAt headRefOid repository{id nameWithOwner} author{__typename login ...on User{id} ...on Bot{id}} mergeCommit{oid author{user{__typename id login}} parents(first:10){nodes{oid} pageInfo{hasNextPage}}}}}}"
+const pageSize = 100
+const isOwnerPolicy = Schema.is(OwnerPolicy)
+const ownerUnavailable = "Current owner permission unavailable"
+
+function iso(value: string | null) {
+  return value === null ? "" : new Date(value).toISOString()
+}
+
+effect function mergedRange(from: number, through: number) {
+  return `merged:${(try isoAt(from)).replace(".000Z", "Z")}..${(try isoAt(through)).replace(".000Z", "Z")}`
+}
+
+effect function censusRange(packet: HistoricalPacket, from: string, through: string): AuditedSource[] {
+  const github = try GitHub
+  const rowsFound: AuditedSource[] = []
+  let cursor: string | null = null
+  let total: number | undefined
+  do {
+    const query = `repo:${packet.sourceAudit.repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
+    const page = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
+    try require(Number.isSafeInteger(page.issueCount) && (total === undefined || total === page.issueCount), "Historical census count changed")
+    total = page.issueCount
+    if (total >= 1000) {
+      const start = Date.parse(from)
+      const end = Date.parse(through)
+      try require(end - start > 1000, "Historical census cannot be split further")
+      const middle = new Date(Math.floor((start + end) / 2000) * 1000).toISOString()
+      const combined = [...(try censusRange(packet, from, middle)), ...(try censusRange(packet, middle, through))]
+      try require(combined.length === total && new Set(combined.map((row) => row.id)).size === total, "Historical split census changed")
+      return combined
+    }
+    for (const node of page.nodes) {
+      try require(node.repository.id === packet.sourceAudit.repositoryNodeId, "Historical census repository changed")
+      rowsFound.push({ id: node.id, number: node.number, headSha: node.headRefOid, mergedAt: iso(node.mergedAt) })
+    }
+    const next = page.pageInfo
+    try require(!next.hasNextPage || (next.endCursor !== null && next.endCursor !== cursor), "Historical census pagination failed")
+    cursor = next.hasNextPage ? next.endCursor : null
+  } while (cursor !== null)
+  try require(rowsFound.length === total && new Set(rowsFound.map((row) => row.id)).size === total, "Historical census incomplete")
+  return rowsFound
+}
+
+export effect function verifyHistoricalCensus(packet: HistoricalPacket) {
+  const found = try censusRange(packet, packet.sourceAudit.from, packet.sourceAudit.through)
+  const ordered = (list: ReadonlyArray<AuditedSource>) => JSON.stringify([...list].sort((left, right) => left.id.localeCompare(right.id)).map((row) => ({ id: row.id, number: row.number, headSha: row.headSha, mergedAt: row.mergedAt })))
+  try require(ordered(found) === ordered(packet.sourceAudit.sources), "Reviewed historical census changed")
+}
+
+effect function pullCommits(root: string, path: string, pull: Pull) {
+  const github = try GitHub
+  const observed = try github.pages(`${path}/commits`, PullCommit, { perPage: pageSize, maxPages: 3 })
+  const complete: PullCommit[] = []
+  const ids = new Set<string>()
+  for (let page = 1; page <= Math.ceil(pull.commits / pageSize); page += 1) {
+    const batch = try github.json(`${root}/compare/${pull.base.sha}...${pull.head.sha}?per_page=${pageSize}&page=${page}`, ComparePage)
+    try require(batch.total_commits === pull.commits, "Comparison cannot reconcile the reported PR commit count")
+    for (const commit of batch.commits) {
+      try require(/^[a-f0-9]{40}$/u.test(commit.sha) && !ids.has(commit.sha), "Comparison contains an invalid or repeated commit")
+      ids.add(commit.sha)
+      complete.push(commit)
+    }
+  }
+  try require(complete.length === pull.commits && observed.every((commit) => ids.has(commit.sha)), "Comparison commit range does not cover the observed PR commits")
+  return complete
+}
+
+function samePull(current: Pull, pull: Pull, withUser: boolean) {
+  return current.node_id === pull.node_id && current.head.sha === pull.head.sha && current.base.sha === pull.base.sha && current.commits === pull.commits &&
+    current.merged_at === pull.merged_at && current.merge_commit_sha === pull.merge_commit_sha &&
+    (!withUser || (current.user.node_id === pull.user.node_id && current.user.type === pull.user.type))
+}
+
+effect function publicGit(directory: string, args: ReadonlyArray<string>) {
+  const bytes = try gitBytes({ args: publicGitArguments(directory, args), env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }, limit: 1024 * 1024, seconds: 120 }, "Earlier automatic merge tree changed")
+  return (utf8Text(bytes) ?? "").trim()
+}
+
+export effect function verifyHistoricalAcceptedSquashes(packet: HistoricalPacket) {
+  const github = try GitHub
+  const root = `/repos/${packet.sourceAudit.repository}`
+  const retirements = packet.duplicateRetirements ?? []
+  for (const retirement of retirements) {
+    const proof = retirement.earlierAcceptanceProof
+    if (proof === undefined) continue
+    const repository = try github.json(root, PublicRepository)
+    try require(repository.node_id === retirement.source.repositoryNodeId, "Earlier acceptance repository changed")
+    const automatic = proof.contextSources.filter((source) => source.automaticMerge !== undefined)
+    if (automatic.length > 0) {
+      try withPublicGitObjects(repository, automatic.flatMap((source) => [source.headSha, source.mergeSha]), (directory) => effect {
+        for (const source of automatic) {
+          const expected = source.automaticMerge
+          try require(expected !== undefined, "Earlier automatic merge proof is missing")
+          const merged = try publicGit(directory, ["merge-tree", "--write-tree", "--no-messages", expected?.baseParentSha ?? "", source.headSha])
+          try require(merged === expected?.automaticTree, "Earlier automatic merge tree changed")
+          const tree = try publicGit(directory, ["rev-parse", `${source.mergeSha}^{tree}`])
+          try require(tree === expected?.automaticTree, "Earlier accepted merge tree changed")
+        }
+      })
+    }
+    for (const source of retirement.earlierSources) {
+      const audit = packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
+      const context = proof.contextSources.find((row) => row.id === source.sourceId)
+      const number = audit?.number ?? context?.number
+      try require(number !== undefined, "Earlier acceptance source is unavailable")
+      const path = `${root}/pulls/${number ?? 0}`
+      const pull = try github.json(path, Pull)
+      try require(pull.node_id === source.sourceId && pull.head.sha === source.headSha && pull.base.sha === context?.baseSha && pull.commits === source.commitCount &&
+        pull.merged_at !== null && iso(pull.merged_at) === source.occurredAt && (context === undefined || pull.merge_commit_sha === context.mergeSha) &&
+        pull.user.node_id === source.author?.id && pull.user.type === source.author.kind, "Earlier acceptance source changed")
+      const commits = new Map((try pullCommits(root, path, pull)).map((commit) => [commit.sha, commit] as const))
+      try require(commits.size === source.commits.length && source.commits.every((commit) => {
+        const current = commits.get(commit.sha)
+        return current !== undefined && JSON.stringify(current.parents.map((parent) => parent.sha)) === JSON.stringify(commit.parentShas) &&
+          current.author?.node_id === commit.author?.id && current.author?.type === commit.author?.kind
+      }), "Earlier acceptance source omits or substitutes a commit")
+      try require(samePull(try github.json(path, Pull), pull, true), "Earlier acceptance changed during collection")
+    }
+  }
+  for (const retirement of retirements) {
+    if ((retirement.acceptedSquashes?.length ?? 0) === 0 && retirement.earlierAcceptanceProof === undefined) continue
+    const promotion = retirement.acceptedPromotion
+    const node = (try github.graphql(promotionQuery, { id: retirement.sourceId }, PromotionAnswer)).node
+    try require(promotion !== undefined && node?.id === retirement.sourceId && node.headRefOid === retirement.source.headSha &&
+      node.repository.id === retirement.source.repositoryNodeId && iso(node.mergedAt) === retirement.source.occurredAt && node.mergeCommit?.oid === promotion.mergeSha,
+      "Accepted promotion source changed")
+  }
+  for (const retirement of retirements) {
+    if ((retirement.acceptedSquashes?.length ?? 0) === 0 && retirement.earlierAcceptanceProof === undefined) continue
+    const audited = packet.sourceAudit.sources.find((source) => source.id === retirement.sourceId)
+    try require(audited !== undefined, "Promotion source is outside the audit")
+    const path = `${root}/pulls/${audited?.number ?? 0}`
+    const repository = try github.json(root, PublicRepository)
+    const pull = try github.json(path, Pull)
+    const proof = retirement.earlierAcceptanceProof
+    try require(repository.node_id === retirement.source.repositoryNodeId && pull.node_id === retirement.sourceId && pull.head.sha === retirement.source.headSha &&
+      pull.merge_commit_sha === retirement.acceptedPromotion?.mergeSha && pull.merged_at !== null && iso(pull.merged_at) === retirement.source.occurredAt &&
+      pull.commits === retirement.source.commitCount &&
+      (proof === undefined || (pull.base.sha === proof.sourceBaseSha && pull.user.node_id === retirement.source.author?.id && pull.user.type === retirement.source.author.kind)),
+      "Accepted promotion membership changed")
+    const commits = new Map((try pullCommits(root, path, pull)).map((commit) => [commit.sha, commit] as const))
+    const head = commits.get(retirement.source.headSha)
+    const headParents = (/^tree [a-f0-9]{40}\n((?:parent [a-f0-9]{40}\n)*)/u.exec(retirement.acceptedPromotion?.headCommit ?? "")?.[1] ?? "").trim().split("\n").filter((line) => line !== "").map((line) => line.slice(7))
+    try require(commits.size === retirement.source.commits.length && head !== undefined && JSON.stringify(head.parents.map((parent) => parent.sha)) === JSON.stringify(headParents) &&
+      retirement.source.commits.every((commit) => {
+        const current = commits.get(commit.sha)
+        return JSON.stringify(current?.parents.map((parent) => parent.sha)) === JSON.stringify(commit.parentShas) &&
+          (proof === undefined || (current?.author?.node_id === commit.author?.id && current?.author?.type === commit.author?.kind))
+      }), "Accepted promotion source omits or substitutes a commit")
+    try require(samePull(try github.json(path, Pull), pull, proof !== undefined), "Accepted promotion changed during collection")
+  }
+  const sources = new Map<string, PacketSquash>()
+  for (const retirement of retirements) {
+    for (const source of retirement.acceptedSquashes ?? []) {
+      const prior = sources.get(source.sourceId)
+      try require(prior === undefined || JSON.stringify(prior) === JSON.stringify(source), "Conflicting accepted squash identity")
+      sources.set(source.sourceId, source)
+    }
+  }
+  const listed = [...sources.values()]
+  for (let offset = 0; offset < listed.length; offset += 50) {
+    const batch = listed.slice(offset, offset + 50)
+    const nodes = (try github.graphql(squashQuery, { ids: batch.map((source) => source.sourceId) }, SquashAnswer)).nodes
+    try require(nodes.length === batch.length, "Accepted squash source unavailable")
+    for (const [index, source] of batch.entries()) {
+      const current = nodes[index]
+      const committer = current?.mergeCommit?.author.user
+      const committerKind = committer?.login.endsWith("[bot]") === true ? "Bot" : committer?.__typename
+      try require(current !== null && current !== undefined && current.id === source.sourceId && current.merged && current.headRefOid === source.headSha &&
+        iso(current.mergedAt) === source.occurredAt && current.url === source.sourceUrl && current.repository.id === source.repositoryNodeId &&
+        current.repository.nameWithOwner.toLowerCase() === packet.sourceAudit.repository.toLowerCase() && current.author?.id === source.author?.id &&
+        current.author?.__typename === source.author?.kind && current.mergeCommit?.oid === source.commit.sha && committer?.id === source.commit.author?.id &&
+        committerKind === source.commit.author?.kind && current.mergeCommit?.parents.pageInfo.hasNextPage === false &&
+        JSON.stringify(current.mergeCommit.parents.nodes.map((parent) => parent.oid)) === JSON.stringify(source.commit.parentShas), "Accepted squash source changed")
+    }
+  }
+}
+
+export function protectionScopes(packet: HistoricalPacket) {
+  const scopes = new Map(historicalMonths.map((period) => [JSON.stringify([packet.projectId, period]), { projectId: packet.projectId, period }] as const))
+  for (const candidate of packet.corrections.candidates) {
+    const scope = { projectId: candidate.projectId, period: candidate.occurredAt.slice(0, 7) }
+    scopes.set(JSON.stringify([scope.projectId, scope.period]), scope)
+  }
+  return [...scopes.values()]
+}
+
+export effect function verifyHistoricalProtection(packet: HistoricalPacket) {
+  const evidence = try protectionEvidence(protectionScopes(packet))
+  const months = historicalMonths.map((month) => periodOf(instantOf(`${month}-01T00:00:00.000Z`) ?? -1))
+  const historical = evidence.filter((row) => row.project === packet.projectId && months.includes(row.period))
+  try require(historical.length === 2 && new Set(historical.map((row) => row.period)).size === 2 && historical.every((row) => !freezes(row)),
+    "Historical Points are financially protected or unavailable")
+  return evidence satisfies ReadonlyArray<FreezeEvidence>
+}
+
+export effect function verifyHistoricalValueRecords(packet: HistoricalPacket) {
+  const verified = new Map<string, string>()
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    for (const { rewardedUnit } of retirement.coverage) {
+      if (rewardedUnit === undefined) continue
+      try require(digestPattern.test(rewardedUnit.recordDigest), "Invalid duplicate coverage record digest")
+      const known = verified.get(rewardedUnit.recordDigest)
+      if (known !== undefined) {
+        try require(known === rewardedUnit.recordJson, "Duplicate coverage record changed")
+        continue
+      }
+      const found = try rows(RecordRow, sql`SELECT record_json, record_digest FROM slopbot_work_unit_journal j WHERE record_digest=${rewardedUnit.recordDigest} AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest=j.record_digest)`)
+      try require(found.length === 1 && found[0]?.record_digest === rewardedUnit.recordDigest && found[0].record_json === rewardedUnit.recordJson &&
+        sha256Of(rewardedUnit.recordJson) === rewardedUnit.recordDigest, "Duplicate coverage record is missing or changed")
+      verified.set(rewardedUnit.recordDigest, rewardedUnit.recordJson)
+    }
+  }
+  const coverage = valueCoverage(packet)
+  for (const digest of new Set(coverage.flatMap((row) => row.recordDigest === null ? [] : [row.recordDigest]))) {
+    try require(digestPattern.test(digest), "Invalid value record binding")
+    const found = try rows(RecordRow, sql`SELECT record_json, record_digest FROM slopbot_value_journal j WHERE record_digest=${digest} AND NOT EXISTS (SELECT 1 FROM slopbot_value_journal n WHERE n.supersedes=j.record_digest) UNION ALL SELECT record_json, record_digest FROM slopbot_work_unit_journal j WHERE record_digest=${digest} AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest=j.record_digest)`)
+    const [row] = found
+    try require(found.length === 1 && row?.record_digest === digest && sha256Of(row.record_json) === digest, "Historical value record is missing or changed")
+    const record = recordOf(row?.record_json ?? "")
+    const sources = Array.isArray(record.sources) ? record.sources as ReadonlyArray<{ readonly pullRequestNodeId?: unknown; readonly repositoryNodeId?: unknown; readonly headSha?: unknown }> : []
+    const rowsFor = coverage.filter((item) => item.recordDigest === digest)
+    try require(rowsFor.every((item) => (record.pullRequestNodeId === item.pullRequestId && record.repositoryNodeId === packet.sourceAudit.repositoryNodeId) ||
+      sources.some((source) => source.pullRequestNodeId === item.pullRequestId && source.repositoryNodeId === packet.sourceAudit.repositoryNodeId)), "Historical value record source differs")
+    try require(record.projectId === packet.projectId, "Historical value record belongs to another project")
+    for (const item of rowsFor) {
+      const audited = packet.sourceAudit.sources.find((source) => source.id === item.pullRequestId)
+      const source = record.pullRequestNodeId === item.pullRequestId ? record : sources.find((entry) => entry.pullRequestNodeId === item.pullRequestId)
+      try require(audited !== undefined && source?.headSha === audited.headSha, "Historical assessment head differs from audited source")
+    }
+  }
+}
+
+interface CoverageRow { readonly pullRequestId: string; readonly recordDigest: string | null }
+
+function valueCoverage(packet: HistoricalPacket): ReadonlyArray<CoverageRow> {
+  const snapshot = packet.valueSnapshot as { readonly valueAssessmentCoverage?: ReadonlyArray<CoverageRow> } | null
+  return snapshot?.valueAssessmentCoverage ?? []
+}
+
+function recordOf(text: string): Readonly<Record<string, unknown>> {
+  const value = parsedJson(text)?.value
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
+}
+
+export effect function enforcementGeneration() {
+  const found = try rows(Generation, sql`SELECT COALESCE(MAX(rowid),0) AS generation FROM project_enforcements`)
+  const generation = found[0]?.generation
+  try require(found.length === 1 && generation !== undefined && Number.isSafeInteger(generation) && generation >= 0, "Enforcement state unavailable")
+  return generation ?? 0
+}
+
+export effect function verifyOwnerAuthority(packet: HistoricalPacket, manifest: unknown) {
+  const github = try GitHub
+  try require(githubIdPattern.test(packet.reviewerGithubId), "Invalid owner identity")
+  const user = try github.json(`/user/${packet.reviewerGithubId}`, GitHubUser)
+  try require(String(user.id) === packet.reviewerGithubId, "Current owner identity differs")
+  try require(isOwnerPolicy(manifest), ownerUnavailable)
+  const policy = manifest as OwnerPolicy
+  const steward = policy.steward.github
+  try require(steward.type !== "User" || steward.actorId === packet.reviewerGithubId, ownerUnavailable)
+  const path = (URL.parse(policy.repositories[0]?.githubUrl ?? "")?.pathname ?? "").replace(/^\/|\/$/gu, "")
+  const [owner = "", name = ""] = path.split("/")
+  const app = try GitHubApp
+  const installation = try app.installationFor(owner, name)
+  provide app.asInstallation(installation, { repositories: [name], permissions: { metadata: "read" } }) {
+    const installed = try GitHub
+    const facts = try installed.json(`/repos/${owner}/${name}`, RepositoryFacts)
+    try require(String(facts.id) === policy.authority.repositoryId && facts.node_id === policy.authority.repositoryNodeId && String(facts.owner.id) === steward.actorId &&
+      facts.owner.node_id === steward.nodeId && facts.owner.type === steward.type && facts.owner.login.toLowerCase() === steward.login.toLowerCase() &&
+      facts.full_name.toLowerCase() === path.toLowerCase() && !facts.private, ownerUnavailable)
+    const access = try installed.json(`/repos/${owner}/${name}/collaborators/${encodeURIComponent(user.login)}/permission`, PermissionAnswer)
+    try require(String(access.user.id) === packet.reviewerGithubId && (access.permission === "admin" || access.permission === "write") &&
+      (steward.actorId === packet.reviewerGithubId || access.permission === "admin"), ownerUnavailable)
+  }
+}
+
+export effect function verifyRecipientAccounts(packet: HistoricalPacket) {
+  const github = try GitHub
+  for (const correction of packet.recipientCorrections) {
+    for (const recipient of correction.recipients) {
+      const user = try github.json(`/user/${recipient.githubId}`, GitHubUser)
+      try require(String(user.id) === recipient.githubId && user.node_id === recipient.actor.id && user.login === recipient.actor.login, "Reviewed recipient account changed")
+    }
+  }
+}
+
+function quoted(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+export function historicalGuards(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string) {
+  const conditions = [
+    `EXISTS (SELECT 1 FROM projects WHERE id=${quoted(packet.projectId)} AND revision=${packet.revision} AND manifest_sha256=${quoted(packet.manifestSha256)} AND status='active')`,
+    `(SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=${generation}`,
+  ]
+  const actors = new Set(candidate.revisions.slice(packet.baselineRevisionCount).filter((row) => row.award.projectId === packet.projectId && row.award.amount > 0).map((row) => row.award.actor.id))
+  for (const actor of actors) {
+    conditions.push(`NOT EXISTS (SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${quoted(githubIdOf(actor))} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1)`)
+  }
+  return conditions.join(" AND ")
+}
+
+export effect function historicalStatements(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string) {
+  try require(Number.isSafeInteger(generation) && generation >= 0, "Invalid enforcement generation")
+  for (const actor of new Set(candidate.revisions.slice(packet.baselineRevisionCount).map((row) => row.award.actor.id))) {
+    try require(githubIdPattern.test(githubIdOf(actor)), "Unknown historical actor identity")
+  }
+  const digest = try batchDigest(candidate)
+  const statements = importStatements(digest, candidate)
+  const gate = statements[statements.length - 3]
+  try require(gate !== undefined && gate.text.startsWith("INSERT INTO points_batches"), "Points import gate unavailable")
+  const guarded: Statement = { text: `${gate?.text ?? ""} AND ${historicalGuards(packet, candidate, generation, githubIdOf)}`, params: gate?.params ?? [] }
+  return { digest, statements: statements.map((statement) => statement === gate ? guarded : statement) } satisfies PreparedImport
+}
+
+export interface ImportIo<VE, VR, LE, LR> {
+  readonly verifyAuthority: () => void!VE!VR
+  readonly loadPublic: () => (Journal | null)!LE!LR
+  readonly wait: (millis: number) => void!!
+}
+
+export interface PreparedImport {
+  readonly digest: string
+  readonly statements: ReadonlyArray<Statement>
+}
+
+effect function applied(statements: ReadonlyArray<Statement>) {
+  const database = try D1
+  for (const statement of statements) try database.run(statement)
+}
+
+export effect function recordHistorical<VE, VR, LE, LR>(prepared: PreparedImport, candidate: Journal, io: ImportIo<VE, VR, LE, LR>) {
+  const { digest, statements } = prepared
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!(try batchRecorded(digest, candidate.revisions.length))) {
+      try io.verifyAuthority()
+      applied(statements) catch () => undefined
+    }
+    if (try batchRecorded(digest, candidate.revisions.length)) {
+      const published = try io.loadPublic()
+      if (published !== null && isExtension(candidate, published)) return digest
+    }
+    if (attempt < 2) try io.wait(5000)
+  }
+  throw refusal("Historical Points import was not verified")
+}

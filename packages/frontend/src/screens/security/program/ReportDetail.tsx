@@ -7,6 +7,7 @@ import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import type { ReviewDecision } from "../../../flows/security/intake.vibe";
 import type { ReportBody, ReportDraft } from "../../../flows/security/private.vibe";
 import { ReportFields } from "./ReportFields.tsx";
+import { ProofFileView } from "./ReportProofFields.tsx";
 
 export type PrivateReport = ReportBody;
 
@@ -32,7 +33,7 @@ export type ReportDetailProps = {
 const severityTones: Readonly<Record<string, StatusProps["presentation"]["tone"]>> = { critical: "Negative", high: "Negative", medium: "Caution", low: "Notice" };
 
 function draftOf(report: PrivateReport): ReportDraft {
-  return { summary: report.summary, description: report.description, severity: report.severity ?? "", cvss: report.cvssVectorString ?? "", cwe: (report.cweIds ?? []).join(", ") };
+  return { summary: report.summary, description: report.description, severity: report.severity ?? "", cvss: report.cvssVectorString ?? "", cwe: (report.cweIds ?? []).join(", "), proofName: report.proofOfConcept?.fileName ?? "", proofText: report.proofOfConcept?.patch ?? "" };
 }
 
 function Revise({ report, busy, onRevise }: { report: PrivateReport; busy: boolean; onRevise: (draft: ReportDraft) => void }) {
@@ -108,6 +109,7 @@ function Loaded({ submission, headings, detail, busy, onRetry, onRevise, onRevie
       >
         {detail.report.description}
       </pre>
+      {detail.report.proofOfConcept ? <ProofFileView labelledBy={headings.card} proof={detail.report.proofOfConcept} /> : null}
       {intake?.canRevise ? <Revise key={intake.revision} report={detail.report} busy={busy} onRevise={onRevise} /> : null}
       {intake?.canReview ? <Review busy={busy} onReview={onReview} /> : null}
     </>

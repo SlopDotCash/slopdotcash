@@ -1,0 +1,143 @@
+import { assert, it } from "@effect/vitest"
+import type { Actor, ChangedFile, Commit, FileAttribution, JointClaim, JointDecision, JointUnit, MergedPull, ScoringFacts } from "../src/score/facts.vibe"
+import { scoreSnapshot } from "../src/score/snapshot.vibe"
+
+const repository = "SlopDotCash/slop"
+
+function actor(login: string): Actor {
+  return { id: `U_${login}`, login, avatarUrl: `https://avatars.githubusercontent.com/${login}`, url: `https://github.com/${login}`, kind: "User" }
+}
+
+function changed(filename: string, additions: number, deletions: number, previousFilename: string | null = null): ChangedFile {
+  return { filename, previousFilename, additions, deletions }
+}
+
+function attributed(files: ReadonlyArray<ChangedFile>, limited = false): FileAttribution {
+  return { limited, files }
+}
+
+function commit(oid: string, by: Actor, files: ReadonlyArray<ChangedFile>, extra: Partial<Commit> = {}): Commit {
+  const additions = files.reduce((sum, file) => sum + file.additions, 0)
+  const deletions = files.reduce((sum, file) => sum + file.deletions, 0)
+  return { oid, parentCount: 1, author: by, retained: null, additions, deletions, attributions: [attributed(files)], resolutions: [], ...extra }
+}
+
+function merge(oid: string, by: Actor, resolutions: ReadonlyArray<ReadonlyArray<ChangedFile>>): Commit {
+  return { oid, parentCount: 2, author: by, retained: null, additions: 50, deletions: 50, attributions: [], resolutions }
+}
+
+function pull(number: number, mergedAt: string, author: Actor, commits: ReadonlyArray<Commit>): MergedPull {
+  return {
+    id: `PR_${number}`,
+    number,
+    repository,
+    project: "slop",
+    url: `https://github.com/${repository}/pull/${number}`,
+    title: `Change ${number}`,
+    mergedAt,
+    author,
+    headRefOid: `head-${number}`,
+    commits,
+    reviews: [],
+    assessment: null,
+    ratification: null,
+    reviewValues: [],
+    externalPrize: false,
+    traceUpload: false,
+    automatedReviews: [],
+  }
+}
+
+function claim(id: string, source: MergedPull, commitOid: string, path: string): JointClaim {
+  return { id, sourceId: source.id, commitOid, path, copy: null }
+}
+
+function unit(workUnitId: string, sources: ReadonlyArray<MergedPull>, claims: ReadonlyArray<JointClaim>): JointUnit {
+  const ids = sources.map((source) => source.id)
+  return { workUnitId, tier: "medium", rationale: "Joint change.", sources: ids, carriers: ids, claims, retainedOriginal: null, reviewValues: [] }
+}
+
+function decision(digest: string, members: ReadonlyArray<MergedPull>, units: ReadonlyArray<JointUnit>): JointDecision {
+  return {
+    digest: digest.repeat(64),
+    source: "PaidApiReceipt",
+    rubric: "slop-value-v1",
+    model: "slopbot-model",
+    recordedAt: "2026-11-12T00:00:00.000Z",
+    hashesVerified: true,
+    members: members.map((member) => ({ pullId: member.id, head: member.headRefOid, acceptedAt: member.mergedAt, indirect: false })),
+    units,
+  }
+}
+
+function facts(merged: ReadonlyArray<MergedPull>, joint: ReadonlyArray<JointDecision>): ScoringFacts {
+  return {
+    windowFrom: "2026-10-12T00:00:00.000Z",
+    windowTo: "2026-11-16T00:00:00.000Z",
+    merged,
+    closedUnmerged: [],
+    contexts: [],
+    joint,
+    attributionHolds: new Set(),
+    heldUnits: [],
+    openReviewedAt: [],
+    penalties: [],
+    projects: new Map([[repository, "slop"]]),
+    bans: new Map(),
+    activity: new Map(),
+  }
+}
+
+effect function outcome(merged: ReadonlyArray<MergedPull>, joint: ReadonlyArray<JointDecision>) {
+  const scoring = try scoreSnapshot(facts(merged, joint))
+  return {
+    credited: scoring.ledger.map((event) => [event.id, event.scoreThirds]),
+    held: scoring.held.map((entry) => [entry.sourceId, entry.reason]),
+  }
+}
+
+const alice = actor("alice")
+const bob = actor("bob")
+const carol = actor("carol")
+const dave = actor("dave")
+const erin = actor("erin")
+const frank = actor("frank")
+
+it.effect('Joint line weights: a renamed file\'s changed lines count once across its new and old path claims, a merge resolution counts its claimed file, and incomplete claims hold the unit (spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID")', () => effect {
+  const renamedFile = changed("src/score/new.ts", 30, 10, "src/score/old.ts")
+  const first = pull(101, "2026-11-03T10:00:00Z", alice, [commit("a1", alice, [renamedFile])])
+  const stacked = pull(102, "2026-11-05T10:00:00Z", bob, [commit("a1", alice, [renamedFile]), commit("b1", bob, [changed("src/b.ts", 15, 5)])])
+  const renamed = unit("wu_slop_renamed", [first, stacked], [
+    claim("claim-new", first, "a1", "src/score/new.ts"),
+    claim("claim-old", first, "a1", "src/score/old.ts"),
+    claim("claim-b", stacked, "b1", "src/b.ts"),
+  ])
+  try Effect.try(() => assert.deepStrictEqual(try outcome([first, stacked], [decision("a", [first, stacked], [renamed])]), {
+    credited: [["PR_102:joint:wu_slop_renamed:merged:U_alice", 6], ["PR_102:joint:wu_slop_renamed:merged:U_bob", 3]],
+    held: [],
+  }))
+
+  const resolved = pull(201, "2026-11-04T10:00:00Z", carol, [merge("m1", carol, [[changed("src/conflict.ts", 4, 2), changed("src/other.ts", 90, 90)]])])
+  const follow = pull(202, "2026-11-06T10:00:00Z", dave, [commit("d1", dave, [changed("src/d.ts", 2, 1)])])
+  const resolution = unit("wu_slop_resolution", [resolved, follow], [claim("claim-m", resolved, "m1", "src/conflict.ts"), claim("claim-d", follow, "d1", "src/d.ts")])
+  try Effect.try(() => assert.deepStrictEqual(try outcome([resolved, follow], [decision("b", [resolved, follow], [resolution])]), {
+    credited: [["PR_202:joint:wu_slop_resolution:merged:U_carol", 6], ["PR_202:joint:wu_slop_resolution:merged:U_dave", 3]],
+    held: [],
+  }))
+
+  const limited = pull(301, "2026-11-04T10:00:00Z", erin, [commit("e1", erin, [changed("src/e.ts", 8, 0)], { attributions: [attributed([changed("src/e.ts", 8, 0)], true)] })])
+  const paired = pull(302, "2026-11-06T10:00:00Z", frank, [commit("f1", frank, [changed("src/f.ts", 4, 0)])])
+  const twoActors = unit("wu_slop_two_actors", [limited, paired], [claim("claim-e", limited, "e1", "src/e.ts"), claim("claim-f", paired, "f1", "src/f.ts")])
+  try Effect.try(() => assert.deepStrictEqual(try outcome([limited, paired], [decision("c", [limited, paired], [twoActors])]), {
+    credited: [],
+    held: [["PR_301", "incomplete-lines"], ["PR_302", "incomplete-lines"]],
+  }))
+
+  const unresolved = pull(401, "2026-11-04T10:00:00Z", carol, [merge("m2", carol, [])])
+  const tail = pull(402, "2026-11-06T10:00:00Z", carol, [commit("c2", carol, [changed("src/c.ts", 3, 0)])])
+  const syncOnly = unit("wu_slop_unresolved", [unresolved, tail], [claim("claim-m2", unresolved, "m2", "src/c.ts"), claim("claim-c2", tail, "c2", "src/c.ts")])
+  try Effect.try(() => assert.deepStrictEqual(try outcome([unresolved, tail], [decision("d", [unresolved, tail], [syncOnly])]), {
+    credited: [],
+    held: [["PR_401", "incomplete-lines"], ["PR_402", "incomplete-lines"]],
+  }))
+})

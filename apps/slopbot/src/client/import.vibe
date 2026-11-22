@@ -1,6 +1,7 @@
-// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { postSlopbotValueImport } from "./refusals.vibe"
+import { importBodyLimit } from "../../gen/slopbot__historicalImport.effect.vibe"
 
 export schema ImportReceipt {
   readonly recordDigest: string
@@ -15,8 +16,23 @@ export schema ImportPendingFrame {
   readonly status: "pending"
 }
 
+export schema ImportTerminalFailure {
+  readonly stage: string
+  readonly sourceIndex: number | null
+  readonly sourceCount: number | null
+  readonly errorName: string
+  readonly httpStatus: number | null
+  readonly messageSha256: string | null
+}
+
+export schema ImportDiagnostic {
+  readonly correlation: string
+  readonly failure: ImportTerminalFailure
+}
+
 export schema ImportRefusalBody {
   readonly error: string
+  readonly diagnostic?: ImportDiagnostic
 }
 
 export const ImportTerminalFrame = Schema.Union([
@@ -26,7 +42,7 @@ export const ImportTerminalFrame = Schema.Union([
 
 export const ImportFrame = Schema.Union([ImportPendingFrame, ImportTerminalFrame])
 
-export const importLimitBytes = 33 * 1024 * 1024
+export const importLimitBytes = importBodyLimit
 
 export const importMediaTypes = ["application/json", "multipart/form-data"] as const
 

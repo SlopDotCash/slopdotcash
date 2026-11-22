@@ -390,8 +390,8 @@ pure val snapshotValues = Set(C::staff, { ...C::staff, technical: List(2, 3, 6) 
   { ...C::staff, epoch: 2, financial: List(), moderators: List(4, 5, 7), relatedParties: List(1) },
   { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false })
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false },
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 2, duplicateOf: 0, declareRelated: false, spam: false })
 pure val byValues = Set(-1, 1, 2, 5)
 pure val checkedEpochValues = Set(1, 2)
 pure val amountValues = Set(List(4))

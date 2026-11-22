@@ -1,0 +1,555 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
+import type { Target } from "./support/ui/protocol.ts";
+
+const users = {
+  oli: { id: 2001, login: "octo-oli" },
+  pia: { id: 2002, login: "octo-pia" },
+  eli: { id: 2003, login: "octo-eli" },
+  ron: { id: 2004, login: "octo-ron" },
+  sam: { id: 2005, login: "octo-sam" },
+  tia: { id: 2006, login: "octo-tia" },
+  uma: { id: 2007, login: "octo-uma" },
+  root: { id: 9001, login: "octo-root" },
+} as const;
+
+type User = (typeof users)[keyof typeof users];
+
+const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001" };
+const refusedLoads = "^console Failed to load resource: the server responded with a status of 40[0139]";
+const settings = named("heading", "Settings", { level: 1 });
+const publish = named("button", "Publish changes");
+const closure = named("checkbox", "Slopbot may close Slop-skill PRs · authors can appeal");
+const readyLabel = named("checkbox", "Label pull requests that are ready to merge");
+const field = (label: string): Target => ({ label });
+const text = (value: string, exact = false): Target => ({ text: value, exact });
+const within = (outer: Target, inner: Target): Target => ({ ...inner, within: outer });
+
+let repositoryIds = 70_000;
+
+async function repository(owner: User, name: string, more: { readonly fork?: boolean; readonly archived?: boolean; readonly installed?: boolean } = {}) {
+  repositoryIds += 1;
+  await site.repository({ id: repositoryIds, owner: owner.login, name, fork: more.fork ?? false, archived: more.archived ?? false, license: "MIT", files: { "README.md": `# ${name}\n`, "CONTRIBUTING.md": "Open a pull request against main.\n" } });
+  await site.permission(`${owner.login}/${name}`, owner.login, "admin");
+  if (more.installed ?? true) await site.installation({ id: repositoryIds, account: owner.login, repositories: [`${owner.login}/${name}`] });
+  return `${owner.login}/${name}`;
+}
+
+async function chooseRepository(fullName: string) {
+  if ((await site.read(named("textbox", "GitHub repository"))).count === 0) await site.select(field("GitHub repository"), "Enter repository…");
+  await site.fill(named("textbox", "GitHub repository"), fullName);
+  await shown(field("Integration branch")).toMatchObject({ disabled: false });
+  await site.select(field("Integration branch"), "main");
+}
+
+async function fillProject(fullName: string, name: string, links: { readonly website?: string; readonly x?: string } = {}) {
+  await chooseRepository(fullName);
+  await site.fill(field("Project name"), name);
+  await site.fill(field("Short description"), `${name} keeps its engine fast and correct.`);
+  await site.fill(field("Goal"), `Make ${name} the dependable engine contributors reach for first.`);
+  if (links.website !== undefined) await site.fill(field("Website (optional)"), links.website);
+  if (links.x !== undefined) await site.fill(field("X account (optional)"), links.x);
+  await site.fill(field("Acceptance criteria"), "Every change ships with a passing test and a short note.");
+}
+
+async function createProject(owner: User, fullName: string, name: string, links: { readonly website?: string; readonly x?: string } = {}): Promise<string> {
+  await signIn(owner.login, "/projects/new");
+  await fillProject(fullName, name, links);
+  await site.click(named("button", "Next"));
+  await shown(field("Points only")).toMatchObject({ checked: true });
+  await site.click(named("button", "Next"));
+  await shown(named("article", "Listing preview")).toMatchObject({ text: expect.stringContaining(name) });
+  await site.click(named("button", "Create project"));
+  await shown(named("heading", "Project created", { level: 1 })).toMatchObject({ focused: true });
+  await site.click(named("link", "Manage project"));
+  await expect.poll(async () => new URL(await site.where()).pathname, { timeout: 30_000 }).toMatch(/^\/projects\/[^/]+\/manage$/u);
+  const id = decodeURIComponent(new URL(await site.where()).pathname.split("/")[2] ?? "");
+  await shown(settings).toMatchObject({ visible: true });
+  return id;
+}
+
+async function manage(id: string, tab?: string) {
+  await site.open(`/projects/${encodeURIComponent(id)}/manage`, tab);
+  await shown(settings).toMatchObject({ visible: true });
+}
+
+async function openGroup(summary: string) {
+  if ((await site.read(field(summary === "Project listing" ? "Short description" : summary === "Contribution rules" ? "Acceptance criteria" : "GitHub repository"))).count === 0) await site.click(text(summary, true));
+}
+
+const revisions = (id: string) =>
+  site.sql(
+    "SELECT revision, json_extract(manifest, '$.status') AS status, json_extract(manifest, '$.headline') AS headline, json_extract(manifest, '$.links') AS links, json_extract(manifest, '$.slopbot') AS slopbot, json_extract(manifest, '$.repositories') AS repositories, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision",
+    id,
+  );
+
+const lastRevision = async (id: string) => (await revisions(id)).at(-1);
+const parsed = (value: unknown): unknown => (typeof value === "string" ? JSON.parse(value) : value);
+const closes = (row: Readonly<Record<string, unknown>> | undefined) => (parsed(row?.slopbot) as { readonly automaticClosure?: boolean } | null)?.automaticClosure === true;
+const writes = async (id: string) => (await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.startsWith(`/api/v1/projects/${id}`));
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function incompleteAssessment(projectId: string, id: string) {
+  const commit = "c".repeat(40);
+  const template = "d".repeat(64);
+  const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: id, disposition: "incomplete", assessed: { commitSha: commit, templateSha256: template } });
+  const at = new Date().toISOString();
+  await site.sql(
+    "INSERT INTO vetting_assessments(id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at) SELECT ?, id, revision, manifest_sha256, ?, ?, ?, '9001', 'octo-root', ?, 'Browser journey fixture', 'incomplete', 'fixture', ?, ?, ?, ? FROM projects WHERE id = ?",
+    id, "b".repeat(64), commit, template, at, result, await sha256(result), "e".repeat(64), at, projectId,
+  );
+}
+
+beforeEach(async () => {
+  await site.start();
+  await site.deploy(roles);
+  for (const user of Object.values(users)) await site.user(user.id, user.login);
+});
+
+afterEach(async () => {
+  expect(await site.popups()).toBe(0);
+  expect(await site.diagnostics()).toEqual({ console: [], failed: [] });
+});
+
+describe('Complete project setup with explicit independent readiness (spec/frontend/presentation.md, "Story: Complete project setup with explicit independent readiness"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document")', () => {
+  it('the setup draft survives a reload, a second document forks a copy, and Create publishes a paused revision 1 with independent readiness checks (spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1")', async () => {
+    const fullName = await repository(users.oli, "engine");
+    await signIn(users.oli.login, "/projects/new");
+    await shown(field("Setup steps")).toMatchObject({ text: expect.stringContaining("Rewards") });
+    await shown(closure).toMatchObject({ checked: false });
+    await fillProject(fullName, "Engine", { x: "@elizaOS" });
+    await expect.poll(async () => (await site.read(text("Saving draft…"))).count, { timeout: 30_000 }).toBe(0);
+
+    await site.open("/projects/new");
+    await shown(field("Project name")).toMatchObject({ value: "Engine" });
+    await shown(closure).toMatchObject({ checked: false });
+
+    await site.open("/projects/new", "copy");
+    await shown(field("Project name")).toMatchObject({ value: "Engine" });
+    await site.fill(field("Project name"), "Engine copy");
+    await expect.poll(async () => (await site.read(text("Saving draft…"))).count, { timeout: 30_000 }).toBe(0);
+    await site.tab("main");
+    await site.open("/projects/new");
+    await shown(field("Project name")).toMatchObject({ value: "Engine" });
+
+    await site.click(named("button", "Next"));
+    await shown(field("Points only")).toMatchObject({ checked: true });
+    await site.click(named("button", "Next"));
+    await shown(named("article", "Listing preview")).toMatchObject({ text: expect.stringContaining("Engine") });
+    await shown(text("Auto-close")).toMatchObject({ visible: true });
+    await site.click(named("button", "Create project"));
+    await shown(named("heading", "Project created", { level: 1 })).toMatchObject({ focused: true });
+    await shown(text("GitHub access", true)).toMatchObject({ visible: true });
+    await shown(text("Slopbot", true)).toMatchObject({ visible: true });
+    await shown(text("Security scan", true)).toMatchObject({ visible: true });
+    await shown(text("Passed", true)).toMatchObject({ count: 0 });
+    const href = (await site.read(named("link", "Manage project"))).href ?? "";
+    const id = decodeURIComponent(href.split("/")[2] ?? "");
+    await site.click(named("button", "Add another"));
+    await shown(field("Project name")).toMatchObject({ value: "" });
+    await site.open("/projects/new");
+    await shown(field("Project name")).toMatchObject({ value: "" });
+
+    await manage(id);
+    expect(await revisions(id)).toEqual([expect.objectContaining({ revision: 1, status: "paused", actor_github_login: users.oli.login })]);
+    expect(closes(await lastRevision(id))).toBe(false);
+    expect(await site.sql("SELECT project_id FROM project_repositories WHERE repository_key = ?", fullName.toLowerCase())).toEqual([{ project_id: id }]);
+
+    const checks = () => site.sent().then((sent) => sent.filter((each) => each.method === "POST" && each.path === `/api/v1/project-setup/${id}/check`).length);
+    const before = await checks();
+    await site.click(named("button", "Rescan"));
+    await expect.poll(checks, { timeout: 30_000 }).toBe(before + 1);
+    await manage(id);
+    await shown(named("button", "Check again")).toMatchObject({ visible: true });
+    expect(await checks()).toBe(before + 1);
+  });
+
+  it('a repository already on Slop is refused at creation and nothing is published (spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', async () => {
+    await site.allow(refusedLoads, "^409 POST /api/v1/projects$");
+    const fullName = await repository(users.pia, "listed");
+    const id = await createProject(users.pia, fullName, "Listed");
+    await site.open("/projects/new");
+    await fillProject(fullName, "Listed again");
+    await site.click(named("button", "Next"));
+    await site.click(named("button", "Next"));
+    await site.click(named("button", "Create project"));
+    await shown(named("alert")).toMatchObject({ text: expect.stringContaining("is already li") });
+    expect(await site.sql("SELECT project_id FROM project_repositories WHERE repository_key = ?", fullName.toLowerCase())).toEqual([{ project_id: id }]);
+  });
+});
+
+describe('Maintain a live project with current GitHub authority (spec/backend/projects.md, "Story: Maintain a live project with current GitHub authority")', () => {
+  it('owners publish and clear the website and X account against the expected revision, and Publish with no change answers "Nothing changed." (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.eli, "eliza");
+    const id = await createProject(users.eli, fullName, "Eliza", { x: "@elizaOS" });
+    await openGroup("Project listing");
+    await shown(field("X account (optional)")).toMatchObject({ value: "@elizaOS" });
+
+    const mark = (await writes(id)).length;
+    await site.click(publish);
+    await shown(text("Nothing changed.", true)).toMatchObject({ visible: true });
+    expect((await writes(id)).length).toBe(mark);
+
+    await site.fill(field("Website (optional)"), "http://elizaos.example");
+    await site.click(publish);
+    await shown(text("Use an https:// address.", true)).toMatchObject({ visible: true });
+    expect((await writes(id)).length).toBe(mark);
+    expect((await revisions(id)).length).toBe(1);
+
+    await site.fill(field("Website (optional)"), "elizaos.example");
+    await site.fill(field("X account (optional)"), "https://twitter.com/elizaOS_ai");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example", x: "https://x.com/elizaOS_ai" });
+
+    await manage(id);
+    await openGroup("Project listing");
+    await site.fill(field("X account (optional)"), "");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    expect(parsed((await lastRevision(id))?.links)).toEqual({ repository: `https://github.com/${fullName}`, issues: `https://github.com/${fullName}/issues`, discussions: `https://github.com/${fullName}/discussions`, website: "https://elizaos.example" });
+  });
+
+  it('the ready label starts off at 1/400/20, refuses 11 approvals, publishes 2 approvals, and turning it off keeps the saved numbers (spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner\'s numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.ron, "ready");
+    const id = await createProject(users.ron, fullName, "Ready");
+    await openGroup("Contribution rules");
+    await shown(readyLabel).toMatchObject({ checked: false });
+    await site.click(readyLabel);
+    await shown(field("Approvals required")).toMatchObject({ value: "1" });
+    await shown(field("Most changed lines")).toMatchObject({ value: "400" });
+    await shown(field("Most changed files")).toMatchObject({ value: "20" });
+
+    const mark = (await writes(id)).length;
+    await site.fill(field("Approvals required"), "11");
+    await site.click(publish);
+    await shown(text("Enter a whole number from 1 to 10.", true)).toMatchObject({ visible: true });
+    expect((await writes(id)).length).toBe(mark);
+
+    await site.fill(field("Approvals required"), "2");
+    await shown(text("On: 2 approvals, at most 400 lines in 20 files", true)).toMatchObject({ visible: true });
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: true, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20, protectedPaths: [] } });
+
+    await manage(id);
+    await openGroup("Contribution rules");
+    await shown(readyLabel).toMatchObject({ checked: true });
+    await site.click(readyLabel);
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ readyLabel: { enabled: false, approvals: 2, maxChangedLines: 400, maxChangedFiles: 20 } });
+  });
+
+  it('one Publish carries consent and headline as revision 2, revoking consent is revision 3, and a draft older than an administrator's later revision blocks Publish until kept (spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.sam, "consent");
+    const id = await createProject(users.sam, fullName, "Consent");
+    await shown(closure).toMatchObject({ checked: false });
+    await site.click(closure);
+    await openGroup("Project listing");
+    await site.fill(field("Short description"), "Consent keeps its engine honest.");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    expect(await lastRevision(id)).toMatchObject({ headline: "Consent keeps its engine honest." });
+    expect(closes(await lastRevision(id))).toBe(true);
+
+    await manage(id);
+    await shown(closure).toMatchObject({ checked: true });
+    await site.click(closure);
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    expect(closes(await lastRevision(id))).toBe(false);
+
+    await manage(id);
+    await openGroup("Project listing");
+    await site.fill(field("Short description"), "A draft from the older revision.");
+    await expect.poll(async () => (await site.read(named("img", "Draft saved on this device"))).count, { timeout: 30_000 }).toBe(1);
+    await signOut(users.sam.login);
+    await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=settings`);
+    await site.fill(field("Project name"), "Consent, renamed");
+    await site.click(named("button", "Save revision 4"));
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
+    await signOut(users.root.login);
+
+    await signIn(users.sam.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("Draft is from rev 3; now rev 4.", true)).toMatchObject({ visible: true });
+    await shown(publish).toMatchObject({ disabled: true });
+    await site.click(named("button", "Keep"));
+    await shown(publish).toMatchObject({ disabled: false });
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(5);
+    expect(await lastRevision(id)).toMatchObject({ headline: "A draft from the older revision." });
+  });
+
+  it('adding a repository refuses a fork, an archived and a listed repository with their reasons, and the added one pauses the project and counts from next month (spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.tia, "core");
+    const fork = await repository(users.tia, "core-fork", { fork: true });
+    const attic = await repository(users.tia, "attic", { archived: true });
+    const extra = await repository(users.tia, "extras");
+    const id = await createProject(users.tia, fullName, "Core");
+    await openGroup("Repositories");
+
+    const add = async (name: string) => {
+      await site.fill(named("textbox", "GitHub repository"), name);
+      await site.click(named("button", "Add"));
+    };
+    await add(fork);
+    await shown(text(`${fork} is a fork. Add the original repository instead.`, true)).toMatchObject({ visible: true });
+    await add(attic);
+    await shown(text(`${attic} is archived on GitHub.`, true)).toMatchObject({ visible: true });
+    await add(fullName);
+    await shown(text(`${fullName} is already listed.`, true)).toMatchObject({ visible: true });
+    await add(extra);
+    await shown(named("button", `Remove ${extra}`)).toMatchObject({ visible: true });
+    await shown(text("an active project pauses until the scan clears")).toMatchObject({ visible: true });
+
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    const now = new Date();
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 7);
+    const repositories = parsed((await lastRevision(id))?.repositories) as ReadonlyArray<{ readonly id: string; readonly countsFrom?: string }>;
+    expect(repositories.find((entry) => entry.id.toLowerCase() === extra.toLowerCase())?.countsFrom?.slice(0, 7)).toBe(nextMonth);
+    expect(await lastRevision(id)).toMatchObject({ status: "paused" });
+  });
+
+  it('access is checked against current GitHub authority: a failed check offers Retry, a stranger sees "Maintainers only" and is refused, and lost admin permission closes the editor (spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', async () => {
+    await site.allow(refusedLoads, "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
+    const fullName = await repository(users.uma, "authority");
+    const id = await createProject(users.uma, fullName, "Authority");
+
+    await site.githubFail(`/repos/${fullName}/collaborators/`, 503);
+    await site.open(`/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("Project access could not be checked. Retry.")).toMatchObject({ visible: true });
+    await site.click(named("button", "Retry"));
+    await shown(settings).toMatchObject({ visible: true });
+
+    await signOut(users.uma.login);
+    await signIn(users.pia.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("Maintainers only", true)).toMatchObject({ visible: true });
+    await shown(publish).toMatchObject({ count: 0 });
+    const forged = await site.fetch("PUT", `/api/v1/projects/${encodeURIComponent(id)}`, { expectedRevision: 1, manifest: { id, headline: "A stranger's headline." } });
+    expect(forged.status).toBeGreaterThanOrEqual(400);
+    const removal = await site.fetch("POST", `/api/v1/projects/${encodeURIComponent(id)}/remove`, { expectedRevision: 1 });
+    expect(removal.status).toBeGreaterThanOrEqual(400);
+    expect(await revisions(id)).toHaveLength(1);
+
+    await signOut(users.pia.login);
+    await signIn(users.uma.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await shown(settings).toMatchObject({ visible: true });
+    await site.permission(fullName, users.uma.login, "read");
+    await site.open(`/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("Maintainers only", true)).toMatchObject({ visible: true });
+    expect((await site.fetch("POST", `/api/v1/projects/${encodeURIComponent(id)}/remove`, { expectedRevision: 1 })).status).toBeGreaterThanOrEqual(400);
+    expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
+  });
+
+  it('removal is asked once, a stale revision keeps the dialog open with Reload, and only the confirm removes the project (spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work")', async () => {
+    await site.allow(refusedLoads, "^409 POST /api/v1/projects/[^/]+/remove$", "^404 GET /api/v1/projects/");
+    const fullName = await repository(users.oli, "removable");
+    const id = await createProject(users.oli, fullName, "Removable");
+    const removals = async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === `/api/v1/projects/${id}/remove`).length;
+    const dialog = named("dialog", "Remove Removable from Slop?");
+
+    await site.click(named("button", "Remove project"));
+    await shown(dialog).toMatchObject({ visible: true });
+    await site.click(within(dialog, named("button", "Keep project")));
+    await shown(dialog).toMatchObject({ count: 0 });
+    expect(await removals()).toBe(0);
+
+    await manage(id, "other");
+    await openGroup("Project listing");
+    await site.fill(field("Short description"), "Removable changed in another tab.");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+
+    await site.tab("main");
+    await site.click(named("button", "Remove project"));
+    await site.click(within(dialog, named("button", "Remove project")));
+    await shown(within(dialog, named("button", "Reload"))).toMatchObject({ visible: true });
+    await shown(dialog).toMatchObject({ visible: true });
+    expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
+
+    await site.click(within(dialog, named("button", "Reload")));
+    await shown(settings).toMatchObject({ visible: true });
+    await site.click(named("button", "Remove project"));
+    await site.click(within(dialog, named("button", "Remove project")));
+    await shown(named("heading", "Project removed", { level: 1 })).toMatchObject({ visible: true });
+    expect(await removals()).toBe(2);
+    expect((await site.fetch("GET", `/api/v1/projects/${encodeURIComponent(id)}`)).status).toBe(404);
+    expect((await revisions(id)).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('Administrators handle exceptions and restrictions, not routine approval (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/frontend/projectDrafts.md, "Story: Keep an administrator\'s manifest edit until it is accepted")', () => {
+  it('a non-admin sees "Admins only", the admin\'s manifest draft survives a reload until saved or discarded, a restriction disables Featured, delisting waits for its confirm, and a redeploy without the role closes administration (spec/frontend/projectDrafts.md, "An administrator\'s manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret")', async () => {
+    await site.allow(refusedLoads, "^403 (GET|PUT|POST) /api/v1/admin/");
+    const fullName = await repository(users.pia, "governed");
+    const id = await createProject(users.pia, fullName, "Governed");
+    await shown(named("link", "Admin")).toMatchObject({ count: 0 });
+    const forged = await site.fetch("PUT", `/api/v1/admin/projects/${encodeURIComponent(id)}/manifest`, { expectedRevision: 1, manifest: { id, listingTier: "featured" } });
+    expect(forged.status).toBe(403);
+    await site.open("/admin");
+    await shown(text("Admins only", true)).toMatchObject({ visible: true });
+    await signOut(users.pia.login);
+
+    const editor = `/admin?project=${encodeURIComponent(id)}&section=settings`;
+    await signIn(users.root.login, "/admin");
+    await site.fill(field("Find a project"), "Governed");
+    await shown(text(id)).toMatchObject({ visible: true });
+
+    await site.open(editor);
+    await site.fill(field("Project name"), "Governed by admins");
+    await site.open(editor);
+    await shown(field("Project name")).toMatchObject({ value: "Governed by admins" });
+    await site.click(named("button", "Discard draft"));
+    await shown(field("Project name")).toMatchObject({ value: "Governed" });
+    await site.open(editor);
+    await shown(field("Project name")).toMatchObject({ value: "Governed" });
+
+    await site.fill(field("Project name"), "Governed by admins");
+    await site.click(named("button", "Save revision 2"));
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    expect(await lastRevision(id)).toMatchObject({ actor_github_login: users.root.login });
+    await site.open(editor);
+    await shown(field("Project name")).toMatchObject({ value: "Governed by admins" });
+    await shown(named("checkbox", "Featured")).toMatchObject({ disabled: false });
+
+    await site.open(`/admin?project=${encodeURIComponent(id)}&section=overview`);
+    const delists = async () => (await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.includes("/delist")).length;
+    await site.click(named("button", "Delist"));
+    await shown(named("dialog", "Delist?")).toMatchObject({ visible: true });
+    await site.click(within(named("dialog", "Delist?"), named("button", "Cancel")));
+    expect(await delists()).toBe(0);
+    expect((await revisions(id)).length).toBe(2);
+
+    await site.select(field("Action"), "Quarantine");
+    await site.fill(field("Reason"), "Browser journey quarantine of a governed project.");
+    await site.fill(field("Evidence"), "case-browser-journey");
+    await site.click(named("button", "Preview"));
+    await site.click(named("button", "Confirm: Quarantine"));
+    await shown(text("Recorded.")).toMatchObject({ visible: true });
+    await site.open(editor);
+    await shown(named("checkbox", "Featured")).toMatchObject({ disabled: true });
+
+    await site.open("/admin?section=fees");
+    await shown(named("link", "Fee conversions")).toMatchObject({ visible: true });
+    await shown(text("No conversions", true)).toMatchObject({ visible: true });
+
+    await site.deploy({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "", OPERATOR_GITHUB_IDS: "" });
+    await site.open("/admin");
+    await shown(text("Admins only", true)).toMatchObject({ visible: true });
+    expect((await site.fetch("GET", "/api/v1/admin/projects")).status).toBe(403);
+    expect((await site.fetch("GET", "/api/v1/admin/fee-conversions")).status).toBe(403);
+    await site.deploy(roles);
+    await site.open("/admin");
+    await shown(field("Find a project")).toMatchObject({ visible: true });
+  });
+});
+
+describe('Exempt only by the frozen set or an audited owner-approved grant (spec/security/enforcement.md, "Story: Exempt only by the frozen set or an audited owner-approved grant")', () => {
+  it('an administrator records an owner-approved exemption on an incomplete scan, the owner sees it and never "Passed", and a revocation is kept in the history (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.eli, "exempt");
+    const id = await createProject(users.eli, fullName, "Exempt");
+    const assessment = `vet_${"7".repeat(32)}`;
+    await incompleteAssessment(id, assessment);
+    await signOut(users.eli.login);
+
+    await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);
+    await shown(named("heading", "Owner-approved exemption")).toMatchObject({ visible: true });
+    const record = named("button", "Record exemption");
+    await site.fill(named("textbox", "Exemption reason"), "The owner approved this repository after a manual review.");
+    await site.fill(field("Decision link"), "https://github.com/slop-cash/decisions/issues/7");
+    await shown(record).toMatchObject({ disabled: true });
+    await site.click(named("checkbox", "Owner authorized this"));
+    await site.click(record);
+    await expect.poll(() => site.sql("SELECT project_id, granted_by_github_login FROM vetting_admission_exemptions WHERE project_id = ?", id), { timeout: 30_000 }).toEqual([{ project_id: id, granted_by_github_login: users.root.login }]);
+    await shown(named("heading", "Exemption history")).toMatchObject({ text: expect.stringContaining("Active") });
+    await signOut(users.root.login);
+
+    await signIn(users.eli.login, `/projects/${encodeURIComponent(id)}/manage`);
+    await shown(text("Owner-approved exemption", true)).toMatchObject({ visible: true });
+    await shown(text("Passed", true)).toMatchObject({ count: 0 });
+    await signOut(users.eli.login);
+
+    await signIn(users.root.login, `/admin?project=${encodeURIComponent(id)}&section=security`);
+    await site.fill(named("textbox", "Exemption reason"), "The owner withdrew the approval for this repository.");
+    await site.fill(field("Decision link"), "https://github.com/slop-cash/decisions/issues/8");
+    await site.click(named("checkbox", "Owner authorized this"));
+    await site.click(named("button", "Revoke exemption"));
+    await expect.poll(() => site.sql("SELECT count(*) AS revoked FROM vetting_admission_exemption_revocations r JOIN vetting_admission_exemptions e ON e.id = r.exemption_id WHERE e.project_id = ?", id), { timeout: 30_000 }).toEqual([{ revoked: 1 }]);
+    await shown(text("Revoked", true)).toMatchObject({ visible: true });
+  });
+});
+
+describe('Read only authorized retained evidence (spec/security/privacy.md, "Story: Read only authorized retained evidence")', () => {
+  it('retained evidence reads as verified text or downloads with its inventory digest, a tampered object is refused, and a stranger reads nothing (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate")', async () => {
+    await site.allow(refusedLoads, "^40[0139] (GET|POST) /api/v1/operator/vetting-evidence(/|$)");
+    const fullName = await repository(users.ron, "evidence");
+    const id = await createProject(users.ron, fullName, "Evidence");
+    const assessment = `vet_${"8".repeat(32)}`;
+    await incompleteAssessment(id, assessment);
+    const trace = "harmless scanner trace for the browser journey";
+    const binary = "harmless binary bytes for the browser journey";
+    const traceSha = await sha256(trace);
+    const binarySha = await sha256(binary);
+    const declared = { traceSha256: traceSha, objects: [{ sha256: traceSha, sizeBytes: trace.length, kind: "trace", label: "trace", contentType: "text/plain" }, { sha256: binarySha, sizeBytes: binary.length, kind: "artifact", label: "artifact", contentType: "application/octet-stream" }] };
+    const run = `/api/v1/vetting/evidence/${assessment}/run-1`;
+    expect((await site.scanner("POST", run, JSON.stringify(declared))).status).toBeLessThan(300);
+    expect((await site.scanner("PUT", `${run}/${traceSha}`, trace)).status).toBeLessThan(300);
+    expect((await site.scanner("PUT", `${run}/${binarySha}`, binary)).status).toBeLessThan(300);
+    const page = `/vetting-evidence?assessmentId=${assessment}&runId=run-1`;
+    await signOut(users.ron.login);
+
+    await signIn(users.pia.login, page);
+    await shown(text("Evidence could not be loaded")).toMatchObject({ visible: true });
+    await expect.poll(() => site.leaks(trace), { timeout: 30_000 }).toBe(false);
+    await signOut(users.pia.login);
+
+    await signIn(users.root.login, page);
+    await shown(text("Evidence inventory", true)).toMatchObject({ visible: true });
+    const traceItem = named("article", "trace");
+    await site.fill(within(traceItem, field("Reason")), "Inspect the harmless trace");
+    await site.click(named("button", "Read trace"));
+    await shown(named("textbox", "trace verified content")).toMatchObject({ value: trace });
+    await shown(within(traceItem, named("status"))).toMatchObject({ text: expect.stringContaining("Verified") });
+
+    const artifactItem = named("article", "artifact");
+    await site.fill(within(artifactItem, field("Reason")), "Download the harmless artifact");
+    await site.click(named("button", "Download artifact"));
+    await expect.poll(() => site.download(), { timeout: 30_000 }).toEqual({ name: `${binarySha}.bin`, sha256: binarySha });
+    await shown(within(artifactItem, named("status"))).toMatchObject({ text: expect.stringContaining("Do not execute") });
+    expect(await site.sql("SELECT count(*) AS audited FROM vetting_evidence_audit WHERE assessment_id = ?", assessment)).toEqual([{ audited: expect.any(Number) }]);
+
+    const [head] = await site.sql("SELECT target_key FROM vetting_evidence_heads WHERE sha256 = ?", traceSha);
+    await site.object("VETTING_EVIDENCE", String(head?.target_key), "tampered trace bytes of the same length!!!!!!!");
+    await site.open(page);
+    await site.fill(within(named("article", "trace"), field("Reason")), "Inspect the harmless trace again");
+    await site.click(named("button", "Read trace"));
+    await shown(within(named("article", "trace"), named("alert"))).toMatchObject({ visible: true });
+    await shown(named("textbox", "trace verified content")).toMatchObject({ count: 0 });
+    expect(await site.leaks("tampered trace bytes")).toBe(false);
+  });
+});
+
+describe('Resume an authorized destination after signing in (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in")', () => {
+  it('a signed-out manage page keeps its URL and returns there after sign-in (spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled")', async () => {
+    const fullName = await repository(users.sam, "resume");
+    const id = await createProject(users.sam, fullName, "Resume");
+    await signOut(users.sam.login);
+    const path = `/projects/${encodeURIComponent(id)}/manage`;
+    await site.open(path);
+    await shown(named("link", "Sign in with GitHub")).toMatchObject({ visible: true });
+    await at(path);
+    await signIn(users.sam.login, path);
+    await shown(settings).toMatchObject({ visible: true });
+  });
+});

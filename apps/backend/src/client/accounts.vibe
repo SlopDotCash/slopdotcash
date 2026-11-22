@@ -39,6 +39,8 @@ export const NoFields = Schema.Struct({})
 
 export schema SignedOut { readonly signedOut: boolean }
 export schema Revoked { readonly revoked: boolean }
+export schema ListedSession { readonly id: string; readonly expiresAt: string; readonly current: boolean }
+export schema SessionList { readonly sessions: ReadonlyArray<ListedSession> }
 export schema Closed { readonly closed: boolean; readonly closedAt: string }
 
 export schema XAccount { readonly id: string; readonly username: string; readonly verifiedAt: string; readonly public: number }
@@ -57,6 +59,7 @@ export const pointsMember = route({ ...points, method: "GET", path: "/api/v1/poi
 export const pointsJoin = route({ ...points, method: "POST", path: "/api/v1/points/join", limitKib: 4, request: JoinRequest, answer: PublicMember })
 export const pointsMe = route({ ...points, method: "GET", path: "/api/v1/points/me", limitKib: 1, request: undefined, answer: Schema.NullOr(PublicMember) })
 export const pointsSignOut = route({ ...points, method: "POST", path: "/api/v1/points/signout", limitKib: 1, request: NoFields, answer: SignedOut })
+export const pointsSessions = route({ ...points, method: "GET", path: "/api/v1/points/sessions", limitKib: 1, request: undefined, answer: SessionList })
 export const pointsRevokeSession = route({ ...points, method: "POST", path: "/api/v1/points/sessions/revoke", limitKib: 1, request: RevokeRequest, answer: Revoked })
 export const pointsVisibility = route({ ...points, method: "POST", path: "/api/v1/points/visibility", limitKib: 1, request: Visibility, answer: PublicMember })
 export const pointsClose = route({ ...points, method: "POST", path: "/api/v1/points/account/close", limitKib: 1, request: CloseRequest, answer: Closed })
@@ -70,4 +73,4 @@ export const xVisibility = route({ ...points, method: "POST", path: "/api/v1/poi
 
 export const projectSession = route({ method: "GET", path: "/api/v1/project-session", access: "public", limitKib: 1, request: undefined, answer: ProjectSession, rejected: "internal_error", cache: "no-store" })
 
-export const api: ReadonlyArray<AnyRoute> = [pointsPeople, pointsMember, pointsJoin, pointsMe, pointsSignOut, pointsRevokeSession, pointsVisibility, pointsClose, xProfile, xCallbackRoute, xMe, xStart, xDisconnect, xVisibility, projectSession]
+export const api: ReadonlyArray<AnyRoute> = [pointsPeople, pointsMember, pointsJoin, pointsMe, pointsSignOut, pointsSessions, pointsRevokeSession, pointsVisibility, pointsClose, xProfile, xCallbackRoute, xMe, xStart, xDisconnect, xVisibility, projectSession]

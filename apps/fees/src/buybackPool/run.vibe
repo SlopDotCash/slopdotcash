@@ -2,27 +2,31 @@
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nowSeconds } from "@repo/platform/clock"
 import { positiveAmount, zero } from "../../gen/settlement__money.effect.vibe"
-import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, creditOf, purchaseDecision, purchaseInput, signs, usdg as usdgAsset } from "../../gen/fees__buybackPool.effect.vibe"
+import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, creditOf, minimumPurchase, purchaseDecision, purchaseInput, remaining, signs, usdg } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress, openSend } from "../../gen/fees__buyback.effect.vibe"
 import { amountOf, modelBalance } from "../buyback/codec.vibe"
 import { exactNumber, pausedCalldata, transferCalldata } from "../evm/abi.ts"
 import { approvalNeeded, approvalSettled } from "../evm/approval.vibe"
 import { type Unlanded, attemptStatus, broadcast, credited, feesPerGas, gasLimit, nativeCost, readWord, tokenBalance } from "../evm/client.vibe"
-import { type KyberSettings, nativeValue, quote } from "../kyber/route.vibe"
+import { rescaleAttempts } from "../conversion/evaluate.vibe"
+import { type KyberQuote, type KyberSettings, nativeValue, quote } from "../kyber/route.vibe"
 import { type EvmSigned, type Signed, FeeWallet, SignRefused } from "../signer/feeWallet.vibe"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { burnAddress, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
-import { type PoolInstance, type SendRecord, closedUnlanded } from "./codec.vibe"
+import { type PoolInstance, type SendRecord, assetToken, closedUnlanded } from "./codec.vibe"
 import { burnTransfers } from "./burnTransfers.ts"
 import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, closeApproval, failPreparation, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval, settleClosed } from "./store.vibe"
 
 module verified {
   import { fromAmount as whole } from "@repo/settlement/kernels/amounts"
+  import { rescaleInput as rescaled } from "../kernels/arithmetic.ts"
   import type { Amount } from "../../gen/settlement__money.ts"
   /** @throws {never} */
   export function fromAmount(amount: Amount): bigint { return whole(amount) }
+  /** @throws {never} */
+  export function rescaleInput(amount: bigint, remaining: bigint, quotedOut: bigint): bigint { return rescaled(amount, remaining, quotedOut) }
 }
-import { fromAmount } from verified
+import { fromAmount, rescaleInput } from verified
 
 export interface PoolSettings {
   readonly runId: string
@@ -41,7 +45,7 @@ interface Running {
 
 export interface PoolResult { readonly instance: PoolInstance; readonly state: Pool; readonly records: ReadonlyArray<string> }
 
-const usdg = robinhoodUsdg as Address
+const usdgToken = robinhoodUsdg as Address
 const slop = slopToken as Address
 
 function tagOf(error: unknown) {
@@ -88,7 +92,7 @@ function open(record: SendRecord) {
 
 effect function expire(running: Running, record: SendRecord) {
   const swap = { tx: running.instance.names.number("tx", record.tx), succeeded: false, finalized: true, output: zero, toFeeWallet: false, slopToken: false }
-  if (!canSettlePurchase(running.state, swap)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: record.tx })
+  if (!canSettlePurchase(running.state, swap, "Worker")) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: record.tx })
   try step(running, { type: "settlePurchase", swap }, { expired: true })
 }
 
@@ -131,7 +135,7 @@ effect function settleSend(running: Running, record: SendRecord) {
   if (record.kind === "buyback") {
     const output = succeeded ? try credited(status.receipt, slop) : 0n
     const swap = { tx, succeeded, finalized: true, output: succeeded ? amountOf(output) : zero, toFeeWallet: output > 0n, slopToken: true }
-    if (!canSettlePurchase(running.state, swap)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: status.tx })
+    if (!canSettlePurchase(running.state, swap, "Worker")) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "buyback", id: record.id, txId: status.tx })
     try step(running, { type: "settlePurchase", swap }, { receipt })
     return
   }
@@ -141,7 +145,7 @@ effect function settleSend(running: Running, record: SendRecord) {
     if (moved.burned !== amount || moved.left !== amount) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "burn", id: record.id, txId: status.tx })
   }
   const sendReceipt = { tx, succeeded, finalized: true }
-  if (!canSettleBurn(running.state, sendReceipt)) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "burn", id: record.id, txId: status.tx })
+  if (!canSettleBurn(running.state, sendReceipt, "Worker")) return try Effect.logWarning("fee_send_receipt_mismatch", { network: "Robinhood", kind: "burn", id: record.id, txId: status.tx })
   try step(running, { type: "settleBurn", receipt: sendReceipt }, { receipt })
 }
 
@@ -152,35 +156,35 @@ effect function reconcile(running: Running) {
 }
 
 effect function decidedPurchase(running: Running, purchaseQuote: PurchaseQuote, facts: Facts) {
-  if (canDecidePurchase(running.state, purchaseQuote)) return try step(running, { type: "decidePurchase", quote: purchaseQuote }, facts)
-  try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "buyback", amount: purchaseQuote.spent, decision: purchaseDecision(running.state, purchaseQuote).state, mode: running.state.runtime.buybackMode })
+  if (canDecidePurchase(running.state, purchaseQuote, "Worker")) return try step(running, { type: "decidePurchase", quote: purchaseQuote }, facts)
+  try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "buyback", asset: purchaseQuote.asset, amount: purchaseQuote.spent, decision: purchaseDecision(running.state, purchaseQuote).state, mode: running.state.runtime.buybackMode })
 }
 
 effect function decidedBurn(running: Running, request: BurnRequest, facts: Facts) {
-  if (canDecideBurn(running.state, request)) return try step(running, { type: "decideBurn", burnRequest: request }, facts)
+  if (canDecideBurn(running.state, request, "Worker")) return try step(running, { type: "decideBurn", burnRequest: request }, facts)
   try Effect.logWarning("fee_buyback_undecided", { network: "Robinhood", leg: "burn", value: request.value, decision: burnDecision(running.state, request).state, mode: running.state.runtime.buybackMode })
 }
 
-effect function refusedPurchase(running: Running, purchaseQuote: PurchaseQuote, quoted: QuoteFacts, detail: string) {
+effect function refusedPurchase(running: Running, token: Address, purchaseQuote: PurchaseQuote, quoted: QuoteFacts, detail: string) {
   const { settings } = running
-  try failPreparation(running.instance, { kind: "buyback", runId: settings.runId, wallet: settings.wallet, amount: String(purchaseQuote.spent), value: purchaseQuote.spent, minAmountOut: fromAmount(purchaseQuote.minimum).toString(), quote: quoted, detail })
+  try failPreparation(running.instance, { kind: "buyback", token, runId: settings.runId, wallet: settings.wallet, amount: String(purchaseQuote.amountIn), value: purchaseQuote.spent, minAmountOut: fromAmount(purchaseQuote.minimum).toString(), quote: quoted, detail })
   running.records.push("failPreparation")
 }
 
 effect function refusedBurn(running: Running, request: BurnRequest, detail: string) {
   const { settings } = running
-  try failPreparation(running.instance, { kind: "burn", runId: settings.runId, wallet: settings.wallet, amount: fromAmount(request.quantity).toString(), value: request.value, minAmountOut: null, quote: undefined, detail })
+  try failPreparation(running.instance, { kind: "burn", token: slop, runId: settings.runId, wallet: settings.wallet, amount: fromAmount(request.quantity).toString(), value: request.value, minAmountOut: null, quote: undefined, detail })
   running.records.push("failPreparation")
 }
 
-effect function approve(running: Running, amount: bigint, purchaseQuote: PurchaseQuote, quoted: QuoteFacts) {
+effect function approve(running: Running, token: Address, amount: bigint, purchaseQuote: PurchaseQuote, quoted: QuoteFacts) {
   const floors = try sendFloors(running.instance)
   const wallet = try FeeWallet
-  const signing = wallet.sign({ kind: "KyberApprove", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amount }, () => Effect.void) catch effect (error) => { return error }
-  if (signing instanceof SignRefused) return try refusedPurchase(running, purchaseQuote, quoted, signing.issue)
+  const signing = wallet.sign({ kind: "KyberApprove", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: try big(String(purchaseQuote.spent)), token, amount }, () => Effect.void) catch effect (error) => { return error }
+  if (signing instanceof SignRefused) return try refusedPurchase(running, token, purchaseQuote, quoted, signing.issue)
   const signed = try signedEvm(signing, "approvePurchase")
   const { settings } = running
-  try journalApproval(running.instance, { amount, runId: settings.runId, wallet: settings.wallet, summary: quoted.summary, signed: signedFacts(settings, signed) })
+  try journalApproval(running.instance, { token, value: purchaseQuote.spent, amount, runId: settings.runId, wallet: settings.wallet, summary: quoted.summary, signed: signedFacts(settings, signed) })
   running.records.push("approvePurchase")
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_approval_submitted")
   if (sent.kind === "Accepted") return
@@ -189,62 +193,99 @@ effect function approve(running: Running, amount: bigint, purchaseQuote: Purchas
   if (record !== undefined) try loseApproval(running.instance, record.id, sent.detail)
 }
 
-effect function buy(running: Running, purchaseQuote: PurchaseQuote, slippageBps: number, quoted: QuoteFacts) {
-  const amount = try big(String(purchaseQuote.spent))
+effect function buy(running: Running, token: Address, purchaseQuote: PurchaseQuote, slippageBps: number, quoted: QuoteFacts) {
+  const amountIn = try big(String(purchaseQuote.amountIn))
   const floors = try sendFloors(running.instance)
   const wallet = try FeeWallet
   const minimumOutput = fromAmount(purchaseQuote.minimum)
-  const signing = wallet.sign({ kind: "KyberSwap", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: amount, token: usdg, amountIn: amount, minimumOutput, slippageBps }, () => Effect.void) catch effect (error) => { return error }
-  if (signing instanceof SignRefused) return try refusedPurchase(running, purchaseQuote, quoted, signing.issue)
+  const signing = wallet.sign({ kind: "KyberSwap", network: "Robinhood", nonceFloor: try big(String(floors.evm)), valueMicro: try big(String(purchaseQuote.spent)), token, amountIn, minimumOutput, slippageBps }, () => Effect.void) catch effect (error) => { return error }
+  if (signing instanceof SignRefused) return try refusedPurchase(running, token, purchaseQuote, quoted, signing.issue)
   const signed = try signedEvm(signing, "purchase")
   const tx = running.instance.names.number("tx", signed.txId)
   const signedQuote = { ...purchaseQuote, tx, minimum: amountOf(signed.prepared.minimumOutput) }
-  if (!canPurchase(running.state, signedQuote)) return try refusedPurchase(running, purchaseQuote, quoted, "the signed purchase is outside the pool's terms")
+  if (!canPurchase(running.state, signedQuote, "Worker")) return try refusedPurchase(running, token, purchaseQuote, quoted, "the signed purchase is outside the pool's terms")
   try step(running, { type: "purchase", quote: signedQuote }, { quote: quoted, signed: signedFacts(running.settings, signed) })
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_buyback_submitted")
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
 }
 
-// The pool buys with USDG, the reference asset, whose credit holds the arrivals and the USDG fee share; for USDG the
-// input and its value are the same amount.
-function unquoted(spent: number, balance: number): PurchaseQuote {
-  return { route: "RouteFound", tx: 0, asset: usdgAsset, amountIn: spent, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
+function unquoted(asset: number, amountIn: number, spent: number, balance: number): PurchaseQuote {
+  return { route: "RouteFound", tx: 0, asset, amountIn, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
 }
 
-effect function purchaseLeg(running: Running) {
-  const { state, settings } = running
-  if (openSend(state.purchase) || creditOf(state, usdgAsset).credit <= 0) return
-  const balance = modelBalance(try tokenBalance(usdg, "finalized"))
-  const spent = purchaseInput(state, usdgAsset, balance)
-  if (spent <= 0) return
-  const unrouted = unquoted(spent, balance)
-  if (purchaseDecision(state, unrouted).state !== "Quoted") return try decidedPurchase(running, unrouted, {})
-  const amount = try big(String(spent))
-  const slippageBps = settings.limits.maxSlippageBps
-  const found = try quote("Robinhood", usdg, amount, slop, slippageBps, settings.kyber)
-  if (found.kind === "NoRoute") return try decidedPurchase(running, { ...unrouted, route: "NoRouteResult" }, { detail: found.detail })
-  const priced = found.quote
+type Valued = { readonly kind: "Valued"; readonly value: bigint } | { readonly kind: "Unvalued"; readonly detail: string }
+
+effect function valueOf(running: Running, asset: number, token: Address, amount: bigint) {
+  if (asset === usdg) return { kind: "Valued", value: amount } satisfies Valued
+  const valued = try quote("Robinhood", token, amount, usdgToken, 0, running.settings.kyber)
+  if (valued.kind === "NoRoute") return { kind: "Unvalued", detail: `value unavailable: ${valued.detail}` } satisfies Valued
+  return { kind: "Valued", value: valued.quote.amountOut } satisfies Valued
+}
+
+type Priced =
+  | { readonly kind: "Waits"; readonly quote: PurchaseQuote; readonly facts: Facts }
+  | { readonly kind: "Routed"; readonly quote: PurchaseQuote; readonly amount: bigint; readonly value: bigint; readonly priced: KyberQuote }
+
+effect function priced(running: Running, asset: number, token: Address, amount: bigint, balance: number) {
+  const slippageBps = running.settings.limits.maxSlippageBps
+  const amountIn = modelBalance(amount)
+  const valued = try valueOf(running, asset, token, amount)
+  if (valued.kind === "Unvalued") return { kind: "Waits", quote: { ...unquoted(asset, amountIn, 0, balance), route: "ValueUnavailable" }, facts: { detail: valued.detail } } satisfies Priced
+  const spent = modelBalance(valued.value)
+  if (valued.value < BigInt(minimumPurchase)) return { kind: "Waits", quote: unquoted(asset, amountIn, spent, balance), facts: {} } satisfies Priced
+  const found = try quote("Robinhood", token, amount, slop, slippageBps, running.settings.kyber)
+  if (found.kind === "NoRoute") return { kind: "Waits", quote: { ...unquoted(asset, amountIn, spent, balance), route: "NoRouteResult" }, facts: { detail: found.detail } } satisfies Priced
   const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n
   const purchaseQuote: PurchaseQuote = {
     route: "RouteFound",
     tx: 0,
-    asset: usdgAsset,
-    amountIn: spent,
+    asset,
+    amountIn,
     spent,
-    minimum: amountOf(priced.minAmountOut),
-    gasValue: try exact(priced.gasCostMicro, "decidePurchase", "the purchase gas value"),
+    minimum: amountOf(found.quote.minAmountOut),
+    gasValue: try exact(found.quote.gasCostMicro, "decidePurchase", "the purchase gas value"),
     slippageBps,
-    impactBps: priced.priceImpactBps,
+    impactBps: found.quote.priceImpactBps,
     receiver: "fees",
     tokenPaused: paused,
     balance,
   }
-  const quoted = { amountOut: priced.amountOut.toString(), impactBps: priced.priceImpactBps < 0 ? null : priced.priceImpactBps, summary: priced.summary.slice(0, 8192) } satisfies QuoteFacts
+  return { kind: "Routed", quote: purchaseQuote, amount, value: valued.value, priced: found.quote } satisfies Priced
+}
+
+effect function fitted(running: Running, asset: number, token: Address, held: number, balance: number) {
+  let amount = try big(String(held))
+  let found = try priced(running, asset, token, amount, balance)
+  const left = try big(String(remaining(running.state)))
+  for (let attempt = 0; attempt < rescaleAttempts && found.kind === "Routed" && found.value > left; attempt++) {
+    const scaled = rescaleInput(amount, left, found.value)
+    if (scaled <= 0n) break
+    amount = scaled
+    found = try priced(running, asset, token, amount, balance)
+  }
+  return found
+}
+
+effect function purchaseLeg(running: Running, asset: number) {
+  const { state, settings } = running
+  const named = assetToken(running.instance, asset)
+  if (named === undefined || openSend(state.purchase) || creditOf(state, asset).credit <= 0) return
+  const token = named as Address
+  const balance = modelBalance(try tokenBalance(token, "finalized"))
+  const held = purchaseInput(state, asset, balance)
+  if (held <= 0) return
+  const probe = unquoted(asset, held, asset === usdg ? held : 0, balance)
+  const waits = asset === usdg ? purchaseDecision(state, probe).state !== "Quoted" : remaining(state) < minimumPurchase
+  if (waits) return try decidedPurchase(running, probe, {})
+  const found = try fitted(running, asset, token, held, balance)
+  if (found.kind === "Waits") return try decidedPurchase(running, found.quote, found.facts)
+  const purchaseQuote = found.quote
+  const quoted = { amountOut: found.priced.amountOut.toString(), impactBps: found.priced.priceImpactBps < 0 ? null : found.priced.priceImpactBps, summary: found.priced.summary.slice(0, 8192) } satisfies QuoteFacts
   const verdict = purchaseDecision(running.state, purchaseQuote)
   if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decidedPurchase(running, purchaseQuote, { quote: quoted })
-  if (paused) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "SLOP transfers are paused" })
-  if (try approvalNeeded(usdg, amount, "Router")) return try approve(running, amount, purchaseQuote, quoted)
-  try buy(running, purchaseQuote, slippageBps, quoted)
+  if (purchaseQuote.tokenPaused) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "buyback", reason: "SLOP transfers are paused" })
+  if (try approvalNeeded(token, found.amount, "Router")) return try approve(running, token, found.amount, purchaseQuote, quoted)
+  try buy(running, token, purchaseQuote, settings.limits.maxSlippageBps, quoted)
 }
 
 effect function burnGas(running: Running, quantity: bigint) {
@@ -261,7 +302,7 @@ effect function burnLeg(running: Running) {
   const quantity = fromAmount(due)
   if ((try tokenBalance(slop, "latest")) < quantity) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "the fee wallet holds less SLOP than the burn share" })
   const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n
-  const valued = try quote("Robinhood", slop, quantity, usdg, 0, settings.kyber)
+  const valued = try quote("Robinhood", slop, quantity, usdgToken, 0, settings.kyber)
   if (valued.kind === "NoRoute") return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: `burn value unavailable: ${valued.detail}` })
   const value = exactNumber(valued.quote.amountOut)
   if (value === undefined) return try Effect.logInfo("fee_buyback_waiting", { network: "Robinhood", leg: "burn", reason: "burn value exceeds safe integer accounting" })
@@ -277,7 +318,7 @@ effect function burnLeg(running: Running) {
   const signed = try signedEvm(signing, "burn")
   const tx = running.instance.names.number("tx", signed.txId)
   const signedRequest = { ...request, tx }
-  if (!canBurn(running.state, signedRequest)) return try refusedBurn(running, request, "the signed burn is outside the pool's terms")
+  if (!canBurn(running.state, signedRequest, "Worker")) return try refusedBurn(running, request, "the signed burn is outside the pool's terms")
   try step(running, { type: "burn", burnRequest: signedRequest }, { signed: signedFacts(settings, signed) })
   const sent = try broadcastOf(running, signed.rawTx, signed.txId, "fee_burn_submitted")
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
@@ -289,11 +330,11 @@ effect function attempt<E, R>(leg: string, program: void!E!R) {
 
 export effect function robinhoodPool(instance: PoolInstance, settings: PoolSettings) {
   const running: Running = { instance, state: (try poolOf(instance)).state, settings, records: [] }
-  if (!canBeginRun(running.state)) return { instance: running.instance, state: running.state, records: running.records } satisfies PoolResult
+  if (!canBeginRun(running.state, "Worker")) return { instance: running.instance, state: running.state, records: running.records } satisfies PoolResult
   try step(running, { type: "beginRun" })
   let approving = true
   try attempt("reconcile", effect { approving = try reconcile(running) })
-  if (!approving) try attempt("buyback", purchaseLeg(running))
+  if (!approving) for (let asset = 1; asset <= running.instance.assets.length; asset++) try attempt(`buyback ${running.instance.assets[asset - 1] ?? asset}`, purchaseLeg(running, asset))
   try attempt("burn", burnLeg(running))
   return { instance: running.instance, state: running.state, records: running.records } satisfies PoolResult
 }

@@ -50,7 +50,7 @@ type ReleasePhase = Candidate | Built | Checked | Publishing | PublicationUncert
 type DataKind = NoData | FreshCollection | ResumedCollection | RetainedSnapshot
 type QualityGate = Types | Models | Proofs | ModelInventory | ProofInventory | Unit | Browser | BrowserSmoke | Isolation | Identity
 type Service = FeeConverter | Notify | VettingBackup | VettingRetention | Slopbot | PaymentAttesters | IdentityWorker
-  | VettingSandbox | Referral | RepositoryAccess
+  | VettingSandbox | Referral | RepositoryAccess | SubmissionFee
 type ServiceVariables = { notify: bool, vettingBackup: bool, vettingRetention: bool, slopbot: bool }
 type Workflow = NoWorkflow | ReleaseWorkflow | OctoberRewardsWorkflow | HistoricalPointsWorkflow | PayoutPacketWorkflow
   | CorrectionsWorkflow | SandboxQualificationWorkflow
@@ -65,7 +65,7 @@ type Release = { phase: ReleasePhase, configured: bool, environment: Environment
   checkpointRun: int, reusedPending: int, revalidated: int, deadlineReached: bool,
   manualRun: bool, skipProofs: bool, skipBrowserTests: bool, bootstrapData: bool, services: List[ServiceRow],
   deployment: int, attempt: int, lock: PublicationLock, fee: F::Runtime, variables: ServiceVariables, anchored: bool,
-  feeRotation: int }
+  feeRotation: int, restoredFrom: int }
 pure val noRef: RunRef = { kind: LocalTree, branch: "", repository: "", githubEnvironment: "" }
 pure val canonicalRepository = "SlopDotCash/slopdotcash"
 pure val legacyAnchor = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
@@ -77,7 +77,7 @@ pure val initial: Release = { phase: Candidate, configured: false, environment: 
   checkpointRun: 0, reusedPending: 0, revalidated: 0, deadlineReached: false, manualRun: false, skipProofs: false,
   skipBrowserTests: false, bootstrapData: false, services: List(), deployment: 0, attempt: 0,
   lock: freeLock, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false },
-  anchored: false, feeRotation: 0 }
+  anchored: false, feeRotation: 0, restoredFrom: 0 }
 pure val selfRun = 1
 pure def liveHead(r: Release): int = r.lock.head
 pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == ReleaseWorkflow and r.lock.holderRun == selfRun
@@ -119,7 +119,7 @@ pure def coverageRequest(r: Release): Coverage::Requests = {
   kind: if (r.manualRun) Coverage::ManualDispatch else Coverage::DeployingPush,
   target: if (r.environment == Production) Coverage::Main else Coverage::Development,
   skipProofs: r.skipProofs, skipBrowserTests: r.skipBrowserTests,
-  resumeDiscussions: r.checkpointRun > 0, usePublishedData: r.dataKind == RetainedSnapshot }
+  resumeDiscussions: r.checkpointRun > 0, usePublishedData: r.dataKind == RetainedSnapshot, dataFromRun: r.restoredFrom > 0 }
 pure def alwaysOptionsOnlyManual(r: Release): bool = (r.skipProofs or r.skipBrowserTests) implies r.manualRun
 pure def alwaysPublicationAnchored(r: Release): bool =
   (r.configured and r.environment == Production) implies (r.anchored or r.phase == Refused)
@@ -134,7 +134,22 @@ collection, source counts, immutable identities and source-specific
 timestamps. An explicit manual release of either environment may instead
 retain the last verified snapshot its own environment published, with
 original history, timestamps and record counts (`use_published_data`). A snapshot from another environment or
-bootstrap data never qualifies.
+bootstrap data never qualifies. A manual production release with
+`use_published_data` may instead name, with `data_from_run`, another run of
+the canonical repository whose own fresh collection was superseded: the
+producer must be a completed run of `.github/workflows/deploy.yml` on `main`
+(head repository the canonical one, started by a push or manual dispatch),
+whose commit is an ancestor of this release's, whose exact attempt has
+exactly one successful "Prepare checked browser bundle" job with exactly one
+successful "Generate live contribution data" step, and whose one unexpired
+`slop-source-<head sha>` artifact, at most 2 GiB and at most six days old,
+matches its GitHub sha256 digest. Only its ledger and profiles are taken,
+with their own generation time; the [retained-data age
+check](../points/retainedFreshness.md) still refuses data older than
+production serves. The extraction bounds (`data/leaderboard.json` at most
+25 MiB, at most eight `data/leaderboard/<sha256>.part` of at most 8 MiB each,
+`data/profiles.json` at most 8 MiB, each a regular non-empty file named once)
+are the shell's.
 
 ```quint
 pure def canCollectData(r: Release, environment: Environment, registryDigest: int, githubDigest: int, recordedAt: int): bool =
@@ -150,6 +165,24 @@ pure def canRetainSnapshot(r: Release, environment: Environment, digest: int, or
 pure def retainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, bootstrap: bool): Release =
   { ...r, dataKind: RetainedSnapshot, snapshotDigest: digest, dataEnvironment: environment, dataRecordedAt: originalRecordedAt,
     bootstrapData: bootstrap, registryDigest: 0, githubDigest: 0 }
+import dailyCollection as DC from "./dailyCollection"
+type Producer = { runId: int, otherRun: bool, deployRun: DC::FollowedRun, ancestor: bool, collected: bool,
+  ageHours: int, digestMatches: bool, digest: int, generatedAt: int }
+pure val producerMaxAgeHours = 144
+pure def trustedProducer(producer: Producer): bool =
+  producer.runId > 0 and producer.otherRun and DC::trustedMainRelease(producer.deployRun, canonicalRepository)
+    and producer.deployRun.completed and producer.ancestor and producer.collected
+    and producer.ageHours >= 0 and producer.ageHours <= producerMaxAgeHours and producer.digestMatches and producer.digest > 0 and producer.generatedAt > 0
+pure def canRestoreCollection(r: Release, producer: Producer, by: Actor): bool =
+  r.phase == Candidate and r.configured and by == TrustedWorkflow and r.manualRun and r.environment == Production
+    and r.dataKind == NoData and r.checkpointRun == 0 and not(r.deadlineReached) and trustedProducer(producer)
+pure def restoreCollection(r: Release, producer: Producer, by: Actor): Release =
+  { ...r, dataKind: RetainedSnapshot, snapshotDigest: producer.digest, dataEnvironment: Production,
+    dataRecordedAt: producer.generatedAt, bootstrapData: false, registryDigest: 0, githubDigest: 0, restoredFrom: producer.runId }
+pure def alwaysRestoredOnlyManualProduction(r: Release): bool =
+  r.restoredFrom >= 0 and (r.restoredFrom > 0 implies r.configured and r.manualRun and r.environment == Production
+    and r.dataKind == RetainedSnapshot)
+pure def sometimesRestoredCollectionPublished(r: Release): bool = published(r) and r.restoredFrom > 0
 pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.dataRecordedAt > 0 and not(r.deadlineReached)
   and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun == 0
     else if (r.dataKind == ResumedCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun > 0
@@ -157,7 +190,7 @@ pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.
     else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun
       and not(r.bootstrapData) and r.checkpointRun == 0)
 pure def stepPreservesDataTimestamps(before: Release, via: str, after: Release): bool =
-  (via != "collectData" and via != "retainSnapshot") implies before.dataRecordedAt == after.dataRecordedAt
+  (via != "collectData" and via != "retainSnapshot" and via != "restoreCollection") implies before.dataRecordedAt == after.dataRecordedAt
 pure def alwaysRetainedOnlyManual(r: Release): bool =
   r.dataKind == RetainedSnapshot implies r.manualRun and r.checkpointRun == 0
 ```
@@ -383,10 +416,12 @@ when publication begins. A disabled or inapplicable service is skipped and
 its deployed version is unchanged. Production publishes the fee converter
 only under `SLOP_FEE_CONVERTER_RELEASE`, Slopbot only with the notification
 Worker, retention only with backups, and always publishes the vetting
-sandbox, the identity Worker, the payment attesters and the referral
-service. Staging always publishes the vetting sandbox, the staging
+sandbox, the identity Worker, the payment attesters, the referral service
+and, after it, the submission-fee Worker, which has no release variable.
+Staging always publishes the vetting sandbox, the staging
 repository-access Worker, the identity Worker, its test attesters and its
-dry-run fee converter, never Slopbot or the referral service. An enabled
+dry-run fee converter, never Slopbot, the referral service or the
+submission-fee Worker. An enabled
 service uploads a version tagged with the tested source, deploys it to all
 traffic and reads back that exact tag; `publishService` records the
 read-back of the tested source's tag on the version serving all traffic.
@@ -414,7 +449,8 @@ pure def serviceRows(r: Release): List[ServiceRow] = List(
   row(IdentityWorker, true),
   row(VettingSandbox, true),
   row(Referral, r.environment == Production),
-  row(RepositoryAccess, r.environment == Staging))
+  row(RepositoryAccess, r.environment == Staging),
+  row(SubmissionFee, r.environment == Production))
 pure def serviceAt(r: Release, service: Service): ServiceRow =
   r.services.foldl({ service: service, enabled: false, phase: ServiceSkipped }, (found, s) => if (s.service == service) s else found)
 pure def setService(r: Release, service: Service, phase: ServicePhase): List[ServiceRow] =
@@ -426,12 +462,13 @@ pure def beginPublication(r: Release, versions: FeeVersions): Release =
   { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1,
     lock: { ...r.lock, attempted: recordedAttempts(r, r.checkedSource) } }
 pure def canPublishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int,
-  versions: FeeVersions): bool =
+  versions: FeeVersions, submissionFeeConfig: SubmissionFeeConfig): bool =
   r.phase == Publishing and lockHeld(r) and serviceAt(r, service).phase == ServicePending and taggedSource == r.source
     and (service == FeeConverter implies F::canPublish(r.fee, feeConfig, F::ReleaseWorkflow) and feeConfig.source == r.source)
     and ((service == FeeConverter and r.environment == Production) implies inheritsRotation(versions))
+    and (service == SubmissionFee implies submissionFeePublishable(submissionFeeConfig))
 pure def publishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int,
-  versions: FeeVersions): Release =
+  versions: FeeVersions, submissionFeeConfig: SubmissionFeeConfig): Release =
   { ...r, services: setService(r, service, ServiceBound),
     fee: if (service == FeeConverter) F::publish(r.fee, feeConfig, F::ReleaseWorkflow) else r.fee,
     feeRotation: if (service == FeeConverter and r.environment == Production) inheritedRotation(versions) else r.feeRotation }
@@ -450,10 +487,54 @@ pure def alwaysFeeConverterBoundToSource(r: Release): bool =
 pure def alwaysEnvironmentServices(r: Release): bool =
   (r.environment == Staging implies serviceAt(r, Slopbot).phase == ServiceSkipped and serviceAt(r, Referral).phase == ServiceSkipped)
     and (r.environment == Production implies serviceAt(r, RepositoryAccess).phase == ServiceSkipped)
+    and (r.environment == Staging implies serviceAt(r, SubmissionFee).phase == ServiceSkipped)
 pure def sometimesFeeConverterBound(r: Release): bool = serviceAt(r, FeeConverter).phase == ServiceBound and r.environment == Production
 pure def sometimesStagingDryRunBound(r: Release): bool = serviceAt(r, FeeConverter).phase == ServiceBound and r.environment == Staging
 pure def sometimesFeeConverterSkipped(r: Release): bool = r.phase == Verified and serviceAt(r, FeeConverter).phase == ServiceSkipped
 pure def sometimesPartial(r: Release): bool = r.phase == PartiallyPublished
+```
+
+### The submission-fee Worker publishes only its reviewed private configuration, and live mode only with every contract and the resolver key
+
+Before its tagged deploy the release reads the reviewed
+`workers/submission-fee/wrangler.toml` and refuses unless the Worker is
+named `slop-submission-fee`, has no `workers.dev` address, no preview URLs
+and no routes, exactly the two crons `*/5 * * * *` (deposits) and
+`7 * * * *` (rates), and one D1 binding `SUBMISSION_FEE_DB` to the
+production `slop-private` database; no resolver key or keyed endpoint name
+may appear among its plain variables. Its settings must parse completely
+(as `dry_run` when the mode is `off`, which reads no chain and loads no key),
+and its mode must be `off` or the mode they parse to; anything else, which
+`FeeUnknown` stands for, is refused. Live mode also needs a contract address and a start block for every
+network of the published terms, and a Worker secret inventory, read by name
+only, that holds `SUBMISSION_FEE_RESOLVER_KEY` and nothing beyond it and the
+two optional keyed endpoints. `dry_run` and `off` need neither key nor
+contracts. Binding the optional endpoints from `PAYMENT_RPC_URLS` before the
+deploy, the tagged deploy and the active-tag readback are the shell's, as for
+every service; a refusal fails the service and leaves the release partially
+published.
+
+```quint
+type FeeMode = FeeOff | FeeDryRun | FeeLive | FeeUnknown
+type SubmissionFeeConfig = { named: bool, workersDev: bool, previewUrls: bool, routes: int, crons: List[str],
+  privateDatabase: bool, secretInVars: bool, mode: FeeMode, contractsRecorded: bool, startBlocksRecorded: bool,
+  resolverKeyHeld: bool, extraSecrets: bool }
+pure val submissionFeeDepositCron = "*/5 * * * *"
+pure val submissionFeeRateCron = "7 * * * *"
+pure def submissionFeePublishable(c: SubmissionFeeConfig): bool =
+  c.named and not(c.workersDev) and not(c.previewUrls) and c.routes == 0
+    and c.crons.length() == 2 and c.crons.includes(submissionFeeDepositCron) and c.crons.includes(submissionFeeRateCron)
+    and c.privateDatabase and not(c.secretInVars) and c.mode != FeeUnknown
+    and (c.mode == FeeLive implies c.contractsRecorded and c.startBlocksRecorded and c.resolverKeyHeld and not(c.extraSecrets))
+pure def lawSubmissionFeeLiveNeedsResolverKey(submissionFeeConfig: SubmissionFeeConfig): bool =
+  (submissionFeeConfig.mode == FeeLive and not(submissionFeeConfig.resolverKeyHeld))
+    implies not(submissionFeePublishable(submissionFeeConfig))
+pure def lawSubmissionFeeDryRunNeedsNoKey(submissionFeeConfig: SubmissionFeeConfig): bool =
+  val dry = { ...submissionFeeConfig, mode: FeeDryRun }
+  submissionFeePublishable(dry) iff submissionFeePublishable({ ...dry, contractsRecorded: false,
+    startBlocksRecorded: false, resolverKeyHeld: false, extraSecrets: true })
+pure def sometimesSubmissionFeeBound(r: Release): bool =
+  serviceAt(r, SubmissionFee).phase == ServiceBound and r.environment == Production
 ```
 
 ### A production fee-converter release keeps the RPC rotation of every active version
@@ -594,6 +675,20 @@ pure val versionsValues = Set(
   { latestUpload: { versionId: 2, rotationLineage: 5 },
     activeVersions: List({ versionId: 1, rotationLineage: 5 }, { versionId: 3, rotationLineage: 0 }) },
   { latestUpload: { versionId: 1, rotationLineage: 0 }, activeVersions: List() })
+pure val reviewedSubmissionFee: SubmissionFeeConfig = { named: true, workersDev: false, previewUrls: false, routes: 0,
+  crons: List(submissionFeeDepositCron, submissionFeeRateCron), privateDatabase: true, secretInVars: false, mode: FeeOff,
+  contractsRecorded: false, startBlocksRecorded: false, resolverKeyHeld: false, extraSecrets: false }
+pure val submissionFeeConfigValues = Set(reviewedSubmissionFee, { ...reviewedSubmissionFee, mode: FeeDryRun },
+  { ...reviewedSubmissionFee, mode: FeeLive },
+  { ...reviewedSubmissionFee, mode: FeeLive, contractsRecorded: true, startBlocksRecorded: true, resolverKeyHeld: true },
+  { ...reviewedSubmissionFee, routes: 1 }, { ...reviewedSubmissionFee, crons: List(submissionFeeDepositCron) },
+  { ...reviewedSubmissionFee, mode: FeeUnknown })
+pure val goodProducer: Producer = { runId: 40, otherRun: true, deployRun: DC::trustedRun, ancestor: true,
+  collected: true, ageHours: 144, digestMatches: true, digest: 3, generatedAt: 1 }
+pure val producerValues = Set(goodProducer, { ...goodProducer, ageHours: 145 }, { ...goodProducer, ancestor: false },
+  { ...goodProducer, collected: false }, { ...goodProducer, digestMatches: false }, { ...goodProducer, otherRun: false },
+  { ...goodProducer, deployRun: { ...DC::trustedRun, headRepository: "fork/slopdotcash" } },
+  { ...goodProducer, deployRun: { ...DC::trustedRun, completed: false } })
 pure val rivalValues = Set(1, 2, 3)
 pure val valueValues = Set(true, false)
 pure val matchesLiveValues = Set(true, false)

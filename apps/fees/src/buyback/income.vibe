@@ -1,4 +1,4 @@
-// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a received USDC payout fee, a finalized conversion output or a booked direct-award fee"
+// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee"
 import { RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { buybackStart } from "../../gen/fees__buyback.effect.vibe"

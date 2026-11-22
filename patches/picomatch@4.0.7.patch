@@ -1,0 +1,49 @@
+diff --git a/lib/parse.js b/lib/parse.js
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -282,6 +282,19 @@
+   }
+ 
+   return depth;
++};
++
++// Repeating a variable-width or ambiguous branch can make matching
++// superlinear. Only emit an unbounded repetition for prefix-free literal
++// alternatives. Compare folded ASCII so case-insensitive matching is safe too.
++const hasDeterministicRepetition = body => {
++  if (/[^A-Za-z0-9_./| -]/.test(body)) {
++    return false;
++  }
++
++  const branches = body.toLowerCase().split('|').sort();
++  return branches.every((branch, index) => branch.length > 0 &&
++    (index === 0 || !branch.startsWith(branches[index - 1])));
+ };
+ 
+ const analyzeRepeatedExtglob = (body, options) => {
+@@ -532,6 +545,7 @@
+ 
+     increment('parens');
+     push({ type, value, output: state.output ? '' : ONE_CHAR });
++    token.openToken = prev;
+     push({ type: 'paren', extglob: true, value: advance(), output });
+     extglobs.push(token);
+   };
+@@ -541,11 +555,16 @@
+     const body = input.slice(token.startIndex + 2, state.index);
+     const analysis = analyzeRepeatedExtglob(body, opts);
+ 
+-    if ((token.type === 'plus' || token.type === 'star') && analysis.risky) {
++    // Do not let maxExtglobRecursion opt out of the repetition guard.
++    if ((token.type === 'plus' || token.type === 'star') &&
++        (analysis.risky || !hasDeterministicRepetition(body))) {
+       const safeOutput = analysis.safeOutput
+         ? (token.output ? '' : ONE_CHAR) + (opts.capture ? `(${analysis.safeOutput})` : analysis.safeOutput)
+         : undefined;
+       const open = tokens[token.tokensIndex];
++      if (open !== token.openToken) {
++        throw new SyntaxError('Invalid repeated extglob');
++      }
+ 
+       open.type = 'text';
+       open.value = literal;

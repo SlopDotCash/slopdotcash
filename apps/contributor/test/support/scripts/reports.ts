@@ -25,6 +25,10 @@ interface TermsPreflight {
   preflight(projectId: string, options?: { readonly testAuthority?: string }): Promise<Record<string, unknown>>;
 }
 
+interface Rendered {
+  renderMarkdown(report: unknown): string;
+}
+
 interface Receipts {
   declaredIdentity(value: string, field: string, kind: "client" | "model" | "provider"): string;
 }
@@ -230,10 +234,11 @@ export async function discloseRefusesPlaceholderIdentityAndKeepsLegacyMarkers():
 
 interface LiveRun {
   readonly candidateIssues: ReadonlyArray<{ readonly number: number }>;
+  readonly wantedIssues: ReadonlyArray<{ readonly number: number }>;
   readonly filtered: { readonly issuesWithOpenPullRequests: ReadonlyArray<{ readonly number: number; readonly closingPullRequests: ReadonlyArray<number> }> };
 }
 
-const isLiveRun = (value: unknown): value is LiveRun => isRecord(value) && Array.isArray(value.candidateIssues) && isRecord(value.filtered) && Array.isArray(value.filtered.issuesWithOpenPullRequests);
+const isLiveRun = (value: unknown): value is LiveRun => isRecord(value) && Array.isArray(value.candidateIssues) && Array.isArray(value.wantedIssues) && isRecord(value.filtered) && Array.isArray(value.filtered.issuesWithOpenPullRequests);
 
 /** @throws {Error} */
 export async function theLiveReportRunsThroughGhAndRetriesAChangedInventory(): Promise<void> {
@@ -252,6 +257,7 @@ export async function theLiveReportRunsThroughGhAndRetriesAChangedInventory(): P
     const blocked = world.addIssue({ repo: liveRepo, number: 2, author: "ada", title: "Defect 2", labels: ["bug-confirmed"], createdAt: at });
     const blocking = world.addPull({ repo: liveRepo, number: 3, author: "dependabot[bot]", title: "Fix 2", body: "Closes #2", createdAt: at });
     const vanishing = world.addIssue({ repo: liveRepo, number: 4, author: "ada", title: "Defect 4", labels: ["bug-confirmed"], createdAt: at });
+    const wanted = world.addIssue({ repo: liveRepo, number: 5, author: "ada", title: "Defect 5", labels: ["bug-confirmed", "slop-wanted"], createdAt: at });
     github.fake.alterNext(`GET /repos/${liveRepo}/pulls?state=open`, (response) => {
       Object.assign(world.item(liveRepo, vanishing), { state: "closed", stateReason: "completed", closedAt: at });
       return response;
@@ -261,10 +267,16 @@ export async function theLiveReportRunsThroughGhAndRetriesAChangedInventory(): P
     expect(ran.stderr).toContain("open-item inventory changed during snapshot attempt 1; retrying one complete read");
     const report: unknown = JSON.parse(ran.stdout);
     if (!isLiveRun(report)) throw new Error("live-report --json printed no report");
+    const rendered: Rendered = await import(f.url);
+    const sections = rendered.renderMarkdown(report).split(/^## /mu);
+    const listedIn = (priority: string) => [...(sections.find((section) => section.startsWith(`Priority ${priority}:`)) ?? "").matchAll(/^- \[#(\d+)\]/gmu)].map((match) => Number(match[1]));
     expect({
       candidates: report.candidateIssues.map((item) => item.number),
+      wanted: report.wantedIssues.map((item) => item.number),
+      priority0: listedIn("0"),
+      priority1: listedIn("1"),
       blocked: report.filtered.issuesWithOpenPullRequests.map((item) => ({ number: item.number, closingPullRequests: item.closingPullRequests })),
-    }).toEqual({ candidates: [free], blocked: [{ number: blocked, closingPullRequests: [blocking] }] });
+    }).toEqual({ candidates: [free, wanted], wanted: [wanted], priority0: [wanted], priority1: [free], blocked: [{ number: blocked, closingPullRequests: [blocking] }] });
     expect(github.fake.requests.filter((request) => request.url.includes(`/repos/${liveRepo}/issues?state=open`)).length).toBe(2);
   } finally {
     await github.close();

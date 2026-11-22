@@ -12,4 +12,4 @@ export { ProjectWork, type ProjectWorkProps, type WorkShown } from "./ProjectWor
 export { projectOf, ProjectRecord, type ShownProject } from "./project.schema.ts";
 export { type RepositoryRegistryOf, projectName } from "./reads.vibe";
 export { RewardSummary, type RewardSummaryProps } from "./RewardSummary.tsx";
-export { cycleLabel, formatDate, formatMonth } from "./summary.ts";
+export { formatDate, formatMonth } from "./summary.ts";

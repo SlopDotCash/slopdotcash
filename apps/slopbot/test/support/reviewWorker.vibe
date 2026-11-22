@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"
 import type { D1Database } from "@repo/platform/bindings"
 import { jsonVar } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
@@ -9,7 +9,8 @@ import { worker } from "@repo/platform/worker"
 import { ProjectStatus, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { Enforcement, Restriction } from "@repo/ports/security"
 import { initiallyUncertain } from "../../gen/slopbot__closure.effect.vibe"
-import { ReviewJob } from "../../src/jobs/job.vibe"
+import { resumeBudgetBlocks } from "../../src/budget/store.vibe"
+import { type Job, JobQueue, ReviewJob } from "../../src/jobs/job.vibe"
 import { type ReviewHooks, type ReviewOutcome, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
 import { routeProviders } from "../../src/route/route.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
@@ -18,8 +19,8 @@ export interface Env {
   readonly SLOPBOT_DB: D1Database
   readonly GITHUB_API: string
   readonly GITHUB_TOKEN: string
-  readonly ORBIO_API_KEY: string
-  readonly SURPLUS_API_KEY: string
+  readonly ORBIO_API_KEY?: string
+  readonly SURPLUS_API_KEY?: string
   readonly SLOPBOT_APP_USER_ID: string
   readonly TEST_PROJECTS: string
 }
@@ -33,6 +34,10 @@ schema TestProject {
 }
 
 const TestProjects = Schema.Array(TestProject)
+
+const registryReads = { count: 0 }
+
+const queued: Job[] = []
 
 function viewOf(project: typeof TestProject.Type): ProjectView {
   return {
@@ -60,6 +65,7 @@ function registryOver(text: string) {
         project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
         byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
         byPath: (fullName) => effect {
+          registryReads.count += 1
           const found = projects.find((project) => project.path === fullName.toLowerCase())
           return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
         },
@@ -120,6 +126,15 @@ effect function reviewed() {
 
 const nobody = Layer.succeed(Participation, { member: () => effect { return false } })
 
+const queue = Layer.succeed(JobQueue, { send: (job: Job) => Effect.sync(() => { queued.push(job) }) })
+
+const reads = HttpRouter.add("POST", "/test/registry-reads", answered(effect { return json(registryReads.count) }))
+
+const resumed = HttpRouter.add("POST", "/test/budget-resume", answered(effect {
+  const sent = try resumeBudgetBlocks()
+  return json({ sent, queued: queued.map((job) => job.deliveryId) })
+}))
+
 function services(env: Env) {
   return Layer.mergeAll(
     d1(env.SLOPBOT_DB),
@@ -128,8 +143,9 @@ function services(env: Env) {
     Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
     registryOver(env.TEST_PROJECTS),
     nobody,
+    queue,
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
   )
 }
 
-export default worker({ services, routes: HttpRouter.add("POST", "/test/review", reviewed()) })
+export default worker({ services, routes: Layer.mergeAll(HttpRouter.add("POST", "/test/review", reviewed()), reads, resumed) })

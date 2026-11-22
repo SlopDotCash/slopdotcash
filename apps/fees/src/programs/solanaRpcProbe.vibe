@@ -1,7 +1,8 @@
-// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { cloudflareAnswer, cloudflareToken, pinnedVersion, privateFile, sameVersion, setting, succeeded } from "./feeOperations.vibe"
+import { type DiagnosticSession, cloudflareAnswer, cloudflareToken, diagnosticRun, pinnedVersion, privateFile, setting, started, succeeded } from "./feeOperations.vibe"
+import { noPin } from "../../gen/fees__diagnostics.effect.vibe"
 import { fieldOf, listOf, requireSolanaProbeCandidate } from "./feeTail.ts"
 import { solanaProbeModule, solanaProbeWorker } from "./probeWorker.ts"
 
@@ -159,19 +160,22 @@ export effect function probeFeeSolanaRpc(input: ProbeInput) {
   return { ...(try safeSolanaProbeResult(answer.body)), workerSha256: try sha256Hex(solanaProbeWorker), previewOnly: true, persistentBindings: 0 }
 }
 
-effect function probed(args: ReadonlyArray<string>, progress: { stage: ProbeStage }) {
+effect function probed(args: ReadonlyArray<string>, progress: { stage: ProbeStage }, run: DiagnosticSession) {
   const [root = ".", ...rest] = args
   if (rest.length > 0) throw invalid(`usage: ${probeUsage}`)
   const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
-  if ((try setting("GITHUB_REF")) !== "refs/heads/main" || runnerTemp === "") throw invalid("Main diagnostic runner required")
+  const mainRef = (try setting("GITHUB_REF")) === "refs/heads/main"
+  if (!mainRef || runnerTemp === "") try run.advance(started("RpcProbe", mainRef, runnerTemp !== "", noPin), "Main diagnostic runner required")
   progress.stage = "active-version-before"
   const before = try pinnedVersion(root)
+  try run.advance(started("RpcProbe", true, true, run.pin(before)), "Main diagnostic runner required")
   progress.stage = "remote-read-probe"
   const candidate = Option.getOrUndefined(try Config.option(Config.Redacted("SLOP_SOLANA_RPC_CANDIDATE"))) ?? Redacted.make("")
   const result = try probeFeeSolanaRpc({ accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token: try cloudflareToken(), candidate })
+  try run.advance({ type: "uploadPreview", upload: { accepted: true, bindings: result.persistentBindings, candidateStored: false } }, "Invalid RPC probe response")
   progress.stage = "active-version-after"
   const after = try pinnedVersion(root)
-  if (!sameVersion(before, after)) throw invalid("Active fee version changed")
+  try run.advance({ type: "recheckPin", pinAfter: run.pin(after) }, "Active fee version changed")
   const output = { ...result, checkedAt: try isoNow(), feeVersionId: before.versionId, feeSourceCommit: before.sourceCommit, checkedSource: before.checkedSource, qualification: "bounded-readiness-only" }
   try privateFile(runnerTemp, probeFile, `${JSON.stringify(output, null, 2)}\n`)
   try Console.log(JSON.stringify(output))
@@ -180,7 +184,8 @@ effect function probed(args: ReadonlyArray<string>, progress: { stage: ProbeStag
 
 export effect function probeSolanaRpc(args: ReadonlyArray<string>) {
   const progress: { stage: ProbeStage } = { stage: "trusted-context" }
-  return probed(args, progress) catch effect (error) => {
+  const run = try diagnosticRun()
+  return probed(args, progress, run) catch effect (error) => {
     const refusal: ProbeRefusal = { error: "fee_solana_rpc_probe_refused", stage: progress.stage, ...safeProbeFailure(error) }
     try Console.error(JSON.stringify(refusal))
     throw new SolanaProbeRefused({ message: "Solana RPC preview refused", refusal })

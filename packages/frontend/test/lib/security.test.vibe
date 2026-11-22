@@ -41,6 +41,7 @@ module world {
     readonly evidence: R2Bucket
     readonly fetcher: Fetcher
     readonly requests: Array<string>
+    readonly bodies: Array<{ readonly path: string; readonly body: string }>
     /** @throws {never} */
     useCookie(token: string): void
     /** @throws {never} */
@@ -57,6 +58,7 @@ module world {
     const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
     if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
     const requests: Array<string> = []
+    const bodies: Array<{ readonly path: string; readonly body: string }> = []
     let jar = ""
     let served: Served | undefined = undefined
     let losing: string | undefined = undefined
@@ -71,6 +73,7 @@ module world {
       if (jar !== "") headers.set("cookie", `__Host-slop_points=${jar}`)
       if (outgoing.method !== "GET") headers.set("origin", site)
       const body = outgoing.method === "GET" ? undefined : await outgoing.text()
+      if (body !== undefined) bodies.push({ path: url.pathname, body })
       const answer = await served(new Request(url.toString(), { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
       if (losing === url.pathname && outgoing.method === "POST") {
         losing = undefined
@@ -86,6 +89,7 @@ module world {
       evidence: await storage(mf, "VETTING_EVIDENCE"),
       fetcher: { fetch: async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }) },
       requests,
+      bodies,
       useCookie: (token) => {
         jar = token
       },
@@ -251,7 +255,9 @@ effect function seedProject() {
   ])
 }
 
-const report: ReportDraft = { summary: "Vault drain through stale price", description: "A stale oracle read lets any caller withdraw more than their balance.", severity: "high", cvss: "", cwe: "cwe-682, CWE-20" }
+const report: ReportDraft = { summary: "Vault drain through stale price", description: "A stale oracle read lets any caller withdraw more than their balance.", severity: "high", cvss: "", cwe: "cwe-682, CWE-20", proofName: "", proofText: "" }
+const proofReport: ReportDraft = { ...report, proofName: "drain.t.sol", proofText: "function test_drain() public {\n  vault.queue(alice, 10);\n}\n" }
+const savedBeforeProofFields = { summary: report.summary, description: report.description, severity: report.severity, cvss: report.cvss, cwe: report.cwe }
 const composeKey = (owner: number) => `slop-report-compose:${owner}:${projectId}`
 const submissionPath = "/api/v1/security-submissions"
 
@@ -283,6 +289,7 @@ effect function submittedFirst(world: World, storage: BrowserStore) {
     const refused = try submitReport(slot)
     const afterRefusal = try storedCompose(storage, reporterId)
     const refusedStage = (try draftState()).stage
+    const reviewedAfterRefusal = try reviewReport(slot)
     try editReport(slot, report)
     const correctedEdit = try storedCompose(storage, reporterId)
     try reviewReport(slot)
@@ -290,7 +297,7 @@ effect function submittedFirst(world: World, storage: BrowserStore) {
     world.loseReplyTo(submissionPath)
     const lost = try submitReport(slot)
     const kept = try storedCompose(storage, reporterId)
-    return { view, firstKey, refused, afterRefusal, refusedStage, correctedEdit, reviewedTwice, lost, lostStage: (try draftState()).stage, kept }
+    return { view, firstKey, refused, afterRefusal, refusedStage, reviewedAfterRefusal, correctedEdit, reviewedTwice, lost, lostStage: (try draftState()).stage, kept }
   }
 }
 
@@ -302,6 +309,28 @@ effect function retriedAfterReload(world: World, storage: BrowserStore) {
     const retried = try submitReport(slot)
     const receipt = try openReceipt(slot, retried.kind === "received" ? retried.submissionId : "")
     return { view, reopenedStage, retried, receipt, stage: (try draftState()).stage, left: try storage.values.get(composeKey(reporterId)) }
+  }
+}
+
+effect function sentReport(world: World) {
+  const body = world.bodies.filter((entry) => entry.path === submissionPath).at(-1)?.body
+  return ((try parsed(body)) as { readonly report: Readonly<Record<string, unknown>> }).report
+}
+
+effect function submittedWithProof(world: World, storage: BrowserStore) {
+  try storage.values.set(composeKey(reporterId), JSON.stringify({ draft: savedBeforeProofFields, key: "draft-before-proof-fields", attempted: false }))
+  provide (try page(world, storage)) {
+    try (try BrowserSession).observe("load")
+    const { slot, view } = try opened(reporterId)
+    try editReport(slot, proofReport)
+    try reviewReport(slot)
+    const reviewed = try draftState()
+    try editReport(slot, { ...proofReport, proofText: `${proofReport.proofText}// replaced\n` })
+    const replaced = try draftState()
+    try editReport(slot, proofReport)
+    try reviewReport(slot)
+    const outcome = (try submitReport(slot)).kind
+    return { view, reviewed: reviewed.stage, replaced: [replaced.stage, replaced.digest !== reviewed.digest], outcome, sent: (try sentReport(world)).proofOfConcept }
   }
 }
 
@@ -355,7 +384,7 @@ effect function textsAfterSignedOutLoad(world: World, storage: BrowserStore) {
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Submit a private report, lose the reply mid-send, reload and retry with the same key (spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', () => effect {
+  it.effect('Submit a private report, lose the reply mid-send, reload and retry with the same key (spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A definite refusal returns the report to review with a fresh key"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', () => effect {
     const { world } = try Browser
     try seedProject()
     world.useCookie(try member(reporterId))
@@ -364,9 +393,10 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
     const reloaded = try retriedAfterReload(world, storage)
     const rows = try (try D1).all(sql`SELECT id, idempotency_key, origin, state FROM security_submissions WHERE reporter_github_id = ${String(reporterId)}`)
     const submitted = reloaded.retried.kind === "received" ? reloaded.retried.submissionId : ""
+    const sentWithoutProof = "proofOfConcept" in (try sentReport(world))
     try same({
       opened: firstLoad.view,
-      refused: [firstLoad.refused.kind, firstLoad.refusedStage, firstLoad.afterRefusal.attempted, firstLoad.afterRefusal.key !== firstLoad.firstKey],
+      refused: [firstLoad.refused.kind, firstLoad.refusedStage, firstLoad.afterRefusal.attempted, firstLoad.afterRefusal.key !== firstLoad.firstKey, firstLoad.afterRefusal.draft, firstLoad.reviewedAfterRefusal.kind === "ready" && firstLoad.reviewedAfterRefusal.draft.summary],
       correctedEdit: [firstLoad.correctedEdit.draft, firstLoad.correctedEdit.attempted, firstLoad.correctedEdit.key === firstLoad.afterRefusal.key],
       reviewedTwice: firstLoad.reviewedTwice,
       lost: [firstLoad.lost.kind, firstLoad.lostStage, firstLoad.kept.attempted, firstLoad.kept.key === firstLoad.afterRefusal.key, firstLoad.kept.draft],
@@ -379,7 +409,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       posts: world.requests.filter((entry) => entry === `POST ${submissionPath}`).length,
     }, {
       opened: { kind: "ready", draft: emptyReport, storageAvailable: true, attempted: false },
-      refused: ["corrected", "Writing", false, true],
+      refused: ["corrected", "Reviewing", false, true, { ...report, summary: "short" }, "short"],
       correctedEdit: [report, false, true],
       reviewedTwice: "ready",
       lost: ["uncertain", "Uncertain", true, true, report],
@@ -388,8 +418,16 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       receipt: { kind: "open", href: `/inbox?view=reports&submission=${encodeURIComponent(submitted)}` },
       stage: "Received",
       left: undefined,
-      rows: [{ id: submitted, idempotency_key: firstLoad.kept.key, origin: "slop", state: "draft" }],
+      rows: [{ id: submitted, idempotency_key: firstLoad.afterRefusal.key, origin: "slop", state: "draft" }],
       posts: 3,
+    })
+    try same({ sentWithoutProof, ...(try submittedWithProof(world, storage)) }, {
+      sentWithoutProof: false,
+      view: { kind: "ready", draft: report, storageAvailable: true, attempted: false },
+      reviewed: "Reviewing",
+      replaced: ["Writing", true],
+      outcome: "received",
+      sent: { fileName: proofReport.proofName, patch: proofReport.proofText },
     })
   })
 

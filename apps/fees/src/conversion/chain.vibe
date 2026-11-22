@@ -75,13 +75,11 @@ export interface Signed {
   readonly minimumOutput: bigint
   readonly deadline: number
   readonly blockhashSlot: number
-  readonly expiresAt?: number
-  // spec/fees/conversion.md canSign: the pinned router, the approved amount and the finalized allowance the send was
-  // prepared against, and its final worst-case native fee priced in USDC micro-units.
   readonly toPinnedRouter: boolean
   readonly approvedAmount: bigint
   readonly allowance: bigint
   readonly pricedFeeMicro: bigint
+  readonly expiresAt?: number
 }
 
 export interface SendAttempt { readonly txId: string; readonly rawTx: string | undefined; readonly attempt: number }

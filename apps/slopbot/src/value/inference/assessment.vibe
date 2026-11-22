@@ -1,4 +1,4 @@
-// spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"
+// spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
 import { millisOf } from "@repo/platform/clock"
 import type { Evidence } from "../evidence/types.vibe"
 import { validateWorkUnitPartition } from "../workUnits/prepare.vibe"
@@ -274,13 +274,85 @@ export function collectedOf(context: AssessmentContext): CollectedEvidence {
   }
 }
 
+function reviewProblem(review: unknown, value: Readonly<Record<string, unknown>>, context: AssessmentContext, seen: Set<string>): string | undefined {
+  const supplied = new Set(context.reviews.map((entry) => entry.id))
+  if (!isRecord(review)) return "a review entry is not an object"
+  if (!exactKeys(review, reviewKeys)) return "a review entry has missing or extra fields"
+  if (!nonempty(review.sourceId)) return "a review sourceId is empty"
+  if (!supplied.has(review.sourceId)) return "a review sourceId is not a supplied review"
+  if (!context.requiredReviewIds.includes(review.sourceId)) return "a review sourceId belongs to another work unit"
+  if (seen.has(review.sourceId)) return "a review is assessed twice"
+  seen.add(review.sourceId)
+  const facts = (id: string) => context.reviews.find((entry) => entry.id === id)
+  if (review.duplicateOf !== null) {
+    if (typeof review.duplicateOf !== "string" || review.duplicateOf === review.sourceId || !supplied.has(review.duplicateOf)) return "a review duplicateOf does not name another supplied review"
+    if (review.tier !== "none") return "a duplicate review was given a tier other than none"
+    const earlier = millisOf(facts(review.duplicateOf)?.submittedAt ?? "")
+    const current = millisOf(facts(review.sourceId)?.submittedAt ?? "")
+    if (!Number.isFinite(earlier) || !Number.isFinite(current)) return "a duplicate review has no submission time to compare"
+    if (earlier >= current) return "a review duplicateOf names a review that is not earlier"
+  }
+  if (!oneOf(reviewTiers, review.tier)) return "a review tier is not a known review tier"
+  if (!nonempty(review.finding)) return "a review finding is empty"
+  if (!nonempty(review.outcome)) return "a review outcome is empty"
+  if (!texts(review.evidenceUrls)) return "a review evidenceUrls is not a list of non-empty strings"
+  if (!review.evidenceUrls.every((url) => context.evidenceUrls.includes(url))) return "a review cites a URL not in the supplied evidence"
+  if (review.tier !== "none") {
+    if (value.status !== "assessed") return "a review was given a tier on an unresolved assessment"
+    if (!context.closed) return "a review was given a tier on a pull request that is still open"
+    if (new Set(review.evidenceUrls).size < 2) return "a credited review cites fewer than two sources"
+    if (!review.evidenceUrls.includes(facts(review.sourceId)?.url ?? "")) return "a credited review does not cite the review itself"
+    if (facts(review.sourceId)?.eligible !== true) return "an ineligible review was given a tier"
+  }
+  return undefined
+}
+
+export function valueAssessmentProblem(value: unknown, context: AssessmentContext): string | undefined {
+  if (!isRecord(value)) return "the reply is not an object"
+  if (!exactKeys(value, assessmentKeys)) return "the reply has missing or extra top-level fields"
+  if (value.status !== "assessed" && value.status !== "unresolved") return "field status is not assessed or unresolved"
+  if (value.tier !== null && !oneOf(valueTiers, value.tier)) return "field tier is not a known tier"
+  if (!nonempty(value.rationale)) return "field rationale is empty"
+  const dimensions = value.dimensions
+  if (!isRecord(dimensions) || !exactKeys(dimensions, valueDimensions)) return "field dimensions does not name exactly the rubric dimensions"
+  if (!Object.values(dimensions).every(nonempty)) return "a dimension explanation is empty"
+  if (!texts(value.evidenceUrls)) return "field evidenceUrls is not a list of non-empty strings"
+  if (!texts(value.relatedPullRequests)) return "field relatedPullRequests is not a list of non-empty strings"
+  if (!texts(value.limitations)) return "field limitations is not a list of non-empty strings"
+  const urls = value.evidenceUrls
+  const related = value.relatedPullRequests
+  if (!urls.every((url) => context.evidenceUrls.includes(url))) return "evidenceUrls cites a URL not in the supplied evidence"
+  if (!related.every((url) => context.evidenceUrls.includes(url))) return "relatedPullRequests cites a URL not in the supplied evidence"
+  if (value.status === "assessed" && context.merged && value.tier === null) return "an assessed merged pull request has no tier"
+  if (value.status === "assessed" && context.merged && urls.length === 0) return "an assessed merged pull request cites no evidence"
+  if (!context.merged && value.tier !== null) return "an unmerged pull request was given a tier"
+  if (value.status === "unresolved" && value.tier !== null) return "an unresolved assessment was given a tier"
+  if (!related.every((url) => context.relatedPullRequestUrls.includes(url))) return "relatedPullRequests names a pull request not listed as related"
+  if (value.status === "assessed" && related.some((url) => !context.jointPullRequestUrls.includes(url))) return "an assessed reply names a related pull request without joint evidence"
+  if (value.status === "unresolved" && value.limitations.length === 0) return "an unresolved assessment lists no limitations"
+  if (!Array.isArray(value.reviews)) return "field reviews is not a list"
+  const reviews: unknown[] = value.reviews
+  const seen = new Set<string>()
+  for (const review of reviews) {
+    const problem = reviewProblem(review, value, context, seen)
+    if (problem !== undefined) return problem
+  }
+  if (seen.size !== context.requiredReviewIds.length) return "not every supplied review was assessed"
+  return undefined
+}
+
 export function validateValueAssessment(value: unknown, context: AssessmentContext): ValueAssessment | undefined {
+  if (valueAssessmentProblem(value, context) !== undefined) return undefined
   const assessment = assessmentOf(value)
   if (assessment === undefined) return undefined
   return validProposal(proposalOf(assessment), collectedOf(context)) ? assessment : undefined
 }
 
-function closedOutcome(evidence: Evidence) {
+export interface PullOutcome {
+  readonly pull: Pick<Evidence["pull"], "state" | "merged_at" | "closed_at">
+}
+
+function closedOutcome(evidence: PullOutcome) {
   return evidence.pull.state === "closed" && Number.isFinite(millisOf(evidence.pull.merged_at ?? evidence.pull.closed_at ?? ""))
 }
 
@@ -288,9 +360,21 @@ export function singleRouteAllowed(evidence: Evidence) {
   return evidence.indirectAcceptance === undefined && evidence.noChangePromotion === undefined && evidence.nativeMergeAcceptance === undefined
 }
 
-export function validateEvidenceAssessment(value: unknown, evidence: Evidence) {
+export function valueOutcomeRules(evidence: PullOutcome) {
+  const closed = closedOutcome(evidence)
+  const lines = [
+    evidence.pull.merged_at !== null
+      ? "This pull request was merged."
+      : `This pull request was not merged${closed ? "" : " and is still open"}. Set tier to null whatever its value; only its retained review findings may matter.`,
+    "If status is unresolved, set tier to null and give every review tier none.",
+    ...(closed ? [] : ["Because the pull request is still open, give every review tier none."]),
+  ]
+  return `\n\nRules for this pull request:\n${lines.map((line) => `- ${line}`).join("\n")}`
+}
+
+function evidenceContext(evidence: Evidence): AssessmentContext {
   const reviews = evidence.reviews.map((review) => ({ id: review.node_id, url: review.html_url, submittedAt: review.submitted_at, eligible: evidence.eligibleReviewIds.includes(review.node_id) }))
-  return validateValueAssessment(value, {
+  return {
     evidenceUrls: evidence.evidenceUrls,
     relatedPullRequestUrls: evidence.relatedPullRequests.map((pull) => pull.url),
     jointPullRequestUrls: [],
@@ -299,7 +383,18 @@ export function validateEvidenceAssessment(value: unknown, evidence: Evidence) {
     merged: evidence.pull.merged_at !== null,
     closed: closedOutcome(evidence),
     singleRouteAllowed: singleRouteAllowed(evidence),
-  })
+  }
+}
+
+export function explainEvidenceAssessment(value: unknown, evidence: Evidence) {
+  if (evidence.indirectAcceptance !== undefined) return "the evidence is an indirect acceptance, which no reply can pass"
+  if (evidence.noChangePromotion !== undefined) return "the evidence is a no-change promotion, which no reply can pass"
+  if (evidence.nativeMergeAcceptance !== undefined) return "the evidence is a native merge acceptance, which no reply can pass"
+  return valueAssessmentProblem(value, evidenceContext(evidence))
+}
+
+export function validateEvidenceAssessment(value: unknown, evidence: Evidence) {
+  return explainEvidenceAssessment(value, evidence) === undefined ? validateValueAssessment(value, evidenceContext(evidence)) : undefined
 }
 
 function reviewEligibleFor(evidence: WorkUnitEvidence, source: Evidence, review: Evidence["reviews"][number], actors: ReadonlySet<string>) {
@@ -394,8 +489,8 @@ export interface ValueCall<T> {
 export effect function singleValueCall(evidence: Evidence, policy: Policy) {
   const model = try valueModelSource(evidence)
   return {
-    prompt: { system: valueSystemPrompt + model.systemSuffix, policy: `Project policy at ${policy.sha}:\n${policy.text}`, item: model.item },
-    output: { name: "slop_value_assessment", schema: valueAssessmentSchema, validate: (value: unknown) => validateEvidenceAssessment(value, evidence), sizeBand: (verdict: ValueAssessment) => sizeBandOf(verdict) },
+    prompt: { system: valueSystemPrompt + model.systemSuffix + valueOutcomeRules(evidence), policy: `Project policy at ${policy.sha}:\n${policy.text}`, item: model.item },
+    output: { name: "slop_value_assessment", schema: valueAssessmentSchema, validate: (value: unknown) => validateEvidenceAssessment(value, evidence), explain: (value: unknown) => explainEvidenceAssessment(value, evidence), sizeBand: (verdict: ValueAssessment) => sizeBandOf(verdict) },
   } satisfies ValueCall<ValueAssessment>
 }
 

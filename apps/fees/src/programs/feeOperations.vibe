@@ -1,9 +1,10 @@
-// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"
+// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing"
 import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { D1, type Statement } from "@repo/platform/d1"
 import { d1Http } from "@repo/platform/d1Http"
 import { Socket } from "effect/socket"
+import { type Diagnostic, type DiagnosticKind, type Event as DiagnosticEvent, type Pin as DiagnosticPin, type QueryName, initial as diagnosticStart, machineOver as diagnosticMachine, noPin } from "../../gen/fees__diagnostics.effect.vibe"
 import { jsonValue } from "../solana/bytes.ts"
 import { attemptStates, feeErrorCategory, sanitizeFeeTail, tailNetworks, type TailObservation } from "./feeTail.ts"
 import { activeVersion, Envelope, type ActiveVersion } from "./inspectFeeWorker.vibe"
@@ -57,6 +58,8 @@ const queries = {
 
 type Query = keyof typeof queries
 
+const queryNames = { locks: "LocksQuery", gas: "GasQuery", attempts: "AttemptsQuery" } as const satisfies Record<Query, QueryName>
+
 type Stage =
   | "active-version-before"
   | "database-binding"
@@ -89,6 +92,43 @@ export interface CloudflareAnswer {
 
 function step(message: string) {
   return new DiagnosticStep({ message })
+}
+
+export interface DiagnosticSession {
+  readonly pin: (version: ActiveVersion) => DiagnosticPin
+  send(event: DiagnosticEvent, refusal: string): Diagnostic!DiagnosticStep
+  advance(event: DiagnosticEvent, refusal: string): Diagnostic!DiagnosticStep
+}
+
+export function started(kind: DiagnosticKind, mainRef: boolean, runnerTemp: boolean, pin: DiagnosticPin): DiagnosticEvent {
+  return { type: "startDiagnostic", request: { kind, mainRef, runnerTemp, pin } }
+}
+
+export effect function diagnosticRun() {
+  const held = try Ref.make(diagnosticStart)
+  const machine = try diagnosticMachine(() => Ref.get(held), (next) => Ref.set(held, next))
+  const numbers = new Map<string, number>()
+  const numbered = (kind: string, text: string) => {
+    if (text === "") return 0
+    const key = `${kind}\u0000${text}`
+    const known = numbers.get(key)
+    if (known !== undefined) return known
+    numbers.set(key, numbers.size + 1)
+    return numbers.size
+  }
+  effect function send(event: DiagnosticEvent, refusal: string) {
+    return machine.send(event) catch effect () => { throw step(refusal) }
+  }
+  effect function advance(event: DiagnosticEvent, refusal: string) {
+    const next = try send(event, refusal)
+    if (next.phase === "Refused") throw step(refusal)
+    return next
+  }
+  return {
+    pin: (version: ActiveVersion) => ({ version: numbered("version", version.versionId), deployment: numbered("deployment", version.deploymentId), source: numbered("source", version.sourceCommit) }),
+    send,
+    advance,
+  } satisfies DiagnosticSession
 }
 
 effect function decoded<S extends Schema.Constraint>(schema: S, value: unknown, refusal: string) {
@@ -225,7 +265,7 @@ interface Inspection {
   readonly worker: string
 }
 
-effect function operations(input: Inspection, progress: Progress) {
+effect function operations(input: Inspection, progress: Progress, run: DiagnosticSession) {
   const { accountId, token, database, versionId, worker } = input
   if (!account.test(accountId) || Redacted.value(token) === "" || !diagnosticBinding.test(database) || !diagnosticBinding.test(versionId)) throw step("Invalid diagnostic binding")
   progress.stage = "database-binding"
@@ -234,7 +274,7 @@ effect function operations(input: Inspection, progress: Progress) {
   const version = try decoded(BoundVersion, try api(`/workers/scripts/${worker}/versions/${versionId}`), "Fee database binding mismatch")
   const databases = (version.resources?.bindings ?? []).filter((binding) => binding.name === "FEE_DB")
   const [bound] = databases
-  if (version.id !== versionId || databases.length !== 1 || bound?.type !== "d1" || bound.id !== database) throw step("Fee database binding mismatch")
+  try run.advance({ type: "checkBinding", bindingMatches: version.id === versionId && databases.length === 1 && bound?.type === "d1" && bound.id === database }, "Fee database binding mismatch")
   progress.stage = "schedule-read"
   const now = try Clock.currentTimeMillis
   const checkedAt = try isoAt(now)
@@ -246,6 +286,7 @@ effect function operations(input: Inspection, progress: Progress) {
     for (const name of ["locks", "gas", "attempts"] as const) {
       progress.stage = `${name}-query`
       rows[name] = try queried({ text: queries[name], params: name === "locks" ? [] : [since] })
+      try run.advance({ type: "readQuery", read: { query: queryNames[name], accepted: true, rows: rows[name].length } }, "Fee diagnostic API refused")
     }
   }
   const expectedEveryMinute = crons.length === 1 && crons[0] === "* * * * *"
@@ -253,12 +294,17 @@ effect function operations(input: Inspection, progress: Progress) {
   progress.completed = completed
   progress.stage = "tail-create"
   const { id, url } = try decoded(TailCreated, try api(`/workers/scripts/${worker}/tails`, { filters: [{ scriptVersion: versionId }] }), "Fee tail unavailable")
+  try run.advance({ type: "openTail", opened: true }, "Fee tail unavailable")
   progress.stage = "tail-transport"
   const observed = try exit(tailObservations(url, worker))
   if (Exit.isSuccess(observed)) progress.stage = "tail-delete"
   const removed = try tailRemoved(accountId, token, worker, id)
-  if (Exit.isFailure(observed)) return try Effect.failCause(observed.cause)
-  if (!removed) throw step("Fee tail cleanup failed")
+  const tailEnd = { delivered: Exit.isSuccess(observed), removed }
+  if (Exit.isFailure(observed)) {
+    try run.send({ type: "endTail", tailEnd }, "Fee tail transport failed")
+    return try Effect.failCause(observed.cause)
+  }
+  try run.advance({ type: "endTail", tailEnd }, "Fee tail cleanup failed")
   progress.stage = "database-summary"
   return { ...completed, tailSeconds, observations: observed.value, rawLogsRetained: false }
 }
@@ -283,31 +329,29 @@ export effect function pinnedVersion(root: string) {
   })
 }
 
-export function sameVersion(before: ActiveVersion, after: ActiveVersion) {
-  return after.versionId === before.versionId && after.deploymentId === before.deploymentId && after.sourceCommit === before.sourceCommit
-}
-
 export effect function privateFile(directory: string, name: string, text: string) {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
   try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
 }
 
-effect function diagnosed(args: ReadonlyArray<string>, runnerTemp: string, progress: Progress) {
+effect function diagnosed(args: ReadonlyArray<string>, runnerTemp: string, progress: Progress, run: DiagnosticSession) {
   const [root = ".", ...rest] = args
   if (rest.length > 0) throw step(`usage: ${operationsUsage}`)
-  if ((try setting("GITHUB_REF")) !== "refs/heads/main" || runnerTemp === "") throw step("Main runner required")
+  const mainRef = (try setting("GITHUB_REF")) === "refs/heads/main"
+  if (!mainRef || runnerTemp === "") try run.advance(started("Inspection", mainRef, runnerTemp !== "", noPin), "Main runner required")
   const reviewed = try reviewedWorker(root)
   const before = try pinnedVersion(root)
   progress.pinned = before
+  try run.advance(started("Inspection", true, true, run.pin(before)), "Main runner required")
   const database = reviewed.d1_databases.find((entry) => entry.binding === "FEE_DB")?.database_id
   if (database === undefined || database === "") throw step("Fee database configuration missing")
   progress.stage = "operational-inspection"
-  const report = try operations({ accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token: try cloudflareToken(), database, versionId: before.versionId, worker: reviewed.name }, progress)
+  const report = try operations({ accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token: try cloudflareToken(), database, versionId: before.versionId, worker: reviewed.name }, progress, run)
   progress.stage = "active-version-after"
   progress.inner = false
   const after = try pinnedVersion(root)
-  if (!sameVersion(before, after)) throw step("Fee Worker changed during diagnostics")
+  try run.advance({ type: "recheckPin", pinAfter: run.pin(after) }, "Fee Worker changed during diagnostics")
   const output = { ...report, deploymentId: before.deploymentId, sourceCommit: before.sourceCommit, checkedSource: before.checkedSource, sourceMatchesCheckout: before.sourceMatchesCheckout }
   try privateFile(runnerTemp, operationsFile, `${JSON.stringify(output, null, 2)}\n`)
   try Console.log(JSON.stringify(output))
@@ -317,7 +361,8 @@ effect function diagnosed(args: ReadonlyArray<string>, runnerTemp: string, progr
 export effect function inspectFeeOperations(args: ReadonlyArray<string>) {
   const progress: Progress = { stage: "active-version-before", inner: false, pinned: {}, completed: {} }
   const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
-  return diagnosed(args, runnerTemp, progress) catch effect (error) => {
+  const run = try diagnosticRun()
+  return diagnosed(args, runnerTemp, progress, run) catch effect (error) => {
     const failure = {
       ...progress.pinned,
       activeVersionRechecked: false,

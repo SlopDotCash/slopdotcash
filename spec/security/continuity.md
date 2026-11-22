@@ -179,7 +179,8 @@ pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
 pure val snapshotValues = Set(C::staff, { ...C::staff, epoch: 2, technical: List(8), financial: List(6), moderators: List(9) })
 pure val decisionValues = Set(
-  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false })
+  { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false,
+    spam: false })
 pure val byValues = Set(1, 2)
 pure val actorValues = Set(2, 10)
 pure val checkedEpochValues = Set(1)

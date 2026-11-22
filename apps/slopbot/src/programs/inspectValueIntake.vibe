@@ -1,9 +1,10 @@
-// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { Socket } from "effect/socket"
 import { type HistoricalIntakeFailure, historicalIntakeErrorNames, projectHistoricalIntakeFailure } from "../import/diagnostics.vibe"
+import { type PagesIntakeMilestone, isIntakeCorrelation, projectPagesIntakeMilestone } from "../import/observation.vibe"
 
 export error IntakeReadFailed { stage: string; httpStatus: number | undefined; providerCode: number | undefined }
 export error IntakeInspectionRefused { message: string }
@@ -23,7 +24,7 @@ const tailMessageLimit = 1024 * 1024
 const tailRecords = 200
 const listItems = 20
 const logItems = 50
-const logMessages = 10
+const logMessageItems = 10
 const structuredLimit = 8192
 const messageLimit = 4096
 const accountPattern = /^[a-f0-9]{32}$/u
@@ -49,6 +50,7 @@ export interface IntakeTailRecord {
   categories?: ReadonlyArray<string>
   exceptionFingerprints?: ReadonlyArray<ExceptionFingerprint>
   historicalIntakeFailures?: ReadonlyArray<HistoricalIntakeFailure>
+  pagesIntakeMilestones?: ReadonlyArray<PagesIntakeMilestone>
 }
 
 export interface ReadFailure { readonly stage: string; readonly httpStatus?: number; readonly providerCode?: number }
@@ -119,7 +121,21 @@ effect function structuredMessage(message: unknown) {
   return parsed === undefined ? message : parsed.value
 }
 
-export effect function sanitizeIntakeTail(value: unknown) {
+function logMessages(fields: Fields) {
+  return listOf(fields.logs, logItems).flatMap((entry) => listOf(fieldsOf(entry)?.message, logMessageItems))
+}
+
+effect function correlatedMilestones(fields: Fields, correlation: string) {
+  const milestones: PagesIntakeMilestone[] = []
+  for (const message of [...listOf(fields.pagesIntakeMilestones, listItems), ...logMessages(fields)]) {
+    const milestone = projectPagesIntakeMilestone(try structuredMessage(message), correlation)
+    if (milestone !== undefined) milestones.push(milestone)
+    if (milestones.length === listItems) break
+  }
+  return milestones
+}
+
+export effect function sanitizeIntakeTail(value: unknown, correlation?: string) {
   if (value === null || typeof value !== "object") return undefined
   const fields = value as Fields
   const row: IntakeTailRecord = {}
@@ -129,6 +145,10 @@ export effect function sanitizeIntakeTail(value: unknown) {
   if (methods.has(method)) row.method = method as string
   const status = fieldsOf(event?.response)?.status ?? fields.httpStatus
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) row.httpStatus = status
+  if (correlation !== undefined) {
+    const milestones = try correlatedMilestones(fields, correlation)
+    return milestones.length > 0 ? { ...row, pagesIntakeMilestones: milestones } satisfies IntakeTailRecord : undefined
+  }
   const labels: string[] = []
   const intakeFailures: HistoricalIntakeFailure[] = []
   for (const entry of listOf(fields.historicalIntakeFailures, listItems)) {
@@ -144,15 +164,13 @@ export effect function sanitizeIntakeTail(value: unknown) {
     const fingerprint = try exceptionFingerprint(entry)
     if (fingerprint !== undefined && fingerprints.length < listItems) fingerprints.push(fingerprint)
   }
-  for (const entry of listOf(fields.logs, logItems)) {
-    for (const message of listOf(fieldsOf(entry)?.message, logMessages)) {
-      const failure = try projectHistoricalIntakeFailure(try structuredMessage(message))
-      if (failure !== undefined) {
-        if (intakeFailures.length < listItems) intakeFailures.push(failure)
-        continue
-      }
-      if (typeof message === "string") labels.push(intakeError(message))
+  for (const message of logMessages(fields)) {
+    const failure = try projectHistoricalIntakeFailure(try structuredMessage(message))
+    if (failure !== undefined) {
+      if (intakeFailures.length < listItems) intakeFailures.push(failure)
+      continue
     }
+    if (typeof message === "string") labels.push(intakeError(message))
   }
   if (labels.length > 0) row.categories = [...new Set(labels)]
   if (fingerprints.length > 0) row.exceptionFingerprints = fingerprints
@@ -252,14 +270,14 @@ function tailTransport(url: unknown) {
   return transport.href
 }
 
-effect function tailFrame(frame: string | Uint8Array) {
+effect function tailFrame(frame: string | Uint8Array, correlation: string | undefined) {
   const raw = typeof frame === "string" ? frame : new TextDecoder().decode(frame)
   if (raw.length > tailMessageLimit) return undefined
   const parsed = Effect.try(() => ({ value: JSON.parse(raw) as unknown })) catch () => undefined
-  return parsed === undefined ? undefined : try sanitizeIntakeTail(parsed.value)
+  return parsed === undefined ? undefined : try sanitizeIntakeTail(parsed.value, correlation)
 }
 
-export effect function readIntakeTail(url: string, seconds: number) {
+export effect function readIntakeTail(url: string, seconds: number, correlation?: string) {
   const records: IntakeTailRecord[] = []
   const listening = { opened: false }
   const socket = try Socket.makeWebSocket(url, { protocols: "trace-v1", openTimeout: Duration.seconds(seconds) })
@@ -271,7 +289,7 @@ export effect function readIntakeTail(url: string, seconds: number) {
     while (true) {
       const frames = try reader.pull
       for (const frame of frames) {
-        const record = try tailFrame(frame)
+        const record = try tailFrame(frame, correlation)
         if (record !== undefined && records.length < tailRecords) records.push(record)
       }
     }
@@ -288,30 +306,35 @@ interface TargetProgress {
   observations: IntakeTailRecord[]
 }
 
-effect function observed(api: CloudflareAccount, target: Target, seconds: number, progress: TargetProgress) {
+function tailFilters(binding: { readonly deploymentId: string; readonly versionId?: string }, correlation: string | undefined) {
+  if (binding.versionId !== undefined) return { filters: [{ scriptVersion: binding.versionId }] }
+  return correlation === undefined ? {} : { filters: [{ query: correlation }] }
+}
+
+effect function observed(api: CloudflareAccount, target: Target, seconds: number, correlation: string | undefined, progress: TargetProgress) {
   const path = target === "pages" ? `/pages/projects/${intakePagesProject}` : `/workers/scripts/${target}/deployments`
   const binding = target === "pages" ? activePages(try api(path, "deployment-read")) : activeWorker(try api(path, "deployment-read"))
   if (binding === undefined) throw readFailed("deployment-read")
   progress.binding = binding
   const tailPath = target === "pages" ? `/pages/projects/${intakePagesProject}/deployments/${binding.deploymentId}/tails` : `/workers/scripts/${target}/tails`
   progress.stage = "tail-create"
-  const filters = "versionId" in binding ? { filters: [{ scriptVersion: binding.versionId }] } : {}
-  const tail = fieldsOf(try api(tailPath, "tail-create", "POST", filters))
+  const tail = fieldsOf(try api(tailPath, "tail-create", "POST", tailFilters(binding, correlation)))
   const id = tail?.id
   if (typeof id !== "string" || !tailId.test(id)) throw readFailed("tail-create")
   progress.stage = "tail-transport"
   const url = tailTransport(tail?.url)
-  const records = try exit(url === undefined ? Effect.fail(readFailed("tail-transport")) : readIntakeTail(url, seconds))
+  const records = try exit(url === undefined ? Effect.fail(readFailed("tail-transport")) : readIntakeTail(url, seconds, correlation))
   if (Exit.isSuccess(records)) progress.observations.push(...records.value)
   try api(`${tailPath}/${id}`, "tail-delete", "DELETE")
   if (Exit.isFailure(records)) return try Effect.failCause(records.cause)
+  if (correlation !== undefined && progress.observations.length >= tailRecords) throw readFailed("tail-limit")
   progress.stage = "deployment-recheck"
   if (currentDeployment(target, try api(path, "deployment-recheck")) !== binding.deploymentId) throw readFailed("deployment-recheck")
 }
 
-effect function inspectTarget(api: CloudflareAccount, target: Target, seconds: number) {
+effect function inspectTarget(api: CloudflareAccount, target: Target, seconds: number, correlation: string | undefined) {
   const progress: TargetProgress = { stage: "deployment-read", binding: {}, observations: [] }
-  const { failure } = try attempted(observed(api, target, seconds, progress))
+  const { failure } = try attempted(observed(api, target, seconds, correlation, progress))
   return {
     target,
     ...progress.binding,
@@ -330,12 +353,15 @@ export effect function privateFile(directory: string, name: string, text: string
 export effect function inspectValueIntake(seconds: number) {
   const runner = try mainRunner()
   if (!runner.main) throw new IntakeInspectionRefused({ message: "Main runner required" })
+  const correlation = (try setting("SLOP_INTAKE_CORRELATION")) || undefined
+  if (correlation !== undefined && !isIntakeCorrelation(correlation)) throw new IntakeInspectionRefused({ message: "Invalid intake correlation" })
   const authority = try cloudflareAuthority()
   if (!authorized(authority)) throw new IntakeInspectionRefused({ message: "Diagnostic credentials unavailable" })
   const api = cloudflareAccount(authority)
   const checkedAt = try isoAt(try Clock.currentTimeMillis)
-  const targets = try Effect.forEach([...intakeWorkers, "pages" as const], (target) => inspectTarget(api, target, seconds), { concurrency: "unbounded" })
-  const result = { checkedAt, tailSeconds: seconds, rawLogsRetained: false, targets }
+  const inspected: ReadonlyArray<Target> = correlation === undefined ? [...intakeWorkers, "pages"] : ["pages"]
+  const targets = try Effect.forEach(inspected, (target) => inspectTarget(api, target, seconds, correlation), { concurrency: "unbounded" })
+  const result = { checkedAt, tailSeconds: seconds, rawLogsRetained: false, ...(correlation === undefined ? {} : { correlation }), targets }
   try privateFile(runner.runnerTemp, intakeFile, `${JSON.stringify(result, null, 2)}\n`)
   try Console.log(JSON.stringify(result))
   if (targets.some((target) => !target.complete)) throw new IntakeInspectionIncomplete({ message: "Intake diagnostic incomplete" })

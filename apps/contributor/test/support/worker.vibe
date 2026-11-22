@@ -14,7 +14,7 @@ import { Restrictions } from "@repo/ports/backend"
 import { RunEvidence } from "@repo/ports/contributor"
 import { EnforcementRows } from "@repo/ports/security"
 import { contributor, siteAssets, traceObjects, traceServices } from "../../src/live.vibe"
-import { planRoutes, plannedClosure, plannedFunding, plannedSecurity } from "./plans.vibe"
+import { planRoutes, plannedClosure, plannedIntake, plannedSecurity } from "./plans.vibe"
 
 interface Env {
   readonly SLOP_DB: D1Database
@@ -76,7 +76,7 @@ export default pages({
     Layer.provide(traceObjects(env.PRIVATE_TRACES), webCrypto),
     Layer.provide(plannedProjects, Layer.provide(RestrictionsLive, Layer.merge(d1(env.SLOP_DB), unrecorded))),
     plannedSecurity,
-    plannedFunding,
+    plannedIntake,
     Layer.provide(IntakeHealthLive, d1(env.SLOP_DB)),
     Layer.provide(RegistryManifestsLive, d1(env.SLOP_DB)),
     Layer.provide(RegistryLive, d1(env.SLOP_DB)),

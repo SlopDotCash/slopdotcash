@@ -1,12 +1,13 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
-import { toAmount } from "@repo/settlement/kernels/amounts";
-import { type HomeCard, homeBefore, homeGroup, type ListingFacts, listedThisMonth as listedThisMonthOf } from "../../../gen/frontend__poolListing.ts";
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
+import { fromAmount } from "@repo/settlement/kernels/amounts";
+import { type HomeCard, homeBefore, homeGroup, homeShownAmount, type ListingFacts, listedThisMonth as listedThisMonthOf } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { projectImage } from "../../../gen/frontend__presentation.ts";
-import { type PoolFacts, poolDisplay } from "../../../gen/frontend__projections.ts";
-import { listedForDiscovery } from "../../../gen/frontend__views.ts";
+import { type PoolFacts, type PromiseFacts, poolDisplay, promiseText, promiseWarning } from "../../../gen/frontend__projections.ts";
+import { listedForDiscovery, reviewBudgetShown } from "../../../gen/frontend__views.ts";
 import { formatRewardMinor, type PoolCommitment } from "../../kernels/assetText.ts";
 import { type CardProject, cardPolicy, hasBountyOverview, hasProjectCardBounty, projectRewardSummaries, type RewardSummary, type SecurityBounty } from "../../kernels/rewardSummary.ts";
+import { noPromise } from "./promise.ts";
 
 export interface Shown<T> {
   readonly status: ReadStatus;
@@ -27,6 +28,7 @@ export interface ListedProject extends CardProject {
   readonly image?: string;
   readonly repositories: ReadonlyArray<ListedRepository>;
   readonly funding: PoolFacts;
+  readonly promise?: PromiseFacts;
   readonly reward: CardProject["reward"] & {
     readonly monthlyCapDisplay: string;
     readonly chain?: string;
@@ -35,11 +37,6 @@ export interface ListedProject extends CardProject {
   };
   readonly securityBounty?: SecurityBounty & { readonly funding: { readonly state: string } };
   readonly escrow?: { readonly deployments: ReadonlyArray<{ readonly network: string }> };
-}
-
-export interface CardLine {
-  readonly amount: string;
-  readonly state?: string;
 }
 
 const prizeCompact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 });
@@ -68,7 +65,7 @@ export function eligibilityWord(bounty: Pick<SecurityBounty, "eligibility">): st
 
 /** @throws {never} */
 export function bountyFundingLabel(bounty: NonNullable<ListedProject["securityBounty"]>): string {
-  return bounty.funding.state === "pledged" ? "Pledged" : "Funding verified";
+  return bounty.funding.state === "pledged" ? "Pledged" : "Funded";
 }
 
 /** @throws {never} */
@@ -81,17 +78,23 @@ export function reviewBudgetLabel(budget: PoolCommitment): string {
   return budget.fundingState === "committed" ? `${formatRewardMinor(budget.committedMinor)} of ${budget.monthlyCapDisplay} review budget funded` : `${budget.monthlyCapDisplay} review budget · not funded`;
 }
 
-function lineOf(summary: RewardSummary | undefined, project: ListedProject): CardLine {
+/** The project's honor-system facts this month; none without the owner's opt-in. @throws {never} */
+export function promiseOf(project: Pick<ListedProject, "funding" | "promise">): PromiseFacts {
+  return project.promise ?? noPromise(project.funding);
+}
+
+/** @throws {RangeError} */
+function amountOf(summary: RewardSummary | undefined, project: ListedProject): string {
   switch (summary?.kind) {
     case "security-bounty":
-      return { amount: `${summary.amount} / ${eligibilityWord(summary)}`, state: project.securityBounty ? bountyFundingLabel(project.securityBounty) : undefined };
+      return `${summary.amount} / ${eligibilityWord(summary)}`;
     case "monthly-pool":
-      return poolDisplay(project.funding) === "PoolFunded" ? { amount: `${summary.amount}${summary.token ? ` ${summary.token.symbol}` : ""}/mo` } : { amount: "Points only" };
+      return poolDisplay(project.funding) === "PoolFunded" ? `${summary.amount}${summary.token ? ` ${summary.token.symbol}` : ""}/mo` : "Points only";
     case "external-prize":
-      return { amount: `${compactPrizeLabel(summary.amount ?? "External")} + points`, state: "External prize" };
+      return "Points + external prize";
     case "points-only":
     case undefined:
-      return { amount: "Points only" };
+      return "Points only";
     default: {
       const _exhaustive: never = summary;
       return _exhaustive;
@@ -99,17 +102,18 @@ function lineOf(summary: RewardSummary | undefined, project: ListedProject): Car
   }
 }
 
-/** @throws {RangeError} */
-export function cardLine(project: ListedProject): CardLine {
+/** A home card's reward line: its open offer, its funded or promised monthly pool, an external prize, or Points only. @throws {RangeError} */
+export function cardAmount(project: ListedProject): string {
   const bounty = hasProjectCardBounty(project);
-  const summaries = projectRewardSummaries(project);
-  return lineOf(summaries.find((summary) => (summary.kind === "security-bounty") === bounty), project);
+  const warning = promiseWarning(promiseOf(project));
+  if (!bounty && warning !== "NoPromise") return `${formatRewardMinor(fromAmount(project.funding.amount), project.rewardAsset)}/mo · ${promiseText(warning)}`;
+  return amountOf(projectRewardSummaries(project).find((summary) => (summary.kind === "security-bounty") === bounty), project);
 }
 
-/** @throws {RangeError} */
-export function cardNotes(project: ListedProject, merge: string | null): string[] {
-  const { state } = cardLine(project);
-  return [state, project.reward.reviewBudget ? `+ ${reviewBudgetLabel(project.reward.reviewBudget)}` : undefined, merge ?? undefined].filter((note) => note !== undefined);
+/** A home card's review budget, once its funding is committed. @throws {RangeError} */
+export function cardNote(project: ListedProject): string | undefined {
+  const budget = project.reward.reviewBudget;
+  return budget && reviewBudgetShown(budget.fundingState === "committed") ? `+${formatRewardMinor(budget.committedMinor)} reviews` : undefined;
 }
 
 /** @throws {never} */
@@ -138,7 +142,7 @@ export type HomeTier = (typeof homeTiers)[number];
 
 /** @throws {RangeError} */
 function homeCard(project: ListedProject, index: number): HomeCard {
-  const amount = poolDisplay(project.funding) === "PoolFunded" ? project.funding.amount : toAmount(0n);
+  const amount = homeShownAmount(promiseOf(project));
   const stablecoin = project.rewardAsset === undefined || project.rewardAsset.kind === "stablecoin";
   return { group: homeGroup(cardPolicy(project).reward, amount, stablecoin), amount, featured: project.listingTier === "featured", index };
 }

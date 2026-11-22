@@ -84,7 +84,7 @@ type Project = { creator: int, steward: int, referrer: int, administrators: List
   revision: int, history: List[Revision], status: Status, tier: Tier, retirement: Retirement,
   repositories: List[int], starts: List[RepositoryStart], fieldsComplete: bool, branch: int, license: License,
   consent: C::SavedConsent, month: int, economic: List[EconomicTerm], network: int, asset: int, funded: bool,
-  honorSystem: bool, vaults: VaultRecords }
+  honorSystem: bool, vaults: VaultRecords, share: int, shareHistory: List[ShareEntry] }
 pure val noLicense: License = { terms: UnknownTerms, url: 0, commit: 0, digest: 0 }
 pure val noVaults: VaultRecords = { ordinary: false, bounty: false }
 pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrators: List(5, 6, 7), participation: OpenParticipation,
@@ -92,7 +92,7 @@ pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrator
   revision: 0, history: List(), status: Paused, tier: Community, retirement: NotRetired,
   repositories: List(1), starts: List({ repositoryId: 1, month: 202611 }), fieldsComplete: false, branch: 0,
   license: noLicense, consent: C::Absent, month: 202611, economic: List(), network: 1, asset: 1, funded: false,
-  honorSystem: false, vaults: noVaults }
+  honorSystem: false, vaults: noVaults, share: 0, shareHistory: List() }
 pure val platform = -1
 pure val noRevision: Revision = { number: 0, kind: Created, status: Paused, tier: Retired, by: 0 }
 pure def currentRevision(p: Project): Revision = p.history.nthOr(p.history.length() - 1, noRevision)
@@ -138,7 +138,10 @@ no terms), records the GitHub owner as steward, requires the complete
 maintainer-authored skill fields, and records the closure consent of the
 new-project form (unchecked by default, absent for a bounty-only setup) and
 the reward's honor-system promise (valid as below; the form starts it
-unchecked). Revision 1 is paused and listed in Community with no money. A
+unchecked) and its maintainer share (below), with no share history: a
+submitted `reward.maintainerShareHistory` is refused (422 `invalid_manifest`,
+"A new project has no maintainer share history; set only the maintainer
+share"). Revision 1 is paused and listed in Community with no money. A
 stored applicant publishes a pending application through the same checks,
 and becomes the listing account; a cancelled application can never publish.
 Funding readiness never controls creation.
@@ -146,19 +149,20 @@ Funding readiness never controls creation.
 ```quint
 type RepositoryFacts = { repository: int, owner: int, public: bool, archived: bool, fork: bool, branch: int }
 type Creation = { authority: AuthorityRead, facts: RepositoryFacts, fieldsComplete: bool, license: License,
-  fundingChoice: C::FundingChoice, closureChecked: bool, referrer: int, reward: RewardPromise }
+  fundingChoice: C::FundingChoice, closureChecked: bool, referrer: int, reward: RewardPromise, shareHistory: List[ShareEntry] }
 pure def licenseRecorded(l: License): bool = l.url > 0 and l.commit > 0 and l.digest > 0
 pure def licenseValid(l: License): bool =
   if (l.terms == UnknownTerms) l.url == 0 and l.commit == 0 and l.digest == 0 else licenseRecorded(l)
 pure def creationValid(p: Project, by: int, creation: Creation): bool =
   p.revision == 0 and currentAuthority(p, by, creation.authority) and creation.facts.repository == primary(p) and
   creation.facts.owner > 0 and creation.facts.public and creation.facts.branch > 0 and
-  creation.fieldsComplete and licenseValid(creation.license) and honorSystemValid(creation.reward)
+  creation.fieldsComplete and licenseValid(creation.license) and honorSystemValid(creation.reward) and
+  shareValid(creation.reward) and creation.shareHistory == List()
 pure def created(by: int, creation: Creation, p: Project): Project =
   { ...revised(Created, by, Paused, Community, p), creator: by, steward: creation.facts.owner,
     starts: List({ repositoryId: primary(p), month: p.month }), fieldsComplete: true, branch: creation.facts.branch,
     license: creation.license, consent: C::newProjectConsent(creation.fundingChoice, creation.closureChecked),
-    honorSystem: creation.reward.honor == HonorTrue }
+    honorSystem: creation.reward.honor == HonorTrue, share: creation.reward.share, shareHistory: List() }
 pure def canCreate(p: Project, by: int, creation: Creation): bool =
   (p.application == NoApplication or p.application == ApplicationCancelled) and creationValid(p, by, creation) and
   creation.referrer >= 0 and creation.referrer != by
@@ -170,13 +174,14 @@ pure def publishApplication(p: Project, by: int, creation: Creation): Project =
 pure val facts1: RepositoryFacts = { repository: 1, owner: 1, public: true, archived: false, fork: false, branch: 1 }
 pure val license1: License = { terms: SpdxLicense, url: 1, commit: 1, digest: 1 }
 pure val creation1: Creation = { authority: owner1, facts: facts1, fieldsComplete: true, license: license1,
-  fundingChoice: C::OrdinarySetup, closureChecked: false, referrer: 0, reward: noPromise }
+  fundingChoice: C::OrdinarySetup, closureChecked: false, referrer: 0, reward: noPromise, shareHistory: List() }
 pure val creationValues = Set(creation1, { ...creation1, closureChecked: true },
   { ...creation1, license: { ...license1, terms: MixedTerms } }, { ...creation1, fundingChoice: C::BountyOnly, closureChecked: true },
   { ...creation1, authority: { ...owner1, permission: PermissionUnavailable } }, { ...creation1, fieldsComplete: false },
   { ...creation1, license: { ...license1, digest: 0 } }, { ...creation1, facts: { ...facts1, public: false } },
   { ...creation1, license: noLicense }, { ...creation1, license: { ...noLicense, url: 1 } },
-  { ...creation1, reward: { ...noPromise, honor: HonorTrue } }, { ...creation1, reward: { ...noPromise, monthlyAmount: 0, honor: HonorTrue } })
+  { ...creation1, reward: { ...noPromise, honor: HonorTrue } }, { ...creation1, reward: { ...noPromise, monthlyAmount: 0, honor: HonorTrue } },
+  { ...creation1, reward: { ...noPromise, share: 2000 } }, { ...creation1, shareHistory: List({ throughMonth: 202611, basisPoints: 0 }) })
 pure def alwaysCreatedFacts(p: Project): bool =
   (p.revision > 0 implies p.creator > 0 and p.steward > 0 and p.branch > 0 and licenseValid(p.license)) and
   (p.revision == 0 implies p.creator == 0 and p.retirement == NotRetired and p.status == Paused)
@@ -246,11 +251,21 @@ pure def alwaysActiveRequirements(p: Project): bool =
 One save (`PUT /api/v1/projects/:id`) publishes everything it changes as one
 revision: there is no "one change at a time" refusal. The server classifies
 the submitted manifest against the current one
-(`classifyRevisionChanges`): presentation (name, eyebrow, headline, image,
-description, links and `slopbot`: the automatic-closure consent and the
-ready-label settings), executable skill inputs (appended repositories and
-`contribution`) and financial policy (reward, reward asset, escrow, funding,
-security bounty). The project's website and X account (`links.website`,
+(`classifyRevisionChanges`, `src/lib/project-revision-changes.ts`):
+presentation (name, eyebrow, headline, image, description, links, `security`,
+the [report deposit](../security/reportDeposit.md) setting
+`security.reportDeposit`, a boolean that is on unless it is `false`
+(`reportDepositOn`, `src/lib/security-report-deposit.mjs`), and every `slopbot` setting: the
+automatic-closure consent, the [ready label](./readyLabelSettings.md), the
+[intake cap](./intakeCap.md), the [submission fee](./submissionFeeSettings.md)
+and wanted issues, each published at once), executable skill inputs (appended
+repositories and `contribution`) and financial policy (reward, among it the
+maintainer share below, reward asset, escrow, funding, security bounty). The
+registry parses each of those settings with development's limits and texts
+(`src/lib/project-schema.mjs`); what a setting means is its owner's rule. A
+save that names `integrationBranch` instead of `manifest` is the
+integration-branch change below, not an owner revision of this kind.
+The project's website and X account (`links.website`,
 `links.x`), which an owner sets or clears, are presentation links, not
 material terms ([project page links](../frontend/projectLinks.md)). A consent
 edit in the save (`consent`) is recorded as the
@@ -286,7 +301,8 @@ type ConsentChoice = ConsentUntouched | ConsentChecked | ConsentUnchecked
 type NewRepository = { appended: AuthorityRead, facts: RepositoryFacts }
 type OwnerChange = { authority: AuthorityRead, expectedRevision: int, presentation: bool, executable: bool,
   financial: bool, restrictedField: bool, fieldsComplete: bool, network: int, asset: int, exclusionsChanged: bool,
-  clearance: Clearance, consent: ConsentChoice, appends: List[NewRepository], reward: RewardPromise }
+  clearance: Clearance, consent: ConsentChoice, appends: List[NewRepository], reward: RewardPromise,
+  shareHistory: List[ShareEntry] }
 pure def consentAfter(prior: C::SavedConsent, choice: ConsentChoice): C::SavedConsent =
   if (choice == ConsentUntouched) prior else C::savedEdit(prior, choice == ConsentChecked)
 pure def appendsValid(p: Project, by: int, appends: List[NewRepository]): bool =
@@ -302,7 +318,9 @@ pure def changeValid(p: Project, by: int, change: OwnerChange): bool =
   (change.exclusionsChanged implies change.financial) and
   (change.consent != ConsentUntouched implies consentAfter(p.consent, change.consent) != p.consent) and
   (change.appends.length() > 0 implies change.executable) and appendsValid(p, by, change.appends) and
-  honorSystemValid(change.reward) and (honorChanged(p, change.reward) implies change.financial)
+  honorSystemValid(change.reward) and (honorChanged(p, change.reward) implies change.financial) and
+  shareValid(change.reward) and (change.reward.share != p.share implies change.financial) and
+  change.shareHistory == p.shareHistory and (change.shareHistory == List() or change.reward.monthlyPool)
 pure def consentOnly(change: OwnerChange): bool =
   change.consent != ConsentUntouched and not(change.presentation) and not(change.executable) and not(change.financial) and
   change.appends.length() == 0
@@ -314,6 +332,7 @@ pure def changed(by: int, change: OwnerChange, p: Project): Project =
   { ...revised(ownerRevisionKind(change), by, if (pauses) Paused else p.status, p.tier, p),
     fieldsComplete: change.fieldsComplete, network: change.network, asset: change.asset,
     consent: consentAfter(p.consent, change.consent), honorSystem: change.reward.honor == HonorTrue,
+    share: change.reward.share, shareHistory: prospectiveShare(p, change.reward.share),
     repositories: p.repositories.concat(added), starts: p.starts.concat(added.listMap(r => { repositoryId: r, month: p.month + 1 })),
     economic: if (change.financial) p.economic.append({ fromMonth: p.month + 1, revision: p.revision + 1 }) else p.economic }
 pure def canPublishOwnerRevision(p: Project, by: int, change: OwnerChange): bool = changeValid(p, by, change)
@@ -324,7 +343,7 @@ pure def publishUpdate(p: Project, by: int, change: OwnerChange): Project = { ..
 pure def updatePublishable(p: Project): bool = p.update == UpdatePending and p.revision == p.updateBase
 pure val change1: OwnerChange = { authority: owner1, expectedRevision: 2, presentation: true, executable: false, financial: false,
   restrictedField: false, fieldsComplete: true, network: 1, asset: 1, exclusionsChanged: false, clearance: ClearanceRetained,
-  consent: ConsentUntouched, appends: List(), reward: noPromise }
+  consent: ConsentUntouched, appends: List(), reward: noPromise, shareHistory: List() }
 pure val newRepository2: NewRepository = { appended: { ...owner1, repository: 2 }, facts: { ...facts1, repository: 2 } }
 pure val changeValues = Set(change1, { ...change1, expectedRevision: 1 }, { ...change1, expectedRevision: 3 },
   { ...change1, consent: ConsentChecked }, { ...change1, consent: ConsentUnchecked, expectedRevision: 3 },
@@ -340,6 +359,10 @@ pure val changeValues = Set(change1, { ...change1, expectedRevision: 1 }, { ...c
   { ...change1, presentation: false, financial: true }, { ...change1, presentation: false, financial: true, asset: 2 },
   { ...change1, presentation: false, financial: true, network: 2 },
   { ...change1, presentation: false, financial: true, exclusionsChanged: true }, { ...change1, exclusionsChanged: true },
+  { ...change1, presentation: false, financial: true, reward: { ...noPromise, share: 2000 } },
+  { ...change1, presentation: false, financial: true, reward: { ...noPromise, share: 2000 }, expectedRevision: 3 },
+  { ...change1, reward: { ...noPromise, share: 2000 } },
+  { ...change1, presentation: false, financial: true, shareHistory: List({ throughMonth: 202611, basisPoints: 0 }) },
   { ...change1, executable: true, clearance: ClearanceMissing }, { ...change1, fieldsComplete: false },
   { ...change1, restrictedField: true }, { ...change1, presentation: false },
   { ...change1, authority: { ...owner1, actor: 2 } }, { ...change1, authority: { ...owner1, actor: 2 }, expectedRevision: 1 })
@@ -369,8 +392,8 @@ existing ones start without it. It changes no listing and no funding
 
 ```quint
 type HonorField = HonorOmitted | HonorTrue | HonorFalse
-type RewardPromise = { monthlyPool: bool, monthlyAmount: int, honor: HonorField }
-pure val noPromise: RewardPromise = { monthlyPool: true, monthlyAmount: 1, honor: HonorOmitted }
+type RewardPromise = { monthlyPool: bool, monthlyAmount: int, honor: HonorField, share: int }
+pure val noPromise: RewardPromise = { monthlyPool: true, monthlyAmount: 1, honor: HonorOmitted, share: 0 }
 pure def honorSystemValid(reward: RewardPromise): bool =
   reward.honor == HonorOmitted or (reward.honor == HonorTrue and reward.monthlyPool and reward.monthlyAmount > 0)
 pure def honorChanged(p: Project, reward: RewardPromise): bool = (reward.honor == HonorTrue) != p.honorSystem
@@ -382,7 +405,67 @@ pure def lawHonorPromiseChangesNoMoney(p: Project, by: int, change: OwnerChange)
     (publishOwnerRevision(p, by, change).funded == p.funded and publishOwnerRevision(p, by, change).vaults == p.vaults and
      publishOwnerRevision(p, by, change).network == p.network and publishOwnerRevision(p, by, change).asset == p.asset)
 pure val rewardValues = Set(noPromise, { ...noPromise, honor: HonorTrue }, { ...noPromise, honor: HonorFalse },
-  { ...noPromise, monthlyAmount: 0, honor: HonorTrue }, { ...noPromise, monthlyPool: false, honor: HonorTrue })
+  { ...noPromise, monthlyAmount: 0, honor: HonorTrue }, { ...noPromise, monthlyPool: false, honor: HonorTrue },
+  { ...noPromise, share: 2000 }, { ...noPromise, share: 3001 }, { ...noPromise, monthlyPool: false, share: 100 })
+```
+
+### The maintainer share is an owner setting whose history only the server writes
+
+`reward.maintainerShare` is whole basis points of the monthly amount, 1 to
+3000, or omitted (`share` 0), and only on a monthly pool ("must be whole
+basis points from 1 to 3000, or omitted"; "applies to a monthly pool only")
+(operator decision, 18 November 2026; Slop development `ac54042a8`,
+`8e3ea3a23`, `src/lib/maintainer-share.mjs`, `src/lib/project-schema.mjs`,
+`backend/projects/handler.ts` `prospectiveFinancialChange`).
+`reward.maintainerShareHistory` lists, oldest first, the share each month
+through its `throughCycle` had (strictly later UTC months, 0 to 3000 basis
+points each), also on a monthly pool only. The owner sets, changes or removes the share at creation and
+by owner revision under current authority, funded or not: it is a financial
+change of the reward that the fixed-reward comparison leaves out, so it
+changes no amount, cycle cap, payment mode or recorded obligation. Only the
+server writes the history: creation and stored-application publication
+refuse a submitted one (the new project's share applies from its first
+month), and an owner revision whose history differs from the
+stored one is refused (422 `financial_change_restricted`, "The maintainer
+share history cannot change"). When a revision changes the share during the
+open UTC month, the server appends that month with the share it had, unless
+the history already reaches the open month (a second change in the same
+month keeps the month's first recorded share), so every month through the
+open one keeps its share and the new one starts next month. A month's share
+is that of the first history entry reaching it, else the current share
+(`monthShareOf`, which the [project views](../frontend/views.md) read too). An
+administrator exception replaces the manifest, the share and its history
+included, as it replaces any field (below). How settlement splits it is the
+[maintainer share](../settlement/maintainerShare.md).
+
+```quint
+type ShareEntry = { throughMonth: int, basisPoints: int }
+pure val maxShareBasisPoints = 3000
+pure def shareValid(reward: RewardPromise): bool =
+  reward.share == 0 or (reward.monthlyPool and reward.share >= 1 and reward.share <= maxShareBasisPoints)
+pure def shareHistoryValid(history: List[ShareEntry]): bool =
+  history.every(e => e.basisPoints >= 0 and e.basisPoints <= maxShareBasisPoints and e.throughMonth > 0) and
+  history.foldl(0, (reached, e) => if (reached >= 0 and e.throughMonth > reached) e.throughMonth else -1) >= 0
+pure def prospectiveShare(p: Project, share: int): List[ShareEntry] =
+  if (share == p.share or p.shareHistory.some(e => e.throughMonth >= p.month)) p.shareHistory
+  else p.shareHistory.append({ throughMonth: p.month, basisPoints: p.share })
+pure def monthShareOf(history: List[ShareEntry], setting: int, period: int): int =
+  history.select(e => period <= e.throughMonth).nthOr(0, { throughMonth: 0, basisPoints: setting }).basisPoints
+pure def shareOf(p: Project, month: int): int = monthShareOf(p.shareHistory, p.share, month)
+pure def alwaysShareWithinLimits(p: Project): bool =
+  p.share >= 0 and p.share <= maxShareBasisPoints and shareHistoryValid(p.shareHistory)
+pure def stepShareHistoryOnlyAppends(before: Project, via: str, after: Project): bool =
+  via != "adminRevise" implies (after.shareHistory == before.shareHistory or
+    after.shareHistory == before.shareHistory.append({ throughMonth: before.month, basisPoints: before.share }))
+pure def stepOpenMonthShareKept(before: Project, via: str, after: Project): bool =
+  (before.revision > 0 and via != "adminRevise") implies shareOf(after, before.month) == shareOf(before, before.month)
+pure def lawShareChangeStartsNextMonth(p: Project, share: int): bool =
+  (share != p.share and not(p.shareHistory.some(e => e.throughMonth >= p.month))) implies
+    shareOf({ ...p, share: share, shareHistory: prospectiveShare(p, share) }, p.month) == p.share and
+    shareOf({ ...p, share: share, shareHistory: prospectiveShare(p, share) }, p.month + 1) == share
+pure def sometimesShareChangedForNextMonth(p: Project): bool =
+  p.shareHistory.length() > 0 and p.share > 0 and shareOf(p, p.month) != p.share
+pure val shareValues = Set(0, 2000, 3000)
 ```
 
 ### Appending a repository pauses the project and its work counts from next month
@@ -542,6 +625,71 @@ pure def lawUnfinalizedCreationRegistersNothing(p: Project, by: int, registratio
   not(registration.finalized) implies not(canRegisterVault(p, by, registration))
 ```
 
+### A current repository administrator moves the integration branch with a committed declaration
+
+A save (`PUT /api/v1/projects/:id`) with `integrationBranch: { name,
+commitSha }` and `expectedRevision` in place of `manifest`, and optionally
+`reason` and `contribution`, moves the primary repository's integration
+branch (Slop development `8d52d586c`, `e2fe2b22f`, `a2c8f5ef0`,
+`backend/projects/handler.ts` `publishIntegrationBranch`,
+`github-lookup.ts` `readIntegrationBranchAuthority`,
+`src/lib/project-policy.mjs` `assertRepositoryTransition`). After the stale
+revision (409 `stale_revision`), ban (403 `maintainer_banned`), restriction
+(409 `project_restricted`, the [composition](./projectComposition.md)) and
+current-authority checks, the actor's current read of the stored repository
+must be admin with Slopbot installed (403 `authority_required`, "The
+integration branch requires current GitHub repository admin permission.");
+the selection must be a valid branch name and a 40-hex commit (400
+`invalid_request`); the branch must differ (422 `no_change`); a retired
+project refuses (409 `project_restricted`, "A retired project cannot change
+integration branches."). The project API reads the branch's head and
+`.github/slop-project.json` at that exact commit: a head that is not that
+commit answers 409 `branch_head_changed` ("The GitHub branch moved. Reload
+and verify its current head."), and a declaration that is not exactly kind
+`slop-project-authority`, `schemaVersion` "1", the project id, the terms
+revision, the repository's full name and id, the new branch and the
+steward's actor and node ids, 1 to 4096 bytes, answers 422
+`branch_proof_required` (shell obligations: `headCurrent` and `declared` are
+that read's facts, never the request's). The same revision may replace the
+contribution instructions. It is an owner revision (`OwnerUpdate`): status,
+tier, funding, economic terms, repositories, consent and share are kept,
+only the branch moves, and every other repository field and every other
+repository's branch stay as they were (an administrator exception never
+moves a branch). An active project needs retained admission clearance for it
+(422 `vetting_required`), since the repository inputs changed; it is never
+paused for it. Both generated skills then use the new branch, and the setup
+check runs without activation.
+
+```quint
+type BranchChange = { authority: AuthorityRead, repositoryAdmin: bool, expectedRevision: int, target: int, declared: bool,
+  headCurrent: bool, fieldsComplete: bool, clearance: Clearance }
+pure def canMoveBranch(p: Project, by: int, branchChange: BranchChange): bool =
+  p.revision > 0 and p.tier != Retired and branchChange.expectedRevision == p.revision and
+  currentAuthority(p, by, branchChange.authority) and branchChange.repositoryAdmin and
+  branchChange.target > 0 and branchChange.target != p.branch and branchChange.headCurrent and branchChange.declared and
+  (branchChange.fieldsComplete or p.status == Paused) and
+  (p.status == Active implies branchChange.clearance == ClearanceRetained)
+pure def moveBranch(p: Project, by: int, branchChange: BranchChange): Project =
+  { ...revised(OwnerUpdate, by, p.status, p.tier, p), branch: branchChange.target, fieldsComplete: branchChange.fieldsComplete }
+pure def lawBranchMoveKeepsStatusAndFunding(p: Project, by: int, branchChange: BranchChange): bool =
+  canMoveBranch(p, by, branchChange) implies
+    (moveBranch(p, by, branchChange).status == p.status and moveBranch(p, by, branchChange).tier == p.tier and
+     moveBranch(p, by, branchChange).funded == p.funded and moveBranch(p, by, branchChange).economic == p.economic and
+     moveBranch(p, by, branchChange).repositories == p.repositories and moveBranch(p, by, branchChange).consent == p.consent and
+     moveBranch(p, by, branchChange).share == p.share and moveBranch(p, by, branchChange).branch == branchChange.target)
+pure def lawRetiredBranchNeverMoves(p: Project, by: int, branchChange: BranchChange): bool =
+  p.tier == Retired implies not(canMoveBranch(p, by, branchChange))
+pure def stepBranchMovesOnlyByVerifiedChange(before: Project, via: str, after: Project): bool =
+  (before.revision > 0 and after.branch != before.branch) implies via == "moveBranch"
+pure def sometimesBranchMoved(p: Project): bool = p.revision > 0 and p.branch == 2 and p.history.some(r => r.kind == OwnerUpdate)
+pure val branchChange1: BranchChange = { authority: owner1, repositoryAdmin: true, expectedRevision: 2, target: 2, declared: true,
+  headCurrent: true, fieldsComplete: true, clearance: ClearanceRetained }
+pure val branchChangeValues = Set(branchChange1, { ...branchChange1, expectedRevision: 3 }, { ...branchChange1, repositoryAdmin: false },
+  { ...branchChange1, declared: false }, { ...branchChange1, headCurrent: false }, { ...branchChange1, target: 1 },
+  { ...branchChange1, clearance: ClearanceMissing }, { ...branchChange1, expectedRevision: 3, clearance: ClearanceMissing },
+  { ...branchChange1, authority: { ...owner1, permission: PermissionUnavailable } })
+```
+
 ## Story: Administrators handle exceptions and restrictions, not routine approval
 
 ### Administrators hold, delist, change the steward or place a project
@@ -594,7 +742,7 @@ administrator decision and never depends on funding. The manifest's
 type Exception = { expectedRevision: int, reason: int, status: Status, tier: Tier, steward: int, participation: Participation,
   fieldsComplete: bool, network: int, asset: int, financial: bool, executable: bool, otherFields: bool, funded: bool,
   vaults: VaultRecords, reward: RewardPromise, clearance: Clearance, license: License, consent: C::SavedConsent,
-  appended: List[RepositoryStart] }
+  appended: List[RepositoryStart], shareHistory: List[ShareEntry] }
 pure def exceptionAppendsValid(p: Project, appended: List[RepositoryStart]): bool =
   p.repositories.length() + appended.length() <= 20 and
   appended.every(s => s.repositoryId > 0 and s.month >= 0 and not(p.repositories.includes(s.repositoryId)) and
@@ -604,7 +752,8 @@ pure def exceptionChanges(p: Project, exception: Exception): bool =
   exception.participation != p.participation or exception.fieldsComplete != p.fieldsComplete or exception.financial or
   exception.executable or exception.otherFields or exception.network != p.network or exception.asset != p.asset or
   exception.funded != p.funded or exception.vaults != p.vaults or honorChanged(p, exception.reward) or
-  exception.license != p.license or exception.consent != p.consent or exception.appended.length() > 0
+  exception.license != p.license or exception.consent != p.consent or exception.appended.length() > 0 or
+  exception.reward.share != p.share or exception.shareHistory != p.shareHistory
 pure def exceptionKind(p: Project, exception: Exception): RevisionKind =
   if (exception.tier == Retired and p.tier != Retired) AdminDelist
   else if (exception.status == Paused and p.status == Active and exception == holdOf(p, exception)) AdminHold
@@ -612,13 +761,16 @@ pure def exceptionKind(p: Project, exception: Exception): RevisionKind =
 pure def holdOf(p: Project, exception: Exception): Exception =
   { ...exception, status: Paused, tier: p.tier, steward: p.steward, participation: p.participation, fieldsComplete: p.fieldsComplete,
     network: p.network, asset: p.asset, financial: false, executable: false, otherFields: false, funded: p.funded, vaults: p.vaults,
-    reward: { ...exception.reward, honor: if (p.honorSystem) HonorTrue else HonorOmitted }, license: p.license,
-    consent: p.consent, appended: List() }
+    reward: { ...exception.reward, honor: if (p.honorSystem) HonorTrue else HonorOmitted, share: p.share }, license: p.license,
+    consent: p.consent, appended: List(), shareHistory: p.shareHistory }
 pure def canAdminRevise(p: Project, by: int, exception: Exception): bool =
   p.administrators.includes(by) and p.revision > 0 and
   exception.expectedRevision == p.revision and exception.reason > 0 and exceptionChanges(p, exception) and
   exception.steward > 0 and exception.network > 0 and exception.asset > 0 and honorSystemValid(exception.reward) and
   licenseValid(exception.license) and exceptionAppendsValid(p, exception.appended) and
+  shareValid(exception.reward) and shareHistoryValid(exception.shareHistory) and
+  (exception.shareHistory == List() or exception.reward.monthlyPool) and
+  ((exception.reward.share != p.share or exception.shareHistory != p.shareHistory) implies exception.financial) and
   (exception.appended.length() > 0 implies exception.executable) and
   (p.retirement == RestrictionRetired implies exception.status == Paused and exception.tier == Retired) and
   (exception.tier == Retired implies exception.status == Paused) and
@@ -635,6 +787,7 @@ pure def adminRevise(p: Project, by: int, exception: Exception): Project =
     steward: exception.steward, license: exception.license, participation: exception.participation, fieldsComplete: exception.fieldsComplete,
     network: exception.network, asset: exception.asset, funded: exception.funded, vaults: exception.vaults,
     honorSystem: exception.reward.honor == HonorTrue, consent: exception.consent,
+    share: exception.reward.share, shareHistory: exception.shareHistory,
     repositories: p.repositories.concat(exception.appended.listMap(s => s.repositoryId)), starts: p.starts.concat(exception.appended),
     economic: if (exception.financial) p.economic.append({ fromMonth: p.month + 1, revision: p.revision + 1 }) else p.economic }
 pure def canPlace(p: Project, by: int, tier: Tier): bool =
@@ -643,7 +796,7 @@ pure def place(p: Project, by: int, tier: Tier): Project = revised(Placement, by
 pure val exception1: Exception = { expectedRevision: 2, reason: 1, status: Paused, tier: Community, steward: 1,
   participation: OpenParticipation, fieldsComplete: true, network: 1, asset: 1, financial: false, executable: false,
   otherFields: false, funded: false, vaults: noVaults, reward: noPromise, clearance: ClearanceRetained, license: license1,
-  consent: C::Absent, appended: List() }
+  consent: C::Absent, appended: List(), shareHistory: List() }
 pure val exceptionValues = tuples(Set(1, 2, 3), Set(exception1, { ...exception1, tier: Retired }, { ...exception1, steward: 4 },
   { ...exception1, participation: Archived }, { ...exception1, participation: PermissionRequired },
   { ...exception1, status: Active }, { ...exception1, status: Active, executable: true, clearance: ClearanceMissing },
@@ -655,7 +808,8 @@ pure val exceptionValues = tuples(Set(1, 2, 3), Set(exception1, { ...exception1,
   { ...exception1, executable: true, appended: List({ repositoryId: 2, month: 202612 }) },
   { ...exception1, executable: true, appended: List({ repositoryId: 2, month: 202610 }) },
   { ...exception1, appended: List({ repositoryId: 2, month: 202612 }) },
-  { ...exception1, executable: true, appended: List({ repositoryId: 1, month: 202612 }) }))
+  { ...exception1, executable: true, appended: List({ repositoryId: 1, month: 202612 }) },
+  { ...exception1, financial: true, reward: { ...noPromise, share: 1500 }, shareHistory: List({ throughMonth: 202611, basisPoints: 0 }) }))
   .map(x => { ...x._2, expectedRevision: x._1 }).union(Set({ ...exception1, steward: 4, reason: 0 }))
 pure def alwaysRestrictedParticipationPaused(p: Project): bool = p.participation != OpenParticipation implies p.status == Paused
 pure def alwaysRetirementConsistent(p: Project): bool =

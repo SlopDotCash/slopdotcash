@@ -17,7 +17,6 @@ export interface SettingChoice {
   readonly automatic: boolean
   readonly expectedSequence: number
   readonly authority: SettingsAuthority
-  // A cut whose 24-hour notice outlasts its unfrozen month's cutoff is still running (lateCutNoticeAt).
   readonly lateCutNotice: boolean
 }
 

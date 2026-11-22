@@ -43,14 +43,15 @@ type Outcome = RestrictionApplied | NoticeSent | RecoveryOpened
 type Decision = { caseKey: str, by: int, reasonLength: int, resulting: Outcome, confirmed: bool }
 type ReadResult = Shown | NotShown | StaleRefused | RetryLater
 type Read = { viewer: int, key: Key, result: ReadResult }
+type ReviewRequest = { id: str, open: bool }
 type Moderation = { rosterVersion: int, moderators: List[int], clock: int, items: List[Item], penalties: List[Penalty],
-  cases: List[Case], decisions: List[Decision], reads: List[Read] }
+  cases: List[Case], decisions: List[Decision], reads: List[Read], requests: List[ReviewRequest] }
 pure val slopbotWorker = -1
 pure val projectService = -2
 pure val monthlyJob = -3
 pure val configRelease = -4
 pure val initial: Moderation = { rosterVersion: 1, moderators: List(18633264, 202660855), clock: 1, items: List(),
-  penalties: List(), cases: List(), decisions: List(), reads: List() }
+  penalties: List(), cases: List(), decisions: List(), reads: List(), requests: List() }
 pure val noKey: Key = { kind: ScamReview, subject: "", project: 0, period: 0, sequence: 0 }
 pure def has(m: Moderation, key: Key, recipient: int): bool = m.items.some(i => i.key == key and i.recipient == recipient)
 pure def addOnce(items: List[Item], key: Key, recipient: int): List[Item] =
@@ -108,7 +109,7 @@ pure def alwaysCasesUnique(m: Moderation): bool = m.cases.every(c => c.key != ""
 The rows are written in the enforcement record's own batch and carry no
 reason or evidence: those stay in the administrator panel. A reinstatement
 request also reaches each current moderator except the one who placed the
-restriction.
+restriction, and is recorded as an open request under the record's ID.
 
 ```quint
 type Enforcement = { id: str, project: int, applicant: int, steward: int, placedBy: int, reinstatementRequest: bool }
@@ -121,7 +122,9 @@ pure def recordEnforcement(m: Moderation, by: int, enforcement: Enforcement): Mo
   val owners = addOnce(addOnce(m.items, enforcementKey(enforcement), enforcement.applicant), enforcementKey(enforcement),
     enforcement.steward)
   { ...m, items: if (not(enforcement.reinstatementRequest)) owners
-    else m.moderators.foldl(owners, (acc, r) => if (r != enforcement.placedBy) addOnce(acc, reviewKey(enforcement), r) else acc) }
+    else m.moderators.foldl(owners, (acc, r) => if (r != enforcement.placedBy) addOnce(acc, reviewKey(enforcement), r) else acc),
+    requests: if (enforcement.reinstatementRequest and not(m.requests.some(q => q.id == enforcement.id)))
+      m.requests.append({ id: enforcement.id, open: true }) else m.requests }
 pure def lawPlacingModeratorNotAsked(m: Moderation, enforcement: Enforcement): bool =
   not(has(recordEnforcement({ ...m, items: List() }, projectService, enforcement), reviewKey(enforcement), enforcement.placedBy))
 pure def sometimesReinstatementReviewRequested(m: Moderation): bool = m.items.some(i => i.key.kind == ReinstatementReview)
@@ -173,17 +176,36 @@ earlier roster is refused and an unavailable one is retryable. A moderator
 review row is shown only to a current moderator: a Scam review only while
 the penalty still stands and never about the viewer's own account, an
 appeal or dispute review only while escalated and never to its appellant.
+A reinstatement review row is listed, counted and marked read only while the
+request it names is undecided; the list has no moderator check for it. A
+later enforcement record of the project that decides the request (a
+quarantine, reinstatement or denial, a ban that moves the appeal state, or
+for an account's request a ban, release or denial of that account) closes it:
+`projectService` folds the append-only records and sends the closure.
 Other rows are shown only to their recipient.
 
 ```quint
 type AuthorityCheck = { actor: int, rosterVersion: int, available: bool }
+pure def requestOf(m: Moderation, id: str): ReviewRequest =
+  m.requests.select(q => q.id == id).nthOr(0, { id: "", open: false })
 pure def visible(m: Moderation, viewer: int, key: Key): bool =
   has(m, key, viewer) and (
     if (key.kind == ScamReview) m.moderators.includes(viewer) and not(penaltyOf(m, key.subject).reversed) and
       penaltyOf(m, key.subject).author != viewer
     else if (key.kind == AppealReview) m.moderators.includes(viewer) and caseOf(m, key.subject).escalated and
       caseOf(m, key.subject).appellant != viewer
+    else if (key.kind == ReinstatementReview) requestOf(m, key.subject).open
     else true)
+pure def canCloseReinstatementRequest(m: Moderation, by: int, id: str): bool =
+  by == projectService and requestOf(m, id).open
+pure def closeReinstatementRequest(m: Moderation, by: int, id: str): Moderation =
+  { ...m, requests: m.requests.listMap(q => if (q.id == id) { ...q, open: false } else q) }
+pure def lawDecidedRequestHidden(m: Moderation, viewer: int, key: Key): bool =
+  (key.kind == ReinstatementReview and not(requestOf(m, key.subject).open)) implies not(visible(m, viewer, key))
+pure def alwaysReviewRowsNameARequest(m: Moderation): bool = m.items.every(i => i.key.kind == ReinstatementReview implies
+  m.requests.some(q => q.id == i.key.subject))
+pure def sometimesDecidedReviewHidden(m: Moderation): bool =
+  m.reads.some(r => r.result == NotShown and r.key.kind == ReinstatementReview)
 pure def readResult(m: Moderation, by: int, key: Key, authority: AuthorityCheck): ReadResult =
   if (authority.actor != by or by <= 0) StaleRefused
   else if (not(authority.available)) RetryLater
@@ -265,7 +287,9 @@ pure val projectValues = Set(1)
 pure val periodValues = Set(202611)
 pure val stewardValues = Set(8)
 pure val sequenceValues = Set(1, 2)
-pure val keyValues = Set(scamKey("pr"), appealKey("appeal:pr:head"), underfundedKey(1, 202611))
+pure val keyValues = Set(scamKey("pr"), appealKey("appeal:pr:head"), underfundedKey(1, 202611),
+  { ...noKey, kind: ReinstatementReview, subject: "e1", project: 1 })
+pure val idValues = Set("e1", "e2")
 pure val authorityValues = Set({ actor: 18633264, rosterVersion: 1, available: true },
   { actor: 18633264, rosterVersion: 2, available: true }, { actor: 202660855, rosterVersion: 1, available: true },
   { actor: 18633264, rosterVersion: 1, available: false }, { actor: 8, rosterVersion: 1, available: true })

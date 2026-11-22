@@ -28,7 +28,6 @@ export effect function registeredUnderFormerPath() {
   const digest = try sha256Hex(manifest)
   const at = "2026-11-01T00:00:00.000Z"
   const statements: ReadonlyArray<Statement> = [
-    // The project row must match an appended revision (migrations/0019 projects_match_revision_insert).
     sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', 1, ${manifest}, ${digest}, 'Created', ${at})`,
     sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', 1, 'Created')`,
     sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('alpha', 'active', 1, ${manifest}, ${digest}, ${at}, ${at})`,

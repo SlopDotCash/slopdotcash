@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"
 import type { Issue } from "effect/SchemaIssue"
 import type { Fetcher } from "./bindings.ts"
 import { DeploymentTier } from "./config.vibe"
@@ -245,12 +245,18 @@ export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResp
   return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), () => internal())
 }
 
-effect function corsOrigins(route: AnyRoute) {
+effect function tierOrigins(route: AnyRoute) {
   const cors = route.cors
   if (cors === undefined || !("production" in cors)) return cors
   const deployment = try Effect.serviceOption(DeploymentTier)
   if (Option.isNone(deployment)) return try die(new Error("A route with per-tier CORS origins is served without DeploymentTier"))
   return cors[deployment.value.tier]
+}
+
+effect function corsOrigins(route: AnyRoute) {
+  const origins = try tierOrigins(route)
+  if (route.corsCredentials === true && origins?.includes("*") === true) return try die(new Error(`The credentialed route ${route.method} ${route.path} lists the origin *`))
+  return origins
 }
 
 function allowedOrigin(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
@@ -260,10 +266,12 @@ function allowedOrigin(origins: ReadonlyArray<string> | undefined, request: Http
   return origin !== undefined && origins.includes(origin) ? origin : undefined
 }
 
-function withCors(response: HttpServerResponse.HttpServerResponse, origin: string | undefined) {
+function withCors(response: HttpServerResponse.HttpServerResponse, origin: string | undefined, credentials: boolean) {
   if (origin === undefined) return response
   const allowed = HttpServerResponse.setHeader(response, "access-control-allow-origin", origin)
-  return origin === "*" ? allowed : HttpServerResponse.setHeader(allowed, "vary", "Origin")
+  if (origin === "*") return allowed
+  const varied = HttpServerResponse.setHeader(allowed, "vary", "Origin")
+  return credentials ? HttpServerResponse.setHeader(varied, "access-control-allow-credentials", "true") : varied
 }
 
 effect function crossOriginAdmitted(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
@@ -280,7 +288,7 @@ effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpSe
     try crossOriginAdmitted(origins, request)
     return try program
   }, routingOf(route))
-  return withCors(response, allowedOrigin(origins, request))
+  return withCors(response, allowedOrigin(origins, request), route.corsCredentials === true)
 }
 
 const bearerToken = /^Bearer (\S+)$/u
@@ -385,6 +393,7 @@ effect function preflighted(group: ReadonlyArray<AnyRoute>) {
       "access-control-allow-headers": allowed.join(", "),
       vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
       "cache-control": "no-store",
+      ...route.corsCredentials === true ? { "access-control-allow-credentials": "true" } : {},
     },
   })
 }

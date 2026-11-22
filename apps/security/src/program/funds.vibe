@@ -1,0 +1,32 @@
+// spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"
+import { millisOf } from "@repo/platform/clock"
+import { type ProgramFundsRead, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
+import type { FundingSnapshot } from "../../gen/security__program.ts"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import { limbsOf } from "../terms/asset.ts"
+import { modelAsset, programTermsOf } from "./manifest.ts"
+
+export interface ProgramFunds {
+  readonly snapshot: FundingSnapshot
+  readonly observedAt: string | undefined
+}
+
+function amountOf(terms: unknown): unknown {
+  return typeof terms === "object" && terms !== null && !Array.isArray(terms) ? Object.getOwnPropertyDescriptor(terms, "amount")?.value : undefined
+}
+
+export effect function programFundsOf(projectId: string, terms: ProgramTerms | undefined) {
+  const none: ProgramFundsRead = { funds: undefined, guards: [] }
+  const provider = try Effect.serviceOption(SecurityProgramFunds)
+  if (terms === undefined || Option.isNone(provider)) return none
+  return try provider.value.read({ projectId, terms })
+}
+
+export effect function programFunds(projectId: string, terms: unknown) {
+  const { funds } = try programFundsOf(projectId, programTermsOf(terms))
+  if (funds === undefined) return { snapshot: { finalized: false, observedAt: 0, asset: "", free: zero }, observedAt: undefined } satisfies ProgramFunds
+  return {
+    snapshot: { finalized: true, observedAt: millisOf(funds.snapshotAt), asset: modelAsset(amountOf(terms)), free: limbsOf(funds.availableMinor) },
+    observedAt: funds.snapshotAt,
+  } satisfies ProgramFunds
+}

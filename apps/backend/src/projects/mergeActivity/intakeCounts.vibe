@@ -1,0 +1,19 @@
+// spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type IntakeCount, IntakeCounts } from "@repo/ports/backend"
+
+schema CountRow { project_id: string; observed_at: string; open_outside: number }
+
+effect function counts() {
+  const found = try rows(CountRow, sql`SELECT project_id, observed_at, open_outside FROM repository_merge_activity WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`)
+  const index = new Map<string, IntakeCount[]>()
+  for (const row of found) index.set(row.project_id, [...index.get(row.project_id) ?? [], { openOutside: row.open_outside, observedAt: row.observed_at }])
+  return index
+}
+
+export const IntakeCountsLive = Layer.effect(IntakeCounts, effect {
+  const db = try D1
+  return {
+    counts: () => provideService(counts(), D1, db),
+  } satisfies IntakeCounts.Shape
+})

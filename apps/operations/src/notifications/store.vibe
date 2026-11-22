@@ -58,18 +58,18 @@ function noticeRows(where: Statement): Statement {
 }
 
 function eventRows(where: Statement): Statement {
-  return sql`SELECT 'security' AS channel, e.delivery_id, e.state, e.evidence_reference, e.at, e.id
+  return sql`SELECT 'security' AS channel, e.delivery_id, e.state, e.evidence_reference, e.attempt, e.at, e.id
       FROM security_notification_delivery_events e
       JOIN security_notification_outbox o ON o.id = e.delivery_id
       JOIN notifications n ON n.event_key = o.event_key AND n.recipient_github_id = o.recipient_github_id
      WHERE ${where}
     UNION ALL
-    SELECT 'activity', e.delivery_id, e.state, e.evidence_reference, e.at, e.id
+    SELECT 'activity', e.delivery_id, e.state, e.evidence_reference, e.attempt, e.at, e.id
       FROM activity_notification_delivery_events e
       JOIN activity_notification_outbox o ON o.id = e.delivery_id
       JOIN notifications n ON n.event_key = o.event_key AND n.recipient_github_id = o.recipient_github_id
      WHERE ${where}
-    ORDER BY 5, 1, 6`
+    ORDER BY 6, 1, 7`
 }
 
 function consentRows(where: Statement, ids: ReadonlyArray<string>): Statement {
@@ -95,7 +95,7 @@ export function aggregate(scope: Scope, release: Release): Aggregate<Projection,
     name: scope.name,
     version: sql`SELECT json_array(
         (SELECT json_group_array(json_array(event_key, recipient_github_id, read_at, outbox_id, state, attempts, next_attempt_at, claimed_at, destination_digest, destination_version, acknowledged_at, escalation_of)) FROM (${notices})),
-        (SELECT json_group_array(json_array(channel, delivery_id, state, evidence_reference)) FROM (${events})),
+        (SELECT json_group_array(json_array(channel, delivery_id, state, evidence_reference, attempt)) FROM (${events})),
         (SELECT json_group_array(json_array(github_id, enabled, security_enabled, preference_version, revision, destination_version, verified_at)) FROM (${consents}))
       ) AS version`,
     reads: [notices, events, consents],
@@ -289,7 +289,7 @@ effect function writesFor(projection: Projection, change: Change, after: Inbox) 
 
 effect function claimed(projection: Projection, after: Inbox, id: number, at: string) {
   const notice = heldAt(after, id)
-  return outboxUpdate(try deliveryOf(projection, id), sql`state = 'sending', attempts = ${notice.attempts}, claimed_at = ${try isoAt(notice.claimedAt)}, updated_at = ${at}, destination_digest = NULL`)
+  return outboxUpdate(try deliveryOf(projection, id), sql`state = 'sending', attempts = ${notice.attempts}, claimed_at = ${try isoAt(notice.claimedAt)}, updated_at = ${at}`)
 }
 
 effect function acknowledged(projection: Projection, after: Inbox, id: number, at: string) {

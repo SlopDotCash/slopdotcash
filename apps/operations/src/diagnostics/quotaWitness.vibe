@@ -1,0 +1,336 @@
+// spec/operations/slopbotQuotaWitness.md, "Story: Witness the installation quota with a temporary metadata-only grant"; spec/operations/slopbotQuotaWitness.md, "Only a manual main run in the protected environment, bound to the exact registry revision, may mint"; spec/operations/slopbotQuotaWitness.md, "The token is minted for the one repository with exactly the mode's read grant, and any other grant is revoked unused"; spec/operations/slopbotQuotaWitness.md, "A quota reading is valid only when its windows agree on one public repository and the named commit"; spec/operations/slopbotQuotaWitness.md, "Every minted grant is revoked, and only a verified reading with a 204 revocation writes the receipt"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Answer, type Exchange, defaultLimitBytes, exchanged, githubApi, githubJson, manualRedirects, parsed } from "@repo/platform/github"
+import { GitHubApp, githubApp } from "@repo/platform/github/app"
+import { type Event, type MintOutcome, type QuotaReading, type QuotaWitness, initial, machineOver } from "../../gen/operations__slopbotQuotaWitness.effect.vibe"
+
+export error QuotaWitnessRefused { phase: string }
+
+export interface Witness {
+  state(): QuotaWitness!!
+  send(event: Event): QuotaWitness!QuotaWitnessRefused
+}
+
+interface Budget {
+  readonly limit: number
+  readonly remaining: number
+  readonly used: number
+  readonly reset: number
+}
+
+interface Registered {
+  readonly path: string
+  readonly repositoryId: number
+  readonly nodeId: string
+}
+
+interface Minted {
+  readonly outcome: MintOutcome
+  readonly installationId: number
+  readonly token?: Redacted.Redacted<string>
+  readonly expiresAt?: string
+}
+
+interface Graph {
+  readonly cost: number
+  readonly limit: number
+  readonly remaining: number
+  readonly resetAt: string
+}
+
+interface Observed {
+  readonly reading: QuotaReading
+  readonly exactCommit: boolean
+  readonly checkedAt: number
+  readonly pageCount: number
+  readonly totalCount: number
+  readonly core?: Budget
+  readonly probe?: Budget
+  readonly commitWindow?: Budget
+  readonly graph?: Graph
+}
+
+const productionAppId = "5257625"
+const registry = "https://slop.cash/api/v1/projects/"
+const pageOnePath = "/installation/repositories?per_page=100&page=1"
+const reviewedCommits: ReadonlyMap<string, string> = new Map([
+  ["slop360", "2ab9e1bcd82da29b9639859948eb6ad70556a75c"],
+  ["slop367", "6446f3e94529786cd32ec7d0c3f8880fea493eaa"],
+])
+const query = "query SlopValueReferenceRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner} rateLimit{cost limit remaining resetAt}}"
+const projectPattern = /^[a-z0-9][a-z0-9-]{0,63}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const repositoryPattern = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/u
+const headerNumber = /^[0-9]{1,16}$/u
+const userAgent = "slopbot"
+const requestMillis = 25_000
+const minimumLifetimeMillis = 60_000
+const commitLimitBytes = 8 * 1024 * 1024
+const metadataOnly: Readonly<Record<string, string>> = { metadata: "read" }
+const metadataContents: Readonly<Record<string, string>> = { metadata: "read", contents: "read" }
+const unread: QuotaReading = { pageCount: 0, totalCount: 0, matched: false, coreResource: false, limitSame: false, resetDelta: 0, usedDelta: 0, remainingDelta: 0, graphqlValid: false, resetsFuture: false }
+
+function objectOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : undefined
+}
+
+function count(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function budget(value: unknown): Budget | undefined {
+  const window = objectOf(value)
+  const limit = window?.limit
+  const remaining = window?.remaining
+  const used = window?.used
+  const reset = window?.reset
+  if (!count(limit) || !count(remaining) || !count(used) || !count(reset) || limit === 0 || reset === 0 || used + remaining !== limit) return undefined
+  return { limit, remaining, used, reset }
+}
+
+function coreWindow(answer: Answer): Budget | undefined {
+  if (answer.headers["x-ratelimit-resource"] !== "core") return undefined
+  const part = (name: string) => {
+    const value = answer.headers[`x-ratelimit-${name}`]
+    return value !== undefined && headerNumber.test(value) ? Number(value) : undefined
+  }
+  return budget({ limit: part("limit"), remaining: part("remaining"), used: part("used"), reset: part("reset") })
+}
+
+function samePermissions(granted: unknown, wanted: Readonly<Record<string, string>>) {
+  const permissions = objectOf(granted)
+  return permissions !== undefined && Object.keys(permissions).length === Object.keys(wanted).length
+    && Object.entries(wanted).every(([permission, access]) => permissions[permission] === access)
+}
+
+function sameName(value: unknown, path: string) {
+  return typeof value === "string" && value.toLowerCase() === path.toLowerCase()
+}
+
+function within(a: number, b: number) {
+  return Math.abs(a - b) <= 1
+}
+
+effect function text(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function json(answer: Answer, path: string) {
+  return objectOf(try parsed(answer.bytes, path))
+}
+
+export effect function startWitness() {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  effect function send(event: Event) {
+    return machine.send(event) catch effect (error) => {
+      throw new QuotaWitnessRefused({ phase: error.state.phase })
+    }
+  }
+  return { state: () => machine.get(), send } satisfies Witness
+}
+
+effect function revision(project: string) {
+  const request = HttpClientRequest.get(`${registry}${project}`)
+  return timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "error", cache: "no-store" } {
+      const response = try HttpClient.execute(request)
+      if (response.status !== 200) return undefined
+      const bytes = try boundedBytes(response, defaultLimitBytes, "the registry revision")
+      return Effect.try((): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))) catch () => undefined
+    }
+  }, Duration.millis(requestMillis)) catch () => undefined
+}
+
+effect function registered(project: string, manifestSha256: string) {
+  const answer = objectOf(try revision(project))
+  const current = objectOf(answer?.project)
+  if (answer?.manifestSha256 !== manifestSha256 || current?.id !== project || current.status !== "active") return undefined
+  if ((try sha256Hex(JSON.stringify(answer.project))) !== manifestSha256) return undefined
+  const repositories = current.repositories
+  const path = Array.isArray(repositories) ? objectOf(repositories[0])?.id : undefined
+  const authority = objectOf(current.authority)
+  const repositoryId = Number(authority?.repositoryId)
+  const nodeId = authority?.repositoryNodeId
+  if (typeof path !== "string" || !repositoryPattern.test(path) || !Number.isSafeInteger(repositoryId) || repositoryId <= 0 || typeof nodeId !== "string" || nodeId === "") return undefined
+  return { path, repositoryId, nodeId } satisfies Registered
+}
+
+effect function looked(exchange: Exchange, jwt: Redacted.Redacted<string>, path: string) {
+  return try json(try exchanged(exchange, { method: "GET", url: `${githubApi}${path}`, accept: githubJson, bearer: jwt, followRenamed: false }, defaultLimitBytes), path)
+}
+
+effect function minted(exchange: Exchange, jwt: Redacted.Redacted<string>, repository: Registered, wanted: Readonly<Record<string, string>>): Minted!! {
+  const lookup = `/repos/${repository.path}/installation`
+  const installation = looked(exchange, jwt, lookup) catch () => undefined
+  const installationId = installation?.id
+  if (!count(installationId) || installationId === 0 || String(installation?.app_id) !== productionAppId) return { outcome: "MintRefused", installationId: 0 }
+  const path = `/app/installations/${installationId}/access_tokens`
+  const call = exchanged(exchange, { method: "POST", url: `${githubApi}${path}`, accept: githubJson, bearer: jwt, json: { repository_ids: [repository.repositoryId], permissions: wanted } }, defaultLimitBytes)
+  const answer = call catch (error) => error._tag === "GitHubMalformed" || (error._tag === "GitHubUnavailable" && (error.status === undefined || error.status < 300)) ? "lost" : "refused"
+  if (answer === "lost" || answer === "refused") return { outcome: answer === "lost" ? "MintLost" : "MintRefused", installationId }
+  const issued = json(answer, path) catch () => undefined
+  const token = issued?.token
+  const expiresAt = issued?.expires_at
+  if (typeof token !== "string" || token === "" || typeof expiresAt !== "string") return { outcome: "MintLost", installationId }
+  const lasting = Date.parse(expiresAt) > (try Clock.currentTimeMillis) + minimumLifetimeMillis
+  const outcome: MintOutcome = !lasting ? "MintWrongGrant"
+    : samePermissions(issued?.permissions, metadataOnly) ? "MintMetadata"
+    : samePermissions(issued?.permissions, metadataContents) ? "MintMetadataContents"
+    : "MintWrongGrant"
+  return { outcome, installationId, token: Redacted.make(token), expiresAt }
+}
+
+effect function graphFacts(answer: Answer, repository: Registered) {
+  const body = try json(answer, "/graphql")
+  const data = objectOf(body?.data)
+  const node = objectOf(data?.repository)
+  const limits = objectOf(data?.rateLimit)
+  const errors = body?.errors
+  const cost = limits?.cost
+  const limit = limits?.limit
+  const remaining = limits?.remaining
+  const resetAt = limits?.resetAt
+  const clean = errors === undefined || errors === null || (Array.isArray(errors) && errors.length === 0)
+  const sameNode = node?.id === repository.nodeId && node?.isPrivate === false && sameName(node?.nameWithOwner, repository.path)
+  if (!clean || !sameNode || !count(cost) || !count(limit) || !count(remaining) || remaining > limit || typeof resetAt !== "string") return undefined
+  return { cost, limit, remaining, resetAt } satisfies Graph
+}
+
+effect function reading(exchange: Exchange, token: Redacted.Redacted<string>, repository: Registered, commit: string | undefined) {
+  const get = (path: string, limitBytes: number = defaultLimitBytes) => exchanged(exchange, { method: "GET", url: `${githubApi}${path}`, accept: githubJson, bearer: token, followRenamed: false }, limitBytes)
+  const matches = (value: unknown) => {
+    const listed = objectOf(value)
+    return listed?.id === repository.repositoryId && listed.node_id === repository.nodeId && listed.private === false && sameName(listed.full_name, repository.path)
+  }
+  const limits = try json(try get("/rate_limit"), "/rate_limit")
+  const core = budget(objectOf(limits?.resources)?.core)
+  const page = try json(try get(pageOnePath), pageOnePath)
+  const repositories = page?.repositories
+  const listed: ReadonlyArray<unknown> = Array.isArray(repositories) ? repositories : []
+  const total = page?.total_count
+  const totalCount = count(total) ? total : 0
+  const commitPath = commit === undefined ? undefined : `/repos/${repository.path}/commits/${commit}?per_page=100&page=1`
+  const commitAnswer = commitPath === undefined ? undefined : try get(commitPath, commitLimitBytes)
+  const repositoryPath = `/repos/${repository.path}`
+  const repositoryAnswer = try get(repositoryPath)
+  const probe = coreWindow(repositoryAnswer)
+  const read = try json(repositoryAnswer, repositoryPath)
+  const [owner, name] = repository.path.split("/")
+  const graph = try graphFacts(try exchanged(exchange, { method: "POST", url: `${githubApi}/graphql`, accept: githubJson, bearer: token, json: { query, variables: { owner, name } } }, defaultLimitBytes), repository)
+  const checkedAt = try Clock.currentTimeMillis
+  const commitBody = commitAnswer === undefined || commitPath === undefined ? undefined : try json(commitAnswer, commitPath)
+  const commitWindow = commitAnswer === undefined ? undefined : coreWindow(commitAnswer)
+  const files = commitBody?.files
+  const exactCommit = commit !== undefined && commitAnswer?.status === 200 && commitBody?.sha === commit && Array.isArray(files) && files.length <= 100
+    && commitWindow !== undefined && core !== undefined && probe !== undefined && commitWindow.limit === core.limit
+    && within(commitWindow.reset, core.reset) && within(commitWindow.reset, probe.reset)
+    && commitWindow.used >= core.used + 2 && probe.used > commitWindow.used && commitWindow.reset * 1000 > checkedAt
+  const windows = core !== undefined && probe !== undefined
+  const quota: QuotaReading = {
+    pageCount: listed.length,
+    totalCount,
+    matched: listed.filter(matches).length === 1 && matches(read),
+    coreResource: windows,
+    limitSame: core !== undefined && probe !== undefined && probe.limit === core.limit,
+    resetDelta: core !== undefined && probe !== undefined ? probe.reset - core.reset : 0,
+    usedDelta: core !== undefined && probe !== undefined ? probe.used - core.used : 0,
+    remainingDelta: core !== undefined && probe !== undefined ? core.remaining - probe.remaining : 0,
+    graphqlValid: graph !== undefined,
+    resetsFuture: core !== undefined && probe !== undefined && graph !== undefined && Math.min(probe.reset, core.reset) * 1000 > checkedAt && Date.parse(graph.resetAt) > checkedAt,
+  }
+  return { reading: quota, exactCommit, checkedAt, pageCount: listed.length, totalCount, core, probe, commitWindow, graph } satisfies Observed
+}
+
+effect function revoked(exchange: Exchange, token: Redacted.Redacted<string>) {
+  const answer = exchanged(exchange, { method: "DELETE", url: `${githubApi}/installation/token`, accept: githubJson, bearer: token, statusOnly: true }, 0) catch () => undefined
+  return answer?.status === 204
+}
+
+effect function cleaned(witness: Witness, exchange: Exchange, token: Redacted.Redacted<string> | undefined) {
+  const confirmed = token === undefined ? false : try revoked(exchange, token)
+  return try witness.send({ type: "cleanup", confirmed })
+}
+
+function refusal(state: QuotaWitness) {
+  return new QuotaWitnessRefused({ phase: state.phase })
+}
+
+export effect function witnessQuota(witness: Witness) {
+  const project = try text("SLOP_QUOTA_PROJECT")
+  const manifestSha256 = try text("SLOP_QUOTA_MANIFEST_SHA256")
+  const planSha256 = try text("SLOP_QUOTA_PLAN_SHA256")
+  const appId = try text("SLOPBOT_APP_ID")
+  const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
+  const commitWitness = (try text("SLOP_QUOTA_COMMIT_WITNESS")) || "none"
+  const commit = commitWitness === "none" ? undefined : reviewedCommits.get(commitWitness)
+  if ((commitWitness !== "none" && commit === undefined) || !projectPattern.test(project)) throw refusal(try witness.state())
+  const local = {
+    onMain: (try text("GITHUB_REF")) === "refs/heads/main",
+    manual: (try text("GITHUB_EVENT_NAME")) === "workflow_dispatch",
+    protectedEnvironment: appId === productionAppId && Redacted.value(privateKey).trim() !== "",
+    boundPlan: digestPattern.test(manifestSha256) && digestPattern.test(planSha256),
+  }
+  const repository = local.onMain && local.manual && local.protectedEnvironment && local.boundPlan ? try registered(project, manifestSha256) : undefined
+  const runnerRepository = try text("GITHUB_REPOSITORY")
+  const runnerRepositoryId = try text("GITHUB_REPOSITORY_ID")
+  const workflowRepository = repository !== undefined && runnerRepository !== "" && String(repository.repositoryId) === runnerRepositoryId && sameName(runnerRepository, repository.path)
+  const begun = try witness.send({ type: "begin", r: { ...local, exactRevision: repository !== undefined, commitRequested: commit !== undefined, workflowRepository } })
+  if (begun.phase !== "Minting" || repository === undefined) throw refusal(begun)
+  provide githubApp({ appId, privateKey, userAgent, timeoutMs: requestMillis }) {
+    const app = try GitHubApp
+    const exchange: Exchange = { client: manualRedirects(try HttpClient.HttpClient), authority: githubApi, userAgent, timeoutMs: requestMillis }
+    const mint = try minted(exchange, Redacted.make(try app.appJwt()), repository, commit === undefined ? metadataOnly : metadataContents)
+    const issued = try witness.send({ type: "issue", answer: mint.outcome })
+    if (issued.phase === "Cleaning") throw refusal(try cleaned(witness, exchange, mint.token))
+    if (issued.phase !== "Reading" || mint.token === undefined || mint.expiresAt === undefined) throw refusal(issued)
+    const failed: Observed = { reading: unread, exactCommit: false, checkedAt: 0, pageCount: 0, totalCount: 0 }
+    const observed = reading(exchange, mint.token, repository, commit) catch () => failed
+    try witness.send({ type: "observe", q: observed.reading, exactCommit: observed.exactCommit })
+    const settled = try cleaned(witness, exchange, mint.token)
+    const { core, probe, graph, commitWindow } = observed
+    if (settled.phase !== "Writing" || core === undefined || probe === undefined || graph === undefined) throw refusal(settled)
+    const exactCommitGet = commit !== undefined && commitWindow !== undefined && settled.commitVerified
+      ? { exactCommitGet: { repository: repository.path, commit, installationId: mint.installationId, method: "GET", http: 200, remaining: commitWindow.remaining, sameInstallationToken: true } }
+      : {}
+    return {
+      schemaVersion: "protected-slopbot-app-quota:v1",
+      checkedAt: try isoAt(observed.checkedAt),
+      project,
+      manifestSha256,
+      planSha256,
+      appId,
+      installationId: mint.installationId,
+      repository: { path: repository.path, databaseId: repository.repositoryId, nodeId: repository.nodeId },
+      installationPageOne: { path: pageOnePath, pageCount: observed.pageCount, totalCount: observed.totalCount, matched: true, checkedWithQuotaToken: true },
+      tokenExpiresAt: mint.expiresAt,
+      temporaryTokenRevoked: true,
+      restCleanupAllowance: 1,
+      scopedTokenMetadataOnly: commit === undefined,
+      coreResource: "core",
+      core,
+      restProbe: probe,
+      effectiveCore: probe,
+      restBudgetConsistent: true,
+      resetDeltaSeconds: observed.reading.resetDelta,
+      usedDelta: observed.reading.usedDelta,
+      remainingDelta: observed.reading.remainingDelta,
+      graphqlValid: true,
+      graphql: graph,
+      ...exactCommitGet,
+      productionWrites: false,
+    }
+  }
+}
+
+export effect function recordQuotaWitness(witness: Witness, runnerTemp: string) {
+  const receipt = try witnessQuota(witness)
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  fs.writeFileString(files.join(runnerTemp, "slopbot-app-quota.json"), `${JSON.stringify(receipt)}\n`, { mode: 0o600 }) catch effect () => {
+    throw refusal(try witness.state())
+  }
+  try witness.send({ type: "writeReceipt" })
+}
