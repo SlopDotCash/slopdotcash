@@ -781,7 +781,11 @@ complete recollection, except a joint value-record member outside the live
 census: when three availability probes a few seconds apart all report it
 unavailable, the first attempt records it and holds its work unit; any
 differing or failed probe keeps the recollection (operator decision,
-20 November 2026). Every production release requires current main equivalence. Every
+20 November 2026). A manual main release may also set
+`defer_retained_attribution`, which holds the retained-copy attribution check
+for a later collection, or `parallel_collection`, which collects on hosted
+runners beside a collection already running (PRD section 11; operator
+decision, 20 November 2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
