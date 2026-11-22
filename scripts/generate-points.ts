@@ -93,20 +93,24 @@ async function loadPublishedProjection(
     if (identity === previousIndex) throw mismatch;
     if (!Array.isArray(index.shards) || index.shards.length !== 16)
       throw new Error("Invalid published points index");
-    const parts = await Promise.all(
-      index.shards.map(async (shard, i) => {
-        if (shard.path !== `/data/points/${i.toString(16)}.json`)
-          throw new Error("Invalid published points shard path");
-        return retryPointsTransport(async () => {
-          const response = await fetch(`${origin}${shard.path}`, {
-            signal: AbortSignal.timeout(30000),
-            cache: "no-store",
-          });
-          if (!response.ok)
-            throw new Error("Published points history unavailable");
-          return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-        }, wait);
-      }),
+    const pendingShards = index.shards.map(async (shard, i) => {
+      if (shard.path !== `/data/points/${i.toString(16)}.json`)
+        throw new Error("Invalid published points shard path");
+      return retryPointsTransport(async () => {
+        const response = await fetch(`${origin}${shard.path}`, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error("Published points history unavailable");
+        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+      }, wait);
+    });
+    const parts = await Promise.all(pendingShards).catch(
+      async (error: unknown) => {
+        await Promise.allSettled(pendingShards);
+        throw error;
+      },
     );
     try {
       return assemblePoints(index, parts);

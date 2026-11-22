@@ -4379,7 +4379,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "a834d0c162d8a5fa6ddc5a9a974cbada6d4972918139d396b1552365744f7e05",
+      "sha256": "2c719098757d6cc9216bdb78140b050f934727677b48051a4478cb1b60c00191",
       "models": [
         "formal/models/api/api_protected_point_months.qnt",
         "formal/models/points/historical_implementation_allocation.qnt",
@@ -4390,8 +4390,8 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 42, 55, 91, 130, 152, 155, 168, 175, 184, 192, 200, 279, 311, 317,
-        320, 324, 325, 326, 327, 417, 831, 838, 839, 841, 846, 850, 854
+        2, 42, 55, 91, 134, 156, 159, 172, 179, 188, 196, 204, 283, 315, 321,
+        324, 328, 329, 330, 331, 421, 835, 842, 843, 845, 850, 854, 858
       ],
       "review": "mapped-abstraction"
     },
@@ -15823,13 +15823,15 @@
     },
     {
       "path": "formal/models/points/points_projection_transport.qnt",
-      "sha256": "7042f1fc0921629d11d954dae56bec2e51742654d9bfa2c0bc353287d1c4f766",
+      "sha256": "2e6acec180203f6309cd41e4c71081c3058b97e390d3b4a37d338958f976b3f3",
       "sources": ["scripts/generate-points.ts"],
       "scenarios": [
         "invalidReadNeverRetriesTest",
         "oneChangedIndexCanRepairMismatchTest",
         "resetResumesSameReadTest",
         "secondMismatchRefusesTest",
+        "siblingExhaustionBeforeRefusalTest",
+        "siblingRetriesBeforeRefusalTest",
         "thirdResetRefusesTest",
         "unchangedIndexCannotRepairMismatchTest"
       ]
