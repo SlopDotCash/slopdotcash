@@ -1066,6 +1066,10 @@ export function AccountPage() {
             code={me.referralCode ?? null}
             onSaved={(referralCode) => setMe({ ...me, referralCode })}
           />
+          <p>
+            <Link href="/requested">Requested repos</Link> lists repos Slop
+            contributors want to work on, with a pitch that carries your link.
+          </p>
         </section>
       ) : null}
     </main>
