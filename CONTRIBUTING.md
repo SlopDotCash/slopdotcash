@@ -393,6 +393,10 @@ Workspace verification installs Dafny from its pinned release, checked against i
 and restores pnpm's store, Quint's evaluator, and what the job adds to: a `selftest-*` job the selftest's shared
 tool runs, any other the spec cache of the root, each workspace package and each example. The key is of the job and
 the commit: what a job of the same name last saved, or else another job's that holds the same.
+The default branch's `verify` job publishes the pnpm store after the frozen
+install. Verification jobs can restore it by the same lockfile key; publication
+jobs restore no cache. This store holds public packages only because fork pull
+requests can read it.
 Turborepo shares task results through the private Cloudflare/R2 cache.
 The task entry point disables Turbo telemetry. Each `selftest:tools` task waits for the root and
 Studio test tasks so those integration journeys do not compete with it.
