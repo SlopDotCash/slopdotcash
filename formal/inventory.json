@@ -651,7 +651,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "17663a1de5d552a3a804e2fb0730bdec5145d9930a271cbbe5320866ea64c1de",
+      "sha256": "3d88b995fec9cfdc59fb1fca6834a2ae0e13a6d99538000878a7e09a084c818c",
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/api_points_session_lifetime.qnt",
@@ -661,8 +661,8 @@
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        23, 24, 122, 228, 233, 238, 242, 316, 344, 348, 351, 354, 357, 362, 367,
-        371, 394, 410
+        25, 28, 29, 127, 233, 238, 243, 247, 321, 349, 353, 356, 359, 362, 367,
+        372, 376, 388, 390, 401, 406, 412, 413, 419, 445, 461
       ],
       "review": "mapped-abstraction"
     },
