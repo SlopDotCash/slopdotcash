@@ -4568,6 +4568,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/historical-net-outcome.ts",
+      "sha256": "fa351fb2035f06fa700e7760a84f8273d802599688d9a8bf27f8070c58089340",
+      "models": ["formal/models/points/historical_net_outcome_retirement.qnt"],
+      "candidateLines": [142, 164, 187, 211, 364, 368, 371, 374],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/historical-replay-qualification.ts",
       "sha256": "65921644330b63e015065ebceddc19098c1b0151d8506114c51082911dae4258",
       "models": ["formal/models/points/source_import.qnt"],
@@ -5337,9 +5344,12 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "7ca67cf32b560d4844d4d6ebe5c4e158efb0298096fb270754a6f0b51c5043cb",
-      "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [57, 58, 523, 804, 1040, 1041, 1042, 1045, 1419],
+      "sha256": "b5a5377f9f8da729a12b8528eab763c9d3fed74249ab8637bef4ffcea7c7cd2e",
+      "models": [
+        "formal/models/points/historical_net_outcome_retirement.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "candidateLines": [61, 62, 529, 852, 1088, 1089, 1090, 1093, 1467],
       "review": "mapped-abstraction"
     },
     {
@@ -5417,14 +5427,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "1d52bdbec1977693f94897e1cdd540843894c6c807b7ea5e8ba5280284b02b64",
+      "sha256": "b03541227bc7e21267d57abb3dd6d3abf6517e95e241ac0a49988d9ab88653ac",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
+        "formal/models/points/historical_net_outcome_retirement.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 246, 247, 248, 249, 251, 256, 299, 314, 315, 321, 322, 457, 1181,
-        1410, 1430, 1641, 1659, 1666, 1793, 1888, 2050
+        3, 247, 248, 249, 250, 252, 257, 300, 315, 316, 322, 323, 458, 1182,
+        1411, 1431, 1642, 1660, 1667, 1794, 1889, 2060
       ],
       "review": "mapped-abstraction"
     },
@@ -15855,6 +15866,25 @@
         "unavailableSupplementAllowsUnrelatedProofTest",
         "unchangedPoolAndAppendOnlyTest",
         "unresolvedEarlierAcceptanceHoldsAffectedPoolTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/historical_net_outcome_retirement.qnt",
+      "sha256": "7a98cf2113fa8716be88f6863661b7cb0a9460a924b91650d85d29f48634e4ec",
+      "sources": [
+        "scripts/historical-net-outcome.ts",
+        "scripts/reviewed-historical-points.ts",
+        "scripts/run-reviewed-historical-points.ts"
+      ],
+      "scenarios": [
+        "missingEarlierAwardRefusesTest",
+        "missingPathRefusesTest",
+        "partialSubmittedRangeRefusesTest",
+        "protectedMonthRefusesTest",
+        "reverseChronologyRefusesTest",
+        "unreviewedRetirementRefusesTest",
+        "unverifiedObjectsRefuseTest",
+        "verifiedDuplicateOnlyTest"
       ]
     },
     {

@@ -31,6 +31,7 @@ import {
   type HistoricalAssessmentReceipt,
   historicalClosedContextBindings,
 } from "./historical-assessment-reconciliation";
+import { verifyHistoricalNetOutcomes } from "./historical-net-outcome";
 import {
   type HistoricalReplayReceipt,
   verifyHistoricalReplayQualification,
@@ -1936,6 +1937,15 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
         beforeImportChecks: carrierBranchChecks,
       },
     );
+  const verifiedDuplicateChanges = new Set([
+    ...verifiedIdenticalAcceptedChanges,
+    ...(await verifyHistoricalNetOutcomes(
+      packet,
+      github,
+      withPublicGitObjects,
+      carrierBranchChecks,
+    )),
+  ]);
   setPhase("financial protection verification");
   await verifyHistoricalProtection(packet, query);
   setPhase("public Points read");
@@ -2031,7 +2041,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     baseline,
     new Date().toISOString(),
     bans,
-    verifiedIdenticalAcceptedChanges,
+    verifiedDuplicateChanges,
     closedReviews,
   );
   if (assessmentReceipt)
