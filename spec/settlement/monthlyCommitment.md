@@ -269,7 +269,9 @@ decision for one run: development `apps/settlement/src/signer/monthlyRoot.vibe`
 `decide` steps `holdSuperseded` and returns without signing, because the
 view has an admitted root, and the publication run reports the month as
 refused with that reason. D1 stores no hold row, so each later run reads the
-same rows and decides the same.
+same rows and decides the same. A retained V1 root is never an attempt's
+root, because retention and signing each refuse a root the other holds, so a
+superseded root is never the V1 root.
 
 On a consistent finalized chain that hold is never reached. `reserveMonthly`
 in `packages/contracts/evm/src/ProjectEscrow.sol` accepts a reservation only
@@ -285,7 +287,7 @@ pure def canAdmit(c: Commitment): bool =
   c.phase == Authorized and c.view.admittedRoot != "" and not(c.view.legacyRoot) and c.attempts.some(a => a.root == c.view.admittedRoot)
     and c.view.admittedRoot == latestAttempt(c).root
 pure def supersededRoot(c: Commitment): bool = c.view.admittedRoot != "" and c.attempts.some(a => a.root == c.view.admittedRoot)
-  and c.view.admittedRoot != latestAttempt(c).root and not(c.view.legacyRoot and c.legacy.root != "" and c.view.admittedRoot == c.legacy.root)
+  and c.view.admittedRoot != latestAttempt(c).root
 pure def admit(c: Commitment): Commitment = { ...c, phase: Admitted, admittedRoot: c.view.admittedRoot }
 ```
 
@@ -298,7 +300,9 @@ the frozen month (same snapshot, whole gross and leaf count) and was signed
 by the identity authority; the executor checks its root and recovered signer
 against the original message. A finalized V1 root equal to it admits the
 month without any new signature; V1 commits every leaf in the same call, so
-the escrow counts an identical existing award once.
+the escrow counts an identical existing award once. The retained V1 root is
+never one of the journal's attempts, and a V1 admission is taken only for
+such a root.
 
 ```quint
 pure def canRetainLegacy(c: Commitment, legacy: LegacyAuthorization): bool =
@@ -308,6 +312,7 @@ pure def canRetainLegacy(c: Commitment, legacy: LegacyAuthorization): bool =
 pure def retainLegacy(c: Commitment, legacy: LegacyAuthorization): Commitment = { ...c, legacy: legacy }
 pure def canAdmitLegacy(c: Commitment): bool =
   c.family == EvmV2 and c.phase == Authorized and c.view.legacyRoot and c.legacy.root != "" and c.view.admittedRoot == c.legacy.root
+    and not(c.attempts.some(a => a.root == c.legacy.root))
 pure def admitLegacy(c: Commitment): Commitment = { ...c, phase: Admitted, admittedRoot: c.view.admittedRoot, admittedLegacy: true }
 ```
 

@@ -24472,7 +24472,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "7c9a1b590a5bf171613e574635011057c201144ebdd58d82a73a364008a7ee6d",
+      "sha256": "f3df0a347570ced2de9dcaf34098e2bf56eb9b513f9b3a799e5b2bf75504d9ce",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -24485,7 +24485,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 354
+          "line": 359
         }
       ],
       "rules": [
@@ -24582,7 +24582,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 292,
+          "line": 294,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -24592,7 +24592,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 314,
+          "line": 319,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -24603,7 +24603,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 333,
+          "line": 338,
           "definitions": [
             "canComplete",
             "complete"
@@ -24611,7 +24611,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 344,
+          "line": 349,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -24619,7 +24619,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 356,
+          "line": 361,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -24632,7 +24632,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 377,
+          "line": 382,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -24670,7 +24670,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 444,
+          "line": 449,
           "definitions": [
             "familyValues",
             "monthSample",
