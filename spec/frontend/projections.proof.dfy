@@ -39,3 +39,14 @@ lemma DepositorNeedsOneNamedAccount(registrations: seq<Registration>)
   ensures |ProofLib.Filter((r: Registration) => (r.publicAccount && !(r.closed)), registrations)| != 1 ==> depositorLogin(registrations) == ""
 {
 }
+
+lemma lawAllocationRowIsTheViewersOwn_ensures(status: frontend__requests_ReadStatus, allocation: AllocationFile, viewer: int, allocationWallets: seq<AllocationWallet>, instant: int)
+  ensures (lawAllocationRowIsTheViewersOwn(status, allocation, viewer, allocationWallets, instant) == true)
+{
+  var mine := (r: AllocationRecipient) => (r.actor == viewer);
+  if viewer > 0 && 0 < |ProofLib.Filter(mine, allocation.recipients)| {
+    var x := ProofLib.Filter(mine, allocation.recipients)[0];
+    ProofLib.FilterMember(mine, allocation.recipients, x);
+    assert x in allocation.recipients && x.actor == viewer;
+  }
+}
