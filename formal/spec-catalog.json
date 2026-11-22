@@ -24846,7 +24846,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "7f5e61f0f47421b19b9f34235bb1c4c9b321fe77083f4cdf8f53466376fd2540",
+      "sha256": "036d121dec8c2d7fc432de5423ccfbbd53b940b8c1a404a54d6b727576ff5039",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
