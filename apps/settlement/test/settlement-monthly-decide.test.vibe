@@ -1,0 +1,54 @@
+import { assert, it } from "@effect/vitest"
+import { type ChainView, type Commitment, apply, emptyView, factsAt, initial, monthSample } from "../gen/settlement__monthlyCommitment.effect.vibe"
+import { decide } from "../src/signer/monthlyRoot.vibe"
+
+const opened = 1796342400
+
+function viewAt(height: number, sourceSequence: number, change: Partial<ChainView> = {}): ChainView {
+  return { ...emptyView, height, time: opened + height * 100, sourceSequence, cap: [8], ...change }
+}
+
+effect function signedAt(state: Commitment, view: ChainView, attemptId: number, root: string) {
+  const observed = try apply(state, { type: "observe", view }, view.authority)
+  const read = try apply(observed, { type: "observeFacts", facts: factsAt(view.height) }, view.authority)
+  return try apply(read, { type: "signEvm", attemptId, root }, view.authority)
+}
+
+effect function authorized() {
+  return try apply(initial, { type: "authorize", family: "EvmV2", month: monthSample }, "attester")
+}
+
+it.effect('A month signed before a rotation at an unchanged source sequence is held with SignedByFormerAuthority and not signed (spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt")', () => effect {
+  const signed = try signedAt(try authorized(), viewAt(1, 0), 1, "r1")
+  const rotated = viewAt(2, 0, { authority: "next" })
+  const held = try decide(signed, rotated, factsAt(2), "next")
+  const raised = try decide(signed, viewAt(2, 1, { authority: "next", consumed: ["s1"] }), factsAt(2), "next")
+  assert.deepStrictEqual({
+    events: held.events.map((event) => event.type),
+    sign: held.sign,
+    held: held.state.held,
+    phase: held.state.phase,
+    raised: { events: raised.events.map((event) => event.type), sign: raised.sign, held: raised.state.held },
+  }, {
+    events: ["observe", "holdRotated"],
+    sign: false,
+    held: "SignedByFormerAuthority",
+    phase: "Authorized",
+    raised: { events: ["observe", "observeFacts"], sign: true, held: "NoRefusal" },
+  })
+})
+
+it.effect('An admitted root of an older attempt is held with SupersededRootObserved, neither admitted nor investigated (spec/settlement/monthlyCommitment.md, "Only the latest authorization, the one with the highest source sequence, is admitted")', () => effect {
+  const first = try signedAt(try authorized(), viewAt(1, 0), 1, "r1")
+  const second = try signedAt(first, viewAt(2, 1, { consumed: ["s1"] }), 2, "r2")
+  const olderAdmitted = try decide(second, viewAt(3, 1, { consumed: ["s1"], admittedRoot: "r1", remaining: [4] }), factsAt(3), "attester")
+  const latestAdmitted = try decide(second, viewAt(3, 1, { consumed: ["s1"], admittedRoot: "r2", remaining: [4] }), factsAt(3), "attester")
+  const unsigned = try decide(second, viewAt(3, 1, { consumed: ["s1"], admittedRoot: "x", remaining: [4] }), factsAt(3), "attester")
+  const outcome = (decided: { readonly state: Commitment; readonly events: ReadonlyArray<{ readonly type: string }>; readonly sign: boolean }) =>
+    ({ events: decided.events.map((event) => event.type), sign: decided.sign, phase: decided.state.phase, held: decided.state.held, refusal: decided.state.refusal })
+  assert.deepStrictEqual({ older: outcome(olderAdmitted), latest: outcome(latestAdmitted), unsigned: outcome(unsigned) }, {
+    older: { events: ["observe", "holdSuperseded"], sign: false, phase: "Authorized", held: "SupersededRootObserved", refusal: "NoRefusal" },
+    latest: { events: ["observe", "admit"], sign: false, phase: "Admitted", held: "NoRefusal", refusal: "NoRefusal" },
+    unsigned: { events: ["observe", "investigate"], sign: false, phase: "Investigating", held: "NoRefusal", refusal: "UnsignedRootObserved" },
+  })
+})
