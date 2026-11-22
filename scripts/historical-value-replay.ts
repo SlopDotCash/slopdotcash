@@ -325,6 +325,45 @@ function bySource(left: Coverage, right: Coverage) {
   return left.pullRequestNumber - right.pullRequestNumber;
 }
 
+/** A missing previously accepted member freezes the complete linked group. */
+export function assertRemovedMergeGroupsPreserved(
+  changes: readonly PointRevision[],
+  receipt: HistoricalAssessmentReceipt,
+  previous: ReadonlyMap<string, PointRevision>,
+) {
+  const held = receipt.records.filter(({ sources }) =>
+    sources.some(({ finding }) => finding === "retained-removed-merge"),
+  );
+  if (!held.length) return;
+  const digests = new Set(held.map(({ digest }) => `value:${digest}`));
+  const ids = new Set(
+    held.flatMap(({ sources }) => sources.map(({ id }) => id)),
+  );
+  const numbers = new Set(
+    held.flatMap(({ sources }) => sources.map(({ number }) => number)),
+  );
+  function belongsToHeldGroup({ award, decision }: PointRevision) {
+    if (award.projectId !== receipt.scope.projectId) return false;
+    const source = new URL(award.sourceUrl);
+    return (
+      digests.has(decision?.sourceId ?? "") ||
+      ids.has(award.sourceId) ||
+      (source.origin === "https://github.com" &&
+        source.pathname
+          .toLowerCase()
+          .startsWith(`/${receipt.scope.repository.toLowerCase()}/pull/`) &&
+        numbers.has(parentPullNumber(award.sourceUrl) ?? 0))
+    );
+  }
+  for (const row of changes) {
+    const prior = previous.get(row.award.key);
+    ensure(
+      !belongsToHeldGroup(row) && (!prior || !belongsToHeldGroup(prior)),
+      "Historical Points change would alter a retained removed-merge group",
+    );
+  }
+}
+
 function verifyCoverage(
   snapshot: LeaderboardSnapshot,
   receipt: HistoricalAssessmentReceipt,
@@ -333,11 +372,31 @@ function verifyCoverage(
   const reviewedParents = new Set(
     [...closedReviews.values()].map((proof) => proof.parentId),
   );
-  const active = new Map<string, { digest: string; stale: boolean }>();
-  for (const { digest, sources } of receipt.records)
+  const active = new Map<
+    string,
+    { digest: string; stale: boolean; held: boolean }
+  >();
+  const heldByDigest = new Map(
+    (snapshot.source.heldWorkUnits ?? []).map((row) => [row.recordDigest, row]),
+  );
+  for (const { digest, journal, sources } of receipt.records) {
+    const removed = sources.filter(
+      ({ finding }) => finding === "retained-removed-merge",
+    );
+    if (removed.length) {
+      const hold = heldByDigest.get(digest);
+      ensure(
+        journal === "joint" &&
+          hold &&
+          sameJson(hold.sourceNodeIds, sources.map(({ id }) => id).sort()) &&
+          sameJson(hold.unavailableNodeIds, removed.map(({ id }) => id).sort()),
+        "Historical replay did not retain the whole removed-merge group",
+      );
+    }
     for (const source of sources) {
       if (
         source.finding === "outside-audit" ||
+        source.finding === "retained-removed-merge" ||
         (isHistoricalClosedFinding(source.finding) &&
           !reviewedParents.has(source.id))
       )
@@ -349,8 +408,13 @@ function verifyCoverage(
           !active.has(source.id),
         "Historical assessment has a conflicting active source",
       );
-      active.set(source.id, { digest, stale: source.finding === "stale-head" });
+      active.set(source.id, {
+        digest,
+        stale: source.finding === "stale-head",
+        held: removed.length > 0,
+      });
     }
+  }
   const coverage = [...(snapshot.valueAssessmentCoverage ?? [])].sort(bySource);
   const staleIds = new Set<string>();
   for (const row of coverage) {
@@ -367,6 +431,9 @@ function verifyCoverage(
     // receipt retains the original active digest. Missing is never a hold.
     ensure(
       !["missing", "legacy-policy"].includes(row.status) &&
+        (!record.held ||
+          (row.status === "unresolved" &&
+            row.recordDigest === record.digest)) &&
         (row.recordDigest === record.digest ||
           (row.status === "incomplete" && row.recordDigest === null)) &&
         !(record.stale && row.status === "assessed"),
@@ -661,6 +728,11 @@ export function verifyHistoricalValueReplay(
       );
     }
     verifyLinkedScope(snapshot, receipt, projection, contains);
+    assertRemovedMergeGroupsPreserved(
+      projection.changed,
+      receipt,
+      projection.previous,
+    );
     return {
       coverage,
       events: events.sort((a, b) => a.id.localeCompare(b.id)),

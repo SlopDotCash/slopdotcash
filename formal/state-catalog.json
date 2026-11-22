@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "518d1586d7fd7a5ef5d42b2b1612a34060ddd72e5c8b3faeaa2d6f40c1010d8b",
+  "inventorySha256": "6bb746bfb8ee5e4c4f42a8327db140370d57904c6270bf9279fe45aab913d965",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2560,7 +2560,7 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "line": 72,
+      "line": 75,
       "name": "Status",
       "kind": "string-union",
       "values": [
@@ -2574,7 +2574,7 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "line": 25,
+      "line": 26,
       "name": "reason",
       "kind": "string-union",
       "values": ["assessment", "lifecycle", "projection", "scored-work"],
@@ -2589,7 +2589,7 @@
     },
     {
       "path": "scripts/historical-replay-qualification.ts",
-      "line": 21,
+      "line": 24,
       "name": "status",
       "kind": "string-union",
       "values": ["no-scoped-active-assessments", "requires-value-replay"],
@@ -2793,7 +2793,7 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 1478,
+      "line": 1480,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [

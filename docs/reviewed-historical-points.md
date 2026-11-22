@@ -34,6 +34,15 @@ per-source and joint digests must match the original record after this change.
 Replay refuses stale or partial standalone evidence. The ordinary scorer still
 checks pre-close review eligibility, duplicate findings and caps.
 
+Under PRD section 7, an accepted PR removed by GitHub retains its prior Points
+and reward eligibility. A missing member of a current joint assessment needs
+the same prior canonical award and native merge ancestry on the registered
+integration branch. GitHub must independently confirm the public source is
+missing. The live merged census keeps its observed rows. Replay validates the
+exact unavailable-source hold across the whole assessment and refuses any
+change to that group's awards, including independent corrections in the
+reviewed packet.
+
 Use `operation=replay-assessments`, `apply=false`, and
 `stage_review_handoff=true` to prepare the exact replay inputs for owner review.
 The workflow saves the complete source audit, value snapshot, and selected award

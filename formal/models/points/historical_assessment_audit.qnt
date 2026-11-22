@@ -29,6 +29,8 @@ module historical_assessment_audit {
     status: str,
     reviewAvailable: bool,
     boundClosureReview: bool,
+    retainedRemovedMerge: bool,
+    rejectedRemovedMerge: bool,
     rejectedClosureReview: bool,
   }
   var s: State
@@ -45,6 +47,8 @@ module historical_assessment_audit {
     status: "unsealed",
     reviewAvailable: false,
     boundClosureReview: false,
+    retainedRemovedMerge: false,
+    rejectedRemovedMerge: false,
     rejectedClosureReview: false,
   }
 
@@ -87,11 +91,27 @@ module historical_assessment_audit {
         .with("rejectedClosureReview", s.rejectedClosureReview or not(matches)),
     }
   }
+  action bindRemovedMerge(
+    nativeAcceptance: bool,
+    exactPriorAward: bool,
+    wholeGroupHeld: bool,
+    preservedAwards: bool,
+  ): bool = {
+    val matches = nativeAcceptance and exactPriorAward and wholeGroupHeld and preservedAwards
+    all {
+      s.phase == "reading",
+      complete,
+      s.relevant,
+      s' = s.with("retainedRemovedMerge", s.retainedRemovedMerge or matches)
+        .with("rejectedRemovedMerge", s.rejectedRemovedMerge or not(matches)),
+    }
+  }
   action stageReview(explicit: bool, qualified: bool, verifiedReadback: bool): bool = all {
     s.phase == "reading",
     s.current,
     complete,
     not(s.rejectedClosureReview),
+    not(s.rejectedRemovedMerge),
     explicit,
     qualified,
     verifiedReadback,
@@ -102,7 +122,7 @@ module historical_assessment_audit {
     s.current,
     s' = s.with("phase", "sealed").with("reviewAvailable", s.phase == "staged").with(
       "status",
-      if (complete and not(s.rejectedClosureReview))
+      if (complete and not(s.rejectedClosureReview) and not(s.rejectedRemovedMerge))
         (if (s.relevant) "requires-value-replay" else "no-scoped-active-assessments")
       else "incomplete"
     ),
@@ -127,6 +147,11 @@ module historical_assessment_audit {
     bindClosureReview(true, true, false, true, true, true, false),
     bindClosureReview(true, false, true, true, true, true, true),
     bindClosureReview(true, false, true, false, true, true, true),
+    bindRemovedMerge(true, true, true, true),
+    bindRemovedMerge(false, true, true, true),
+    bindRemovedMerge(true, false, true, true),
+    bindRemovedMerge(true, true, false, true),
+    bindRemovedMerge(true, true, true, false),
     stageReview(true, true, true),
     seal,
     s' = s,
@@ -139,6 +164,8 @@ module historical_assessment_audit {
     s.reviewAvailable implies (s.phase == "sealed" and complete and s.current and not(s.rejectedClosureReview)),
     s.boundClosureReview implies (complete and s.relevant),
     s.rejectedClosureReview implies (not(s.reviewAvailable) and s.status != "requires-value-replay"),
+    s.rejectedRemovedMerge implies (not(s.reviewAvailable) and s.status != "requires-value-replay"),
+    s.retainedRemovedMerge implies (complete and s.relevant),
   }
 
   run verifiedEmptyCutTest = init.then(capture(true, true, false, 0, 0))
@@ -192,4 +219,14 @@ module historical_assessment_audit {
   run postCloseReviewCannotBeStagedTest = init.then(relevantCut)
     .then(bindClosureReview(true, true, false, true, true, false, true))
     .then(stageReview(true, true, true).fail())
+  run verifiedRemovedMergeKeepsPriorAwardsTest = init.then(relevantCut)
+    .then(bindRemovedMerge(true, true, true, true)).then(stageReview(true, true, true)).then(seal)
+    .expect(s.reviewAvailable and s.retainedRemovedMerge and invariant)
+  run missingNativeAcceptanceRefusesHistoricalReviewTest = init.then(relevantCut)
+    .then(bindRemovedMerge(false, true, true, true)).then(seal)
+    .expect(s.status == "incomplete" and not(s.reviewAvailable) and invariant)
+  run partialRemovedMergeHoldRefusesHistoricalReviewTest = init.then(relevantCut)
+    .then(bindRemovedMerge(true, true, false, true)).then(stageReview(true, true, true).fail())
+  run changeToHeldMergeRefusesHistoricalReviewTest = init.then(relevantCut)
+    .then(bindRemovedMerge(true, true, true, false)).then(stageReview(true, true, true).fail())
 }

@@ -1,11 +1,17 @@
 import { expect, test } from "bun:test";
 import { canonicalJson } from "../src/lib/canonical-json";
+import {
+  appendPointAwards,
+  emptyPointsJournal,
+  pointKey,
+} from "../src/lib/points";
 import { REGISTERED_REPOSITORIES } from "../src/lib/repositories.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import {
   VALUE_RUBRIC_VERSION,
   type ValueTier,
 } from "../src/lib/value-assessment";
+import { VALUE_REFERENCE_QUERY } from "../workers/slopbot/value-reference-query";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import type { WorkUnitRecord } from "../workers/slopbot/value-work-unit-journal";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
@@ -369,6 +375,143 @@ test("closed joint context requires an audited merge anchor and matching GitHub 
     status: "incomplete",
     blockers: ["missing-from-merged-audit"],
   });
+});
+
+test("a removed assessed merge keeps its archived award only with current Git ancestry", async () => {
+  const source = {
+    ...member,
+    pullRequestNodeId: "PR_removed",
+    pullRequestNumber: 10,
+    headSha: "c".repeat(40),
+    mergeSha: "d".repeat(40),
+  };
+  const root = "/repos/elizaOS/eliza";
+  const tip = "e".repeat(40);
+  const scope = {
+    baseline: appendPointAwards(
+      emptyPointsJournal(recordedAt),
+      [
+        {
+          key: pointKey(
+            projectId,
+            "U_archived",
+            "merged-pull-request",
+            source.pullRequestNodeId,
+          ),
+          actor: { id: "U_archived", login: "archived-contributor" },
+          projectId,
+          category: "merged-pull-request",
+          occurredAt: sourceTime,
+          sourceId: source.pullRequestNodeId,
+          sourceUrl: "https://github.com/elizaOS/eliza/pull/10",
+          workUnitId: "wu_archived",
+          amount: 30,
+          provisional: true,
+        },
+      ],
+      "1".repeat(64),
+      "slop-score-v2",
+      recordedAt,
+    ),
+    integrationBranch: "develop",
+  };
+  const assessment = catalog([], [joint(1, [member, source])]);
+  assessment.heads.d1PointsDigest = sha256Hex(JSON.stringify(scope.baseline));
+  assessment.heads.d1PointsCount = scope.baseline.revisions.length;
+
+  function github(
+    options: {
+      wrongParent?: boolean;
+      wrongAncestor?: boolean;
+      pullPresent?: boolean;
+    } = {},
+  ): HistoricalContextGitHub {
+    return {
+      async request<T>(method: string, path: string) {
+        expect(method).toBe("GET");
+        expect(path).toBe(`${root}/pulls/10`);
+        return {
+          status: options.pullPresent ? 200 : 404,
+          data: null as T | null,
+        };
+      },
+      async graphql<T>(query: string) {
+        if (options.pullPresent) return { nodes: [null] } as T;
+        expect(query).toBe(VALUE_REFERENCE_QUERY);
+        return {
+          repository: {
+            id: audit.repositoryNodeId,
+            isPrivate: false,
+            nameWithOwner: audit.repository,
+            issueOrPullRequest: null,
+          },
+        } as T;
+      },
+      async get<T>(path: string) {
+        if (path === `${root}/git/commits/${source.mergeSha}`)
+          return {
+            sha: source.mergeSha,
+            parents: [
+              { sha: member.headSha },
+              { sha: options.wrongParent ? tip : source.headSha },
+            ],
+          } as T;
+        if (path === `${root}/git/ref/heads/develop`)
+          return {
+            ref: "refs/heads/develop",
+            object: { type: "commit", sha: tip },
+          } as T;
+        expect(path).toBe(
+          `${root}/compare/${source.mergeSha}...${tip}?per_page=1`,
+        );
+        return {
+          status: "ahead",
+          behind_by: 0,
+          base_commit: { sha: source.mergeSha },
+          merge_base_commit: {
+            sha: options.wrongAncestor ? tip : source.mergeSha,
+          },
+        } as T;
+      },
+    };
+  }
+
+  const receipt = await classifyHistoricalAssessmentScope(
+    assessment,
+    audit,
+    projectId,
+    github(),
+    scope,
+  );
+  expect(receipt.status).toBe("requires-value-replay");
+  expect(receipt.counts.auditedSources).toBe(1);
+  expect(receipt.records[0].sources.map(({ finding }) => finding)).toEqual([
+    "audited-head",
+    "retained-removed-merge",
+  ]);
+  expect(historicalClosedContextBindings(receipt).size).toBe(0);
+  expect(
+    (
+      await classifyHistoricalAssessmentScope(
+        assessment,
+        audit,
+        projectId,
+        github({ pullPresent: true }),
+        scope,
+      )
+    ).status,
+  ).toBe("incomplete");
+  for (const bad of [{ wrongParent: true }, { wrongAncestor: true }]) {
+    expect(
+      classifyHistoricalAssessmentScope(
+        assessment,
+        audit,
+        projectId,
+        github(bad),
+        scope,
+      ),
+    ).rejects.toThrow("Invalid protected assessment journal");
+  }
 });
 
 test("standalone closure needs one exact review-only joint source and independent lifecycle reads", async () => {

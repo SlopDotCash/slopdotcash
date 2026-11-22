@@ -313,6 +313,7 @@ test("a reviewed replay reopens the exact donor heads and refuses relevant appen
   await expect(verify()).resolves.toEqual({
     heads: catalog.heads,
     closedReviews: new Map(),
+    receipt,
   });
   await expect(
     verify(reviewed, { ...donor, sourceCommit: "3".repeat(40) }),
