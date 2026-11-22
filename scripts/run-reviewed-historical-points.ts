@@ -1068,6 +1068,62 @@ export async function verifyHistoricalAcceptedSquashes(
       )
     )
       throw Error("Accepted promotion source omits or substitutes a commit");
+    if (retirement.earlierAcceptanceProof?.acceptedMergeEdges?.length) {
+      const mergeSha = pull.merge_commit_sha;
+      if (!mergeSha) throw Error("Accepted promotion merge is unavailable");
+      const expectedMembers = new Set(
+        retirement.source.commits.map(({ sha, parentShas }) =>
+          [sha, ...(parentShas ?? [])].join(" "),
+        ),
+      );
+      const maxBuffer = [...expectedMembers].reduce(
+        (bytes, line) => bytes + line.length + 1,
+        1024 * 1024,
+      );
+      await withObjects(repository, [mergeSha], async (directory) => {
+        const git = async (...args: string[]) => {
+          const command = publicGitProcess(directory, args);
+          return (
+            await execute(command.file, command.args, {
+              ...command.options,
+              maxBuffer,
+            })
+          ).stdout.trim();
+        };
+        const [parentLine, acceptedTree] = await Promise.all([
+          git("show", "--no-patch", "--format=%P", mergeSha),
+          git("rev-parse", `${mergeSha}^{tree}`),
+        ]);
+        const parents = parentLine.split(" ");
+        if (
+          parents.length !== 2 ||
+          parents[1] !== pull.head.sha ||
+          !parents.every((parent) => /^[a-f0-9]{40}$/u.test(parent))
+        )
+          throw Error("Carried acceptance promotion has different parents");
+        const nativeMembers = (
+          await git("rev-list", "--parents", parents[1], `^${parents[0]}`, "--")
+        ).split("\n");
+        if (
+          nativeMembers.length !== expectedMembers.size ||
+          nativeMembers.some((member) => !expectedMembers.delete(member))
+        )
+          throw Error(
+            "Carried acceptance promotion has different native members",
+          );
+        const automatic = await git(
+          "merge-tree",
+          "--write-tree",
+          "--no-messages",
+          parents[0],
+          parents[1],
+        );
+        if (automatic !== acceptedTree)
+          throw Error(
+            "Carried acceptance promotion has independent merge changes",
+          );
+      });
+    }
     const current = await github.get<Pull>(path);
     if (
       !current ||
@@ -1082,40 +1138,6 @@ export async function verifyHistoricalAcceptedSquashes(
           current.user.type !== pull.user.type))
     )
       throw Error("Accepted promotion changed during collection");
-    if (retirement.earlierAcceptanceProof?.acceptedMergeEdges?.length) {
-      const mergeSha = pull.merge_commit_sha;
-      if (!mergeSha) throw Error("Accepted promotion merge is unavailable");
-      await withObjects(repository, [mergeSha], async (directory) => {
-        const git = async (...args: string[]) => {
-          const command = publicGitProcess(directory, args);
-          return (
-            await execute(command.file, command.args, command.options)
-          ).stdout.trim();
-        };
-        const [parentLine, acceptedTree] = await Promise.all([
-          git("show", "--no-patch", "--format=%P", mergeSha),
-          git("rev-parse", `${mergeSha}^{tree}`),
-        ]);
-        const parents = parentLine.split(" ");
-        if (
-          parents.length !== 2 ||
-          parents[1] !== pull.head.sha ||
-          !parents.every((parent) => /^[a-f0-9]{40}$/u.test(parent))
-        )
-          throw Error("Carried acceptance promotion has different parents");
-        const automatic = await git(
-          "merge-tree",
-          "--write-tree",
-          "--no-messages",
-          parents[0],
-          parents[1],
-        );
-        if (automatic !== acceptedTree)
-          throw Error(
-            "Carried acceptance promotion has independent merge changes",
-          );
-      });
-    }
   }
   const sources = new Map<string, HistoricalAcceptedSquash>();
   for (const retirement of packet.duplicateRetirements ?? []) {

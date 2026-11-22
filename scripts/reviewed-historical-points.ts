@@ -1165,6 +1165,13 @@ export function reconstructHistoricalPoints(
                 award.sourceUrl === origin.sourceUrl &&
                 award.occurredAt === origin.occurredAt &&
                 award.workUnitId === ordinary.workUnitId &&
+                award.key ===
+                  pointKey(
+                    award.projectId,
+                    award.actor.id,
+                    "merged-pull-request",
+                    earlierSourceId,
+                  ) &&
                 award.amount > 0,
             ),
           "Earlier accepted merge edge is not bound to a retained ordinary award",

@@ -2147,6 +2147,61 @@ test("a positive award alone cannot prove an earlier ordinary acceptance", () =>
   );
 });
 
+test("a grouped award cannot witness a carried ordinary acceptance", () => {
+  const { packet, baseline, retirement } = carriedEarlierMergeFixture();
+  const origin = retirement.earlierSources[0];
+  const earlier = baseline.revisions.find(
+    (row) => row.award.sourceId === origin.sourceId,
+  );
+  const candidate = packet.corrections.candidates.find(
+    (entry) => entry.sourceId === origin.sourceId,
+  );
+  if (!earlier || !candidate) throw Error("Fixture lacks an earlier award");
+  const workUnitId = `wu_${"a".repeat(64)}`;
+  const ordinary = { ...earlier.award, workUnitId, amount: 0 };
+  const grouped = {
+    ...earlier.award,
+    workUnitId,
+    key: pointKey(
+      "feed",
+      actor.id,
+      "merged-pull-request",
+      origin.sourceId,
+      workUnitId,
+    ),
+  };
+  const changed = appendPointAwards(
+    { ...baseline, revisions: baseline.revisions.slice(0, 1) },
+    [ordinary, grouped],
+    "b".repeat(64),
+    "slop-score-v2",
+    time,
+  );
+  const awards = latestPoints(changed);
+  const prior = awards.get(ordinary.key);
+  const groupedPrior = awards.get(grouped.key);
+  if (!prior || !groupedPrior) throw Error("Fixture lacks pool predecessors");
+  packet.baselineDigest = hash(changed);
+  packet.baselineRevisionCount = changed.revisions.length;
+  packet.corrections.baseline = createPointsCorrectionBaseline(changed);
+  candidate.workUnitId = workUnitId;
+  candidate.expectedPredecessors = [
+    { key: ordinary.key, revisionId: prior.id },
+  ];
+  packet.corrections.candidates.push({
+    ...candidate,
+    id: "earlier_grouped",
+    kind: "work-unit",
+    proof: { status: "held" },
+    expectedPredecessors: [{ key: grouped.key, revisionId: groupedPrior.id }],
+  });
+  expect(() =>
+    reconstructHistoricalPoints(packet, changed, time, new Map()),
+  ).toThrow(
+    "Earlier accepted merge edge is not bound to a retained ordinary award",
+  );
+});
+
 function mixedSubmittedAndSquashFixture(perPathNative = false) {
   const f = earlierAcceptanceFixture();
   const retirement = f.retirement;
@@ -2609,6 +2664,172 @@ for (const fault of [
     );
   });
 }
+
+test("carried acceptance checks the actual first-parent-exclusive members", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "historical-carried-range-"));
+  try {
+    const git = (args: string[], input = "") => {
+      const result = Bun.spawnSync(
+        [
+          "git",
+          "-C",
+          directory,
+          "-c",
+          "commit.gpgsign=false",
+          "-c",
+          "user.name=Historical Fixture",
+          "-c",
+          "user.email=fixture@example.invalid",
+          ...args,
+        ],
+        { stdin: Buffer.from(input) },
+      );
+      if (result.exitCode !== 0) throw Error("Fixture Git command failed");
+      return result.stdout.toString().trim();
+    };
+    git(["init", "--template="]);
+    const commit = (tree: string, message: string, ...parents: string[]) =>
+      git([
+        "commit-tree",
+        tree,
+        ...parents.flatMap((sha) => ["-p", sha]),
+        "-m",
+        message,
+      ]);
+    const empty = git(["mktree"]);
+    const x = git(
+      ["hash-object", "-w", "--stdin"],
+      "independent accepted change\n",
+    );
+    const w = git(["hash-object", "-w", "--stdin"], "earlier work\n");
+    const xEntry = `100644 blob ${x}\tx.ts\n`;
+    const wEntry = `100644 blob ${w}\tw.ts\n`;
+    const base = commit(empty, "Shared base");
+    const actualParent = commit(
+      empty,
+      "Separate actual integration parent",
+      base,
+    );
+    const omitted = commit(git(["mktree"], xEntry), "Changed line", base);
+    const work = commit(
+      git(["mktree"], wEntry),
+      "Earlier submitted work",
+      base,
+    );
+    const mergedTree = git(["mktree"], wEntry + xEntry);
+    const head = commit(mergedTree, "Earlier accepted merge", omitted, work);
+    const accepted = commit(
+      mergedTree,
+      "Clean outer promotion",
+      actualParent,
+      head,
+    );
+    expect(
+      git(["merge-tree", "--write-tree", "--no-messages", actualParent, head]),
+    ).toBe(mergedTree);
+
+    const verify = async (
+      declaredBase: string,
+      changeAfterNativeRead = false,
+    ) => {
+      const { packet, retirement } = carriedEarlierMergeFixture();
+      const source = retirement.source;
+      const prior = retirement.earlierSources[0];
+      const proof = retirement.earlierAcceptanceProof;
+      if (!proof) throw Error("Fixture acceptance proof is missing");
+      const item = (sha: string, ...parentShas: string[]) => ({
+        sha,
+        parentShas,
+        parentCount: parentShas.length,
+        author: actor,
+        firstAcceptedSourceId: prior.sourceId,
+        additions: 1,
+        deletions: 0,
+      });
+      prior.headSha = work;
+      prior.commits = [item(work, base)];
+      source.headSha = head;
+      source.commits = [item(work, base), item(head, omitted, work)];
+      if (declaredBase === base) source.commits.push(item(omitted, base));
+      source.commitCount = source.commits.length;
+      proof.sourceBaseSha = declaredBase;
+      proof.contextSources[0].headSha = work;
+      proof.contextSources[0].baseSha = base;
+      proof.contextSources[0].mergeSha = head;
+      proof.acceptedMergeEdges = [
+        { sha: head, earlierSourceId: prior.sourceId },
+      ];
+      retirement.acceptedPromotion = {
+        headCommit: `${git(["cat-file", "commit", head])}\n`,
+        mergeCommit: `${git(["cat-file", "commit", accepted])}\n`,
+        mergeSha: accepted,
+      };
+      for (const row of packet.sourceAudit.sources) {
+        if (row.id === prior.sourceId) row.headSha = work;
+        if (row.id === source.sourceId) row.headSha = head;
+      }
+      let verifiedNative = false;
+      await verifyHistoricalAcceptedSquashes(
+        packet,
+        {
+          graphql: async <T>() =>
+            ({
+              node: {
+                id: source.sourceId,
+                headRefOid: head,
+                mergedAt: source.occurredAt,
+                repository: { id: source.repositoryNodeId },
+                mergeCommit: { oid: accepted },
+              },
+            }) as T,
+          get: async <T>(path: string) => {
+            if (path === "/repos/feedforagents/feed")
+              return { node_id: source.repositoryNodeId } as T;
+            const earlier =
+              path.includes("/pulls/2") || path.includes(`...${work}`);
+            const selected = earlier ? prior : source;
+            const commits = selected.commits.map(({ sha, parentShas }) => ({
+              sha,
+              parents: parentShas?.map((id) => ({ sha: id })),
+              author: { node_id: actor.id, login: actor.login, type: "User" },
+            }));
+            if (path.includes("/compare/"))
+              return { total_commits: commits.length, commits } as T;
+            if (path.includes("/commits?")) return commits as T;
+            return {
+              node_id: selected.sourceId,
+              head: { sha: selected.headSha },
+              base: { sha: earlier ? base : declaredBase },
+              commits: selected.commitCount,
+              merged_at: selected.occurredAt,
+              merge_commit_sha: earlier
+                ? head
+                : changeAfterNativeRead && verifiedNative
+                  ? omitted
+                  : accepted,
+              user: { node_id: actor.id, login: actor.login, type: "User" },
+            } as T;
+          },
+        },
+        async (_repository, shas, read) => {
+          expect(shas).toEqual([accepted]);
+          const result = await read(directory);
+          verifiedNative = true;
+          return result;
+        },
+      );
+    };
+    await verify(base);
+    await expect(verify(omitted)).rejects.toThrow(
+      "Carried acceptance promotion has different native members",
+    );
+    await expect(verify(base, true)).rejects.toThrow(
+      "Accepted promotion changed during collection",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 function historicalAcceptanceFixture() {
   const f = earlierAcceptanceFixture();
