@@ -118,6 +118,7 @@
     "./stories": "./vibestack/stories/meta.ts",
     "./stories/storybook": "./vibestack/stories/storybook.ts",
     "./design/eslint": "./vibestack/design/eslint.ts",
+    "./design/project": "./vibestack/design/project.ts",
     "./package.json": "./package.json",
     "./design/tokens": "./vibestack/design/tokens.ts"
   },
@@ -129,6 +130,7 @@
       "./stories": "./dist/stories/meta.js",
       "./stories/storybook": "./dist/stories/storybook.js",
       "./design/eslint": "./dist/design/eslint.js",
+      "./design/project": "./dist/design/project.js",
       "./package.json": "./package.json",
       "./design/tokens": "./dist/design/tokens.js"
     }
