@@ -1,18 +1,15 @@
 // spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
-import { fromAmount } from "@repo/settlement/kernels/amounts";
 import type { Effect } from "effect";
-import { promiseWarning } from "../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../gen/frontend__requests.ts";
-import { formatRewardMinor } from "../kernels/assetText.ts";
 import { networkPays } from "../kernels/payingNetworks.ts";
 import { mergeActivityCardLine, summarizeModelOutcomes, summarizeWhoBuilds } from "../projections/statistics.ts";
 import { whoBuildsFigures } from "../reads/funding.vibe";
 import { loadPointsSummary } from "../reads/points.vibe";
 import { listedProjects, loadRegistry, type RegistryBoot } from "../reads/registry.vibe";
 import { repositoryRegistryOf } from "../reads/registryTerms.ts";
-import { HomePage, projectPromise } from "../screens/home/index.ts";
+import { HomePage } from "../screens/home/index.ts";
 import type { ListedProject, MergeLine, Shown } from "../screens/home/index.ts";
-import { projectFunding, shownReward } from "../screens/projects/summary.ts";
+import { projectFunding, projectPromiseOf, shownPool } from "../screens/projects/summary.ts";
 import { projectOf } from "../screens/projects/project.schema.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime } from "../screens/projects/reads.vibe";
 import { useShownRead } from "../screens/projects/hooks.ts";
@@ -39,11 +36,10 @@ function useListing(reads: Reads, boot: RegistryBoot): Shown<ReadonlyArray<Liste
   const listed = listedProjects(boot).flatMap((record) => {
     const project = projectOf(record);
     if (project === undefined) return [];
-    const vaults = pool.value?.get(project.id);
-    const funding = projectFunding({ project, read: { status: pool.status, vaults }, networkPays, nowMs });
-    const promise = projectPromise({ pool: funding.facts, honorSystem: project.reward.honorSystem === true, deployments: project.deployments, vaults: vaults ?? [], networkPays });
-    const month = fromAmount(funding.facts.amount);
-    const shown = promiseWarning(promise) === "NoPromise" ? shownReward(project, funding) : { ...project, reward: { ...project.reward, monthlyCapMinor: month, monthlyCapDisplay: formatRewardMinor(month, project.rewardAsset), cycleCaps: [] } };
+    const read = { status: pool.status, vaults: pool.value?.get(project.id) };
+    const funding = projectFunding({ project, read, networkPays, nowMs });
+    const promise = projectPromiseOf({ project, funding, read, networkPays });
+    const shown = shownPool(project, funding, promise);
     return [{ ...shown, funding: funding.facts, promise, escrow: { deployments: project.deployments } } satisfies ListedProject];
   });
   return { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined };

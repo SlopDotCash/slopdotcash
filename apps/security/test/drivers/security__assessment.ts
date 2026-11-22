@@ -1,4 +1,4 @@
-// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version"
 import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
 import type { D1PreparedStatement } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
@@ -45,7 +45,6 @@ interface Entry {
   readonly submissionId: string;
   authority: Authority;
   readonly runs: Map<number, Run>;
-  // Whether the case was received through Slop intake, and whether an intake version or qualification was recorded.
   readonly intake: boolean;
   screened: boolean;
 }
@@ -97,10 +96,6 @@ async function entryOf(key: string): Promise<Entry> {
   return entry;
 }
 
-// spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version": the driver
-// chooses the receipt route of a key's case when the walk first needs it. A case received through intake that has no
-// recorded version or qualification is still in the model's initial assessment (attempts need qualification), so the
-// key's case becomes one received without intake, verified with the stored receipt source the event names.
 async function receivedWithout(key: string, entry: Entry, source: "GithubVerified" | "MaintainerAttested"): Promise<Entry> {
   const caseId = `sc_assessment_g${generation}_${key}_receipt`;
   const githubId = String(6_100_000_000 + generation * 100 + entries.size + 1);

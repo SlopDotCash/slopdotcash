@@ -5,7 +5,7 @@ import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } fro
 import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
-import { apply, canRecordAttested, initial } from "../../gen/security__cases.effect.vibe"
+import { apply, canRecordAttested, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
 import { analyze, scheduleReceiptAnalysis } from "../assessment/routes.vibe"
 import { AuthorityUnavailable, caseAuthority, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
@@ -13,13 +13,12 @@ import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { projectId as projectPattern } from "../intake/availability.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
-import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
+import { type ReportingProgram, ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
 import { caseEvent, caseInsert } from "../receipt/statements.vibe"
 import { type Body, exactKeys, githubIdPattern, githubLogin, planned, timeField } from "./actions.vibe"
-import { type ReconcileScope, reconcileProgram, termsAtReceipt } from "./legacy.vibe"
-import { checkReceipt } from "./receiptCheck.vibe"
+import { type ReconcileScope, reconcileProgram } from "./receiptCheck.vibe"
 import { CaseRow, caseColumns, caseRecord, shownRecord } from "./rows.vibe"
-import { type Observed, accessLog, audited, caseNotices, committed, observedAs, observedCase, refused } from "./store.vibe"
+import { type Observed, accessLog, audited, caseNotices, committed, notAllowed, observedAs, observedCase, refused } from "./store.vibe"
 import { type Starter, scheduledTriage, triageMayStart, triaged } from "./triage.vibe"
 import { type ExtraActions, caseView, noExtraActions } from "./view.vibe"
 
@@ -244,6 +243,15 @@ effect function reconciled(projectId: string, program: ReportingProgram, actor: 
   return result
 }
 
+effect function receiptChecked(observed: Observed, actor: Actor, body: Body) {
+  try exactKeys(body, common)
+  const { row } = observed.record
+  const program = try openProgram(row.project_id, actionRows.projectNotFound, actionRows.projectNotFound)
+  if (!mayRequestReceiptCheck(observed.model, githubNumber(actor.githubId), observed.epoch)) throw notAllowed("check-receipt")
+  const result = try reconciled(row.project_id, program, actor, observed.roles.has("security-maintainer") ? "all" : "own")
+  if (result.kind !== "ok") throw refused(actionRows.receiptCheckUnavailable)
+}
+
 schema Recorded { id: string; submission_state: string }
 schema RecordEvent { ok: number }
 
@@ -276,7 +284,7 @@ export effect function recorded(actor: Actor, body: Body) {
   const id = `sc_${(try randomId()).replaceAll("-", "")}`
   const at = try isoNow()
   const notices = try caseNotices({ caseId: id, revision: 1, kind: "record", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: reporterId, detail: {}, program, relatedReview: false, at })
-  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: receipt.policyRevision, terms: receipt.terms, award: after.award, source: "maintainer-attested" as const }
+  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: receipt.policyRevision, terms: receipt.terms, award: after.award }
   const written = (try D1).batch([
     caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: reporterId, login: reporterLogin }, verified, ownerGithubId: actor.githubId, at }),
     caseEvent({ caseId: id, revision: 1, kind: "record", actorGithubId: actor.githubId, role: "security-maintainer", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory, receivedAt, receivedAtSource: "maintainer-attested" }, at, guard: false }),
@@ -359,11 +367,7 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     return { kind: "triage", caseId: row.id, starter: { kind: "moderator", by, epoch: observed.epoch, model: observed.model } } satisfies Performed
   }
   if (action === "check-receipt") {
-    try exactKeys(body, common)
-    const at = try isoNow()
-    const settled = try checkReceipt(observed, actor, at)
-    if (settled.change !== undefined) try committed({ observed, actor, change: settled.change, idempotencyKey, at })
-    if (settled.change?.kind === "receive") try scheduleReceiptAnalysis(row.id)
+    try receiptChecked(observed, actor, body)
     return { kind: "changed", caseId: row.id } satisfies Performed
   }
   if (row.submission_state !== "verified" && action !== "verify-link" && action !== "reject-link") throw refused(actionRows.notVerified)

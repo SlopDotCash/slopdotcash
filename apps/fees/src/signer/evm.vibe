@@ -39,7 +39,6 @@ export interface EvmCall {
   readonly nonce: bigint
   readonly deadline: number | undefined
   readonly minimumOutput: bigint
-  // The finalized allowance the call was prepared against: the one an approval replaces, the one a swap spends.
   readonly allowance: bigint
 }
 

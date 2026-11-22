@@ -15,7 +15,7 @@ import { type AnalysisProposal, analysisProposal } from "../analysis/proposals.v
 import { type AnalysisReport, type PriorCase, analysisMessage, analysisPrompt, analysisPromptRevision, digestInput, jsonValue, priorCaseLimit } from "../analysis/prompts.ts"
 import { type ReceiptScope, receiptManifest, receiptScope, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
-import { advisoryReport } from "../cases/legacy.vibe"
+import { advisoryReport } from "../receipt/github.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { StoredIntake, screeningOf } from "../intake/rows.vibe"
 import { reportBytes } from "../privacy/reads.vibe"

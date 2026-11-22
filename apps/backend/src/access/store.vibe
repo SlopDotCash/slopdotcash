@@ -43,7 +43,7 @@ export interface Settled {
 
 export error RecordedByEnforcement { event: string }
 export error AwardsUnobserved { event: string }
-export error DenialUnrecordable { projectId: string; reason: string }
+export error AccountDecisionUnrecordable { projectId: string; reason: string }
 export error DecisionNotNext { decision: number; next: number }
 export error ProjectUnknown { project: number }
 
@@ -205,13 +205,16 @@ effect function planned(loaded: Loaded, event: Event) {
     case "appeal": return { projectId: projectIdOf(loaded, event.project), action: "request_reinstatement" } satisfies Planned
     case "reinstateAccounts": {
       if (event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
-      return { projectId: projectIdOf(loaded, event.project), action: "reinstate_accounts" } satisfies Planned
+      const projectId = projectIdOf(loaded, event.project)
+      const projectRequestOpen = restrictionStateOf(loaded, projectId) !== "clear" && openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0
+      if ((event.projectRequest === "ProjectRequestOpen") !== projectRequestOpen) throw new AccountDecisionUnrecordable({ projectId, reason: "the project request read differs from the enforcement journal" })
+      return { projectId, action: "reinstate_accounts" } satisfies Planned
     }
     case "denyAppeal": {
       if (event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
       const projectId = projectIdOf(loaded, event.project)
-      if (restrictionStateOf(loaded, projectId) === "clear") throw new DenialUnrecordable({ projectId, reason: "the project is clear" })
-      if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new DenialUnrecordable({ projectId, reason: "a project appeal is open" })
+      if (restrictionStateOf(loaded, projectId) === "clear") throw new AccountDecisionUnrecordable({ projectId, reason: "the project is clear" })
+      if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new AccountDecisionUnrecordable({ projectId, reason: "a project appeal is open" })
       return { projectId, action: "deny_reinstatement" } satisfies Planned
     }
   }

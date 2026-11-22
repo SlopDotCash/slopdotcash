@@ -22,7 +22,6 @@ function projectOf(key: string) {
   return `readiness-g${generation}-${key}`;
 }
 
-/** The model numbers a node id; the application stores GitHub's text. */
 function nodeText(id: number) {
   return id === 0 ? "" : `R_node${id}`;
 }
@@ -110,7 +109,6 @@ async function observed(key: string): Promise<Readiness> {
   return { observations };
 }
 
-/** The refresh records only an attempt it accepts, so a changed stored row is the application's acceptance. */
 async function dispatched(key: string, event: Event): Promise<"accepted" | "refused"> {
   await seed(key);
   const target = targetOf(key, event.target);

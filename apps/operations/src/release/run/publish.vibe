@@ -139,19 +139,19 @@ function inheritanceRefusal(versions: FeeVersions) {
     : "Active fee-converter versions have different RPC rotations."
 }
 
-effect function versionsAt(run: Run, target: Target, needed: boolean, outcome: string, failed: Service | undefined) {
+effect function versionsAt(run: Run, needed: boolean, outcome: string, failed: Service | undefined) {
   if (!needed) return unreadVersions
   const publisher = try Publisher
-  const read = publisher.feeVersions(target) catch effect (error) => {
+  const read = publisher.feeVersions() catch effect (error) => {
     if (failed !== undefined) try run.send({ type: "failService", service: failed })
     return try stop(run, outcome, error.message, "abandon")
   }
   return try feeVersionsOf(run, read)
 }
 
-effect function beginPublication(run: Run, target: Target) {
+effect function beginPublication(run: Run) {
   const checked = try run.state()
-  const versions = try versionsAt(run, target, checked.environment === "Production" && checked.fee.variableEnabled, "Refused", undefined)
+  const versions = try versionsAt(run, checked.environment === "Production" && checked.fee.variableEnabled, "Refused", undefined)
   if (canRefuseInheritance(checked, versions)) {
     try run.send({ type: "refuseInheritance", versions })
     return try stop(run, "Refused", inheritanceRefusal(versions), "abandon")
@@ -170,7 +170,7 @@ effect function publishServices(run: Run, heads: Heads, target: Target, root: st
     const inherited = service === "FeeConverter" && run.environment === "Production"
     const settings = service === "FeeConverter" ? (publisher.feeSettings(target) catch () => undefined) : undefined
     const feeConfig: WorkerConfig = settings === undefined ? inertFee : { ...settings, source: state.source }
-    const before = try versionsAt(run, target, inherited, "PartiallyPublished", service)
+    const before = try versionsAt(run, inherited, "PartiallyPublished", service)
     if (!canPublishService(state, service, feeConfig, state.source, before)) {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", inherited && !inheritsRotation(before) ? inheritanceRefusal(before) : `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
@@ -179,7 +179,7 @@ effect function publishServices(run: Run, heads: Heads, target: Target, root: st
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} publication failed: ${error.message}`, "abandon")
     }
-    const versions = try versionsAt(run, target, inherited, "PartiallyPublished", service)
+    const versions = try versionsAt(run, inherited, "PartiallyPublished", service)
     const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0, versions }) catch () => undefined
     if (accepted === undefined) {
       try run.send({ type: "failService", service })
@@ -282,7 +282,7 @@ export effect function release(input: ReleaseInput) {
   try run.lock.send({ type: "acquire", id: thisRun }, run.lockBy)
   try heads.observe()
   if ((try settle(run, root, branch, facts.sha)) === "Superseded") return done
-  try beginPublication(run, target)
+  try beginPublication(run)
   publisher.prepare(target) catch effect (error) => {
     const state = try run.state()
     const pending = publisher.order.find((service) => serviceAt(state, service).phase === "ServicePending")

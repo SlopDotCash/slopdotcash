@@ -19,6 +19,12 @@ export interface ReportingProgram {
   readonly acknowledgeHours: number
 }
 
+export interface ReceiptAt {
+  readonly policyRevision: number | null
+  readonly terms: FrozenTerms | undefined
+  readonly receiptTerms: ReceiptTerms
+}
+
 export interface ProgramAtReceipt {
   readonly revision: number
   readonly publishedAt: string
@@ -145,7 +151,7 @@ effect function atReceipt(read: { readonly projectId: string; readonly receivedA
   const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
   const bounty = manifest.securityBounty
   const published = member(raw, "securityBounty")
-  const scoped = bounty !== undefined && programStatus(published) !== "Unpublished"
+  const scoped = bounty !== undefined && programStatus(published) !== "Unpublished" && member(published, "scope") !== undefined
   const scope = { revision: row.revision, publishedAt: row.created_at, scoped, excludedFindings: scoped ? exclusionLengths(scopeExclusions(published)) : [] }
   const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
   if (!open) return { ...scope, terms: undefined } satisfies ProgramAtReceipt
@@ -202,4 +208,11 @@ export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number,
     asset: assetOf(terms),
     excludedFindings: [...program.excludedFindings ?? []],
   }
+}
+
+export effect function termsAtReceipt(projectId: string, receivedAt: string) {
+  const program = try (try ReportingPrograms).atReceipt({ projectId, receivedAt })
+  const receivedAtMs = millisOf(receivedAt)
+  if (program === undefined) return { policyRevision: null, terms: undefined, receiptTerms: unpaidTerms(0, receivedAtMs) } satisfies ReceiptAt
+  return { policyRevision: program.revision, terms: program.terms, receiptTerms: receiptTermsOf(program, millisOf(program.publishedAt), receivedAtMs) } satisfies ReceiptAt
 }

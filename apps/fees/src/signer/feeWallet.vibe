@@ -39,8 +39,6 @@ export interface EvmPrepared {
   readonly deadline: number
   readonly expiresAt: number | undefined
   readonly minimumOutput: bigint
-  // spec/fees/conversion.md canSign: the send goes only to the pinned router (a swap to it, or an approval of it),
-  // with the finalized allowance it was prepared against and its final worst-case native fee priced in USDC.
   readonly toPinnedRouter: boolean
   readonly approvedAmount: bigint
   readonly allowance: bigint
@@ -56,7 +54,6 @@ export interface SolanaPrepared {
   readonly accountProof: string | undefined
   readonly expiresAt: number
   readonly minimumOutput: bigint
-  // The final native fee and account rent, priced in USDC through Jupiter (positive on Solana).
   readonly pricedFeeMicro: bigint
 }
 
