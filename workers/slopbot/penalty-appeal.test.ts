@@ -2778,6 +2778,153 @@ test("a repeat appeal after a maintainer-denied draft also goes to a moderator",
   });
 });
 
+const FIRST_APPEAL = `SELECT appeal_key FROM slopbot_appeals
+  WHERE appeal_key NOT LIKE 'value-appeal:%' ORDER BY opened_at, appeal_key LIMIT 1`;
+const SPAM_DEBIT_STANDS = [
+  { category: "spam", debit_thirds: 3, moderator_review: 0, reversal: null },
+];
+
+test("an appellant cannot accept a repeat appeal once an earlier appeal of the item is denied", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.97);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    // The earlier appeal is still open when the repeat appeal is triaged.
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item has a deny draft",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "accept",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal denied by the maintainer");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+  });
+});
+
+test("an earlier appeal denied after a repeat appeal was drafted sends the appellant's accept to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // Both appeals draft uphold, so the repeat appeal is triaged with nothing
+    // denied, deny-drafted or escalated beside it.
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    run.head("d".repeat(40));
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // Then the maintainer rejects the earlier draft and a moderator denies it.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "reject",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal escalated: the maintainer rejected the draft");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "deny",
+          senderId: MODERATOR,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal denied by the moderator");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+    expect(run.sql(APPEAL)).toEqual([
+      {
+        draft: "uphold",
+        escalated: 1,
+        resolution: "denied",
+        resolved_by: "moderator",
+      },
+      { draft: "uphold", escalated: 1, resolution: null, resolved_by: null },
+    ]);
+  });
+});
+
+test("a repeat appeal goes to a moderator while an earlier appeal of the item awaits one", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("spam", 0.5);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: Slopbot confidence is below 0.9",
+    );
+    run.head("d".repeat(40));
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal escalated: an earlier appeal of this item awaits a moderator",
+    );
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+  });
+});
+
+test("an earlier appeal escalated after a repeat appeal was drafted sends the appellant's accept to a moderator", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    run.model("none", 0.95);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    const [{ appeal_key: first }] = run.sql(FIRST_APPEAL) as {
+      appeal_key: string;
+    }[];
+    run.head("d".repeat(40));
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (uphold)",
+    );
+    // The maintainer rejects the earlier draft; no moderator has decided it.
+    expect(
+      await run.deliver(
+        run.job("appeal_command", {
+          command: "reject",
+          senderId: MAINTAINER,
+          appealKey: first,
+        }),
+      ),
+    ).toBe("appeal escalated: the maintainer rejected the draft");
+    expect(
+      await run.deliver(
+        run.job("appeal_command", { command: "accept", senderId: AUTHOR }),
+      ),
+    ).toBe("a Slop moderator decides this appeal");
+    expect(run.sql(PENALTY)).toEqual(SPAM_DEBIT_STANDS);
+  });
+});
+
 test("a maintainer reopen upholds an open appeal and removes the finding label, but does not post an upheld comment after a maintainer-denied appeal", async () => {
   await closedItem(async (run) => {
     expect(await run.review()).toBe("closed (spam)");

@@ -32,18 +32,26 @@ async function signIn(
     randomToken,
     resolveGithubIdentity,
   };
+  // The starting browser's binding cookie, sent with every later request.
+  let binding = "";
   const post = (path: string, body: unknown) =>
     handleIdentityRequest(
       new Request(`${LOCAL}${path}`, {
         method: "POST",
-        headers: { origin: LOCAL, "content-type": "application/json" },
+        headers: {
+          origin: LOCAL,
+          "content-type": "application/json",
+          cookie: binding,
+        },
         body: JSON.stringify(body),
       }),
       deps,
     );
-  const flow = (await (
-    await post("/v1/oauth/start", { audience: "slop-points-web" })
-  ).json()) as {
+  const started = await post("/v1/oauth/start", {
+    audience: "slop-points-web",
+  });
+  binding = (started.headers.getSetCookie()[0] ?? "").split(";")[0] ?? "";
+  const flow = (await started.json()) as {
     flowId: string;
     pollCapability: string;
     authorizationUrl: string;
@@ -53,9 +61,11 @@ async function signIn(
   alterPendingFlow?.(sqlite);
   const callback = await handleIdentityRequest(
     new Request(`${LOCAL}/v1/oauth/callback?state=${state}&${callbackQuery}`, {
-      headers: bindStateCookie
-        ? { cookie: `__Host-slop_oauth_state=${state}` }
-        : {},
+      headers: {
+        cookie: bindStateCookie
+          ? `__Host-slop_oauth_state=${state}; ${binding}`
+          : binding,
+      },
     }),
     deps,
   ).then((response) => response.status);
