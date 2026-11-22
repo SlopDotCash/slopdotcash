@@ -104,7 +104,7 @@ pure def canRecordTests(c: Contribution, by: int, usefulResult: bool, testEviden
   by == c.contributor and c.phase == Working and c.available and usefulResult and testEvidence
 pure def recordTests(c: Contribution, by: int, usefulResult: bool, testEvidence: bool): Contribution =
   { ...c, phase: Tested, usefulResult: true, testEvidence: true,
-    evidenceFields: c.evidenceFields.union(Set(SC::TestResults, SC::ProofOfChange)) }
+    evidenceFields: c.evidenceFields.union(SC::commonEvidence) }
 pure def canAbandon(c: Contribution, by: int): bool = by == c.contributor and (active(c) or c.phase == Stopped)
 pure def abandon(c: Contribution, by: int): Contribution =
   { ...initial, contributor: c.contributor, project: c.project, repository: c.repository, banned: c.banned,
@@ -235,7 +235,7 @@ debit for a signed submission that lacks it are Slopbot's and Points'.
 
 ```quint
 pure def evidenceComplete(c: Contribution): bool =
-  c.changeTypes.size() > 0 and (c.changeTypes.contains(SC::Docs) implies c.changeTypes.subseteq(Set(SC::Docs)))
+  SC::validChangeTypes(c.changeTypes, false)
   and SC::requiredEvidence(c.changeTypes, c.guideRequiresScreenshots).subseteq(c.evidenceFields)
 pure def canReadContributionGuide(c: Contribution, by: int, requiresScreenshots: bool): bool =
   by == c.contributor and active(c)

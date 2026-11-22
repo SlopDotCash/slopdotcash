@@ -87,7 +87,12 @@ this very deposit as the one that paid, and the deposit is SLOP on Robinhood
 Chain kept to the burn address. The row this deposit paid gets `kept`, or
 `refunded` for a refund and for a reclaim, with the event's block time; the
 security area's `outcome_reason` is left as it is. A `recorded` row, or no
-row, is never paid and keeps nothing.
+row, is never paid and keeps nothing. On the security side these writes are
+the [report deposit](../security/reportDeposit.md)'s `pay` (the row marked
+paid), `unpay` (a payment a reorganisation removed) and `recordSent`, burned
+only for the burn of a `kept_due` row and not burned for a refund or the
+payer's reclaim, each sent as `feeRecorder`; the Worker never sets
+`refund_due` or `kept_due`.
 
 ```quint
 type ReportResolveFacts = { resolveFacts: D::ResolveFacts, robinhood: bool, keptToBurn: bool }

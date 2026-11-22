@@ -297,16 +297,16 @@ pure def ask(p: PayFlow, origin: Origin, by: int): PayFlow =
   { ...p, checking: origin, autoAsks: p.autoAsks + (if (origin == AutoCheck) 1 else 0) }
 pure def canAnswer(p: PayFlow, result: ChainResult, by: int): bool = by == chainReader and p.checking != NoCheck and p.phase == Sent
 pure def answer(p: PayFlow, result: ChainResult, by: int): PayFlow =
-  val settled = { ...p, checking: NoCheck }
-  val cleared = { ...settled, slot: WA::compareAndClear(p.slot, p.slot), walletHash: false, evidence: NoEvidence }
+  val answered = { ...p, checking: NoCheck }
+  val cleared = { ...answered, slot: WA::compareAndClear(p.slot, p.slot), walletHash: false, evidence: NoEvidence }
   if (result == FinalRead) { ...cleared, phase: Idle, evidence: Finished, depositedAt: p.now, watching: true,
     notice: VerifiedNotice }
-  else if (result == ReceivedRead) { ...settled, evidence: Received, watching: true, notice: ReceivedNotice }
+  else if (result == ReceivedRead) { ...answered, evidence: Received, watching: true, notice: ReceivedNotice }
   else if (result == ApprovalRead) { ...cleared, phase: if (p.page == Due) Reviewed else Idle, freshRead: NotConfirmed,
     notice: ApprovalConfirmed }
   else if (result == Reverted or result == NotSent) { ...cleared, phase: Idle, notice: TxFailed }
-  else if (result == FinalMismatch) { ...settled, notice: CheckFailed }
-  else { ...settled, evidence: NoEvidence, notice: if (p.evidence == Received) Quiet else p.notice }
+  else if (result == FinalMismatch) { ...answered, notice: CheckFailed }
+  else { ...answered, evidence: NoEvidence, notice: if (p.evidence == Received) Quiet else p.notice }
 pure def canSetTabHidden(p: PayFlow, hidden: bool, by: int): bool = by == tab and hidden != p.hidden
 pure def setTabHidden(p: PayFlow, hidden: bool, by: int): PayFlow = { ...p, hidden: hidden }
 ```

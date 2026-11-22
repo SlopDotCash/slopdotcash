@@ -77,7 +77,7 @@ only while this month's share or the setting is above zero (development
 `src/lib/maintainer-share.mjs` `publishedMaintainerShare`,
 `maintainerShareNotice` and `maintainerShareCardLine` at `8660a6121`). This
 month's share is the first history entry whose month is this month or later,
-else the setting (`monthShareOf`); a change the owner made this month takes
+else the setting (the [registry](../backend/projects.md)'s `monthShareOf`); a change the owner made this month takes
 effect next month. While the two are equal one share is shown ("Maintainer
 share: 20% of the monthly amount, split among the maintainers who merge or
 close outside pull requests."; the card "Maintainer share 20%"); otherwise
@@ -87,11 +87,9 @@ December"). A share of zero reads "none".
 
 ```quint
 import payoutExclusions as X from "../settlement/payoutExclusions"
-type ShareHistoryEntry = { throughMonth: int, basisPoints: int }
+import projects as BP from "../backend/projects"
 type ShareShown = NoShare | SameShare({ basisPoints: int })
   | ChangingShare({ thisMonth: int, fromNext: int, fromPeriod: int })
-pure def monthShareOf(history: List[ShareHistoryEntry], setting: int, period: int): int =
-  history.select(e => period <= e.throughMonth).nthOr(0, { throughMonth: 0, basisPoints: setting }).basisPoints
 pure def shareShown(monthlyPool: bool, baseAmountPositive: bool, thisMonth: int, setting: int, period: int): ShareShown =
   if (not(monthlyPool) or not(baseAmountPositive) or (thisMonth == 0 and setting == 0)) NoShare
   else if (thisMonth == setting) SameShare({ basisPoints: thisMonth })
@@ -104,11 +102,11 @@ pure def lawNoAmountNoShare(monthlyPool: bool, thisMonth: int, setting: int, per
 pure def lawChangeShowsBothMonths(thisMonth: int, setting: int, period: int): bool =
   (thisMonth != setting) implies shareChanging(shareShown(true, true, thisMonth, setting, period), period)
 pure def lawHistoryKeepsTheOpenMonth(setting: int, period: int, basisPoints: int): bool =
-  monthShareOf(List({ throughMonth: period, basisPoints: basisPoints }), setting, period) == basisPoints
-pure def lawNoHistoryIsTheSetting(setting: int, period: int): bool = monthShareOf(List(), setting, period) == setting
-pure def lawMonthShareIsAnEntryOrTheSetting(history: List[ShareHistoryEntry], setting: int, period: int): bool =
-  monthShareOf(history, setting, period) == setting
-    or history.some(e => e.throughMonth >= period and e.basisPoints == monthShareOf(history, setting, period))
+  BP::monthShareOf(List({ throughMonth: period, basisPoints: basisPoints }), setting, period) == basisPoints
+pure def lawNoHistoryIsTheSetting(setting: int, period: int): bool = BP::monthShareOf(List(), setting, period) == setting
+pure def lawMonthShareIsAnEntryOrTheSetting(history: List[BP::ShareEntry], setting: int, period: int): bool =
+  BP::monthShareOf(history, setting, period) == setting
+    or history.some(e => e.throughMonth >= period and e.basisPoints == BP::monthShareOf(history, setting, period))
 pure val thisMonthValues = Set(0, 2000)
 pure val settingValues = Set(0, 1000, 2000)
 pure val periodValues = Set(202611, 202612)

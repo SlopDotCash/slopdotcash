@@ -144,20 +144,20 @@ metadata" step of the "Deploy trusted production bundle" job.
 type FollowedRun = { repository: str, headRepository: str, branch: str, event: str, path: str, completed: bool }
 type ReleaseRead = { collected: bool, collectionFailed: bool, resumed: bool, published: bool, checkpointSaved: bool }
 type FollowUp = PublishCollection | ResumeCollection | NoFollowUp
-pure def trustedMainRelease(followedRun: FollowedRun, repository: str): bool =
-  followedRun.repository == repository and followedRun.headRepository == repository and followedRun.branch == "main"
-    and (followedRun.event == "push" or followedRun.event == "workflow_dispatch") and followedRun.path == ".github/workflows/deploy.yml"
-pure def followUpOf(followedRun: FollowedRun, repository: str, release: ReleaseRead): FollowUp =
-  if (not(trustedMainRelease(followedRun, repository) and followedRun.completed)) NoFollowUp
+pure def trustedMainRelease(followed: FollowedRun, repository: str): bool =
+  followed.repository == repository and followed.headRepository == repository and followed.branch == "main"
+    and (followed.event == "push" or followed.event == "workflow_dispatch") and followed.path == ".github/workflows/deploy.yml"
+pure def followUpOf(followed: FollowedRun, repository: str, release: ReleaseRead): FollowUp =
+  if (not(trustedMainRelease(followed, repository) and followed.completed)) NoFollowUp
   else if (release.collected and not(release.published)) PublishCollection
   else if (release.collectionFailed and not(release.resumed) and release.checkpointSaved) ResumeCollection
   else NoFollowUp
-pure def lawFollowUpOnlyTrustedCompleted(followedRun: FollowedRun, repository: str, release: ReleaseRead): bool =
-  followUpOf(followedRun, repository, release) != NoFollowUp implies (trustedMainRelease(followedRun, repository) and followedRun.completed)
-pure def lawResumeNeverResumedAgain(followedRun: FollowedRun, repository: str, release: ReleaseRead): bool =
-  (release.resumed or not(release.checkpointSaved)) implies followUpOf(followedRun, repository, release) != ResumeCollection
-pure def lawPublishedReleaseNotRepublished(followedRun: FollowedRun, repository: str, release: ReleaseRead): bool =
-  release.published implies followUpOf(followedRun, repository, release) != PublishCollection
+pure def lawFollowUpOnlyTrustedCompleted(followed: FollowedRun, repository: str, release: ReleaseRead): bool =
+  followUpOf(followed, repository, release) != NoFollowUp implies (trustedMainRelease(followed, repository) and followed.completed)
+pure def lawResumeNeverResumedAgain(followed: FollowedRun, repository: str, release: ReleaseRead): bool =
+  (release.resumed or not(release.checkpointSaved)) implies followUpOf(followed, repository, release) != ResumeCollection
+pure def lawPublishedReleaseNotRepublished(followed: FollowedRun, repository: str, release: ReleaseRead): bool =
+  release.published implies followUpOf(followed, repository, release) != PublishCollection
 ```
 
 ### Live data older than 48 hours fails the daily run
@@ -181,7 +181,7 @@ These sets bound simulation only.
 ```quint
 pure val trustedRun: FollowedRun = { repository: "SlopDotCash/slopdotcash", headRepository: "SlopDotCash/slopdotcash",
   branch: "main", event: "workflow_dispatch", path: ".github/workflows/deploy.yml", completed: true }
-pure val followedRunValues = Set(trustedRun, { ...trustedRun, event: "push" }, { ...trustedRun, completed: false },
+pure val followedValues = Set(trustedRun, { ...trustedRun, event: "push" }, { ...trustedRun, completed: false },
   { ...trustedRun, headRepository: "fork/slopdotcash" }, { ...trustedRun, branch: "development" },
   { ...trustedRun, event: "pull_request" }, { ...trustedRun, path: ".github/workflows/scheduled.yml" })
 pure val repositoryValues = Set("SlopDotCash/slopdotcash")

@@ -220,10 +220,10 @@ pure def lawShareEntryAtMostThirtyPercent(entry: SettingEntry): bool =
   shareEntryValid(entry) implies entryNumber(entry) * 100 <= MS::maxShareBasisPoints
 pure def lawIntakeCapEntryWithinLimits(entry: SettingEntry): bool =
   (intakeCapEntryValid(entry) and entry != EntryEmpty) implies (entryNumber(entry) >= IC::minCap and entryNumber(entry) <= IC::maxCap)
-pure def changeEffect(field: SettingField, cleared: bool): SettingEffect =
-  if (field == VaultField or field == MonthlyField or field == MaintainerShareField) NextMonth
-  else if (field == SlopbotField or field == ReportDepositField or field == ImageField or field == HeadlineField
-    or field == DescriptionField or field == IntegrationBranchField or cleared) LiveNow
+pure def changeEffect(settingField: SettingField, cleared: bool): SettingEffect =
+  if (settingField == VaultField or settingField == MonthlyField or settingField == MaintainerShareField) NextMonth
+  else if (settingField == SlopbotField or settingField == ReportDepositField or settingField == ImageField or settingField == HeadlineField
+    or settingField == DescriptionField or settingField == IntegrationBranchField or cleared) LiveNow
   else NeedsRescan
 pure def branchChangeAllowed(branchChanged: bool, others: List[SettingField]): bool =
   not(branchChanged) or others.every(f => f == ContributionGuideField)
