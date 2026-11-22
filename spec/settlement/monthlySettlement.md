@@ -304,7 +304,8 @@ coordinator clock and head reach the last of them; with eight blocks most
 traces had used the high blocks before admission. A single deposit of twelve
 funds the whole month at once: with only deposits of four and eight, the
 month was funded almost only with the banned recipient left out, whose total
-matches no signed root.
+matches no signed root. A ban of an account without a share joins the bans,
+so two of three funded months keep every recipient and match the signed root.
 
 ```quint
 pure val assetValues = Set(E::baseAsset)
@@ -325,6 +326,7 @@ pure val factValues = Set({ actor: 9, role: MO::ProjectOwner, banned: false, rev
 pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
+pure val bansValues = Set(List(), List({ actor: 2, ban: 7 }), List({ actor: 9, ban: 7 }))
 pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(8) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(12) })
