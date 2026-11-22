@@ -186,6 +186,13 @@ lemma PresentationShown(units: int, decimals: int)
   }
 }
 
+// Division with a positive divisor splits a number into quotient and remainder.
+lemma PresentationDivMod(a: int, b: int)
+  requires b > 0
+  ensures a == b * (a / b) + a % b
+{
+}
+
 // Whole part times the scale plus fraction times its own scale gives back the units.
 lemma lawShownAmountRoundTrips_ensures(units: int, decimals: int)
   ensures (lawShownAmountRoundTrips(units, decimals) == true)
@@ -195,19 +202,25 @@ lemma lawShownAmountRoundTrips_ensures(units: int, decimals: int)
     var T := tenTo(decimals);
     var r := units % T;
     var s := showAmount(units, decimals);
-    PresentationTenToPositive(decimals);
-    assert units == T * (units / T) + r;
+    var w := units / T;
+    PresentationDivMod(units, T);
+    assert s.whole == w;
+    assert s.whole * T == T * w;
     if r == 0 {
       PresentationTenToZero();
-      assert tenTo(decimals - s.fractionDigits) == tenTo(decimals);
+      assert decimals - s.fractionDigits == 0;
+      assert s.fraction * tenTo(decimals - s.fractionDigits) == 0;
     } else {
       var z := trailingZeros(r, decimals);
-      PresentationTenToPositive(z);
-      assert decimals - s.fractionDigits == z;
       var P := tenTo(z);
-      assert r == P * (r / P) + r % P;
-      assert s.fraction * P == r;
+      assert decimals - s.fractionDigits == z;
+      PresentationDivMod(r, P);
+      assert s.fraction == r / P;
+      assert s.fraction * tenTo(decimals - s.fractionDigits) == s.fraction * P;
+      assert s.fraction * P == P * (r / P);
+      assert s.fraction * tenTo(decimals - s.fractionDigits) == r;
     }
+    assert s.whole * T + s.fraction * tenTo(decimals - s.fractionDigits) == units;
   }
 }
 
