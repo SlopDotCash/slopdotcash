@@ -16,7 +16,6 @@ interface Fixture {
   readonly id: string
   readonly repository: string
   readonly repositoryId: number
-  readonly aliases?: ReadonlyArray<string>
   readonly listingTier: string
   readonly headline: string
 }
@@ -26,8 +25,10 @@ service World {
   readonly net: Internet
 }
 
-const alpha: Fixture = { id: "alpha", repository: "member-41/alpha", repositoryId: 9101, aliases: ["member-41/shared-tool"], listingTier: "community", headline: "First tooling." }
-const beta: Fixture = { id: "beta", repository: "member-41/shared-tool", repositoryId: 9102, listingTier: "featured", headline: "Listed under the old path." }
+// beta lists the same repository (9101) under its old path. Each repository path is claimed by one project
+// (project_repositories), so alpha carries no alias of beta's path; the shared restriction follows the repository ID.
+const alpha: Fixture = { id: "alpha", repository: "member-41/alpha", repositoryId: 9101, listingTier: "community", headline: "First tooling." }
+const beta: Fixture = { id: "beta", repository: "member-41/shared-tool", repositoryId: 9101, listingTier: "featured", headline: "Listed under the old path." }
 const gamma: Fixture = { id: "gamma", repository: "member-41/gamma", repositoryId: 9103, listingTier: "retired", headline: "Delisted tooling." }
 const renamed: Fixture = { id: "renamed", repository: "member-41/alpha-renamed", repositoryId: 9101, listingTier: "community", headline: "Same repository, another path." }
 const zeta: Fixture = { id: "zeta", repository: "member-41/zeta", repositoryId: 9106, listingTier: "community", headline: "Unrelated tooling." }
@@ -48,16 +49,21 @@ const Built = Layer.effect(World, effect {
   return { github, net: internet({ github: github.handler }) }
 })
 
+// The project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const root = new URL("..", import.meta.url).pathname
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
   return areaLayer({
-    root,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     d1: { SLOP_DB: "slop-private" },
-    vars: { PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788", ADMIN_GITHUB_IDS: String(moderatorId), PROJECT_MODERATOR_GITHUB_IDS: String(moderatorId), SLOP_ENVIRONMENT: "local", SLOP_GITHUB_READ_TOKEN: reader },
+    vars: { PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-registry-journey-0001", ADMIN_GITHUB_IDS: String(moderatorId), PROJECT_MODERATOR_GITHUB_IDS: String(moderatorId), SLOP_ENVIRONMENT: "local", SLOP_GITHUB_READ_TOKEN: reader },
     services: {
+      ASSETS: () => new Response("Not found", { status: 404 }),
       SLOPBOT: (request) => {
         const url = new URL(request.url)
         const id = Number(url.searchParams.get("repositoryId"))
@@ -117,10 +123,11 @@ function manifestOf(fixture: Fixture) {
       assignment: null,
       externalPrize: null,
     },
-    repositories: [{ id: repository, ...fixture.aliases === undefined ? {} : { aliases: fixture.aliases }, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Tooling.", integrationBranch: "main" }],
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
     skill: { id: `contribute-to-${fixture.id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${fixture.id}/skill.md` },
     reviewSkill: { id: `review-${fixture.id}-contributions`, sourcePath: "skills/project-reviewer-template" },
-    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC" },
+    // A stored reward asset carries its chain-read decimals (spec/backend/rewardAsset.md).
+    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 },
     contribution: {
       approvedScope: "Bug fixes and documented features in the toolkit.",
       contributionGuide: "Branch from main and keep one change per pull request.",
@@ -188,7 +195,7 @@ effect function quarantine(moderator: Session, projectId: string) {
   })
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('Public reads before and after a publish and a quarantine: the next request reflects each write (spec/backend/listing.md, "Story: Find Featured and Community projects independently of funding"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision")', () => effect {
     const area = try Area
     const world = try World

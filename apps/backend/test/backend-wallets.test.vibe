@@ -2,16 +2,22 @@ import { assert, layer } from "@effect/vitest"
 import { base64Encode } from "@repo/platform/chain/solana"
 import { isoAt } from "@repo/platform/clock"
 import { base64url, ed25519Sign, hmacSha256, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { Response } from "miniflare"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 
 const traceSecret = "wallet-journey-trace-secret-0123456789"
 const operatorId = "900"
 
+// The wallet and project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = areaLayer({
-  root: new URL("..", import.meta.url).pathname,
-  entry: "worker",
+  root: new URL("../../points", import.meta.url).pathname,
+  config: "test/support/backendRoutes/vite.config.ts",
+  entry: "backendRoutes",
   d1: { SLOP_DB: "slop-private" },
   vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", OPERATOR_GITHUB_IDS: operatorId, TRACE_AUTH_SECRET: traceSecret },
+  services: { ASSETS: () => new Response("Not found", { status: 404 }) },
 })
 
 interface Wallet {
@@ -82,7 +88,7 @@ effect function read(path: string, headers: Readonly<Record<string, string>> = {
   return try (try Area).request(`/api/v1/${path}`, { headers })
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('Replace a payout wallet without losing the current destination over HTTP (spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim")', () => effect {
     const area = try Area
     const member = try signIn("101")

@@ -2,13 +2,10 @@ import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { type Applied, bundle, database, migrate, startWorker } from "@repo/platform/testing"
-import { readdirSync } from "node:fs"
 import { Response } from "miniflare"
-import { migrationsDir } from "@repo/platform/testing/paths"
+import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
 
 const origin = "https://slop.test"
-// Every migration file applies, without an error.
-const migrationFiles = readdirSync(migrationsDir).filter((name) => name.endsWith(".sql")).length
 const member = "t".repeat(48)
 const other = "o".repeat(48)
 
@@ -78,7 +75,7 @@ effect function choose(code: unknown, token = member) {
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
     const backend = try Backend
-    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [migrationFiles, []]))
+    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [migrationCount(), []]))
     try signIn("actor-1", "1", member, "2099-01-01T00:00:00.000Z")
     try signIn("actor-2", "2", other, "2099-01-01T00:00:00.000Z")
 
