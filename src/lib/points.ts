@@ -31,6 +31,8 @@ export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
 export const OCTOBER_DUPLICATE_RETIREMENT_DECISION =
   "Owner-reviewed duplicate accepted work already rewarded by earlier sources.";
+export const VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION =
+  "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -859,6 +861,17 @@ export function applyPointsSnapshot(
     // A missing value assessment cannot replace a recorded PR pool with the
     // fallback minimum, or add a second pool under a different recipient.
     heldUnassessedSources.add(sourceKey);
+    // A rolling window can miss earlier acceptance proved by the October
+    // historical census. Retain that allocation without a current assessment.
+    if (
+      prior.some(
+        ({ award, decision }) =>
+          award.occurredAt.startsWith("2026-10-") &&
+          decision?.reason ===
+            VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+      )
+    )
+      continue;
     const allocation = row.implementationAllocation;
     const current = currentMergesBySource.get(sourceKey) ?? [];
     const actorIds =

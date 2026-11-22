@@ -38,6 +38,7 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "./points";
 import { findHistoricalRepository } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
@@ -2142,7 +2143,7 @@ export function applyPointsImplementationCorrections(
           effectiveAt: recordedAt,
           reason: plan.usesOctoberDecision
             ? OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION
-            : "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.",
+            : VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
         });
     }
     return appendPointAwards(

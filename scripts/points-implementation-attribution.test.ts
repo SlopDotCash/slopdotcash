@@ -15,6 +15,7 @@ import {
   OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
   type PointsJournal,
   pointKey,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
 import { createPaymentProjectView } from "../src/lib/project-view";
 import { allocateReviewBudgetMinor } from "../src/lib/reward-cycle";
@@ -435,6 +436,56 @@ test("rolling scores preserve a verified October replacement allocation", () => 
     REFRESHED_AT,
   );
   expect(refreshed.revisions).toEqual(journal.revisions);
+});
+
+test("a rolling fallback preserves an October first-acceptance allocation", () => {
+  const { empty, oldSnapshot } = setup();
+  const occurredAt = "2026-10-29T12:00:00.000Z";
+  const rows = legacyAwards(oldSnapshot).map((award) => ({
+    ...award,
+    occurredAt,
+    amount: award.actor.id === PENALIZED_AUTHOR.id ? 30 : 0,
+  }));
+  const journal = appendPointAwards(
+    empty,
+    rows,
+    hash(rows),
+    "slop-score-v2",
+    GENERATED_AT,
+    new Map(
+      rows.map((award) => [
+        award.key,
+        {
+          sourceId: award.sourceId,
+          effectiveAt: GENERATED_AT,
+          reason: VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+        },
+      ]),
+    ),
+  );
+  const next = input(true, REFRESHED_AT);
+  next.mergedPullRequestOutcomes[0].mergedAt = occurredAt;
+  const current = createLeaderboardSnapshot(next);
+  expect(current.valueAssessmentCoverage?.[0]).toMatchObject({
+    status: "legacy-policy",
+    recordDigest: null,
+    implementationAllocation: { rule: "changed-lines-v1" },
+  });
+
+  const refreshed = applyPointsSnapshot(
+    journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(refreshed.revisions).toEqual(journal.revisions);
+  const repeated = applyPointsSnapshot(
+    refreshed,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(repeated.revisions).toEqual(journal.revisions);
 });
 
 test("rolling scores preserve an owner-retired duplicate October pool", () => {

@@ -7236,14 +7236,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "1e3d63012cb8071fa5fd87a945c533c388eeaf02747f4c6a5d1c0115cb9501d6",
+      "sha256": "94ebba2944be1c975cc5b29545831af33c3dcc34fada5bebad85dae209269503",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        234, 299, 313, 324, 338, 345, 480, 537, 538, 539, 543, 763, 765, 769,
-        864, 916, 922, 949, 950, 1037, 1042, 1247, 1440, 1515, 1614, 1630, 1829,
-        1836, 1841, 1949, 2030, 2065, 2093, 2195, 2196, 2197
+        235, 300, 314, 325, 339, 346, 481, 538, 539, 540, 544, 764, 766, 770,
+        865, 917, 923, 950, 951, 1038, 1043, 1248, 1441, 1516, 1615, 1631, 1830,
+        1837, 1842, 1950, 2031, 2066, 2094, 2196, 2197, 2198
       ],
       "review": "mapped-abstraction"
     },
@@ -7257,7 +7257,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "47e3007f89c0055efb0b939eb5f547056e45a655378ad243c50f2f1098620934",
+      "sha256": "adae580f25eaaac11d5f666492714c485c4a64841bf1a01dd28bee3bfb1cb217",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -7268,7 +7268,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [382, 849, 1097, 1109, 1116, 1125],
+      "candidateLines": [384, 851, 1110, 1122, 1129, 1138],
       "review": "mapped-abstraction"
     },
     {
