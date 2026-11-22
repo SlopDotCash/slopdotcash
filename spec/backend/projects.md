@@ -253,7 +253,9 @@ revision: there is no "one change at a time" refusal. The server classifies
 the submitted manifest against the current one
 (`classifyRevisionChanges`, `src/lib/project-revision-changes.ts`):
 presentation (name, eyebrow, headline, image, description, links, `security`,
-the report deposit setting, and every `slopbot` setting: the
+the [report deposit](../security/reportDeposit.md) setting
+`security.reportDeposit`, a boolean that is on unless it is `false`
+(`reportDepositOn`, `src/lib/security-report-deposit.mjs`), and every `slopbot` setting: the
 automatic-closure consent, the [ready label](./readyLabelSettings.md), the
 [intake cap](./intakeCap.md), the [submission fee](./submissionFeeSettings.md)
 and wanted issues, each published at once), executable skill inputs (appended
@@ -430,7 +432,8 @@ open UTC month, the server appends that month with the share it had, unless
 the history already reaches the open month (a second change in the same
 month keeps the month's first recorded share), so every month through the
 open one keeps its share and the new one starts next month. A month's share
-is that of the first history entry reaching it, else the current share. An
+is that of the first history entry reaching it, else the current share
+(`monthShareOf`, which the [project views](../frontend/views.md) read too). An
 administrator exception replaces the manifest, the share and its history
 included, as it replaces any field (below). How settlement splits it is the
 [maintainer share](../settlement/maintainerShare.md).
@@ -442,12 +445,13 @@ pure def shareValid(reward: RewardPromise): bool =
   reward.share == 0 or (reward.monthlyPool and reward.share >= 1 and reward.share <= maxShareBasisPoints)
 pure def shareHistoryValid(history: List[ShareEntry]): bool =
   history.every(e => e.basisPoints >= 0 and e.basisPoints <= maxShareBasisPoints and e.throughMonth > 0) and
-  history.foldl(0, (last, e) => if (last >= 0 and e.throughMonth > last) e.throughMonth else -1) >= 0
+  history.foldl(0, (reached, e) => if (reached >= 0 and e.throughMonth > reached) e.throughMonth else -1) >= 0
 pure def prospectiveShare(p: Project, share: int): List[ShareEntry] =
   if (share == p.share or p.shareHistory.some(e => e.throughMonth >= p.month)) p.shareHistory
   else p.shareHistory.append({ throughMonth: p.month, basisPoints: p.share })
-pure def shareOf(p: Project, month: int): int =
-  p.shareHistory.select(e => month <= e.throughMonth).nthOr(0, { throughMonth: 0, basisPoints: p.share }).basisPoints
+pure def monthShareOf(history: List[ShareEntry], setting: int, period: int): int =
+  history.select(e => period <= e.throughMonth).nthOr(0, { throughMonth: 0, basisPoints: setting }).basisPoints
+pure def shareOf(p: Project, month: int): int = monthShareOf(p.shareHistory, p.share, month)
 pure def alwaysShareWithinLimits(p: Project): bool =
   p.share >= 0 and p.share <= maxShareBasisPoints and shareHistoryValid(p.shareHistory)
 pure def stepShareHistoryOnlyAppends(before: Project, via: str, after: Project): bool =

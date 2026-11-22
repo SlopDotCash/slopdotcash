@@ -124,10 +124,10 @@ pure val noRate: FeeRate = { effectiveAt: -1, slopPerUsd: "" }
 pure def rateAt(rates: List[FeeRate], t: int): FeeRate =
   rates.foldl(noRate, (best, r) => if (r.effectiveAt >= 0 and r.effectiveAt <= t and r.effectiveAt > best.effectiveAt) r else best)
 pure def ratesAt(rates: List[FeeRate], t: int): RatesInForce =
-  val current = rateAt(rates, t)
+  val inForce = rateAt(rates, t)
   val before = rates.foldl(noRate, (best, r) =>
-    if (r.effectiveAt >= 0 and r.effectiveAt < current.effectiveAt and r.effectiveAt > best.effectiveAt) r else best)
-  { current: current, previous: if (current.effectiveAt >= 0 and t < current.effectiveAt + rateGraceMs) before else noRate }
+    if (r.effectiveAt >= 0 and r.effectiveAt < inForce.effectiveAt and r.effectiveAt > best.effectiveAt) r else best)
+  { current: inForce, previous: if (inForce.effectiveAt >= 0 and t < inForce.effectiveAt + rateGraceMs) before else noRate }
 pure def rateInForce(rate: FeeRate): bool = rate.effectiveAt >= 0
 pure def slopAccepted(rates: List[FeeRate], t: int): bool = rateInForce(ratesAt(rates, t).current)
 pure def lawRateNeverInForceBeforeItsTime(rates: List[FeeRate], t: int): bool =

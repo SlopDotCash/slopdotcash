@@ -50,14 +50,14 @@ pure val maxManifests = 2400
 pure val maxManifestBytes = 8388608
 pure val maxTotalBytes = 33554432
 pure val maxReports = 4096
-pure def manifestAdmitted(size: int, spent: int): bool = size > 0 and size <= maxManifestBytes and spent + size <= maxTotalBytes
+pure def manifestAdmitted(manifestSize: int, spent: int): bool = manifestSize > 0 and manifestSize <= maxManifestBytes and spent + manifestSize <= maxTotalBytes
 pure def everyPathKept(basePaths: List[str], headPaths: List[str]): bool = basePaths.every(p => headPaths.includes(p))
 pure def namedByPath(project: str, period: int, after: Manifest): bool = after.project == project and after.period == period
 pure def sameIdentity(before: Manifest, after: Manifest): bool =
   before.project == after.project and before.period == after.period and before.kind == after.kind
-pure def lawLimitsHold(size: int, spent: int): bool =
-  manifestAdmitted(size, spent) implies (size <= maxManifestBytes and spent + size <= maxTotalBytes)
-pure val sizeValues = Set(0, 1, 8388608, 8388609)
+pure def lawLimitsHold(manifestSize: int, spent: int): bool =
+  manifestAdmitted(manifestSize, spent) implies (manifestSize <= maxManifestBytes and spent + manifestSize <= maxTotalBytes)
+pure val manifestSizeValues = Set(0, 1, 8388608, 8388609)
 pure val spentValues = Set(0, 25165824, 33554431)
 ```
 
@@ -80,9 +80,9 @@ pure def keepsTrustedHistory(after: Manifest, trusted: List[TrustedReport]): boo
   after.kind != RewardAllocation or after.rows.every(r => trusted.every(t =>
     (t.project == after.project and t.actor == r.actor and t.report.period <= after.period) implies r.reports.includes(t.report)))
 pure def evidenceRow(previous: CycleRow): bool = previous.reports.length() > 0 or previous.hold != ""
-pure def holdKept(previous: CycleRow, next: CycleRow): bool = previous.hold == "" or
-  (next.hold == previous.hold and next.held and next.approved == M::zero and next.wallet == previous.wallet
-    and next.suggested == previous.suggested and next.accrued == previous.accrued and next.lines == previous.lines)
+pure def holdKept(previous: CycleRow, kept: CycleRow): bool = previous.hold == "" or
+  (kept.hold == previous.hold and kept.held and kept.approved == M::zero and kept.wallet == previous.wallet
+    and kept.suggested == previous.suggested and kept.accrued == previous.accrued and kept.lines == previous.lines)
 pure def rowKept(previous: CycleRow, after: Manifest): bool = not(evidenceRow(previous)) or
   after.rows.some(n => n.intent == previous.intent and n.actor == previous.actor and prefixOf(previous.reports, n.reports)
     and holdKept(previous, n))

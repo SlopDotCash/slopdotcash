@@ -207,7 +207,7 @@ the cap simulation and their cents views each allocate the amount less the
 month's share: the amount times its basis points, divided by 10,000 and
 rounded down (development `src/lib/project-view.ts:736–760` at
 `8660a6121`). The month's share is its history entry, else the setting
-([views](./views.md), `monthShareOf`). A month in which nobody decides an
+([registry](../backend/projects.md), `monthShareOf`). A month in which nobody decides an
 outside pull request pays no share, so the projection is then lower than the
 proposal, never higher.
 

@@ -29,9 +29,11 @@ and the deposits of `spec/fees/`); this machine reads them as facts.
 Every fact is read by a named verified service: `FeeFacts.mode` is the
 Worker configuration `SUBMISSION_FEE_MODE`; `contractPublished` is a
 published deposit contract in the terms (`feeWays` is not empty);
-`settingOn` and `amountMinor` are the project's effective setting in the
-registry (on only with a valid amount), `settingSince` the time of the first
-revision after the latest one that had it off (`feeSettingSince`, 0 while
+`feeSetting` is the project's stored setting in the registry, read as the
+[submission fee setting](../backend/submissionFeeSettings.md) reads it
+(`settingOn` and `settingAmount`: on only with a valid amount);
+`settingSince` is the time of the first revision after the latest one that
+had it off (`feeSettingSince`, 0 while
 off); `openedAt` is GitHub's `created_at` of the pull request; `exemption`
 is the author's write access or organisation membership as the review reads
 it; `mayAsk` is the monthly free-review cap's non-reserving read
@@ -66,13 +68,15 @@ cap full nothing is asked and the review runs (no fee for a review the cap
 would refuse); otherwise the gate claims the ask and the review waits.
 
 ```quint
+import submissionFeeTerms as T from "../backend/submissionFeeTerms"
+import submissionFeeSettings as S from "../backend/submissionFeeSettings"
 type FeeMode = FeeOff | FeeDryRun | FeeLive
 type FeeExemption = Exempt | NotExempt | ExemptionUnknown
 type GateState = NoGate | Recorded | Asking | Asked | Paid | Released
 type Settlement = NoSettlement | RefundDue | KeptDue | Refunded | Kept
 type FeeStep = FeeRuns | FeeRecords | FeeReleases | FeeClaims | FeeWaits
-type FeeFacts = { mode: FeeMode, contractPublished: bool, settingOn: bool, settingSince: int, openedAt: int,
-  exemption: FeeExemption, mayAsk: bool, amountMinor: int }
+type FeeFacts = { mode: FeeMode, contractPublished: bool, feeSetting: S::StoredFeeSetting, settingSince: int, openedAt: int,
+  exemption: FeeExemption, mayAsk: bool }
 type FeeItem = { present: bool, paid: bool, paidAt: int, amountMinor: int, settlement: Settlement }
 type PullFacts = { readable: bool, open: bool, merged: bool, draft: bool, closedAt: int, contributorScope: bool,
   installationActive: bool }
@@ -81,16 +85,16 @@ type FeeGate = { now: int, gate: GateState, commentId: int, nextCheckAt: int, up
 pure val askLeaseSeconds = 600
 pure val recheckSeconds = 86400
 pure val daySeconds = 86400
-pure val refundUndecidedDays = 14
-pure val keptAfterClosedDays = 7
 pure val noItem: FeeItem = { present: false, paid: false, paidAt: 0, amountMinor: 0, settlement: NoSettlement }
 pure val initial: FeeGate = { now: 1793491200, gate: NoGate, commentId: 0, nextCheckAt: 0, updatedAt: 0, feeItem: noItem,
   labelNeeded: false, labelPaid: false, reviewsQueued: 0 }
+pure def settingOn(facts: FeeFacts): bool = S::feeSettingOn(facts.feeSetting)
+pure def settingAmount(facts: FeeFacts): int = S::feeSettingAmount(facts.feeSetting)
 pure def feeLive(facts: FeeFacts): bool = facts.mode == FeeLive and facts.contractPublished
 pure def checkable(g: FeeGate, facts: FeeFacts, pull: PullFacts): bool =
   feeLive(facts) and g.gate != NoGate and g.feeItem.present and pull.installationActive and pull.readable
 pure def applies(facts: FeeFacts): bool =
-  facts.settingOn and facts.exemption == NotExempt and facts.settingSince > 0 and facts.openedAt > facts.settingSince
+  settingOn(facts) and facts.exemption == NotExempt and facts.settingSince > 0 and facts.openedAt > facts.settingSince
 pure def askInFlight(g: FeeGate): bool = g.gate == Asking and g.updatedAt > g.now - askLeaseSeconds
 pure def askStands(g: FeeGate): bool = g.gate == Asked or (g.gate == Asking and not(askInFlight(g)))
 pure def claimable(g: FeeGate): bool =
@@ -102,7 +106,7 @@ pure def feeStep(g: FeeGate, facts: FeeFacts): FeeStep =
     (if (applies(facts) and not(g.feeItem.present) and g.gate == NoGate and facts.mayAsk) FeeRecords else FeeRuns)
   else if (g.feeItem.paid) FeeRuns
   else if (not(applies(facts)))
-    (if (askStands(g) and (not(facts.settingOn) or facts.exemption == Exempt)) FeeReleases
+    (if (askStands(g) and (not(settingOn(facts)) or facts.exemption == Exempt)) FeeReleases
      else if (g.gate == Asked or g.gate == Asking) FeeWaits
      else FeeRuns)
   else if (g.gate == Asked or g.gate == Paid) FeeWaits
@@ -120,7 +124,7 @@ pure def lawFullMonthAsksNothing(g: FeeGate, facts: FeeFacts): bool =
   not(facts.mayAsk) implies (feeStep(g, facts) != FeeClaims and feeStep(g, facts) != FeeRecords)
 pure def lawOnlyAnOutsideNewPullIsAsked(g: FeeGate, facts: FeeFacts): bool =
   feeStep(g, facts) == FeeClaims implies
-    (facts.settingOn and facts.exemption == NotExempt and facts.openedAt > facts.settingSince and facts.settingSince > 0)
+    (settingOn(facts) and facts.exemption == NotExempt and facts.openedAt > facts.settingSince and facts.settingSince > 0)
 ```
 
 ### One job asks under a lease, and a failed write hands the lease back
@@ -140,10 +144,10 @@ retry a minute later takes the ask, and finds the comment again by its
 marker.
 
 ```quint
-pure def canClaimAsk(g: FeeGate, facts: FeeFacts): bool = feeStep(g, facts) == FeeClaims and facts.amountMinor > 0
+pure def canClaimAsk(g: FeeGate, facts: FeeFacts): bool = feeStep(g, facts) == FeeClaims and settingAmount(facts) > 0
 pure def claimAsk(g: FeeGate, facts: FeeFacts): FeeGate =
   { ...g, gate: Asking, updatedAt: g.now, nextCheckAt: 0,
-    feeItem: { present: true, paid: false, paidAt: 0, amountMinor: facts.amountMinor, settlement: NoSettlement } }
+    feeItem: { present: true, paid: false, paidAt: 0, amountMinor: settingAmount(facts), settlement: NoSettlement } }
 pure def canConfirmAsk(g: FeeGate, commentId: int): bool = g.gate == Asking and commentId > 0
 pure def confirmAsk(g: FeeGate, commentId: int): FeeGate =
   { ...g, gate: Asked, commentId: commentId, labelNeeded: true, updatedAt: g.now }
@@ -198,7 +202,7 @@ pure def canRelease(g: FeeGate, facts: FeeFacts, commentId: int): bool =
   feeStep(g, facts) == FeeReleases and commentId > 0
 pure def release(g: FeeGate, facts: FeeFacts, commentId: int): FeeGate =
   { ...g, gate: Released, commentId: commentId, labelNeeded: false, nextCheckAt: 0, updatedAt: g.now, feeItem: noItem }
-pure def checkReleases(g: FeeGate, facts: FeeFacts): bool = askStands(g) and not(facts.settingOn)
+pure def checkReleases(g: FeeGate, facts: FeeFacts): bool = askStands(g) and not(settingOn(facts))
 pure def canReleaseChecked(g: FeeGate, facts: FeeFacts, pull: PullFacts, commentId: int): bool =
   checkable(g, facts, pull) and not(g.feeItem.paid) and checkReleases(g, facts) and commentId > 0
 pure def releaseChecked(g: FeeGate, facts: FeeFacts, pull: PullFacts, commentId: int): FeeGate =
@@ -234,8 +238,8 @@ submission-fee Worker's records. The days are the published terms'
 ```quint
 type FeeDecision = { settlement: Settlement, nextCheckAt: int }
 pure def settlementFor(paidAt: int, pull: PullFacts, now: int): FeeDecision =
-  val keptAt = (if (pull.closedAt > paidAt) pull.closedAt else paidAt) + keptAfterClosedDays * daySeconds
-  val refundAt = paidAt + refundUndecidedDays * daySeconds
+  val keptAt = (if (pull.closedAt > paidAt) pull.closedAt else paidAt) + T::keptAfterClosedDays * daySeconds
+  val refundAt = paidAt + T::refundUndecidedDays * daySeconds
   if (pull.merged) { settlement: RefundDue, nextCheckAt: 0 }
   else if (not(pull.open))
     (if (pull.closedAt <= 0 or paidAt <= 0) { settlement: NoSettlement, nextCheckAt: now + recheckSeconds }
@@ -260,10 +264,10 @@ pure def canDeferCheck(g: FeeGate, facts: FeeFacts, pull: PullFacts): bool =
 pure def deferCheck(g: FeeGate, facts: FeeFacts, pull: PullFacts): FeeGate = { ...g, nextCheckAt: g.now + askLeaseSeconds }
 pure def canObservePaid(g: FeeGate, paidAt: int): bool = g.feeItem.present and not(g.feeItem.paid) and paidAt > 0
 pure def observePaid(g: FeeGate, paidAt: int): FeeGate = { ...g, feeItem: { ...g.feeItem, paid: true, paidAt: paidAt } }
-pure def canObserveSettled(g: FeeGate, settled: Settlement): bool =
-  g.feeItem.paid and ((g.feeItem.settlement == RefundDue and settled == Refunded) or
-    (g.feeItem.settlement == KeptDue and settled == Kept))
-pure def observeSettled(g: FeeGate, settled: Settlement): FeeGate = { ...g, feeItem: { ...g.feeItem, settlement: settled } }
+pure def canObserveSettled(g: FeeGate, settledAs: Settlement): bool =
+  g.feeItem.paid and ((g.feeItem.settlement == RefundDue and settledAs == Refunded) or
+    (g.feeItem.settlement == KeptDue and settledAs == Kept))
+pure def observeSettled(g: FeeGate, settledAs: Settlement): FeeGate = { ...g, feeItem: { ...g.feeItem, settlement: settledAs } }
 pure def alwaysSettlementOnPaidGate(g: FeeGate): bool =
   g.feeItem.settlement != NoSettlement implies (g.feeItem.paid and g.gate == Paid)
 pure def stepSlopbotNeverPays(before: FeeGate, via: str, after: FeeGate): bool =
@@ -281,10 +285,10 @@ pure def lawMergedIsRefundDue(paidAt: int, pull: PullFacts, now: int): bool =
 pure def lawKeptOnlyAfterTheWait(paidAt: int, pull: PullFacts, now: int): bool =
   settlementFor(paidAt, pull, now).settlement == KeptDue implies
     (not(pull.merged) and not(pull.open) and pull.closedAt > 0 and paidAt > 0 and
-      now >= pull.closedAt + keptAfterClosedDays * daySeconds and now >= paidAt + keptAfterClosedDays * daySeconds)
+      now >= pull.closedAt + T::keptAfterClosedDays * daySeconds and now >= paidAt + T::keptAfterClosedDays * daySeconds)
 pure def lawOpenRefundOnlyAfterTheWait(paidAt: int, pull: PullFacts, now: int): bool =
   (pull.open and not(pull.merged) and settlementFor(paidAt, pull, now).settlement == RefundDue) implies
-    (paidAt > 0 and now >= paidAt + refundUndecidedDays * daySeconds)
+    (paidAt > 0 and now >= paidAt + T::refundUndecidedDays * daySeconds)
 pure def sometimesPaidReviewQueued(g: FeeGate): bool = g.gate == Paid and g.reviewsQueued > 0 and g.labelPaid
 pure def sometimesRefundDue(g: FeeGate): bool = g.feeItem.settlement == RefundDue
 pure def sometimesKeptDue(g: FeeGate): bool = g.feeItem.settlement == KeptDue
@@ -338,7 +342,7 @@ pure def dueForCheck(g: FeeGate, facts: FeeFacts): bool =
     (g.nextCheckAt == 0 and g.gate != Paid and g.feeItem.paid) or
     (g.gate == Paid and not(g.feeItem.paid) and g.feeItem.settlement == NoSettlement and
       (g.nextCheckAt == 0 or g.nextCheckAt <= g.now or g.nextCheckAt > g.now + askLeaseSeconds)) or
-    (g.nextCheckAt == 0 and g.gate == Asked and not(g.feeItem.paid) and not(facts.settingOn)))
+    (g.nextCheckAt == 0 and g.gate == Asked and not(g.feeItem.paid) and not(settingOn(facts))))
 pure def canDispatch(g: FeeGate, facts: FeeFacts): bool = feeLive(facts) and dueForCheck(g, facts)
 pure def dispatch(g: FeeGate, facts: FeeFacts): FeeGate = { ...g, nextCheckAt: g.now + askLeaseSeconds }
 pure def stepDispatchClaimsAhead(before: FeeGate, via: str, after: FeeGate): bool =
@@ -351,10 +355,10 @@ pure def sometimesDispatched(g: FeeGate): bool = g.nextCheckAt > g.now and g.gat
 These sets bound simulation only.
 
 ```quint
-pure val liveFacts: FeeFacts = { mode: FeeLive, contractPublished: true, settingOn: true, settingSince: 1793400000,
-  openedAt: 1793491100, exemption: NotExempt, mayAsk: true, amountMinor: 2000000 }
+pure val liveFacts: FeeFacts = { mode: FeeLive, contractPublished: true, feeSetting: S::enabledDefault, settingSince: 1793400000,
+  openedAt: 1793491100, exemption: NotExempt, mayAsk: true }
 pure val factsValues = Set(liveFacts, { ...liveFacts, mode: FeeDryRun }, { ...liveFacts, mode: FeeOff },
-  { ...liveFacts, contractPublished: false }, { ...liveFacts, settingOn: false, settingSince: 0 },
+  { ...liveFacts, contractPublished: false }, { ...liveFacts, feeSetting: S::feeSettingAbsent, settingSince: 0 },
   { ...liveFacts, exemption: Exempt }, { ...liveFacts, exemption: ExemptionUnknown }, { ...liveFacts, mayAsk: false },
   { ...liveFacts, openedAt: 1793300000 })
 pure val openPull: PullFacts = { readable: true, open: true, merged: false, draft: false, closedAt: 0,

@@ -70,7 +70,7 @@ pure def withinNativeCeilings(maximum: int, spentToday: int, ceilings: Ceilings)
   and maximum <= ceilings.perTxWei and spentToday + maximum <= ceilings.perDayWei
 pure def firstBatch(ids: List[int]): List[int] = ids.foldl(List(), (batch, id) => if (batch.length() < maxBatch) batch.append(id) else batch)
 pure def ascendingIds(ids: List[int]): bool =
-  ids.foldl({ ascending: true, previous: 0 }, (run, id) => { ascending: run.ascending and id > run.previous, previous: id }).ascending
+  ids.foldl({ ascending: true, previous: 0 }, (scan, id) => { ascending: scan.ascending and id > scan.previous, previous: id }).ascending
 pure def resolverMaySign(intent: ResolveIntent, published: PublishedContract): bool = published.contract != ""
   and intent.chainId == published.chainId and intent.contract == published.contract and intent.ids.length() > 0
   and intent.ids.length() <= maxBatch and intent.refunds.length() == intent.ids.length() and ascendingIds(intent.ids)
