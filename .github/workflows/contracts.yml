@@ -48,7 +48,9 @@ jobs:
         with:
           job: contracts
       - run: forge fmt --root packages/contracts/evm --check
-      - run: forge build --root packages/contracts/evm --sizes
+      - name: Check deployable EVM bytecode sizes
+        working-directory: packages/contracts/evm
+        run: forge build --sizes src
       - run: pnpm --filter @repo/contracts test
 
   solana-verifiable:
