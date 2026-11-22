@@ -104,6 +104,10 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       precise: [protectedCredit, [completion, independent.workUnitId, carrier.login, 30]],
       legacy: [protectedCredit],
     }))
+    const prior = [...disjoint.revisions]
+    const relinked = { ...precise, reviewedImplementationUnits: [{ ...membership[0], units: [overlapping, independent] }, membership[1]] }
+    try applySnapshots(disjoint, repositories, [{ snapshot: relinked, digest: "3".repeat(64) }], recordedAt)
+    try Effect.try(() => assert.deepStrictEqual(disjoint.revisions, prior))
   })
 
   it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {
