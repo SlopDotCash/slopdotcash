@@ -70,8 +70,9 @@ lineage for a rotation, and the stored binding signature for the current
 on-chain version. A binding that is already current needs nothing. Its
 journal key names the vault, actor, claim and finalized binding version,
 so an unknown send retains the same signed bytes. Every signed binding stays
-on a pending list until its canonical receipt is finalized or a finalized
-revert proof retires it. Each run reads pending receipts first, even after a
+on a pending list until its canonical receipt is finalized, a finalized
+revert proof retires it, or the scheduled run retires it as rotated under
+the rotation rule below. Each run reads pending receipts first, even after a
 wallet changes. Before any broadcast, it verifies the exact signed intent
 against the current D1 claim, wallet authorization, unpaid award, on-chain
 version and unexpired stored consent. An obsolete or unprovable attempt stays
@@ -342,6 +343,31 @@ empty data/access list, and exactly 21,000 gas consumed and supplied. Its signed
 bytes are reconstructed and its signature and hash verified. Missing, changed,
 nonfinal, or unsupported winners remain held. Current reviewed deployment and
 identity pins must still match; a rotated-away identity requires separate review.
+
+Rotated-authority retirement (scheduled path only). The scheduled run may
+retire a stored binding locally without a finalized receipt only when all of
+these hold: the canonical-receipt check runs first and finds no finalized
+receipt for the original transaction; the sender recovered from the stored
+bytes is not the identity authority the factory currently reports
+(`identityAuthority()`); and the run writes a
+`${key}:rotated:${transactionId}` tombstone recording the current authority as
+`rotatedAuthority` and deletes the key in one journal transaction. This
+replaces the "a rotated-away identity requires separate review" rule for this
+one case: the review is the deterministic receipt-first plus authority
+comparison in code, not a separate human review, and it authorizes only local
+retirement — never a broadcast, a re-signing, or a cancellation. The
+retirement is terminal: the tombstone is retained, the deleted key is not
+restored, and the old bytes are never replayed by the service. If the
+registrar later rotates the authority back to the old key, the contributor
+must bind again with fresh bytes signed under the current authority; the
+retired bytes are not re-sent even if they would be valid on-chain again. A
+binding mined before the rotation still reconciles through the existing
+receipt path, and `/v1/reconcile-binding` still refuses an unmined attempt
+whose signer differs from the pin ("Stored binding identity differs"). A
+`:rotated:` tombstone counts as retained consent history, exactly like a
+`:reverted:` tombstone, so the same consent may fund one new binding only
+after the old binding has been retired into its tombstone — never two live
+bindings in parallel.
 
 The journal atomically archives the exact original attempt and observed proof,
 then retires only that pending entry. Repeating the same request is idempotent;
