@@ -72,7 +72,8 @@ type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSourc
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
   award: Award, grossChosen: M::Amount, commitment: Commitment, payment: PaymentState,
   related: Related, relatedReview: RelatedReview, deciders: List[int],
-  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage, routine: RoutineMark }
+  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage, routine: RoutineMark,
+  depositHeld: bool, spamMarked: bool }
 type RoutineMark = { closed: bool, returned: bool, proofAsked: int, proofDueAt: int }
 pure val noRoutine: RoutineMark = { closed: false, returned: false, proofAsked: 0, proofDueAt: 0 }
 pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List(), moderators: List(), banned: List(),
@@ -85,7 +86,8 @@ pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: 
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
   award: NotApplicable, grossChosen: M::zero, commitment: NoCommitment, payment: PaymentNotApplicable,
   related: NotAssessed, relatedReview: ReviewNotApplicable, deciders: List(),
-  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage, routine: noRoutine }
+  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage, routine: noRoutine,
+  depositHeld: false, spamMarked: false }
 pure def historicalAllowed(terms: T::ReceiptTerms, history: Historical, gross: M::Amount): bool =
   history == NewReceipt or (terms.paidTerms and terms.fundingPolicy == T::Prefunded
     and (history == ImportedCapacityWait or T::amountAllowed(terms, gross)))
@@ -103,11 +105,12 @@ pure def claim(c: PrivateCase, by: int): PrivateCase = { ...c, submission: Claim
 pure def technicalNow(c: PrivateCase, by: int, checkedEpoch: int): bool = checkedEpoch == c.authority.epoch and checkedEpoch > 0
   and c.authority.technical.includes(by) and by != c.reporter
 pure def canVerifyLink(c: PrivateCase, by: int, checkedEpoch: int, terms: T::ReceiptTerms): bool =
-  c.submission == Claimed and technicalNow(c, by, checkedEpoch) and T::validReceipt(terms)
+  c.submission == Claimed and technicalNow(c, by, checkedEpoch) and T::validReceipt(terms) and not(heldFor(c, by))
 pure def verifyLink(c: PrivateCase, by: int, checkedEpoch: int, terms: T::ReceiptTerms): PrivateCase =
   { ...c, submission: Verified, source: MaintainerAttested, terms: terms, revision: c.revision + 1, reportVersion: 1,
     award: if (terms.paidTerms) Pending else NotApplicable }
 pure def canRejectLink(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Claimed and technicalNow(c, by, checkedEpoch)
+  and not(heldFor(c, by))
 pure def rejectLink(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase = { ...c, submission: LinkRejected, revision: c.revision + 1 }
 pure def canRecordAttested(c: PrivateCase, by: int, checkedEpoch: int, terms: T::ReceiptTerms, confirmed: bool): bool =
   c.submission == NotReceived and technicalNow(c, by, checkedEpoch) and confirmed and T::validReceipt(terms)
@@ -156,7 +159,7 @@ link by hand.
 ```quint
 pure val githubReceiptService = -1
 pure def mayRequestReceiptCheck(c: PrivateCase, actor: int, checkedEpoch: int): bool =
-  c.submission == Claimed and (actor == c.reporter or technicalNow(c, actor, checkedEpoch))
+  c.submission == Claimed and (actor == c.reporter or technicalNow(c, actor, checkedEpoch)) and not(heldFor(c, actor))
 pure def canSettleClaim(c: PrivateCase, by: int, listed: bool, terms: T::ReceiptTerms): bool =
   c.submission == Claimed and by == githubReceiptService and (listed implies T::validReceipt(terms))
 pure def settleClaim(c: PrivateCase, by: int, listed: bool, terms: T::ReceiptTerms): PrivateCase =
@@ -181,11 +184,11 @@ pure def observeAuthority(c: PrivateCase, snapshot: Authority): PrivateCase =
   { ...c, authority: snapshot, triagers: List(), revokedTriagers: c.revokedTriagers.concat(c.triagers),
     memberEvents: c.memberEvents + c.triagers.length(), revision: if (c.triagers.length() > 0) c.revision + 1 else c.revision }
 pure def canAssignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
-  and technicalNow(c, by, checkedEpoch) and actor > 0 and actor != c.reporter and not(c.triagers.includes(actor))
+  and technicalNow(c, by, checkedEpoch) and actor > 0 and actor != c.reporter and not(c.triagers.includes(actor)) and not(heldFor(c, by))
 pure def assignTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
   { ...c, triagers: c.triagers.append(actor), triagerEpoch: checkedEpoch, revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
 pure def canRevokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): bool = c.submission == Verified
-  and technicalNow(c, by, checkedEpoch) and c.triagers.includes(actor)
+  and technicalNow(c, by, checkedEpoch) and c.triagers.includes(actor) and not(heldFor(c, by))
 pure def revokeTriager(c: PrivateCase, by: int, checkedEpoch: int, actor: int): PrivateCase =
   { ...c, triagers: c.triagers.select(t => t != actor), revokedTriagers: c.revokedTriagers.append(actor),
     revision: c.revision + 1, memberEvents: c.memberEvents + 1 }
@@ -193,11 +196,12 @@ pure def triagerNow(c: PrivateCase, by: int, checkedEpoch: int): bool = checkedE
   and c.triagers.includes(by) and by != c.reporter
 pure def moderatorNow(c: PrivateCase, by: int, checkedEpoch: int): bool = checkedEpoch == c.authority.epoch and checkedEpoch > 0
   and c.authority.moderators.includes(by) and by != c.reporter
-pure def mayReadBody(c: PrivateCase, actor: int, checkedEpoch: int): bool = c.submission == Verified and
+pure def mayReadBody(c: PrivateCase, actor: int, checkedEpoch: int): bool = c.submission == Verified and not(heldFor(c, actor)) and
   (actor == c.reporter or technicalNow(c, actor, checkedEpoch) or triagerNow(c, actor, checkedEpoch)
     or (moderatorNow(c, actor, checkedEpoch) and (c.appeal == AppealOpen or c.relatedReview == ReviewPending)))
 pure def mayReadAward(c: PrivateCase, actor: int, checkedEpoch: int): bool = mayReadBody(c, actor, checkedEpoch)
-  or (checkedEpoch == c.authority.epoch and c.authority.financial.includes(actor) and (c.award == Approved or c.award == Reserved))
+  or (checkedEpoch == c.authority.epoch and c.authority.financial.includes(actor) and (c.award == Approved or c.award == Reserved)
+    and not(heldFor(c, actor)))
 pure def alwaysTriagersExcludeReporter(c: PrivateCase): bool = not(c.triagers.includes(c.reporter))
 pure def alwaysMembershipAudited(c: PrivateCase): bool = c.memberEvents >= c.revokedTriagers.length() and c.memberEvents >= 0
 pure def alwaysTriagersAssignedUnderCurrentSnapshot(c: PrivateCase): bool =
@@ -210,6 +214,30 @@ pure def sometimesTriagerReassignedAfterSnapshot(c: PrivateCase): bool = c.triag
 ```
 
 ## Story: Obtain a human decision on every report the routine pass leaves open
+
+### A report that waits for its deposit is its reporter's alone
+
+PRD section 8, "Report deposit" (operator decision of 21 November 2026;
+`depositHeld` in `backend/security/report-deposit-hold.ts`, development
+commit `c04752ccf`). While the case's [report deposit](./reportDeposit.md)
+holds (an asked deposit with no payment and no outcome), only its reporter
+reads it or acts on it: every read or action of anyone else answers not found
+(`readCase`, `actOnCase` and the case list in `backend/security/handler.ts`,
+`authorizedStored` in `backend/security/report-intake.ts`), so no maintainer,
+triager, financial approver or moderator verifies, triages, decides or reads
+it, and the routine pass skips it. The reporter keeps every action of their
+own, a new report version included. The shell loads `depositHeld` with the
+case from the deposit row (`held` of the deposit); only the deposit machine
+changes it.
+
+```quint
+pure def heldFor(c: PrivateCase, by: int): bool = c.depositHeld and by != c.reporter
+pure def withDepositHeld(held: bool, c: PrivateCase): PrivateCase = { ...c, depositHeld: held }
+pure def lawHeldCaseIsTheReportersAlone(waitingCase: PrivateCase, by: int, checkedEpoch: int, decision: Decision): bool =
+  heldFor(waitingCase, by) implies not(mayReadBody(waitingCase, by, checkedEpoch))
+    and not(canDecide(waitingCase, by, checkedEpoch, waitingCase.reportVersion, decision))
+    and not(canRequestInformation(waitingCase, by, checkedEpoch))
+```
 
 ### Current technical approvers and triagers request information on the current report version
 
@@ -230,7 +258,7 @@ that decision stale.
 pure def receiptOpen(c: PrivateCase): bool = c.receipt == Received or c.receipt == NeedsInformation or c.receipt == Triaging
 pure def committed(c: PrivateCase): bool = c.award == Approved or c.award == Reserved
 pure def canRequestInformation(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Verified and receiptOpen(c)
-  and (technicalNow(c, by, checkedEpoch) or triagerNow(c, by, checkedEpoch))
+  and (technicalNow(c, by, checkedEpoch) or triagerNow(c, by, checkedEpoch)) and not(heldFor(c, by))
 pure def requestInformation(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase =
   { ...c, receipt: NeedsInformation, revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 } }
 pure def canReviseReport(c: PrivateCase, by: int, version: int): bool = c.submission == Verified and by == c.reporter
@@ -244,26 +272,35 @@ pure def sometimesInformationProvided(c: PrivateCase): bool = c.receipt == Needs
 
 The reporter never decides their own case. Once a case is related it stays
 related: a declaration, a program approver, dispute contact or sponsor
-reporter makes it related. A committed award is never redecided.
+reporter makes it related. A committed award is never redecided. A person
+who rejects a report may mark it as spam (`spam`, only with `rejected`: 400
+`invalid_request` "Only a rejected report can be marked spam" otherwise;
+`planDecision` in `backend/security/handler.ts`, development commits
+`c04752ccf` and `a381f7591`). The mark is the latest decision's: each
+decision records its own, and the routine pass never sets one. Only a
+person's spam mark lets the [report deposit](./reportDeposit.md) be kept.
 
 ```quint
-type Decision = { finding: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int, declareRelated: bool }
+type Decision = { finding: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int, declareRelated: bool,
+  spam: bool }
 pure def reporterRelated(c: PrivateCase): bool = c.related == RelatedParty or c.authority.relatedParties.includes(c.reporter)
 pure def canDecide(c: PrivateCase, by: int, checkedEpoch: int, version: int, decision: Decision): bool = c.submission == Verified
   and technicalNow(c, by, checkedEpoch) and receiptOpen(c) and not(committed(c)) and version == c.reportVersion
   and (decision.finding == Confirmed or decision.finding == Duplicate or decision.finding == OutOfScope or decision.finding == Rejected)
   and (decision.finding == Confirmed implies decision.rootCause > 0) and (decision.finding == Duplicate implies decision.duplicateOf > 0)
+  and (decision.spam implies decision.finding == Rejected) and not(heldFor(c, by))
 pure def decide(c: PrivateCase, by: int, checkedEpoch: int, version: int, decision: Decision): PrivateCase =
   { ...c, receipt: decision.finding, severity: decision.severity, loss: decision.loss, inScope: decision.inScope,
     rootCause: decision.rootCause, duplicateOf: decision.duplicateOf,
     related: if (decision.declareRelated or reporterRelated(c)) RelatedParty else Unrelated,
-    deciders: c.deciders.append(by), revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 } }
+    deciders: c.deciders.append(by), revision: c.revision + 1, routine: { ...c.routine, proofDueAt: 0 }, spamMarked: decision.spam }
 pure def alwaysDecidersExcludeReporter(c: PrivateCase): bool = not(c.deciders.includes(c.reporter))
 pure def alwaysConfirmedHasRootCause(c: PrivateCase): bool =
   (c.receipt == Confirmed or (c.appeal == AppealOpen and c.appealFrom == Confirmed)) implies c.rootCause > 0
 pure def stepRelatedPermanent(before: PrivateCase, after: PrivateCase): bool = before.related == RelatedParty implies after.related == RelatedParty
 pure def stepDecidersRetained(before: PrivateCase, after: PrivateCase): bool = before.deciders.every(d => after.deciders.includes(d))
 pure def sometimesDuplicate(c: PrivateCase): bool = c.receipt == Duplicate
+pure def sometimesRejectedAsSpam(c: PrivateCase): bool = c.receipt == Rejected and c.spamMarked
 ```
 
 ### A routine decision changes only an unappealed undecided report and its close is appealed to the owner once
@@ -290,7 +327,7 @@ pure val routineService = -2
 pure val routineProofWindowMs = 1209600000
 pure def routineClockPending(c: PrivateCase): bool = c.receipt == NeedsInformation and c.routine.proofDueAt > 0
   and c.reportVersion <= c.routine.proofAsked
-pure def routineReadable(c: PrivateCase, nowMs: int): bool = c.submission == Verified and c.appeal == NoAppeal
+pure def routineReadable(c: PrivateCase, nowMs: int): bool = c.submission == Verified and c.appeal == NoAppeal and not(c.depositHeld)
   and c.appealHistory.length() == 0 and not(committed(c)) and c.relatedReview != ReviewPending
   and (c.receipt == Received or (c.receipt == NeedsInformation and c.routine.proofDueAt > 0
     and (nowMs >= c.routine.proofDueAt or c.reportVersion > c.routine.proofAsked)))
@@ -355,24 +392,26 @@ pure def awardOpen(c: PrivateCase): bool = c.submission == Verified and c.receip
   and (c.award == Pending or c.award == CapacityExhausted) and c.relatedReview != ReviewPending
 pure def canDecideAward(c: PrivateCase, by: int, checkedEpoch: int, amount: M::Amount, clearance: ProjectClearance): bool =
   awardOpen(c) and technicalNow(c, by, checkedEpoch) and T::amountAllowed(c.terms, amount)
-    and T::eligibleFinding(c.terms, c.inScope, c.severity, c.loss) and mayStartCommitment(c, by, clearance)
+    and T::eligibleFinding(c.terms, c.inScope, c.severity, c.loss) and mayStartCommitment(c, by, clearance) and not(heldFor(c, by))
 pure def decideAward(c: PrivateCase, by: int, checkedEpoch: int, amount: M::Amount, clearance: ProjectClearance): PrivateCase =
   val decided = { ...c, deciders: c.deciders.append(by), revision: c.revision + 1 }
   if (reporterRelated(c) and c.relatedReview != ReviewApproved)
     { ...decided, related: RelatedParty, relatedReview: ReviewPending, award: Pending, grossChosen: amount }
   else committedWith(amount, clearance.rail, decided)
 pure def canDeclineAward(c: PrivateCase, by: int, checkedEpoch: int): bool = awardOpen(c) and technicalNow(c, by, checkedEpoch)
+  and not(heldFor(c, by))
 pure def declineAward(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase =
   { ...c, award: Ineligible, grossChosen: M::zero, deciders: c.deciders.append(by), revision: c.revision + 1 }
 pure def canReviewRelated(c: PrivateCase, by: int, checkedEpoch: int, approve: bool, clearance: ProjectClearance): bool =
   c.relatedReview == ReviewPending and c.receipt == Confirmed and c.award == Pending and c.appeal != AppealOpen
-    and moderatorNow(c, by, checkedEpoch) and not(c.deciders.includes(by))
+    and moderatorNow(c, by, checkedEpoch) and not(c.deciders.includes(by)) and not(heldFor(c, by))
     and (approve implies mayStartCommitment(c, by, clearance) and T::amountAllowed(c.terms, c.grossChosen))
 pure def reviewRelated(c: PrivateCase, by: int, checkedEpoch: int, approve: bool, clearance: ProjectClearance): PrivateCase =
   val reviewed = { ...c, relatedReview: if (approve) ReviewApproved else ReviewRefused, deciders: c.deciders.append(by), revision: c.revision + 1 }
   if (approve) committedWith(c.grossChosen, clearance.rail, reviewed) else { ...reviewed, award: Ineligible, grossChosen: M::zero }
 pure def canApproveReservedAward(c: PrivateCase, by: int, checkedEpoch: int, amount: M::Amount): bool =
   c.award == Reserved and c.appeal != AppealOpen and technicalNow(c, by, checkedEpoch) and M::equalAmounts(amount, c.grossChosen)
+  and not(heldFor(c, by))
 pure def approveReservedAward(c: PrivateCase, by: int, checkedEpoch: int, amount: M::Amount): PrivateCase =
   { ...c, award: Approved, deciders: c.deciders.append(by), revision: c.revision + 1 }
 pure def alwaysCommitmentMatchesAward(c: PrivateCase): bool = (c.commitment != NoCommitment) == committed(c)
@@ -446,6 +485,7 @@ pure def finishTriage(c: PrivateCase, appealRevision: int, attempt: int, result:
     | TriageUnavailableResult => { ...c, triage: { ...c.triage, state: TriageUnavailable } }
   }
 pure def canRetryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int): bool = c.appeal == AppealOpen and moderatorNow(c, by, checkedEpoch)
+  and not(heldFor(c, by))
   and (c.triage.state == TriageFailed or c.triage.state == TriageUnavailable
     or (c.triage.state == TriageRunning and nowMs >= c.triage.startedAt and nowMs - c.triage.startedAt > 900000))
 pure def retryTriage(c: PrivateCase, by: int, checkedEpoch: int, nowMs: int): PrivateCase = { ...c, triage: { ...c.triage, state: TriageQueued } }
@@ -471,7 +511,7 @@ a capacity wait still waits for funds. Every appeal outcome stays in history.
 
 ```quint
 pure def canDecideAppeal(c: PrivateCase, by: int, checkedEpoch: int, uphold: bool): bool = c.appeal == AppealOpen
-  and moderatorNow(c, by, checkedEpoch) and not(c.deciders.includes(by))
+  and moderatorNow(c, by, checkedEpoch) and not(c.deciders.includes(by)) and not(heldFor(c, by))
 pure def decideAppeal(c: PrivateCase, by: int, checkedEpoch: int, uphold: bool): PrivateCase =
   { ...c, appeal: if (uphold) Upheld else Returned, receipt: if (uphold) c.appealFrom else Triaging,
     award: if (not(uphold) and c.award == Ineligible) Pending else c.award,
@@ -500,6 +540,10 @@ pure val snapshotValues = Set(staff, { ...staff, epoch: 2, technical: List(3) },
 pure val byValues = Set(-1, 1, 2, 3, 4, 5, 6, 7)
 pure val actorValues = Set(1, 6)
 pure val checkedEpochValues = Set(1, 2, 3)
+pure val waitingCaseValues = Set(Received, NeedsInformation).map(receipt =>
+  { ...receive(initial, SlopReceived, T::standardTerms, NewReceipt, M::zero, 1), authority: staff, depositHeld: true, receipt: receipt })
+  .union(Set(true, false).map(held => { ...receive(initial, SlopReceived, T::standardTerms, NewReceipt, M::zero, 1), authority: staff,
+    depositHeld: held, triagers: List(6), triagerEpoch: 1 }))
 pure val sourceValues = Set(SlopReceived, GithubVerified)
 pure val termsValues = Set(T::standardTerms, T::fullTerms, T::historicalTerms, T::unpaidTerms(1, 2), T::unpaidTerms(0, 2), T::pausedTerms)
 pure val grossValues = Set(List(4), List(0))
@@ -507,10 +551,11 @@ pure val historyValues = Set(NewReceipt, ImportedReservation, ImportedCapacityWa
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1, 2)
 pure val decisionValues = Set(
-  { finding: Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false },
-  { finding: Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true },
-  { finding: Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false },
-  { finding: Duplicate, severity: T::SeverityUnset, loss: T::LossUnset, inScope: true, rootCause: 1, duplicateOf: 9, declareRelated: false })
+  { finding: Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false },
+  { finding: Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true, spam: false },
+  { finding: Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: false },
+  { finding: Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false, spam: true },
+  { finding: Duplicate, severity: T::SeverityUnset, loss: T::LossUnset, inScope: true, rootCause: 1, duplicateOf: 9, declareRelated: false, spam: false })
 pure val clearanceValues = Set(2, 3, 4, 5).fold(Set(), (cs, revision) => cs.union(Set(
   { caseRevision: revision, firstQualifying: true, rootCauseFree: true, rail: DirectRail },
   { caseRevision: revision, firstQualifying: true, rootCauseFree: true, rail: VaultRail },

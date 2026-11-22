@@ -176,7 +176,10 @@ the attempt pending: a pending attempt never expires with the review lease
 and keeps occupying capacity until reconciled. Confirmation is recorded even
 after a maintainer reopened the revision, because GitHub did close it; the
 reversal below then undoes it. After confirmation the close comment is
-retried until GitHub confirms it.
+retried until GitHub confirms it. The candidate stays what closure decided:
+two confirming model verdicts, or the deterministic missing-evidence finding,
+whose recheck must repeat the finding from the fresh body and guide
+(`stillMayClose` in `review.ts`, development `bf73d46fa`).
 
 ```quint
 type CloseActor = ActorUnknown | SlopbotApp | HumanActor
@@ -207,7 +210,8 @@ pure def alwaysConfirmedHasCloseTime(c: CloseAttempt): bool =
 pure def alwaysRejectedIdsOrdered(c: CloseAttempt): bool =
   c.rejected.every(r => r > 0 and (c.attempt.state == NoAttempt or r < c.attempt.id))
 pure def alwaysCandidateStaysEligible(c: CloseAttempt): bool =
-  C::confirms(c.candidate.triage, c.candidate.confirm) and c.candidate.identity.kind == C::PullRequest and
+  (C::confirms(c.candidate.triage, c.candidate.confirm) or C::evidenceCandidate(c.candidate.triage)) and
+  c.candidate.identity.kind == C::PullRequest and
   F::permittedAction(c.candidate.triage.verdict.category) == F::CloseAllowed and c.candidate.decidedSeq > 0
 pure def stepRejectedHistoryRetained(before: CloseAttempt, after: CloseAttempt): bool =
   after.rejected.length() >= before.rejected.length() and before.rejected.every(r => after.rejected.includes(r))

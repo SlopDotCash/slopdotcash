@@ -17,18 +17,24 @@ A missing clock never establishes expiry. The public retry and revision routes
 admit work through the existing per-actor rolling window before durable
 writes or paid calls. The public screening retry on a qualified intake
 retries its routing; no schedule does. Maintainer assessment retries follow their separate authorization.
-Credentials absent at screening produce unavailable evidence.
+Credentials absent at screening produce unavailable evidence. A report that
+waits for its [deposit](./reportDeposit.md) is not claimed: no screening, no
+assessment and no owner routing starts while it holds, and the public retry
+answers 409 `deposit_required` (`screenStoredReport` in
+`backend/security/report-intake.ts`, development commit `c04752ccf`). The
+shell loads `depositHeld` with the intake from the deposit row; only the
+deposit machine changes it.
 
 ```quint
 import terms as T from "./terms"
 type Phase = Queued | Running | Legitimate | NeedsInformation | Spam | Unavailable
 type Review = PendingReview | Forward | RequestInformation
 type Screening = { reporter: int, revision: int, version: int, digest: str, phase: Phase, review: Review,
-  startedAt: int, routed: bool, noticeVersions: Set[int], reportDigests: List[str], exclusions: T::ExclusionContext }
+  startedAt: int, routed: bool, noticeVersions: Set[int], reportDigests: List[str], exclusions: T::ExclusionContext, depositHeld: bool }
 type Clock = UnknownClock | ExactClock({ nowMs: int })
 type Claim = { revision: int, version: int, digest: str }
 pure val initial: Screening = { reporter: 1, revision: 1, version: 1, digest: "original", phase: Queued, review: PendingReview,
-  startedAt: 0, routed: false, noticeVersions: Set(), reportDigests: List("original"), exclusions: T::noExclusions }
+  startedAt: 0, routed: false, noticeVersions: Set(), reportDigests: List("original"), exclusions: T::noExclusions, depositHeld: false }
 pure def qualified(s: Screening): bool = s.review == Forward or (s.review == PendingReview and s.phase == Legitimate)
 pure def recoverable(s: Screening, clock: Clock): bool =
   match clock {
@@ -38,8 +44,10 @@ pure def recoverable(s: Screening, clock: Clock): bool =
   }
 pure def canClaim(s: Screening, seenRevision: int, nowMs: int, admitted: bool): bool =
   seenRevision == s.revision and nowMs > 0 and admitted and s.review == PendingReview and recoverable(s, ExactClock({ nowMs: nowMs }))
+    and not(s.depositHeld)
 pure def claim(s: Screening, seenRevision: int, nowMs: int, admitted: bool): Screening =
   { ...s, revision: s.revision + 1, phase: Running, startedAt: nowMs }
+pure def withDepositHeld(held: bool, s: Screening): Screening = { ...s, depositHeld: held }
 pure def owns(s: Screening, token: Claim): bool =
   s.phase == Running and s.revision == token.revision and s.version == token.version and s.digest == token.digest
 pure def alwaysClockBindings(s: Screening): bool = s.startedAt >= 0 and (s.phase == Running implies s.startedAt > 0)
@@ -69,7 +77,9 @@ a scoped receipt, or none ([terms](./terms.md)); the screening records that
 context. A matching exclusion is named only in the free-text reason
 (`SCREENING_PROMPT` and `parseScreeningProposal` in
 `backend/security/analysis.ts` carry no line field), which is advice; no
-structured line is recorded and the phase never depends on it.
+structured line is recorded and the phase never depends on it. A report that
+waits for its deposit is never duplicate evidence for another report
+(`matchingEvidenceDigest` skips it).
 
 ```quint
 type ProviderRoute = Surplus | Absent | OtherRoute
@@ -122,19 +132,24 @@ a reporter replaces an eligible draft or failed report. The transaction
 advances both records and appends exact retained evidence. A successful
 replacement queues new screening and clears current routing. Preserve prior
 versions and their notices. The shell checks the concurrent case revision,
-case eligibility, private object and reporter before this event.
+case eligibility, private object and reporter before this event. The
+reporter may also add a version to a report that waits for its deposit,
+whatever its screening phase (`actStoredIntake` revise and `intakeView`
+`canRevise` in `backend/security/report-intake.ts`); a maintainer reviews
+nothing while it holds.
 
 ```quint
 type RevisionEvidence = { isReporter: bool, draftOrFailed: bool, noAdvisory: bool, caseNeedsInformation: bool,
   exactCaseCas: bool, allowedCaseState: bool, exactObjectStored: bool, admitted: bool }
 pure def canReviewReport(s: Screening, by: int, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): bool =
   seenRevision == s.revision and by != s.reporter and currentMaintainer and checkedReason and decision != PendingReview
+    and not(s.depositHeld)
 pure def reviewReport(s: Screening, by: int, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): Screening =
   { ...s, revision: s.revision + 1, review: decision }
 pure def revisionPermitted(s: Screening, evidence: RevisionEvidence): bool =
   evidence.isReporter and evidence.draftOrFailed and evidence.noAdvisory and evidence.exactCaseCas and evidence.allowedCaseState
     and evidence.exactObjectStored and evidence.admitted
-    and (s.review == RequestInformation or evidence.caseNeedsInformation or
+    and (s.review == RequestInformation or evidence.caseNeedsInformation or s.depositHeld or
       (s.review == PendingReview and (s.phase == NeedsInformation or s.phase == Spam or s.phase == Unavailable)))
 pure def canReplace(s: Screening, seenRevision: int, digest: str, evidence: RevisionEvidence): bool =
   seenRevision == s.revision and digest != "" and digest != s.digest and revisionPermitted(s, evidence)
@@ -157,12 +172,14 @@ own notice. An acting sole technical approver may complete routing without
 mailing themselves. Missing contacts keep routing pending. The database
 deduplicates each submission, version and recipient. The notification worker
 checks recipient authority again before delivery. Routing and model output
-leave case findings, award authority and disclosures with their owners.
+leave case findings, award authority and disclosures with their owners. The
+owners hear nothing of a report that waits for its deposit: routing waits
+until it no longer holds (`routedNotice`).
 
 ```quint
 type Routing = { checkedContext: bool, eligibleRecipients: bool, actingTechnicalApprover: bool }
 pure def canRoute(s: Screening, seenRevision: int, routing: Routing): bool =
-  seenRevision == s.revision and qualified(s) and not(s.routed) and routing.checkedContext
+  seenRevision == s.revision and qualified(s) and not(s.routed) and routing.checkedContext and not(s.depositHeld)
     and (routing.eligibleRecipients or routing.actingTechnicalApprover)
 pure def route(s: Screening, seenRevision: int, routing: Routing): Screening =
   { ...s, revision: s.revision + 1, routed: true,

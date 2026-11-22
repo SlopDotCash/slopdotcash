@@ -67,7 +67,19 @@ admission with 413
 unreachable in practice; `security_intake_reports.byte_count` (migration
 `0101`) keeps the same bound as a database check. An empty report is refused
 by the input schema, and a stored object whose size differs from its recorded
-count is never shown.
+count is never shown. A report may carry one optional proof-of-concept file
+(`proofOfConcept`: exactly `fileName` and `patch`; PRD section 8, operator
+decision of 20 November 2026, `src/lib/report-proof.ts` and
+`parseReportInput` in `backend/security/github-advisories.ts`, development
+commit `548dcaaf7`): a name of 1 to 200 characters that starts with a letter
+or digit, uses only letters, digits, dots, hyphens and underscores, holds no
+`..` and ends, in any letter case and after at least one more character, in `.patch`, `.diff`,
+`.sol`, `.ts`, `.js`, `.rs`, `.py` or `.go`; and text that is not blank, holds
+no NUL and no lone surrogate, and is at most 60,000 UTF-8 bytes. A
+description whose forwarded form, with the file as its own fenced section,
+exceeds 65,000 characters is refused. Each refusal answers 400
+`invalid_report` and creates nothing. The file is part of the stored report,
+under the same 1 to 262,144-byte bound; browser and server share one parser.
 
 ```quint
 pure val maxReportBytes = 262144
@@ -136,7 +148,8 @@ pure def sometimesBannedBeforeCommit(i: Intake): bool = i.phase == ObjectStored 
 Drafts are account-and-project-bound session storage. Sign-out and account
 changes clear retained private draft data. Storage failures remain visible.
 No local-storage persistence, server autosave, attachment service or public
-issue fallback is introduced. The frontend specification owns those controls.
+issue fallback is introduced; a proof-of-concept file is part of the stored
+report, not an attachment. The frontend specification owns those controls.
 
 ### Simulation samples
 

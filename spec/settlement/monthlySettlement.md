@@ -40,8 +40,8 @@ pure def canDeploy(s: MonthlySettlement, asset: E::AssetIdentity, mint: E::MintF
   purpose == E::OrdinaryPurpose and E::canDeploy(s.escrow, asset, mint, purpose, delay, cap, turnOn)
 pure def deploy(s: MonthlySettlement, asset: E::AssetIdentity, mint: E::MintFacts, purpose: E::VaultPurpose, delay: int, cap: M::Amount, turnOn: bool): MonthlySettlement =
   { ...s, escrow: E::deploy(s.escrow, asset, mint, purpose, delay, cap, turnOn) }
-pure def canOpenMonth(s: MonthlySettlement, period: int): bool = MO::canOpenMonth(s.month, period)
-pure def openMonth(s: MonthlySettlement, period: int): MonthlySettlement = { ...s, month: MO::openMonth(s.month, period) }
+pure def canOpenMonth(s: MonthlySettlement, period: int): bool = MO::canOpenMonth(s.month, s.month.project, period)
+pure def openMonth(s: MonthlySettlement, period: int): MonthlySettlement = { ...s, month: MO::openMonth(s.month, s.month.project, period) }
 pure def canObserveClock(s: MonthlySettlement, now: int): bool = MO::canObserveClock(s.month, now)
 pure def observeClock(s: MonthlySettlement, now: int): MonthlySettlement = { ...s, month: MO::observeClock(s.month, now) }
 pure def canObserveEligibility(s: MonthlySettlement, eligibility: MO::Eligibility): bool = MO::canObserveEligibility(s.month, eligibility)
@@ -63,9 +63,9 @@ pure def canFinalize(s: MonthlySettlement, expectedSequence: int, fact: MO::Auth
 pure def finalize(s: MonthlySettlement, expectedSequence: int, fact: MO::AuthorityFact): MonthlySettlement =
   { ...s, month: MO::finalize(s.month, expectedSequence, fact) }
 pure def canPropose(s: MonthlySettlement, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: MO::RevisionFact): bool =
-  MO::canPropose(s.month, snapshot, exclusions, revision)
+  MO::canPropose(s.month, snapshot, exclusions, revision, 0, MO::noShareRecord)
 pure def propose(s: MonthlySettlement, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: MO::RevisionFact): MonthlySettlement =
-  { ...s, month: MO::propose(s.month, snapshot, exclusions, revision) }
+  { ...s, month: MO::propose(s.month, snapshot, exclusions, revision, 0, MO::noShareRecord) }
 pure def canAutoFreeze(s: MonthlySettlement): bool = MO::canAutoFreeze(s.month)
 pure def autoFreeze(s: MonthlySettlement): MonthlySettlement = { ...s, month: MO::autoFreeze(s.month) }
 pure def canDeposit(s: MonthlySettlement, funds: E::Deposit, ev: E::ChainEvent): bool = E::canDeposit(s.escrow, funds, ev)

@@ -28,12 +28,20 @@ account change or sign-out, changes nothing. Time is seconds.
 The server reports whether the viewer is an owner or administrator who may
 manage the month; a maintainer reads awards but never edits, saves or
 finalizes. With the automatic default on, editing closes at the cutoff, and
-a cut closes 24 hours before it. A frozen month accepts nothing.
+a cut closes 24 hours before it. A frozen month accepts nothing. A month
+whose proposal carries a recorded early close (`fixed`, the
+[closeout](../settlement/asiNovemberCloseout.md)'s `earlyCloseAt`) opens no
+editor and saves nothing; the page shows its close time ("Contributions
+before <time>.") and its cap as "Prorated cap", and the owner may still
+finalize it. Month navigation reaches the last closed month, and also the
+closeout month from its cutoff while that month has not ended (development
+`src/OwnerAwards.tsx:128–163,397–401,683–750` at `8660a6121`).
 
 ```quint
 import walletAttempt as WA from "./walletAttempt"
 import monthly as MO from "../settlement/monthly"
-type MonthView = { sequence: int, automatic: bool, cutoffAt: int, latestCutAt: int, frozen: bool }
+import asiNovemberCloseout as C from "../settlement/asiNovemberCloseout"
+type MonthView = { sequence: int, automatic: bool, cutoffAt: int, latestCutAt: int, frozen: bool, fixed: bool }
 type SaveResult = SaveAccepted | SaveConflict | WindowClosed | SaveFailed
 type Notice = Quiet | AllocationSaved | CutSaved | Conflict | Closed | Failed | Finalized | StorageBlocked | Occupied | NoticeWindow
 type Target = Commitment | Setting | Release
@@ -48,14 +56,24 @@ type OwnerMonthly = { owner: int, manages: bool, lifetime: int, now: int, month:
 pure val server = 0
 pure val adapter = -1
 pure val clock = -2
-pure val noMonth: MonthView = { sequence: 0, automatic: true, cutoffAt: 0, latestCutAt: 0, frozen: false }
+pure val noMonth: MonthView = { sequence: 0, automatic: true, cutoffAt: 0, latestCutAt: 0, frozen: false, fixed: false }
 pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "" }
 pure val initial: OwnerMonthly = { owner: 0, manages: false, lifetime: 0, now: 1, month: noMonth, loaded: false,
   draftOpen: false, draftCut: false, reasonLength: 0, saving: 0, expected: 0, savingCut: false, finalizing: false,
   requests: 0, notice: Quiet, commitment: idleFlow, setting: idleFlow, release: idleFlow, releaseApproved: false,
   funds: FundsHidden, fundsRequest: 0, used: List(), settingRequest: 0, settingWanted: false }
-pure def editorOpen(v: OwnerMonthly): bool = v.loaded and v.manages and not(v.month.frozen)
+pure def editorOpen(v: OwnerMonthly): bool = v.loaded and v.manages and not(v.month.frozen) and not(v.month.fixed)
   and not(v.month.automatic and v.now >= v.month.cutoffAt)
+pure def lastReachableMonth(projectId: str, viewedAt: int, lastClosed: int): int =
+  if (projectId == C::closeoutProject and viewedAt >= C::closeoutCutoff and lastClosed < C::closeoutPeriod) C::closeoutPeriod
+  else lastClosed
+pure def lawOnlyTheCloseoutOpensEarly(projectId: str, viewedAt: int, lastClosed: int): bool =
+  lastReachableMonth(projectId, viewedAt, lastClosed) != lastClosed implies
+    (projectId == C::closeoutProject and viewedAt >= C::closeoutCutoff
+      and lastReachableMonth(projectId, viewedAt, lastClosed) == C::closeoutPeriod)
+pure val projectIdValues = Set("asi", "eliza")
+pure val viewedAtValues = Set(C::closeoutCutoff - 1).union(Set(C::closeoutCutoff))
+pure val lastClosedValues = Set(202610, 202611)
 pure def cutsOpen(v: OwnerMonthly): bool = editorOpen(v) and not(v.month.automatic and v.now >= v.month.cutoffAt - MO::cutNoticeSeconds)
 pure def reasonValid(reasonLength: int): bool = reasonLength >= MO::cutReasonMin and reasonLength <= MO::cutReasonMax
 pure def resumed(flow: Flow, account: int): Flow =
@@ -75,7 +93,7 @@ pure def observeClock(v: OwnerMonthly, now: int, by: int): OwnerMonthly = { ...v
 pure def canObserveMonth(v: OwnerMonthly, lifetime: int, month: MonthView, by: int): bool = by == server and v.owner > 0
   and lifetime == v.lifetime and month.cutoffAt > 0 and month.sequence >= v.month.sequence and month.latestCutAt <= v.now
 pure def observeMonth(v: OwnerMonthly, lifetime: int, month: MonthView, by: int): OwnerMonthly =
-  { ...v, month: month, loaded: true, draftOpen: v.draftOpen and not(month.frozen) }
+  { ...v, month: month, loaded: true, draftOpen: v.draftOpen and not(month.frozen) and not(month.fixed) }
 ```
 
 ### A cut needs a 20 to 500 character public reason, and a save names the sequence it read
@@ -267,6 +285,8 @@ pure def stepFrozenOnlyAfterNotice(before: OwnerMonthly, via: str, after: OwnerM
 pure def stepReleaseNeedsApproval(before: OwnerMonthly, after: OwnerMonthly): bool =
   (before.release.phase != Reviewed and after.release.phase == Reviewed and after.release.slot == before.release.slot)
     implies before.releaseApproved
+pure def alwaysFixedMonthNeverSaves(v: OwnerMonthly): bool = v.month.fixed implies (not(editorOpen(v)) and not(canSave(v, v.owner)))
+pure def sometimesFixedMonthShown(v: OwnerMonthly): bool = v.loaded and v.manages and v.month.fixed and not(v.month.frozen)
 pure def sometimesCutSaved(v: OwnerMonthly): bool = v.notice == CutSaved
 pure def sometimesConflict(v: OwnerMonthly): bool = v.notice == Conflict and v.draftOpen
 pure def sometimesCutWindowClosedEditorOpen(v: OwnerMonthly): bool = editorOpen(v) and not(cutsOpen(v))
@@ -282,9 +302,10 @@ pure val byValues = Set(1, 2, server, adapter, clock)
 pure val lifetimeValues = Set(1, 2)
 pure val requestValues = Set(1, 2)
 pure val nowValues = Set(100000, 180000, 200000)
-pure val monthValues = Set({ sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
-  { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
-  { sequence: 0, automatic: false, cutoffAt: 190000, latestCutAt: 0, frozen: false })
+pure val monthValues = Set({ sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
+  { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
+  { sequence: 0, automatic: false, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
+  { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: true })
 pure val reasonLengthValues = Set(0, 40, 600)
 pure val identityValues = Set("p1", "p2", "p3")
 pure val hashValues = Set("", "h1")

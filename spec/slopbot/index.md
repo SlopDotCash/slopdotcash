@@ -11,6 +11,7 @@ Slopbot review remains free.
 - [Review routing and the new-author cap](./routing.md)
 - [Monthly free-review cap](./reviewCap.md)
 - [Review and provider recovery](./review.md)
+- [Submission fee gate](./submissionFeeGate.md)
 - [The slopbot:ready label](./readyLabel.md)
 - [Review claims and late-worker fencing](./reviewLease.md)
 - [Provider budget blocks](./budgetBlocks.md)

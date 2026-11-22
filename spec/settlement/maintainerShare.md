@@ -31,10 +31,17 @@ field of the [project registry](../backend/projects.md) revision.
 ### Only another person's outside pull request, merged or closed by a person, is a decision
 
 The deciding account is the one GitHub records as merging or closing the
-pull request. GitHub lets only an account with maintainer rights merge or
-close another person's pull request, so no permission list is read. The
-author's own close, a merge or close by a bot, and a pull request whose
-author is an owner, member or collaborator or a bot count for nobody. A
+pull request. GitHub lets only an account with maintainer rights merge
+another person's pull request, so no permission list is read. A close is
+different: deleting the head branch or the fork closes the pull request, and
+GitHub records the deleting account as the closer. So a close counts for
+nobody when the closer owns the fork the pull request came from (or GitHub
+names no owner for it), when that fork no longer exists, or when the closer deleted the head branch within 60
+seconds of the close, before or after it (development `8660a6121`,
+`scripts/maintainer-decisions.ts` `closedByHeadDeletion`); a merge is
+unaffected. The author's own close, a merge or close by a bot or by an
+account GitHub no longer names, and a pull request whose author is an owner,
+member or collaborator or a bot count for nobody. A
 merge and a close count the same, and a reopened pull request counts once,
 for its last close: the record holds each pull request at most once. A
 record is the complete read of one project month: it names that month and
@@ -47,9 +54,13 @@ import allocation as A from "./allocation"
 import payoutExclusions as X from "./payoutExclusions"
 type DecisionKind = MergedByMaintainer | ClosedByMaintainer
 type Decision = { repository: int, pull: int, author: int, authorOutside: bool, decider: int, deciderBot: bool,
-  kind: DecisionKind, period: int }
+  kind: DecisionKind, period: int, headForkOwnedByDecider: bool, headForkMissing: bool, deciderDeletedHeadWithinWindow: bool }
 type DecisionRecord = { period: int, repositories: List[int], deciders: List[int], decisions: List[Decision], digest: str }
+pure val deletionWindowSeconds = 60
+pure def closedByHeadDeletion(d: Decision): bool = d.kind == ClosedByMaintainer
+  and (d.headForkOwnedByDecider or d.headForkMissing or d.deciderDeletedHeadWithinWindow)
 pure def countedDecision(d: Decision): bool = d.authorOutside and not(d.deciderBot) and d.decider != d.author and d.decider > 0
+  and not(closedByHeadDeletion(d))
 pure def validRecord(record: DecisionRecord, period: int, repositories: List[int]): bool =
   record.period == period and record.repositories == repositories and record.digest != ""
     and record.decisions.every(d => d.period == period and repositories.includes(d.repository) and d.pull > 0
@@ -59,6 +70,8 @@ pure def validRecord(record: DecisionRecord, period: int, repositories: List[int
       and record.decisions.some(d => d.decider == a))
 pure def lawOwnCloseAndBotsCountForNobody(d: Decision): bool =
   (d.decider == d.author or d.deciderBot or not(d.authorOutside)) implies not(countedDecision(d))
+pure def lawHeadDeletionCloseCountsForNobody(d: Decision): bool = closedByHeadDeletion(d) implies not(countedDecision(d))
+pure def lawMergeNeverHeadDeletion(d: Decision): bool = d.kind == MergedByMaintainer implies not(closedByHeadDeletion(d))
 ```
 
 ### The share is a floor of the monthly amount and is split by decisions with ties to the lower account
@@ -183,19 +196,26 @@ pure def sometimesChangeWaitsForNextMonth(m: ShareMonth): bool = m.phase == Mont
 
 ```quint
 pure val decided: Decision = { repository: 1, pull: 1, author: 9, authorOutside: true, decider: 1, deciderBot: false,
-  kind: MergedByMaintainer, period: 202701 }
+  kind: MergedByMaintainer, period: 202701, headForkOwnedByDecider: false, headForkMissing: false,
+  deciderDeletedHeadWithinWindow: false }
 pure val recordValues = Set(
   { period: 202701, repositories: List(1), deciders: List(1, 2), digest: "r1",
     decisions: List(decided, { ...decided, pull: 2, decider: 2, kind: ClosedByMaintainer }, { ...decided, pull: 3, decider: 2 }) },
   { period: 202701, repositories: List(1), deciders: List(1), digest: "r2",
     decisions: List({ ...decided, author: 1, decider: 1, kind: ClosedByMaintainer }) },
-  { period: 202612, repositories: List(1), deciders: List(1), digest: "r3", decisions: List({ ...decided, period: 202612 }) })
+  { period: 202612, repositories: List(1), deciders: List(1), digest: "r3", decisions: List({ ...decided, period: 202612 }) },
+  { period: 202701, repositories: List(1), deciders: List(1), digest: "r4",
+    decisions: List({ ...decided, kind: ClosedByMaintainer, headForkMissing: true }) })
 pure val basisPointsValues = Set(0, 2000, 3000, 3001)
 pure val amountValues = Set(List(0), List(10), List(15))
 pure val repositoriesValues = Set(List(1), List(1, 2))
 pure val exclusionsValues = Set(List(), List({ actor: 1, relationship: X::ProjectOwner, fromPeriod: 202612, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2)
-pure val dValues = Set(decided, { ...decided, decider: 9 }, { ...decided, deciderBot: true }, { ...decided, authorOutside: false })
+pure val dValues = Set(decided, { ...decided, decider: 9 }, { ...decided, deciderBot: true }, { ...decided, authorOutside: false },
+  { ...decided, kind: ClosedByMaintainer }, { ...decided, kind: ClosedByMaintainer, headForkOwnedByDecider: true },
+  { ...decided, kind: ClosedByMaintainer, headForkMissing: true },
+  { ...decided, kind: ClosedByMaintainer, deciderDeletedHeadWithinWindow: true },
+  { ...decided, headForkMissing: true })
 pure val byValues = Set(owner, workflow, clock)
 pure val weight_readCompletes = 4
 pure val weight_propose = 3

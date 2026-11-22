@@ -11,9 +11,10 @@ without their own qualified verifier, and
 "Automatic closure" repeats that qualification uses reviewed real cases and
 counterexamples and that the current global closure switch stays off until
 reviewed production activation. Source: `workers/slopbot/wrangler.toml`
-ships `SLOPBOT_CLOSURE_ENABLED = "false"`, `review.ts` (`closureState`,
-`qualityQualified`) and `QUALITY.md` (`slopbot_quality_shadow`,
-`SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256`).
+ships `SLOPBOT_CLOSURE_ENABLED = "false"` and, since development
+`bf73d46fa` (#3063, 20 November 2026), `SLOPBOT_EVIDENCE_CLOSURE_ENABLED =
+"true"`, `review.ts` (`closureState`, `qualityQualified`) and `QUALITY.md`
+(`slopbot_quality_shadow`, `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256`).
 
 This machine owns the switch, the per-category qualification records and the
 objective verifier qualification. [Closure](./closure.md) and the
@@ -51,9 +52,10 @@ type VerifierReview = { profileDigest: str, shadowRecorded: bool, reviewer: int 
 type EntryKind = Decided | Qualified | Revoked | VerifierQualified | VerifierRevoked | Activated | Deactivated
 type Entry = { kind: EntryKind, by: int, category: F::Category, reference: str }
 type Activation = { qualifier: int, verifierLaunchLifted: bool, enabled: bool, lastRelease: int,
-  qualifications: List[Qualification], verifierProfile: str, journal: List[Entry] }
+  qualifications: List[Qualification], verifierProfile: str, journal: List[Entry], evidenceEnabled: bool,
+  lastEvidenceRelease: int }
 pure val initial: Activation = { qualifier: 0, verifierLaunchLifted: false, enabled: false, lastRelease: 0,
-  qualifications: List(), verifierProfile: "", journal: List() }
+  qualifications: List(), verifierProfile: "", journal: List(), evidenceEnabled: false, lastEvidenceRelease: 0 }
 pure def canRecordDecision(a: Activation, decision: OwnerDecision): bool = decision.reference != "" and
   (if (decision.kind == QualifierNamed) a.qualifier == 0 and decision.actor > 0 else not(a.verifierLaunchLifted))
 pure def recordDecision(a: Activation, decision: OwnerDecision): Activation =
@@ -246,7 +248,7 @@ one.
 type ReleaseBranch = MainBranch | OtherBranch
 type ReleaseWorkflow = ProductionRelease | OtherWorkflow
 type ReleaseEvidence = { sequence: int, branch: ReleaseBranch, workflow: ReleaseWorkflow, reviewedPullRequest: int,
-  sourceSha: str, closureEnabled: bool }
+  sourceSha: str, closureEnabled: bool, evidenceClosureEnabled: bool }
 pure def reviewedRelease(a: Activation, release: ReleaseEvidence): bool =
   release.sequence > a.lastRelease and release.branch == MainBranch and release.workflow == ProductionRelease and
   release.reviewedPullRequest > 0 and release.sourceSha != ""
@@ -280,6 +282,47 @@ pure def sometimesLowQualityClosedAtLaunch(a: Activation): bool =
   a.enabled and qualified(a, F::LowQuality) and not(categoryOpen(a, F::LowQuality))
 ```
 
+### The missing-evidence closure has its own reviewed switch, which needs no model qualification
+
+`closureState` in `review.ts` reads `SLOPBOT_EVIDENCE_CLOSURE_ENABLED` for
+`missing_evidence` and `SLOPBOT_CLOSURE_ENABLED` for every other category
+(development `bf73d46fa`, #3063). No model decides the evidence finding (it
+is the deterministic check of [closure](./closure.md)), so its switch needs
+no qualification record and no owner decision naming a qualifier. It changes
+like the general switch, only with a reviewed production release of `main`,
+in release order of its own; a release reporting it on switches it on, one
+reporting it off switches it off, independently of the general switch and of
+any qualification. Closure's `ActivationView.evidenceEnabled` is exactly
+`evidenceEnabled` here. Every other gate of closure still applies to the
+evidence close.
+
+```quint
+pure def reviewedEvidenceRelease(a: Activation, release: ReleaseEvidence): bool =
+  release.sequence > a.lastEvidenceRelease and release.branch == MainBranch and release.workflow == ProductionRelease and
+  release.reviewedPullRequest > 0 and release.sourceSha != ""
+pure def canActivateEvidence(a: Activation, release: ReleaseEvidence): bool =
+  reviewedEvidenceRelease(a, release) and release.evidenceClosureEnabled and not(a.evidenceEnabled)
+pure def activateEvidence(a: Activation, release: ReleaseEvidence): Activation =
+  { ...a, evidenceEnabled: true, lastEvidenceRelease: release.sequence,
+    journal: a.journal.append({ kind: Activated, by: 0, category: F::MissingEvidence, reference: release.sourceSha }) }
+pure def canDeactivateEvidence(a: Activation, release: ReleaseEvidence): bool =
+  reviewedEvidenceRelease(a, release) and not(release.evidenceClosureEnabled) and a.evidenceEnabled
+pure def deactivateEvidence(a: Activation, release: ReleaseEvidence): Activation =
+  { ...a, evidenceEnabled: false, lastEvidenceRelease: release.sequence,
+    journal: a.journal.append({ kind: Deactivated, by: 0, category: F::MissingEvidence, reference: release.sourceSha }) }
+pure def lawUnreviewedReleaseNeverActivatesEvidence(a: Activation, release: ReleaseEvidence): bool =
+  (release.branch != MainBranch or release.workflow != ProductionRelease or release.reviewedPullRequest <= 0) implies
+    not(canActivateEvidence(a, release))
+pure def alwaysEvidenceEnabledWasActivated(a: Activation): bool =
+  a.evidenceEnabled implies
+    (a.journal.some(e => e.kind == Activated and e.category == F::MissingEvidence) and a.lastEvidenceRelease > 0)
+pure def stepEvidenceReleasesInOrder(before: Activation, after: Activation): bool =
+  after.lastEvidenceRelease >= before.lastEvidenceRelease
+pure def sometimesOnlyEvidenceClosureOn(a: Activation): bool = a.evidenceEnabled and not(a.enabled)
+pure def sometimesEvidenceClosureSwitchedOff(a: Activation): bool =
+  not(a.evidenceEnabled) and a.journal.some(e => e.kind == Deactivated and e.category == F::MissingEvidence)
+```
+
 ### Simulation samples include unreviewed counts, label-only categories, other actors and unreviewed releases
 
 The decision samples are placeholders for the gates, not the owner's choice.
@@ -296,10 +339,11 @@ pure val decisionValues = Set({ kind: QualifierNamed, reference: "decision-a", a
   { kind: VerifierLaunchLifted, reference: "decision-b", actor: 4 }, { kind: QualifierNamed, reference: "", actor: 4 })
 pure val byValues = Set(4, 202660855)
 pure val mainRelease: ReleaseEvidence = { sequence: 1, branch: MainBranch, workflow: ProductionRelease,
-  reviewedPullRequest: 77, sourceSha: "sha1", closureEnabled: true }
+  reviewedPullRequest: 77, sourceSha: "sha1", closureEnabled: true, evidenceClosureEnabled: true }
 pure val releaseValues = Set(mainRelease, { ...mainRelease, sequence: 2, closureEnabled: false },
   { ...mainRelease, sequence: 3 }, { ...mainRelease, sequence: 4, branch: OtherBranch },
-  { ...mainRelease, sequence: 4, reviewedPullRequest: 0 })
+  { ...mainRelease, sequence: 4, reviewedPullRequest: 0 },
+  { ...mainRelease, sequence: 5, closureEnabled: false, evidenceClosureEnabled: false })
 pure val weight_recordDecision = 4
 pure val weight_qualify = 4
 pure val weight_activate = 4

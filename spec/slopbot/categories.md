@@ -16,8 +16,12 @@ cannot disagree between areas.
 The PRD row "Clear violation of a quoted project rule" is the verdict
 categories `busywork` and `gaming`; a quoted rule must be found verbatim in
 the reviewed policy before either can act. `empty` closes without a debit,
-like `duplicate`. `none` is the no-findings outcome. `missing_evidence` and
-`out_of_scope` are label-only whatever a repository file configures. Only
+like `duplicate`. `none` is the no-findings outcome. `out_of_scope` is
+label-only whatever a repository file configures. Since table
+`slopbot-penalties-v2` (development `bf73d46fa`, #3063) `missing_evidence`
+may close, but only on the service's deterministic evidence finding
+([closure](./closure.md)); a model's `missing_evidence` verdict stays a
+label. Only
 `scam` is a confirmed-malicious result that adds the moderator label, the
 moderator account-review notice and mandatory appeal escalation. The four
 universal categories (`spam`, `scam`, `empty`, `duplicate`) need no
@@ -30,7 +34,7 @@ type Category = NoFinding | Spam | Scam | EmptyItem | Duplicate | OutOfScope | B
 type PermittedAction = NoAction | LabelOnly | CloseAllowed
 pure def permittedAction(category: Category): PermittedAction =
   if (category == NoFinding) NoAction
-  else if (category == OutOfScope or category == MissingEvidence) LabelOnly
+  else if (category == OutOfScope) LabelOnly
   else CloseAllowed
 pure def neverCloses(category: Category): bool = permittedAction(category) != CloseAllowed
 pure def universal(category: Category): bool =
@@ -42,29 +46,35 @@ pure def securityCategory(category: Category): bool = category == Scam
 pure def lawNoFindingTakesNoAction(category: Category): bool =
   category == NoFinding implies permittedAction(category) == NoAction
 pure def lawLabelOnlyCategoriesNeverClose(category: Category): bool =
-  (category == OutOfScope or category == MissingEvidence or category == NoFinding) implies neverCloses(category)
+  (category == OutOfScope or category == NoFinding) implies neverCloses(category)
 pure def lawOnlyScamIsMalicious(category: Category): bool = confirmedMalicious(category) iff category == Scam
 pure def lawSecurityActsOnlyOnScam(category: Category): bool = securityCategory(category) implies category == Scam
 ```
 
 ### Debits are whole Points fixed by the table version in force when the debit is recorded
 
-The published table is `slopbot-penalties-v1`: spam 30, scam or malicious
-240, quoted-rule violation 10, and 0 for every other category. Source units
-are thirds (3, 24, 1); one third is ten Points. A debit row records its table
-version, so a later table applies prospectively and never re-prices an
-existing row. Only version 1 exists; an unknown version has no debit and the
-recording guard refuses it.
+The table in force is `slopbot-penalties-v2` (`PENALTY_TABLE_VERSION` in
+`penalties.ts`, `penaltyDebit` in `verified-policy.ts`): spam 30, scam or
+malicious 240, quoted-rule violation 10, missing evidence 10, and 0 for every
+other category. Version 1 (`slopbot-penalties-v1`) had the same debits but
+none for missing evidence. Source units are thirds (3, 24, 1); one third is
+ten Points. A debit row records its table version, so a later table applies
+prospectively and never re-prices an existing row: a version-1 row keeps its
+version-1 debit. Versions 1 and 2 exist; an unknown version has no debit and
+the recording guard refuses it. A missing-evidence debit needs no moderator
+review.
 
 ```quint
-pure val currentTableVersion = 1
-pure def knownTableVersion(version: int): bool = version == 1
+pure val currentTableVersion = 2
+pure def knownTableVersion(version: int): bool = version == 1 or version == 2
 pure def debitFor(version: int, category: Category): int =
   if (not(knownTableVersion(version))) 0
   else if (category == Spam) 30
   else if (category == Scam) 240
-  else if (category == Busywork or category == Gaming) 10
+  else if (category == Busywork or category == Gaming or (category == MissingEvidence and version >= 2)) 10
   else 0
+pure def lawMissingEvidenceDebitOnlyFromV2(version: int): bool =
+  debitFor(version, MissingEvidence) > 0 iff version == 2
 pure def moderatorReview(category: Category): bool = confirmedMalicious(category)
 pure val escalationDebit = 240
 pure def lawPublishedDebits(category: Category): bool = {

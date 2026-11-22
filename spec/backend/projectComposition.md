@@ -219,7 +219,13 @@ before the already-removed retry, and again inside the guarded append
 the retained `api_project_removal` model). An owner
 revision's clearance input is the composed clearance, so an executable change
 pauses an active project whose admission is not retained: an executable
-change never leaves the project collectable without clearance.
+change never leaves the project collectable without clearance. A verified
+integration-branch move ([project registration](./projects.md), "A current
+repository administrator moves the integration branch with a committed
+declaration") is an owner write too: refused while any restriction holds and
+for a banned acting account or steward, and its clearance input is the
+composed clearance, so an active project moves its branch only while its
+admission is retained.
 
 ```quint
 pure def clearanceOf(e: E::Enforcement): P::Clearance = if (E::cleared(e)) P::ClearanceRetained else P::ClearanceMissing
@@ -261,6 +267,12 @@ pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: Ac
   appendReads: List[RegistryRead]): Registry =
   val p = P::publishUpdate(c.project, by, change)
   { ...c, project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
+pure def canMoveBranch(c: Registry, by: int, branchChange: P::BranchChange, account: AccountStanding): bool =
+  P::canMoveBranch(c.project, by, branchChange) and ownerWriteAllowed(c, by, account) and
+  branchChange.clearance == clearanceOf(c.security)
+pure def moveBranch(c: Registry, by: int, branchChange: P::BranchChange, account: AccountStanding): Registry =
+  val p = P::moveBranch(c.project, by, branchChange)
+  { ...c, project: p, security: sync(p, c.security) }
 pure def canRemove(c: Registry, by: int, removal: P::Removal): bool =
   P::canRemove(c.project, by, removal) and c.security.restriction == E::Clear
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
@@ -592,6 +604,8 @@ pure val changeValues = Set(P::change1, { ...P::change1, presentation: false, fi
   { ...P::change1, consent: P::ConsentChecked, executable: true, appends: List(P::newRepository2), clearance: P::ClearanceMissing })
 pure val appendReadsValues = Set(List(), List({ repository: 2, listedBy: 0, restricted: false }),
   List({ repository: 2, listedBy: 9, restricted: false }))
+pure val branchChangeValues = Set(P::branchChange1, { ...P::branchChange1, clearance: P::ClearanceMissing },
+  { ...P::branchChange1, expectedRevision: 3 })
 pure val registrationValues = Set(P::registration1, { ...P::registration1, purpose: P::BountyVault },
   { ...P::registration1, expectedRevision: 3 }, { ...P::registration1, finalized: false })
 pure val weight_publishUpdate = 4
