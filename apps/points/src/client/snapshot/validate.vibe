@@ -938,7 +938,9 @@ function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actor
     if (millis(event.occurredAt) < millis(snapshot.window.from) || millis(event.occurredAt) >= millis(snapshot.window.to)) return "Value score event is outside the scoring window"
     const row = coverageFor(event.id)
     const assessedDigest = row?.status === "assessed" || (row?.status === "human-ratified" && review) ? row.recordDigest : review ? row?.reviewAssessmentDigest : undefined
-    if (`value:${assessedDigest}` !== event.scoreDecisionSourceId) return "Value score event is not bound to its assessment coverage"
+    if (typeof assessedDigest !== "string" || !digest.test(assessedDigest) || `value:${assessedDigest}` !== event.scoreDecisionSourceId) {
+      return "Value score event is not bound to its assessment coverage"
+    }
   }
   return undefined
 }

@@ -121,6 +121,15 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       ...fixture.held,
       valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : { ...row, status: "legacy-policy" }),
     }, compatible), "") catch (error) => error.message
+    const unboundReview = (decision: string, status: "incomplete" | "human-ratified") => ({
+      ...fixture.held,
+      ledger: held.ledger.map((event) => event.category !== "substantive-review" ? event : { ...event, scoreDecisionSourceId: decision }),
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : {
+        pullRequestId: row.pullRequestId, pullRequestNumber: row.pullRequestNumber, repository: row.repository, recordDigest: null, status,
+      }),
+    })
+    const forgedMissingDigest = Effect.as(validateSnapshot(unboundReview("value:undefined", "incomplete"), compatible), "") catch (error) => error.message
+    const forgedNullDigest = Effect.as(validateSnapshot(unboundReview("value:null", "human-ratified"), compatible), "") catch (error) => error.message
     const history = `${journalText(fixture.prior)}\n`
     const store = try openStore(history, null, [])
     const repositories = repositoriesOf(compatible, {})
@@ -128,10 +137,12 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     const retained = store.revisions.length
     const zeroed = { snapshot: revoked, digest: "a".repeat(64) }
     try applySnapshots(store, repositories, [zeroed, zeroed], fixture.prior.generatedAt)
-    try Effect.try(() => assert.deepStrictEqual({ retained, revisions: store.revisions, forgedMerge, forgedCoverage }, {
+    try Effect.try(() => assert.deepStrictEqual({ retained, revisions: store.revisions, forgedMerge, forgedCoverage, forgedMissingDigest, forgedNullDigest }, {
       retained: fixture.prior.revisions.length, revisions: fixture.retired.revisions,
       forgedMerge: "Held implementation source cannot publish merge credit",
       forgedCoverage: "Review assessment coverage requires a held implementation source",
+      forgedMissingDigest: "Value score event is not bound to its assessment coverage",
+      forgedNullDigest: "Value score event is not bound to its assessment coverage",
     }))
   })
 
