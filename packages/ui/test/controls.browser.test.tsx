@@ -1,4 +1,4 @@
-// What only a browser shows of spec/ui/index.md: each control kind's primitive in the states of `Shown`, compared
+// What only a browser shows of spec/ui/index.md: each control kind's primitive in every `Shown`, compared
 // with `moves` and `showsRing`; the heights controls are laid out at; and the 44px square each control is hit in,
 // on the design tokens in Chromium.
 import "@repo/design-system/fonts";
@@ -7,7 +7,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
-import { type ControlKind, type Event, heightPx, initial, moves, type Shown, showsRing, step, targetPx } from "../gen/ui.ts";
+import { type ControlKind, type Focus, heightPx, type Motion, moves, type Shown, showsRing, targetPx } from "../gen/ui.ts";
 import {
   Button, Checkbox, ConfirmDialog, CopyButton, Dialog, DialogContent, DialogTitle, Disclosure, FileField, Identity, Input, NavTab, NavTabs, Pagination,
   Progress, RadioGroup, SegmentedControl, Select, SiteFooter, Skeleton, Spinner, Switch, Table, TableHead, TableHeader, TableRow, Textarea,
@@ -81,35 +81,36 @@ const moving = (host: Element) =>
     return style.animationName !== "none" || transitions;
   });
 
+/** Every motion and focus, in an order that reaches each focus from another. */
+const states: [Motion, Focus][] = [
+  ["FullMotion", "KeyboardFocus"], ["FullMotion", "Unfocused"], ["FullMotion", "PointerFocus"],
+  ["ReducedMotion", "PointerFocus"], ["ReducedMotion", "Unfocused"], ["ReducedMotion", "KeyboardFocus"],
+];
+
 // spec/ui/index.md, "A shown control stands still under reduced motion, and keyboard focus shows its ring"
-it("shows each control kind as `moves` and `showsRing` say, in every state it reaches", async () => {
+it("shows each control kind as `moves` and `showsRing` say, in every motion and focus", async () => {
   for (const kind of kinds) {
-    let state = step(initial, { type: "show", kind });
     const host = await show(<>{samples[kind]}</>);
     const start = document.body.insertBefore(Object.assign(document.createElement("span"), { tabIndex: -1 }), host);
     const away = document.body.appendChild(Object.assign(document.createElement("p"), { textContent: "Away" }));
     const control = controls(host)[0];
     const unfocused = getComputedStyle(control).boxShadow;
 
-    /** Brings the page into the state `event` leads to, then says what it shows. */
-    const reach = async (event: Event) => {
-      state = step(state, event);
-      await motion(state.motion === "ReducedMotion" ? "reduce" : "no-preference");
-      if (event.type === "reach") (document.activeElement as HTMLElement | null)?.blur();
-      if (state.focus === "KeyboardFocus") { start.focus(); await userEvent.keyboard("{Tab}"); }
+    /** Brings the page to `shown`, then says what it shows. */
+    const bring = async (shown: Shown) => {
+      await motion(shown.motion === "ReducedMotion" ? "reduce" : "no-preference");
+      (document.activeElement as HTMLElement | null)?.blur();
+      if (shown.focus === "KeyboardFocus") { start.focus(); await userEvent.keyboard("{Tab}"); }
       // Pressed on the control and released away from it: focused by the pointer, and never activated.
-      if (state.focus === "PointerFocus") { await mouse("mousePressed", control); await mouse("mouseReleased", away); }
+      if (shown.focus === "PointerFocus") { await mouse("mousePressed", control); await mouse("mouseReleased", away); }
       const style = getComputedStyle(control);
-      return { state, still: moving(host).length === 0, ring: style.boxShadow !== unfocused, outline: style.outlineStyle };
+      return { still: moving(host).length === 0, ring: style.boxShadow !== unfocused, outline: style.outlineStyle };
     };
-    const expected = (shown: Shown, still: boolean) => ({ state: shown, still: moves(shown) ? still : true, ring: showsRing(shown), outline: "none" });
 
-    for (const event of [
-      { type: "reach", focus: "KeyboardFocus" }, { type: "prefer", motion: "ReducedMotion" }, { type: "reach", focus: "Unfocused" },
-      { type: "reach", focus: "PointerFocus" }, { type: "prefer", motion: "FullMotion" }, { type: "reach", focus: "Unfocused" },
-    ] satisfies Event[]) {
-      const seen = await reach(event);
-      expect({ kind, ...seen }).toEqual({ kind, ...expected(seen.state, seen.still) });
+    for (const [preferred, focus] of states) {
+      const shown: Shown = { kind, motion: preferred, focus };
+      const seen = await bring(shown);
+      expect({ shown, ...seen }).toEqual({ shown, still: moves(shown) ? seen.still : true, ring: showsRing(shown), outline: "none" });
     }
   }
 });

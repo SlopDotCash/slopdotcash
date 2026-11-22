@@ -12,7 +12,6 @@ module verified {
 import { tokenLengthAllowed } from verified
 
 export const sessionCookie = "__Host-slop_points"
-export const sessionSeconds = 3600
 
 export schema SessionMember { actor_id: string; github_id: string; login: string; token_hash: string }
 

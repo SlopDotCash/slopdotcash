@@ -1,5 +1,5 @@
-// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
-import { idList } from "./config.vibe"
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/accounts.md, "Only the configured owner, while a current administrator, gets a seven-day session"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
+import { ConfigInvalid, idList } from "./config.vibe"
 
 export type Role = "administrator" | "moderator" | "operator"
 
@@ -7,12 +7,14 @@ export service Roles {
   has(githubId: string, role: Role): boolean!!
   isTeam(githubId: string): boolean!!
   snapshot(role: Role): ReadonlyArray<string>!!
+  ownerSession(): (string | undefined)!!
 }
 
 export interface RoleVars {
   readonly ADMIN_GITHUB_IDS: string
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
   readonly OPERATOR_GITHUB_IDS?: string
+  readonly OWNER_SESSION_GITHUB_ID?: string
 }
 
 effect function decodeRoles(vars: RoleVars) {
@@ -31,10 +33,14 @@ effect function decodeRoles(vars: RoleVars) {
     operator: new Set(operators),
   } satisfies Readonly<Record<Role, ReadonlySet<string>>>
   const team = new Set([...administrators, ...listedModerators])
+  const owners = try idList("OWNER_SESSION_GITHUB_ID", vars.OWNER_SESSION_GITHUB_ID)
+  if (owners.length > 1) throw new ConfigInvalid({ name: "OWNER_SESSION_GITHUB_ID", issue: "names more than one GitHub id" })
+  const owner = owners.find((id) => admitted.has(id))
   return {
     has: (githubId: string, role: Role) => succeed(members[role].has(githubId)),
     isTeam: (githubId: string) => succeed(team.has(githubId)),
     snapshot: (role: Role) => succeed(snapshots[role]),
+    ownerSession: () => succeed(owner),
   } satisfies Roles.Shape
 }
 

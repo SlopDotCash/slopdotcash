@@ -74,14 +74,19 @@ const xWorld: XWorld = { user: { id: "123456789012345678901234567890", username:
 const notifyWorld: NotifyWorld = { sent: [], paths: [] }
 const net = internet({ github: github.handler, hosts: { "api.x.com": xFake(xWorld) } })
 
+const origin = "http://localhost:8787"
+
 const Backend = areaLayer({
   root,
   entry: "worker",
+  origin,
+  identity: { origin },
   d1: { SLOP_DB: "slop-private" },
   vars: {
     ADMIN_GITHUB_IDS: "7",
     PROJECT_MODERATOR_GITHUB_IDS: "",
     SLOP_ENVIRONMENT: "local",
+    PAYMENTS_ALLOWED_ORIGIN: origin,
     TRACE_AUTH_SECRET: "trace-auth-secret-for-the-accounts-journey-0001",
     X_CLIENT_ID: "x-client",
     X_CLIENT_SECRET: "x-client-secret",
@@ -97,6 +102,8 @@ const Backend = areaLayer({
       ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
       vars: {
         SLOP_ENVIRONMENT: "local",
+        IDENTITY_PUBLIC_ORIGIN: origin,
+        IDENTITY_ALLOW_LOOPBACK: "1",
         GITHUB_APP_CLIENT_ID: github.app.clientId,
         GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
         IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -189,6 +196,16 @@ effect function callback(state: string, capability: string, query: string) {
 }
 
 const at = { account: "203.0.113.21", x: "203.0.113.22", email: "203.0.113.23", burst: "203.0.113.77" }
+
+effect function ownerJoin(githubId: string, login: string, suffix: string) {
+  const answer = try post("203.0.113.31", "/api/v1/points/join", { assertion: try seededAssertion(githubId, login, `U_${login}`, suffix), public: true })
+  return [answer.status, fields(answer).error ?? /Max-Age=(\d+)/u.exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""] as const
+}
+
+effect function ownerExpiries() {
+  const rows = try (try Area).sql("SELECT expires_at FROM points_sessions WHERE actor_id = ? ORDER BY expires_at", "U_ownerweek")
+  return rows.map((row) => String(row.expires_at))
+}
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Sign in, rename, sign out, revoke, browse the directory, close and reopen an account (spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/points/participation.md, "Stored awards include rows recorded on the cutoff day, which never count")', () => effect {
@@ -353,7 +370,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     }, {
       signedOut: [401, "not_signed_in"],
       before: { configured: true, account: null },
-      started: [200, "https://x.com/i/oauth2/authorize", "https://slop.test/api/v1/points/x/callback", "tweet.read users.read", 43, 43],
+      started: [200, "https://x.com/i/oauth2/authorize", `${origin}/api/v1/points/x/callback`, "tweet.read users.read", 43, 43],
       connected: [303, "/points?x=connected", true],
       replayed: [303, "/points?x=failed", true],
       linked: ["123456789012345678901234567890", "hubot_x", 1],
@@ -448,6 +465,26 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       after: [false, false, "verified"],
       burst: [true, 429],
       throttled: [429, "rate_limited", true],
+    })
+  })
+
+  it.effect('The configured owner signs in for seven days only while a current administrator, and a session keeps its recorded expiry (spec/backend/accounts.md, "Only the configured owner, while a current administrator, gets a seven-day session")', () => effect {
+    const area = try Area
+    try area.redeploy({ vars: { ADMIN_GITHUB_IDS: "7,9301", OWNER_SESSION_GITHUB_ID: "9301" } })
+    const owner = try ownerJoin("9301", "ownerweek", "ownerweek")
+    const other = try ownerJoin("9302", "memberhour", "memberhour")
+    const week = try ownerExpiries()
+    try area.redeploy({ vars: { ADMIN_GITHUB_IDS: "7" } })
+    const demoted = try ownerJoin("9301", "ownerweek", "ownerdemoted")
+    const afterDemotion = try ownerExpiries()
+    try area.redeploy({ vars: { OWNER_SESSION_GITHUB_ID: "" } })
+    try same({ owner, other, demoted, week: week.length, kept: afterDemotion[1] === week[0], shorter: Date.parse(afterDemotion[0] ?? "") < Date.parse(week[0] ?? "") }, {
+      owner: [200, "604800"],
+      other: [200, "3600"],
+      demoted: [200, "3600"],
+      week: 1,
+      kept: true,
+      shorter: true,
     })
   })
 })

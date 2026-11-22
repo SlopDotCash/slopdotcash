@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Only the configured owner, while a current administrator, gets a seven-day session"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
 import { isoNow } from "@repo/platform/clock"
 import { base64url, randomBytes, sha256Hex } from "@repo/platform/crypto"
 import { bytesBody, handleRaw, json } from "@repo/platform/http"
@@ -7,8 +7,9 @@ import { Roles } from "@repo/platform/roles"
 import { Rejected } from "../../../gen/backend__accounts.effect.vibe"
 import { LookedUpMember, People, pointsClose, pointsJoin, pointsMe, pointsMember, pointsPeople, pointsRevokeSession, pointsSignOut, pointsVisibility, projectSession } from "../../client/accounts.vibe"
 import { getPointsMember, getPointsPeople, postPointsAccountClose, postPointsJoin, postPointsSessionsRevoke, postPointsSignout, postPointsVisibility } from "../../client/refusals.vibe"
-import { presentedToken, sessionCookieHeader, sessionMember, sessionSeconds } from "../../session.vibe"
-import { type Intent, send } from "../store/store.vibe"
+import { presentedToken, sessionCookieHeader, sessionMember } from "../../session.vibe"
+import { noFacts } from "../store/codec.vibe"
+import { type Intent, openedExpiry, send } from "../store/store.vibe"
 import { AccountSettings, exchangedVia, okStatus, pointsAnswer, pointsJson, postJson } from "./admission.vibe"
 import { bare } from "./refusals.vibe"
 
@@ -130,12 +131,13 @@ effect function join() {
   if (identity === "invalid") return bare(postPointsJoin.invalidIdentity)
   const token = base64url(try randomBytes(32))
   const intent: Intent = { kind: "signIn", assertion: identity, reopen, sessionHash: try sha256Hex(token) }
-  const settled = try send(intent, { kind: "session", hash: "" })
+  const ownerSession = try (try Roles).ownerSession()
+  const settled = try send(intent, { kind: "session", hash: "" }, { ...noFacts, ownerSession })
   const prior = settled.before.members.find((row) => row.github_id === identity.githubId)
   if (settled.event.type === "refuseClosedSignIn") return bare(postPointsJoin.accountClosed, { closedAt: prior?.closed_at ?? null })
   const member = try memberByActor(prior?.actor_id ?? identity.nodeId)
   if (member === undefined) throw new MembershipUnconfirmed({ step: "joined member readback" })
-  return pointsJson(publicMember(member), sessionCookieHeader(token, sessionSeconds))
+  return pointsJson(publicMember(member), sessionCookieHeader(token, openedExpiry(settled.next) - settled.next.now))
 }
 
 effect function me() {
