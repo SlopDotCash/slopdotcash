@@ -12,8 +12,8 @@ export interface RevisionChanges {
 
 /** @throws {never} */
 export function presentationField(field: string): boolean {
-  //@ ensures \result === (field === "name" || field === "eyebrow" || field === "headline" || field === "image" || field === "description" || field === "links" || field === "slopbot")
-  return field === "name" || field === "eyebrow" || field === "headline" || field === "image" || field === "description" || field === "links" || field === "slopbot";
+  //@ ensures \result === (field === "name" || field === "eyebrow" || field === "headline" || field === "image" || field === "description" || field === "links" || field === "security" || field === "slopbot")
+  return field === "name" || field === "eyebrow" || field === "headline" || field === "image" || field === "description" || field === "links" || field === "security" || field === "slopbot";
 }
 
 /** @throws {never} */

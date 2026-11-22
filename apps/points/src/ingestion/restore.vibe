@@ -4,9 +4,9 @@ import { boundedBytes } from "@repo/platform/browser"
 import { sha256Hex } from "@repo/platform/crypto"
 import { GitHub, githubApi } from "@repo/platform/github"
 import { type ZipEntry, zipContent, zipEntries } from "./archive.ts"
-import { CheckpointInvalid, entryName, maxDiscussionAgeMs, maxDiscussionBodyBytes, maxDiscussionBytes, maxDiscussionEntries, maxMetadataBytes, refuseIf } from "./discussions.vibe"
+import { CheckpointInvalid, entryName, maxDiscussionAgeMs, maxDiscussionBytes, maxDiscussionEntries, maxImmutableBodyBytes, maxMetadataBytes, refuseIf } from "./discussions.vibe"
 
-export const maxEntryBytes = maxDiscussionBodyBytes + maxMetadataBytes
+export const maxEntryBytes = maxImmutableBodyBytes + maxMetadataBytes
 export const maxArchiveBytes = maxDiscussionBytes + maxDiscussionEntries * 512
 export const checkpointDirectoryName = "leaderboard-discussions"
 export const downloadTimeoutMs = 180_000

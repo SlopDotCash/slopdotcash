@@ -250,7 +250,7 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
       const coverage = coverageByNumber.get(`${repository}\u0000${Number(match[3])}`)
       coverageState = coverage === undefined ? "CoverageAbsent" : coverageStates[coverage.status] ?? "CoverageMissing"
       const record = coverage?.pullRequestId === award.sourceId ? coverage.recordDigest ?? "" : ""
-      if (merged && own && coverage?.status === "assessed" && record !== "") absorbed = try decidedBy(joints.get(`${repository}\u0000value:${record}`))
+      if (merged && coverage?.status === "assessed" && record !== "") absorbed = try decidedBy(joints.get(`${repository}\u0000value:${record}`))
       if (merged && !own && (coverage?.status === "stale" || coverage?.status === "incomplete") && record !== "" && previous.decision?.sourceId === `value:${record}`) {
         invalidated = { sourceId: previous.decision.sourceId, effectiveAt: snapshot.generatedAt, reason: `The current completion source marks this prior joint assessment ${coverage.status}.` }
       }

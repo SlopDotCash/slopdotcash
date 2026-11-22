@@ -1,10 +1,10 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
-import { noEdgeCache } from "@repo/platform/cache"
+import { EdgeCache, noEdgeCache } from "@repo/platform/cache"
 import { DeploymentTier, type Tier, deploymentTier } from "@repo/platform/config"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { D1, DatabaseFailure, type Statement, d1, sql } from "@repo/platform/d1"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
 import { Caller, Unauthenticated, json } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { database, migrate, startWorker } from "@repo/platform/testing"
@@ -18,9 +18,6 @@ import { DisclosuresRefused } from "../src/directTransfers/disclosures.vibe"
 import { ReservedAwardFeedRoutes, type ReservedAwardFeedVars, reservedAwardFeedAccess } from "../src/operator/reservedAwards.vibe"
 import { disclosures } from "../src/programs/disclosures.vibe"
 import { publicRoutes } from "../src/public/routes.vibe"
-import { PoolListingLive } from "../src/public/listing.vibe"
-import { toAmount } from "../src/kernels/amounts.ts"
-import { PoolListing } from "@repo/ports/settlement"
 
 const now = Date.parse("2026-11-17T12:00:00.000Z")
 const vault = `0x${"a".repeat(40)}`
@@ -80,7 +77,71 @@ service Public {
   readonly outbound: ReadonlyArray<string>
   read(tier: Tier, path: string, headers?: Readonly<Record<string, string>>): Answer!!
   readImports(path: string): Answer!!
+  readDeposits(tier: Tier, path: string): Funders!!
 }
+
+interface Funders {
+  readonly status: number
+  readonly body: unknown
+  readonly cache: string | null
+  readonly edge: string | null
+}
+
+function memoryEdgeCache() {
+  const kept = new Map<string, HttpServerResponse.HttpServerResponse>()
+  return Layer.succeed(EdgeCache, {
+    match: (key) => succeed(kept.get(key)),
+    put: (key, response, _seconds) => sync(() => {
+      kept.set(key, response)
+      return response
+    }),
+  })
+}
+
+const fundedAt = (index: number) => new Date(Date.parse("2026-11-01T00:00:00.000Z") + index * 60_000).toISOString()
+const fundedTransaction = (index: number) => `0x${index.toString(16).padStart(64, "0")}`
+const funder = (digit: string) => `0x${digit.repeat(40)}`
+const fundersOrder = [funder("1"), funder("2"), funder("3"), funder("4"), funder("5"), funder("6"), `0x${"7".repeat(39)}a`]
+
+function fundedDeposit(network: string, vaultAddress: string, index: number, depositor: string): Statement {
+  return sql`INSERT INTO vault_deposits (project_id, network, chain, vault, transaction_id, event_index, depositor, amount, block_number, block_time, recorded_at)
+    VALUES ('funded', ${network}, 'base', ${vaultAddress}, ${fundedTransaction(index)}, 0, ${depositor}, '1000000', ${String(100 + index)}, ${network === "base-sepolia" ? "2026-11-10T00:00:00.000Z" : fundedAt(index)}, '2026-11-17T00:00:00.000Z')`
+}
+
+function registration(actor: string, login: string, chain: string, address: string, signed: boolean, account?: "private" | "closed"): ReadonlyArray<Statement> {
+  const claim = `fund-claim-${actor}`
+  return [
+    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, created_at, chain)
+      VALUES (${claim}, ${actor}, ${login}, ${address}, 'd1_registry', ${digest("9")}, '2026-11-17T00:00:00.000Z', ${`fund${actor}`.padEnd(64, "0")}, '2026-11-17T00:00:00.000Z', ${chain})`,
+    ...(signed ? [
+      sql`INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at)
+        VALUES (${`fund-challenge-${actor}`}, ${claim}, ${actor}, 'fund-message', '2026-11-18T00:00:00.000Z', '2026-11-17T00:00:00.000Z')`,
+      sql`INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature)
+        VALUES (${claim}, ${actor}, '2026-11-17T00:00:00.000Z', ${`fund-challenge-${actor}`}, 'fund-signature')`,
+    ] : []),
+    ...(account === undefined ? [] : [
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome, closed_at)
+        VALUES (${`fund-actor-${actor}`}, ${actor}, ${login}, '2026-01-01T00:00:00.000Z', ${account === "private" ? 0 : 1}, 5, ${account === "closed" ? "2026-11-17T01:00:00.000Z" : null})`,
+    ]),
+  ]
+}
+
+const funders = [
+  snapshot("funded", "base-mainnet", vault, usdc, "1000000"),
+  snapshot("funded", "base-sepolia", testVault, sepoliaUsdc, "1000000"),
+  ...Array.from({ length: 52 }, (_, index) => fundedDeposit("base-mainnet", vault, index, fundersOrder[51 - index] ?? funder("9"))),
+  fundedDeposit("base-sepolia", testVault, 60, funder("1")),
+  ...registration("301", "ada", "base", funder("1"), true),
+  ...registration("302", "jo", "base", funder("1"), true, "private"),
+  ...registration("303", "bob", "base", funder("2"), true),
+  ...registration("304", "cy", "robinhood", funder("2"), true),
+  ...registration("305", "dee", "base", funder("3"), true, "private"),
+  ...registration("306", "eve", "base", funder("4"), true, "closed"),
+  ...registration("307", "fay", "base", funder("5"), false),
+  ...registration("308", "gus", "base", funder("5"), true),
+  ...registration("309", "hal", "base", funder("6"), false),
+  ...registration("310", "ivy", "ethereum", `0x${"7".repeat(39)}A`, true),
+]
 
 function paidEvent(obligation: string, project: string, network: string, chain: string, vaultAddress: string, actor: string, gross: string, fee: string, net: string, transaction: string) {
   return JSON.stringify({ kind: "paid", transactionId: transaction, eventIndex: 0, obligationId: obligation, projectId: project, network, chain, vault: vaultAddress, githubUserId: actor, sourceDigest: digest(obligation.slice(-1)), grossMicro: gross, feeMicro: fee, netMicro: net })
@@ -160,25 +221,29 @@ const monthLinks = [
 ]
 
 const Started = Layer.effect(Public, effect {
-  const mf = try acquireRelease(sync(() => startWorker({ d1: { READS_DB: "public-reads", IMPORT_DB: "disclosure-import" } })), (started) => promise(() => started.dispose()))
-  for (const binding of ["READS_DB", "IMPORT_DB"]) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { READS_DB: "public-reads", IMPORT_DB: "disclosure-import", DEPOSITS_DB: "vault-deposits" } })), (started) => promise(() => started.dispose()))
+  for (const binding of ["READS_DB", "IMPORT_DB", "DEPOSITS_DB"]) {
     const failed = (try promise(() => migrate(mf, binding, migrationsDir))).find((applied) => applied.error !== undefined)
     if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
   }
   const reads = try promise(() => database(mf, "READS_DB"))
   const imports = try promise(() => database(mf, "IMPORT_DB"))
+  const deposits = try promise(() => database(mf, "DEPOSITS_DB"))
   provide d1(reads) {
     try (try D1).batch(seed)
   }
   provide d1(imports) {
     try (try D1).batch(monthLinks)
   }
+  provide d1(deposits) {
+    try (try D1).batch(funders)
+  }
   const outbound: string[] = []
   const clock = settableClock(now)
-  const site = (tier: Tier, database: D1Database = reads) => worker({
+  const site = (tier: Tier, database: D1Database = reads, cache: Layer.Layer<EdgeCache> = noEdgeCache) => worker({
     services: (_env: object) => Layer.mergeAll(
       d1(database),
-      noEdgeCache,
+      cache,
       clock.layer,
       Layer.succeed(DeploymentTier, { tier }),
       Layer.succeed(Caller, { current: () => effect {
@@ -196,6 +261,7 @@ const Started = Layer.effect(Public, effect {
   })
   const sites = { production: site("production"), staging: site("staging"), local: site("local") }
   const importSite = site("production", imports)
+  const depositSites = { production: site("production", deposits, memoryEdgeCache()), staging: site("staging", deposits, memoryEdgeCache()), local: site("local", deposits, memoryEdgeCache()) }
   const answered = (served: typeof importSite, path: string, headers: Readonly<Record<string, string>>) => effect {
     const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET", headers })))
     const response = try promise(() => served.fetch(request as unknown as globalThis.Request, {}, context))
@@ -209,6 +275,13 @@ const Started = Layer.effect(Public, effect {
     outbound,
     read: (tier, path, headers = {}) => answered(sites[tier], path, headers),
     readImports: (path) => answered(importSite, path, {}),
+    readDeposits: (tier, path) => effect {
+      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET" })))
+      const response = try promise(() => depositSites[tier].fetch(request as unknown as globalThis.Request, {}, context))
+      const text = try promise(() => response.text())
+      const body: unknown = try orDie(Effect.try(() => JSON.parse(text) as unknown))
+      return { status: response.status, body, cache: response.headers.get("cache-control"), edge: response.headers.get("x-slop-cache") } satisfies Funders
+    },
   }
 })
 
@@ -269,28 +342,6 @@ const pledgedFunding = { projectId: "pledged", vaults: [{ network: "base-mainnet
   { period: "2026-10", amount: "2000000", open: false },
   { period: "2026-11", amount: "2000000", open: true },
 ] }] }
-
-function manifestOf(id: string, cap: string, deployments: ReadonlyArray<{ readonly network: string; readonly vault: string }>) {
-  return { id, status: "active", reward: { kind: "monthly-pool", monthlyCapMinor: cap }, escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: deployments.map((deployment) => ({ ...deployment, asset: usdc })) } }
-}
-
-effect function amountOf(value: bigint) {
-  return try Effect.try(() => toAmount(value))
-}
-
-effect function factsOf(cap: bigint, fields: { readonly freeNow: bigint; readonly freeAtStart: bigint; readonly monthStartRead: boolean; readonly pledgeSupport: boolean; readonly pledged: bigint }) {
-  return {
-    read: "PoolCurrent", monthlyPool: true, period: 202611, amount: try amountOf(cap), priorAmount: try amountOf(0n), priorPending: false,
-    freeNow: try amountOf(fields.freeNow), monthStartRead: fields.monthStartRead, freeAtStart: try amountOf(fields.freeAtStart), withdrawnSince: false,
-    pledgeSupport: fields.pledgeSupport, pledged: try amountOf(fields.pledged),
-  }
-}
-
-const brokenD1 = Layer.succeed(D1, {
-  all: () => Effect.fail(new DatabaseFailure({ operation: "all", message: "D1 unavailable" })),
-  run: () => Effect.fail(new DatabaseFailure({ operation: "run", message: "D1 unavailable" })),
-  batch: () => Effect.fail(new DatabaseFailure({ operation: "batch", message: "D1 unavailable" })),
-})
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Public payment reads serve only stored records, never reach a chain during an RPC outage, and link a paid award to its month under either 2% rounding of the same gross (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/monthPledges.md, "Pool funding serves a vault\'s open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open")', () => effect {
@@ -382,31 +433,6 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     ])
   })
 
-  it.effect('Discovery reads one pool fact per candidate from the cached vault rows, counting a pledged month in a pledging vault, a month-start funded pool and zero for a pool without rows, and a broken D1 fails instead of answering (spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging")', () => effect {
-    const site = try Public
-    const candidates = [
-      { projectId: "eliza", manifest: manifestOf("eliza", "7000000", [{ network: "base-mainnet", vault }]) },
-      { projectId: "nobody", manifest: manifestOf("nobody", "1000000", [{ network: "base-mainnet", vault: `0x${"e".repeat(40)}` }]) },
-      { projectId: "pledged", manifest: manifestOf("pledged", "2000000", [{ network: "base-mainnet", vault: pledgedVault }]) },
-      { projectId: "demo", manifest: manifestOf("demo", "5000000", [{ network: "base-sepolia", vault: testVault }]) },
-    ]
-    const tier = Layer.succeed(DeploymentTier, { tier: "production" })
-    const listed = (database: Layer.Layer<D1>) => effect {
-      provide settableClock(now).layer, Layer.provide(PoolListingLive, Layer.merge(database, tier)) {
-        return (try PoolListing).facts(candidates) catch (error) => error._tag
-      }
-    }
-    try same({ current: try listed(d1(site.reads)), broken: try listed(brokenD1) }, {
-      current: [
-        { projectId: "eliza", pool: try factsOf(7_000_000n, { freeNow: 7_000_000n, freeAtStart: 7_000_000n, monthStartRead: true, pledgeSupport: false, pledged: 0n }) },
-        { projectId: "nobody", pool: try factsOf(1_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: false, pledged: 0n }) },
-        { projectId: "pledged", pool: try factsOf(2_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: true, pledged: 2_000_000n }) },
-        { projectId: "demo", pool: try factsOf(5_000_000n, { freeNow: 0n, freeAtStart: 0n, monthStartRead: false, pledgeSupport: false, pledged: 0n }) },
-      ],
-      broken: "DatabaseFailure",
-    })
-  })
-
   it.effect('Testnet payments, totals and vaults appear only on the staging deployment (spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart")', () => effect {
     const site = try Public
     const paths = ["/api/v1/payments/vault-payments", "/api/v1/payments/actors/101/vault-payments", "/api/v1/pool-funding", "/api/v1/payments/projects/demo/vault"]
@@ -446,7 +472,28 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('An authenticated operator reads only actionable reserved awards and every other caller sees the ordinary unknown API path (spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/monthly.md, "A finalized award reserves an obligation and a ledger payment pays it")', () => effect {
+  it.effect('Funded by: the funders read lists the newest 50 deposits with the full count and names a depositor only through one public, open, wallet-signed registration (spec/settlement/vaultDeposits.md, "Story: List who funded a project"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale")', () => effect {
+    const site = try Public
+    const path = "/api/v1/payments/projects/funded/deposits"
+    const summary = (answer: Funders) => {
+      const body = answer.body as { projectId: string; deposits: ReadonlyArray<{ id: string; githubLogin: string | null }>; total: number; servedAt: string }
+      return { status: answer.status, cache: answer.cache, edge: answer.edge, projectId: body.projectId, total: body.total, shown: body.deposits.length, newest: body.deposits[0], names: body.deposits.slice(0, 8).map((deposit) => deposit.githubLogin), oldest: body.deposits.at(-1)?.id, unnamedRest: body.deposits.slice(8).every((deposit) => deposit.githubLogin === null), servedAt: body.servedAt }
+    }
+    const first = try site.readDeposits("production", path)
+    const second = try site.readDeposits("production", path)
+    const staging = try site.readDeposits("staging", path)
+    const newest = { id: `base-mainnet:${fundedTransaction(51)}:0`, projectId: "funded", network: "base-mainnet", chain: "base", vault, depositor: funder("1"), githubLogin: "ada", amountBase: "1000000", assetAddress: usdc, assetDecimals: 6, transactionId: fundedTransaction(51), depositedAt: fundedAt(51) }
+    const production = { status: 200, cache: "public, max-age=60, s-maxage=60", projectId: "funded", total: 52, shown: 50, newest, names: ["ada", null, null, null, "gus", null, "ivy", null], oldest: `base-mainnet:${fundedTransaction(2)}:0`, unnamedRest: true, servedAt: "2026-11-17T12:00:00.000Z" }
+    try same([summary(first), summary(second), summary(staging)], [
+      { ...production, edge: "miss" },
+      { ...production, edge: "hit" },
+      { ...production, edge: "miss", total: 53, newest: { ...newest, id: `base-sepolia:${fundedTransaction(60)}:0`, network: "base-sepolia", vault: testVault, assetAddress: sepoliaUsdc, transactionId: fundedTransaction(60), depositedAt: "2026-11-10T00:00:00.000Z" }, names: ["ada", "ada", null, null, null, "gus", null, "ivy"], oldest: `base-mainnet:${fundedTransaction(3)}:0` },
+    ])
+    const empty = try site.readDeposits("local", "/api/v1/payments/projects/nobody/deposits")
+    try same([empty.status, empty.body], [200, { projectId: "nobody", deposits: [], total: 0, servedAt: "2026-11-17T12:00:00.000Z" }])
+  })
+
+  it.effect('Remind contributors whose funded award is still reserved: an authenticated operator reads only actionable reserved awards and every other caller sees the ordinary unknown API path (spec/settlement/reservedAwardsFeed.md, "Story: Remind contributors whose funded award is still reserved"; spec/settlement/reservedAwardsFeed.md, "The feed opens only for the exact configured bearer secret and is otherwise not found"; spec/settlement/reservedAwardsFeed.md, "Each row names one account, project and network and what it still needs, and never an amount, address, award or month"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging")', () => effect {
     const site = try Public
     const path = "/api/v1/operator/reserved-awards"
     const bearer = `Bearer ${feedToken}`
@@ -490,6 +537,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         feedObligation("feed-obligation-g", "106", "feed", "base-mainnet", "reserved", "777777777", "1234567"),
         feedObligation("feed-obligation-h", "107", "feed", "base-mainnet", "reserved", "777777778", "1234568"),
         feedObligation("feed-obligation-i", "108", "test-feed", "base-sepolia", "reserved", "777777779", "1234569"),
+        feedObligation("feed-obligation-j", "109", "feed", "base-mainnet", "reserved", "777777780", "1234570"),
+        sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
+          VALUES ('feed-obligation-k', 'feed', '109', 'solana-mainnet', 'solana', ${"V".repeat(44)}, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 6, '777777781', '1234571', ${digest("k")}, 'reserved', '2026-11-02T00:00:00.000Z', NULL)`,
         sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome)
           VALUES ('feed-actor-101', '101', 'alice', '2026-11-17T00:00:00.000Z', 0, 5)`,
         sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome, closed_at)
@@ -497,6 +547,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         ...feedWallet("102", "c", false),
         ...feedWallet("103", "d", true),
         ...feedWallet("104", "e", true),
+        ...feedWallet("109", "a", true),
         sql`INSERT INTO payment_binding_authorizations (claim_id, github_user_id, network, vault, chain_id, expected_version, expires_at, signature, created_at)
           VALUES ('feed-claim-e', '104', 'base-mainnet', ${`0x${"f".repeat(40)}`}, '8453', '0', '2026-11-18T00:00:00.000Z', 'binding-signature', '2026-11-17T00:00:00.000Z')`,
       ])
@@ -508,14 +559,16 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       { githubId: 102, login: "login-102", projectId: "feed", projectName: "Feed", network: "base-mainnet", needs: "wallet" },
       { githubId: 103, login: "login-103", projectId: "feed", projectName: "Feed", network: "base-mainnet", needs: "authorize" },
     ]
-    try same(production.body, { schema: "slop-reserved-awards-v1", generatedAt: "2026-11-17T12:00:00.000Z", awards: expectedAwards })
+    const listed = (production.body as { schema: string; generatedAt: string; awards: ReadonlyArray<{ githubId: number; needs: string }> })
+    try same({ ...listed, awards: listed.awards.filter((award) => award.githubId !== 109) }, { schema: "slop-reserved-awards-v1", generatedAt: "2026-11-17T12:00:00.000Z", awards: expectedAwards })
+    try same(listed.awards.filter((award) => award.githubId === 109).map((award) => award.needs), ["wallet"])
     const protectedValues = [
       "777777771", "1234561", `0x${"c".repeat(40)}`, `0x${"f".repeat(40)}`,
       "feed-obligation-a", "feed-claim-c", "feed-challenge-d", "binding-signature",
     ]
     try same(protectedValues.filter((value) => production.text.includes(value)), [])
     const staging = try operatorAsk(site.imports, path, { ...options, tier: "staging" })
-    try same((staging.body as { awards: ReadonlyArray<{ githubId: number }> }).awards.map((award) => award.githubId), [101, 102, 103, 108])
+    try same((staging.body as { awards: ReadonlyArray<{ githubId: number }> }).awards.map((award) => award.githubId), [101, 102, 103, 109, 108])
     const trailing = try operatorAsk(site.imports, `${path}/`, options)
     try same(trailing.body, production.body)
     const head = try operatorAsk(site.imports, path, { ...options, method: "HEAD" })

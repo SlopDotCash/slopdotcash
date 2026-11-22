@@ -30,6 +30,9 @@ module world {
     readonly fetch: typeof globalThis.fetch
     readonly sent: Array<Sent>
     readonly requests: Array<string>
+    readonly identityRequests: Array<string>
+    /** @throws {never} */
+    identityCookies(): Array<string>
     /** @throws {never} */
     cookie(): string
     /** @throws {never} */
@@ -73,6 +76,12 @@ module world {
     return value === "" || /Max-Age=0/iu.test(header) ? "" : value
   }
 
+  const bindingCookie = /(__Host-slop_oauth_bind_[^=;,\s]+)=([^;,\s]*)/u
+
+  function withCookies(pairs: ReadonlyArray<string>): Record<string, string> {
+    return pairs.length === 0 ? {} : { cookie: pairs.join("; ") }
+  }
+
   async function expectStatus(step: string, response: WebResponse, status: number): Promise<WebResponse> {
     if (response.status === status) return response
     throw new Error(`${step} answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
@@ -86,6 +95,8 @@ module world {
     const net = internet({ github: github.handler })
     const sent: Array<Sent> = []
     const requests: Array<string> = []
+    const identityRequests: Array<string> = []
+    const bindings = new Map<string, string>()
     const hooks = new Map<string, () => void>()
     let jar = ""
     const mf: StartedWorker = startWorker({
@@ -132,43 +143,65 @@ module world {
       return response
     }
 
-    const toIdentity = async (request: WebRequest, url: URL) => {
-      const body = request.method === "GET" ? undefined : await request.text()
-      const headers: Record<string, string> = { ...Object.fromEntries(request.headers), origin: site, "cf-connecting-ip": address }
-      return (await identityWorker()).fetch(url.toString(), { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+    const bound = () => [...bindings].map(([name, value]) => `${name}=${value}`)
+
+    const keepBinding = (response: WebResponse) => {
+      const header = response.headers.get("set-cookie") ?? ""
+      const set = bindingCookie.exec(header)
+      if (set === null) return
+      if (set[2] === "" || /Max-Age=0/iu.test(header)) bindings.delete(set[1] ?? "")
+      else bindings.set(set[1] ?? "", set[2] ?? "")
     }
 
-    const browser: Handler = async (request: WebRequest) => {
+    const toIdentity = async (request: WebRequest, url: URL, credentials: string) => {
+      identityRequests.push(`${request.method} ${url.pathname} ${credentials}`)
+      const included = credentials === "include"
+      const body = request.method === "GET" ? undefined : await request.text()
+      const headers: Record<string, string> = { ...Object.fromEntries(request.headers), origin: site, "cf-connecting-ip": address, ...included ? withCookies(bound()) : {} }
+      const response = await (await identityWorker()).fetch(url.toString(), { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+      if (included) keepBinding(response)
+      return response
+    }
+
+    const browser = (credentials: string): Handler => async (request: WebRequest) => {
       const url = new URL(request.url)
       if (url.origin === site) return toSite(request, url)
-      if (url.origin === identity) return toIdentity(request, url)
+      if (url.origin === identity) return toIdentity(request, url, credentials)
       return new WebResponse(`the page may not reach ${url.host}`, { status: 599 })
     }
 
+    const onPage: typeof globalThis.fetch = (input, init) => asFetch(browser(init?.credentials ?? "same-origin"))(input, init)
+
     const consent = async (authorizationUrl: string, login: string) => {
       const worker = await identityWorker()
-      const authorized = await expectStatus("authorize", await worker.fetch(authorizationUrl, { redirect: "manual" }), 302)
+      const authorized = await expectStatus("authorize", await worker.fetch(authorizationUrl, { headers: withCookies(bound()), redirect: "manual" }), 302)
       const state = cookieOf(authorized, "__Host-slop_oauth_state") ?? ""
       const github = new URL(authorized.headers.get("location") ?? "")
       github.searchParams.set("login", login)
       const consented = await expectStatus("GitHub authorize", await net.handler(new WebRequest(github.toString(), { redirect: "manual" })), 302)
-      await expectStatus("callback", await worker.fetch(consented.headers.get("location") ?? "", { headers: { cookie: `__Host-slop_oauth_state=${state}` }, redirect: "manual" }), 200)
+      await expectStatus("callback", await worker.fetch(consented.headers.get("location") ?? "", { headers: withCookies([`__Host-slop_oauth_state=${state}`, ...bound()]), redirect: "manual" }), 200)
     }
 
     const otherTab = async (login: string) => {
       const worker = await identityWorker()
-      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: site, "cf-connecting-ip": address }, body: JSON.stringify(body) })
-      const started = await (await expectStatus("start", await worker.fetch(`${identity}/v1/oauth/start`, json({ audience: "slop-points-web" })), 201)).json() as { flowId: string; pollCapability: string; authorizationUrl: string }
+      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: site, "cf-connecting-ip": address, ...withCookies(bound()) }, body: JSON.stringify(body) })
+      const start = await expectStatus("start", await worker.fetch(`${identity}/v1/oauth/start`, json({ audience: "slop-points-web" })), 201)
+      keepBinding(start)
+      const started = await start.json() as { flowId: string; pollCapability: string; authorizationUrl: string }
       await consent(started.authorizationUrl, login)
-      const polled = await (await expectStatus("poll", await worker.fetch(`${identity}/v1/oauth/poll`, json({ flowId: started.flowId, pollCapability: started.pollCapability, audience: "slop-points-web" })), 200)).json() as { assertion: string }
+      const poll = await expectStatus("poll", await worker.fetch(`${identity}/v1/oauth/poll`, json({ flowId: started.flowId, pollCapability: started.pollCapability, audience: "slop-points-web" })), 200)
+      keepBinding(poll)
+      const polled = await poll.json() as { assertion: string }
       const joined = await expectStatus("join", await mf.dispatchFetch(`${site}/api/v1/points/join`, { method: "POST", headers: { "content-type": "application/json", origin: site, "cf-connecting-ip": address }, body: JSON.stringify({ assertion: polled.assertion, public: true }) }), 200)
       return cookieOf(joined, "__Host-slop_points") ?? ""
     }
 
     return {
-      fetch: asFetch(browser),
+      fetch: onPage,
       sent,
       requests,
+      identityRequests,
+      identityCookies: bound,
       cookie: () => jar,
       useCookie: (value) => {
         jar = value
@@ -258,7 +291,7 @@ effect function viewed() {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect(`Sign in through the identity flow, switch accounts and sign out without showing the prior account (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account's draft"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account")`, () => effect {
+  it.effect(`Sign in through the identity flow, switch accounts and sign out without showing the prior account (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account's draft"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account")`, () => effect {
     const { world } = try Browser
     const stores = try tab()
     provide page(world, stores) {
@@ -296,8 +329,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
         const out = try shape()
         const outView = try viewed()
         const cookie = world.cookie()
+        const identityCalls = [...new Set(world.identityRequests)]
+        const bindings = world.identityCookies()
         try same(
-          { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, began, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased },
+          { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, began, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased, identityCalls, bindings },
           {
             loaded: "checking",
             navigated: true,
@@ -323,6 +358,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
             outView: "signedOut",
             cookie: "",
             erased: [7, 8, 0],
+            identityCalls: ["POST /v1/oauth/start include", "POST /v1/oauth/poll include"],
+            bindings: [],
           },
         )
       })

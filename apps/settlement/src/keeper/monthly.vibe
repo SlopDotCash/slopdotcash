@@ -9,7 +9,7 @@ import { type Period, formatPeriod, parsePeriod, periodContaining, shiftPeriod }
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { type Attempt, type SendContext, fingerprintOf, parsedAttempt, readAttempt, reasonOf, retireReverted, signNewAttempt } from "./attempts.vibe"
 import { canonicalJson } from "./canonical.ts"
-import { monthlyCutoff } from "./config.vibe"
+import { type KeeperConfig, monthlyCutoff } from "./config.vibe"
 import type { KeeperResult } from "./diagnostics.vibe"
 import { submitSigned } from "./pay.vibe"
 import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
@@ -56,6 +56,7 @@ schema Plan {
   readonly totalGrossBase: string
   readonly entries: ReadonlyArray<PlanEntry>
   readonly evmReservation?: Reservation
+  readonly frozenAt?: string
 }
 
 schema LegacyAuthorization {
@@ -63,7 +64,7 @@ schema LegacyAuthorization {
   readonly signatureHex: string
 }
 
-schema Authorization {
+export schema Authorization {
   readonly plan: Plan
   readonly signatureHex: string
   readonly legacyAuthorization?: LegacyAuthorization
@@ -78,17 +79,20 @@ interface Retained {
 
 export interface MonthlySubmission {
   readonly transactionId: string | null
+  readonly transactionIds?: ReadonlyArray<string>
   readonly alreadyCommitted: boolean
   readonly complete?: boolean
   readonly notAdmitted?: boolean
   readonly committedSources?: ReadonlyArray<string>
 }
 
-export interface MonthContext {
-  readonly send: SendContext
+export interface MonthContext<E, R> {
+  readonly config: KeeperConfig
+  readonly deployment: { readonly projectId: string; readonly vault: string }
   readonly projectActive: boolean
   readonly restricted: boolean
   readonly execute: boolean
+  submit(authorization: Authorization, admit: boolean, perRun: number): (MonthlySubmission | undefined)!E!R
 }
 
 const SIGNATURE = /^[a-f0-9]{130}$/u
@@ -349,8 +353,8 @@ export effect function submitEvmMonthly(context: SendContext, authorization: Aut
   return { transactionId: sent.transactionId, alreadyCommitted: false } satisfies MonthlySubmission
 }
 
-effect function published(context: MonthContext, period: string, key: string) {
-  const { config, deployment } = context.send
+effect function published<E, R>(context: MonthContext<E, R>, period: string, key: string) {
+  const { config, deployment } = context
   const origin = siteOrigin(config.apiOrigin)
   const url = `${origin}/api/v1/payments/projects/${deployment.projectId}/monthly/${period}/authorization/${config.network}`
   const answer = try publicJson(url, origin, () => new KeeperRefused({ message: "Monthly authorization publication unavailable" }))
@@ -363,8 +367,15 @@ effect function published(context: MonthContext, period: string, key: string) {
   return value
 }
 
-export effect function serveMonths(context: MonthContext, scope: string, item: { readonly projectId: string; readonly vault: string }) {
-  const { config } = context.send
+export function evmMonths(send: SendContext) {
+  return (authorization: Authorization, admit: boolean, perRun: number) => effect {
+    if (!admit && authorization.plan.evmReservation === undefined) return undefined
+    return try submitEvmMonthly(send, authorization, admit, perRun)
+  }
+}
+
+export effect function serveMonths<E, R>(context: MonthContext<E, R>, scope: string, item: { readonly projectId: string; readonly vault: string }) {
+  const { config } = context
   const results: KeeperResult[] = []
   const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
   const current = try Effect.try(() => periodContaining(nowSeconds))
@@ -392,9 +403,8 @@ export effect function serveMonths(context: MonthContext, scope: string, item: {
       results.push({ ...item, operation, state: admit ? "published-not-executed" : "resume-only" })
       continue
     }
-    if (!admit && authorization.plan.evmReservation === undefined) continue
     const chosen = authorization
-    const submitted = submitEvmMonthly(context.send, chosen, admit, config.perRun) catch effect (error) => {
+    const submitted = context.submit(chosen, admit, config.perRun) catch effect (error) => {
       results.push({ ...item, operation, state: "waiting", error: reasonOf(error) })
       return undefined
     }

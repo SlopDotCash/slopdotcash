@@ -2,7 +2,7 @@
 export { collectedTargets, fetchRegistry } from "../../census/projects.vibe"
 export { Graphql, graphqlClient, tryReferenceDiscussion } from "../../ingestion/graphql.vibe"
 export { validateHistoricalDiscussion } from "../../ingestion/historicalDiscussion.vibe"
-export { actionsToken } from "../../ingestion/token.vibe"
+export { actionsToken, collectorRenewal } from "../../ingestion/token.vibe"
 export { ValueFeedUnavailable } from "../feeds/authoritative.vibe"
 export { type HistoryPage, type HistorySource, valueHistoryPage, workUnitHistory } from "../feeds/value.vibe"
 export { AssemblyRefused, type Collection, type CollectionSource, type CollectOptions, type CollectRequest, CollectDeferred, CollectUsage, type OpenCollection, SnapshotAssembly, collectArguments, collectSnapshot, collectUsage } from "./pipeline.vibe"

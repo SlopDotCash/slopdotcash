@@ -6,7 +6,7 @@ import { Restrictions } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
 import { closeConfidence, currentTableVersion, escalationDebit } from "../../gen/slopbot__categories.effect.vibe"
 import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
-import { penaltyTableVersion, pointsPerThird } from "../closeAttempt/penalty.vibe"
+import { pointsPerThird, tableVersionOf } from "../closeAttempt/penalty.vibe"
 import type { AppealDueJob } from "../jobs/job.vibe"
 import { actionStatement } from "../publish/actions.vibe"
 import { type CategoryName, categories, findingOf, hundredths } from "../review/verdict.vibe"
@@ -227,7 +227,7 @@ effect function subjectOf(appealKey: string, author: number, scope: ProjectScope
     revision: revisionOfKey(appealKey),
     author,
     category: findingOf(category),
-    tableVersion: penalty === undefined ? currentTableVersion : penalty.table_version === penaltyTableVersion ? currentTableVersion : 0,
+    tableVersion: penalty === undefined ? currentTableVersion : tableVersionOf(penalty.table_version),
     debit: penalty === undefined ? 0 : penalty.debit_thirds * pointsPerThird,
     scope,
   } satisfies AppealSubject

@@ -56,7 +56,7 @@ const reportRefusals: Readonly<Record<ReportRefusal, Row>> = {
 
 effect function report(value: unknown) {
   const parsed: ParsedReport = parseReport(value)
-  if (parsed.kind === "refused") throw refused(reportRefusals[parsed.refusal])
+  if (parsed.kind === "refused") throw refused(parsed.refusal === "proof" ? { ...createRows.invalidReport, message: parsed.message } : reportRefusals[parsed.refusal])
   return parsed.report
 }
 

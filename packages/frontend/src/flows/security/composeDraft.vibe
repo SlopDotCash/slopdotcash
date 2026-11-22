@@ -20,7 +20,7 @@ export const composeMessages = {
   receiptUnverified: "This tab could not verify your current account. Try again.",
 } as const
 
-schema StoredDraft { summary: string; description: string; severity: string; cvss: string; cwe: string }
+schema StoredDraft { summary: string; description: string; severity: string; cvss: string; cwe: string; proofName: string; proofText: string }
 schema SavedReport { draft: StoredDraft; key: string; attempted: boolean }
 schema Submission { projectId: string; idempotencyKey: string; origin: string; expectedReporterGithubId: string; report: ReportBody }
 
@@ -104,11 +104,16 @@ effect function fresh() {
 }
 
 function sameReport(left: ReportDraft, right: ReportDraft) {
-  return left.summary === right.summary && left.description === right.description && left.severity === right.severity && left.cvss === right.cvss && left.cwe === right.cwe
+  return left.summary === right.summary && left.description === right.description && left.severity === right.severity && left.cvss === right.cvss && left.cwe === right.cwe && left.proofName === right.proofName && left.proofText === right.proofText
 }
 
 effect function contentNumber(draft: ReportDraft) {
-  return try modelNumber(JSON.stringify([draft.summary, draft.description, draft.severity, draft.cvss, draft.cwe]))
+  return try modelNumber(JSON.stringify([draft.summary, draft.description, draft.severity, draft.cvss, draft.cwe, draft.proofName, draft.proofText]))
+}
+
+function withLaterFields(parsed: unknown): unknown {
+  if (typeof parsed !== "object" || parsed === null || !("draft" in parsed) || typeof parsed.draft !== "object" || parsed.draft === null) return parsed
+  return { ...parsed, draft: { ...emptyReport, ...parsed.draft } }
 }
 
 effect function restored(store: BrowserStore, owner: string, projectId: string) {
@@ -120,7 +125,7 @@ effect function restored(store: BrowserStore, owner: string, projectId: string) 
   const raw = store.values.get(`${accountPrefix}${projectId}`) catch () => undefined
   if (raw === undefined) return try fresh()
   const parsed = Effect.try(() => JSON.parse(raw) as unknown) catch () => undefined
-  const saved = Schema.decodeUnknownEffect(SavedReport)(parsed) catch () => undefined
+  const saved = Schema.decodeUnknownEffect(SavedReport)(withLaterFields(parsed)) catch () => undefined
   return saved ?? (try fresh())
 }
 

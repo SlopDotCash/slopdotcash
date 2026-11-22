@@ -85,7 +85,16 @@ export const draft: ReportDraft = {
   severity: "critical",
   cvss: "",
   cwe: "CWE-284",
+  proofName: "",
+  proofText: "",
 };
+
+export const proof = {
+  fileName: "drain.t.sol",
+  patch: "function test_drain() public {\n  vault.queue(alice, 10);\n  vault.queue(alice, 10);\n  assertEq(vault.balanceOf(bob), 0);\n}\n",
+};
+
+export const proofDraft: ReportDraft = { ...draft, proofName: proof.fileName, proofText: proof.patch };
 
 export const headings: DetailHeadings = { card: "private-report-card-48211", summary: "private-report-summary-48211" };
 
@@ -155,5 +164,7 @@ export const reportText = {
   severity: "critical",
   cweIds: ["CWE-284"],
 };
+
+export const reportWithProof = { ...reportText, proofOfConcept: proof };
 
 export const nowMs = Date.parse("2026-11-16T14:50:00.000Z");

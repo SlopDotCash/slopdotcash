@@ -1,29 +1,48 @@
-// spec/operations/slopbotRuntime.md, "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"; spec/operations/slopbotRuntime.md, "A readback is selected alone, for an exact source, before any credential is used"
+// spec/operations/slopbotRuntime.md, "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"; spec/operations/slopbotRuntime.md, "A readback is selected alone, for an exact source, before any credential is used"; spec/operations/slopbotQuotaWitness.md, "Story: Witness the installation quota with a temporary metadata-only grant"
+import { recordQuotaWitness, startWitness } from "../diagnostics/quotaWitness.vibe"
 import { inspectSlopbotRuntime, selectSlopbotReadback, startReadback } from "../diagnostics/slopbotRuntime.vibe"
 
 export error InspectUsage { message: string }
 export error InspectRefused { message: string }
 
-const usage = "usage: inspect slopbot-runtime [--validate-selection]"
+const usage = "usage: inspect slopbot-runtime [--validate-selection] | inspect slopbot-app-quota"
 const validateSelection = "--validate-selection"
+const quotaRefused = "Protected GitHub App quota witness was refused"
 
-export effect function inspect(args: ReadonlyArray<string>) {
-  const [target, ...rest] = args
-  if (target !== "slopbot-runtime") throw new InspectUsage({ message: usage })
+effect function runnerTemp() {
+  return try Config.withDefault(Config.String("RUNNER_TEMP"), "")
+}
+
+effect function slopbotRuntime(rest: ReadonlyArray<string>) {
   const readback = try startReadback()
   if (!(try selectSlopbotReadback(readback))) throw new InspectRefused({ message: "Slopbot-only protected main selection required." })
   if (rest.length === 1 && rest[0] === validateSelection) {
     try Console.log("Slopbot-only metadata selection accepted.")
     return
   }
-  const runnerTemp = try Config.withDefault(Config.String("RUNNER_TEMP"), "")
-  if (rest.length > 0 || runnerTemp === "") throw new InspectRefused({ message: "Protected main runner required." })
+  const temp = try runnerTemp()
+  if (rest.length > 0 || temp === "") throw new InspectRefused({ message: "Protected main runner required." })
   const report = try inspectSlopbotRuntime(readback)
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
-  fs.writeFileString(files.join(runnerTemp, "slopbot-runtime.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }) catch effect () => {
+  fs.writeFileString(files.join(temp, "slopbot-runtime.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 }) catch effect () => {
     throw new InspectRefused({ message: "Protected main runner required." })
   }
   try Console.log(JSON.stringify(report))
   if (report.status !== "observed") throw new InspectRefused({ message: "Slopbot runtime metadata unavailable" })
+}
+
+effect function slopbotAppQuota(rest: ReadonlyArray<string>) {
+  const temp = try runnerTemp()
+  if (rest.length > 0 || temp === "") throw new InspectRefused({ message: quotaRefused })
+  const witness = try startWitness()
+  const refused = () => Effect.fail(new InspectRefused({ message: quotaRefused }))
+  try Effect.catchDefect(Effect.catch(recordQuotaWitness(witness, temp), refused), refused)
+}
+
+export effect function inspect(args: ReadonlyArray<string>) {
+  const [target, ...rest] = args
+  if (target === "slopbot-runtime") return try slopbotRuntime(rest)
+  if (target === "slopbot-app-quota") return try slopbotAppQuota(rest)
+  throw new InspectUsage({ message: usage })
 }

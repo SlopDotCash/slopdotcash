@@ -1,4 +1,4 @@
-// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"
 import { ConfigInvalid, idList, secret } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
 import { verifyWebhook } from "@repo/platform/github/webhook"
@@ -15,18 +15,28 @@ import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
 import { type Parsed, parse } from "./payload.vibe"
 import { type Context, advance } from "./store.vibe"
 
+module verified {
+  import { hasSlopParticipationFooter as footer } from "../review/evidence.ts"
+  /** @throws {never} */
+  export function hasSlopParticipationFooter(body: string): boolean { return footer(body) }
+}
+import { hasSlopParticipationFooter } from verified
+
 export const webhookLimitBytes = 25 * 1024 * 1024
+export const receiptDelaySeconds = 60
 
 const requestId = 1
 
 export service WebhookSettings {
   readonly secret: Redacted.Redacted<string>
   readonly appUserId: string
+  readonly evidenceSwitch: string
 }
 
 export interface WebhookVars {
   readonly SLOPBOT_WEBHOOK_SECRET?: string
   readonly SLOPBOT_APP_USER_ID?: string
+  readonly SLOPBOT_EVIDENCE_CLOSURE_ENABLED?: string
 }
 
 export function webhookSettings(vars: WebhookVars) {
@@ -34,7 +44,7 @@ export function webhookSettings(vars: WebhookVars) {
     const webhookSecret = try secret("SLOPBOT_WEBHOOK_SECRET", vars.SLOPBOT_WEBHOOK_SECRET)
     const [appUserId] = try idList("SLOPBOT_APP_USER_ID", vars.SLOPBOT_APP_USER_ID)
     if (appUserId === undefined) throw new ConfigInvalid({ name: "SLOPBOT_APP_USER_ID", issue: "missing" })
-    return { secret: webhookSecret, appUserId }
+    return { secret: webhookSecret, appUserId, evidenceSwitch: vars.SLOPBOT_EVIDENCE_CLOSURE_ENABLED ?? "" }
   })
 }
 
@@ -137,7 +147,14 @@ effect function queuedReady(parsed: Parsed) {
   if (queuesReadyCheck(trigger, try readyLabelWanted(job))) try send(job)
 }
 
-effect function routed(context: Context, claimed: Webhook, parsed: Parsed) {
+function queueDelay(settings: WebhookSettings.Shape, eventName: string, payload: Readonly<Record<string, unknown>>, job: Parsed["job"]) {
+  const pull = payload.pull_request
+  const body = typeof pull === "object" && pull !== null && "body" in pull ? pull.body : undefined
+  const awaitsReceipt = settings.evidenceSwitch === "true" && job?.kind === "review" && eventName === "pull_request" && payload.action === "opened" && typeof body === "string" && hasSlopParticipationFooter(body)
+  return awaitsReceipt ? receiptDelaySeconds : 0
+}
+
+effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
   const lookups = try valueLookups(claimed)
   const valued = try durable(context, claimed, { type: "inspectValue", requestId, ...lookups })
   try queuedReady(parsed)
@@ -147,15 +164,15 @@ effect function routed(context: Context, claimed: Webhook, parsed: Parsed) {
   let state = try durable(context, valued, { type: "inspectQueue", requestId, ...queueLookup })
   if (request(state, requestId).phase === "PersistReopen") state = try durable(context, state, { type: "bindReopen", requestId, strictSource: parsed.strictSource })
   if (request(state, requestId).phase === "SendQueue" && job !== undefined) {
-    const sent = send(job) catch () => false
+    const sent = send(job, delaySeconds) catch () => false
     state = try durable(context, state, { type: "send", requestId, ack: sent === false ? "QueueRejected" : "QueuedAndAcked" })
   }
   if (request(state, requestId).phase === "AwaitCompletion") state = try completed(context, state)
   return state
 }
 
-effect function releasing(context: Context, claimed: Webhook, parsed: Parsed) {
-  return routed(context, claimed, parsed) catch effect (error) => {
+effect function releasing(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
+  return routed(context, claimed, parsed, delaySeconds) catch effect (error) => {
     try Effect.logError("slopbot webhook failed", { delivery: context.deliveryId, failure: error._tag })
     const _released = durable(context, claimed, { type: "releaseOrdinary" }) catch () => claimed
     throw error
@@ -185,5 +202,5 @@ export effect function webhook() {
   const claimed = try durable(context, claimable, { type: "claim", requestId })
   if (settled(claimed)) return replied(claimed)
   if (request(claimed, requestId).phase === "InstallPending") return replied(try finishedInstallation(context, claimed, parsed))
-  return replied(try releasing(context, claimed, parsed))
+  return replied(try releasing(context, claimed, parsed, queueDelay(settings, eventName, decoded.payload ?? {}, parsed.job)))
 }

@@ -79,7 +79,7 @@ export const browserSession = Layer.effect(BrowserSession, effect {
 
   effect function observe(reason: ObserveReason) {
     const stamp = reason === "revalidate" ? try stampNow() : undefined
-    const observed = try session.refresh()
+    const observed = try session.refresh(reason === "revalidate")
     if (observed.current && (observed.view.status === "signedIn" || observed.view.status === "signedOut")) try settled(viewActor(observed.view), stamp, false)
     return observed.view
   }

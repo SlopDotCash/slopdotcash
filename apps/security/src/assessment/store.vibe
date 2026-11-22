@@ -248,6 +248,7 @@ export effect function exactReport(submissionId: string, version: number) {
     cvss: report.cvssVectorString ?? null,
     cweIds: [...report.cweIds ?? []],
     packages: [],
+    ...(report.proofOfConcept === undefined ? {} : { proofOfConcept: { fileName: report.proofOfConcept.fileName, patch: report.proofOfConcept.patch } }),
   } satisfies AnalysisReport
 }
 

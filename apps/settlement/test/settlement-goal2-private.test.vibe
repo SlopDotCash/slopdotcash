@@ -1,0 +1,197 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { type Statement, d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type CaseContext, type DirectPaymentView, DirectPayments, DirectRefused, RecoveryRefused } from "@repo/ports/settlement"
+import { evmDirectRails } from "../src/direct/evm.vibe"
+import { DirectPaymentsLive } from "../src/direct/port.vibe"
+import { solanaDirectRails } from "../src/direct/solana.vibe"
+
+error MigrationFailed { file: string }
+
+service Ledger {
+  readonly db: D1Database
+}
+
+effect function ledger() {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "goal2-private" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+}
+
+const LedgerStarted = Layer.effect(Ledger, ledger())
+
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const vault = `0x${"1".repeat(40)}`
+const owner = `0x${"2".repeat(40)}`
+const reporterId = "202"
+const payerId = "101"
+
+const awards = new Map<string, ApprovedAward>()
+const wallets = new Map<string, EffectiveWallet>()
+
+const boundary = Layer.mergeAll(
+  Layer.succeed(ApprovedAwards, { forCase: (caseId) => effect { return awards.get(caseId) } }),
+  Layer.succeed(Wallets, {
+    effective: ({ githubId }) => effect { return wallets.get(githubId) },
+    payable: ({ githubId }) => effect { return wallets.get(githubId) },
+    authorized: ({ githubId }) => effect { return [...wallets.entries()].flatMap(([holder, wallet]) => holder === githubId ? [wallet] : []) },
+    fence: ({ githubId, claimId, digest }) => effect { return sql`${wallets.get(githubId)?.claimId === claimId && wallets.get(githubId)?.digest === digest ? 1 : 0} = 1` },
+  }),
+)
+
+function bountyManifest(projectId: string) {
+  const deployment = {
+    network: "base-mainnet", vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: usdc, owner,
+    identityAuthority: `0x${"3".repeat(40)}`, feeRecipient: `0x${"4".repeat(40)}`, deploymentTransaction: `0x${"7".repeat(64)}`,
+    sourceCommit: "a".repeat(40), codeSha256: "b".repeat(64), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: `0x${"5".repeat(40)}`, factoryCodeSha256: "c".repeat(64), registrar: `0x${"6".repeat(40)}`,
+  }
+  return JSON.stringify({
+    id: projectId,
+    status: "active",
+    securityBounty: { settlement: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] } },
+  })
+}
+
+effect function seedCase(db: D1Database, input: { readonly caseId: string; readonly projectId: string; readonly gross: string; readonly direct: boolean }) {
+  const now = try isoNow()
+  const manifest = bountyManifest(input.projectId)
+  const terms = JSON.stringify({ currency: "USDC", decimals: 6, network: "base" })
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind(input.projectId, manifest, "a".repeat(64), now),
+    db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind(input.projectId, manifest, "a".repeat(64), now, now),
+    db.prepare("INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key) VALUES (?, ?, 'owner/repo', ?, 'reporter', 'verified', ?, ?, '7', 1, ?, 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ?, ?, ?)").bind(input.caseId, input.projectId, reporterId, now, now, terms, now, now, `root-${input.caseId}`),
+    input.direct
+      ? db.prepare("INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (?, ?, ?, ?, ?, ?)").bind(input.caseId, input.projectId, `root-${input.caseId}`, terms, input.gross, now)
+      : db.prepare("INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) VALUES (?, ?, ?, 1, ?, 'USDC', ?)").bind(input.caseId, input.projectId, `root-${input.caseId}`, input.gross, now),
+    db.prepare("INSERT INTO security_vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, block_number, block_time, observed_at) VALUES (?, 'base-mainnet', 'base', ?, ?, 6, '10000000', '0', '0', '0', '0', '0', '10000000', '1', ?, ?)").bind(input.projectId, vault, usdc, now, now),
+  ]))
+}
+
+function approved(caseId: string, projectId: string, input: { readonly gross: string; readonly direct: boolean; readonly split: ApprovedAward["split"]; readonly asset: string }): ApprovedAward {
+  return { caseId, projectId, caseRevision: 3, termsRevision: 1, direct: input.direct, split: input.split, grossBaseUnits: input.gross, asset: input.asset, network: "Base", rootCauseKey: `root-${caseId}`, approvedAt: "2026-11-22T00:00:00.000Z" }
+}
+
+effect function event(caseId: string, revision: number, kind: string, actor: string, role: string) {
+  const at = try isoNow()
+  return [
+    sql`UPDATE security_cases SET revision = ${revision} WHERE id = ${caseId} AND revision = ${revision - 1}`,
+    sql`INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, detail, at) VALUES (${caseId}, ${revision}, ${kind}, ${actor}, ${role}, ${`journey-${kind}-${revision}-key`}, '{}', ${at})`,
+  ] satisfies ReadonlyArray<Statement>
+}
+
+function body(action: string, fields: Readonly<Record<string, unknown>>) {
+  return { action, expectedRevision: 0, idempotencyKey: `journey-${action}-idempotency`, ...fields }
+}
+
+effect function reasonOf<A, E, R>(run: A!E!R) {
+  const answer = run catch effect (error) => {
+    if (error instanceof DirectRefused || error instanceof RecoveryRefused) return error.reason
+    throw error
+  }
+  return typeof answer === "string" ? answer : "accepted"
+}
+
+effect function rowsOf(db: D1Database, text: string, ...params: ReadonlyArray<string>) {
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function shape(view: DirectPaymentView) {
+  return { paymentRail: view.paymentRail, railAvailable: view.railAvailable, settlementState: view.settlementState, actions: [...view.actions].sort(), escrowOffered: view.paymentNetworks.includes("base-mainnet") }
+}
+
+const rails = Layer.mergeAll(outbound, webCrypto, evmDirectRails(JSON.stringify({ "base-mainnet": "http://127.0.0.1:9" })), solanaDirectRails({ paymentRpcUrls: undefined, localSolanaGenesis: undefined, recoveryRpcUrl: undefined }), boundary)
+
+layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('A vault-backed private award is prepared once as an unsigned owner commitment (spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts")', () => effect {
+    const { db } = try Ledger
+    const caseId = "sc_vault_award_case"
+    const projectId = "vault-award-project"
+    try seedCase(db, { caseId, projectId, gross: "4000000", direct: false })
+    awards.set(caseId, approved(caseId, projectId, { gross: "4000000", direct: false, split: "StandardSplit", asset: usdc }))
+    const fullCase = "sc_full_award_vault_case"
+    try seedCase(db, { caseId: fullCase, projectId: "full-award-vault-project", gross: "4000000", direct: false })
+    awards.set(fullCase, approved(fullCase, "full-award-vault-project", { gross: "4000000", direct: false, split: "FullAward", asset: usdc }))
+    const reporter: CaseContext = { caseId, revision: 3, reporterGithubId: reporterId, actorGithubId: reporterId }
+    const payer: CaseContext = { ...reporter, actorGithubId: payerId }
+    provide Layer.provide(DirectPaymentsLive, Layer.mergeAll(d1(db), rails)) {
+      const payments = try DirectPayments
+      const viewer = { payer: true, reporter: false }
+      const before = try payments.view({ caseContext: payer, viewer })
+      const refusals = [
+        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true, extra: 1 }), [])),
+        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: false }), [])),
+        try reasonOf(payments.act("prepare-payment", payer, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 4, "prepare-payment", payerId, "financial"))),
+        try reasonOf(payments.act("prepare-payment", { ...payer, caseId: fullCase }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), [])),
+      ]
+      const consent = try payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 4, "consent-payment", reporterId, "reporter"))
+      const prepare = try payments.act("prepare-payment", { ...payer, revision: 4 }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 5, "prepare-payment", payerId, "financial"))
+      const again = try reasonOf(payments.act("prepare-payment", { ...payer, revision: 5 }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 6, "prepare-payment", payerId, "financial")))
+      const after = try payments.view({ caseContext: { ...payer, revision: 5 }, viewer })
+      const settled = try rowsOf(db, "SELECT network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, case_revision, json_extract(deployment, '$.payoutPolicy') AS policy, json_extract(deployment, '$.projectId') AS project, json_extract(deployment, '$.chainId') AS chain_id, length(source_digest) AS source_length FROM security_settlements WHERE case_id = ?", caseId)
+      const settlement = after.settlement !== null && typeof after.settlement === "object" && !Array.isArray(after.settlement) ? after.settlement : {}
+      const request = settlement.ownerRequest !== null && typeof settlement.ownerRequest === "object" && !Array.isArray(settlement.ownerRequest) ? settlement.ownerRequest : {}
+      try same({
+        before: { railAvailable: before.railAvailable, settlementState: before.settlementState, escrowOffered: before.paymentNetworks.includes("base-mainnet"), actions: before.actions.filter((action) => action === "consent-payment" || action === "prepare-payment") },
+        refusals,
+        consent,
+        prepare,
+        again,
+        after: { ...shape(after), paymentRail: after.paymentRail, settlement: { state: settlement.state, grossBase: settlement.grossBase, feeBase: settlement.feeBase, netBase: settlement.netBase, transactionId: settlement.transactionId } },
+        request: { from: request.from, to: request.to, value: request.value, encoded: typeof request.data === "string" && request.data.length === 266 },
+        settled,
+      }, {
+        before: { railAvailable: true, settlementState: null, escrowOffered: true, actions: ["consent-payment", "prepare-payment"] },
+        refusals: ["invalidRequestRequestBodyHasUnexpected", "confirmationRequiredAcceptPublicChainVisibility", "paymentConsentRequiredTheReporterMustAccept", "railUnavailableTheBountyVaultPays"],
+        consent: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        prepare: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        again: "settlementExists",
+        after: { paymentRail: "escrow", railAvailable: true, settlementState: "awaiting-owner-commitment", actions: [], escrowOffered: true, settlement: { state: "awaiting-owner-commitment", grossBase: "4000000", feeBase: "1000000", netBase: "3000000", transactionId: null } },
+        request: { from: owner, to: vault, value: "0x0", encoded: true },
+        settled: [{ network: "base-mainnet", vault, asset: usdc, asset_decimals: 6, gross_base: "4000000", fee_base: "1000000", reporter_github_id: reporterId, approved_by: payerId, case_revision: 5, policy: "security-bounty", project: projectId, chain_id: "8453", source_length: 64 }],
+      })
+    }
+  })
+
+  it.effect('A direct award is dispatched to its journal and its payment actions are checked exactly (spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts")', () => effect {
+    const { db } = try Ledger
+    const caseId = "sc_direct_award_dispatch"
+    const projectId = "direct-award-dispatch"
+    try seedCase(db, { caseId, projectId, gross: "4000", direct: true })
+    awards.set(caseId, approved(caseId, projectId, { gross: "4000", direct: true, split: "StandardSplit", asset: "0x0000000000000000000000000000000000000000" }))
+    wallets.set(reporterId, { address: "0x00000000000000000000000000000000000000b2", claimId: "claim-reporter-dispatch", digest: "d".repeat(64) })
+    const reporter: CaseContext = { caseId, revision: 3, reporterGithubId: reporterId, actorGithubId: reporterId }
+    const payer: CaseContext = { ...reporter, actorGithubId: payerId }
+    provide Layer.provide(DirectPaymentsLive, Layer.mergeAll(d1(db), rails)) {
+      const payments = try DirectPayments
+      const refusals = [
+        try reasonOf(payments.act("verify-payment", payer, body("verify-payment", { transactionIds: ["0x1", "0x2", "0x3"], confirmation: true }), [])),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: false }), [])),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, signatures: [{ messageId: "m", signature: "s", extra: true }] }), [])),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, cancellationTransactionId: 7 }), [])),
+      ]
+      const consent = try payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true }), [])
+      const consents = try rowsOf(db, "SELECT json_extract(deployment, '$.rail') AS rail, json_extract(deployment, '$.network') AS network, reporter_github_id FROM security_payment_consents WHERE case_id = ?", caseId)
+      const view = try payments.view({ caseContext: payer, viewer: { payer: true, reporter: false } })
+      try same({ refusals, consent, consents, view: { paymentRail: view.paymentRail, settlementState: view.settlementState, settlement: view.settlement } }, {
+        refusals: ["invalidRequestConfirmOneOrTwo", "confirmationRequiredConfirmTheReviewedPayment", "invalidRequestProvideTheExpiredRequest", "invalidRequestProvideTheCancellationTransaction"],
+        consent: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        consents: [{ rail: "direct", network: "base-mainnet", reporter_github_id: reporterId }],
+        view: { paymentRail: "direct", settlementState: null, settlement: null },
+      })
+    }
+  })
+})

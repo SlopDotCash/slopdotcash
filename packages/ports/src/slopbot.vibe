@@ -1,4 +1,5 @@
-// spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+// spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"
+import type { Statement } from "@repo/platform/d1"
 import type { Actor } from "@repo/platform/http"
 import type { ReadFailure } from "./backend.vibe"
 
@@ -113,3 +114,55 @@ export schema PenaltyRow {
 
 export const PenaltyPage = Schema.Struct({ schemaVersion: Schema.String, project: Schema.String, records: Schema.Array(Schema.Unknown), nextAfter: Schema.NullOr(Schema.String) })
 export type PenaltyPage = typeof PenaltyPage.Type
+
+export schema FeeOutcome = "refund_due" | "kept_due" | "refunded" | "kept"
+
+export schema FinalOutcome = "refunded" | "kept"
+
+export interface FeeDeposit {
+  readonly network: string
+  readonly depositId: number
+}
+
+export interface ObservedDeposit extends FeeDeposit {
+  readonly item: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly keptTo: string
+  readonly txHash: string
+  readonly blockNumber: number
+  readonly blockTime: string
+}
+
+export type GoneDeposits =
+  | { readonly kind: "Reorganised"; readonly network: string; readonly throughBlock: number }
+  | { readonly kind: "Missing"; readonly network: string; readonly fromBlock: number; readonly toBlock: number; readonly seen: ReadonlyArray<number> }
+
+export schema SubmissionFeeItem {
+  readonly repositoryId: number
+  readonly pullNumber: number
+  readonly projectId: string
+  readonly item: string
+  readonly stableMinor: string
+  readonly askedAt: string
+  readonly paidAt: string | null
+  readonly paidNetwork: string | null
+  readonly paidDepositId: number | null
+  readonly outcome: FeeOutcome | null
+  readonly outcomeAt: string | null
+}
+
+export interface FeePull {
+  readonly repositoryId: number
+  readonly pullNumber: number
+}
+
+export service SubmissionFeeItems {
+  byItem(item: string): (SubmissionFeeItem | null)!ReadFailure
+  byPull(pull: FeePull): (SubmissionFeeItem | null)!ReadFailure
+  markPaid(deposit: FeeDeposit, pull: FeePull, at: string): Statement!!
+  finalOutcome(deposit: FeeDeposit, outcome: FinalOutcome, at: string): Statement!!
+  unpayWhereGone(gone: GoneDeposits): Statement!!
+  unpayChanged(observed: ObservedDeposit): Statement!!
+}

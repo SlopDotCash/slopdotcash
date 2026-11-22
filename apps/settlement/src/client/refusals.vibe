@@ -367,8 +367,9 @@ export const postPaymentsProjectsByIdMonthlyByPeriodAllocations = {
   monthFrozen: { status: 409, error: "month_frozen", message: "This month is finalized. Its allocations can no longer change.", headers: jsonPrivateNoStore },
   allocationsChanged: { status: 409, error: "allocations_changed", message: "The allocations changed. Reload them before saving.", headers: jsonPrivateNoStore },
   cutReasonRequired: { status: 400, error: "cut_reason_required", message: "An amount below the proposed amount needs a reason of 20 to 500 characters. The reason is public and sent to the contributor.", headers: jsonPrivateNoStore },
-  cutNoticeWindowPrivateNoStore: { status: 409, error: "cut_notice_window", messageFrom: "`A contributor gets 24 hours of notice before a cut takes effect. With automatic finalization on, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`", headers: jsonPrivateNoStore },
+  cutNoticeWindowPrivateNoStore: { status: 409, error: "cut_notice_window", messageFrom: "`A contributor gets 24 hours of notice before a cut takes effect. Because this month freezes at the cutoff, cuts close at ${utcMinute(noticeDeadline as Date)}, 24 hours before the cutoff.`", headers: jsonPrivateNoStore },
   cutoffPassed: { status: 409, error: "cutoff_passed", message: "The cutoff for this month has passed. The automatic process pays the current allocations.", headers: jsonPrivateNoStore },
+  closeoutAllocationsFixed: { status: 409, error: "closeout_allocations_fixed", message: "This month uses the exact reviewed closeout allocations.", headers: jsonPrivateNoStore },
 } as const
 
 export const postPaymentsProjectsByIdMonthlyByPeriodFinalize = {

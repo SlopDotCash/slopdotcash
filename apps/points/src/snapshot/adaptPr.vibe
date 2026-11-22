@@ -38,7 +38,7 @@ function rebound(candidate: Json, registry: RepositoryRegistry): Json | string {
     const current = registry.registered.find((repository) => repository.id === deployed.id)
     if (current === undefined) return `${path}.id is not registered`
     if (Object.keys(deployed).length !== publishedRepositoryKeys.length || publishedRepositoryKeys.some((key) => !Object.hasOwn(deployed, key))) return `${path} must publish exactly the registry fields`
-    for (const key of ["id", "description", "integrationBranch", "projectId"] as const) {
+    for (const key of ["id", "description", "projectId"] as const) {
       if (deployed[key] !== current[key]) return `${path}.${key} cannot change during a transfer`
     }
     const identity = `${String(deployed.owner)}/${String(deployed.name)}`

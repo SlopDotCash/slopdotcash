@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A bound review of a new item over the month's free-review cap is skipped before any call"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label"
 import { randomId } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
 import { Registry } from "@repo/ports/backend"
@@ -28,18 +28,25 @@ import { type CategoryName, type Verdict, findingOf, hundredths, reviewedOf, val
 
 module verified {
   import { type PolicyText, type RuleRef, evidenceFound as evidence, rulesFound as rules } from "./grounding.ts"
+  import { type MissingEvidence, type PolicyText as GuideText, missingSubmissionEvidence as missing } from "./evidence.ts"
+  import { evidenceKeyParts as keyParts } from "../context/reviewKey.ts"
   /** @throws {never} */
   export function evidenceFound(quotes: string[], itemText: string): boolean { return evidence(quotes, itemText) }
   /** @throws {never} */
   export function rulesFound(refs: RuleRef[], policy: PolicyText[]): boolean { return rules(refs, policy) }
+  /** @throws {never} */
+  export function missingSubmissionEvidence(body: string, policy: readonly GuideText[]): MissingEvidence | null { return missing(body, policy) }
+  /** @throws {never} */
+  export function evidenceKeyParts(found: boolean, evidenceSwitch: string): string[] { return keyParts(found, evidenceSwitch) }
 }
-import { evidenceFound, rulesFound } from verified
+import { evidenceFound, evidenceKeyParts, missingSubmissionEvidence, rulesFound } from verified
 
 export error ReviewFailed { reason: string }
 
 export interface ReviewSettings {
   readonly appUserId: string
   readonly verifierKey: string
+  readonly evidenceSwitch?: string
 }
 
 export interface Session {
@@ -205,6 +212,21 @@ function emptyVerdict(quote: string, summary: string): Verdict {
   return { category: "empty", confidence: 1, rule_refs: [{ source: "universal", quote }], evidence: [], summary, limitations: [], objective_defect: null }
 }
 
+export function evidenceVerdictOf(target: ReviewTarget, context: ReviewContext): Verdict | undefined {
+  if (context.pull === undefined || target.securityOnly || context.limitations.length > 0) return undefined
+  const finding = missingSubmissionEvidence(context.issue.body ?? "", context.policy)
+  if (finding === null) return undefined
+  return {
+    category: "missing_evidence",
+    confidence: 1,
+    rule_refs: [{ source: finding.source, quote: finding.quote }],
+    evidence: [],
+    summary: `The Evidence section is missing or incomplete. Supply these required fields with checkable results: ${finding.fields.join(", ")}.`,
+    limitations: [],
+    objective_defect: null,
+  }
+}
+
 export function prefilter(context: ReviewContext): Verdict | undefined {
   if (context.pull !== undefined && context.pull.changed_files === 0) return emptyVerdict("pull request changes no files", "This pull request does not change any files, so there is nothing to review.")
   if (context.pull === undefined && context.issue.title.trim() === "" && (context.issue.body ?? "").trim() === "") return emptyVerdict("issue has no title or body", "This issue has no content to review.")
@@ -325,8 +347,9 @@ effect function publishAdvisory(session: Session, verdict: Verdict, triage: Call
   return settled(limited ? "limited advisory review published" : "review published (no finding)")
 }
 
-function modeOf(context: ReviewContext, category: CategoryName): ModeName {
-  return category === "none" ? "off" : context.config.categories[category]
+function modeOf(context: ReviewContext, assessed: Assessed, category: CategoryName): ModeName {
+  const configured: ModeName = category === "none" ? "off" : context.config.categories[category]
+  return category === "missing_evidence" && !assessed.assessed.verdict.deterministic && configured === "close" ? "label" : configured
 }
 
 effect function decided(session: Session, assessed: Assessed) {
@@ -338,7 +361,7 @@ effect function decided(session: Session, assessed: Assessed) {
     try completeReview(session, { verdict, action: "none" }, assessed.call !== undefined)
     return settled(`no action (${category}; security review only)`)
   }
-  const mode = modeOf(context, category)
+  const mode = modeOf(context, assessed, category)
   if ((category === "none" && !session.target.securityOnly) || limited) return try publishAdvisory(session, verdict, assessed.call, mode)
   if (mode === "off") {
     try completeReview(session, { verdict, action: "none" }, assessed.call !== undefined)
@@ -367,7 +390,7 @@ effect function runReview<E, R>(session: Session, onSkip: (session: Session) => 
     return settled(monthlyReviewCapReason)
   }
   const limited = context.limitations.length > 0
-  const filtered = limited ? undefined : prefilter(context)
+  const filtered = limited ? undefined : evidenceVerdictOf(session.target, context) ?? prefilter(context)
   const duplicate = limited || filtered !== undefined ? undefined : try duplicateOf(session.target, context)
   const current: Session = duplicate === undefined ? session : { ...session, related: duplicate.related }
   const deterministic = filtered ?? duplicate?.verdict
@@ -409,7 +432,8 @@ export effect function reviewItem<E, R>(job: ReviewJob, settings: ReviewSettings
   const quality = try hooks.quality(target, context)
   const closed = context.issue.state === "closed"
   if (closed) try hooks.closedItem(job, context)
-  const reviewKey = try reviewKeyOf(context, target, settings.verifierKey, quality.map((defect) => defect.id))
+  const evidenceParts = evidenceKeyParts(evidenceVerdictOf(target, context) !== undefined, settings.evidenceSwitch ?? "")
+  const reviewKey = try reviewKeyOf(context, target, settings.verifierKey, quality.map((defect) => defect.id), evidenceParts)
   const close = try unfinishedClose(context.issue.node_id)
   if (close !== undefined && !closed && close.state === "pending") throw new ReviewBusy({ remainingSeconds: pendingCloseSeconds })
   if (close !== undefined && closed) {

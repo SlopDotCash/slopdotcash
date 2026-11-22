@@ -1,0 +1,271 @@
+// spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/payment.md, "A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import { jsonRpc } from "@repo/platform/chain/rpc"
+import { type Address, MAX_TRANSACTION_BYTES, SYSTEM_PROGRAM, SolanaRpc, addressOf, base64Decode, base64Encode, solanaRpc } from "@repo/platform/chain/solana"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { SqlTx } from "@repo/platform/journal"
+import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
+import { type KeeperMode, apply } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { decodeAward, decodeBinding } from "../chain/solana/accounts.ts"
+import { digest, u64 } from "../chain/solana/bytes.ts"
+import { payAward } from "../chain/solana/instructions.ts"
+import { awardAddress, awardId, bindingAddress, vetoAddress } from "../chain/solana/pda.ts"
+import { type Instruction, compileLegacy, transactionId, unsignedTransaction, withSignature } from "../chain/solana/transactions.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { networkPays } from "../kernels/poolFacts.ts"
+import { DeploymentUnverified, type VerifiedDeployment, verifiedDeployment } from "../owner/solanaDeployment.vibe"
+import { broadcastSolana, finalizedAccount, finalizedProject, statusOf } from "../signer/solana.vibe"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { AttemptRefused } from "./attempts.vibe"
+import { reserveSolanaSend, solanaMaximum, solanaReservationId } from "./budget.vibe"
+import { type SolanaKeeperConfig, chainOfGenesis } from "./config.vibe"
+import { classifyFailure } from "./diagnostics.vibe"
+import { type GroupWork, type KeeperCore, bytesOf, withGroup } from "./lifecycle.vibe"
+import { KeeperRefused } from "./registry.vibe"
+import { OperatorKeyUnavailable } from "./signer.vibe"
+import { RecordInvalid, inTransaction, keep, record } from "./store.vibe"
+import { decimal, widen } from "./units.ts"
+
+export interface SolanaScope {
+  readonly config: SolanaKeeperConfig
+  readonly mode: KeeperMode
+  readonly core: KeeperCore
+  readonly runId: number
+}
+
+export interface SolanaContext extends SolanaScope {
+  readonly deployment: SolanaDeployment
+  readonly verified: VerifiedDeployment
+}
+
+export type SolanaPayOutcome =
+  | { readonly state: "paid" }
+  | { readonly state: "awaiting-wallet" }
+  | { readonly state: "ready"; readonly destination: string; readonly version: string }
+  | { readonly state: "submitted"; readonly transactionId: string }
+
+export service OperatorSolanaSeed {
+  read(): string | undefined
+}
+
+export function operatorSolanaSeed(read: () => string | undefined) {
+  return Layer.succeed(OperatorSolanaSeed, { read })
+}
+
+export schema SolanaAttempt {
+  readonly obligationId?: string
+  readonly network?: string
+  readonly vault?: string
+  readonly fingerprint: string
+  readonly raw: string
+  readonly transactionId: string
+  readonly lastValidBlockHeight: number
+  readonly generation: number
+}
+
+export type RelayKind = "Payment" | "Monthly"
+
+interface RelayWording {
+  readonly collision: string
+  readonly unfinalized: string
+  readonly journal: string
+  readonly disappeared: string
+  readonly tooLarge: string
+  readonly kept: string
+}
+
+const WORDING: Readonly<Record<RelayKind, RelayWording>> = {
+  Payment: { collision: "Idempotency collision", unfinalized: "Existing transaction failed; reconcile before retry", journal: "Journal collision", disappeared: "Expired attempt disappeared from durable journal", tooLarge: "Transaction too large", kept: "expired" },
+  Monthly: { collision: "Monthly journal collision", unfinalized: "Monthly failure is not finalized", journal: "Monthly journal collision", disappeared: "Monthly attempt disappeared", tooLarge: "Monthly transaction too large", kept: "retired" },
+}
+
+export interface Relay<E, R> {
+  readonly key: string
+  readonly fingerprint: string
+  readonly kind: RelayKind
+  readonly retired?: string
+  readonly fields?: { readonly obligationId: string; readonly network: string; readonly vault: string }
+  renew(): void!E!R
+}
+
+function refused(reason: string) {
+  return new AttemptRefused({ reason })
+}
+
+function keyUnavailable(reason: string) {
+  return new OperatorKeyUnavailable({ reason })
+}
+
+export function solanaCause(error: unknown): ClassifiedError {
+  const classified = classifyFailure(error)
+  if (classified === "EvmUnavailable") return "SolanaUnavailable"
+  return classified === "EvmFailure" ? "UnrecognizedError" : classified
+}
+
+export function solanaUrls(config: SolanaKeeperConfig) {
+  return Redacted.make([Redacted.value(config.rpcUrl)])
+}
+
+export effect function observedSolanaChain(config: SolanaKeeperConfig, deployment: SolanaDeployment) {
+  if (!networkPays(deployment.network)) throw new KeeperRefused({ message: "Only approved Solana test clusters are supported" })
+  const raw = try jsonRpc({ urls: solanaUrls(config), timeoutMs: 20_000, maxBytes: 1024 })
+  const genesis = try raw.call("getGenesisHash", [], Schema.String)
+  if (genesis !== config.genesis || genesis !== deployment.genesisHash) throw new KeeperRefused({ message: "Wrong Solana RPC genesis" })
+  return chainOfGenesis(genesis) ?? config.chain
+}
+
+export effect function onKeeperSolana<A, E, R>(config: SolanaKeeperConfig, program: () => A!E!R) {
+  provide solanaRpc({ urls: solanaUrls(config), genesis: config.genesis }) {
+    return try program()
+  }
+}
+
+export effect function verifiedSolana(deployment: SolanaDeployment) {
+  return verifiedDeployment(deployment) catch effect (error) => match (error) {
+    when DeploymentUnverified: throw new KeeperRefused({ message: error.message });
+    default: throw error;
+  }
+}
+
+export effect function solanaRoles(deployment: SolanaDeployment, verified: VerifiedDeployment) {
+  const project = try finalizedProject(verified)
+  return [project.identityAuthority, project.pendingIdentityAuthority ?? "", deployment.owner, deployment.identityAuthority, deployment.feeRecipient, deployment.upgradeAuthority ?? "", deployment.rotationAuthority].filter((role) => role !== "")
+}
+
+effect function signWithSolanaSeed(signer: Address, message: Uint8Array) {
+  const text = (try OperatorSolanaSeed).read()
+  if (text === undefined || !/^[0-9a-f]{64}$/u.test(text)) throw keyUnavailable("Dedicated operator Solana seed unavailable")
+  const seed = try Effect.try({ try: () => hexToBytes(text), catch: () => keyUnavailable("Dedicated operator Solana seed unavailable") })
+  const publicKey = try Effect.try({ try: () => ed25519.getPublicKey(seed), catch: () => keyUnavailable("Dedicated operator Solana seed unavailable") })
+  if (addressOf(publicKey) !== signer) throw keyUnavailable("Operator key does not match configured signer")
+  const signature = try Effect.try({ try: () => ed25519.sign(message, seed), catch: () => keyUnavailable("Signing failed") })
+  const valid = Effect.try(() => ed25519.verify(signature, message, publicKey, { zip215: false })) catch () => false
+  if (signature.length !== 64 || !valid) throw keyUnavailable("Invalid signer response")
+  return signature
+}
+
+effect function readSolanaAttempt(tx: SqlTx, key: string) {
+  const found = try record(tx, key)
+  if (found === undefined) return undefined
+  return Schema.decodeUnknownEffect(SolanaAttempt)(found) catch effect () => { throw new RecordInvalid({ key }) }
+}
+
+effect function broadcastAttempt(context: SolanaContext, attempt: SolanaAttempt) {
+  const raw = base64Decode(attempt.raw)
+  if (raw === undefined || raw[0] !== 1) throw refused("Journaled transaction is malformed")
+  const group = solanaReservationId(raw.subarray(65))
+  const announce = () => effect {
+    const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+    try withGroup(context.core, group, now, 1, (state, found) => effect {
+      if (found === undefined) throw refused("Journaled attempt has no send journal")
+      const next = try apply(state, { type: "broadcast", runId: context.runId, bytes: bytesOf(found.hashes, attempt.transactionId) })
+      return { state: next, hashes: found.hashes, value: undefined } satisfies GroupWork<undefined>
+    })
+  }
+  return try broadcastSolana(attempt, announce)
+}
+
+export effect function sendSolana<E, R>(context: SolanaContext, relay: Relay<E, R>, instructions: ReadonlyArray<Instruction>) {
+  const said = WORDING[relay.kind]
+  const signer = context.config.signer
+  const rpc = try SolanaRpc
+  const existing = try inTransaction((tx) => readSolanaAttempt(tx, relay.key))
+  let expired: SolanaAttempt | undefined = undefined
+  if (existing !== undefined) {
+    if (existing.fingerprint !== relay.fingerprint) throw refused(said.collision)
+    const status = try statusOf(existing.transactionId)
+    if (status !== undefined && !status.failed) return existing.transactionId
+    if (status !== undefined && !status.finalized) throw refused(said.unfinalized)
+    if (status === undefined && (try rpc.blockHeight("finalized")) <= existing.lastValidBlockHeight) return try broadcastAttempt(context, existing)
+    try relay.renew()
+    expired = existing
+  }
+  const latest = try rpc.blockhash("finalized")
+  const compiled = compileLegacy({ payer: signer, blockhash: latest.blockhash, instructions })
+  const unsigned = compiled.kind === "compiled" ? unsignedTransaction(compiled.message) : undefined
+  if (compiled.kind !== "compiled" || unsigned === undefined) throw refused(said.tooLarge)
+  const message = compiled.bytes
+  const group = solanaReservationId(message)
+  const maximum = try solanaMaximum(message, signer)
+  const millis = try Clock.currentTimeMillis
+  const retired = expired
+  const attempt = try withGroup(context.core, group, Math.floor(millis / 1000), 1, (state, found, tx) => effect {
+    if (relay.retired !== undefined && (try record(tx, relay.retired)) !== undefined) throw refused("Attempt retired before signing")
+    const current = try readSolanaAttempt(tx, relay.key)
+    if (current !== undefined && current.fingerprint !== relay.fingerprint) throw refused(said.journal)
+    if (current !== undefined && (retired === undefined || current.transactionId !== retired.transactionId || current.generation !== retired.generation))
+      return { state: undefined, hashes: [], value: current } satisfies GroupWork<SolanaAttempt>
+    if (retired !== undefined && current === undefined) throw refused(said.disappeared)
+    if (found !== undefined) throw refused("Gas reservation conflict: this nonce is already reserved")
+    if (current !== undefined) try keep(tx, `${relay.key}:${said.kept}:${current.generation}`, current)
+    const signature = try signWithSolanaSeed(signer, message)
+    const raw = withSignature(unsigned, signer, signature)
+    const id = raw === undefined ? undefined : transactionId(raw)
+    if (raw === undefined || id === undefined || raw.length > MAX_TRANSACTION_BYTES) throw refused(said.tooLarge)
+    const next = try reserveSolanaSend(tx, state, context, group, maximum, id, millis)
+    const generation = relay.kind === "Payment" ? latest.lastValidBlockHeight : (current?.generation ?? 0) + 1
+    const candidate = { ...relay.fields, fingerprint: relay.fingerprint, raw: base64Encode(raw), transactionId: id, lastValidBlockHeight: latest.lastValidBlockHeight, generation } satisfies SolanaAttempt
+    try keep(tx, relay.key, candidate)
+    return { state: next, hashes: [id], value: candidate } satisfies GroupWork<SolanaAttempt>
+  })
+  return try broadcastAttempt(context, attempt)
+}
+
+effect function readSolanaAward(context: SolanaContext, obligationId: string, githubUserId: string) {
+  const { verified, deployment } = context
+  const project = try finalizedProject(verified)
+  if (project.mint !== deployment.asset || project.network !== digest(deployment.networkDomain)) throw refused("Project domain mismatch")
+  const id = digest(obligationId.replace(/^0x/u, "").toLowerCase())
+  const parsed = /^[0-9]{1,20}$/u.test(githubUserId) ? decimal(githubUserId) : undefined
+  const actor = parsed === undefined ? undefined : u64(parsed)
+  if (id === undefined || actor === undefined) throw refused("Finalized award mismatch")
+  const read = decodeAward(try finalizedAccount(awardAddress(verified.program, verified.project, id)), verified.program)
+  const award = read.kind === "decoded" ? read.value : undefined
+  if (award === undefined || award.gross === 0n || awardId(verified.project, award.source) !== id || award.project !== verified.project || award.actor !== actor
+    || !payoutFeeAccepted(award.gross, award.fee, deployment.scope === "security-bounty") || award.principal + award.fee !== award.gross)
+    throw refused("Finalized award mismatch")
+  const bound = try finalizedAccount(bindingAddress(verified.program, verified.project, actor))
+  const binding = bound === undefined ? undefined : decodeBinding(bound, verified.program)
+  if (binding !== undefined && binding.kind !== "decoded") throw refused("Account layout mismatch")
+  return { project, award, id, actor, binding: binding?.value }
+}
+
+export effect function readSolanaPayment(context: SolanaContext, obligationId: string, githubUserId: string) {
+  const read = try readSolanaAward(context, obligationId, githubUserId)
+  if (read.award.paid) return { state: "paid" } satisfies SolanaPayOutcome
+  if (read.binding === undefined) return { state: "awaiting-wallet" } satisfies SolanaPayOutcome
+  return { state: "ready", destination: read.binding.destination, version: read.binding.version.toString() } satisfies SolanaPayOutcome
+}
+
+effect function confirmedChainTime() {
+  const rpc = try SolanaRpc
+  const time = try rpc.blockTime(try rpc.slot("confirmed"))
+  if (time === undefined || !Number.isSafeInteger(time)) throw refused("Confirmed block time unavailable")
+  return widen(time)
+}
+
+export effect function submitSolanaPayment(context: SolanaContext, obligationId: string, githubUserId: string) {
+  const { config, deployment, verified } = context
+  const read = try readSolanaAward(context, obligationId, githubUserId)
+  if (read.award.paid) return { state: "paid" } satisfies SolanaPayOutcome
+  const binding = read.binding
+  if (binding === undefined) return { state: "awaiting-wallet" } satisfies SolanaPayOutcome
+  if ([deployment.feeRecipient, deployment.rotationAuthority, deployment.upgradeAuthority].includes(config.signer)) throw refused("Keeper key must have no vault role")
+  const payableAt = read.award.committedAt + read.project.bindingDelay
+  if ((try confirmedChainTime()) < payableAt) throw refused(`Award is inside its commit delay until ${try isoAt(Number(payableAt) * 1000)}; retry after it ends`)
+  const veto = try finalizedAccount(vetoAddress(verified.program, verified.project, read.actor, binding.version))
+  if (veto !== undefined && veto.owner !== SYSTEM_PROGRAM) throw refused("Project owner vetoed this destination binding; identity review required")
+  if (config.signer === read.project.owner) throw refused("Gas payer must be separate from project owner")
+  if (config.signer === read.project.identityAuthority) throw refused("Gas payer must be separate from identity authority")
+  const instructions = payAward({ program: verified.program, project: verified.project, payer: config.signer, asset: verified.asset, actor: read.actor, award: read.id, destination: binding.destination, version: binding.version })
+  const idempotencyKey = try sha256Hex(JSON.stringify([deployment.network, deployment.vault, obligationId]))
+  const fingerprint = try sha256Hex(JSON.stringify([deployment.programId, deployment.projectPda, obligationId, deployment.network, deployment.vault, githubUserId, idempotencyKey]))
+  const renew = () => effect {
+    const current = try readSolanaAward(context, obligationId, githubUserId)
+    if (current.award.paid) throw refused("Paid outside known attempt; finalized receipt reconciliation required")
+  }
+  const relay = { key: `solana:keeper:${deployment.network}:${idempotencyKey}`, fingerprint, kind: "Payment" as const, retired: `retired:${deployment.network}:${idempotencyKey}`, fields: { obligationId, network: deployment.network, vault: deployment.vault }, renew }
+  return { state: "submitted", transactionId: try sendSolana(context, relay, instructions) } satisfies SolanaPayOutcome
+}

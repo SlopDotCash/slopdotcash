@@ -95,12 +95,12 @@ export error NotAJob { reason: string }
 export error QueueUnavailable { kind: string }
 
 export service JobQueue {
-  send(job: Job): void!QueueUnavailable
+  send(job: Job, delaySeconds: number): void!QueueUnavailable
 }
 
 export function jobQueue(binding: Queue<Job>) {
   return Layer.succeed(JobQueue, {
-    send: (job) => tryPromise({ try: () => binding.send(job), catch: () => new QueueUnavailable({ kind: job.kind }) }),
+    send: (job, delaySeconds) => tryPromise({ try: () => binding.send(job, delaySeconds > 0 ? { delaySeconds } : undefined), catch: () => new QueueUnavailable({ kind: job.kind }) }),
   })
 }
 
@@ -114,6 +114,6 @@ export effect function parseJob(text: string) {
   return try decodeJob(value)
 }
 
-export effect function send(job: Job) {
-  try (try JobQueue).send(job)
+export effect function send(job: Job, delaySeconds: number = 0) {
+  try (try JobQueue).send(job, delaySeconds)
 }
