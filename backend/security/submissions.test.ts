@@ -3733,6 +3733,31 @@ describe("the report deposit on a report that lives on GitHub", () => {
     expect(ownerNotices(t)).toBe(2);
   });
 
+  test("an older-style link whose one try meets a GitHub outage is tried again on the next sweep", async () => {
+    const t = setup({ noProgram: true, reportDeposit: "live" });
+    const advisory = seed(t);
+    const claimed = await t.call(REPORTER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: advisory.ghsa_id,
+      idempotencyKey: t.key(),
+    });
+    expect(claimed.status).toBe(201);
+    const caseId = (claimed.body.case as { id: string }).id;
+    expect(pay(t, caseId)).toBe(1);
+    // The owners' authority cannot be read: the try is not recorded.
+    t.setAccessUnavailable(true);
+    await sweep(t);
+    expect(ownerNotices(t)).toBe(0);
+    t.setAccessUnavailable(false);
+    // GitHub answers again: the waiting claim is told on the next sweep.
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBeGreaterThan(0);
+    const told = ownerNotices(t);
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(told);
+  });
+
   test("an older-style link that nobody can be told about leaves the sweep after one try and does not hold back a later claim", async () => {
     const t = setup({ reportDeposit: "live" });
     // No technical approver of "silent" has current GitHub authority, so

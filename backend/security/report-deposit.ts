@@ -48,6 +48,7 @@ import {
   reportingContext,
   type SecurityApiDependencies,
 } from "./case-store";
+import { reportingAuthorityUnavailable } from "./project-access";
 import { depositHeldSql } from "./report-deposit-hold";
 import { ROUTINE_ACTOR, ROUTINE_PROOF_NEXT_ACTION } from "./routine-decisions";
 
@@ -521,7 +522,13 @@ async function startReleasedWork(
     started++;
   }
   for (const row of claimed.results) {
-    await ownerNotice(deps, row.id, row.project_id).catch(() => undefined);
+    // A permission-provider outage is retryable, never a denial: leave the
+    // claim for the next sweep instead of recording the try.
+    let unavailable = false;
+    await ownerNotice(deps, row.id, row.project_id).catch((error) => {
+      unavailable = reportingAuthorityUnavailable(error);
+    });
+    if (unavailable) continue;
     await deps.db
       .prepare(
         "UPDATE security_report_deposits SET claim_notice_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",

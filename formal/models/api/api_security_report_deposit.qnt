@@ -135,6 +135,9 @@ module api_security_report_deposit {
     ((s.row == "asked" and s.paid) or (s.row == "recorded" and s.released))
   action sweepClaimNotice(reachable: bool): bool = all { claimReady,
     s' = touch(s.with("claimTried", true).with("notified", s.notified or reachable)) }
+  // A permission-provider outage during the try records nothing: the claim
+  // stays ready for the next sweep.
+  action sweepClaimOutage = all { claimReady, s' = s }
   // reportDepositOutcome, on a paid row with no outcome.
   val stood = s.appeal != "open" and s.closedAt >= 0 and s.now >= s.closedAt + STOOD
   val decision: str =
@@ -164,6 +167,7 @@ module api_security_report_deposit {
     { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() accept(e, r) },
     { nondet e = Set(true, false).oneOf() nondet r = Set(true, false).oneOf() acceptClaim(e, r) },
     { nondet reach = Set(true, false).oneOf() sweepClaimNotice(reach) },
+    sweepClaimOutage,
     { nondet o = Set("triaging", "duplicate", "out-of-scope", "rejected", "needs-information").oneOf() routine(o) },
     { nondet o = Set("confirmed", "duplicate", "out-of-scope", "rejected").oneOf()
       nondet sp = Set(true, false).oneOf() decide(o, sp) },
@@ -275,6 +279,9 @@ module api_security_report_deposit {
     .then(pay).then(sweepClaimNotice(false))
     .expect(not(s.notified) and s.claimTried and invariant)
     .then(sweepClaimNotice(true).fail())
+  run outageClaimIsTriedAgainTest = init.then(setMode("live")).then(acceptClaim(false, true))
+    .then(pay).then(sweepClaimOutage).expect(not(s.claimTried) and not(s.notified) and invariant)
+    .then(sweepClaimNotice(true)).expect(s.notified and s.claimTried and invariant)
   run turnedOffClaimIsToldTest = init.then(setMode("live")).then(acceptClaim(false, true))
     .then(ownerSets(false)).then(sweepRelease).then(sweepClaimNotice(true))
     .expect(s.notified and not(held) and invariant)
