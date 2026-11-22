@@ -143,6 +143,53 @@ function priorMerges(store: Store) {
   return merges
 }
 
+function historicalJointHolds(snapshot: LeaderboardSnapshot, repositories: Repositories, original: ReadonlySet<string>) {
+  const membership = (snapshot.reviewedImplementationUnits ?? []).flatMap((source) => {
+    const project = projectOf(repositories, source.repository)
+    return project === undefined ? [] : [{ project, source: sourceKey(project, source.pullRequestId), units: source.units }]
+  })
+  const unitKey = (project: string, decision: string, unit: string) => `${project}\u0000${decision}\u0000${unit}`
+  const protectedGroups = new Set<string>()
+  const exactRecords = new Set<string>()
+  const heldRecords = new Set<string>()
+  const allUnits = new Set<string>()
+  const heldUnits = new Set<string>()
+  const heldSources = new Set<string>()
+  const related = new Set<string>()
+  for (const row of membership) if (original.has(row.source)) {
+    for (const unit of row.units) {
+      protectedGroups.add(sourceKey(row.project, unit.groupId))
+      exactRecords.add(sourceKey(row.source, unit.recordDigest))
+    }
+  }
+  for (const row of membership) for (const unit of row.units) {
+    const key = unitKey(row.project, `value:${unit.recordDigest}`, unit.workUnitId)
+    allUnits.add(key)
+    if (protectedGroups.has(sourceKey(row.project, unit.groupId))) {
+      heldSources.add(row.source)
+      heldUnits.add(key)
+    }
+  }
+  const assessed = (snapshot.valueAssessmentCoverage ?? []).flatMap((row) => {
+    const project = projectOf(repositories, row.repository)
+    if (project === undefined || row.status !== "assessed" || row.recordDigest === null) return []
+    return [{ source: sourceKey(project, row.pullRequestId), digest: row.recordDigest, record: sourceKey(project, `value:${row.recordDigest}`) }]
+  })
+  for (const row of assessed) {
+    if (original.has(row.source) && !exactRecords.has(sourceKey(row.source, row.digest))) heldRecords.add(row.record)
+  }
+  for (const row of assessed) if (heldRecords.has(row.record)) related.add(row.source)
+  for (const event of snapshot.ledger) {
+    if (event.category !== "merged-pull-request" || event.scoreDecisionSourceId === undefined) continue
+    const project = projectOf(repositories, event.repository)
+    if (project === undefined) continue
+    const source = sourceKey(project, event.source.id)
+    if (heldRecords.has(sourceKey(project, event.scoreDecisionSourceId))) related.add(source)
+    if (heldUnits.has(unitKey(project, event.scoreDecisionSourceId, event.workUnitId ?? ""))) heldSources.add(source)
+  }
+  return { unitKey, allUnits, heldUnits, heldSources, related }
+}
+
 effect function checkOmissions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot) {
   const omitted = new Map<string, string>()
   for (const exclusion of snapshot.reviewExclusions ?? []) {
@@ -336,13 +383,15 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
   for (const row of snapshot.valueAssessmentCoverage ?? []) if (!coverage.has(row.pullRequestId)) coverage.set(row.pullRequestId, row)
   const merges = priorMerges(store)
   const held = octoberHeld(store)
+  const joint = historicalJointHolds(snapshot, repositories, held)
+  for (const source of joint.related) held.add(source)
   const buffer: Row[] = []
   for (const row of snapshot.valueAssessmentCoverage ?? []) {
     const projectId = projectOf(repositories, row.repository)
     if (!unassessedCoverage.has(row.status) || row.recordDigest !== null || projectId === undefined) continue
     const key = sourceKey(projectId, row.pullRequestId)
     const prior = merges.get(key) ?? []
-    if (held.has(key) || prior.length === 0) continue
+    if (held.has(key) || joint.heldSources.has(key) || prior.length === 0) continue
     held.add(key)
     const current = snapshotAwards.filter(({ award }) => award.category === "merged-pull-request" && sourceKey(award.projectId, award.sourceId) === key)
     try commit(store, buffer, try reallocateFromCoverage(store, snapshot, digest, recordedAt, row, projectId, prior, current, unavailable))
@@ -352,7 +401,13 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     const { award } = item
     const merged = award.category === "merged-pull-request"
     const recorded = store.latest.has(award.key) || store.unitsBySource.has(award.sourceId)
-    if (owned.has(award.key) || (merged && held.has(sourceKey(award.projectId, award.sourceId)))) continue
+    const source = sourceKey(award.projectId, award.sourceId)
+    const unit = joint.unitKey(award.projectId, item.event.scoreDecisionSourceId ?? "", award.workUnitId)
+    if (owned.has(award.key) || (merged && (held.has(source) || joint.heldUnits.has(unit)))) continue
+    if (merged && joint.heldSources.has(source)) {
+      const ordinary = (merges.get(source) ?? []).some(({ award: prior }) => prior.amount > 0 && store.unitOfKey.get(prior.key) === ownUnit(prior.projectId, prior.sourceId))
+      if (!joint.allUnits.has(unit) || ordinary) continue
+    }
     if (merged && award.provisional && unavailable.has(award.sourceId) && recorded) continue
     credited.push(item)
   }
