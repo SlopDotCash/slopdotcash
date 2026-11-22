@@ -7,7 +7,7 @@ import { valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
 import { commitActorKind } from "../kernels/scoring/lines.ts"
 import { valueTierBand } from "../kernels/scoring/tiers.ts"
 import { Commits } from "./book.vibe"
-import { type Actor, type ActorIndex, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import { type Actor, type ActorIndex, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import { scoredSource, valueAssessed } from "./policy.vibe"
 
 export interface JointReview {
@@ -91,6 +91,10 @@ effect function elsewhere(owner: MergedPull) {
   return units
 }
 
+function resolutionLines(files: ReadonlyArray<ChangedFile>) {
+  return { additions: countOf(files.reduce((sum, file) => sum + file.additions, 0)), deletions: countOf(files.reduce((sum, file) => sum + file.deletions, 0)) }
+}
+
 effect function attributed(key: string, pull: Source, commit: Commit, owner: MergedPull | undefined, actors: ActorIndex) {
   const book = try Commits
   if (commit.author !== null) try book.send(key, { type: "observePrimary", actor: actors.of(commit.author), kind: commitActorKind(commit.author), linked: true })
@@ -99,8 +103,12 @@ effect function attributed(key: string, pull: Source, commit: Commit, owner: Mer
     const copy: CopyBinding = { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) }
     if (canObserveCopy(try book.get(key), copy, commit.retained.discussion)) try book.send(key, { type: "observeCopy", copy, discussion: commit.retained.discussion })
   }
-  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge: commit.parentCount > 1, resolutions: commit.resolutions.length, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
-  if (commit.additions >= 0 && commit.deletions >= 0) try book.send(key, { type: "recordLines", additions: commit.additions, deletions: commit.deletions })
+  const merge = commit.parentCount > 1
+  const resolutions = merge ? commit.resolutions : []
+  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge, resolutions: resolutions.length, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
+  const resolved = resolutions.length === 1 ? resolutions[0] : undefined
+  const lines = !merge ? { additions: commit.additions, deletions: commit.deletions } : resolved === undefined ? undefined : resolutionLines(resolved)
+  if (lines !== undefined && lines.additions >= 0 && lines.deletions >= 0) try book.send(key, { type: "recordLines", additions: lines.additions, deletions: lines.deletions })
   if (canAttribute(try book.get(key))) try book.send(key, { type: "attribute" })
   if (canCreditCommit(try book.get(key))) try book.send(key, { type: "creditCommit" })
   return try book.get(key)
@@ -135,9 +143,10 @@ function countOf(count: number) {
 function commitClaims(claim: number, state: CommitAttribution): ReadonlyArray<PathClaim> {
   const acceptance = state.acceptance
   if (acceptance.tag !== "AcceptedCommit") return [unknownClaim(claim)]
-  if (acceptance.merge || !contributes(state)) return []
+  if (acceptance.merge && acceptance.resolutions > 1) return [unknownClaim(claim)]
+  if (!contributes(state)) return []
   const lines = state.lines.tag === "CompleteLines" ? state.lines : undefined
-  return [{ claim, actor: state.recipient, creditedActors: state.recipient > 0 ? 1 : 0, actorsKnown: true, file: claim, merge: false, resolutions: 0, attributed: lines !== undefined, limited: false, fileFound: true, additions: lines?.additions ?? 0, deletions: lines?.deletions ?? 0 }]
+  return [{ claim, actor: state.recipient, creditedActors: state.recipient > 0 ? 1 : 0, actorsKnown: true, file: claim, merge: acceptance.merge, resolutions: acceptance.resolutions, attributed: lines !== undefined, limited: false, fileFound: !acceptance.merge || lines !== undefined, additions: lines?.additions ?? 0, deletions: lines?.deletions ?? 0 }]
 }
 
 function numbered(numbers: Map<string, number>, key: string) {
@@ -211,7 +220,7 @@ function eligibleAuthor(author: Actor | null, actors: ActorIndex) {
 
 function recipientsOf(observations: ReadonlyArray<Observation>, fallback: number): Found {
   if (observations.length === 0) return { recipients: fallback > 0 ? [{ actor: fallback, lines: 0 }] : [], complete: true }
-  if (observations.every(({ commit }) => commit.parentCount > 1)) return "synchronization-only"
+  if (observations.every(({ commit }) => commit.parentCount > 1 && commit.resolutions.length !== 1)) return "synchronization-only"
   if (observations.some(({ state }) => state.phase === "ConflictHeld")) return "attribution-conflict"
   const claims = observations.flatMap(({ state }, index) => commitClaims(index + 1, state))
   return { recipients: recipientLines(claims), complete: completeLines(claims) }

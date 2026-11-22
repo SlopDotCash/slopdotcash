@@ -12,7 +12,7 @@ import { Notices } from "@repo/ports/operations";
 import type { Driver, Options } from "../../gen/settlement__monthlySettlement.conformance.ts";
 import type { Award, Escrow } from "../../gen/settlement__escrow.ts";
 import type { Eligibility, RevisionFact } from "../../gen/settlement__monthly.ts";
-import type { Event, MonthlySettlement } from "../../gen/settlement__monthlySettlement.ts";
+import { type Event, type MonthlySettlement, noCursor } from "../../gen/settlement__monthlySettlement.ts";
 import { fromAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { type MonthFacts, MonthlyFacts, manifestRelationships, sendMonth } from "../../src/monthly/store.vibe";
@@ -58,12 +58,13 @@ const modelled = (revision: RevisionFact): RevisionFact => ({
 
 const ports = Layer.mergeAll(
   Layer.succeed(Registry, {
-    project: () => Effect.succeed({ projectId: PROJECT, revision: 1, manifestSha256: "", rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: STEWARD, repositories: [], closureConsent: false } satisfies ProjectView),
-    byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([]), fence: () => Effect.succeed(sql`1`) }),
+    project: () => Effect.succeed({ projectId: PROJECT, revision: 1, manifestSha256: "", rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: STEWARD, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [], closureConsent: false } satisfies ProjectView),
+    byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(Restrictions, { account: () => Effect.succeed({ banned: false }), project: () => Effect.succeed({ restricted: false }), fence: () => Effect.succeed(sql`SELECT 1`), unbanned: () => Effect.succeed(sql`1`) }),
   Layer.succeed(Notices, {
     statements: (batch) => Effect.succeed(batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'payout_exception', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${notice.sourceAt} WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)),
     fanout: () => Effect.succeed([]),
+    payoutRecipient: (project) => Effect.succeed(project.stewardGithubId),
   }),
 );
 
@@ -102,7 +103,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: NO_ELIGIBILITY, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), chain: { escrow: initialEscrow(), headTime: 0 }, period: undefined };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), chain: { escrow: initialEscrow(), headTime: 0, cursor: noCursor }, period: undefined };
 };
 
 function initialEscrow(): Escrow {
@@ -111,6 +112,7 @@ function initialEscrow(): Escrow {
     bindingDelay: 0, implementation: "PreRelease", at: { block: 0, index: 0, time: START, transaction: "" }, clock: START, monthlyEnabled: false, monthlyCap: [0], sourceSequence: 0,
     deposited: [0], held: [0], committed: [0], spent: [0], free: [0], pending: [0], reserved: [0], reservedPrincipal: [0], reservedFees: [0], paid: [0], paidNet: [0], payoutFees: [0],
     grossWithdrawn: [0], withdrawalFees: [0], accruedFees: [0], claimedFees: [0], months: [], awards: [], releasedLeaves: [], withdrawals: [], depositsWhilePending: 0,
+    pledges: [], pledged: [0], admissionsWhileOff: 0,
   };
 }
 
@@ -177,7 +179,7 @@ const chainStep = async (w: World, event: Event, by: string) => {
   const next = await run(w, observeChain(keyOf(w), event, by, w.chain).pipe(Effect.option));
   if (next._tag === "None") return "refused" as const;
   const before = w.chain;
-  w.chain = { escrow: next.value.escrow, headTime: next.value.headTime };
+  w.chain = { escrow: next.value.escrow, headTime: next.value.headTime, cursor: next.value.cursor };
   if (event.type === "commitObligation") await recordAward(w, event.actor, false);
   if (event.type === "commitManualAward") await recordAward(w, event.source.actor, false);
   if (event.type === "materialize") await recordAward(w, event.proof.actor, false);
@@ -240,13 +242,14 @@ const observed = async (w: World): Promise<MonthlySettlement> => {
   if (w.period === undefined) {
     return view({ month: { project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0, eligibility: w.facts.eligibility, revision: ZERO_REVISION,
       currentRevision: w.facts.current ?? ZERO_REVISION, cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0,
-      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "" }, escrow: w.chain.escrow, headTime: w.chain.headTime });
+      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "" }, escrow: w.chain.escrow, headTime: w.chain.headTime, cursor: w.chain.cursor ?? noCursor });
   }
   const settlement = await run(w, loadSettlement(keyOf(w)));
   const month = settlement.state.month;
   return view({
     escrow: projected(w.chain.escrow, settlement.place, settlement.state.escrow),
     headTime: w.chain.headTime,
+    cursor: w.chain.cursor ?? noCursor,
     month: {
       ...month,
       underfundedNotice: await noticeSent(w),

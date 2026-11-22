@@ -88,6 +88,8 @@ function portsOf(bans: ReadonlySet<string>) {
       byRepository: () => succeed(undefined),
       byPath: () => succeed(undefined),
       active: () => succeed([fixture(paid), fixture(unpaid)]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => succeed(sql`1`),
     } satisfies Registry.Shape),
     Layer.succeed(Authority, {

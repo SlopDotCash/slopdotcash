@@ -223,6 +223,7 @@ export effect function solanaClaimPrepared(plan: SolanaClaimPlan, signing: Claim
     messageOffset: unsigned.length - body.length,
     expiresAt: latest.lastValidBlockHeight,
     minimumOutput: 0n,
+    pricedFeeMicro: priced.outAmount,
   } satisfies SolanaReviewed
 }
 

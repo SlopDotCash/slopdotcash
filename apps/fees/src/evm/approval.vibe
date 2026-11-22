@@ -23,18 +23,26 @@ export function boundedApproval(data: Hex, value: bigint, spender: Spender, amou
   return value === 0n && approval !== undefined && approval.spender === spenderAddress(spender) && approval.amount === amount
 }
 
-export effect function approvalNeeded(token: Address, amount: bigint, spender: Spender) {
+// The finalized allowance an approval of `amount` would replace; the approval is needed only while it is below it.
+export effect function approvalAllowance(token: Address, amount: bigint, spender: Spender) {
   if (isNative(token)) throw new ApprovalRefused({ issue: "a native asset carries its input as value and never approves" })
   if (amount <= 0n) throw new ApprovalRefused({ issue: "an approval needs a positive amount" })
   if (amount >= unlimitedAmount) throw new ApprovalRefused({ issue: "an unlimited approval is never signed" })
   if (amount > (try tokenBalance(token, "finalized"))) throw new ApprovalRefused({ issue: "the approval exceeds the fee wallet's finalized balance" })
-  return (try allowanceOf(token, spenderAddress(spender), "finalized")) < amount
+  return try allowanceOf(token, spenderAddress(spender), "finalized")
 }
 
+export effect function approvalNeeded(token: Address, amount: bigint, spender: Spender) {
+  return (try approvalAllowance(token, amount, spender)) < amount
+}
+
+// The finalized allowance that covers the input; a native input needs none and reports the input itself
+// (spec/fees/conversion.md, "A native input needs no allowance, and the adapter reports it as the input").
 export effect function allowanceCovers(token: Address, amount: bigint, spender: Spender) {
-  if (isNative(token)) return
+  if (isNative(token)) return amount
   const allowance = try allowanceOf(token, spenderAddress(spender), "finalized")
   if (allowance < amount) throw new ApprovalRefused({ issue: `the finalized allowance ${allowance} does not cover the input ${amount}` })
+  return allowance
 }
 
 export interface ApprovalEvidence { readonly succeeded: boolean; readonly allowance: bigint }

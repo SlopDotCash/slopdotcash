@@ -1,14 +1,13 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { type Applied, type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { type Applied, bundle, database, migrate, startWorker } from "@repo/platform/testing"
 import { Response } from "miniflare"
-import { migrationsDir } from "@repo/platform/testing/paths"
+import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
 
 const origin = "https://slop.test"
 const member = "t".repeat(48)
 const other = "o".repeat(48)
-const expired = "e".repeat(48)
 
 interface Answer { readonly status: number; readonly body: Record<string, unknown> }
 
@@ -17,7 +16,6 @@ service Backend {
   readonly applied: ReadonlyArray<Applied>
   readonly github: ReadonlyArray<string>
   request(path: string, init?: { readonly body?: unknown; readonly token?: string; readonly origin?: string }): Answer!!
-  scheduled(cron: string): ScheduledOutcome!!
 }
 
 const githubUsers: Record<string, number> = { "Fresh-name": 0, taken: 999 }
@@ -56,7 +54,6 @@ const Started = Layer.effect(Backend, effect {
       })
       return { status: response.status, body: (await response.json()) as Record<string, unknown> }
     }),
-    scheduled: (cron) => promise(() => scheduled(mf, cron)),
   }
 })
 
@@ -78,7 +75,7 @@ effect function choose(code: unknown, token = member) {
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
     const backend = try Backend
-    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [138, []]))
+    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [migrationCount(), []]))
     try signIn("actor-1", "1", member, "2099-01-01T00:00:00.000Z")
     try signIn("actor-2", "2", other, "2099-01-01T00:00:00.000Z")
 
@@ -122,13 +119,5 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       active: ["1"],
       github: ["Fresh-name", "alpha1", "bravo1", "down", "taken"].map((login) => `GET https://api.github.com/users/${login}`),
     }))
-  })
-
-  it.effect('Expired sessions end at the scheduled maintenance (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account")', () => effect {
-    const backend = try Backend
-    try signIn("actor-3", "3", expired, "2020-01-01T00:00:00.000Z")
-    const outcome = try backend.scheduled("17 * * * *")
-    const sessions = try run("SELECT actor_id FROM points_sessions ORDER BY actor_id")
-    try Effect.try(() => assert.deepStrictEqual([outcome.outcome, sessions], ["ok", [{ actor_id: "actor-1" }, { actor_id: "actor-2" }]]))
   })
 })

@@ -127,7 +127,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     try advance(world, 180000)
     try step(world, { type: "renewLease", runId: 1 })
     try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000, pricedFeeMicro: 1000 } })
-    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, roleFree: true, allowanceAtBlock: 500000000 }
+    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, roleFree: false, allowanceAtBlock: 500000000 }
     const settled = try step(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const again = try tried(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const gas = try gasRows(world)
@@ -274,7 +274,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       again: "Rejected",
       legacy: ["changed", "changed"],
       loaded: [["Conversion", "Submitted", 1, 0], ["Approval", "Submitted", 2, 1]],
-      reservations: [[0, 53000000, true, false], [1, 50040000, true, false]],
+      reservations: [[0, 53000000, true, false], [1, 50040000, false, false]],
       blocked: ["Rejected", "Rejected", "Rejected", "accepted"],
       gas: [[0, "signed", "53000000000000"], [1, "signed", "50040000000000"], [2, "signed", "50040000000000"]],
     })

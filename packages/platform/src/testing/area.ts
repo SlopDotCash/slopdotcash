@@ -162,7 +162,9 @@ export function areaLayer(options: AreaOptions): Layer.Layer<Area> {
       if (bound === undefined) throw new Error(`signIn needs the identity Worker bound as ${identity.binding} in workers`);
       if (options.internet === undefined) throw new Error("signIn needs internet() with the GitHub fake");
       const worker = (await mf.getWorker(bound.name)) as unknown as Fetching;
-      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(body) });
+      // The identity Worker is reached through Miniflare's platform proxy, which refuses an Origin header whose host is
+      // not a configured route, so the start and poll go without one, as the installed client sends them.
+      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const started = Schema.decodeUnknownSync(Started)(await (await expect("start", await worker.fetch(`${identity.origin}/v1/oauth/start`, json({ audience: identity.audience })), 201)).json());
       const authorized = await expect("authorize", await worker.fetch(started.authorizationUrl, { redirect: "manual" }), 302);
       const state = cookieOf("authorize", authorized, "__Host-slop_oauth_state");

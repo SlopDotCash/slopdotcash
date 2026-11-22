@@ -16,7 +16,7 @@ import { Enforcement, type Restriction } from "@repo/ports/security";
 import type { Driver, Options } from "../../gen/slopbot__historicalImport.conformance.ts";
 import type { Channel, Event, ImportRequest, ImportSource, ImportedRecord, Imports, Producer } from "../../gen/slopbot__historicalImport.ts";
 import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.ts";
-import { type AdmittedImport, HistoricalPublication, PublicationFailed, type WorkUnitFacts, confirmHistoricalWorkUnit, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
+import { type Admit, type AdmittedImport, HistoricalPublication, type PreparedFacts, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
 import { type Numbered, deliver, installationState } from "../../src/installation/store.vibe";
 import { appendValueRecord } from "../../src/value/history/store.vibe";
 import { subscriptionCutoff } from "../../src/value/inference/settings.vibe";
@@ -62,7 +62,6 @@ const enforcements: ReadonlyArray<{ readonly restriction: RegistryObservation["r
 let generation = 0;
 const apiCutoff = subscriptionCutoff(undefined);
 let cutoff = apiCutoff;
-let current: ImportRequest | undefined;
 let installs: number[] = [];
 let records: ImportedRecord[] = [];
 let last: Imports["last"] = "NoImport";
@@ -111,9 +110,8 @@ function pullInput(repository: string, number: number, source: ImportSource | un
   if (source === undefined || source.read === "PullUnreadable") return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(1_790_000_000) };
   if (source.read === "PullOpen") return { repo: repository, number, author: "bo", state: "open" as const };
   if (source.occurredAt <= 0) unrealizable("a closed pull request always has a closing time");
-  return source.merged
-    ? { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(source.occurredAt) }
-    : { repo: repository, number, author: "bo", state: "closed" as const, closedAt: iso(source.occurredAt) };
+  if (!source.merged) return { repo: repository, number, author: "bo", state: "closed" as const, closedAt: iso(source.occurredAt) };
+  return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(source.occurredAt) };
 }
 
 function worldOf(request: ImportRequest) {
@@ -179,6 +177,8 @@ function registryOf(request: ImportRequest) {
       byRepository: (repositoryId) => Effect.succeed([...views.values()].find((entry) => entry.view.repositories.some((repository) => repository.id === repositoryId))?.view),
       byPath: (fullName) => Effect.succeed(lookups.get(fullName.toLowerCase())),
       active: () => Effect.succeed([...views.values()].map((entry) => entry.view)),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => Effect.succeed(sql`1`),
     }),
     Layer.succeed(Restrictions, {
@@ -195,18 +195,6 @@ function registryOf(request: ImportRequest) {
 }
 
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
-
-function factsOf(request: ImportRequest, admitted: AdmittedImport): WorkUnitFacts {
-  const nodes = request.sources.map((source, index) => ({ source, node: admitted.sources[index]?.pullRequestNodeId ?? unrealizable("every admitted source was submitted") }));
-  const claimed = nodes.filter(({ source }) => source.claimed).map(({ node }) => node);
-  const [credit, ...carriers] = claimed;
-  if ((credit === undefined) !== (request.claims === 0)) unrealizable("a claim credits or carries a source of its own group");
-  return {
-    sources: nodes.map(({ source, node }) => ({ evidence: { pull: { node_id: node }, ...source.indirectAcceptance ? { indirectAcceptance: {} } : {} } })),
-    claims: credit === undefined ? [] : Array.from({ length: request.claims }, () => ({ creditPullRequestId: credit, carrierPullRequestIds: carriers })),
-    limitations: Array.from({ length: request.limitations }, (_, index) => `limitation ${index}`),
-  };
-}
 
 const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
   const [source] = admitted.sources;
@@ -238,8 +226,6 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
     const stored = yield* appendValueRecord(recordJson, { installationId: admitted.installationId, projectId: source.projectId, registryFence });
     return { recordDigest: stored.record_digest, sequence: stored.sequence };
   }
-  if (current === undefined) return yield* Effect.fail(new PublicationFailed());
-  yield* confirmHistoricalWorkUnit(admitted, factsOf(current, admitted));
   const recordJson = JSON.stringify({
     schemaVersion: "slop-work-unit-record:v1",
     projectId: source.projectId,
@@ -265,13 +251,26 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
 
 type Base = Layer.Success<typeof webCrypto> | D1 | Registry;
 
+let submitted: ImportRequest | undefined;
+
+function preparedOf(admitted: AdmittedImport): PreparedFacts | undefined {
+  const request = submitted;
+  if (request === undefined || admitted.mode !== "work-unit") return undefined;
+  if ((request.claims === 0) !== request.sources.every((source) => !source.claimed)) unrealizable("a claim credits or carries a source of its own group");
+  return {
+    limitations: request.limitations,
+    claims: request.claims,
+    sources: admitted.sources.map((source, index) => ({ pullRequestNodeId: source.pullRequestNodeId, indirectAcceptance: request.sources[index]?.indirectAcceptance ?? true, claimed: request.sources[index]?.claimed ?? true })),
+  };
+}
+
 const recordingPublication = Layer.effect(HistoricalPublication, Effect.gen(function* () {
   const context = yield* Effect.context<Base>();
   return {
-    publish: (admitted: AdmittedImport) => appendAdmitted(admitted).pipe(
+    publish: (admitted: AdmittedImport, admit: Admit) => admit(preparedOf(admitted)).pipe(
+      Effect.flatMap(() => appendAdmitted(admitted).pipe(Effect.mapError(() => new PublicationFailed()))),
       Effect.tap(() => Effect.sync(() => { published.push(admitted); })),
       Effect.provide(context),
-      Effect.mapError(() => new PublicationFailed()),
     ),
   };
 }));
@@ -325,7 +324,6 @@ function cutoffVars() {
 }
 
 async function submit(request: ImportRequest) {
-  current = request;
   const fake = worldOf(request);
   const revision = request.producerRevision === "" ? "" : hex(`revision-${generation}-${request.producerRevision}`, 40);
   const http = outboundVia({ fetch: (input: Request) => fake.fetch(input) });
@@ -339,6 +337,7 @@ async function submit(request: ImportRequest) {
     Layer.provide(recordingPublication, registry),
   );
   published.length = 0;
+  submitted = request;
   const envelope = envelopeOf(request, await heads(request, fake));
   const before = await journalSize();
   const exit = await runtime.runPromiseExit(Effect.provide(publishSubscription(actorOf(request), envelope, undefined), services));
@@ -369,14 +368,14 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   reset: () => {
     generation++;
     cutoff = apiCutoff;
-    current = undefined;
+    submitted = undefined;
     installs = [];
     records = [];
     last = "NoImport";
     refusals = 0;
     keyOfDigest.clear();
   },
-  dispatch: (_key, event: Event) => {
+  dispatch: async (_key, event: Event) => {
     switch (event.type) {
       case "recordCutoff": {
         if (event.cutoff < apiCutoff || event.cutoff === cutoff) return "refused";

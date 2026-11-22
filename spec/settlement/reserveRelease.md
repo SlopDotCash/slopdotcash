@@ -9,10 +9,12 @@ PRD section 6 permits one bounded attester approval for a current owner's reques
 ```quint
 import money as M from "./money"
 type ReleasePhase = Absent | Reserved | Checked | Approved | OwnerSigned | Released
+type Network = Unpinned | Evm | Solana
+type ReleaseRefusal = NoRefusal | NetworkUnsupported
 type RetainedAllocation = { root: str, allocationRoot: str, allocationTotal: M::Amount, reserve: M::Amount, free: M::Amount,
   settled: M::Amount, released: M::Amount, leafCount: int, retainedLeaves: int, height: int }
 type UpgradeQualification = { implementation: str, height: int }
-type DeploymentPin = { revision: int, implementation: str }
+type DeploymentPin = { revision: int, implementation: str, network: Network }
 type ReleaseReceipt = { attempt: int, root: str, height: int, releasedAmount: M::Amount,
   settledAmount: M::Amount, finalized: bool, succeeded: bool }
 type FailedReleaseReceipt = { attempt: int, root: str, height: int, canonicalFailure: bool }
@@ -20,19 +22,21 @@ type RetiredReleaseAttempt = { attempt: int, requestRevision: int, evidenceHeigh
 type ReserveRelease = { phase: ReleasePhase, root: str, allocationRoot: str, originalReserve: M::Amount, originalFree: M::Amount, hasSettled: bool, reserved: M::Amount,
   allocationTotal: M::Amount, settledAmount: M::Amount, free: M::Amount, evidenceHeight: int, observedHeight: int,
   ownerRevision: int, requestRevision: int, signedAttempt: int, retiredAttempts: List[RetiredReleaseAttempt],
-  finalizedHeight: int, observedAfterSignature: bool, upgradeQualified: bool, pinRevision: int, reviewedImplementation: str }
+  finalizedHeight: int, observedAfterSignature: bool, upgradeQualified: bool, pinRevision: int, reviewedImplementation: str,
+  network: Network, refusal: ReleaseRefusal }
 pure val initial: ReserveRelease = { phase: Absent, root: "", allocationRoot: "",
   originalReserve: M::zero, originalFree: M::zero, hasSettled: false,
   reserved: M::zero, allocationTotal: M::zero, settledAmount: M::zero, free: M::zero, evidenceHeight: 0, observedHeight: 0,
   ownerRevision: 1, requestRevision: 0, signedAttempt: 0, retiredAttempts: List(), finalizedHeight: 0, observedAfterSignature: false, upgradeQualified: false,
-  pinRevision: 0, reviewedImplementation: "" }
+  pinRevision: 0, reviewedImplementation: "", network: Unpinned, refusal: NoRefusal }
 pure val byValues = Set("owner", "attester", "wrong")
 pure val retainedSample: RetainedAllocation = { root: "root", allocationRoot: "root", allocationTotal: List(5), reserve: List(6),
   free: M::zero, settled: M::zero, released: M::zero, leafCount: 2, retainedLeaves: 2, height: 1 }
 pure val evidenceValues = Set(retainedSample, { ...retainedSample, allocationTotal: List(6) }, { ...retainedSample, settled: List(1) },
   { ...retainedSample, retainedLeaves: 1 }, { ...retainedSample, height: 2 }, { ...retainedSample, released: List(6) })
 pure val qualificationValues = Set({ implementation: "v2", height: 1 }, { implementation: "v1", height: 1 })
-pure val pinValues = Set({ revision: 1, implementation: "v2" }, { revision: 0, implementation: "v2" })
+pure val pinValues = Set({ revision: 1, implementation: "v2", network: Evm }, { revision: 0, implementation: "v2", network: Evm },
+  { revision: 1, implementation: "program", network: Solana }, { revision: 1, implementation: "v2", network: Unpinned })
 pure val rootValues = Set("root", "wrong")
 pure val totalValues = Set(List(5), List(6), List(7))
 pure val amountValues = Set(List(1), List(6))
@@ -48,7 +52,7 @@ settled or already released evidence leaves the allocation absent.
 
 ```quint
 pure def canAdmitRetained(r: ReserveRelease, evidence: RetainedAllocation): bool =
-  r.phase == Absent and evidence.root != "" and evidence.allocationRoot == evidence.root
+  r.phase == Absent and r.network == Evm and evidence.root != "" and evidence.allocationRoot == evidence.root
     and evidence.leafCount > 0 and evidence.retainedLeaves == evidence.leafCount
     and M::validAmount(evidence.allocationTotal) and M::validAmount(evidence.reserve) and M::positiveAmount(evidence.reserve)
     and M::validAmount(evidence.free) and M::validAmount(evidence.settled) and M::validAmount(evidence.released)
@@ -71,7 +75,15 @@ deployment pin; neither the owner nor the attester can assert it. The pin is
 state: it is recorded once from the approved D1 project revision's
 deployment binding (supplied by the project registry) and never changes, and
 the qualification carries only the implementation the finalized read
-returned. Binding the retained allocation to the escrow's own admitted month
+returned. The pin also records that binding's single vault network (PRD
+section 6, one network per project), so a record has no network until it is
+pinned and its network never changes. For an EVM binding the pinned
+implementation is the reviewed vault implementation of its EVM upgrade
+binding; for a Solana binding it is the escrow program id, which identifies
+the deployment but is no upgrade implementation. Upgrade qualification is
+therefore an EVM read only: `release.vibe` qualifies only
+`deployment.evmUpgrade.vaultImplementation`, so a record pinned to another
+network is never qualified. Binding the retained allocation to the escrow's own admitted month
 (root, admitted gross and remainder) is a composition obligation with
 [escrow accounting](./escrow.md). Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
 height invalidates a pre-signature review. After the owner signs, a newer
@@ -84,16 +96,16 @@ pure def observe(r: ReserveRelease, height: int): ReserveRelease =
   else if (r.phase == Absent) { ...r, observedHeight: height }
   else { ...r, phase: Reserved, observedHeight: height, evidenceHeight: 0, requestRevision: 0 }
 pure def canPinImplementation(r: ReserveRelease, pin: DeploymentPin): bool =
-  r.pinRevision == 0 and pin.revision > 0 and pin.implementation != ""
+  r.pinRevision == 0 and pin.revision > 0 and pin.implementation != "" and pin.network != Unpinned
 pure def pinImplementation(r: ReserveRelease, pin: DeploymentPin): ReserveRelease =
-  { ...r, pinRevision: pin.revision, reviewedImplementation: pin.implementation }
+  { ...r, pinRevision: pin.revision, reviewedImplementation: pin.implementation, network: pin.network }
 pure def canQualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): bool =
-  not(r.upgradeQualified) and r.phase != Released and qualification.implementation != ""
+  not(r.upgradeQualified) and r.phase != Released and r.network == Evm and qualification.implementation != ""
     and r.reviewedImplementation != "" and qualification.implementation == r.reviewedImplementation
     and qualification.height > 0 and qualification.height <= r.observedHeight
 pure def qualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): ReserveRelease = { ...r, upgradeQualified: true }
 pure def canCheck(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): bool =
-  r.phase == Reserved and r.signedAttempt == 0 and not(r.hasSettled) and r.upgradeQualified and by == "owner" and requestRevision > 0 and requestRevision == r.ownerRevision
+  r.phase == Reserved and r.network == Evm and r.signedAttempt == 0 and not(r.hasSettled) and r.upgradeQualified and by == "owner" and requestRevision > 0 and requestRevision == r.ownerRevision
     and root == r.root and root == r.allocationRoot and M::equalAmounts(total, r.allocationTotal)
     and not(M::equalAmounts(total, r.reserved)) and M::equalAmounts(r.settledAmount, M::zero) and height > 0 and height == r.observedHeight
 pure def check(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): ReserveRelease =
@@ -190,6 +202,53 @@ pure def sometimesObservedThenReleased(r: ReserveRelease): bool = r.phase == Rel
 pure def sometimesPartialHeld(r: ReserveRelease): bool = M::positiveAmount(r.settledAmount) and r.phase == Reserved
 ```
 
+### Only an EVM vault's release reaches service approval
+
+Both contracts accept only the whole untouched reserve, signed by the owner
+with the identity authority's attestation:
+`packages/contracts/evm/src/ProjectEscrow.sol` `releaseMonthlyReserve`
+requires `remaining == total` and `releasedGross == expectedRemaining`, and
+`packages/contracts/solana/programs/slop-escrow/src/lib.rs`
+`release_monthly_reserve` requires `committed == 0`, `released == 0`,
+`unsettled == total` and `released == unsettled`, verified against an Ed25519
+attestation of `monthly_release_message`. The service approval path is
+implemented only for EVM vaults: `apps/settlement/src/reserveRelease/release.vibe`
+takes a registered EVM deployment, qualifies its EVM upgrade implementation and
+signs `monthlyReleaseDigest`. `apps/settlement/src/chain/solana/messages.ts`
+already encodes the Solana release message and instruction, but the service has
+no Solana evidence adapter and never signs an Ed25519 attestation of that
+message. A record pinned to a Solana deployment binding is therefore never
+admitted, checked or approved. Before anything is written, a Solana request
+passes the same owner checks as an EVM request: the route's owner authorization
+and manifest check, then the current steward, GitHub repository authority and
+unchanged manifest (`refuseUnsupportedNetwork` runs `ownedProject`, as
+`prepareRelease` does). The attester then records the named
+refusal `NetworkUnsupported` on it, and the request stays held; time never
+releases it (PRD section 6). The named refusal is retained in the release
+record. The owner receives the route's existing `release_held` answer, as for
+every other held release, because the route's refusal catalog follows the
+reference parity contract (`reference/parity/routes.json`). A stored record
+written before the network was recorded has no network field; the state
+decoder refuses it and the generated store never writes over it, so it stays
+held instead of being approved or reset. A Solana approval path needs its own reviewed
+implementation and model.
+
+```quint
+pure def canRefuseNetwork(r: ReserveRelease, by: str): bool =
+  by == "attester" and r.phase == Absent and r.network == Solana and r.refusal == NoRefusal
+pure def refuseNetwork(r: ReserveRelease, by: str): ReserveRelease = { ...r, refusal: NetworkUnsupported }
+pure def alwaysApprovedEvm(r: ReserveRelease): bool = r.phase != Absent implies r.network == Evm
+pure def alwaysRefusalNamed(r: ReserveRelease): bool =
+  r.refusal == NetworkUnsupported implies r.network == Solana and r.phase == Absent
+pure def alwaysNetworkPinned(r: ReserveRelease): bool =
+  (r.pinRevision > 0 iff r.network != Unpinned) and (r.pinRevision > 0 iff r.reviewedImplementation != "")
+pure def stepNetworkFixed(before: ReserveRelease, after: ReserveRelease): bool =
+  before.network != Unpinned implies after.network == before.network
+pure def stepRefusalRetained(before: ReserveRelease, after: ReserveRelease): bool =
+  before.refusal == NetworkUnsupported implies after.refusal == NetworkUnsupported
+pure def sometimesNetworkRefused(r: ReserveRelease): bool = r.refusal == NetworkUnsupported
+```
+
 ### The original balances and allocation survive every recovery step
 
 Discovered by the proof: a syntactically valid OwnerSigned state could contain
@@ -228,7 +287,12 @@ pure def stepSettlementHistoryRetained(before: ReserveRelease, after: ReserveRel
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+value allowed by their declared types and product rules. Discovered by simulation: without a Solana pin and an unpinned pin among the
+samples, the network refusal is never allowed and the pin guard's network
+condition never refuses, so both are sampled beside the EVM pins. The network
+refusal also gets the same weight as the other attester events
+(`weight_refuseNetwork`), so a Solana-pinned record reaches it in the sampled
+traces instead of leaving the event rarely chosen.
 
 ```quint
 pure val heightValues = Set(0, 1, 2, 3)
@@ -255,6 +319,7 @@ pure val weight_approve = 25
 pure val weight_ownerSign = 25
 pure val weight_finalize = 20
 pure val weight_retireFailedAttempt = 20
+pure val weight_refuseNetwork = 20
 pure val requestRevisionValues = Set(0, 1, 2)
 pure val revisionValues = Set(0, 1, 2)
 ```

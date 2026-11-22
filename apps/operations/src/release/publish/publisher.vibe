@@ -4,7 +4,8 @@ import type { Environment, Service } from "../../../gen/operations__release.effe
 import { bundleSite, pagesManifestName, verifyPagesManifest } from "../manifest/pages.vibe"
 import { retiredScripts } from "../retired.ts"
 import { inheritedMessage } from "../rpc/rotate.vibe"
-import { type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
+import { inheritedSuffix, inspectVersion, workerState } from "../rpc/worker.vibe"
+import { type FeeVersionRead, type FeeVersionsRead, type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
 import { identityApp, identityClientId, identityProbes, slopbotHealth, traceApiOrigin, traceBoundary, tracePatience, verifySchedules } from "../verify/probes.vibe"
 import { type Patience, propagation, providerChecks, servedMismatches } from "../verify/served.vibe"
 import { Cloudflare, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
@@ -479,6 +480,17 @@ export function publisher(options: PublisherOptions) {
       return try identityClientId(origin)
     }
 
+    effect function feeVersions(target: Target) {
+      const state = try workerState()
+      const latest = try inspectVersion(state.latest.id)
+      const activeVersions: FeeVersionRead[] = []
+      for (const split of state.active.versions) {
+        const active = try inspectVersion(split.version_id)
+        activeVersions.push({ versionId: active.id, rotation: try inheritedSuffix(active.annotations) })
+      }
+      return { latestUpload: { versionId: latest.id, rotation: try inheritedSuffix(latest.annotations) }, activeVersions } satisfies FeeVersionsRead
+    }
+
     effect function served(target: Target, deploymentId: string) {
       const ready = try preparedFor(target)
       const url = (try Ref.get(listedUrls)).get(deploymentId)
@@ -506,6 +518,7 @@ export function publisher(options: PublisherOptions) {
       prepare: (target: Target) => staged("prepare", Effect.provide(prepare(target), services)),
       publish: (service: Service, target: Target) => staged(`publish ${service}`, Effect.provide(publishService(service, target), services)),
       feeSettings: (target: Target) => staged("fee settings", Effect.provide(feeSettings(target), services)),
+      feeVersions: (target: Target) => staged("fee versions", Effect.provide(feeVersions(target), services)),
       site: (target: Target) => staged("site", Effect.provide(site(target), services)),
       deployments: (target: Target, sinceMillis: number) => staged("deployments", Effect.provide(deployments(target, sinceMillis), services)),
       served: (target: Target, deploymentId: string) => staged("served", Effect.provide(served(target, deploymentId), services)),

@@ -7,7 +7,7 @@ import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { unpaidTerms } from "../../gen/security__terms.effect.vibe"
 import type { ProgramApprovers } from "../caseAuthority/snapshot.vibe"
 import { exclusionLengths } from "../program/exclusions.ts"
-import { scopeExclusions } from "../program/manifest.ts"
+import { programStatus, scopeExclusions } from "../program/manifest.ts"
 
 export type FrozenTerms = { readonly [key: string]: Json }
 
@@ -145,7 +145,7 @@ effect function atReceipt(read: { readonly projectId: string; readonly receivedA
   const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
   const bounty = manifest.securityBounty
   const published = member(raw, "securityBounty")
-  const scoped = Boolean(member(published, "scope"))
+  const scoped = bounty !== undefined && programStatus(published) !== "Unpublished"
   const scope = { revision: row.revision, publishedAt: row.created_at, scoped, excludedFindings: scoped ? exclusionLengths(scopeExclusions(published)) : [] }
   const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
   if (!open) return { ...scope, terms: undefined } satisfies ProgramAtReceipt

@@ -1,0 +1,3 @@
+// The prompt the spend test worker reviews. It lives outside the worker module because the Workers runtime accepts
+// only handlers as named exports of a worker entry.
+export const testPrompt = { system: "Review the one item you are shown.", policy: "Spam is unsolicited promotion.", item: "Buy cheap tokens now." }

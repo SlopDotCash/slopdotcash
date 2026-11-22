@@ -198,7 +198,9 @@ export function ingestion(options: TransportOptions = {}) {
 
     effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
       let state = try machine.get()
-      if (!state.pageWait) try Console.warn(JSON.stringify({ event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+      try Console.warn(JSON.stringify(state.pageWait
+        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }
+        : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
       while (state.phase === "Waiting" && state.now < state.wakeAt) {
         try sleeping(state.wakeAt - state.now)
         state = try advanced(machine)

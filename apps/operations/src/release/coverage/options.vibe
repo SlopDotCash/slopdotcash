@@ -1,7 +1,6 @@
 // spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"
 import { coverage, dataOptionsAllowed, explicitManual } from "../../../gen/operations__releaseCoverage.effect.vibe"
-import { type Environment, coverageRequest, legacyAnchor } from "../../../gen/operations__release.effect.vibe"
-import { isAncestor } from "../run/heads.vibe"
+import { type Environment, coverageRequest } from "../../../gen/operations__release.effect.vibe"
 import type { RunFacts } from "../run/facts.vibe"
 import { ReleaseRefused, type Run, startRun } from "../run/run.vibe"
 
@@ -24,8 +23,7 @@ export effect function selectCoverage(run: Run, facts: RunFacts) {
   try run.send({ type: "selectManualCoverage", skipProofs: facts.options.skipProofs, skipBrowserTests: facts.options.skipBrowserTests })
 }
 
-export effect function releaseCoverage(facts: RunFacts, environment: Environment, root = ".") {
-  const anchored = try isAncestor(root, legacyAnchor, facts.sha)
+export effect function releaseCoverage(facts: RunFacts, environment: Environment, anchored: boolean) {
   const run = try startRun(environment, facts.by)
   try run.send({ type: "configure", environment, ref: facts.ref, anchored })
   if ((try run.state()).phase === "Refused") throw new ReleaseRefused({ step: "configure", phase: "Refused" })

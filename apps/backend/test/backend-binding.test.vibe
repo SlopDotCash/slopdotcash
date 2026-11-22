@@ -55,9 +55,13 @@ const attester: Handler = async (request) => {
 
 const net = internet({ rpc: { [rpcOrigin]: rpc } })
 
+// The wallet routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = areaLayer({
-  root: new URL("..", import.meta.url).pathname,
-  entry: "worker",
+  root: new URL("../../points", import.meta.url).pathname,
+  config: "test/support/backendRoutes/vite.config.ts",
+  entry: "backendRoutes",
   d1: { SLOP_DB: "slop-private" },
   vars: {
     ADMIN_GITHUB_IDS: "7",
@@ -65,7 +69,7 @@ const Backend = areaLayer({
     PAYMENT_NETWORKS: JSON.stringify(["base-sepolia", "solana-devnet"]),
     PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcOrigin }),
   },
-  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester },
+  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester, ASSETS: () => new Response("Not found", { status: 404 }) },
   internet: net,
 })
 
@@ -188,7 +192,7 @@ effect function bindingTransaction(walletSigned: boolean) {
   return base64Encode(wire)
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('Consent to bind the authorized payout wallet to a project vault on an EVM chain (spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version")', () => effect {
     const area = try Area
     try seedRegistry()

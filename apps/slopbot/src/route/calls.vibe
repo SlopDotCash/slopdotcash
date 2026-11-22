@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { D1, sql } from "@repo/platform/d1"
 import type { Usage } from "@repo/platform/providers"
 import { apply } from "../../gen/slopbot__spendAlerts.effect.vibe"
-import { emptySpend, failureKindOf, monthNumber, monthOf, secondsOf } from "../spend/store.vibe"
+import { emptySpend, failureKindOf, monthNumber, monthOf, secondsAt } from "../spend/store.vibe"
 import type { CallRecord } from "./route.vibe"
 
 module pricing {
@@ -48,7 +48,7 @@ export effect function recordCalls(reviewKey: string, installationId: number, ca
         job: 1,
         model: call.requestedModel,
         cause: call.failure ?? "",
-        at: secondsOf(at),
+        at: secondsAt(at),
       },
     })
     const substituted = call.servedModel !== null && !call.priceKey.endsWith(`/${call.servedModel}`)

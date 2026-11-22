@@ -191,7 +191,7 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
   }
 
   effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string, stored: boolean) {
-    return try prompt.written({ type: "walletReply", identity, reply, signature, stored }, adapter)
+    return try prompt.written({ type: "walletReply", identity, reply, signature, stored: stored && slotWritable(storage) }, adapter)
   }
 
   effect function send<R>(connection: SolanaConnection, authority: Authority<R>) {

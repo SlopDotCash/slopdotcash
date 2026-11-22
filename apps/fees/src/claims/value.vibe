@@ -35,9 +35,9 @@ export function admission(state: Fee, candidate: VaultClaim, value: bigint, cost
   if (valueMicro === undefined) return skipped("claim value exceeds safe integer accounting")
   const gasValue = cost === undefined ? undefined : safeNumber(cost)
   if (gasValue === undefined) return skipped("claim network fee could not be priced")
-  const unpriced = { gasValue: 0, pricedFeeMicro: state.network === "Solana" ? 1 : 0 }
-  if (!claimAdmitted(state, { ...candidate, ...unpriced, valueMicro: maximumSafeValue })) return skipped("the reviewed vault, fee wallet or accrued amount does not admit the claim")
-  if (!claimAdmitted(state, { ...candidate, ...unpriced, valueMicro })) return skipped("below the minimum conversion value")
-  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue, pricedFeeMicro: gasValue })) return skipped("below the gas-cost multiple")
+  const least = state.network === "Solana" ? 1 : 0
+  if (!claimAdmitted(state, { ...candidate, valueMicro: maximumSafeValue, gasValue: 0, pricedFeeMicro: least })) return skipped("the reviewed vault, fee wallet or accrued amount does not admit the claim")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue: 0, pricedFeeMicro: least })) return skipped("below the minimum conversion value")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue, pricedFeeMicro: Math.max(gasValue, least) })) return skipped("below the gas-cost multiple")
   return { kind: "admitted", valueMicro, gasValue }
 }

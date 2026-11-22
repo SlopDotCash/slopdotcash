@@ -3,7 +3,7 @@ import { secp256k1 } from "@noble/curves/secp256k1.js"
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
 import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
 import { first, sql } from "@repo/platform/d1"
-import { type ChainView, type Commitment, type Event, type SigningFacts, apply, canAdmit, canAdmitLegacy, canCloseWindow, canComplete, canInvestigate, canObserve, canObserveFacts, canRefuseSigning, canSignEvm, signingRefusal, stale, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { type ChainView, type Commitment, type Event, type SigningFacts, apply, canAdmit, canAdmitLegacy, canCloseWindow, canComplete, canHoldRotated, canHoldSuperseded, canInvestigate, canObserve, canObserveFacts, canRefuseSigning, canSignEvm, signingRefusal, stale, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
 import { type AwardState, type Bytes32, U128_MAX, U256_MAX, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBool, decodeBytes32, decodeUint, escrowGetter, isZero } from "../chain/evm/abi.ts"
 import { MONTHLY_RESERVE_VERSION, MONTHLY_RESERVE_VERSION_CALL, type MonthlyEntry, type MonthlyReservation, SOURCE_SEQUENCE_CALL, decodeMonthlyReserve, monthlyReservation, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall } from "../chain/evm/monthlyRoot.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
@@ -152,9 +152,14 @@ export effect function decide(state: Commitment, view: ChainView, facts: Signing
   if (canAdmit(current)) current = try stepped(current, events, { type: "admit" }, by)
   else if (canAdmitLegacy(current)) current = try stepped(current, events, { type: "admitLegacy" }, by)
   else if (canInvestigate(current)) current = try stepped(current, events, { type: "investigate" }, by)
+  else if (canHoldSuperseded(current)) current = try stepped(current, events, { type: "holdSuperseded" }, by)
   if (canComplete(current)) current = try stepped(current, events, { type: "complete" }, by)
   if (canCloseWindow(current)) current = try stepped(current, events, { type: "closeWindow" }, by)
   if (current.phase !== "Authorized" || current.view.admittedRoot !== "") return { state: current, events, sign: false } satisfies Decided
+  if (canHoldRotated(current)) {
+    current = try stepped(current, events, { type: "holdRotated" }, by)
+    return { state: current, events, sign: false } satisfies Decided
+  }
   if (canObserveFacts(current, facts, by)) current = try stepped(current, events, { type: "observeFacts", facts }, by)
   if (signingRefusal(current) !== "NoRefusal") {
     if (canRefuseSigning(current)) current = try stepped(current, events, { type: "refuseSigning" }, by)
@@ -417,7 +422,9 @@ export effect function publishMonthlyAuthorizations<EE extends { readonly _tag: 
     const outcome = effect {
       const attested = try attest(request, now)
       if (attested.run.events.length === 0) return "skipped"
-      try runJournal(attested.key, attested.context, attested.run)
+      const state = try runJournal(attested.key, attested.context, attested.run)
+      if (attested.run.signed === undefined && state.held === "SupersededRootObserved") return "refused: superseded_root_observed"
+      if (attested.run.signed === undefined && state.held === "SignedByFormerAuthority") return "refused: signed_by_former_authority"
       return attested.run.signed === undefined ? "observed" : "published"
     } catch (error) => outcomeOf(error)
     if (outcome === "published") published.push(label)

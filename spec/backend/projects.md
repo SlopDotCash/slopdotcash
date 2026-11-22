@@ -53,6 +53,15 @@ only so that one machine reaches both publication paths, since no route
 stores a new application. The one-pending guarantee is not stated as a rule
 until stored update applications are modelled on a published project of
 their own.
+The current revision is the latest appended one. Discovered by proof: read
+by its number (`p.revision - 1`), a project whose history is not numbered
+made the law that a consent-only save records `ConsentChanged` false for
+some values of its parameters; every reachable project keeps
+`alwaysHistoryNumbered`, where the two readings agree. The app reads the
+same entry: the store takes the last appended revision and refuses unless its
+number is the next one (`apps/backend/src/projects/store/store.vibe`), and the
+registry triggers keep the project row at that appended revision
+(`migrations/0019_project_registry.sql`).
 
 ```quint
 import closureConsent as C from "./closureConsent"
@@ -86,7 +95,7 @@ pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrator
   honorSystem: false, vaults: noVaults }
 pure val platform = -1
 pure val noRevision: Revision = { number: 0, kind: Created, status: Paused, tier: Retired, by: 0 }
-pure def currentRevision(p: Project): Revision = p.history.nthOr(p.revision - 1, noRevision)
+pure def currentRevision(p: Project): Revision = p.history.nthOr(p.history.length() - 1, noRevision)
 pure def primary(p: Project): int = p.repositories.nthOr(0, 0)
 pure def revised(kind: RevisionKind, by: int, status: Status, tier: Tier, p: Project): Project =
   { ...p, revision: p.revision + 1, status: status, tier: tier,
@@ -450,6 +459,11 @@ already-removed retry, so a restriction's retired revision is never taken for
 a removal and reinstatement lists the project again from the revision the
 restriction opened on (Slop development `da358d8a9`). History, earned
 Points, private cases and funded obligations are kept.
+A removal or delisting is never restored: the restriction's reinstatement
+leaves such a project at its revision and its Retired tier.
+Discovered by proof: over all values the law was false for a project whose
+retirement and tier disagree, which no reachable state has; the law now names
+`alwaysRetirementConsistent` as its premise and keeps the Retired conclusion.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }
@@ -671,7 +685,7 @@ pure def withCommunityRestored(restore: bool, p: Project): Project =
 pure def lawRestorationIsPausedCommunity(p: Project): bool =
   restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
 pure def lawRemovedNeverRestored(p: Project): bool =
-  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
+  (ownerRetired(p) and alwaysRetirementConsistent(p)) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
 pure def stepNoRegistryEventUnretires(before: Project, via: str, after: Project): bool =
   (before.retirement != NotRetired and after.retirement == NotRetired) implies
     (via == "adminRevise" and before.retirement != RestrictionRetired)

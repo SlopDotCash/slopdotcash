@@ -272,6 +272,15 @@ export const postPaymentsProjectsByIdSolanaFunding = {
   ...withInvalidFundingAction,
 } as const
 
+// spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive
+// amount" (development backend/payments/solana-month-lock.ts and handler.ts).
+export const postPaymentsProjectsByIdSolanaMonthLock = {
+  ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV7,
+  invalidMonthLock: { status: 400, error: "invalid_month_lock", headers: jsonPrivateNoStore },
+  invalidMonthLockAmount: { status: 422, error: "invalid_month_lock_amount", message: "Enter a positive amount within this token's decimal precision.", headers: jsonPrivateNoStore },
+  monthLockRejected: { status: 422, error: "month_lock_rejected", messageFrom: "error.message", headers: jsonPrivateNoStore },
+} as const
+
 export const postPaymentsProjectsByIdSolanaMonthlyCommitment = {
   ...withOriginForbiddenPrivateNoStoreAndFundingVaultNotFoundV7,
   ...withInvalidMonthlySetting,

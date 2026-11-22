@@ -12,6 +12,7 @@ import { internet } from "@repo/platform/testing/internet"
 import { type QuotesFake, asFetch, kyberNative, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
 import { fromAmount } from "@repo/settlement/kernels/amounts"
 import type { Event, Pool } from "../gen/fees__buybackPool.ts"
+import { creditOf, usdg as usdgAsset } from "../gen/fees__buybackPool.effect.vibe"
 import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import type { BookedDirectFee } from "../src/buyback/income.vibe"
 import type { PoolInstance } from "../src/buybackPool/codec.vibe"
@@ -267,10 +268,6 @@ function recorded(run: PoolResult) {
   return [...run.records]
 }
 
-function creditIn(state: Pool, asset: number) {
-  return state.credits.find((entry) => entry.asset === asset)?.credit ?? 0
-}
-
 function routeCalls(quotes: QuotesFake, tokenIn: Address, tokenOut: Address) {
   return quotes.calls.filter((call) => {
     if (call.service !== "kyberswap") return false
@@ -352,17 +349,17 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
 
     try same({
       forged,
-      loaded: { credit: creditIn(loaded, 1), arrivals: loaded.arrivals.length, rhIncome: whole(loaded.credits[0]?.income ?? []), rhCommitted: whole(loaded.credits[0]?.committed ?? []) },
+      loaded: { credit: creditOf(loaded, usdgAsset).credit, arrivals: loaded.arrivals.length, rhIncome: whole(creditOf(loaded, usdgAsset).income), rhCommitted: whole(creditOf(loaded, usdgAsset).committed) },
       dry,
-      approving: [recorded(approving), creditIn(approving.state, 1)],
+      approving: [recorded(approving), creditOf(approving.state, usdgAsset).credit],
       exact: decodedApproval(approval.input),
-      purchasing: [recorded(purchasing), purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditIn(purchasing.state, 1)],
+      purchasing: [recorded(purchasing), purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditOf(purchasing.state, usdgAsset).credit],
       burning: [recorded(burning), whole(burning.state.purchased), whole(burning.state.burnQuantity), burning.state.burn.phase],
       burned: [recorded(burned), whole(burned.state.burned), burned.state.burn.phase],
       afterBurn: [afterBurn.wallet.toString(), afterBurn.dead.toString()],
-      reapproving: [recorded(reapproving), creditIn(reapproving.state, 1)],
-      failing: [recorded(failing), creditIn(failing.state, 1)],
-      failed: [recorded(failed), failed.state.purchase.phase, creditIn(failed.state, 1), failed.state.purchaseSpends.map((spend) => [spend.amount, spend.released])],
+      reapproving: [recorded(reapproving), creditOf(reapproving.state, usdgAsset).credit],
+      failing: [recorded(failing), creditOf(failing.state, usdgAsset).credit],
+      failed: [recorded(failed), failed.state.purchase.phase, creditOf(failed.state, usdgAsset).credit, failed.state.purchaseSpends.map((spend) => [spend.amount, spend.released])],
       paused: paused.map((run) => [recorded(run), run.state.decisions.filter((decision) => decision.leg === "BurnLeg").map((decision) => [decision.state, decision.reason])]),
       resumed: [recorded(resumed), whole(resumed.state.burnQuantity)],
       settled: [recorded(settled), whole(settled.state.burned), whole(settled.state.burnCommitted), settled.state.burn.phase],
@@ -425,7 +422,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same({
       waiting,
       unquoted,
-      quoting: [recorded(quoting), creditIn(quoting.state, 1)],
+      quoting: [recorded(quoting), creditOf(quoting.state, usdgAsset).credit],
       quoted,
       decisions: decisions.map((row) => [row.state, row.mode, row.reason, row.amount_in, row.quote_value_micro]),
     }, {
@@ -469,15 +466,15 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
 
     try same({
       assets: world.instance.assets,
-      credits: [creditIn(quoting.state, 1), creditIn(quoting.state, 2), creditIn(quoting.state, 3)],
+      credits: [creditOf(quoting.state, 1).credit, creditOf(quoting.state, 2).credit, creditOf(quoting.state, 3).credit],
       waiting: recorded(waiting),
       waitingCalls,
       quoting: recorded(quoting),
       quotingCalls,
       decisions: decisions.map((row) => [row.token.toLowerCase(), row.state, row.state === "no_route" ? row.reason?.startsWith("value unavailable: ") === true : row.reason, row.amount_in, row.quote_value_micro]),
       approving: recorded(approving),
-      purchasing: [recorded(purchasing), purchasing.state.purchaseAsset, purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditIn(purchasing.state, 2)],
-      reloaded: [reloaded.purchaseAsset, reloaded.purchase.phase, reloaded.purchase.amount, reloaded.runSpent, creditIn(reloaded, 2), reloaded.purchaseSpends.map((spend) => spend.amount)],
+      purchasing: [recorded(purchasing), purchasing.state.purchaseAsset, purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditOf(purchasing.state, 2).credit],
+      reloaded: [reloaded.purchaseAsset, reloaded.purchase.phase, reloaded.purchase.amount, reloaded.runSpent, creditOf(reloaded, 2).credit, reloaded.purchaseSpends.map((spend) => spend.amount)],
       signed: signed.map((row) => [row.kind, row.token.toLowerCase(), row.state, row.amount_in, row.quote_value_micro]),
     }, {
       assets: [robinhoodUsdg, other, unvalued],

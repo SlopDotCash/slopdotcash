@@ -22,8 +22,8 @@ const Reward = Schema.Struct({
   monthlyCapDisplay: Schema.String,
   cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
   reviewBudget: Schema.optional(Budget),
-  honorSystem: Schema.optional(Schema.Literal(true)),
   externalOpportunity: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String), advertisedAmountDisplay: Schema.optional(Schema.String) })),
+  honorSystem: Schema.optional(Schema.Boolean),
 });
 
 const Bounty = Schema.Struct({
@@ -84,7 +84,7 @@ export interface ShownProject extends CardProject {
     readonly monthlyCapDisplay: string;
     readonly cycleCaps: ReadonlyArray<CycleCap>;
     readonly reviewBudget?: PoolCommitment;
-    readonly honorSystem?: true;
+    readonly honorSystem?: boolean;
   };
   readonly rewardAsset?: RewardAsset;
   readonly securityBounty?: SecurityBounty & { readonly funding: { readonly state: string } };

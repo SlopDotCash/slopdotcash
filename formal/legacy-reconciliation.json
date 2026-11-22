@@ -35922,12 +35922,14 @@
           "defs": [
             "canStartRun",
             "startRun",
+            "canSelectRow",
+            "selectRow",
             "canMarkAttempt",
             "markAttempt",
             "canSubmit",
             "submit"
           ],
-          "note": "A scheduler run stamps the least recently attempted pending rows (plus waited-on newer v2 roots) before attempting them and submits each independently; the successor splits the pass into per-row mark and submit steps."
+          "note": "A scheduler run selects its whole batch first (the least recently attempted pending rows plus waited-on newer v2 roots), then stamps and submits each row in turn, newest period first, each independently; the successor splits the pass into per-row select, mark and submit steps."
         },
         "passAny": {
           "status": "abstraction",
@@ -35948,14 +35950,17 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
+            "canMarkAttempt",
             "canSubmit",
+            "newerRootIncomplete",
+            "revertsIfSent",
             "submit"
           ],
-          "note": "Newest-first ordering is carried as a guard: an older-period row is not submitted while a newer EVM v2 root of the same vault is incomplete, so no older leaf reverts the newer reservation."
+          "note": "Newest-first ordering is carried as an in-run guard: a batch row is attempted only after every newer pending row of the batch was processed. Across runs canSubmit refuses to send an older-period row while a newer unadmitted v2 root of the same vault is incomplete (newerRootIncomplete), and refuses an unadmitted v2 root whose signed source sequence differs from the vault's recorded awards (sourceOf) or that an older in-flight step of its vault (submitted, or a live journal attempt) would precede under sameSignerNonceOrder (revertsIfSent)."
         },
         "runPassOldestFirst": {
           "status": "abstraction",
-          "note": "Counter-example ordering that is never part of step; the successor excludes it by the canSubmit/newerRootPending guard and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
+          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the newest-first canMarkAttempt/newerRootPending guard and across runs by the canSubmit refusals newerRootIncomplete and revertsIfSent (stale source sequence, or an older in-flight step under sameSignerNonceOrder), and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
         },
         "tick": {
           "status": "rule",
@@ -36003,6 +36008,7 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
+            "newerRootIncomplete",
             "canSubmit",
             "sometimesNewestFirst"
           ],
@@ -36012,27 +36018,36 @@
           "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
+            "revertsIfSent",
             "submit",
             "observeFinality",
             "alwaysNoReorderingRevert"
           ],
-          "note": "The successor keeps the revert mechanics (invalidated rows count reverts in observeFinality) but its guard makes the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
+          "note": "The successor keeps the revert mechanics: an unadmitted root sent at a stale source sequence, or behind an older in-flight step of its vault, is invalidated (revertsIfSent) and its landing counts a revert in observeFinality. The newest-first run order and the canSubmit refusals (newerRootIncomplete, revertsIfSent) make the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
         },
         "prerequisiteAddedForLruCandidateTest": {
           "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "waitedOn",
+            "canSelectRow",
+            "selectRow",
             "canMarkAttempt",
             "markAttempt",
             "sometimesPrerequisiteIncluded"
           ],
-          "note": "An omitted newer v2 root of the same vault that a selected older row waits on is added to the run as a prerequisite."
+          "note": "An omitted newer v2 root of the same vault that a selected older row waits on is added to the run's batch as a prerequisite and attempted before the older row."
         },
         "prerequisiteFailureStillRunsOriginalTest": {
-          "status": "gap",
+          "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
-          "note": "Legacy runs the original older item after its newer-root prerequisite fails (the leaf advances the source sequence and the newer root is later reattested); the successor's canSubmit refuses any older-period row while a newer v2 root of the vault is not Complete and has no rule releasing it when that root's send fails or its window closes unadmitted, so add a rule (and a liveness check) that lets the older row proceed once the newer root failed this run or was refused, with reattestation via monthlyCommitment signEvm."
+          "defs": [
+            "newerRootPending",
+            "newerRootIncomplete",
+            "canSubmit",
+            "submit"
+          ],
+          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then attempted in the same run; canSubmit answers it Failed while the newer unadmitted root is incomplete (newerRootIncomplete), so the run continues and the older row stays pending. The successor is stricter than the legacy test, which sends the older row; a newer root at a stale source sequence is reattested via monthlyCommitment signEvm."
         },
         "raceRun": {
           "status": "abstraction",

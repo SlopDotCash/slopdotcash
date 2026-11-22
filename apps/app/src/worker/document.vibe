@@ -97,7 +97,9 @@ effect function served(assets: Fetcher, environment: string | undefined, request
   const cash = domainOf(host) === cashDomain
   const sponsor = cash && sponsorPage(pathname)
   const headers = documentHeaders(response, !cash)
-  if (analyticsMayLoad(environments[try tierOf(environment)], host, beaconEvidence)) {
+  const tier = environments[try tierOf(environment)]
+  const beacon = try Effect.orDie(Effect.try({ try: () => analyticsMayLoad(tier, host, beaconEvidence), catch: (error) => error }))
+  if (beacon) {
     const html = try htmlOf(request, response)
     return document(response, headers, try withBeacon(sponsor ? withSponsorHead(html) : html))
   }

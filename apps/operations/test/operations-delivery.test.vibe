@@ -198,6 +198,8 @@ const AudiencePorts = Layer.mergeAll(
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => effect { return sql`SELECT 1` },
   }),
   Layer.succeed(ContributorAudience, { affected: () => effect { askedAudience.push("affected"); return nobody } }),

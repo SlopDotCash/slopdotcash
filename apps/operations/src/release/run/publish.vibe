@@ -6,7 +6,6 @@ import { type ReleaseWrite, mayWrite } from "../../../gen/operations__rpcRotatio
 import { observeLock } from "../../publicationLock/group.vibe"
 import { thisRun } from "../../publicationLock/lock.vibe"
 import { selectCoverage } from "../coverage/options.vibe"
-import { inheritedSuffix, inspectVersion, workerState } from "../rpc/worker.vibe"
 import { BundleRefused } from "../manifest/inventory.vibe"
 import { bundleSite, verifyPagesManifest } from "../manifest/pages.vibe"
 import { readCollection, verifyBundle } from "../manifest/release.vibe"
@@ -14,7 +13,7 @@ import { githubDigest, registryDigest } from "./collect.vibe"
 import { type RunFacts, environmentOf } from "./facts.vibe"
 import { type Heads, branchHeads, isAncestor } from "./heads.vibe"
 import { stagingHistory } from "./history.vibe"
-import { Publisher, type Target } from "./publisher.vibe"
+import { type FeeVersionRead, type FeeVersionsRead, Publisher, type Target } from "./publisher.vibe"
 import { type GateReceipts, readReceipts } from "./receipts.vibe"
 import { type Run, startRun } from "./run.vibe"
 
@@ -124,20 +123,13 @@ effect function settle(run: Run, root: string, branch: string, sha: string) {
   return "Superseded" satisfies Settled
 }
 
-effect function feeVersion(run: Run, id: string, annotations: Readonly<Record<string, string>> | undefined) {
-  const suffix = try inheritedSuffix(annotations)
-  return { versionId: try run.idOf("fee version", id), rotationLineage: suffix === "" ? 0 : try run.idOf("fee rotation", suffix) } satisfies FeeVersion
-}
-
-effect function readFeeVersions(run: Run) {
-  const worker = try workerState()
-  const latest = try inspectVersion(worker.latest.id)
-  const activeVersions: FeeVersion[] = []
-  for (const split of worker.active.versions) {
-    const active = try inspectVersion(split.version_id)
-    activeVersions.push(try feeVersion(run, active.id, active.annotations))
+effect function feeVersionsOf(run: Run, read: FeeVersionsRead) {
+  const versionOf = effect (version: FeeVersionRead) => {
+    return { versionId: try run.idOf("fee-converter version", version.versionId), rotationLineage: version.rotation === "" ? 0 : try run.idOf("fee-converter rotation", version.rotation) } satisfies FeeVersion
   }
-  return { latestUpload: try feeVersion(run, latest.id, latest.annotations), activeVersions } satisfies FeeVersions
+  const activeVersions: FeeVersion[] = []
+  for (const active of read.activeVersions) activeVersions.push(try versionOf(active))
+  return { latestUpload: try versionOf(read.latestUpload), activeVersions } satisfies FeeVersions
 }
 
 function inheritanceRefusal(versions: FeeVersions) {
@@ -147,17 +139,19 @@ function inheritanceRefusal(versions: FeeVersions) {
     : "Active fee-converter versions have different RPC rotations."
 }
 
-effect function versionsAt(run: Run, needed: boolean, outcome: string, failed: Service | undefined) {
+effect function versionsAt(run: Run, target: Target, needed: boolean, outcome: string, failed: Service | undefined) {
   if (!needed) return unreadVersions
-  return readFeeVersions(run) catch effect (error) => {
+  const publisher = try Publisher
+  const read = publisher.feeVersions(target) catch effect (error) => {
     if (failed !== undefined) try run.send({ type: "failService", service: failed })
     return try stop(run, outcome, error.message, "abandon")
   }
+  return try feeVersionsOf(run, read)
 }
 
-effect function beginPublication(run: Run) {
+effect function beginPublication(run: Run, target: Target) {
   const checked = try run.state()
-  const versions = try versionsAt(run, checked.environment === "Production" && checked.fee.variableEnabled, "Refused", undefined)
+  const versions = try versionsAt(run, target, checked.environment === "Production" && checked.fee.variableEnabled, "Refused", undefined)
   if (canRefuseInheritance(checked, versions)) {
     try run.send({ type: "refuseInheritance", versions })
     return try stop(run, "Refused", inheritanceRefusal(versions), "abandon")
@@ -176,7 +170,7 @@ effect function publishServices(run: Run, heads: Heads, target: Target, root: st
     const inherited = service === "FeeConverter" && run.environment === "Production"
     const settings = service === "FeeConverter" ? (publisher.feeSettings(target) catch () => undefined) : undefined
     const feeConfig: WorkerConfig = settings === undefined ? inertFee : { ...settings, source: state.source }
-    const before = try versionsAt(run, inherited, "PartiallyPublished", service)
+    const before = try versionsAt(run, target, inherited, "PartiallyPublished", service)
     if (!canPublishService(state, service, feeConfig, state.source, before)) {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", inherited && !inheritsRotation(before) ? inheritanceRefusal(before) : `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
@@ -185,7 +179,7 @@ effect function publishServices(run: Run, heads: Heads, target: Target, root: st
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} publication failed: ${error.message}`, "abandon")
     }
-    const versions = try versionsAt(run, inherited, "PartiallyPublished", service)
+    const versions = try versionsAt(run, target, inherited, "PartiallyPublished", service)
     const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0, versions }) catch () => undefined
     if (accepted === undefined) {
       try run.send({ type: "failService", service })
@@ -249,11 +243,11 @@ effect function verifyServed(run: Run, target: Target, deploymentId: string) {
 
 export effect function release(input: ReleaseInput) {
   const { environment, facts, root } = input
-  const anchored = try isAncestor(root, input.anchor, facts.sha)
+  const anchored = environment !== "Production" || (try isAncestor(root, input.anchor, facts.sha))
   const run = try startRun(environment, facts.by)
   try run.send({ type: "configure", environment, ref: facts.ref, anchored })
   if ((try run.state()).phase === "Refused") {
-    return try stop(run, "Refused", `Main ${facts.sha} does not contain ${input.anchor}, the last commit of the previous application history`, undefined)
+    throw new ReleaseStopped({ outcome: "Refused", message: `Main ${facts.sha} does not contain ${input.anchor}, the last commit of the previous application history` })
   }
   if (!releaseWrites.every((write) => mayWrite(facts.mode, write))) {
     throw new ReleaseStopped({ outcome: "Refused", message: "An RPC rotation run publishes no Worker or static site" })
@@ -288,7 +282,7 @@ export effect function release(input: ReleaseInput) {
   try run.lock.send({ type: "acquire", id: thisRun }, run.lockBy)
   try heads.observe()
   if ((try settle(run, root, branch, facts.sha)) === "Superseded") return done
-  try beginPublication(run)
+  try beginPublication(run, target)
   publisher.prepare(target) catch effect (error) => {
     const state = try run.state()
     const pending = publisher.order.find((service) => serviceAt(state, service).phase === "ServicePending")

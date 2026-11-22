@@ -2,7 +2,7 @@
 import { EvmRpc } from "@repo/platform/chain/evm"
 import { type Fee, type Holding, type VaultClaim, canClaim, holding, leaseHeld, nonceFloor, openRows, solanaSequence, vaultOf, wallet } from "../../gen/fees__conversion.effect.vibe"
 import { type Mode, buybackSigns, converts, networkSigns } from "../../gen/fees__runtime.effect.vibe"
-import { ConversionChain, chainFailure, detailOf, wideNumber } from "../conversion/chain.vibe"
+import { ConversionChain, chainFailure, detailOf, safeNumber, wideNumber } from "../conversion/chain.vibe"
 import type { Claims } from "../conversion/run.vibe"
 import { type Session, renewed, step } from "../conversion/session.vibe"
 import type { Facts } from "../journal/store.vibe"
@@ -76,7 +76,7 @@ function candidateOf(state: Fee, holding: Holding, amount: bigint, roleFree: boo
 }
 
 function claimOf(base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, prepared: Prepared, tx: number): VaultClaim {
-  const fitted = { ...base, valueMicro: admitted.valueMicro, gasValue: admitted.gasValue, pricedFeeMicro: admitted.gasValue, tx }
+  const fitted = { ...base, valueMicro: admitted.valueMicro, gasValue: admitted.gasValue, tx, pricedFeeMicro: safeNumber(prepared.pricedFeeMicro) ?? -1 }
   if (prepared.family === "solana") return { ...fitted, gasLimit: 1, fees: { maxFee: prepared.maximumUnits, priority: 0 }, blockhashSlot: prepared.blockhashSlot }
   return { ...fitted, nonce: prepared.nonce, gasLimit: prepared.gasLimit, fees: prepared.feeUnits, blockhashSlot: 0 }
 }

@@ -48,8 +48,9 @@ export function caseActions(observed: Observed, viewer: number): ReadonlyArray<s
   if (!observed.record.valid) return []
   const maintainer = has(roles, "security-maintainer")
   if (model.submission !== "Verified") {
-    const links = model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
-    return mayRequestReceiptCheck(model, viewer, epoch) ? [...links, "check-receipt"] : links
+    if (model.submission !== "Claimed") return []
+    const check = mayRequestReceiptCheck(model, viewer, epoch) ? ["check-receipt"] : []
+    return maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link", ...check] : check
   }
   const actions: string[] = []
   const open = receiptOpen(model)

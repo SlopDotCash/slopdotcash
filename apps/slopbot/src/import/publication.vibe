@@ -5,6 +5,7 @@ import { mergeRecipe } from "@repo/platform/git/evidence"
 import { MergeVerifier } from "@repo/ports/security"
 import { collectEvidence } from "../value/evidence/collect.vibe"
 import { collectContext } from "../value/evidence/context.vibe"
+import type { Evidence } from "../value/evidence/types.vibe"
 import { ValueRefused, isSubscriptionProvenance, loadValuePolicy, publishValueAssessment, registeredProject, targetOf } from "../value/inference/publish.vibe"
 import type { Recovered } from "../value/proofs/blob.vibe"
 import { fileRecoveryCapture, recoveredFiles } from "../value/proofs/recovery.vibe"
@@ -12,12 +13,12 @@ import { mergeInputOf } from "../value/workUnits/merge.vibe"
 import { prepareWorkUnitEvidence } from "../value/workUnits/prepare.vibe"
 import { publishWorkUnitAssessment } from "../value/workUnits/publish.vibe"
 import type { AssessedUnit } from "../value/workUnits/record.vibe"
-import { WorkUnitRefused, type WorkUnitSource } from "../value/workUnits/types.vibe"
+import { type WorkUnitEvidence, WorkUnitRefused, type WorkUnitSource } from "../value/workUnits/types.vibe"
 import type { GroupRepository } from "../value/workUnits/group.vibe"
 import { publicationCommitPages } from "./commitPages.vibe"
 import { reached } from "./diagnostics.vibe"
 import { bundleStream } from "./parts.ts"
-import { type AdmittedImport, type AdmittedSource, HistoricalPublication, confirmHistoricalWorkUnit, sourceEvidenceAdmitted } from "./publisher.vibe"
+import { type Admit, type AdmittedImport, type AdmittedSource, HistoricalPublication, type PreparedFacts } from "./publisher.vibe"
 
 type Fields = Readonly<Record<string, unknown>>
 
@@ -42,6 +43,28 @@ function isAssessedUnit(value: unknown): value is AssessedUnit {
   const reviews = fieldsOf(unit?.["assessment"])?.["reviews"]
   return Array.isArray(claimIds) && claimIds.every((id: unknown) => typeof id === "string")
     && Array.isArray(reviews) && reviews.every((review: unknown) => typeof fieldsOf(review)?.["sourceId"] === "string")
+}
+
+function intakeSource(evidence: Evidence, cutoff: number, joint: boolean) {
+  if (evidence.pull.state !== "closed") return false
+  const occurred = Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? "")
+  if (!Number.isFinite(occurred)) return false
+  return occurred < cutoff * 1000 || (joint && evidence.pull.merged_at === null)
+}
+
+function preparedFacts(prepared: WorkUnitEvidence): PreparedFacts {
+  return {
+    limitations: prepared.limitations.length,
+    claims: prepared.claims.length,
+    sources: prepared.sources.map(({ evidence }) => {
+      const node = evidence.pull.node_id
+      return {
+        pullRequestNodeId: node,
+        indirectAcceptance: evidence.indirectAcceptance !== undefined,
+        claimed: prepared.claims.some((claim) => claim.creditPullRequestId === node || claim.carrierPullRequestIds.includes(node) || claim.retainedCopy?.acceptancePullRequestId === node),
+      }
+    }),
+  }
 }
 
 function singleResultOf(result: Fields) {
@@ -85,7 +108,7 @@ effect function collectSource(admitted: AdmittedImport, source: AdmittedSource, 
   const target = registered === undefined ? undefined : targetOf(registered.repositories, source.repository)
   if (target === undefined) throw new ValueRefused({ reason: "Historical source is not registered" })
   const collected = try captured(capture.layer, collectEvidence({ repository: source.repository, number: source.number, policy: target }))
-  if (!sourceEvidenceAdmitted(admitted, index, collected.pull)) throw new ValueRefused({ reason: "Subscription intake covers only work accepted before the API start" })
+  if (!intakeSource(collected, admitted.cutoff, admitted.mode === "work-unit")) throw new ValueRefused({ reason: "Subscription intake covers only work accepted before the API start" })
   try reached("source-context", index, count)
   let evidence = try collectContext(collected, source.contextPaths)
   if (source.emptyMergeResolutions) {
@@ -155,7 +178,7 @@ effect function collectAll(admitted: AdmittedImport) {
   return admitted.bundle === undefined ? collected : try reconstructed(admitted, admitted.bundle, collected, capture)
 }
 
-effect function publishInstalled(admitted: AdmittedImport) {
+effect function publishInstalled(admitted: AdmittedImport, admit: Admit) {
   const count = admitted.sources.length
   const pages = publicationCommitPages()
   const wrapped = try pages.wrap
@@ -168,7 +191,7 @@ effect function publishInstalled(admitted: AdmittedImport) {
   if (admitted.mode === "work-unit") {
     try reached("prepare-work-unit", null, count)
     const prepared = try prepareWorkUnitEvidence(collected.sources, collected.targets)
-    try confirmHistoricalWorkUnit(admitted, prepared)
+    try admit(preparedFacts(prepared))
     const joint = jointResultOf(admitted.result)
     if (joint === undefined) throw new WorkUnitRefused({ reason: "Joint value assessment does not validate" })
     try reached("publish-work-unit", null, count)
@@ -190,6 +213,7 @@ effect function publishInstalled(admitted: AdmittedImport) {
   }
   const single = singleResultOf(admitted.result)
   if (single === undefined) throw new ValueRefused({ reason: "Value result does not bind complete supplied source evidence" })
+  try admit(undefined)
   try reached("publish-single", null, count)
   const stored = try publishValueAssessment({
     job,
@@ -203,16 +227,16 @@ effect function publishInstalled(admitted: AdmittedImport) {
   return { recordDigest: stored.record_digest, sequence: stored.sequence }
 }
 
-effect function publishAdmitted(admitted: AdmittedImport) {
+effect function publishAdmitted(admitted: AdmittedImport, admit: Admit) {
   const scoped = (try GitHubApp).asInstallation(String(admitted.installationId))
   provide scoped {
-    return try publishInstalled(admitted)
+    return try publishInstalled(admitted, admit)
   }
 }
 
 export const historicalPublication = Layer.effect(HistoricalPublication, effect {
   const services = try Effect.context<Effect.Services<ReturnType<typeof publishAdmitted>>>()
   return {
-    publish: (admitted) => Effect.provide(publishAdmitted(admitted), services),
+    publish: (admitted, admit) => Effect.provide(publishAdmitted(admitted, admit), services),
   }
 })

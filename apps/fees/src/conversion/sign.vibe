@@ -11,17 +11,10 @@ effect function failed(session: Session, detail: string) {
   return recorded.Failed
 }
 
-interface Bound { readonly approvedAmount: number; readonly allowance: number; readonly pricedFeeMicro: number }
-
-function boundOf(signed: Signed): Bound | undefined {
-  const approvedAmount = safeNumber(signed.approvedAmount)
-  const allowance = safeNumber(signed.allowance)
-  if (approvedAmount === undefined || allowance === undefined) return undefined
-  return { approvedAmount, allowance, pricedFeeMicro: signed.pricedFeeMicro === undefined ? -1 : safeNumber(signed.pricedFeeMicro) ?? -1 }
-}
-
-function sendOf(signed: Signed, reserved: Reservable, tx: number, minimumOutput: number, bound: Bound): SignedSend {
+function sendOf(signed: Signed, reserved: Reservable, tx: number, minimumOutput: number, exact: { readonly approvedAmount: number; readonly allowance: number; readonly pricedFeeMicro: number }): SignedSend {
   return {
+    ...exact,
+    toPinnedRouter: signed.toPinnedRouter,
     kind: signed.kind,
     tx,
     nonce: reserved.nonce,
@@ -32,10 +25,6 @@ function sendOf(signed: Signed, reserved: Reservable, tx: number, minimumOutput:
     minimumOutput,
     deadline: signed.deadline,
     blockhashSlot: signed.blockhashSlot,
-    toPinnedRouter: signed.toPinnedRouter,
-    approvedAmount: bound.approvedAmount,
-    allowance: bound.allowance,
-    pricedFeeMicro: bound.pricedFeeMicro,
   }
 }
 
@@ -55,11 +44,13 @@ export effect function signIntent(session: Session, token: string, quote: QuoteF
   if (signed.rawTx.length > rawTxLimit) return try failed(session, "signed transaction exceeds the storage limit")
   const minimumOutput = quoteNumber(signed.minimumOutput)
   if (minimumOutput === undefined) return try failed(session, "sign: the signed minimum output is negative")
-  const bound = boundOf(signed)
-  if (bound === undefined) return try failed(session, "sign: the approved amount or finalized allowance exceeds the journal's exact range")
+  const approvedAmount = safeNumber(signed.approvedAmount)
+  const allowance = safeNumber(signed.allowance)
+  const pricedFeeMicro = safeNumber(signed.pricedFeeMicro)
+  if (approvedAmount === undefined || allowance === undefined || pricedFeeMicro === undefined) return try failed(session, "sign: the approval, allowance or priced fee exceeds the journal's exact range")
   if (!(try renewed(session, true))) return recorded.Quoted
   const id = pendingIntent(session.state, session.runId).id
-  const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), minimumOutput, bound) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
+  const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), minimumOutput, { approvedAmount, allowance, pricedFeeMicro }) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
     if (error._tag === "JournalRefused") return error.issue
     throw error
   }

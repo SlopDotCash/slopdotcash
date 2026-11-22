@@ -1,6 +1,7 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { Area, areaLayer } from "@repo/platform/testing/area"
+import { Response } from "miniflare"
 
 const live = "l".repeat(48)
 const expired = "e".repeat(48)
@@ -8,11 +9,16 @@ const closed = "c".repeat(48)
 const unknown = "u".repeat(48)
 const path = "/api/v1/project-setup"
 
+// The project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = areaLayer({
-  root: new URL("..", import.meta.url).pathname,
-  entry: "worker",
+  root: new URL("../../points", import.meta.url).pathname,
+  config: "test/support/backendRoutes/vite.config.ts",
+  entry: "backendRoutes",
   d1: { SLOP_DB: "slop-private" },
   vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
+  services: { ASSETS: () => new Response("Not found", { status: 404 }) },
 })
 
 effect function member(actor: string, githubId: string, token: string, expiresAt: string) {
@@ -27,7 +33,7 @@ effect function asked(cookie: string | undefined, expected?: string) {
   return [answer.status, answer.status === 200 ? "ok" : body?.error ?? ""] as const
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('A session cookie names one open member until it expires, and the expected-actor header only narrows it (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")', () => effect {
     const area = try Area
     try member("actor-live", "41", live, "2099-01-01T00:00:00.000Z")

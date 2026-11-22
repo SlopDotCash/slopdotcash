@@ -144,6 +144,7 @@ function recorder(calls: string[], afterFirstWorker?: () => void) {
     prepare: () => afterFirstWorker === undefined ? refused("prepare") : Effect.sync(() => { calls.push("prepare") }),
     publish: (service, target) => afterFirstWorker === undefined ? refused(`publish ${service}`) : published(service, target),
     feeSettings: () => refused("feeSettings"),
+    feeVersions: () => refused("feeVersions"),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),

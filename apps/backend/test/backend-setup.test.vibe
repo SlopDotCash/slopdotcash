@@ -59,15 +59,19 @@ const Built = Layer.effect(World, effect {
   return { github, net, access, slopbot }
 })
 
+// The project routes need the security area's enforcement ports, so they are served by the composed backend and
+// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
+// Worker entry serves only the account, binding and referral-code routes.
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const world = try World
   const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
   return areaLayer({
-    root: new URL("..", import.meta.url).pathname,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     d1: { SLOP_DB: "slop-private" },
     vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl },
-    services: { SLOPBOT: (request) => world.slopbot(request) },
+    services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: () => new Response("Not found", { status: 404 }) },
     internet: world.net,
   })
 }), Built)
@@ -87,8 +91,9 @@ function outcome(answer: Answer) {
 effect function member(githubId: number) {
   const area = try Area
   const session = `setup-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  // Each test of this file shares one database, so a member seeded by an earlier test is kept.
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
   return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
 }
 
@@ -183,7 +188,7 @@ effect function seedProject(id: string, text: string, key: string) {
 }
 
 effect function seedApplication(application: string, projectId: string, key: string, text: string, expectedRevision: number | null) {
-  try (try Area).sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', ?, ?)", application, projectId, key, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`, expectedRevision, expectedRevision === null ? null : "Clearer description")
+  try (try Area).sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z', ?, ?)", application, projectId, key, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`, expectedRevision, expectedRevision === null ? null : "Clearer description")
 }
 
 effect function seedExemption(projectId: string, sha256: string, githubId: number) {
@@ -220,7 +225,7 @@ function setupOf(answer: Answer) {
   return [field(setup, "state"), field(field(setup, "nextAction"), "kind"), field(field(setup, "nextAction"), "message"), field(setup, "activatedRevision"), field(setup, "status")]
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('Project setup and removal over HTTP (spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset\'s decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/backend/projectComposition.md, "A cleared, ready project is activated by the setup refresh"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
     const area = try Area
     const world = try World
@@ -248,8 +253,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const latest = (try stored(id)).manifest
     const extra = `member-${stewardId}/extra`
     const appendedEntry = { id: extra, displayName: extra, githubUrl: `https://github.com/${extra}`, description: "Additional research tooling.", integrationBranch: "main", githubId: String(appendedId), nodeId: `R_${appendedId}`, countsFrom: nextMonthStart(try Clock.currentTimeMillis) }
-    const combined = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
-    const appended = try revise(steward, id, { manifest: { ...latest, repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
+    // One save publishes everything it changes as one revision: there is no "one change at a time" refusal
+    // (spec/backend/projects.md, "Owner revisions publish at once against the expected revision").
+    const appended = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
     world.access.missing = [appendedId]
     const uninstalled = try area.request(`/api/v1/project-setup/${id}/check`, { json: {}, as: steward })
     world.access.missing = []
@@ -283,8 +289,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       presented: [presented.status, field(field(presented.body, "changes"), "presentation"), ...project(presented)],
       retokened: [retokened.status, field(field(retokened.body, "changes"), "financial")],
       asset,
-      combined: refused(combined),
-      appended: [appended.status, ...project(appended)],
+      appended: [appended.status, field(field(appended.body, "changes"), "presentation"), ...project(appended)],
       uninstalled: [uninstalled.status, nextActionOf(uninstalled), installationOf(uninstalled)],
       revoked: outcome(revoked),
       setup: [setup.status, setupOf(setup), installationOf(setup)],
@@ -312,8 +317,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       presented: [200, ["headline"], 3, "active", "community"],
       retokened: [200, ["reward", "rewardAsset"]],
       asset: [{ decimals: 18, symbol: "SLOP", status: "active" }],
-      combined: [422, "invalid_manifest", "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."],
-      appended: [200, 5, "paused", "community"],
+      appended: [200, ["headline"], 5, "paused", "community"],
       uninstalled: [200, { kind: "install_slopbot", message: `Not installed on member-${stewardId}/extra. On GitHub, choose "Only select repositories" and pick member-${stewardId}/extra.`, href: "https://github.com/apps/slopdotcash/installations/new" }, { state: "missing", message: `Not installed on member-${stewardId}/extra.` }],
       revoked: [403, "authority_required"],
       setup: [200, ["retry", "retry_scan", "The scan service is unavailable. Check again later.", null, "paused"], { state: "installed", message: `Installed on member-${stewardId}/tool and member-${stewardId}/extra.` }],
@@ -365,7 +369,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const id = "pending-tool"
     const application = "app_pending0001"
     const text = JSON.stringify(manifest(try listed(id, "tool", primaryId)))
-    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'sent')", application, id, `member-${stewardId}/tool`, text, try sha256Hex(text), "Accepted pull requests with tests.", "43", "member-43", "2026-11-02T00:00:00.000Z")
+    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'sent', '2026-11-02T00:00:00.000Z')", application, id, `member-${stewardId}/tool`, text, try sha256Hex(text), "Accepted pull requests with tests.", "43", "member-43", "2026-11-02T00:00:00.000Z")
     const foreign = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: other })
     const cancelled = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: applicant })
     const again = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: applicant })

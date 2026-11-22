@@ -7,13 +7,20 @@ lemma ownerSign_ensures(r: ReserveRelease, attempt: int, by_: string)
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysLiveAttemptFresh(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysFinalizedHeight(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysObservedAfterSignature(ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysApprovedEvm(ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysRefusalNamed(ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysNetworkPinned(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysUntouchedBalances(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysSettlementHistory(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysOwnerRevision(ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysQualifiedAgainstPin(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysValidAmounts(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysConserved(ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepAttemptHistoryRetained(r, ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepSignedAttemptRetained(r, ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepNetworkFixed(r, ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepRefusalRetained(r, ownerSign(r, attempt, by_)))
+  ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepPinFixed(r, ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepOriginalTermsRetained(r, ownerSign(r, attempt, by_)))
   ensures (inv(r) ==> canOwnerSign(r, attempt, by_) ==> stepSettlementHistoryRetained(r, ownerSign(r, attempt, by_)))
 {
@@ -45,13 +52,20 @@ lemma check_ensures(r: ReserveRelease, root: string, total: seq<int>, height: in
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysLiveAttemptFresh(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysFinalizedHeight(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysObservedAfterSignature(check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysApprovedEvm(check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysRefusalNamed(check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysNetworkPinned(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysUntouchedBalances(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysSettlementHistory(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysOwnerRevision(check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysQualifiedAgainstPin(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysValidAmounts(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysConserved(check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepAttemptHistoryRetained(r, check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepSignedAttemptRetained(r, check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepNetworkFixed(r, check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepRefusalRetained(r, check(r, root, total, height, requestRevision, by_)))
+  ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepPinFixed(r, check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepOriginalTermsRetained(r, check(r, root, total, height, requestRevision, by_)))
   ensures (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> stepSettlementHistoryRetained(r, check(r, root, total, height, requestRevision, by_)))
 {
@@ -123,13 +137,20 @@ lemma finalize_ensures(r: ReserveRelease, receipt: ReleaseReceipt)
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysLiveAttemptFresh(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysFinalizedHeight(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysObservedAfterSignature(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysApprovedEvm(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysRefusalNamed(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysNetworkPinned(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysUntouchedBalances(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysSettlementHistory(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysOwnerRevision(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysQualifiedAgainstPin(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysValidAmounts(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysConserved(finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> stepAttemptHistoryRetained(r, finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> stepSignedAttemptRetained(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepNetworkFixed(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepRefusalRetained(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepPinFixed(r, finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> stepOriginalTermsRetained(r, finalize(r, receipt)))
   ensures (inv(r) ==> canFinalize(r, receipt) ==> stepSettlementHistoryRetained(r, finalize(r, receipt)))
 {
@@ -163,13 +184,20 @@ lemma settlePart_ensures(r: ReserveRelease, amount: seq<int>)
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysLiveAttemptFresh(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysFinalizedHeight(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysObservedAfterSignature(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysApprovedEvm(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysRefusalNamed(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysNetworkPinned(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysUntouchedBalances(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysSettlementHistory(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysOwnerRevision(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysQualifiedAgainstPin(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> stepAttemptHistoryRetained(r, settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> stepSignedAttemptRetained(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepNetworkFixed(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepRefusalRetained(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepPinFixed(r, settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> stepOriginalTermsRetained(r, settlePart(r, amount)))
   ensures (inv(r) ==> canSettlePart(r, amount) ==> stepSettlementHistoryRetained(r, settlePart(r, amount)))
 {
@@ -209,4 +237,50 @@ lemma settlePart_ensures(r: ReserveRelease, amount: seq<int>)
     PaddedAmountSubstitution(newTotal, oldTotal, settlement__money_addAmounts(r.originalFree, r.originalReserve));
     assert alwaysConserved(settlePart(r, amount));
   }
+}
+
+lemma admitRetained_ensures(r: ReserveRelease, evidence: RetainedAllocation)
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysAbsentEmpty(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysNoSettlementOnRelease(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysWholeRelease(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysBoundApproval(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysSignedIdentity(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysLiveAttemptFresh(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysFinalizedHeight(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysObservedAfterSignature(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysApprovedEvm(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysRefusalNamed(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysNetworkPinned(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysUntouchedBalances(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysSettlementHistory(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysOwnerRevision(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysQualifiedAgainstPin(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysValidAmounts(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> alwaysConserved(admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepAttemptHistoryRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepSignedAttemptRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepNetworkFixed(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepRefusalRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepPinFixed(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepOriginalTermsRetained(r, admitRetained(r, evidence)))
+  ensures (inv(r) ==> canAdmitRetained(r, evidence) ==> stepSettlementHistoryRetained(r, admitRetained(r, evidence)))
+{
+  if inv(r) && canAdmitRetained(r, evidence) {
+    var admitted := admitRetained(r, evidence);
+    assert r.settledAmount == settlement__money_zero;
+    var total := settlement__money_addAmounts(evidence.free, evidence.reserve);
+    settlement__money_lawAdditionValid_ensures(evidence.free, evidence.reserve);
+    settlement__money_lawZeroIdentity_ensures(total);
+    assert alwaysConserved(admitted);
+  }
+}
+
+lemma initialHolds_ensures()
+  ensures inv(initialHolds())
+{
+  var zero := settlement__money_zero;
+  var total := settlement__money_addAmounts(zero, zero);
+  settlement__money_lawAdditionValid_ensures(zero, zero);
+  settlement__money_lawZeroIdentity_ensures(total);
+  assert alwaysConserved(initialHolds());
 }

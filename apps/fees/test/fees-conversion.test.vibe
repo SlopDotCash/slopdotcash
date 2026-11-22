@@ -73,7 +73,7 @@ function chainStand(stand: Stand, base: Instance) {
     },
     sign: (intent, reserved) => effect {
       stand.calls.push("sign")
-      const send: SignedSend = { kind: "Conversion", tx: 1, nonce: reserved.nonce, gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: 0, pricedFeeMicro: 1000 }
+      const send: SignedSend = { kind: "Conversion", tx: 1, nonce: reserved.nonce, gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 0, allowance: Number(intent.quote.amountIn), pricedFeeMicro: 1000 }
       const facts = stand.signing === "forged"
         ? { txId: "0x6666666666666666666666666666666666666666666666666666666666666666", rawTx: "0x02f8", expiresAt: undefined }
         : try promise(() => factsFor({ type: "sign", runId: 1, send }, generationNames(0), base))

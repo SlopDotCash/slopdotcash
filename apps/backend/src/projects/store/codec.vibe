@@ -2,7 +2,7 @@
 import type { Exclusion, Relationship } from "../../../gen/settlement__payoutExclusions.ts"
 import type { ApplicationRow, Manifest, PayoutExclusion, ProjectRows, Revisioned } from "./rows.vibe"
 
-export type Kind = "Created" | "Activated" | "OwnerUpdate" | "RepositoryAppended" | "Removed" | "AdminHold" | "AdminDelist" | "AdminException" | "RestrictionRetirement" | "CommunityRestored" | "Placement" | "ConsentChanged"
+export type Kind = "Created" | "Activated" | "OwnerUpdate" | "RepositoryAppended" | "Removed" | "AdminHold" | "AdminDelist" | "AdminException" | "RestrictionRetirement" | "CommunityRestored" | "Placement" | "ConsentChanged" | "VaultRegistered"
 export type Status = "Active" | "Paused"
 export type Tier = "Community" | "Featured" | "Retired"
 export type Retirement = "NotRetired" | "OwnerRemoved" | "AdminDelisted" | "RestrictionRetired"
@@ -89,7 +89,7 @@ export function repositoryKeysOf(manifest: RepositoryClaims): ReadonlyArray<stri
 
 export function licenseOf(manifest: Manifest) {
   const license = manifest.terms.repositoryLicense
-  const terms = license.state !== "verified" ? "UnknownTerms" : license.spdx === "mixed" ? "MixedTerms" : license.spdx === "unknown" || license.spdx === null ? "UnknownTerms" : "SpdxLicense"
+  const terms: "UnknownTerms" | "MixedTerms" | "SpdxLicense" = license.state !== "verified" ? "UnknownTerms" : license.spdx === "mixed" ? "MixedTerms" : license.spdx === "unknown" || license.spdx === null ? "UnknownTerms" : "SpdxLicense"
   return { terms, url: license.url ? 1 : 0, commit: license.commitSha ? 1 : 0, digest: license.fileSha256 ? 1 : 0 }
 }
 
@@ -140,6 +140,26 @@ export function assetKeyIn(manifests: ReadonlyArray<Manifest>, identity: string)
   return index < 0 ? seen.length + 1 : index + 1
 }
 
+// spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no
+// amount or payment": the promise as the manifest states it, `reward.honorSystem` omitted, true or anything else.
+export interface RewardFields {
+  readonly kind?: unknown
+  readonly monthlyCapMinor?: unknown
+  readonly honorSystem?: unknown
+}
+
+export function rewardPromiseOf(reward: RewardFields | undefined) {
+  const amount = typeof reward?.monthlyCapMinor === "string" && /^[0-9]+$/u.test(reward.monthlyCapMinor) && /[1-9]/u.test(reward.monthlyCapMinor) ? 1 : 0
+  const honor = reward === undefined || !Object.hasOwn(reward, "honorSystem") || reward.honorSystem === undefined ? "HonorOmitted" as const : reward.honorSystem === true ? "HonorTrue" as const : "HonorFalse" as const
+  return { monthlyPool: reward?.kind === "monthly-pool", monthlyAmount: amount, honor }
+}
+
+// spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer":
+// one recorded deployment of each purpose, the ordinary escrow and the security bounty settlement.
+export function vaultsOf(manifest: Manifest) {
+  return { ordinary: (manifest.escrow?.deployments ?? []).length > 0, bounty: (manifest.securityBounty?.settlement?.deployments ?? []).length > 0 }
+}
+
 export function fundedOf(manifest: Manifest): boolean {
   return manifest.reward.fundingState === "committed" || /^[0-9]*[1-9][0-9]*$/u.test(manifest.reward.committedMinor) || manifest.reward.paymentMode === "enabled" || (manifest.escrow?.deployments ?? []).length > 0 || (manifest.funding.addresses ?? []).length > 0 || (manifest.funding.commitments ?? []).length > 0
 }
@@ -148,12 +168,19 @@ function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 }
 
-export function retirementAfter(retirement: Retirement, kind: Kind): Retirement {
-  return kind === "Removed" ? "OwnerRemoved" : kind === "AdminDelist" ? "AdminDelisted" : kind === "RestrictionRetirement" ? "RestrictionRetired" : kind === "CommunityRestored" ? "NotRetired" : retirement
+// spec/backend/projects.md adminRevise: an administrator exception that lists the project in a listed tier ends an
+// owner removal or a delisting; one that keeps it retired keeps the retirement it had.
+export function retirementAfter(retirement: Retirement, kind: Kind, tier: Tier): Retirement {
+  if (kind === "Removed") return "OwnerRemoved"
+  if (kind === "AdminDelist") return retirement === "NotRetired" ? "AdminDelisted" : retirement
+  if (kind === "RestrictionRetirement") return "RestrictionRetired"
+  if (kind === "CommunityRestored") return "NotRetired"
+  if ((kind === "AdminException" || kind === "AdminHold") && tier !== "Retired") return "NotRetired"
+  return retirement
 }
 
 export function retirementOf(revisions: ReadonlyArray<Revisioned>): Retirement {
-  return revisions.reduce<Retirement>((retirement, { kind }) => retirementAfter(retirement, kind), "NotRetired")
+  return revisions.reduce<Retirement>((retirement, { kind, manifest }) => retirementAfter(retirement, kind, tierOf(manifest.listingTier)), "NotRetired")
 }
 
 function creationApplication(rows: ProjectRows): ApplicationRow | undefined {
@@ -242,6 +269,8 @@ export function projectState(rows: ProjectRows, facts: Facts) {
     network: manifest === undefined ? 0 : networkOf(manifest),
     asset,
     funded: manifest === undefined ? false : fundedOf(manifest),
+    honorSystem: manifest?.reward.honorSystem === true,
+    vaults: manifest === undefined ? { ordinary: false, bounty: false } : vaultsOf(manifest),
   }
 }
 
@@ -269,6 +298,8 @@ export interface ProjectFacts {
   readonly exclusions: ReadonlyArray<Exclusion>
   readonly branch: number
   readonly license: License
+  readonly honorSystem: boolean
+  readonly vaults: { readonly ordinary: boolean; readonly bounty: boolean }
 }
 
 export interface Submitted {
@@ -305,5 +336,9 @@ export function mismatchOf(manifest: Manifest, projectId: string, expected: Proj
   if (submitted.assetKey !== expected.asset) return "rewardAsset"
   if (submitted.previous !== undefined && expected.asset === submitted.previousAsset && !sameRewardAsset(submitted.previous.rewardAsset, manifest.rewardAsset)) return "rewardAsset"
   if (!sameExclusions(exclusionsOf(manifest), expected.exclusions)) return "reward.payoutExclusions"
+  if ((manifest.reward.honorSystem === true) !== expected.honorSystem) return "reward.honorSystem"
+  const vaults = vaultsOf(manifest)
+  if (vaults.ordinary !== expected.vaults.ordinary) return "escrow.deployments"
+  if (vaults.bounty !== expected.vaults.bounty) return "securityBounty.settlement.deployments"
   return undefined
 }

@@ -8,8 +8,8 @@ import { type EnvironmentName, createReleaseManifest, verifyBundle } from "../re
 import { collect } from "../release/run/collect.vibe"
 import { environmentOf, runFacts } from "../release/run/facts.vibe"
 import { publisher } from "../release/publish/publisher.vibe"
+import { isAncestor } from "../release/run/heads.vibe"
 import { historyAnchor, release as publishRelease } from "../release/run/publish.vibe"
-import { cloudflare, pinnedWrangler } from "../release/wrangler/cloudflare.vibe"
 
 export error ReleaseUsage { message: string }
 
@@ -35,9 +35,11 @@ export effect function release(args: ReadonlyArray<string>) {
   const [command, first, second, third, fourth, ...rest] = args
   const environment = environmentOf(first ?? "")
   const name = nameOf(first)
-  if (command === "coverage" && environment !== undefined && second === undefined) {
+  if (command === "coverage" && environment !== undefined && third === undefined) {
+    const facts = try runFacts()
     provide systemGit {
-      try writeOutputs(try releaseCoverage(try runFacts(), environment))
+      const anchored = environment !== "Production" || (try isAncestor(second ?? ".", historyAnchor, facts.sha))
+      try writeOutputs(try releaseCoverage(facts, environment, anchored))
     }
     return
   }
@@ -70,7 +72,7 @@ export effect function release(args: ReadonlyArray<string>) {
     const facts = try runFacts()
     const access = try githubAccess()
     const root = fourth ?? "."
-    provide Layer.mergeAll(access, systemGit, publisher({ root }), cloudflare({ root, wrangler: pinnedWrangler(root) })) {
+    provide Layer.mergeAll(access, systemGit, publisher({ root })) {
       const released = try publishRelease({ environment, facts, bundle: second, receipts: third, root, anchor: historyAnchor })
       try Console.log(released.outcome === "Verified"
         ? `[Slop] published and verified ${released.sourceSha} as deployment ${released.deployment}`

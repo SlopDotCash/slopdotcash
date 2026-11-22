@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure suppresses every waiting notice of the account in the same write"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"

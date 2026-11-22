@@ -50,7 +50,10 @@ export type DecodedLog =
   | { readonly kind: "malformed"; readonly at: LogPosition; readonly topic: Hex | undefined; readonly reason: Malformation };
 
 class Rejected {
-  constructor(readonly reason: Malformation) {}
+  readonly reason: Malformation;
+  constructor(reason: Malformation) {
+    this.reason = reason;
+  }
 }
 
 interface Words {

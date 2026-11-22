@@ -350,7 +350,7 @@ effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapsh
   const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
   const recipients = [...lines].map(([actor, count]) => ({ actor: actors.get(actor) ?? 0, lines: count })).sort((left, right) => left.actor - right.actor)
   const total = prior.reduce((sum, row) => sum + row.award.amount, 0)
-  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: projectId, unit: recorded, recipients, completeLines: true, reason: reallocated(total), digest }])
+  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: projectId, unit: recorded, recipients, completeLines: true, reason: reallocated(total), digest, pullRequest: coverage.pullRequestId }])
   if (refused !== "") {
     hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
     return []
@@ -497,13 +497,14 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
     workUnit: key.workUnit, digest,
   }
   const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
+  const effectiveAt = event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
   const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, decision: context.decided ? try scoreDecision(event) : noDecision }])
   if (refused !== "") {
     hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
     return []
   }
   const provenance = {
-    recordedAt, sourceDigest: digest, effectiveAt: event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt)),
+    recordedAt, sourceDigest: digest, effectiveAt,
     decisionSourceId: decisionSourceOf([event.scoreDecisionSourceId, award.sourceId]),
     confirmation: context.confirmation === true,
   }

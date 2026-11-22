@@ -20,6 +20,11 @@ const db = await database(mf, "SLOPBOT_DB");
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer));
 
 let generation = 0;
+let recorded: Array<{ readonly job: number; readonly at: number; readonly month: number }> = [];
+
+function originOf(month: number) {
+  return Date.parse(`${monthText(month)}-15T00:00:00.000Z`);
+}
 
 function monthText(month: number) {
   return `${2100 + generation}-${String(month).padStart(2, "0")}`;
@@ -35,10 +40,6 @@ function monthStart(month: number) {
 
 function jobKey(job: number) {
   return `spend-${generation}-job${job}`;
-}
-
-function jobOf(reviewKey: string) {
-  return Number(reviewKey.slice(reviewKey.lastIndexOf("job") + 3));
 }
 
 function months(): [string, string] {
@@ -87,19 +88,22 @@ async function callIdOf(call: number) {
 
 async function dispatched(event: Event) {
   switch (event.type) {
-    case "recordCall":
+    case "recordCall": {
       if (event.c.month < 1 || event.c.month > 12) return "refused" as const;
-      clock.set(monthStart(event.c.month) + event.c.at * 1000);
-      return outcome(recordCalls(jobKey(event.c.job), 1, "triage", [callOf(event.c)]), runtime);
+      clock.set(originOf(event.c.month) + event.c.at * 1000);
+      const result = await outcome(recordCalls(jobKey(event.c.job), 1, "triage", [callOf(event.c)]), runtime);
+      if (result === "accepted") recorded = [...recorded, { job: event.c.job, at: event.c.at, month: event.c.month }];
+      return result;
+    }
     case "claimMilestone":
       return outcome(claimMilestone(monthText(event.month)), runtime);
     case "deliverMilestone":
       return outcome(recordMilestoneReceipt(monthText(event.month), event.threshold, event.accepted), runtime);
     case "claimFailure":
-      clock.set(monthStart(1) + event.now * 1000);
-      return outcome(claimFailureNotice(await callIdOf(event.call), clock.now()), runtime);
+      clock.set(originOf(recorded[event.call - 2]?.month ?? 1) + event.now * 1000);
+      return outcome(claimFailureNotice(await callIdOf(event.call)), runtime);
     case "deliverFailure":
-      clock.set(monthStart(1) + event.now * 1000);
+      clock.set(originOf(recorded[event.call - 2]?.month ?? 1) + event.now * 1000);
       return outcome(recordFailureReceipt(await callIdOf(event.call), event.accepted), runtime);
   }
 }
@@ -114,21 +118,21 @@ function view(state: Spend): Spend {
 export const driver: Driver<Spend> & AsyncDisposable = {
   reset: async () => {
     generation++;
+    recorded = [];
     await db.prepare("UPDATE slopbot_provider_failure_notices SET claimed_at = ? WHERE claimed_at IS NULL").bind(new Date(monthStart(1)).toISOString()).run();
     await seedHistory();
   },
   dispatch: (_key, event: Event) => dispatched(event),
   observe: async () => {
-    const { spend, calls } = await runtime.runPromise(spendIn(months()));
-    const base = Math.floor(monthStart(1) / 1000);
+    const { spend } = await runtime.runPromise(spendIn(months()));
     return view({
       ...spend,
       costs: spend.costs.map((cost, index) => {
-        const month = modelMonth(cost.month);
-        return { ...cost, month, job: jobOf(calls[index]?.reviewKey ?? ""), at: cost.at - Math.floor(monthStart(month) / 1000) };
+        const call = recorded[index - 1];
+        return { ...cost, month: modelMonth(cost.month), job: call?.job ?? 0, at: call?.at ?? 0 };
       }),
+      failures: spend.failures.map((notice) => ({ ...notice, recordedAt: notice.recordedAt === 0 ? 0 : notice.recordedAt - Math.floor(originOf(recorded[notice.call - 2]?.month ?? 1) / 1000) })),
       alerts: spend.alerts.map((alert) => ({ ...alert, month: modelMonth(alert.month) })),
-      failures: spend.failures.map((notice) => ({ ...notice, recordedAt: notice.recordedAt === 0 ? 0 : notice.recordedAt - base })),
     });
   },
   [Symbol.asyncDispose]: async () => {

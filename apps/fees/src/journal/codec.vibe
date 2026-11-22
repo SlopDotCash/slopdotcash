@@ -193,7 +193,7 @@ schema ReplacementRow { conversion_id: string; tx_id: string; max_fee_per_gas: s
 schema GasRow {
   id: string; run_id: string; fee_wallet: string; nonce: number; maximum_wei: string; state: "reserved" | "signed" | "abandoned"
   tx_id: string | null; conversion_id: string | null; actual_wei: string | null; settled_day: string | null
-  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null; imported: number
+  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null; imported: 0 | 1
 }
 schema StepRow { tx_id: string; operator: string; revision: number; run_id: string; scan_json: string; observed_at: string }
 schema ProofRow { tx_id: string; run_id: string; proof_json: string; observed_at: string }

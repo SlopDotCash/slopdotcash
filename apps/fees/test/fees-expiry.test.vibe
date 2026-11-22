@@ -116,7 +116,7 @@ const liveSolana = { source: 1, converterMode: "Live", buybackMode: "Off", netwo
 
 const quote: Quote = { token: 1, route: "Found", amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }
 
-const swap: SignedSend = { kind: "Conversion", tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 1, priority: 0 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000, deadline: maximumSafeValue, blockhashSlot: anchorSlot }
+const swap: SignedSend = { kind: "Conversion", tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 1, priority: 0 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000, deadline: maximumSafeValue, blockhashSlot: anchorSlot, toPinnedRouter: true, approvedAmount: 0, allowance: 0, pricedFeeMicro: 1000 }
 
 function journalServices(world: World) {
   return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)

@@ -66,7 +66,7 @@ const fixture: ProjectView = {
 };
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
@@ -269,11 +269,13 @@ async function claim(caseKey: string, by: unknown): Promise<Outcome> {
 async function record(caseKey: string, event: Extract<Event, { type: "recordAttested" }>, by: unknown): Promise<Outcome> {
   terms = storedTerms(event.terms);
   const projectId = await seeded(terms);
-  clock.set(Math.max(clock.now(), base() + event.terms.receivedAt));
-  const advisory = `GHSA-2345-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "mpqr" : "vwx2"}`;
-  const body = { mode: "record", projectId, advisory, idempotencyKey: key(), reporterGithubId: githubId(1), reporterGithubLogin: `member-${githubId(1)}`, receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: event.confirmed };
-  const result = await outcome(recorded(actorOf(by), body));
-  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND submission_state='verified'").bind(projectId, advisory).all()).results;
+  clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+  const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "rvwx" : "hjmp"}`;
+  const result = await outcome(recorded(actorOf(by), {
+    mode: "record", projectId, advisory, idempotencyKey: key(), reporterGithubId: githubId(1), reporterGithubLogin: `member-${githubId(1)}`,
+    receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: event.confirmed,
+  }));
+  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
   if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
   await Promise.allSettled(pending.splice(0));
   return result;
@@ -289,7 +291,9 @@ async function settle(caseKey: string, caseId: string, event: Extract<Event, { t
     terms = storedTerms(event.terms);
     const projectId = (await db.prepare("SELECT project_id FROM security_cases WHERE id=?").bind(caseId).all()).results[0]?.project_id;
     if (typeof projectId === "string") await seeded(terms, projectId);
-    (advisories[index] as { createdAt: string }).createdAt = new Date(base() + Math.max(event.terms.receivedAt, 1)).toISOString();
+    const createdAt = base() + Math.max(event.terms.receivedAt, 1);
+    clock.set(Math.max(clock.now(), createdAt + 1));
+    (advisories[index] as { createdAt: string }).createdAt = new Date(createdAt).toISOString();
   }
   const before = await revisionOf(caseId);
   const result = await act(caseKey, caseId, 1, "check-receipt");

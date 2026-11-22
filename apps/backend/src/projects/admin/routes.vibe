@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { rows, sql } from "@repo/platform/d1"
 import { type Actor, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
-import type { Exception, RepositoryStart, RewardPromise } from "../../../gen/backend__projects.ts"
+import type { Exception, RepositoryStart } from "../../../gen/backend__projects.ts"
 import { type Event, type Registry, type RegistryRead, Rejected, clearanceOf, withExceptionAppends } from "../../../gen/backend__projectComposition.effect.vibe"
 import { projectContract } from "../../access/routes.vibe"
 import { loadAccess } from "../../access/store.vibe"
@@ -10,20 +10,17 @@ import { AdminRevisionRequest, adminManifest, adminProjects } from "../../client
 import { getAdminProjects, putAdminProjectsByIdManifest } from "../../client/refusals.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
 import { definitionProblem, registryProblem, transitionProblem } from "../owner/definition.ts"
-import { positiveMinor } from "../owner/manifest.vibe"
 import { listedManifests } from "../owner/records.vibe"
 import { type Json, classified, objectOf, same } from "../owner/revisionChanges.ts"
-import { assetKeyIn, assetOf, consentOf, fieldsCompleteOf, fundedOf, idOf, licenseOf, monthOf, networkOf, participationOf, statusOf, tierOf } from "../store/codec.vibe"
+import { consentOf, exclusionsOf, idOf, monthOf } from "../store/codec.vibe"
 import { type Manifest, manifestOf } from "../store/rows.vibe"
-import { loadProject, send } from "../store/store.vibe"
+import { type Loaded, exceptionFacts, loadProject, send } from "../store/store.vibe"
 import { verifiedAsset } from "../tokens/metadata.vibe"
 import { ProjectRow, adminProjectView, boundedText, moderation, positiveInteger, projectColumns, projectIdPattern, projectRow, refused, requireAdmin } from "../enforcement/admission.vibe"
 import { enforcementState } from "../enforcement/views.vibe"
 
-schema RevisionManifest { manifest: string }
-
 const bodyBytes = 65536
-const registryFacts = ["status", "listingTier", "steward", "participation"]
+const registryFacts = ["status", "listingTier", "steward", "participation", "terms"]
 const manifestRows = putAdminProjectsByIdManifest
 
 effect function listProjects(actor: Actor) {
@@ -74,17 +71,6 @@ effect function reviewBudgetFits(previous: Json, next: Json, nowIso: string) {
   if (Date.parse(String(nextBudget.effectiveAt ?? "")) < nextCycleStart(nowIso)) throw refused(manifestRows.invalidManifestAReviewBudgetCannotAffectAnOpen)
 }
 
-function rewardOf(manifest: Json): RewardPromise {
-  const reward = objectOf(manifest.reward) ?? {}
-  const honor = !Object.hasOwn(reward, "honorSystem") ? "HonorOmitted" : reward.honorSystem === true ? "HonorTrue" : "HonorFalse"
-  return { monthlyPool: reward.kind === "monthly-pool", monthlyAmount: positiveMinor(reward.monthlyCapMinor) ? 1 : 0, honor }
-}
-
-function licenseFacts(manifest: Manifest): Exception["license"] {
-  const license = licenseOf(manifest)
-  return { terms: license.terms === "SpdxLicense" ? "SpdxLicense" : license.terms === "MixedTerms" ? "MixedTerms" : "UnknownTerms", url: license.url, commit: license.commit, digest: license.digest }
-}
-
 function appendedOf(previous: Json, next: Json): ReadonlyArray<Json> {
   return list(next.repositories).slice(list(previous.repositories).length).map((entry) => objectOf(entry) ?? {})
 }
@@ -103,40 +89,22 @@ effect function appendReadsOf(projectId: string, appended: ReadonlyArray<Json>) 
   return reads
 }
 
-effect function revisionManifests(projectId: string) {
-  const stored = try rows(RevisionManifest, sql`SELECT manifest FROM project_revisions WHERE project_id = ${projectId} ORDER BY revision`)
-  const manifests: Manifest[] = []
-  for (const entry of stored) manifests.push(try manifestOf(entry.manifest, `revision of ${projectId}`))
-  return manifests
-}
-
-effect function exceptionOf(projectId: string, state: Registry, previous: Json, next: Json, manifest: Manifest, expectedRevision: number) {
+function exceptionOf(loaded: Loaded, previous: Json, next: Json, manifest: Manifest, expectedRevision: number): Exception {
   const changes = classified(previous, next)
   const changed = [...new Set([...Object.keys(previous), ...Object.keys(next)])].filter((field) => !same(previous[field], next[field]))
   const appended = appendedOf(previous, next).map(startOf)
-  const deployments = manifest.escrow?.deployments ?? []
   const draft: Exception = {
     expectedRevision,
     reason: 1,
-    status: statusOf(manifest.status),
-    tier: tierOf(manifest.listingTier),
-    steward: idOf(manifest.steward.github.actorId),
-    participation: participationOf(manifest),
-    fieldsComplete: fieldsCompleteOf(manifest),
-    network: networkOf(manifest),
-    asset: assetKeyIn([...(try revisionManifests(projectId)), manifest], assetOf(manifest).identity),
+    ...exceptionFacts(manifest, loaded.rows),
     financial: changes.financial.length > 0,
     executable: changes.executable.length > 0 || appended.length > 0,
     otherFields: changes.presentation.length > 0 || changed.some((field) => changes.restricted.includes(field) && !registryFacts.includes(field)),
-    funded: fundedOf(manifest),
-    vaults: { ordinary: state.project.vaults.ordinary || deployments.length > 0, bounty: state.project.vaults.bounty },
-    reward: rewardOf(next),
     clearance: "ClearanceMissing",
-    license: licenseFacts(manifest),
     consent: consentOf(manifest),
     appended,
   }
-  return { ...draft, clearance: clearanceOf(withExceptionAppends(draft, state.security)) } satisfies Exception
+  return { ...draft, clearance: clearanceOf(withExceptionAppends(draft, loaded.state.security)) }
 }
 
 function placementOf(previous: Json, next: Json, state: Registry): Event | undefined {
@@ -185,8 +153,8 @@ effect function revise(actor: Actor, projectId: string) {
   const manifest = manifestOf(text, `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }
   const conflict = registryProblem([...(try listedManifests()).filter((listed) => listed.id !== projectId).map((listed) => listed.manifest), next])
   if (conflict !== undefined) throw refused(manifestRows.registryConflict, conflict)
-  const state = (try loadProject(projectId)).state
-  const event = placementOf(previous, next, state) ?? { type: "adminRevise", exception: try exceptionOf(projectId, state, previous, next, manifest, expectedRevision), exclusions: [], appendReads: try appendReadsOf(projectId, appendedOf(previous, next)) } satisfies Event
+  const loaded = try loadProject(projectId)
+  const event = placementOf(previous, next, loaded.state) ?? { type: "adminRevise", exception: exceptionOf(loaded, previous, next, manifest, expectedRevision), exclusions: [...exclusionsOf(manifest)], appendReads: try appendReadsOf(projectId, appendedOf(previous, next)) } satisfies Event
   const by = Number(actor.githubId)
   send({ projectId, event, by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
     when Rejected: throw exceptionRefusal(error);

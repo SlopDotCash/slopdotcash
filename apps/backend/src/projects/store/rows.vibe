@@ -70,10 +70,12 @@ export schema Contribution {
 }
 export schema RewardAsset { network: string; address: string; decimals: number }
 export schema PayoutExclusion { actorId: string; relationship: "owner" | "funded-employee" | "related-party"; fromCycle: string; untilCycle: string | null }
-export schema Reward { chain: string | null; fundingState: string; committedMinor: string; paymentMode: string; payoutExclusions?: ReadonlyArray<PayoutExclusion> }
+export schema Reward { kind?: string; chain: string | null; fundingState: string; committedMinor: string; monthlyCapMinor?: string; paymentMode: string; honorSystem?: boolean; payoutExclusions?: ReadonlyArray<PayoutExclusion> }
 export schema Entry {}
 export schema Escrow { deployments?: ReadonlyArray<Entry> }
 export schema Funding { addresses?: ReadonlyArray<Entry>; commitments?: ReadonlyArray<Entry> }
+export schema BountySettlement { deployments?: ReadonlyArray<Entry> }
+export schema SecurityBounty { settlement?: BountySettlement }
 
 export schema Manifest {
   id: string
@@ -89,6 +91,7 @@ export schema Manifest {
   rewardAsset?: RewardAsset
   reward: Reward
   escrow?: Escrow
+  securityBounty?: SecurityBounty
   funding: Funding
 }
 
@@ -111,7 +114,7 @@ export effect function manifestOf(text: string, label: string) {
   return Schema.decodeUnknownEffect(Manifest)(parsed) catch effect (error) => { throw new RowMismatch({ text: label, issue: String(error) }) }
 }
 
-const kinds: ReadonlyArray<Kind> = ["Created", "Activated", "OwnerUpdate", "RepositoryAppended", "Removed", "AdminHold", "AdminDelist", "AdminException", "RestrictionRetirement", "CommunityRestored", "Placement", "ConsentChanged"]
+const kinds: ReadonlyArray<Kind> = ["Created", "Activated", "OwnerUpdate", "RepositoryAppended", "Removed", "AdminHold", "AdminDelist", "AdminException", "RestrictionRetirement", "CommunityRestored", "Placement", "ConsentChanged", "VaultRegistered"]
 
 function recordedKind(row: { readonly revision: number; readonly kind: string | null }): Kind | undefined {
   const stored = kinds.find((kind) => kind === row.kind)

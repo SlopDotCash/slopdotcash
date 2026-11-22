@@ -96,7 +96,7 @@ export interface Imported {
 
 export function importReservation(entry: Imported): ReadonlyArray<Statement> {
   return [
-    sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose) SELECT ${entry.id}, ${entry.network}, ${entry.wallet}, ${entry.nonce}, ${entry.intentHash}, ${entry.runId}, ${entry.maximumWei}, ${entry.perTransactionWei}, ${entry.perDayWei}, 'signed', ${entry.txId}, ${entry.conversionId}, ${entry.createdAt}, 'fees' WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${entry.network} AND run_id = ${entry.runId} AND expires_at >= ${entry.createdAt})`,
+    sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose, imported) SELECT ${entry.id}, ${entry.network}, ${entry.wallet}, ${entry.nonce}, ${entry.intentHash}, ${entry.runId}, ${entry.maximumWei}, ${entry.perTransactionWei}, ${entry.perDayWei}, 'signed', ${entry.txId}, ${entry.conversionId}, ${entry.createdAt}, 'fees', 1 WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${entry.network} AND run_id = ${entry.runId} AND expires_at >= ${entry.createdAt})`,
     confirmed(sql`EXISTS (SELECT 1 FROM fee_native_gas WHERE id = ${entry.id})`, "Historical native fee import lost its lease"),
   ]
 }

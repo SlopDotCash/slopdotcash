@@ -144,18 +144,14 @@ function recordOf(event: Recorded, by: number): Written {
   return { id, projectId, action: "reinstate", stateAfter: "clear", appealAfter: "granted", actor, role: "project-moderator", source: "admin-panel", issuer: null, at };
 }
 
-function bansOf(event: Recorded) {
-  if (event.type !== "decideProjectBan") return [];
-  const id = `enf_driver${event.decision}`;
-  return [...new Set(event.accounts)].map((account) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${id}, ${String(account)}, ${`account-${account}`})`);
-}
-
 function decided(real: Event, sender: number) {
   if (real.type !== "recordVettingBan" && real.type !== "decideProjectBan" && real.type !== "reinstateProject") return send(real, sender, context(sender));
   return Effect.gen(function* () {
     yield* admitted(real, sender);
     const db = yield* D1;
-    yield* db.batch([written(recordOf(real, sender)), ...bansOf(real)]);
+    const record = recordOf(real, sender);
+    const bans = real.type === "decideProjectBan" ? [...new Set(real.accounts)].map((target) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${record.id}, ${String(target)}, ${`account-${modelActorOf(target)}`})`) : [];
+    yield* db.batch([written(record), ...bans]);
   });
 }
 
@@ -177,7 +173,7 @@ async function observed(): Promise<Access> {
   const bans = state.bans.filter((ban) => ours(ban.project));
   const releases = state.releases.filter((release) => bans.some((ban) => ban.enforcement === release.enforcement));
   return {
-    moderators: [...moderators],
+    moderators: state.moderators,
     enforcements: state.enforcements.filter((entry) => ours(entry.project)).map((entry) => ({ ...entry, id: decision(entry.id), project: byRow.get(entry.project) ?? 0, decidedBy: modelActorOf(entry.decidedBy) })),
     bans: bans.map((ban) => ({ enforcement: decision(ban.enforcement), project: byRow.get(ban.project) ?? 0, target: modelActorOf(ban.target), decidedBy: modelActorOf(ban.decidedBy) })),
     releases: releases.map((release) => ({ decision: decision(release.decision), enforcement: decision(release.enforcement), target: modelActorOf(release.target), decidedBy: modelActorOf(release.decidedBy) })),

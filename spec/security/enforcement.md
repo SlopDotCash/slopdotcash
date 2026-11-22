@@ -200,11 +200,13 @@ pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestO
    else if (requestOrigin == AdminInvestigation) e.administrators.contains(by)
    else by == vettingService and e.restriction == FlagQuarantine and
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
+pure def pendingAssessment(e: Enforcement, repository: int, assessmentId: int): Assessment =
+  { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
+    revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
+    snapshot: activeReceipts(e), chainRequestedAt: e.clockDay }
 pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, { id: assessmentId, repository: repository, identity: identityOf(e, repository), state: APending,
-      revision: e.revision, requestedAt: e.clockDay, requestEpoch: e.epoch, requeued: false, reused: false, verified: false,
-      snapshot: activeReceipts(e), chainRequestedAt: e.clockDay }) }
+    latest: e.latest.put(repository, pendingAssessment(e, repository, assessmentId)) }
 pure def canRequeueTemplate(e: Enforcement, by: int, repository: int, assessmentId: int): bool =
   by == vettingService and e.repositories.includes(repository) and latestOf(e, repository).state == APending and
   assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and

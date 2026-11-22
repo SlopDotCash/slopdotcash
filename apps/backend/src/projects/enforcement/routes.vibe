@@ -1,5 +1,5 @@
 // spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account or a moderator files one open project appeal"; spec/security/enforcement.md, "Account entries share the project journal without changing its restriction"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project's open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
-import { type Actor, Refused, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
 import { type DecisionRole, EnforcementRecord, EnforcementRows, type RecordDetails, type ReinstatementRead } from "@repo/ports/security"
@@ -7,7 +7,7 @@ import { type Access, type Event as AccessEvent, type ProjectRequestRead, Reject
 import { type Event, type Registry, apply, canReinstate } from "../../../gen/backend__projectComposition.effect.vibe"
 import { type Enforcement, accountAppealOpenFor, accountsIndependent, independent, openAccountAppeals, platform } from "../../../gen/security__enforcement.effect.vibe"
 import { AccessRoutes, projectContract } from "../../access/routes.vibe"
-import { type Context, DecisionNotNext, type GithubActor, type Loaded, activeBans, dryRun, loadAccess, maliceDecision, projectAppeal, recordIdFor, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
+import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, dryRun, loadAccess, maliceDecision, projectAppeal, recordIdFor, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
 import { AppealRequest, EnforcementRequest, enforcementDecision, enforcementPreview, projectAppeals } from "../../client/admin.vibe"
 import { postAdminProjectsByIdEnforcement, postProjectAppeals } from "../../client/refusals.vibe"
 import { AdminRoutes } from "../admin/routes.vibe"
@@ -155,9 +155,10 @@ function accessRefusal(a: Access, event: AccessEvent, by: number): Refused | und
     }
     case "denyAppeal": {
       const open = openAppealsOf(a, event.project)
-      if (!projectRestricted(a, event.project) || open.length === 0) return refused(decisionRows.noOpenAppeal)
-      if (open.some((appeal) => !independentOf(a, by, event.project, appeal.target))) return refused(decisionRows.independentReviewRequiredAccount)
-      return latestRecord(a, event.project).role === "VettingRole" ? refused(decisionRows.maliciousDecisionRequired) : undefined
+      if (!projectRestricted(a, event.project)) return refused(decisionRows.noOpenAppeal)
+      if (latestRecord(a, event.project).role === "VettingRole") return refused(decisionRows.maliciousDecisionRequired)
+      if (open.length === 0) return refused(decisionRows.noOpenAppeal)
+      return open.some((appeal) => !independentOf(a, by, event.project, appeal.target)) ? refused(decisionRows.independentReviewRequiredAccount) : undefined
     }
     default: return undefined
   }
@@ -166,6 +167,7 @@ function accessRefusal(a: Access, event: AccessEvent, by: number): Refused | und
 effect function accessAfter(access: Loaded, event: AccessEvent, by: number) {
   return dryRun(access, event, by) catch effect (error) => match (error) {
     when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
+    when DenialUnrecordable: throw accessRefusal(access.state, event, by) ?? new Refused(admission.rejected);
     when AccessRejected: throw accessRefusal(access.state, event, by) ?? error;
     default: throw error;
   }
@@ -235,6 +237,7 @@ effect function accountPlan(request: Request, row: ProjectRow, registry: Registr
   if (request.action === "reinstate_accounts") {
     if (restrictionAppeal(access, request.projectId) !== "requested" || !activeBans(access).some((ban) => ban.projectId === request.projectId)) throw refused(decisionRows.noOpenAppealAccount)
     if (request.accounts.length === 0) throw refused(decisionRows.invalidRequestSelectTheAccountsTo)
+    for (const account of request.accounts) if (!bannedIn(access, request.projectId, account.githubId)) throw refused(decisionRows.accountNotBanned)
     const targets = request.accounts.map((account) => Number(account.githubId))
     const event: AccessEvent = { type: "reinstateAccounts", decision: access.nextDecision, project, targets, projectRequest }
     const after = try accessAfter(access, event, by)
@@ -359,6 +362,7 @@ effect function decided(request: Request, preview: boolean) {
   const plan = try planOf(request, row, registry, access)
   if (preview) return json({ preview: plan.preview }, 200, projectContract)
   const recordId = commit(plan) catch effect (error) => match (error) {
+    when DenialUnrecordable: throw new Refused(admission.rejected);
     when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
     when Conflict: throw refused(decisionRows.staleEnforcement);
     default: throw error;

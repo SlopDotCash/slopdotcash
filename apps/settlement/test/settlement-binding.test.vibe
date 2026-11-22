@@ -66,13 +66,14 @@ const Site = areaLayer({
   root: new URL("..", import.meta.url).pathname,
   config: "test/support/binding/vite.config.ts",
   d1: { SLOP_DB: "slop-private" },
+  r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"],
   vars: {
     ADMIN_GITHUB_IDS: "7",
     PROJECT_MODERATOR_GITHUB_IDS: "",
     PAYMENT_NETWORKS: JSON.stringify(["solana-devnet"]),
     PAYMENT_RPC_URLS: JSON.stringify({}),
   },
-  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester, SOLANA_PAYMENT_EXECUTOR: executor },
+  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester, SOLANA_PAYMENT_EXECUTOR: executor, ASSETS: async () => new Response("Not found", { status: 404 }) },
   internet: internet({}),
 })
 

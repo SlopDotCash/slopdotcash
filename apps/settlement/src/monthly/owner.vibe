@@ -1,12 +1,12 @@
 // spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"
-import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { type Statement, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Refused } from "@repo/platform/http"
 import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
-import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, hasActor, lateCutNoticeAt, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, canObserveSettings, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, hasActor, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { excludedIn } from "../../gen/settlement__payoutExclusions.effect.vibe"
 import { type SettingsAuthority, Rejected as SettingRejected } from "../../gen/settlement__monthlySettings.effect.vibe"
 import { type MonthlyAwardState, type MonthlyAwardView, type MonthlyCut, type MonthlyOwnerView } from "../client/monthly.vibe"
@@ -401,29 +401,17 @@ export effect function finalizeMonth(projectId: string, periodText: string, acto
   return try monthView(authorized, try loadedMonth(key, authorized.facts))
 }
 
-schema OpenCutRow { readonly period: string; readonly latest: string }
+schema OpenCutRow { readonly period: string }
 
-effect function lateCutNoticeOf(projectId: string) {
-  const open = try rows(OpenCutRow, sql`SELECT x.period, MAX(x.created_at) AS latest FROM monthly_allocation_cut_reasons x WHERE x.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = x.project_id AND r.period = x.period) GROUP BY x.period ORDER BY x.period`)
-  const now = try nowSeconds()
+effect function noticeBlocks(projectId: string, facts: MonthFacts, nextSequence: number) {
+  const open = try rows(OpenCutRow, sql`SELECT DISTINCT x.period FROM monthly_allocation_cut_reasons x WHERE x.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = x.project_id AND r.period = x.period) ORDER BY x.period`)
   for (const row of open) {
     const period = parsePeriod(row.period)
-    const monthCutoff = period === undefined ? undefined : automaticCutoffAt(period)
-    const latestCutAt = Math.floor(millisOf(row.latest) / 1000)
-    if (monthCutoff === undefined || !Number.isSafeInteger(latestCutAt)) continue
-    if (lateCutNoticeAt(latestCutAt, monthCutoff, now)) return { period: row.period, noticeEnds: latestCutAt + cutNoticeSeconds } satisfies LateCut
+    if (period === undefined) continue
+    const { state } = try loadedMonth({ projectId, period }, facts)
+    if (!canObserveSettings(state, true, nextSequence)) return { period: row.period, noticeEnds: state.latestCutAt + cutNoticeSeconds }
   }
   return undefined
-}
-
-interface LateCut {
-  readonly period: string
-  readonly noticeEnds: number
-}
-
-effect function settingRefusal(authorized: Authorized, blocked: LateCut | undefined) {
-  if (blocked === undefined) return try afterRace(authorized, settingRows.settingChanged)
-  return refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
 }
 
 export effect function setMonthlyAutomatic(projectId: string, actor: Actor, automatic: boolean) {
@@ -431,9 +419,10 @@ export effect function setMonthlyAutomatic(projectId: string, actor: Actor, auto
   const expectedSequence = (try loadSettings(projectId)).state.sequence
   const authorized = try authorize(projectId, actor, "owner")
   if (authorized.fact.banned) throw refused(settingRows.accountBanned)
-  const blocked = automatic ? try lateCutNoticeOf(projectId) : undefined
+  const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
+  if (automatic && blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
   const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized), lateCutNotice: blocked !== undefined }) catch effect (error) => match (error) {
-    when SettingRejected: throw (try settingRefusal(authorized, blocked));
+    when SettingRejected: throw (try afterRace(authorized, settingRows.settingChanged));
     when Conflict: throw (try afterRace(authorized, settingRows.settingChanged));
     when ProjectChanged: throw (try afterRace(authorized, settingRows.settingChanged));
     default: throw error;

@@ -1,4 +1,4 @@
-// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order"
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order"
 import { type AnyRoute, route } from "@repo/platform/route"
 
 export schema CodeFields { readonly code: Schema.Unknown }

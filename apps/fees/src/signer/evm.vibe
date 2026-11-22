@@ -17,7 +17,7 @@ import {
   transferCalldata,
   wholeBig,
 } from "../evm/abi.ts"
-import { allowanceCovers, approvalNeeded, boundedApproval, isNative } from "../evm/approval.vibe"
+import { allowanceCovers, approvalAllowance, boundedApproval, isNative } from "../evm/approval.vibe"
 import { freeNonce, nonceAtLeast, readWord, simulated, tokenBalance } from "../evm/client.vibe"
 import { type BuybackSigning, type KyberSettings, builtSwap, nativeValue, swapMatches } from "../kyber/route.vibe"
 import { decodedSwap, returnAmountOf } from "../kyber/swap.ts"
@@ -39,11 +39,14 @@ export interface EvmCall {
   readonly nonce: bigint
   readonly deadline: number | undefined
   readonly minimumOutput: bigint
+  // The finalized allowance the call was prepared against: the one an approval replaces, the one a swap spends.
+  readonly allowance: bigint
 }
 
 export const maximumDlnNativeFee = 1_000_000_000_000_000n
 
 const router = kyberswap.router as Address
+export const pinnedRouter: Address = router
 
 effect function refuse(step: string, issue: string) {
   throw new SignRefused({ step, issue })
@@ -94,32 +97,34 @@ function swapRequestOf(intent: Extract<FirstEvmIntent, { kind: "KyberSwap" }>, w
 export effect function derivedCall(intent: FirstEvmIntent, wallet: Address, settings: KyberSettings) {
   switch (intent.kind) {
     case "KyberApprove": {
-      if (!(try approvalNeeded(intent.token, intent.amount, "Router"))) return try refuse("facts", "the finalized allowance already covers the input")
+      const allowance = try approvalAllowance(intent.token, intent.amount, "Router")
+      if (allowance >= intent.amount) return try refuse("facts", "the finalized allowance already covers the input")
       const nonce = try nonceAtLeast(intent.nonceFloor)
-      return { to: intent.token, data: approveCalldata(router, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n } satisfies EvmCall
+      return { to: intent.token, data: approveCalldata(router, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n, allowance } satisfies EvmCall
     }
     case "KyberSwap": {
       const target = pinnedTarget(intent.network, settings)
       if (target === undefined) return try refuse("bytes", "KyberSwap target differs from the pinned target")
-      try allowanceCovers(intent.token, intent.amountIn, "Router")
+      const allowance = try allowanceCovers(intent.token, intent.amountIn, "Router")
       const nonce = try nonceAtLeast(intent.nonceFloor)
       const built = try builtSwap(swapRequestOf(intent, wallet, target, settings))
       const returned = returnAmountOf(built.description.entry, try simulated(router, built.data, built.value))
       if (returned === undefined || returned < built.description.minReturnAmount) return try refuse("facts", "swap simulation returned less than the signed minimum")
-      return { to: router, data: built.data, value: built.value, nonce, deadline: built.deadline, minimumOutput: built.description.minReturnAmount } satisfies EvmCall
+      return { to: router, data: built.data, value: built.value, nonce, deadline: built.deadline, minimumOutput: built.description.minReturnAmount, allowance } satisfies EvmCall
     }
     case "EvmClaimFees": {
       if ((try readWord(intent.vault, accruedFeesCalldata, "latest")) === 0n) return try refuse("facts", "No accrued fees to claim")
       const nonce = try freeNonce(intent.nonceFloor)
       try simulated(intent.vault, claimFeesCalldata, 0n)
-      return { to: intent.vault, data: claimFeesCalldata, value: 0n, nonce, deadline: undefined, minimumOutput: 0n } satisfies EvmCall
+      return { to: intent.vault, data: claimFeesCalldata, value: 0n, nonce, deadline: undefined, minimumOutput: 0n, allowance: 0n } satisfies EvmCall
     }
     case "DlnApprove": {
       try buybackOf(settings)
       const usdc = try usdcOf(intent.network)
-      if (!(try approvalNeeded(usdc, intent.amount, "Bridge"))) return try refuse("facts", "the finalized bridge allowance already covers the order")
+      const allowance = try approvalAllowance(usdc, intent.amount, "Bridge")
+      if (allowance >= intent.amount) return try refuse("facts", "the finalized bridge allowance already covers the order")
       const nonce = try freeNonce(intent.nonceFloor)
-      return { to: usdc, data: approveCalldata(dln.source as Address, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n } satisfies EvmCall
+      return { to: usdc, data: approveCalldata(dln.source as Address, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n, allowance } satisfies EvmCall
     }
     case "DlnCreateOrder": {
       const buyback = try buybackOf(settings)
@@ -129,13 +134,13 @@ export effect function derivedCall(intent: FirstEvmIntent, wallet: Address, sett
       const fee = try readWord(dln.source as Address, fixedNativeFeeCalldata, "latest")
       if (fee !== order.nativeFee || fee > maximumDlnNativeFee) return try refuse("facts", "the bridge's fixed native fee differs from the order or exceeds 0.001 ETH")
       if (order.allowedTaker !== undefined && !dln.allowedTakers.some((taker) => taker === order.allowedTaker?.toLowerCase())) return try refuse("bytes", "Bridge order reserves its fill for an unknown taker")
-      try allowanceCovers(usdc, order.giveAmount, "Bridge")
+      const allowance = try allowanceCovers(usdc, order.giveAmount, "Bridge")
       const data = dlnCall(wallet, usdc, buyback, intent)
       if (data === undefined) return try refuse("bytes", "Bridge order has no arrival amount, salt or bounded metadata")
       const nonce = try freeNonce(intent.nonceFloor)
       const answer = try simulated(dln.source as Address, data, order.nativeFee)
       if (answer.toLowerCase() !== order.orderId.toLowerCase()) return try refuse("facts", "the order simulation does not return the proposed order id")
-      return { to: dln.source as Address, data, value: order.nativeFee, nonce, deadline: undefined, minimumOutput: 0n } satisfies EvmCall
+      return { to: dln.source as Address, data, value: order.nativeFee, nonce, deadline: undefined, minimumOutput: 0n, allowance } satisfies EvmCall
     }
     case "SlopBurn": {
       if (intent.network !== "Robinhood") return try refuse("facts", "SLOP burns only on Robinhood Chain")
@@ -145,7 +150,7 @@ export effect function derivedCall(intent: FirstEvmIntent, wallet: Address, sett
       const data = transferCalldata(burnAddress as Address, intent.amount)
       const nonce = try freeNonce(intent.nonceFloor)
       try simulated(slop, data, 0n)
-      return { to: slop, data, value: 0n, nonce, deadline: undefined, minimumOutput: 0n } satisfies EvmCall
+      return { to: slop, data, value: 0n, nonce, deadline: undefined, minimumOutput: 0n, allowance: 0n } satisfies EvmCall
     }
     default: {
       const _exhaustive: never = intent
