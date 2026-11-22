@@ -1441,6 +1441,744 @@ lemma CommitMonthlyPledges(p: Program, monthlyCommit: MonthlyCommit)
   }
 }
 
+// The months after replacing one by period keep every period in place.
+lemma WithMonthPeriods(ms: seq<SolMonth>, nm: SolMonth)
+  ensures |withMonth(ms, nm)| == |ms|
+  ensures forall i :: 0 <= i < |ms| ==> withMonth(ms, nm)[i].period == ms[i].period
+{
+}
+
+// The pledge rules after releaseMonthlyAward, which frees the leaf's gross and leaves the pledges alone.
+lemma ReleaseMonthlyAwardPledges(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures alwaysPledgesCovered(releaseMonthlyAward(p, period, leaf)) && alwaysClosedPledgeEnded(releaseMonthlyAward(p, period, leaf))
+  ensures stepPledgeIrrevocable(p, "releaseMonthlyAward", releaseMonthlyAward(p, period, leaf))
+  ensures stepPledgeRecordKept(p, "releaseMonthlyAward", releaseMonthlyAward(p, period, leaf))
+  ensures alwaysPrePledgeShape(releaseMonthlyAward(p, period, leaf))
+{
+  var after := releaseMonthlyAward(p, period, leaf);
+  var x := monthFor(p.months, period);
+  var nm := x.(committed := (x.committed + leaf.gross), released := (x.released + leaf.gross), settled := (x.settled + [leaf.source]));
+  assert after.months == withMonth(p.months, nm);
+  WithMonthPeriods(p.months, nm);
+  PledgesView(p);
+  assert leaf.gross > 0;
+  assert free(after) == free(p) + leaf.gross;
+  PledgeFrame(p, after, "releaseMonthlyAward");
+  PrePledgeFrame(p, after);
+}
+
+// The pledge rules after releaseMonthlyReserve, which frees the month's total and leaves the pledges alone.
+lemma ReleaseMonthlyReservePledges(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures alwaysPledgesCovered(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysClosedPledgeEnded(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepPledgeIrrevocable(p, "releaseMonthlyReserve", releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepPledgeRecordKept(p, "releaseMonthlyReserve", releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysPrePledgeShape(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+  var x := monthFor(p.months, period);
+  var nm := x.(committed := x.total, released := x.total, wholeReleased := true);
+  assert after.months == withMonth(p.months, nm);
+  WithMonthPeriods(p.months, nm);
+  PledgesView(p);
+  assert free(after) == free(p) + releasedAmount;
+  PledgeFrame(p, after, "releaseMonthlyReserve");
+  PrePledgeFrame(p, after);
+}
+
+// The pledge rules after pledgeMonth, raised or unchanged.
+lemma PledgeMonthPledges(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures alwaysPledgesCovered(pledgeMonth(p, period, amount, by_)) && alwaysClosedPledgeEnded(pledgeMonth(p, period, amount, by_))
+  ensures stepPledgeIrrevocable(p, "pledgeMonth", pledgeMonth(p, period, amount, by_))
+  ensures stepPledgeRecordKept(p, "pledgeMonth", pledgeMonth(p, period, amount, by_))
+{
+  var after := pledgeMonth(p, period, amount, by_);
+  PledgeMonthView(p, period, amount, by_);
+  if raisedBy(p, period, amount) != 0 {
+    PledgeMonthNew(p, period, amount, by_);
+  } else {
+    assert after == p;
+    PledgeFrame(p, after, "pledgeMonth");
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma ReleaseMonthlyAwardPart1(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures alwaysConfigSeparate(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysClockStarted(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysAdmittedAsset(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysProjectShape(releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma ReleaseMonthlyAwardPart2(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures alwaysRotationSeparate(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysFeesAccounted(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysNonnegative(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysVaultCovers(releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma ReleaseMonthlyAwardPart3(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures alwaysReservedMatches(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysPaidMatches(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysAwardsWellFormed(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysMonthsWellFormed(releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma ReleaseMonthlyAwardPart4(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures alwaysOutstandingMatchesMonths(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysBountyHasNoMonthly(releaseMonthlyAward(p, period, leaf))
+  ensures alwaysBindingsWellFormed(releaseMonthlyAward(p, period, leaf))
+  ensures stepProjectFixed(p, releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma ReleaseMonthlyAwardPart5(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures stepAuthorityChanges(p, "releaseMonthlyAward", releaseMonthlyAward(p, period, leaf))
+  ensures stepAwardsRetained(p, releaseMonthlyAward(p, period, leaf))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "releaseMonthlyAward", releaseMonthlyAward(p, period, leaf))
+  ensures stepMonthsRetained(p, releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyAward_ensures: the rules other than the pledge rules, 21 to 22 of them.
+lemma ReleaseMonthlyAwardPart6(p: Program, period: int, leaf: contracts__ledger_Leaf)
+  requires inv(p) && canReleaseMonthlyAward(p, period, leaf)
+  ensures stepNewBindingAttested(p, releaseMonthlyAward(p, period, leaf))
+  ensures stepPaidToLiveBinding(p, releaseMonthlyAward(p, period, leaf))
+{
+  if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
+    var after := releaseMonthlyAward(p, period, leaf);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    SettleMonth(p, after, period, leaf, leaf.gross);
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma ReleaseMonthlyReservePart1(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures alwaysConfigSeparate(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysClockStarted(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysAdmittedAsset(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysProjectShape(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma ReleaseMonthlyReservePart2(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures alwaysRotationSeparate(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysFeesAccounted(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysNonnegative(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysVaultCovers(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma ReleaseMonthlyReservePart3(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures alwaysReservedMatches(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysPaidMatches(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysAwardsWellFormed(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysMonthsWellFormed(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma ReleaseMonthlyReservePart4(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures alwaysOutstandingMatchesMonths(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysBountyHasNoMonthly(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures alwaysBindingsWellFormed(releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepProjectFixed(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma ReleaseMonthlyReservePart5(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures stepAuthorityChanges(p, "releaseMonthlyReserve", releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepAwardsRetained(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "releaseMonthlyReserve", releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepMonthsRetained(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of releaseMonthlyReserve_ensures: the rules other than the pledge rules, 21 to 22 of them.
+lemma ReleaseMonthlyReservePart6(p: Program, period: int, expectedUnsettled: int, releasedAmount: int, attested: bool, by_: string)
+  requires inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)
+  ensures stepNewBindingAttested(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+  ensures stepPaidToLiveBinding(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_))
+{
+  if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
+    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    var i := MonthForIndex(p, period);
+    var m := p.months[i];
+    MonthsView(p);
+    assert m in p.months;
+    assert m.settled == [];
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
+    UnpaidNonneg(p);
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma CommitMonthlyPart1(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures alwaysConfigSeparate(commitMonthly(p, monthlyCommit))
+  ensures alwaysClockStarted(commitMonthly(p, monthlyCommit))
+  ensures alwaysAdmittedAsset(commitMonthly(p, monthlyCommit))
+  ensures alwaysProjectShape(commitMonthly(p, monthlyCommit))
+{
+  hide *;
+  reveal inv, alwaysConfigSeparate, alwaysClockStarted, alwaysAdmittedAsset, alwaysProjectShape, alwaysPrePledgeShape, alwaysRotationSeparate, alwaysFeesAccounted, alwaysNonnegative, canCommitMonthly, live;
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    CommitMonthlyShape(p, monthlyCommit);
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma CommitMonthlyPart2(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures alwaysPrePledgeShape(commitMonthly(p, monthlyCommit))
+  ensures alwaysRotationSeparate(commitMonthly(p, monthlyCommit))
+  ensures alwaysFeesAccounted(commitMonthly(p, monthlyCommit))
+  ensures alwaysNonnegative(commitMonthly(p, monthlyCommit))
+{
+  hide *;
+  reveal inv, alwaysConfigSeparate, alwaysClockStarted, alwaysAdmittedAsset, alwaysProjectShape, alwaysPrePledgeShape, alwaysRotationSeparate, alwaysFeesAccounted, alwaysNonnegative, canCommitMonthly, live;
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    CommitMonthlyShape(p, monthlyCommit);
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma CommitMonthlyPart3(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures alwaysVaultCovers(commitMonthly(p, monthlyCommit))
+  ensures alwaysReservedMatches(commitMonthly(p, monthlyCommit))
+  ensures alwaysPaidMatches(commitMonthly(p, monthlyCommit))
+  ensures alwaysAwardsWellFormed(commitMonthly(p, monthlyCommit))
+{
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    var period := monthlyCommit.period;
+    var after := commitMonthly(p, monthlyCommit);
+    OpensAtPositive(period);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    CloseNamedRules(p, period, monthlyCommit.pledgeAccount);
+    AppendMonth(closeNamed(period, p, monthlyCommit.pledgeAccount), after, noSolMonth.(period := period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves));
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma CommitMonthlyPart4(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures alwaysMonthsWellFormed(commitMonthly(p, monthlyCommit))
+  ensures alwaysOutstandingMatchesMonths(commitMonthly(p, monthlyCommit))
+  ensures alwaysBountyHasNoMonthly(commitMonthly(p, monthlyCommit))
+  ensures alwaysBindingsWellFormed(commitMonthly(p, monthlyCommit))
+{
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    var period := monthlyCommit.period;
+    var after := commitMonthly(p, monthlyCommit);
+    OpensAtPositive(period);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    CloseNamedRules(p, period, monthlyCommit.pledgeAccount);
+    AppendMonth(closeNamed(period, p, monthlyCommit.pledgeAccount), after, noSolMonth.(period := period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves));
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma CommitMonthlyPart5(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures stepProjectFixed(p, commitMonthly(p, monthlyCommit))
+  ensures stepAuthorityChanges(p, "commitMonthly", commitMonthly(p, monthlyCommit))
+  ensures stepAwardsRetained(p, commitMonthly(p, monthlyCommit))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "commitMonthly", commitMonthly(p, monthlyCommit))
+{
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    var period := monthlyCommit.period;
+    var after := commitMonthly(p, monthlyCommit);
+    OpensAtPositive(period);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    CloseNamedRules(p, period, monthlyCommit.pledgeAccount);
+    AppendMonth(closeNamed(period, p, monthlyCommit.pledgeAccount), after, noSolMonth.(period := period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves));
+  }
+}
+
+// Part of commitMonthly_ensures: the rules other than the pledge rules, 21 to 23 of them.
+lemma CommitMonthlyPart6(p: Program, monthlyCommit: MonthlyCommit)
+  requires inv(p) && canCommitMonthly(p, monthlyCommit)
+  ensures stepMonthsRetained(p, commitMonthly(p, monthlyCommit))
+  ensures stepNewBindingAttested(p, commitMonthly(p, monthlyCommit))
+  ensures stepPaidToLiveBinding(p, commitMonthly(p, monthlyCommit))
+{
+  if inv(p) && canCommitMonthly(p, monthlyCommit) {
+    var period := monthlyCommit.period;
+    var after := commitMonthly(p, monthlyCommit);
+    OpensAtPositive(period);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    BindingsFrame(p, after);
+    CloseNamedRules(p, period, monthlyCommit.pledgeAccount);
+    AppendMonth(closeNamed(period, p, monthlyCommit.pledgeAccount), after, noSolMonth.(period := period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves));
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma PledgeMonthPart1(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures alwaysConfigSeparate(pledgeMonth(p, period, amount, by_))
+  ensures alwaysClockStarted(pledgeMonth(p, period, amount, by_))
+  ensures alwaysAdmittedAsset(pledgeMonth(p, period, amount, by_))
+  ensures alwaysProjectShape(pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma PledgeMonthPart2(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures alwaysPrePledgeShape(pledgeMonth(p, period, amount, by_))
+  ensures alwaysRotationSeparate(pledgeMonth(p, period, amount, by_))
+  ensures alwaysFeesAccounted(pledgeMonth(p, period, amount, by_))
+  ensures alwaysNonnegative(pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma PledgeMonthPart3(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures alwaysVaultCovers(pledgeMonth(p, period, amount, by_))
+  ensures alwaysReservedMatches(pledgeMonth(p, period, amount, by_))
+  ensures alwaysPaidMatches(pledgeMonth(p, period, amount, by_))
+  ensures alwaysAwardsWellFormed(pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma PledgeMonthPart4(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures alwaysMonthsWellFormed(pledgeMonth(p, period, amount, by_))
+  ensures alwaysOutstandingMatchesMonths(pledgeMonth(p, period, amount, by_))
+  ensures alwaysBountyHasNoMonthly(pledgeMonth(p, period, amount, by_))
+  ensures alwaysBindingsWellFormed(pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma PledgeMonthPart5(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures stepProjectFixed(p, pledgeMonth(p, period, amount, by_))
+  ensures stepAuthorityChanges(p, "pledgeMonth", pledgeMonth(p, period, amount, by_))
+  ensures stepAwardsRetained(p, pledgeMonth(p, period, amount, by_))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "pledgeMonth", pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of pledgeMonth_ensures: the rules other than the pledge rules, 21 to 23 of them.
+lemma PledgeMonthPart6(p: Program, period: int, amount: int, by_: string)
+  requires inv(p) && canPledgeMonth(p, period, amount, by_)
+  ensures stepMonthsRetained(p, pledgeMonth(p, period, amount, by_))
+  ensures stepNewBindingAttested(p, pledgeMonth(p, period, amount, by_))
+  ensures stepPaidToLiveBinding(p, pledgeMonth(p, period, amount, by_))
+{
+  if inv(p) && canPledgeMonth(p, period, amount, by_) {
+    var after := pledgeMonth(p, period, amount, by_);
+    PledgeMonthView(p, period, amount, by_);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma ExpirePledgePart1(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures alwaysConfigSeparate(expirePledge(p, period))
+  ensures alwaysClockStarted(expirePledge(p, period))
+  ensures alwaysAdmittedAsset(expirePledge(p, period))
+  ensures alwaysProjectShape(expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma ExpirePledgePart2(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures alwaysPrePledgeShape(expirePledge(p, period))
+  ensures alwaysRotationSeparate(expirePledge(p, period))
+  ensures alwaysFeesAccounted(expirePledge(p, period))
+  ensures alwaysNonnegative(expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma ExpirePledgePart3(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures alwaysVaultCovers(expirePledge(p, period))
+  ensures alwaysReservedMatches(expirePledge(p, period))
+  ensures alwaysPaidMatches(expirePledge(p, period))
+  ensures alwaysAwardsWellFormed(expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma ExpirePledgePart4(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures alwaysMonthsWellFormed(expirePledge(p, period))
+  ensures alwaysOutstandingMatchesMonths(expirePledge(p, period))
+  ensures alwaysBountyHasNoMonthly(expirePledge(p, period))
+  ensures alwaysBindingsWellFormed(expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma ExpirePledgePart5(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures stepProjectFixed(p, expirePledge(p, period))
+  ensures stepAuthorityChanges(p, "expirePledge", expirePledge(p, period))
+  ensures stepAwardsRetained(p, expirePledge(p, period))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "expirePledge", expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of expirePledge_ensures: the rules other than the pledge rules, 21 to 23 of them.
+lemma ExpirePledgePart6(p: Program, period: int)
+  requires inv(p) && canExpirePledge(p, period)
+  ensures stepMonthsRetained(p, expirePledge(p, period))
+  ensures stepNewBindingAttested(p, expirePledge(p, period))
+  ensures stepPaidToLiveBinding(p, expirePledge(p, period))
+{
+  if inv(p) && canExpirePledge(p, period) {
+    var after := expirePledge(p, period);
+    CloseNamedRules(p, period, true);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 1 to 4 of them.
+lemma CloseMonthPledgePart1(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures alwaysConfigSeparate(closeMonthPledge(p, period, by_))
+  ensures alwaysClockStarted(closeMonthPledge(p, period, by_))
+  ensures alwaysAdmittedAsset(closeMonthPledge(p, period, by_))
+  ensures alwaysProjectShape(closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 5 to 8 of them.
+lemma CloseMonthPledgePart2(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures alwaysPrePledgeShape(closeMonthPledge(p, period, by_))
+  ensures alwaysRotationSeparate(closeMonthPledge(p, period, by_))
+  ensures alwaysFeesAccounted(closeMonthPledge(p, period, by_))
+  ensures alwaysNonnegative(closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 9 to 12 of them.
+lemma CloseMonthPledgePart3(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures alwaysVaultCovers(closeMonthPledge(p, period, by_))
+  ensures alwaysReservedMatches(closeMonthPledge(p, period, by_))
+  ensures alwaysPaidMatches(closeMonthPledge(p, period, by_))
+  ensures alwaysAwardsWellFormed(closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 13 to 16 of them.
+lemma CloseMonthPledgePart4(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures alwaysMonthsWellFormed(closeMonthPledge(p, period, by_))
+  ensures alwaysOutstandingMatchesMonths(closeMonthPledge(p, period, by_))
+  ensures alwaysBountyHasNoMonthly(closeMonthPledge(p, period, by_))
+  ensures alwaysBindingsWellFormed(closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 17 to 20 of them.
+lemma CloseMonthPledgePart5(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures stepProjectFixed(p, closeMonthPledge(p, period, by_))
+  ensures stepAuthorityChanges(p, "closeMonthPledge", closeMonthPledge(p, period, by_))
+  ensures stepAwardsRetained(p, closeMonthPledge(p, period, by_))
+  ensures stepFreeSpentByOwnerOrAttestation(p, "closeMonthPledge", closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// Part of closeMonthPledge_ensures: the rules other than the pledge rules, 21 to 23 of them.
+lemma CloseMonthPledgePart6(p: Program, period: int, by_: string)
+  requires inv(p) && canCloseMonthPledge(p, period, by_)
+  ensures stepMonthsRetained(p, closeMonthPledge(p, period, by_))
+  ensures stepNewBindingAttested(p, closeMonthPledge(p, period, by_))
+  ensures stepPaidToLiveBinding(p, closeMonthPledge(p, period, by_))
+{
+  if inv(p) && canCloseMonthPledge(p, period, by_) {
+    var after := closeMonthPledge(p, period, by_);
+    MonthsFrame(p, after);
+    BindingsFrame(p, after);
+    SameAwards(p, after);
+    AwardsFrame(p, after);
+  }
+}
+
+// commitMonthly as one record update of the program: only the pledges, the reserve, the outstanding total and the months change.
+lemma CommitMonthlyShape(p: Program, monthlyCommit: MonthlyCommit)
+  requires alwaysPledgesCovered(p)
+  ensures commitMonthly(p, monthlyCommit) == p.(pledged := closeNamed(monthlyCommit.period, p, monthlyCommit.pledgeAccount).pledged, pledges := closeNamed(monthlyCommit.period, p, monthlyCommit.pledgeAccount).pledges, reserved := (p.reserved + monthlyCommit.total), monthlyOutstanding := (p.monthlyOutstanding + monthlyCommit.total), months := (p.months + [noSolMonth.(period := monthlyCommit.period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, monthlyCommit.period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves)]))
+{
+  CloseNamedRules(p, monthlyCommit.period, monthlyCommit.pledgeAccount);
+}
+
 lemma InitialIs()
   ensures initialHolds() == initial
 {
@@ -2373,16 +3111,15 @@ lemma commitMonthly_ensures(p: Program, monthlyCommit: MonthlyCommit)
   ensures (inv(p) ==> canCommitMonthly(p, monthlyCommit) ==> stepNewBindingAttested(p, commitMonthly(p, monthlyCommit)))
   ensures (inv(p) ==> canCommitMonthly(p, monthlyCommit) ==> stepPaidToLiveBinding(p, commitMonthly(p, monthlyCommit)))
 {
+  hide *;
   if inv(p) && canCommitMonthly(p, monthlyCommit) {
-    var period := monthlyCommit.period;
-    var after := commitMonthly(p, monthlyCommit);
-    OpensAtPositive(period);
-    SameAwards(p, after);
-    AwardsFrame(p, after);
-    BindingsFrame(p, after);
     CommitMonthlyPledges(p, monthlyCommit);
-    CloseNamedRules(p, period, monthlyCommit.pledgeAccount);
-    AppendMonth(closeNamed(period, p, monthlyCommit.pledgeAccount), after, noSolMonth.(period := period, root := monthlyCommit.root, total := monthlyCommit.total, frozenAt := monthlyCommit.frozenAt, cap := capFor(p, period, monthlyCommit.pledgeAccount), leaves := monthlyCommit.leaves));
+    CommitMonthlyPart1(p, monthlyCommit);
+    CommitMonthlyPart2(p, monthlyCommit);
+    CommitMonthlyPart3(p, monthlyCommit);
+    CommitMonthlyPart4(p, monthlyCommit);
+    CommitMonthlyPart5(p, monthlyCommit);
+    CommitMonthlyPart6(p, monthlyCommit);
   }
 }
 
@@ -2456,15 +3193,15 @@ lemma releaseMonthlyAward_ensures(p: Program, period: int, leaf: contracts__ledg
   ensures (inv(p) ==> canReleaseMonthlyAward(p, period, leaf) ==> stepNewBindingAttested(p, releaseMonthlyAward(p, period, leaf)))
   ensures (inv(p) ==> canReleaseMonthlyAward(p, period, leaf) ==> stepPaidToLiveBinding(p, releaseMonthlyAward(p, period, leaf)))
 {
+  hide *;
   if inv(p) && canReleaseMonthlyAward(p, period, leaf) {
-    var after := releaseMonthlyAward(p, period, leaf);
-    PledgeFrame(p, after, "releaseMonthlyAward");
-    PrePledgeFrame(p, after);
-    SameAwards(p, after);
-    AwardsFrame(p, after);
-    BindingsFrame(p, after);
-    SettleMonth(p, after, period, leaf, leaf.gross);
-    UnpaidNonneg(p);
+    ReleaseMonthlyAwardPledges(p, period, leaf);
+    ReleaseMonthlyAwardPart1(p, period, leaf);
+    ReleaseMonthlyAwardPart2(p, period, leaf);
+    ReleaseMonthlyAwardPart3(p, period, leaf);
+    ReleaseMonthlyAwardPart4(p, period, leaf);
+    ReleaseMonthlyAwardPart5(p, period, leaf);
+    ReleaseMonthlyAwardPart6(p, period, leaf);
   }
 }
 
@@ -2497,20 +3234,15 @@ lemma releaseMonthlyReserve_ensures(p: Program, period: int, expectedUnsettled: 
   ensures (inv(p) ==> canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) ==> stepNewBindingAttested(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)))
   ensures (inv(p) ==> canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) ==> stepPaidToLiveBinding(p, releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_)))
 {
+  hide *;
   if inv(p) && canReleaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_) {
-    var after := releaseMonthlyReserve(p, period, expectedUnsettled, releasedAmount, attested, by_);
-    PledgeFrame(p, after, "releaseMonthlyReserve");
-    PrePledgeFrame(p, after);
-    var i := MonthForIndex(p, period);
-    var m := p.months[i];
-    MonthsView(p);
-    assert m in p.months;
-    assert m.settled == [];
-    SameAwards(p, after);
-    AwardsFrame(p, after);
-    BindingsFrame(p, after);
-    ReplaceMonth(p, after, i, m.(committed := m.total, released := m.total, wholeReleased := true));
-    UnpaidNonneg(p);
+    ReleaseMonthlyReservePledges(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart1(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart2(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart3(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart4(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart5(p, period, expectedUnsettled, releasedAmount, attested, by_);
+    ReleaseMonthlyReservePart6(p, period, expectedUnsettled, releasedAmount, attested, by_);
   }
 }
 
@@ -2543,15 +3275,15 @@ lemma pledgeMonth_ensures(p: Program, period: int, amount: int, by_: string)
   ensures (inv(p) ==> canPledgeMonth(p, period, amount, by_) ==> stepNewBindingAttested(p, pledgeMonth(p, period, amount, by_)))
   ensures (inv(p) ==> canPledgeMonth(p, period, amount, by_) ==> stepPaidToLiveBinding(p, pledgeMonth(p, period, amount, by_)))
 {
+  hide *;
   if inv(p) && canPledgeMonth(p, period, amount, by_) {
-    var after := pledgeMonth(p, period, amount, by_);
-    PledgeMonthView(p, period, amount, by_);
-    if raisedBy(p, period, amount) != 0 {
-      PledgeMonthNew(p, period, amount, by_);
-    } else {
-      assert after == p;
-      PledgeFrame(p, after, "pledgeMonth");
-    }
+    PledgeMonthPledges(p, period, amount, by_);
+    PledgeMonthPart1(p, period, amount, by_);
+    PledgeMonthPart2(p, period, amount, by_);
+    PledgeMonthPart3(p, period, amount, by_);
+    PledgeMonthPart4(p, period, amount, by_);
+    PledgeMonthPart5(p, period, amount, by_);
+    PledgeMonthPart6(p, period, amount, by_);
   }
 }
 
@@ -2584,14 +3316,15 @@ lemma expirePledge_ensures(p: Program, period: int)
   ensures (inv(p) ==> canExpirePledge(p, period) ==> stepNewBindingAttested(p, expirePledge(p, period)))
   ensures (inv(p) ==> canExpirePledge(p, period) ==> stepPaidToLiveBinding(p, expirePledge(p, period)))
 {
+  hide *;
   if inv(p) && canExpirePledge(p, period) {
-    var after := expirePledge(p, period);
     ExpirePledgeRules(p, period);
-    CloseNamedRules(p, period, true);
-    MonthsFrame(p, after);
-    BindingsFrame(p, after);
-    SameAwards(p, after);
-    AwardsFrame(p, after);
+    ExpirePledgePart1(p, period);
+    ExpirePledgePart2(p, period);
+    ExpirePledgePart3(p, period);
+    ExpirePledgePart4(p, period);
+    ExpirePledgePart5(p, period);
+    ExpirePledgePart6(p, period);
   }
 }
 
@@ -2624,13 +3357,15 @@ lemma closeMonthPledge_ensures(p: Program, period: int, by_: string)
   ensures (inv(p) ==> canCloseMonthPledge(p, period, by_) ==> stepNewBindingAttested(p, closeMonthPledge(p, period, by_)))
   ensures (inv(p) ==> canCloseMonthPledge(p, period, by_) ==> stepPaidToLiveBinding(p, closeMonthPledge(p, period, by_)))
 {
+  hide *;
   if inv(p) && canCloseMonthPledge(p, period, by_) {
-    var after := closeMonthPledge(p, period, by_);
     CloseMonthPledgeRules(p, period, by_);
-    MonthsFrame(p, after);
-    BindingsFrame(p, after);
-    SameAwards(p, after);
-    AwardsFrame(p, after);
+    CloseMonthPledgePart1(p, period, by_);
+    CloseMonthPledgePart2(p, period, by_);
+    CloseMonthPledgePart3(p, period, by_);
+    CloseMonthPledgePart4(p, period, by_);
+    CloseMonthPledgePart5(p, period, by_);
+    CloseMonthPledgePart6(p, period, by_);
   }
 }
 
