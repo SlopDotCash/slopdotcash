@@ -49,7 +49,7 @@ jobs:
           job: contracts
       - run: forge fmt --root packages/contracts/evm --check
       - run: forge build --root packages/contracts/evm --sizes
-      - run: pnpm all test --filter=@repo/contracts
+      - run: pnpm --filter @repo/contracts test
 
   solana-verifiable:
     name: Verifiable Solana program build

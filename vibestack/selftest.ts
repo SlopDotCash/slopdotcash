@@ -3180,6 +3180,11 @@ describe("the documents name what exists", () => {
     const append = (file: string, text = "\nMore words.\n") => () => fs.appendFileSync(path.join(root, file), text);
     const vibeDeclared = ["apps/app", "packages/ui", "vibestack/studio"].filter((dir) => read(`${dir}/tsconfig.json`, root).includes(".vibe/declarations")).map((dir) => `${JSON.parse(read(`${dir}/package.json`, root)).name}#typecheck`);
     const [prose, selftest, fixture] = [await changedBy(append("spec/app/index.md")), await changedBy(append("vibestack/selftest.ts", "\n")), await changedBy(append("vibestack/fixtures/door.md"))];
+    const nativeContracts = ["@repo/contracts#build", "@repo/contracts#test"];
+    assert.deepEqual(nativeContracts.filter((task) => prose.includes(task)), []);
+    assert.ok(prose.includes("@repo/contracts#typecheck"), "the TypeScript contract harness still reads generated models");
+    const contractSource = await changedBy(append("packages/contracts/evm/test/MonthlyTree.sol", "\n"));
+    assert.deepEqual(nativeContracts.filter((task) => contractSource.includes(task)), nativeContracts);
     const examplesChangedBy = async (edit: () => void) => {
       const before = await exampleCheckKeys(root);
       edit();
@@ -3211,7 +3216,7 @@ describe("the documents name what exists", () => {
         assert.equal((await exec("git", ["add", "-A"], root)).status, 0);
       }),
     }, {
-      notWaiting: ["//#analyze", "//#lint:css", "//#selftest:docs", "//#selftest:examples", "@repo/design-system#build", "vibestack-studio#dev"],
+      notWaiting: ["//#analyze", "//#lint:css", "//#selftest:docs", "//#selftest:examples", "@repo/contracts#build", "@repo/contracts#test", "@repo/design-system#build", "vibestack-studio#dev"],
       lintWaitsFor: vibeDeclared,
       devWaitsFor: ["@repo/design-system#build", "@repo/ui#build", "vibestack-studio#gen"],
       prose: [["@repo/ui#typecheck", "vibestack-studio#build", "vibestack-studio#test", "vibestack-studio#test:browser", "vibestack-studio#typecheck"], true],

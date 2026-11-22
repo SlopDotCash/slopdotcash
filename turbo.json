@@ -426,21 +426,15 @@
       ]
     },
     "@repo/contracts#build": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/setup/action.yml"],
       "outputs": [
         "evm/out/**"
       ]
     },
     "@repo/contracts#test": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/actions/setup/action.yml"],
       "outputs": []
     },
     "@repo/platform#test": {

@@ -357,13 +357,14 @@ configured scopes are in `knip.config.js`, `.madgerc`, `.jscpd.json` and
 | When | Runs |
 |---|---|
 | Configured pull request and push triggers for `vibestack`, `development` and `main` | `pnpm verify --continue --summarize`: build, types, tests, browser tests, all checks, formal inventory, ESLint, Stylelint, Knip, Madge, and jscpd |
+| Native contract checks | Forge formatting and size checks, Foundry tests and SMT checks, locked Cargo tests, and a separate reproducible Solana artifact build |
 | Nightly on the default branch | `pnpm all check --continue -- --nightly` runs every check fresh under the fixed nightly profile |
 
 Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
 run keeps `test/counterexamples/` and `test/__traces__/`, where a broken
 exploration is, as an artifact.
 
-Each run installs Dafny from its pinned release, checked against its SHA-256,
+Workspace verification installs Dafny from its pinned release, checked against its SHA-256,
 and restores pnpm's store, Quint's evaluator, and what the job adds to: a `selftest-*` job the selftest's shared
 tool runs, any other the spec cache of the root, each workspace package and each example. The key is of the job and
 the commit: what a job of the same name last saved, or else another job's that holds the same.
@@ -376,6 +377,11 @@ policy. A pull request keeps its own Turborepo results in the GitHub cache
 instead, which only that pull request reads, so its next push reuses them. Newer commits replace an older run of the same pull request. A branch push
 without a remote cache token also restores and saves its GitHub-local cache.
 Trusted publication jobs skip dependency and task-cache restoration.
+The standalone native contract job invokes the same package test script
+with its native toolchain. Its setup omits application dependencies, browser
+tools and the formal model toolchain. Turborepo's native contract build and
+test tasks use contract inputs; the TypeScript contract harness still
+depends on generated models.
 Every pushed commit can finish. Completed tasks are shared through the cache.
 Local `pnpm` task commands read the operator's cache credential from
 `~/.config/vibestack/turbo-cache.json`, outside the repository. Credentials

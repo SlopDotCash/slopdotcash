@@ -2,7 +2,7 @@ name: setup
 description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3 and the spec cache; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
 inputs:
   job:
-    description: Names the caches this job saves, so that jobs of one run do not save under one key, and what the spec cache holds for it; a job that saves nothing leaves it.
+    description: Names the caches this job saves. The contracts job installs only the native contract tools and pinned package runner.
     default: verify
   verification:
     description: Set up the tools pnpm verify needs beyond Node and pnpm.
@@ -37,7 +37,7 @@ runs:
         exit 1
     - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
     - name: Install Dafny
-      if: inputs.verification == 'true'
+      if: inputs.verification == 'true' && inputs.job != 'contracts'
       shell: bash
       run: |
         version=4.11.0
@@ -87,8 +87,8 @@ runs:
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
       with:
         node-version-file: .nvmrc
-        cache: ${{ inputs.publication != 'true' && 'pnpm' || '' }}
-        package-manager-cache: ${{ inputs.publication != 'true' }}
+        cache: ${{ inputs.publication != 'true' && inputs.job != 'contracts' && 'pnpm' || '' }}
+        package-manager-cache: ${{ inputs.publication != 'true' && inputs.job != 'contracts' }}
     # Turborepo skips a task whose inputs it has seen; spec skips a simulation or proof it has seen, and the selftest's
     # shared projects skip a tool run an earlier selftest made (nightly, fuzz.yml runs it without them).
     # Quint downloads its evaluator to ~/.quint from GitHub's rate-limited API: once per cache, not per run.
@@ -97,7 +97,7 @@ runs:
     # that holds the same paths: a selftest-* job holds the selftest's tool runs, which no other job adds to, and any
     # other job the spec caches of the projects, which no selftest-* job checks.
     - id: spec-cache
-      if: inputs.verification == 'true' && inputs.cache-verification == 'true'
+      if: inputs.verification == 'true' && inputs.cache-verification == 'true' && inputs.job != 'contracts'
       shell: bash
       env:
         JOB: ${{ inputs.job }}
@@ -125,7 +125,7 @@ runs:
         key: ${{ steps.spec-cache.outputs.key }}
         restore-keys: ${{ steps.spec-cache.outputs.restore }}
     - id: turbo-cache
-      if: inputs.publication != 'true' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && inputs.job == 'verify' && env.TURBO_CACHE == 'local:rw'))
+      if: inputs.publication != 'true' && inputs.job != 'contracts' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch' && inputs.job == 'verify' && env.TURBO_CACHE == 'local:rw'))
       shell: bash
       env:
         JOB: ${{ inputs.job }}
@@ -138,7 +138,7 @@ runs:
         restore-keys: |
           turbo-${{ runner.os }}-${{ runner.arch }}-${{ inputs.job }}-
           turbo-${{ runner.os }}-${{ runner.arch }}-
-    - if: inputs.publication != 'true'
+    - if: inputs.publication != 'true' && inputs.job != 'contracts'
       run: pnpm install --frozen-lockfile
       shell: bash
     - if: inputs.publication == 'true'
@@ -146,13 +146,13 @@ runs:
       shell: bash
     - name: Read the pinned Quint evaluator version
       id: quint-evaluator
-      if: inputs.verification == 'true'
+      if: inputs.verification == 'true' && inputs.job != 'contracts'
       shell: bash
       run: |
         version=$(node -p "require('@informalsystems/quint/dist/src/rust/binaryManager.js').QUINT_EVALUATOR_VERSION")
         echo "version=$version" >> "$GITHUB_OUTPUT"
     - id: quint-cache
-      if: inputs.verification == 'true' && inputs.cache-verification == 'false'
+      if: steps.quint-evaluator.outputs.version != '' && inputs.cache-verification == 'false'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.quint/rust-evaluator-${{ steps.quint-evaluator.outputs.version }}
@@ -160,7 +160,7 @@ runs:
     # Quint's first-run downloader uses the unauthenticated GitHub API.
     # Fetch its pinned release directly before concurrent checks need it.
     - name: Install Quint evaluator
-      if: inputs.verification == 'true'
+      if: steps.quint-evaluator.outputs.version != ''
       env:
         EVALUATOR_VERSION: ${{ steps.quint-evaluator.outputs.version }}
       run: |
@@ -177,7 +177,7 @@ runs:
         path: ~/.quint/rust-evaluator-${{ steps.quint-evaluator.outputs.version }}
         key: ${{ steps.quint-cache.outputs.cache-primary-key }}
     # Studio's journeys and every test:browser drive a real Chromium.
-    - if: inputs.verification == 'true'
+    - if: inputs.verification == 'true' && inputs.job != 'contracts'
       run: |
         pnpm exec playwright install-deps chromium & deps=$!
         pnpm exec playwright install chromium
