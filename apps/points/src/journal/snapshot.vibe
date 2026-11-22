@@ -452,7 +452,7 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     const status = coverage.get(first.award.sourceId)
     const scored: Scored = {
       phase: scorePhases[status?.status ?? ""] ?? "LegacyScored", project, unit: recorded, head: "", acceptedAt: 0, policy: "ValueV1",
-      legacyPoints: 0, points: total, frozen: false, frozenPoints: 0, held: false, pendingBand: 0, rubric: "", model: "", billingProven: false,
+      legacyPoints: 0, points: total, frozen: false, frozenPoints: 0, held: false, pendingBand: 0, rubric: "", model: "", billingProven: false, jointWithheld: false,
     }
     const refused = try sendAll(opened, [{ type: "rescoreUnit", s: scored, reason: first.event.reason, digest }])
     if (refused !== "") {
