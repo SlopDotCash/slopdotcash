@@ -210,7 +210,8 @@ for its time or its output is ended the same way. A run
 of a tool is remembered when it reached its answer, a refusal of its input
 included, never when it was stopped, timed out or failed for want of a file or
 program: an unchanged unit whose proof failed runs neither again, and an edit
-to a proof file only checks and verifies the Dafny it changes. A unit offered
+to a proof file only checks and verifies the Dafny it changes. Shared proof
+imports are rendered once per name prefix and citation setting. A unit offered
 what the units it imports proved is proved once when their results are
 remembered, and meanwhile, to be proved again if they fail, only while one of
 them is still being proved. A test run
@@ -245,7 +246,8 @@ reads those times of Dafny's installation once, and reads them again after each
 run of Dafny, so a result is not remembered when the verifier was installed
 again during the run. On GitHub Actions, the install step uses the same
 strict generation task as verification, so a successful install warms the
-task cache. A failed generation is retried by verification. Generated stories,
+task cache. Studio's shared Slop UI also needs generated product code during
+the workspace build. Generated stories,
 browser build artifacts, compiler declarations and successful test receipts
 are restored with their owning task. `check` is never skipped whole: its
 `driver:` programs run the real application in `traces` every time. Standalone examples install and check
@@ -269,7 +271,9 @@ receipt matches unless another root document changed, and then `check` runs the
 root's tests itself. Generated code names each rule by its heading, not its line, so
 prose that only moves a rule changes none of these keys. Filtered, exclusive, interrupted
 and failed runs record no complete result. Acceptance and nightly checks
-bypass these receipts and the inner verification cache. An owner with a
+bypass these receipts and the inner verification cache. The nightly setup
+restores the versioned Quint evaluator without restoring verification results.
+An owner with a
 direct or transitive `link:` dependency runs its inner tests, typecheck and
 drivers afresh because the linked files can change independently of the
 lockfile.

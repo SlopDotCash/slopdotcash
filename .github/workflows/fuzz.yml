@@ -23,6 +23,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - uses: ./.github/actions/setup
+        with:
+          cache-verification: "false"
       # --nightly bypasses the inner verification cache and always exercises the real application.
       - run: pnpm all check --continue -- --nightly
       - if: failure()
