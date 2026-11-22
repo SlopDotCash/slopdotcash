@@ -162,6 +162,10 @@ export type MergedPullRequestReviewRecord = Pick<
 export interface MergedPullRequestOutcome {
   /** Exact source head; older saved inputs can omit it but cannot use valuations. */
   headRefOid?: string;
+  /** A changed single-commit submission whose separate acceptance marker has no tree delta. */
+  emptyAcceptanceMarker?: true;
+  /** Nonempty one-parent acceptance emitted by GitHub, used only to recognize copies. */
+  acceptedOrdinaryCommitOid?: string;
   id: string;
   number: number;
   title: string;
@@ -614,6 +618,13 @@ export interface HeldWorkUnit {
   unavailableNodeIds: string[];
 }
 
+/** A verified implementation unit that includes this pull request's claims. */
+export interface ReviewedImplementationUnit {
+  recordDigest: string;
+  workUnitId: string;
+  groupId: string;
+}
+
 export interface LeaderboardSourceMetadata {
   provider: "github-graphql";
   fetchedAt: string;
@@ -685,6 +696,8 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
+    /** Standalone review assessment when implementation credit is held. */
+    reviewAssessmentDigest?: string;
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
     /** Source-verified allocation; this never changes the PR's value tier. */
@@ -697,6 +710,12 @@ export interface LeaderboardSnapshot {
         changedLines: string;
       }[];
     };
+  }[];
+  /** Exact claim membership and overlap from verified joint assessment history. */
+  reviewedImplementationUnits?: {
+    repository: RepositoryId;
+    pullRequestId: string;
+    units: ReviewedImplementationUnit[];
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */
@@ -763,6 +782,15 @@ export interface LeaderboardInput {
    * these safe source limitations are internal collection evidence, not a value.
    */
   implementationAttributionHolds?: ReadonlyMap<string, readonly string[]>;
+  /** Exact native digests of complete submitted and accepted implementation. */
+  acceptedImplementationDigests?: ReadonlyMap<string, string>;
+  /** Exact repository and change keys tied to earlier positive ordinary awards. */
+  previousImplementationDigests?: ReadonlySet<string>;
+  /** Repository and exact accepted SHA, owned by an earlier positive ordinary
+   * award outside the rolling window. Apply only to unassessed implementation. */
+  previousAcceptedOrdinaryOwners?: ReadonlyMap<string, string>;
+  /** An earlier possible match has incomplete native acceptance evidence. */
+  unresolvedImplementationSources?: ReadonlySet<string>;
   /** Trusted journal decisions verified against fresh complete source evidence. */
   valueDecisions?: ReadonlyMap<
     string,

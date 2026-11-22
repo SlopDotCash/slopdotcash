@@ -341,7 +341,10 @@ PRD section 5). The review stays free: an outside contributor's pull request
 waits for its review until a deposit is recorded, with one comment and the
 label `slopbot:fee-needed`. A merge, or 14 days without a maintainer decision,
 makes the deposit due back; a pull request closed without a merge for 7 days
-keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned). Slopbot
+keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned), except
+one that closes an issue labelled `slop-wanted` before it was opened, which is
+sent back unless a maintainer adds `slop-keep-fee` (operator decision,
+22 November 2026). Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
 The comment links the pay page
@@ -494,7 +497,8 @@ Use generic private email notices with secure Inbox links. GitHub forwarding
 requires the researcher's authorization and separate verified receipt; it is
 not a prerequisite for Slop intake or owner review. Retained private report
 reads require current case authority and an audit record. Contributor trace
-bodies remain unreadable. See PRD sections 8–10.
+bodies remain unreadable, except operator export of a licensed trace under
+contract version 2. See PRD sections 8–10.
 
 ## Private traces
 
@@ -503,9 +507,19 @@ Contributors may opt into the minimized contribution-specific trace defined by
 redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
+Operator decision, 22 November 2026: contract version 2
+(`backend/trace/README.md#private-trace-privacy-contract-v2`) lets a client
+upload by default after showing the file and a one-line decline, and adds paid
+licensing as a separate account opt-in: 50% of each sale to contributors,
+merged or closed pull requests only, never re-identification or resale.
+Version 1 keeps governing traces uploaded under it. Licensing is not available
+until the account setting exists.
+
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
 digests. No website or API route returns a trace body, including to
-contributors, project owners, operators, and the public.
+contributors, project owners, operators, and the public. Under version 2,
+designated operators may export a licensed trace only to fulfil a sale, with
+an audit record.
 
 The contributor upload route is write-only, bounded, authenticated,
 checksum-verified, and fail-closed. Public artifacts contain only safe metadata

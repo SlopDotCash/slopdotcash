@@ -49,6 +49,13 @@ export const SUBMISSION_FEE_SLOP_SHARE_BPS = 5000; // SLOP fee is half the stabl
 export const SUBMISSION_FEE_REFUND_UNDECIDED_DAYS = 14;
 export const SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS = 7;
 /**
+ * A pull request that closes an issue labelled `slop-wanted` (labelled before
+ * the pull request was opened) is invited work. Closed without a merge, its
+ * deposit goes back unless a maintainer adds this label before the kept wait
+ * ends (operator decision, 22 November 2026; PRD section 5).
+ */
+export const SUBMISSION_FEE_KEEP_LABEL = "slop-keep-fee";
+/**
  * The contracts' immutable reclaim delay (`RECLAIM_DELAY` in
  * `contracts/evm/script/DeploySubmissionDeposits.sol`): the payer can take an
  * open deposit back from the contract this long after making it.

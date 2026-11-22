@@ -17,6 +17,7 @@ import {
   awardForScore,
   latestPoints,
   type PointsJournal,
+  pointKey,
 } from "../src/lib/points";
 import { findProject } from "../src/lib/projects.mjs";
 import {
@@ -28,16 +29,25 @@ import {
   GENERATED_AT,
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
+import { ImplementationMemo } from "./accepted-implementation-memo";
 import {
   collectSearchReferences,
+  type GenerateOptions,
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
+  implementationDigestCandidates,
+  JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+  JOINT_SOURCE_CONFIRMATION_PROBES,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
   MAX_TRANSIENT_ATTEMPTS,
   type OutcomeCommitIdentity,
   OutcomeCommitLineLoader,
+  parseSearchReference,
+  readImplementationProofs,
+  readPreviousImplementationSources,
   runGenerator,
   SourceNodeUnavailableError,
+  unresolvedImplementationComparisons,
   writeLeaderboardAtomically,
 } from "./generate-leaderboard";
 import {
@@ -327,6 +337,10 @@ test("ordinary commit pagination and PR search pages share one flat statistics c
     async execute(document: string, variables: Record<string, unknown> = {}) {
       if (document.includes("query LeaderboardSearchReferences")) {
         expect(variables.withMergeCommits).toBe(true);
+        // The saved historical query is part of the raw evidence cache key.
+        expect(sha256(document)).toBe(
+          "a680f6ddd1260f268b3135f7d1ffd448590ae4412f66728320f45941ffb35701",
+        );
         expect(document).not.toContain("oid additions deletions");
         return {
           search: {
@@ -439,6 +453,443 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     },
   ]),
 });
+test("only a complete changed single-commit submission can have an empty acceptance marker", () => {
+  const tree = { oid: "1".repeat(40) };
+  const parent = { oid: "2".repeat(40), tree };
+  const mergeCommit = {
+    oid: "3".repeat(40),
+    tree,
+    parents: { totalCount: 1, nodes: [parent] },
+  };
+  const node = { ...nodeFor(retained), mergeCommit };
+  const marker = (value: unknown) =>
+    parseSearchReference(value, "merged source", "PullRequest").outcome
+      ?.emptyAcceptanceMarker;
+  expect(marker(node)).toBe(true);
+  for (const other of [
+    { ...node, mergeCommit: null },
+    { ...node, mergeCommit: { oid: mergeCommit.oid } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1 },
+      },
+    },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { totalCount: 1, nodes: [{ oid: parent.oid }] },
+      },
+    },
+    { ...node, additions: 0, deletions: 0 },
+    { ...node, mergeCommit: { ...mergeCommit, oid: node.headRefOid } },
+    { ...node, mergeCommit: { ...mergeCommit, tree: { oid: "4".repeat(40) } } },
+    {
+      ...node,
+      mergeCommit: {
+        ...mergeCommit,
+        parents: { ...mergeCommit.parents, totalCount: 2 },
+      },
+    },
+    {
+      ...node,
+      commits: {
+        ...node.commits,
+        totalCount: 2,
+        pageInfo: { hasNextPage: true, endCursor: "more-commits" },
+      },
+    },
+    {
+      ...node,
+      commits: connection([
+        {
+          commit: {
+            ...node.commits.nodes[0].commit,
+            parents: { totalCount: 2 },
+          },
+        },
+      ]),
+    },
+  ]) {
+    expect(marker(other)).toBeUndefined();
+  }
+});
+
+test("collection records a distinct nonempty one-parent acceptance for a multi-commit submission", () => {
+  const firstParent = { oid: "2".repeat(40), tree: { oid: "1".repeat(40) } };
+  const tree = { oid: "4".repeat(40) };
+  const accepted = {
+    oid: "3".repeat(40),
+    tree,
+    parents: { totalCount: 1, nodes: [firstParent] },
+  };
+  const reference = nodeFor(retained);
+  const node = {
+    ...reference,
+    commits: connection([
+      { commit: { ...reference.commits.nodes[0].commit, oid: "5".repeat(40) } },
+      ...reference.commits.nodes,
+    ]),
+    mergeCommit: accepted,
+  };
+  const parse = (row: unknown) =>
+    parseSearchReference(row, "merged source", "PullRequest").outcome;
+  expect(parse(node)).toMatchObject({
+    acceptedOrdinaryCommitOid: accepted.oid,
+    commits: null,
+  });
+  for (const other of [
+    reference,
+    { ...node, mergeCommit: { oid: accepted.oid } },
+    { ...node, mergeCommit: { ...accepted, tree: firstParent.tree } },
+    { ...node, mergeCommit: { ...accepted, oid: node.headRefOid } },
+    {
+      ...node,
+      mergeCommit: {
+        ...accepted,
+        parents: {
+          totalCount: 2,
+          nodes: [firstParent, { oid: node.headRefOid, tree }],
+        },
+      },
+    },
+    { ...node, commits: connection([]) },
+  ]) {
+    expect(parse(other)?.acceptedOrdinaryCommitOid).toBeUndefined();
+  }
+});
+
+test("line and file totals select native proof candidates without establishing duplication", () => {
+  const tree = { oid: "1".repeat(40) };
+  const earlier = {
+    ...nodeFor(retained),
+    changedFiles: 1,
+    mergeCommit: {
+      oid: "3".repeat(40),
+      tree: { oid: "4".repeat(40) },
+      parents: { totalCount: 1, nodes: [{ oid: "2".repeat(40), tree }] },
+    },
+  };
+  const later = {
+    ...earlier,
+    id: unaffected.id,
+    headRefOid: unaffected.headRefOid,
+    mergeCommit: {
+      ...earlier.mergeCommit,
+      oid: "5".repeat(40),
+      parents: {
+        totalCount: 2,
+        nodes: [
+          ...earlier.mergeCommit.parents.nodes,
+          { oid: unaffected.headRefOid, tree: earlier.mergeCommit.tree },
+        ],
+      },
+    },
+    commits: nodeFor(unaffected).commits,
+  };
+  const parse = (value: unknown) =>
+    parseSearchReference(value, "merged source", "PullRequest");
+  expect(implementationDigestCandidates([parse(earlier)])).toEqual([]);
+  expect(
+    implementationDigestCandidates([
+      parse(earlier),
+      parse({ ...later, changedFiles: 2 }),
+    ]),
+  ).toEqual([]);
+  const candidates = implementationDigestCandidates([
+    parse(earlier),
+    parse(later),
+  ]);
+  expect(candidates.map(({ id, headSha }) => [id, headSha])).toEqual([
+    [retained.id, retained.headRefOid],
+    [unaffected.id, unaffected.headRefOid],
+  ]);
+});
+
+test("an older award is eligible only for its exact public merged source and repository", async () => {
+  const earlier = {
+    ...nodeFor(retained),
+    changedFiles: 1,
+    additions: 4,
+    deletions: 4,
+    repository: { id: "R_verified", isPrivate: false },
+    mergeCommit: {
+      oid: "3".repeat(40),
+      tree: { oid: "4".repeat(40) },
+      parents: {
+        totalCount: 1,
+        nodes: [{ oid: "2".repeat(40), tree: { oid: "1".repeat(40) } }],
+      },
+    },
+  };
+  const predecessor = {
+    id: retained.id,
+    number: retained.number,
+    url: retained.url,
+    mergedAt: retained.mergedAt as string,
+  };
+  const selectedShape = `1/${earlier.additions}/${earlier.deletions}`;
+  const read = (node: unknown, memo?: ImplementationMemo) =>
+    readPreviousImplementationSources(
+      {
+        async execute() {
+          return { nodes: [node] };
+        },
+      },
+      "R_verified",
+      new Set([selectedShape]),
+      [predecessor],
+      memo,
+    );
+  expect(
+    (await read(earlier)).candidates.get(selectedShape)?.map(({ id }) => id),
+  ).toEqual([retained.id]);
+  const missingMerge = { ...earlier, mergeCommit: null };
+  const transient = new ImplementationMemo();
+  const pending = await read(missingMerge, transient);
+  expect(pending.candidates.size).toBe(0);
+  expect(pending.unresolvedShapes).toEqual(new Set(["1/4/4"]));
+  expect(transient.previous("R_verified", predecessor)).toBeUndefined();
+  expect((await read(earlier, transient)).unresolvedShapes.size).toBe(0);
+  const next = parseSearchReference(
+    {
+      ...earlier,
+      id: unaffected.id,
+      headRefOid: unaffected.headRefOid,
+      commits: nodeFor(unaffected).commits,
+    },
+    "later source",
+    "PullRequest",
+  );
+  const scheduled = implementationDigestCandidates(
+    [next],
+    pending.unresolvedShapes,
+  );
+  expect(scheduled.map(({ id }) => id)).toEqual([unaffected.id]);
+  const unrelated = { ...required(scheduled[0]), id: "unrelated" };
+  const current = new Map([
+    [selectedShape, scheduled],
+    ["2/4/4", [unrelated]],
+  ]);
+  const dates = new Map([
+    [unaffected.id, unaffected.mergedAt as string],
+    [unrelated.id, unaffected.mergedAt as string],
+  ]);
+  const compare = (verifiedIds: string[], unavailableIds: string[] = []) =>
+    unresolvedImplementationComparisons(
+      current,
+      pending.candidates,
+      dates,
+      {
+        digests: new Map(verifiedIds.map((id) => [id, "f".repeat(64)])),
+        unavailable: new Set(unavailableIds),
+      },
+      pending.unresolvedShapes,
+    );
+  expect(compare([unaffected.id, unrelated.id])).toEqual(
+    new Set([unaffected.id]),
+  );
+  expect(compare([unrelated.id])).toEqual(new Set());
+  expect(compare([unrelated.id], [unaffected.id])).toEqual(
+    new Set([unaffected.id]),
+  );
+  expect(
+    implementationDigestCandidates(
+      [{ ...next, outcome: next.outcome && { ...next.outcome, additions: 5 } }],
+      pending.unresolvedShapes,
+    ),
+  ).toEqual([]);
+  expect(
+    (
+      await read({
+        ...missingMerge,
+        mergeCommit: { ...earlier.mergeCommit, tree: null },
+      })
+    ).unresolvedShapes,
+  ).toEqual(new Set([selectedShape]));
+  for (const node of [
+    null,
+    { ...missingMerge, changedFiles: null },
+    { ...missingMerge, headRefOid: unaffected.headRefOid },
+    { ...missingMerge, url: unaffected.url },
+    { ...missingMerge, number: unaffected.number },
+    { ...missingMerge, commits: { ...missingMerge.commits, totalCount: 2 } },
+    { ...missingMerge, commits: { ...missingMerge.commits, totalCount: 0 } },
+    { ...missingMerge, repository: { id: "R_other", isPrivate: false } },
+    { ...missingMerge, repository: { id: "R_verified", isPrivate: true } },
+    { ...missingMerge, state: "CLOSED" },
+    {
+      ...missingMerge,
+      mergedAt: new Date(Date.parse(predecessor.mergedAt) + 1000).toISOString(),
+    },
+    { ...missingMerge, changedFiles: 2 },
+  ])
+    expect(await read(node)).toEqual({
+      candidates: new Map(),
+      unresolvedShapes: new Set(),
+      acceptedOrdinaryOwners: new Map(),
+      submittedOrdinaryCandidates: [],
+      unresolvedSubmittedOrdinaryOids: new Set(),
+    });
+  for (const [parents, observation] of [
+    [
+      {
+        totalCount: 4,
+        nodes: [...earlier.mergeCommit.parents.nodes, { oid: "5".repeat(40) }],
+      },
+      { kind: "ineligible" },
+    ],
+    [
+      {
+        totalCount: 2,
+        nodes: [...earlier.mergeCommit.parents.nodes, { oid: "5".repeat(40) }],
+      },
+      { kind: "ineligible" },
+    ],
+    [{ totalCount: 2, nodes: earlier.mergeCommit.parents.nodes }, undefined],
+    [null, undefined],
+  ] as const) {
+    const memo = new ImplementationMemo();
+    const result = await read(
+      {
+        ...earlier,
+        mergeCommit: { ...earlier.mergeCommit, tree: null, parents },
+      },
+      memo,
+    );
+    expect(result.candidates.size).toBe(0);
+    expect(result.unresolvedShapes).toEqual(
+      new Set(observation ? [] : [selectedShape]),
+    );
+    expect(memo.previous("R_verified", predecessor)).toEqual(observation);
+  }
+});
+
+test("selection reuses prior evidence across shapes but unresolved reads collect live", async () => {
+  const earlier = {
+    ...nodeFor(retained),
+    changedFiles: 1,
+    repository: { id: "R_verified", isPrivate: false },
+    mergeCommit: {
+      oid: "3".repeat(40),
+      tree: { oid: "4".repeat(40) },
+      parents: {
+        totalCount: 1,
+        nodes: [{ oid: "2".repeat(40), tree: { oid: "1".repeat(40) } }],
+      },
+    },
+  };
+  const prior = {
+    id: earlier.id,
+    number: earlier.number,
+    url: earlier.url,
+    mergedAt: new Date(earlier.mergedAt as string).toISOString(),
+  };
+  const shape = `1/${earlier.additions}/${earlier.deletions}`;
+  const memo = new ImplementationMemo();
+  let reply: unknown = null;
+  let calls = 0;
+  const executor = {
+    async execute() {
+      calls++;
+      return { nodes: [reply] };
+    },
+  };
+  const lookup = (scope: string) =>
+    readPreviousImplementationSources(
+      executor,
+      "R_verified",
+      new Set([scope]),
+      [prior],
+      memo,
+      new Set([earlier.mergeCommit.oid]),
+    );
+  expect((await lookup(shape)).candidates.size).toBe(0);
+  reply = { ...earlier, mergeCommit: null };
+  expect((await lookup(shape)).unresolvedShapes).toEqual(new Set([shape]));
+  expect(memo.previous("R_verified", prior)).toBeUndefined();
+  reply = earlier;
+  const aliasWithoutShape = await lookup("99/100/1");
+  expect(aliasWithoutShape.candidates.size).toBe(0);
+  expect(aliasWithoutShape.acceptedOrdinaryOwners).toEqual(
+    new Map([[earlier.mergeCommit.oid, earlier.id]]),
+  );
+  const reused = await lookup(shape);
+  expect(reused.candidates.get(shape)?.map(({ id }) => id)).toEqual([
+    earlier.id,
+  ]);
+  expect(reused.acceptedOrdinaryOwners).toEqual(
+    aliasWithoutShape.acceptedOrdinaryOwners,
+  );
+  expect(reused.unresolvedShapes.size).toBe(0);
+  expect(calls).toBe(3);
+
+  const proof = required(reused.candidates.get(shape)?.[0]);
+  const repository = {
+    node_id: "R_verified",
+    private: false,
+    full_name: "SlopDotCash/asi",
+  };
+  let nativeResult = new Map<string, string>();
+  let unavailable = new Set([proof.id]);
+  let nativeCalls = 0;
+  const native = async () => {
+    nativeCalls++;
+    return { digests: nativeResult, unavailable };
+  };
+  expect(
+    (await readImplementationProofs(native, repository, [proof], memo))
+      .unavailable,
+  ).toEqual(new Set([proof.id]));
+  const digest = "f".repeat(64);
+  nativeResult = new Map([[proof.id, digest]]);
+  unavailable = new Set();
+  expect(
+    (
+      await readImplementationProofs(native, repository, [proof], memo)
+    ).digests.get(proof.id),
+  ).toBe(digest);
+  nativeResult = new Map();
+  expect(
+    (
+      await readImplementationProofs(native, repository, [proof], memo)
+    ).digests.get(proof.id),
+  ).toBe(digest);
+  expect(nativeCalls).toBe(2);
+
+  const sources = ["first", "later", "ineligible", "last"].map((id) => ({
+    ...proof,
+    id,
+  }));
+  const dates = new Map(
+    sources.map(({ id }, index) => [
+      id,
+      new Date(Date.UTC(2026, 10, 8 + index)).toISOString(),
+    ]),
+  );
+  const group = new Map([[shape, [...sources].reverse()]]);
+  expect(
+    unresolvedImplementationComparisons(group, new Map(), dates, {
+      digests: new Map([
+        ["first", digest],
+        ["last", "e".repeat(64)],
+      ]),
+      unavailable: new Set(["later"]),
+    }),
+  ).toEqual(new Set(["later", "last"]));
+  expect(
+    unresolvedImplementationComparisons(group, new Map(), dates, {
+      digests: new Map([
+        ["first", digest],
+        ["last", "e".repeat(64)],
+      ]),
+      unavailable: new Set(),
+    }),
+  ).toEqual(new Set());
+});
+
 // Open work listed before detail hydration. One PR and one issue close
 // between the open listing and their detail reads.
 const openPull = (id: string, number: number) => ({
@@ -500,6 +951,25 @@ const recordJson = JSON.stringify(record);
 const recordDigest = sha256(recordJson);
 /** A registered project that only the staging registry lists. */
 const STAGING_ONLY = "canonry";
+const priorSquashes = [retained.headRefOid, "d".repeat(40)].map(
+  (accepted, index) => ({
+    accepted,
+    pull: {
+      ...retained,
+      id: `PR_earlier_${index}`,
+      number: 98 + index,
+      url: `https://github.com/${repository.id}/pull/${98 + index}`,
+      mergedAt: `2026-10-0${index + 1}T00:00:00.000Z`,
+      headRefOid: "c".repeat(40),
+    },
+  }),
+);
+const priorSingleSubmissions = priorSquashes.map(
+  ({ accepted, pull }, index) => ({
+    accepted: String(index + 3).repeat(40),
+    pull: { ...pull, headRefOid: accepted },
+  }),
+);
 type Failure =
   | "forbidden"
   | "mixed"
@@ -662,14 +1132,22 @@ async function fixture(
     | "open-files-later-changed"
     | "commit-lines-missing"
     | "commit-lines-negative"
+    | "cross-window-squash"
+    | "cross-window-submitted"
     | "open-reorder"
     | "open-skip",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
   nativeFiles?: NativeFileFixture,
+  // The answer to each successive joint availability probe; the last repeats.
+  availability: ReadonlyArray<"missing" | "present" | "forbidden"> = [
+    "missing",
+  ],
 ) {
   let missingSeen = false;
+  let availabilityProbes = 0;
+  const confirmationDelays: number[] = [];
   let requests = 0;
   let attempts = 0;
   let repositoryReads = 0;
@@ -677,6 +1155,9 @@ async function fixture(
   let openPullRequestListings = 0;
   const comparisonPages: number[] = [];
   const commitLineBatches: string[][] = [];
+  const previousImplementationBatches: string[][] = [];
+  const crossWindow =
+    mode === "cross-window-squash" || mode === "cross-window-submitted";
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
@@ -694,6 +1175,35 @@ async function fixture(
   }));
   const sourceNodeFor = (pull: (typeof pulls)[number]) => {
     const node = nodeFor(pull);
+    if (crossWindow)
+      node.url = `https://github.com/${repository.id}/pull/${pull.number}`;
+    if (crossWindow && pull.id === unaffected.id) {
+      const independent = node.commits.nodes[0].commit;
+      const carried = priorSquashes[1].accepted;
+      const edit = "e".repeat(40);
+      node.commits = connection([
+        {
+          commit: {
+            ...independent,
+            id: `C_${carried}`,
+            oid: carried,
+            additions: 120,
+            deletions: 0,
+          },
+        },
+        { commit: { ...independent, additions: 0, deletions: 2 } },
+        {
+          commit: {
+            ...independent,
+            id: `C_${edit}`,
+            oid: edit,
+            additions: 8,
+            deletions: 0,
+            author: nodeFor(retained).commits.nodes[0].commit.author,
+          },
+        },
+      ]);
+    }
     const firstCommit = node.commits.nodes[0] as {
       commit: { additions?: number; deletions: number };
     };
@@ -763,6 +1273,7 @@ async function fixture(
             owner: string;
             name: string;
             searchQuery: string;
+            withMergeCommits?: boolean;
             ids: string[];
             id: string;
             after: string | null;
@@ -771,7 +1282,40 @@ async function fixture(
         requests++;
         const data: Record<string, unknown> = {};
         let errors: unknown[] | undefined;
-        if (query.includes("query LeaderboardOutcomeCommitLines")) {
+        if (
+          crossWindow &&
+          query.includes("query PreviousImplementationSources")
+        ) {
+          previousImplementationBatches.push(v.ids);
+          data.nodes = v.ids.map((id) => {
+            const { accepted, pull } = required(
+              (mode === "cross-window-submitted"
+                ? priorSingleSubmissions
+                : priorSquashes
+              ).find(({ pull }) => pull.id === id),
+            );
+            const prior = nodeFor(pull);
+            return {
+              ...prior,
+              changedFiles: mode === "cross-window-submitted" ? 9 : 3,
+              commits:
+                mode === "cross-window-submitted"
+                  ? prior.commits
+                  : { ...prior.commits, totalCount: 3 },
+              repository: {
+                id: nodeId(repository.owner, repository.name),
+                isPrivate: false,
+              },
+              mergeCommit: {
+                oid: accepted,
+                tree: { oid: "1".repeat(40) },
+                parents: connection([
+                  { oid: "a".repeat(40), tree: { oid: "2".repeat(40) } },
+                ]),
+              },
+            };
+          });
+        } else if (query.includes("query LeaderboardOutcomeCommitLines")) {
           commitLineBatches.push(v.ids);
           const lineSources = comparison
             ? [
@@ -857,6 +1401,9 @@ async function fixture(
             },
           };
         } else if (query.includes("query LeaderboardSearchReferences")) {
+          expect(query.includes("mergeCommit @include")).toBe(
+            v.withMergeCommits === true,
+          );
           const isOurs = v.searchQuery.startsWith(
             `repo:${repository.owner}/${repository.name} `,
           );
@@ -980,11 +1527,16 @@ async function fixture(
             missingSeen = true;
           }
         } else if (query.includes("query LeaderboardSourceAvailability")) {
+          const answer =
+            availability[Math.min(availabilityProbes, availability.length - 1)];
+          availabilityProbes++;
+          const gone = (id: string) =>
+            answer !== "present" && id === removed.id;
           data.nodes = v.ids.map((id: string) =>
-            id === removed.id ? null : { __typename: "PullRequest", id },
+            gone(id) ? null : { __typename: "PullRequest", id },
           );
           errors = v.ids.flatMap((id: string, index: number) =>
-            id === removed.id
+            gone(id)
               ? [
                   {
                     type: "NOT_FOUND",
@@ -994,6 +1546,8 @@ async function fixture(
                 ]
               : [],
           );
+          if (answer === "forbidden")
+            errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "forbidden")
             errors = [{ type: "FORBIDDEN", path: ["nodes", 0] }];
           if (failure === "mixed")
@@ -1213,10 +1767,13 @@ async function fixture(
       openPullRequestListings,
       comparisonPages,
       commitLineBatches,
+      previousImplementationBatches,
       recoveredFiles,
       recoveryInputs,
+      availabilityProbes,
+      confirmationDelays,
     }),
-    generate: () =>
+    generate: (options: GenerateOptions = {}) =>
       runGenerator(
         output,
         {
@@ -1229,6 +1786,10 @@ async function fixture(
           now: new Date(GENERATED_AT),
           actualNow: new Date(GENERATED_AT),
           ...(productionProjects ? { deploymentTier: "staging" as const } : {}),
+          jointSourceConfirmationDelay: async (milliseconds) => {
+            confirmationDelays.push(milliseconds);
+          },
+          ...options,
         },
       ),
     close: async () => {
@@ -1287,6 +1848,144 @@ function journalFor(
     GENERATED_AT,
   );
 }
+
+async function verifyCrossWindowCredit(
+  mode: "cross-window-squash" | "cross-window-submitted",
+) {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture(mode);
+  const prior =
+    mode === "cross-window-submitted" ? priorSingleSubmissions : priorSquashes;
+  try {
+    const before = await f.generate();
+    const journal = appendPointAwards(
+      { ...journalFor(before), revisions: [] },
+      prior.map(({ pull }) => ({
+        ...awardForScore(
+          required(
+            before.ledger.find((event) => event.source.id === retained.id),
+          ),
+        ),
+        key: pointKey(
+          project.id,
+          required(retained.author).id,
+          "merged-pull-request",
+          pull.id,
+        ),
+        sourceId: pull.id,
+        sourceUrl: pull.url,
+        occurredAt: pull.mergedAt,
+        workUnitId: `wu_asi_pr_${pull.number}`,
+      })),
+      "a".repeat(64),
+      before.ruleVersion,
+      GENERATED_AT,
+    );
+    let journalReads = 0;
+    const nativeReads: string[][] = [];
+    const options: GenerateOptions = {
+      readPreviousImplementationJournal: async () => {
+        journalReads++;
+        return journal;
+      },
+      readAcceptedImplementation: async (_repository, sources) => {
+        nativeReads.push(sources.map(({ id }) => id));
+        return {
+          digests: new Map(sources.map(({ id }) => [id, "d".repeat(64)])),
+          unavailable: new Set(),
+        };
+      },
+    };
+    const digest = "b".repeat(64);
+    const memo = new ImplementationMemo();
+    const cold = await f.generate({ ...options, implementationMemo: memo });
+    const warm = await f.generate({
+      ...options,
+      implementationMemo: ImplementationMemo.parse(
+        memo.serialize(digest, GENERATED_AT),
+        digest,
+        new Date(GENERATED_AT),
+      ),
+    });
+    for (const snapshot of [cold, warm]) {
+      assertLeaderboardSnapshot(snapshot);
+      expect(
+        snapshot.ledger.some((event) => event.source.id === retained.id),
+      ).toBe(false);
+      const points = applyPointsSnapshot(
+        journal,
+        snapshot,
+        "c".repeat(64),
+        snapshot.generatedAt,
+      );
+      expect(points.revisions.slice(0, 2)).toEqual(journal.revisions);
+      expect(
+        [...latestPoints(points).values()]
+          .map(({ award }) => award)
+          .filter(({ sourceId }) => sourceId === unaffected.id)
+          .map(({ actor, amount }) => [actor.id, amount])
+          .sort(),
+      ).toEqual(
+        [
+          [required(retained.author).id, 8],
+          [required(unaffected.author).id, 2],
+        ].sort(),
+      );
+      expect(
+        snapshot.ledger.some((event) =>
+          prior.some(({ pull }) => pull.id === event.source.id),
+        ),
+      ).toBe(false);
+    }
+    expect(nativeReads).toEqual(
+      mode === "cross-window-submitted"
+        ? [prior.map(({ pull }) => pull.id)]
+        : [],
+    );
+    expect(journalReads).toBe(2);
+    expect(f.stats().previousImplementationBatches).toEqual([
+      prior.map(({ pull }) => pull.id),
+    ]);
+    const withdrawn = appendPointAwards(
+      journal,
+      journal.revisions.map(({ award }) => ({ ...award, amount: 0 })),
+      "e".repeat(64),
+      before.ruleVersion,
+      GENERATED_AT,
+    );
+    const noPriorCredit = await f.generate({
+      ...options,
+      readPreviousImplementationJournal: async () => withdrawn,
+      implementationMemo: memo,
+    });
+    expect(noPriorCredit.ledger).toEqual(before.ledger);
+    expect(f.stats().previousImplementationBatches).toHaveLength(1);
+    if (mode === "cross-window-submitted") {
+      const incomplete = await f.generate({
+        ...options,
+        readAcceptedImplementation: async () => ({
+          digests: new Map(),
+          unavailable: new Set([prior[0].pull.id]),
+        }),
+      });
+      expect(
+        incomplete.ledger.some((event) => event.source.id === retained.id),
+      ).toBe(false);
+      expect(
+        incomplete.ledger.filter((event) => event.source.id === unaffected.id),
+      ).toEqual(
+        before.ledger.filter((event) => event.source.id === unaffected.id),
+      );
+    }
+  } finally {
+    await f.close();
+  }
+}
+
+test.each(["cross-window-squash", "cross-window-submitted"] as const)(
+  "rolling collection reserves earlier accepted work from prior positive Points with %s",
+  verifyCrossWindowCredit,
+);
 
 test("removed node is recorded after a complete recollection and both valid outcomes reach atomic output", async () => {
   setSystemTime(new Date(GENERATED_AT));
@@ -1520,9 +2219,90 @@ test("unavailable joint context keeps the verified merge minimum without replaci
           .map((row) => row.award),
       ).toEqual([previousActorAward]);
     }
-    expect(f.stats().attempts).toBe(2);
+    // Operator decision, 20 November 2026: the member is outside the census
+    // and every probe agrees, so the first attempt holds it and publishes.
+    expect(f.stats().attempts).toBe(1);
+    expect(f.stats().availabilityProbes).toBe(
+      1 + JOINT_SOURCE_CONFIRMATION_PROBES,
+    );
+    expect(f.stats().confirmationDelays).toEqual(
+      Array.from(
+        { length: JOINT_SOURCE_CONFIRMATION_PROBES },
+        () => JOINT_SOURCE_CONFIRMATION_DELAY_MS,
+      ),
+    );
+    expect(snapshot.source.rateLimit.consumedDuringRun).toBe(
+      f.stats().requests,
+    );
     expect(f.stats().forbiddenSourceReads).toBe(0);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+// A joint member outside the census is held on the first attempt only when
+// every confirming probe repeats the first answer. Any other answer keeps the
+// complete recollection, whose own probe then decides.
+for (const [name, availability, probes] of [
+  [
+    "resolves on the first confirming probe",
+    ["missing", "present", "missing"],
+    3,
+  ],
+  [
+    "resolves on the last confirming probe",
+    ["missing", "missing", "present", "missing"],
+    4,
+  ],
+  ["is refused on a confirming probe", ["missing", "forbidden", "missing"], 3],
+] as const) {
+  test(`a joint member outside the census that ${name} still forces one complete recollection`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(
+      "joint",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      availability,
+    );
+    try {
+      const snapshot = await f.generate();
+      expect(f.stats().attempts).toBe(2);
+      expect(f.stats().availabilityProbes).toBe(probes);
+      expect(snapshot.source.unavailableSources).toEqual([
+        { nodeId: removed.id, reason: "NOT_FOUND" },
+      ]);
+      expect(snapshot.source.heldWorkUnits).toEqual([
+        {
+          recordDigest,
+          sourceNodeIds: [retained.id, removed.id].sort(),
+          unavailableNodeIds: [removed.id],
+        },
+      ]);
+      expect(f.stats().forbiddenSourceReads).toBe(0);
+      assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("a joint member outside the census is never held on the first attempt without the recollection record", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("joint");
+  try {
+    // A direct collection has nowhere to record the unavailable source.
+    await expect(
+      generateLeaderboardFromGitHub(f.client, {
+        now: new Date(GENERATED_AT),
+        actualNow: new Date(GENERATED_AT),
+        evidenceToken: "fixture-token",
+        jointSourceConfirmationDelay: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(SourceNodeUnavailableError);
+    expect(f.stats().availabilityProbes).toBe(1);
   } finally {
     await f.close();
   }
