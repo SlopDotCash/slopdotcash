@@ -248,8 +248,9 @@ drivers they run included, compiles only the code that changed.
 
 Turborepo caches `gen`, `build`, `typecheck`, tests, selftest and lint according
 to `turbo.json`. The task entry point fingerprints Node, VibeLang, Dafny, Z3
-and their runtime files before Turbo hashes its inputs. What it reads of an
-installed file, and Dafny's version, is remembered across processes in
+and their runtime files before Turbo hashes its inputs. Missing proof tools
+have their own task cache identity, and the proof stage requires the verifier
+and solver. What it reads of an installed file, and Dafny's version, is remembered across processes in
 `$XDG_CACHE_HOME/vibestack` (`~/.cache/vibestack` by default) while the file's
 device, inode, size and modification and change times stay the same, so an
 unchanged toolchain is not read again, nor Z3 asked its version. A check
@@ -257,8 +258,9 @@ reads those times of Dafny's installation once, and reads them again after each
 run of Dafny, so a result is not remembered when the verifier was installed
 again during the run. On GitHub Actions, the install step uses the same
 strict generation task as verification, so a successful install warms the
-task cache. Studio's shared Slop UI also needs generated product code during
-the workspace build. Generated stories,
+task cache. Local-only verification jobs save the successful generation
+archive before the long suite starts. Studio's shared Slop UI can trigger that
+generation during the workspace build. Generated stories,
 browser build artifacts, compiler declarations and successful test receipts
 are restored with their owning task. `check` is never skipped whole: its
 `driver:` programs run the real application in `traces` every time. Standalone examples install and check
