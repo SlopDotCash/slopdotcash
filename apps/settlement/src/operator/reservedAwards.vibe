@@ -14,7 +14,7 @@ export interface ReservedAwardFeedVars {
   readonly OPERATOR_FEED_TOKEN?: string
 }
 
-export service ReservedAwardFeedAccess {
+service ReservedAwardFeedAccess {
   authorized(header: string | undefined): boolean!!
 }
 
