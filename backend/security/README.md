@@ -447,9 +447,12 @@ project turned the deposit off; a released row keeps `outcome_reason =
 the work that waited, three reports per sweep: the screening of a saved
 report still `queued`, or the owner's notice and the analysis of a linked
 GitHub report that has neither, or the owner's notice of an older-style link
-GitHub has not confirmed yet. Only a paid ask and a released ask are looked
-at; a row that record-only mode wrote is never touched. Each start is safe to
-repeat.
+GitHub has not confirmed yet. That claim notice is tried once: the sweep sets
+`claim_notice_at` after the try even when no notice row could be written (no
+technical approver with current GitHub authority, or a retired project), so
+such a claim never takes the sweep's slots again. Only a paid ask and a
+released ask are looked at; a row that record-only mode wrote is never
+touched. Each start is safe to repeat.
 
 **Outcome.** The same sweep sets `refund_due` or `kept_due` on a paid row
 with no outcome (`reportDepositOutcome`), with one fixed reason:

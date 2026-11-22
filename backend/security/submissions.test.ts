@@ -529,7 +529,12 @@ function setup(
         .all() as { recipient_github_id: string }[]
     ).map((r) => r.recipient_github_id);
   return {
-    addProject: (id: string, repository: string) => {
+    /**
+     * A second project. `unowned` publishes it with no security program, an
+     * Organization steward and a registry actor with read access only, so it
+     * has no technical approver with current GitHub authority.
+     */
+    addProject: (id: string, repository: string, unowned = false) => {
       const other = JSON.parse(manifest);
       other.id = id;
       other.repositories = [
@@ -539,6 +544,18 @@ function setup(
         repositoryId: "700000002",
         repositoryNodeId: "R_700000002",
       };
+      if (unowned) {
+        delete other.securityBounty;
+        other.steward = {
+          github: {
+            actorId: "700000050",
+            login: "example",
+            nodeId: "O_700000050",
+            type: "Organization",
+          },
+        };
+      }
+      const registryActor = unowned ? OTHER : MAINTAINER;
       const bytes = JSON.stringify(other);
       const hash = createHash("sha256").update(bytes).digest("hex");
       sqlite
@@ -550,8 +567,8 @@ function setup(
           bytes,
           hash,
           START,
-          MAINTAINER.githubId,
-          MAINTAINER.githubLogin,
+          registryActor.githubId,
+          registryActor.githubLogin,
         );
       sqlite
         .query(
@@ -3713,6 +3730,90 @@ describe("the report deposit on a report that lives on GitHub", () => {
     expect(ownerNotices(t)).toBe(2);
     // A second sweep repeats nothing.
     expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(2);
+  });
+
+  test("an older-style link that nobody can be told about leaves the sweep after one try and does not hold back a later claim", async () => {
+    const t = setup({ reportDeposit: "live" });
+    // No technical approver of "silent" has current GitHub authority, so
+    // its claim notice writes no row.
+    t.addProject("silent", "example/silent", true);
+    const claim = async (projectId: string, repository: string) => {
+      const advisory = t.github.seed(
+        repository,
+        { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+        {
+          summary: "Filed on GitHub",
+          description: `Direct ${SENTINEL}`,
+          severity: "high",
+        },
+        "2026-10-20T08:30:00.000Z",
+      );
+      const created = await t.call(REPORTER, "POST", "security-cases", {
+        mode: "claim",
+        projectId,
+        advisory: advisory.ghsa_id,
+        idempotencyKey: t.key(),
+      });
+      expect(created.status).toBe(201);
+      const caseId = (created.body.case as { id: string }).id;
+      expect(pay(t, caseId)).toBe(1);
+      return caseId;
+    };
+    for (let i = 0; i < 3; i++) await claim("silent", "example/silent");
+    // Each stuck claim is tried once, and the next sweep has nothing to do.
+    expect(await sweep(t)).toMatchObject({ started: 3 });
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    // A later paid claim on a project with owners is told on the next sweep.
+    await claim(PROJECT, REPO);
+    expect(ownerNotices(t)).toBe(0);
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBe(2);
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(2);
+  });
+
+  test("an older-style link released because the owner turned the deposit off tells the owners once", async () => {
+    const t = setup({ reportDeposit: "live" });
+    const advisory = seed(t);
+    const claimed = await t.call(REPORTER, "POST", "security-cases", {
+      mode: "claim",
+      projectId: PROJECT,
+      advisory: advisory.ghsa_id,
+      idempotencyKey: t.key(),
+    });
+    expect(claimed.status).toBe(201);
+    expect(ownerNotices(t)).toBe(0);
+    const row = t.sqlite
+      .query("SELECT manifest FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string };
+    const next = JSON.stringify({
+      ...JSON.parse(row.manifest),
+      security: { reportDeposit: false },
+    });
+    const digest = createHash("sha256").update(next).digest("hex");
+    t.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at, actor_github_id, actor_github_login) VALUES (?, 2, ?, ?, 'test', ?, ?, ?)",
+      )
+      .run(
+        PROJECT,
+        next,
+        digest,
+        START,
+        MAINTAINER.githubId,
+        MAINTAINER.githubLogin,
+      );
+    t.sqlite
+      .query(
+        "UPDATE projects SET manifest = ?, manifest_sha256 = ?, revision = 2 WHERE id = ?",
+      )
+      .run(next, digest, PROJECT);
+    expect(await sweep(t)).toEqual({ released: 1, decided: 0, started: 1 });
+    expect(deposits(t)[0]).toMatchObject({ mode: "recorded", paid_at: null });
+    expect(t.cases()[0]).toMatchObject({ submission_state: "claimed" });
+    expect(ownerNotices(t)).toBe(2);
+    expect(await sweep(t)).toMatchObject({ released: 0, started: 0 });
     expect(ownerNotices(t)).toBe(2);
   });
 

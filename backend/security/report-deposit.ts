@@ -496,17 +496,16 @@ async function startReleasedWork(
     .bind(RELEASE_LIMIT)
     .all<{ id: string; project_id: string; reporter_github_id: string }>();
   // An older-style link that GitHub has not confirmed yet has no analysis to
-  // start, but its owner's notice of the claim waited too.
+  // start, but its owner's notice of the claim waited too. It is tried once:
+  // `claim_notice_at` is set after the try even when no notice row could be
+  // written, so a claim nobody can be told about never takes these slots
+  // again.
   const claimed = await deps.db
     .prepare(
       `SELECT c.id, c.project_id FROM security_report_deposits d
          JOIN security_cases c ON c.id = d.case_id
         WHERE ${ready} AND NOT ${depositHeldSql("d.case_id")}
-          AND c.submission_state = 'claimed'
-          AND NOT EXISTS (SELECT 1 FROM security_case_events e
-                JOIN notifications n
-                  ON n.event_key = 'security-case:' || e.case_id || ':' || e.case_revision
-               WHERE e.case_id = c.id AND e.kind = 'claim')
+          AND c.submission_state = 'claimed' AND d.claim_notice_at IS NULL
         ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?1`,
     )
     .bind(RELEASE_LIMIT)
@@ -523,6 +522,12 @@ async function startReleasedWork(
   }
   for (const row of claimed.results) {
     await ownerNotice(deps, row.id, row.project_id).catch(() => undefined);
+    await deps.db
+      .prepare(
+        "UPDATE security_report_deposits SET claim_notice_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
+      )
+      .bind(deps.now().toISOString(), row.id)
+      .run();
     started++;
   }
   return started;
