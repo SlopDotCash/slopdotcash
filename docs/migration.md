@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the published `lalalune/vibestack` `main`
-commit `80851480e266d1deca9ff96044cc605776e0846a`. The vendor update takes
+commit `48c47c83e7501c813ab4bd49b3e25653eee87396`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
