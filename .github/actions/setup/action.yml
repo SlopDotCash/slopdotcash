@@ -140,7 +140,7 @@ runs:
           turbo-${{ runner.os }}-${{ runner.arch }}-
     - id: gen-seed
       if: >-
-        inputs.job == 'verify' && inputs.verification == 'true' && inputs.cache-verification == 'true' &&
+        inputs.job == 'verify' && inputs.cache-verification == 'true' &&
         inputs.publication != 'true' &&
         env.TURBO_CACHE == 'local:rw' && steps.turbo-cache.outputs.key != ''
       shell: bash
@@ -199,12 +199,12 @@ runs:
       if: inputs.publication != 'true' && inputs.job != 'contracts'
       shell: bash
       env:
-        GEN_SEED_PREFIX: ${{ steps.gen-seed.outputs.prefix }}
+        PUBLISH_GEN_SEED: ${{ inputs.verification == 'true' && steps.gen-seed.outputs.prefix != '' }}
       run: |
-        if [[ -n $GEN_SEED_PREFIX ]]; then export TURBO_RUN_SUMMARY=true; fi
+        if [[ $PUBLISH_GEN_SEED == true ]]; then export TURBO_RUN_SUMMARY=true; fi
         pnpm install --frozen-lockfile
     - id: publish-gen-seed
-      if: steps.gen-seed.outputs.prefix != ''
+      if: inputs.verification == 'true' && steps.gen-seed.outputs.prefix != ''
       continue-on-error: true
       shell: bash
       env:
