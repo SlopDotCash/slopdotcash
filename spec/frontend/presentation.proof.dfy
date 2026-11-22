@@ -207,8 +207,7 @@ lemma lawShownAmountRoundTrips_ensures(units: int, decimals: int)
     assert s.whole == w;
     assert s.whole * T == T * w;
     if r == 0 {
-      PresentationTenToZero();
-      assert decimals - s.fractionDigits == 0;
+      assert s.fraction == 0;
       assert s.fraction * tenTo(decimals - s.fractionDigits) == 0;
     } else {
       var z := trailingZeros(r, decimals);
