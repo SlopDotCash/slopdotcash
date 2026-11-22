@@ -1,5 +1,5 @@
 // spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The owner releases the whole untouched reserve of a wrong-total month once, with the attester's signature"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"
-import type { Address, Blockhash } from "@repo/platform/chain/solana";
+import type { Address, Blockhash } from "@repo/platform/chain/solanaWire";
 import type { Period } from "../../kernels/calendar.ts";
 import { type Digest, type I64, type U64, concat, digestBytes, i64le, u32le, u64le, utf8 } from "./bytes.ts";
 import { type Built, type WalletBindingTerms, bindWallet, commitMonthly, ed25519Verification, releaseReserve } from "./instructions.ts";

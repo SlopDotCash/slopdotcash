@@ -1,6 +1,6 @@
 // spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project's network"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor's latest unvetoed binding"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"; spec/contracts/solanaEscrow.md, "Anyone closes an open pledge once its period is committed or the period's window has closed"
 import { sha256 } from "@noble/hashes/sha2.js";
-import { type Address, type Decoded, type FetchedTransaction, ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM } from "@repo/platform/chain/solana";
+import { type Address, type Decoded, type FetchedTransaction, ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM } from "@repo/platform/chain/solanaWire";
 import { type Period, isPeriod } from "../../kernels/calendar.ts";
 import { type AllocationNode, encodeProof } from "./allocationRoot.ts";
 import { type Digest, type I64, type U64, concat, digestBytes, digestOf, hex, i64le, isZeroDigest, readI64, readU32, readU64, sameBytes, u32le, u64, u64le, utf8 } from "./bytes.ts";
