@@ -35952,14 +35952,15 @@
             "newerRootPending",
             "canMarkAttempt",
             "canSubmit",
-            "reorderedBy",
+            "newerRootIncomplete",
+            "revertsIfSent",
             "submit"
           ],
-          "note": "Newest-first ordering is carried as an in-run guard: a batch row is attempted and submitted only after every newer pending row of the batch was processed. Under the stated sameSignerNonceOrder assumption an unadmitted newer v2 root sent while an older step of its vault is in flight lands after it and reverts (reorderedBy); canSubmit refuses that send, so across runs the newer root waits until the older send's finality is observed."
+          "note": "Newest-first ordering is carried as an in-run guard: a batch row is attempted only after every newer pending row of the batch was processed. Across runs canSubmit refuses to send an older-period row while a newer unadmitted v2 root of the same vault is incomplete (newerRootIncomplete), and refuses an unadmitted v2 root whose signed source sequence differs from the vault's recorded awards (sourceOf) or that an older in-flight step of its vault (submitted, or a live journal attempt) would precede under sameSignerNonceOrder (revertsIfSent)."
         },
         "runPassOldestFirst": {
           "status": "abstraction",
-          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the newest-first canMarkAttempt/newerRootPending guard and across runs by the canSubmit refusal of a reordered root send (reorderedBy under sameSignerNonceOrder), and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
+          "note": "Counter-example ordering that is never part of step; the successor excludes it within a run by the newest-first canMarkAttempt/newerRootPending guard and across runs by the canSubmit refusals newerRootIncomplete and revertsIfSent (stale source sequence, or an older in-flight step under sameSignerNonceOrder), and states the consequence as alwaysNoReorderingRevert in monthlyExecution."
         },
         "tick": {
           "status": "rule",
@@ -36007,6 +36008,7 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
+            "newerRootIncomplete",
             "canSubmit",
             "sometimesNewestFirst"
           ],
@@ -36016,12 +36018,12 @@
           "status": "rule",
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
-            "reorderedBy",
+            "revertsIfSent",
             "submit",
             "observeFinality",
             "alwaysNoReorderingRevert"
           ],
-          "note": "The successor keeps the revert mechanics: a root send that an older in-flight step of its vault precedes is invalidated (reorderedBy) and its landing counts a revert in observeFinality. The newest-first run order and the canSubmit refusal of such a send make the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
+          "note": "The successor keeps the revert mechanics: an unadmitted root sent at a stale source sequence, or behind an older in-flight step of its vault, is invalidated (revertsIfSent) and its landing counts a revert in observeFinality. The newest-first run order and the canSubmit refusals (newerRootIncomplete, revertsIfSent) make the oldest-first revert unreachable, asserted by alwaysNoReorderingRevert rather than demonstrated as a counter-example."
         },
         "prerequisiteAddedForLruCandidateTest": {
           "status": "rule",
@@ -36041,10 +36043,11 @@
           "spec": "spec/settlement/monthlyExecution.md",
           "defs": [
             "newerRootPending",
+            "newerRootIncomplete",
             "canSubmit",
             "submit"
           ],
-          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then attempted and submitted in the same run; while that older send is in flight a later run refuses to send the newer root (reorderedBy), and the newer root is reattested via monthlyCommitment signEvm."
+          "note": "A failed newer-root prerequisite is processed in the run (SendResult Failed), so newerRootPending no longer blocks the original older row, which is then attempted in the same run; canSubmit answers it Failed while the newer unadmitted root is incomplete (newerRootIncomplete), so the run continues and the older row stays pending. The successor is stricter than the legacy test, which sends the older row; a newer root at a stale source sequence is reattested via monthlyCommitment signEvm."
         },
         "raceRun": {
           "status": "abstraction",

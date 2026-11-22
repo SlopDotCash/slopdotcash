@@ -24846,7 +24846,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "036d121dec8c2d7fc432de5423ccfbbd53b940b8c1a404a54d6b727576ff5039",
+      "sha256": "c5308ece8f5169a508e32e38e0f934756f71aec1b601f5d6c2251b287c2b2f59",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -24855,7 +24855,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal",
-          "line": 287
+          "line": 334
         }
       ],
       "rules": [
@@ -24870,6 +24870,8 @@
             "batchLimit",
             "initial",
             "hasRow",
+            "recordedAwardsOf",
+            "sourceOf",
             "validTree",
             "canPublish",
             "publish",
@@ -24890,7 +24892,7 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Each run attempts the least recently attempted rows first",
-          "line": 100,
+          "line": 105,
           "definitions": [
             "windowOpen",
             "selectable",
@@ -24903,6 +24905,7 @@
             "canSelectRow",
             "selectRow",
             "newerRootPending",
+            "batchComplete",
             "canMarkAttempt",
             "markAttempt",
             "alwaysRunBounded",
@@ -24913,12 +24916,16 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / A newer admitting root goes first, so no older leaf reverts it",
-          "line": 170,
+          "line": 181,
           "definitions": [
             "SendResult",
             "resultFits",
             "fresh",
-            "reorderedBy",
+            "newerRootIncomplete",
+            "liveAny",
+            "inFlight",
+            "olderStepInFlight",
+            "revertsIfSent",
             "canSubmit",
             "submit",
             "alwaysNoReorderingRevert",
@@ -24930,7 +24937,7 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Finalized evidence completes a submitted legacy or Solana row, and a dropped submission is retried",
-          "line": 250,
+          "line": 296,
           "definitions": [
             "Landing",
             "landingFits",
@@ -24947,7 +24954,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A row reads only a later, well-formed journal of its own month",
-          "line": 289,
+          "line": 336,
           "definitions": [
             "monthOnly",
             "admissionFits",
@@ -24959,7 +24966,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A version 2 row completes once its root is settled and its cursor reaches the leaf count, or a verified V1 root won",
-          "line": 332,
+          "line": 379,
           "definitions": [
             "v2Total",
             "cursorDone",
@@ -24975,7 +24982,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / The executor uses the latest authorization, and its cursor belongs to that root",
-          "line": 365,
+          "line": 412,
           "definitions": [
             "laterAttempt",
             "canSignAttempt",
@@ -24991,7 +24998,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A wrong admitted total is held and never completes; only a finalized whole release ends it",
-          "line": 418,
+          "line": 467,
           "definitions": [
             "canObserveWrongTotal",
             "observeWrongTotal",
@@ -25008,7 +25015,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / An EVM month whose window closed unadmitted is refused and leaves the batch",
-          "line": 470,
+          "line": 519,
           "definitions": [
             "canRefuseUnadmitted",
             "refuseUnadmitted",
@@ -25019,7 +25026,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / Simulation samples are finalized journals of each sampled month",
-          "line": 498,
+          "line": 547,
           "definitions": [
             "entryOf",
             "snapshot",
@@ -25052,23 +25059,23 @@
         },
         {
           "target": "./executorJournal.md",
-          "line": 293
+          "line": 340
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 299
+          "line": 346
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 367
+          "line": 414
         },
         {
           "target": "./reserveRelease.md",
-          "line": 426
+          "line": 475
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 476
+          "line": 525
         }
       ]
     },

@@ -25,7 +25,7 @@ lemma publish_ensures(e: Execution, key: int, project: int, period: int, network
 {
   if inv(e) && canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) {
     var after := publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_);
-    var nr := Row(key, project, period, network, vault, v2, solana, 0, RowPhase.Pending, false, 0, 0, tree.root, tree.total, tree.count, tree.legacyRoot, 1, settlement__executorJournal_emptyJournal, settlement__money_zero, -1, false, false, tree.whole, tree.digest, tree, 1);
+    var nr := Row(key, project, period, network, vault, v2, solana, 0, RowPhase.Pending, false, 0, 0, tree.root, tree.total, tree.count, tree.legacyRoot, 1, settlement__executorJournal_emptyJournal, settlement__money_zero, -1, false, false, tree.whole, tree.digest, tree, 1, sourceOf(e, project, network, vault));
     assert after.rows == e.rows + [nr];
     KeyIdx(e);
     forall i | 0 <= i < |e.rows|
@@ -156,12 +156,12 @@ lemma submit_ensures(e: Execution, key: int, sendResult: SendResult, admit: bool
     KeyIdx(e);
     var r0 :| r0 in e.rows && ((r0.key == key) && r0.phase.Pending?);
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
-    assert (((((r0.phase.Pending? && (r0.lastAttempt == e.now)) && !(newerRootPending(e, r0))) && (admit == ((consent && windowOpen(r0.period, e.now)) && fresh_(r0)))) && resultFits(r0, sendResult, admit)) && (!(sendResult.Sent?) || !((exists o :: o in e.rows && reorderedBy(e, r0, o)))));
+    assert (((((r0.phase.Pending? && (r0.lastAttempt == e.now)) && !(newerRootPending(e, r0))) && (admit == ((consent && windowOpen(r0.period, e.now)) && fresh_(r0)))) && resultFits(r0, sendResult, admit)) && (!(sendResult.Sent?) || (!(newerRootIncomplete(e, r0)) && !(revertsIfSent(e, r0)))));
     assert admit ==> fresh_(r0);
     assert fresh_(r0) ==> r0.root == r0.latest.root;
     assert !r0.invalidated;
     if sendResult.Sent? {
-      assert !((exists o :: o in e.rows && reorderedBy(e, r0, o)));
+      assert !(revertsIfSent(e, r0));
       assert !admit ==> (r0.solana || settlement__executorJournal_admitted(r0.journal, r0.period));
       SubmitSent(e, key, sendResult, admit, consent, by_, t);
     } else {
@@ -589,7 +589,7 @@ lemma signAttempt_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
     assert ((((sequence > r0.latestSequence) && laterAttempt(r0, tree)) && windowOpen(r0.period, e.now)) && !(settlement__executorJournal_admitted(r0.journal, r0.period)));
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
-    var r1 := r0.(latest := tree, latestSequence := sequence);
+    var r1 := r0.(latest := tree, latestSequence := sequence, latestSource := sourceOf(e, r0.project, r0.network, r0.vault));
     assert after.rows[t] == r1;
     assert r0.sequence <= r0.latestSequence;
     assert !fresh_(r1);
@@ -905,7 +905,7 @@ lemma SubmitSent(e: Execution, key: int, sendResult: SendResult, admit: bool, co
   requires 0 <= t < |e.rows| && e.rows[t].key == key && e.rows[t].phase.Pending? && e.rows[t].lastAttempt == e.now
   requires attemptedThisRun(e, key) && !(key in e.processed)
   requires forall i :: 0 <= i < |e.rows| && i != t ==> e.rows[i].key != key
-  requires !(exists o :: o in e.rows && reorderedBy(e, e.rows[t], o)) && !e.rows[t].invalidated
+  requires !(revertsIfSent(e, e.rows[t])) && !e.rows[t].invalidated
   requires admit ==> (fresh_(e.rows[t]) && e.rows[t].root == e.rows[t].latest.root)
   requires !admit ==> (e.rows[t].solana || settlement__executorJournal_admitted(e.rows[t].journal, e.rows[t].period))
   ensures inv(submit(e, key, sendResult, admit, consent, by_))
@@ -942,7 +942,7 @@ lemma SubmitShape(e: Execution, key: int, sendResult: SendResult, admit: bool, c
   requires alwaysSentNoncesIssued(e) && sendResult.Sent?
   requires 0 <= t < |e.rows| && e.rows[t].key == key
   requires forall i :: 0 <= i < |e.rows| && i != t ==> e.rows[i].key != key
-  requires !(exists o :: o in e.rows && reorderedBy(e, e.rows[t], o)) && !e.rows[t].invalidated
+  requires !(revertsIfSent(e, e.rows[t])) && !e.rows[t].invalidated
   ensures |submit(e, key, sendResult, admit, consent, by_).rows| == |e.rows|
   ensures forall i :: 0 <= i < |e.rows| && i != t ==> submit(e, key, sendResult, admit, consent, by_).rows[i] == e.rows[i]
   ensures submit(e, key, sendResult, admit, consent, by_).rows[t] == e.rows[t].(phase := RowPhase.Submitted, sentNonce := e.sends, lastAdmit := admit, sentWithoutAdmit := (e.rows[t].sentWithoutAdmit || !(admit)))
