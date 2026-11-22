@@ -339,6 +339,7 @@ export schema ValueCoverage {
   readonly pullRequestNumber: number
   readonly status: string
   readonly recordDigest: string | null
+  readonly reviewAssessmentDigest?: string
   readonly verifiedImplementationActorNodeIds?: ReadonlyArray<string>
   readonly implementationAllocation?: ImplementationAllocation
 }

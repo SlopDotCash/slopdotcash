@@ -1,6 +1,7 @@
 // spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "Unit value changes only through a scored assessment or ratification of that unit"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
+import { findRepository, repositoryIdFromUrl } from "../client/snapshot/checks.vibe"
 import { pointsOfThirdsText } from "../client/units/scoreUnits.ts"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
@@ -368,6 +369,70 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
   return rows
 }
 
+effect function retireHeldImplementationReviews(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, credited: ReadonlyArray<Credited>, owned: ReadonlySet<string>, buffer: Row[], digest: string, recordedAt: string) {
+  const holds = new Map<string, string>()
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const parent = findRepository(repositories.registry, row.repository)
+    if (row.status === "incomplete" && row.recordDigest === null && row.reviewAssessmentDigest !== undefined && parent !== undefined) {
+      holds.set(sourceKey(parent.id, String(row.pullRequestNumber)), `value:${row.reviewAssessmentDigest}`)
+    }
+  }
+  if (holds.size === 0) return
+  const supplied = new Set(credited.map(({ award }) => award.key))
+  const exclusions = new Map<string, string>()
+  for (const exclusion of snapshot.reviewExclusions ?? []) {
+    const project = projectOf(repositories, exclusion.repository)
+    if (project !== undefined) exclusions.set(sourceKey(project, exclusion.reviewId), exclusion.reason)
+  }
+  const decisions = new Map<string, ScoreEvent>()
+  for (const { event } of credited) {
+    const key = event.source.url.split("#")[0]
+    if (event.category === "substantive-review" && key !== undefined && event.scoreDecisionSourceId !== undefined && event.scoreDecisionAt !== undefined) decisions.set(key, event)
+  }
+  for (const prior of store.latest.values()) {
+    const { award } = prior
+    if (award.category !== "substantive-review" || award.amount <= 0 || supplied.has(award.key) || owned.has(award.key)) continue
+    const parent = repositoryIdFromUrl(repositories.registry, award.sourceUrl)
+    const number = /^\/[^/]+\/[^/]+\/pull\/([1-9][0-9]*)$/u.exec(URL.parse(award.sourceUrl)?.pathname ?? "")?.[1]
+    if (parent === undefined || number === undefined || projectOf(repositories, parent) !== award.projectId || !workCounts(repositories, parent, award.occurredAt)) continue
+    const linked = holds.get(sourceKey(parent, number))
+    if (linked === undefined) continue
+    const omission = exclusions.get(sourceKey(award.projectId, award.sourceId))
+    if (omission === omittedBeforePolicy || omission === omittedOutsideWindow) continue
+    const inside = award.occurredAt >= snapshot.window.from && award.occurredAt < snapshot.window.to
+    if (!inside && omission === undefined) continue
+    const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+    const key = opened.names.keys.get(award.key)
+    if (key === undefined || opened.names.opaque.has(award.key)) {
+      hold(store, { subject: award.key, reason: "the recorded history of this award is outside the journal model", digest })
+      continue
+    }
+    const observed = decisions.get(award.sourceUrl.split("#")[0] ?? "")
+    const observedAt = observed?.scoreDecisionSourceId === linked ? observed?.scoreDecisionAt : undefined
+    const effectiveAt = observedAt === undefined ? undefined : try isoAt(millisOf(observedAt))
+    const decision = effectiveAt === undefined || observed === undefined ? noDecision : {
+      basis: "Superseded" as const, effectiveAt: try instant(effectiveAt), source: linked, valued: true, delta: 0,
+      reason: `Prior credit was superseded by the current source-bound scoring decision. ${observed.reason}`,
+    }
+    const transitions: Event[] = []
+    if (store.coverage.some((row) => row.digest === prior.sourceDigest)) transitions.push({ type: "recordSnapshotCoverage", snapshotDigest: prior.sourceDigest })
+    transitions.push({ type: "zeroSuperseded", k: key, snapshot: {
+      snapshotDigest: digest, windowFrom: try instant(snapshot.window.from), windowTo: try instant(snapshot.window.to),
+      policyFrom: try instant(snapshot.valuePolicyEffectiveAt ?? snapshot.window.from), supplied: [],
+      projectCollected: snapshot.repositories.some((repository) => repository.projectId === award.projectId),
+      heldPool: false, coverage: "CoverageAssessed", invalidatesJoint: false, ownRecordAbsorbs: false,
+      review: omission === undefined ? "NotOmitted" : "AdverseExclusion", decision,
+    } })
+    const refused = try sendAll(opened, transitions)
+    if (refused !== "") {
+      hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
+      continue
+    }
+    const provenance = { recordedAt, sourceDigest: digest, effectiveAt: effectiveAt ?? recordedAt, decisionSourceId: linked }
+    for (const revision of try appended(opened)) try commit(store, buffer, try rowsOf(store, opened, revision, new Map([[award.actor.id, award]]), provenance))
+  }
+}
+
 export effect function applySnapshot(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string) {
   if (store.coverage.some((entry) => entry.digest === digest)) return false
   try checkOmissions(store, repositories, snapshot)
@@ -421,6 +486,7 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     }
     try commit(store, buffer, try creditAward(store, repositories, item, context))
   }
+  try retireHeldImplementationReviews(store, repositories, snapshot, credited, owned, buffer, digest, recordedAt)
   flush(store, buffer)
   const existing = new Set(store.coverage.map((entry) => `${entry.repository}:${entry.digest}`))
   for (const repository of snapshot.repositories) {

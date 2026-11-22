@@ -1,14 +1,14 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import type { ScoreEvent } from "../src/client/snapshot/schema.vibe"
-import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
+import { decodeSnapshot, validateSnapshot } from "../src/client/snapshot/validate.vibe"
 import { type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
 import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
 import { applySnapshots, batchOwnedKeys, octoberOriginalContributorDecision } from "../src/journal/snapshot.vibe"
-import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+import { historyText, legacyHeldReview, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
 
 const recordedAt = "2026-11-17T06:00:00.000Z"
 const holdReasons = [
@@ -103,6 +103,35 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     try Effect.try(() => assert.deepStrictEqual({ precise: allocations(disjoint.revisions), legacy: allocations(legacy.revisions) }, {
       precise: [protectedCredit, [completion, independent.workUnitId, carrier.login, 30]],
       legacy: [protectedCredit],
+    }))
+  })
+
+  it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {
+    const fixture = try promise(() => legacyHeldReview())
+    const targets = fixture.before.repositories.map((repository) => ({
+      ...repository, nodeId: fixture.before.source.repositories.find((row) => row.id === repository.id)?.repositoryId ?? "",
+      aliases: repository.id === `${repository.owner}/${repository.name}` ? [] : [`${repository.owner}/${repository.name}`],
+    }))
+    const compatible = { registered: targets, targets, projects: targets.map((repository) => ({ id: repository.projectId, skillSourcePath: "SKILL.md" })) }
+    try validateSnapshot(fixture.before, compatible)
+    const held = try validateSnapshot(fixture.held, compatible)
+    const revoked = try validateSnapshot(fixture.revoked, compatible)
+    const forgedMerge = Effect.as(validateSnapshot({ ...fixture.before, valueAssessmentCoverage: held.valueAssessmentCoverage }, compatible), "") catch (error) => error.message
+    const forgedCoverage = Effect.as(validateSnapshot({
+      ...fixture.held,
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : { ...row, status: "legacy-policy" }),
+    }, compatible), "") catch (error) => error.message
+    const history = `${journalText(fixture.prior)}\n`
+    const store = try openStore(history, null, [])
+    const repositories = repositoriesOf(compatible, {})
+    try applySnapshots(store, repositories, [{ snapshot: held, digest: "9".repeat(64) }], fixture.prior.generatedAt)
+    const retained = store.revisions.length
+    const zeroed = { snapshot: revoked, digest: "a".repeat(64) }
+    try applySnapshots(store, repositories, [zeroed, zeroed], fixture.prior.generatedAt)
+    try Effect.try(() => assert.deepStrictEqual({ retained, revisions: store.revisions, forgedMerge, forgedCoverage }, {
+      retained: fixture.prior.revisions.length, revisions: fixture.retired.revisions,
+      forgedMerge: "Held implementation source cannot publish merge credit",
+      forgedCoverage: "Review assessment coverage requires a held implementation source",
     }))
   })
 
