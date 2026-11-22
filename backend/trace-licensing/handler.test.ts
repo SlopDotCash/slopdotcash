@@ -612,6 +612,99 @@ test("a ban or a turn-off that lands inside a request writes nothing", async () 
   ).toBe(0);
 });
 
+test("a refused opt-in at the same clock reading never re-licenses a withdrawn trace", async () => {
+  const h = await harness();
+  const a = h.run(ALICE);
+  const b = h.run(ALICE);
+  // Every step below happens at one clock reading.
+  await h.setting(ALICE, ENABLE);
+  expect((await h.optIn(ALICE, { runIds: [a] })).body).toEqual({ licensed: 1 });
+  await h.setting(ALICE, { enabled: false });
+  await h.setting(ALICE, ENABLE);
+  const before = h.history();
+  h.raceNextBatch(() =>
+    h.sqlite
+      .query(
+        "UPDATE trace_licensing_settings SET enabled = 0 WHERE github_id = ?",
+      )
+      .run(ALICE),
+  );
+  const refused = await h.optIn(ALICE, { runIds: [b] });
+  expect(refused.status).toBe(409);
+  expect(refused.body.error).toBe("licensing_off");
+  expect(
+    h.sqlite.query("SELECT run_id, state FROM trace_licences").all(),
+  ).toEqual([{ run_id: a, state: "withdrawn" }]);
+  expect(h.history()).toEqual(before);
+});
+
+test("a count-refused opt-in at the same clock reading never re-licenses a withdrawn trace", async () => {
+  const h = await harness();
+  const a = h.run(ALICE);
+  h.run(ALICE);
+  await h.setting(ALICE, ENABLE);
+  await h.optIn(ALICE, { runIds: [a] });
+  await h.setting(ALICE, { enabled: false });
+  await h.setting(ALICE, ENABLE);
+  const before = h.history();
+  // The setting stays on; a new upload makes the confirmed count stale.
+  h.raceNextBatch(() => h.run(ALICE));
+  const refused = await h.optIn(ALICE, { all: true, expectedCount: 2 });
+  expect(refused.status).toBe(409);
+  expect(refused.body.error).toBe("count_changed");
+  expect(
+    h.sqlite.query("SELECT run_id, state FROM trace_licences").all(),
+  ).toEqual([{ run_id: a, state: "withdrawn" }]);
+  expect(h.history()).toEqual(before);
+});
+
+test("a participation-banned account can still turn licensing off", async () => {
+  const h = await harness();
+  const a = h.run(ALICE);
+  await h.setting(ALICE, ENABLE);
+  await h.optIn(ALICE, { runIds: [a] });
+  seedParticipationBan(
+    h.sqlite,
+    { githubId: ALICE, githubLogin: "alice-gh" },
+    { githubId: "900000900", githubLogin: "moderator" },
+    NOW,
+  );
+  h.tick();
+  const off = await h.setting(ALICE, { enabled: false });
+  expect(off.status).toBe(200);
+  expect((off.body.setting as { enabled: boolean }).enabled).toBe(false);
+  expect(h.sqlite.query("SELECT state FROM trace_licences").all()).toEqual([
+    { state: "withdrawn" },
+  ]);
+  expect(
+    h.sqlite
+      .query("SELECT kind, reason FROM trace_licence_events ORDER BY id")
+      .all(),
+  ).toEqual([
+    { kind: "granted", reason: "opt_in" },
+    { kind: "withdrawn", reason: "setting_off" },
+  ]);
+});
+
+test("turning on while already on needs no confirmation and writes nothing", async () => {
+  const h = await harness();
+  await h.setting(ALICE, ENABLE);
+  h.tick();
+  for (const body of [
+    { enabled: true },
+    { enabled: true, providerTermsConfirmed: false },
+  ]) {
+    const again = await h.setting(ALICE, body);
+    expect(again.status).toBe(200);
+    expect(again.body.setting).toEqual({
+      enabled: true,
+      since: NOW,
+      providerTermsConfirmed: true,
+    });
+  }
+  expect(h.history()).toEqual({ account: 1, licence: 0 });
+});
+
 test("another account's run id is refused and nothing is licensed", async () => {
   const h = await harness();
   const mine = h.run(ALICE);

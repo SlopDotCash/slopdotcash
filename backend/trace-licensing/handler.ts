@@ -246,14 +246,16 @@ async function changeSetting(
     );
   const { db } = deps;
   await refuseClosed(db, githubId);
+  // A toggle to the state in force is a no-op, with or without the tick.
+  const current = await readSetting(db, githubId);
+  if (current.enabled === enabled) return { setting: current };
   if (enabled && providerTermsConfirmed !== true)
     fail(
       422,
       "provider_terms_unconfirmed",
       "Confirm that your model provider's terms let you license these runs' output.",
     );
-  const current = await readSetting(db, githubId);
-  if (current.enabled === enabled) return { setting: current };
+  // A ban refuses turning on; the account can still withdraw by turning off.
   if (enabled) await refuseBanned(db, githubId);
   const now = deps.now().toISOString();
   if (enabled) {
@@ -421,7 +423,9 @@ async function optIn(
       )
       .bind(githubId, githubId, "opted_in", now, ...scope, ...guardBinds),
     // The licences follow the grant events this batch just wrote, so this
-    // statement does not depend on the count it changes.
+    // statement does not depend on the count it changes. A grant licenses
+    // only while it is still its trace's latest event and the setting holds,
+    // so an older batch's grants never revive a withdrawn licence.
     db
       .prepare(
         `INSERT INTO trace_licences (run_id, github_id, state, basis, updated_at)
@@ -430,11 +434,23 @@ async function optIn(
          WHERE granted.account_event_id = ${LATEST_EVENT}
            AND granted.github_id = ? AND granted.kind = 'granted'
            AND granted.reason = 'opt_in' AND granted.at = ?
+           AND NOT EXISTS (SELECT 1 FROM trace_licence_events later
+             WHERE later.run_id = granted.run_id AND later.id > granted.id)
+           AND ${ENABLED} AND NOT ${BANNED} AND NOT ${CLOSED}
          ON CONFLICT (run_id) DO UPDATE SET state = 'licensed', basis = 'opt_in',
            updated_at = excluded.updated_at
          WHERE trace_licences.state = 'withdrawn'`,
       )
-      .bind(now, githubId, "opted_in", githubId, now),
+      .bind(
+        now,
+        githubId,
+        "opted_in",
+        githubId,
+        now,
+        githubId,
+        githubId,
+        githubId,
+      ),
   ]);
   if ((written?.meta?.changes ?? 0) !== 1) {
     await refuseClosed(db, githubId);
