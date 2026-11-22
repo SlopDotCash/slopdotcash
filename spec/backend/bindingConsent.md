@@ -65,7 +65,7 @@ type EvmConsentSignature = { recoveredSigner: str, claim: int, network: str, vau
 type Consent = { claim: int, network: str, vault: str, chainId: int, version: int, expiresAt: int, signer: str, createdAt: int }
 type SolanaStatus = SolanaPrepared | SolanaCompleted | SolanaExpired
 type SolanaGeneration = { obligation: int, generation: int, claim: int, transaction: int, status: SolanaStatus,
-  expiryHeight: int, privateCase: int }
+  expiryHeight: int, privateCase: int, failedFinalized: bool }
 type PaymentEvidence = { obligation: int, owner: str, network: str, vault: str, reserved: bool,
   attemptClaim: int, attemptOpen: bool, privateCase: int, outboxReady: bool }
 type CaseAccess = { privateCase: int, actor: str }
@@ -182,10 +182,14 @@ nothing. Completion rechecks the same evidence and only fills the wallet's
 slot of that exact transaction, compare-and-set on its generation; a second
 completion of the same generation is refused and the first full transaction
 is kept. A generation whose claim was replaced cannot complete; it stays
-live until it expires. Only the scanner's finalized height past the
-generation's last valid height, while the obligation is still reserved,
-expires it; then a new generation with new bytes may be prepared, and
-earlier bytes are retained. Submission and on-chain outcome are the
+live until it expires. Only the scanner expires it, while the obligation is
+still reserved: by a finalized height past the generation's last valid
+height, or by its transaction's failure at finality when no binding for its
+destination and claim landed (a landed binding is left for finalized receipt
+reconciliation and never replaced; Slop development `0d59867ed`, #3172,
+`workers/payment-executor/solana.ts`, the attester role); then a new
+generation with new bytes may be prepared, and earlier bytes are retained. A
+failure short of finality expires nothing. Submission and on-chain outcome are the
 signer's and settlement's.
 
 A private security settlement uses the security attester. Every request by
@@ -222,14 +226,15 @@ pure def logged(b: Binding, by: str, obligation: int): List[CaseAccess] =
   if (p.privateCase > 0 and p.owner == by) b.caseAccessLog.append({ privateCase: p.privateCase, actor: by }) else b.caseAccessLog
 pure def liveGeneration(b: Binding, obligation: int): SolanaGeneration =
   b.generations.select(g => g.obligation == obligation and g.status != SolanaExpired)
-    .nthOr(0, { obligation: 0, generation: 0, claim: 0, transaction: 0, status: SolanaExpired, expiryHeight: 0, privateCase: 0 })
+    .nthOr(0, { obligation: 0, generation: 0, claim: 0, transaction: 0, status: SolanaExpired, expiryHeight: 0, privateCase: 0,
+      failedFinalized: false })
 pure def canSolanaPrepare(b: Binding, by: str, obligation: int): bool =
   solanaReady(b, by, obligation) and solanaDeploymentReady(b, obligation) and liveGeneration(b, obligation).generation == 0
 pure def solanaPrepare(b: Binding, by: str, obligation: int): Binding =
   { ...b, lastGeneration: b.lastGeneration + 1, caseAccessLog: logged(b, by, obligation),
     generations: b.generations.append({ obligation: obligation, generation: b.lastGeneration + 1, claim: solanaClaim(b),
       transaction: b.lastGeneration + 1, status: SolanaPrepared, expiryHeight: b.finalizedHeight + blockhashValidity,
-      privateCase: paymentFor(b, obligation).privateCase }) }
+      privateCase: paymentFor(b, obligation).privateCase, failedFinalized: false }) }
 pure def canSolanaComplete(b: Binding, by: str, obligation: int, generation: int, walletSignature: SolanaWalletSignature): bool =
   val g = liveGeneration(b, obligation)
   solanaReady(b, by, obligation) and g.generation > 0 and g.generation == generation and g.status == SolanaPrepared
@@ -247,10 +252,17 @@ pure def canSolanaExpire(b: Binding, by: str, obligation: int, generation: int):
     and paymentFor(b, obligation).reserved
 pure def solanaExpire(b: Binding, by: str, obligation: int, generation: int): Binding =
   { ...b, generations: b.generations.listMap(g => if (g.generation == generation) { ...g, status: SolanaExpired } else g) }
+pure def canSolanaFail(b: Binding, by: str, obligation: int, generation: int): bool =
+  by == solanaScanner and generation > 0 and liveGeneration(b, obligation).generation == generation
+    and paymentFor(b, obligation).reserved
+pure def solanaFail(b: Binding, by: str, obligation: int, generation: int): Binding =
+  { ...b, generations: b.generations.listMap(g =>
+    if (g.generation == generation) { ...g, status: SolanaExpired, failedFinalized: true } else g) }
 pure def alwaysOneLiveGeneration(b: Binding): bool = b.generations.every(g =>
   g.generation > 0 and g.generation <= b.lastGeneration and g.transaction == g.generation and g.claim > 0
     and g.claim <= b.solanaWallet.claims.length() and W::alreadyAuthorized(b.solanaWallet, g.claim)
-    and g.expiryHeight > 0 and (g.status == SolanaExpired implies b.finalizedHeight > g.expiryHeight)
+    and g.expiryHeight > 0 and (g.status == SolanaExpired implies (b.finalizedHeight > g.expiryHeight or g.failedFinalized))
+    and (g.failedFinalized implies g.status == SolanaExpired)
     and paymentFor(b, g.obligation).obligation == g.obligation and paymentFor(b, g.obligation).privateCase == g.privateCase
     and b.generations.select(o => o.generation == g.generation).length() == 1
     and (g.status != SolanaExpired implies
@@ -407,6 +419,8 @@ pure def sometimesConsentForReplacedClaim(b: Binding): bool = b.consents.some(c 
 pure def sometimesSolanaCompleted(b: Binding): bool = b.generations.some(g => g.status == SolanaCompleted)
 pure def sometimesPrivateCompleted(b: Binding): bool = b.generations.some(g => g.status == SolanaCompleted and g.privateCase > 0)
 pure def sometimesSolanaRegenerated(b: Binding): bool = b.generations.some(g => g.status == SolanaExpired) and b.lastGeneration >= 2
+pure def sometimesRegeneratedAfterFailure(b: Binding): bool = b.generations.some(g => g.failedFinalized and
+  b.generations.some(h => h.obligation == g.obligation and h.generation > g.generation and h.status != SolanaExpired))
 pure def sometimesSolanaGenerationForReplacedClaim(b: Binding): bool =
   b.generations.some(g => g.status == SolanaPrepared and g.claim != solanaClaim(b))
 pure def sometimesRegeneratedForNewClaim(b: Binding): bool =

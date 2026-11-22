@@ -175,3 +175,56 @@ pure val changeValues = Set({ delivery: 1, kind: I::Created, sourceTime: 1, hasA
 pure val pValues = Set(chatgpt, claude, api)
 pure val sValues = Set(initial, { ...initial, cutoff: 1793577600, install: { ...I::initial, known: true, sourceTime: 1 } })
 ```
+
+### An opted-in refusal returns only its own correlation and the fixed terminal projection
+
+Source `backend/slopbot/value-import.ts`, `value-import-observation.ts`
+(`isIntakeCorrelation`), `workers/slopbot/value-import-service.ts`
+(`publishSubscriptionDiagnosed`) and `value-import-diagnostics.ts`
+(`projectTerminalIntakeFailure`), development `409dddcfc` (#3127). A
+request opts in with the header `x-slop-intake-correlation` holding exactly
+64 lowercase hexadecimal characters and the header
+`x-slop-intake-diagnostics: terminal-v1`. A success is unchanged: 200 with
+the stored receipt. A refused publication is the 409
+`assessment_not_published`; it carries `diagnostic: { correlation, failure }`
+only when the request opted in, the publisher answered with the same
+correlation, and its failure is exactly the six fields `stage`,
+`sourceIndex`, `sourceCount`, `errorName`, `httpStatus` and
+`messageSha256`, with a known intake stage, a known error name
+(`Error`, `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`,
+`URIError`, `EvalError`, `DOMException`, `AbortError`, `TimeoutError`,
+`DataError`, `OperationError`, `NotSupportedError`, `InvalidAccessError`,
+`DataCloneError`, `QuotaExceededError`, `GitHubError` or `OtherError`), a
+source count that is absent or from 1 to 10,000, a source index
+that is absent or below a present count, a status that is absent or one of
+400, 401, 403, 404, 408, 409, 413, 415, 422, 429, 500, 502, 503 and 504, and
+a digest that is absent or 64 lowercase hexadecimal characters. Anything
+else is the plain 409. No error text, provider body, uploaded assessment,
+evidence or source-read refusal detail leaves through it. The shell parses
+the publisher's answer into `TerminalFailure`: an absent count is 0 and an
+absent index is -1.
+
+```quint
+type TerminalFailure = { exactFields: bool, stageKnown: bool, nameKnown: bool, sourceIndex: int, sourceCount: int,
+  statusKnown: bool, digestValid: bool }
+type RefusalReply = PlainRefusal | DiagnosedRefusal
+pure val maxIntakeSources = 10000
+pure def terminalProjection(failure: TerminalFailure): bool =
+  failure.exactFields and failure.stageKnown and failure.nameKnown and failure.statusKnown and failure.digestValid and
+  (failure.sourceCount == 0 or (failure.sourceCount >= 1 and failure.sourceCount <= maxIntakeSources)) and
+  (failure.sourceIndex == -1 or (failure.sourceIndex >= 0 and failure.sourceCount > 0 and failure.sourceIndex < failure.sourceCount))
+pure def refusalReply(optedIn: bool, correlationValid: bool, echoed: bool, failure: TerminalFailure): RefusalReply =
+  if (optedIn and correlationValid and echoed and terminalProjection(failure)) DiagnosedRefusal else PlainRefusal
+pure def lawNoOptInNoDiagnostic(correlationValid: bool, echoed: bool, failure: TerminalFailure): bool =
+  refusalReply(false, correlationValid, echoed, failure) == PlainRefusal
+pure def lawOtherCorrelationNoDiagnostic(optedIn: bool, correlationValid: bool, failure: TerminalFailure): bool =
+  refusalReply(optedIn, correlationValid, false, failure) == PlainRefusal
+pure def lawDiagnosticIsTheFixedProjection(optedIn: bool, correlationValid: bool, echoed: bool, failure: TerminalFailure): bool =
+  refusalReply(optedIn, correlationValid, echoed, failure) == DiagnosedRefusal implies terminalProjection(failure)
+pure val terminalFailure: TerminalFailure = { exactFields: true, stageKnown: true, nameKnown: true, sourceIndex: 0,
+  sourceCount: 2, statusKnown: true, digestValid: true }
+pure val failureValues = Set(terminalFailure, { ...terminalFailure, exactFields: false },
+  { ...terminalFailure, sourceIndex: 2 }, { ...terminalFailure, sourceIndex: -1, sourceCount: 0 },
+  { ...terminalFailure, sourceIndex: 0, sourceCount: 0 }, { ...terminalFailure, sourceCount: 10001 },
+  { ...terminalFailure, statusKnown: false })
+```

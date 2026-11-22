@@ -37,7 +37,8 @@ type ClearanceRead = ClearanceCleared | ClearanceUnverified | ClearanceRefused
 type Answer = Served | GoneRestricted | ProjectNotFound | SkillsNotPublished | NoUsableClearance
   | ArtifactNotFound | RetryLater | PassThrough
 type ArtifactFacts = { read: L::PublicRead, active: bool, skillFields: bool, clearance: ClearanceRead,
-  templateLoaded: bool, templateVerified: bool, artifactExists: bool, readFailed: bool, monthListing: MonthListing }
+  templateLoaded: bool, templateVerified: bool, artifactExists: bool, readFailed: bool, monthListing: MonthListing,
+  intake: IntakeListing }
 pure def canonicalArtifact(artifactName: str): str =
   if (artifactName == "SKILL.md") "skill.md" else if (artifactName == "review/SKILL.md") "review-skill.md" else artifactName
 pure def answerStatus(answer: Answer): int =
@@ -123,14 +124,14 @@ pure def lawPausedClearedProjectStillServes(known: ArtifactFacts): bool =
 `/.well-known/slop/projects.json` is `{ schemaVersion: "1", projects }`. A
 project contributes rows only when its public read is listed, its status is
 active (not paused), it publishes generated skills, it is not left out as
-unfunded this month (below) and its clearance for the index's
+not listed this month or paused at its intake cap (below) and its clearance for the index's
 `templateSha256` is cleared; an unverified clearance leaves it out rather
 than failing the index. Each of its repositories gives one row:
 `project_id`, `project_url` (`https://slop.cash/projects/<id>/`),
 `repository` (the repository's last alias, else its id), `review_skill`,
 `review_skill_manifest`
 (`https://slop.cash/projects/<id>/review-skill-manifest.json`), `skill` and
-`skill_source`. Apart from the month listing, this gate is exactly the
+`skill_source`. Apart from the month listing and the intake cap, this gate is exactly the
 installer's (`frontend/projections.md` `installable`, used by
 [skill authority](./skillAuthority.md)).
 
@@ -139,7 +140,7 @@ type RepositoryEntry = { id: str, lastAlias: str }
 type DiscoveryRow = { projectId: str, repositoryName: str }
 pure def discoverable(known: ArtifactFacts): bool =
   known.read == L::Listed and known.active and known.skillFields and known.clearance == ClearanceCleared
-  and known.monthListing != UnfundedThisMonth
+  and known.monthListing == ListedThisMonth and known.intake != IntakePaused
 pure def discoveryRows(known: ArtifactFacts, projectId: str, repositories: List[RepositoryEntry]): List[DiscoveryRow] =
   if (discoverable(known))
     repositories.listMap(x => { projectId: projectId, repositoryName: if (x.lastAlias != "") x.lastAlias else x.id })
@@ -148,47 +149,68 @@ pure def factsOfView(view: F::ProjectView): ArtifactFacts =
   { read: if (not(F::listed(view))) L::NotFound else if (view.flagged or view.quarantined) L::Gone else L::Listed,
     active: not(view.paused), skillFields: view.skillFields,
     clearance: if (view.cleared) ClearanceCleared else ClearanceRefused,
-    templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth }
+    templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth,
+    intake: IntakeOpen }
 pure def lawDiscoveryMatchesInstallerGate(view: F::ProjectView): bool = discoverable(factsOfView(view)) iff F::installable(view)
 pure def lawOneRowPerRepository(known: ArtifactFacts, projectId: str, repositories: List[RepositoryEntry]): bool =
   discoveryRows(known, projectId, repositories).length() == (if (discoverable(known)) repositories.length() else 0)
 pure def lawPausedProjectNotDiscovered(known: ArtifactFacts): bool = not(known.active) implies not(discoverable(known))
 ```
 
-### Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project
+### Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing
 
-An unfunded monthly pool is not listed this month (operator decision,
-16 November 2026). Discovery reads, on the server and beside the project
-list, the cached vault rows behind `GET /api/v1/pool-funding`. A read that
-throws or returns nothing gives every candidate a pool read of `PoolFailed`,
-which is `FundingUnread`: it logs `project discovery pool
-funding unavailable` and lists every cleared project as before, so a funding
-outage never empties discovery. A successful read, an empty one included,
-gives each candidate `ListedThisMonth` when `listedThisMonth` of the
-[monthly listing](../frontend/poolListing.md) holds for its listing facts on
-that read, and `UnfundedThisMonth` otherwise. The discovery answer is
-`no-store` like every other, so the next request reads the funding again. The month listing changes discovery only:
-the project's skills, guides, archives and `terms.json` keep serving by
-direct link, and the installer's gate is unchanged.
+Discovery reads no vault funding (operator decision, 18 November 2026). The
+month listing comes from the registry alone: a project is listed this month when `listedThisMonth` of the
+[monthly listing](../frontend/poolListing.md) holds for its manifest, so an
+active monthly pool with no open security program and a configured amount of
+zero for the current UTC month (the month's `cycleCaps` override, else
+`monthlyCapMinor`) is `NotListedThisMonth`, whatever any vault holds, and a
+pool with a positive configured amount is listed whether or not it is
+vaulted. Beside the project list, discovery reads the stored intake counts of
+the [merge activity](../backend/mergeActivity.md) once: a project that the
+[intake cap](../backend/intakeCap.md) has paused (its cap is set and a count
+of one of its repositories at or above it was observed no more than 72 hours
+ago) is `IntakePaused` and left out until a later count falls below the cap.
+A read that is absent, empty or null, or that throws, is `IntakeUnread` and
+pauses nothing; one that throws logs `project discovery intake counts
+unavailable`. A project with no stored count pauses nothing. The discovery
+answer is `no-store` like every other, so the next request reads the counts
+again. Both gates change discovery only: the project's skills, guides,
+archives and `terms.json` keep serving by direct link, and the installer's
+gate is unchanged.
 
 ```quint
 import poolListing as PL from "../frontend/poolListing"
-type MonthListing = ListedThisMonth | UnfundedThisMonth | FundingUnread
+import intakeCap as IC from "../backend/intakeCap"
+type MonthListing = ListedThisMonth | NotListedThisMonth
+type IntakeListing = IntakeOpen | IntakePaused | IntakeUnread
 pure def monthListingOf(facts: PL::ListingFacts): MonthListing =
-  if (not(PL::fundingKnown(facts))) FundingUnread else if (PL::listedThisMonth(facts)) ListedThisMonth else UnfundedThisMonth
-pure def lawUnfundedProjectNotDiscovered(known: ArtifactFacts): bool =
-  known.monthListing == UnfundedThisMonth implies not(discoverable(known))
-pure def lawFailedFundingReadListsAsBefore(known: ArtifactFacts): bool =
-  discoverable({ ...known, monthListing: FundingUnread }) iff discoverable({ ...known, monthListing: ListedThisMonth })
-pure def lawFundingReadDecidesOnlyWhenRead(facts: PL::ListingFacts): bool =
-  (not(PL::fundingKnown(facts)) implies monthListingOf(facts) == FundingUnread)
-  and (PL::fundingKnown(facts) implies (monthListingOf(facts) == UnfundedThisMonth iff not(PL::listedThisMonth(facts))))
-pure def lawUnfundedProjectServesByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
+  if (PL::listedThisMonth(facts)) ListedThisMonth else NotListedThisMonth
+pure def intakeListingOf(countsRead: bool, cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): IntakeListing =
+  if (not(countsRead)) IntakeUnread
+  else if (IC::paused({ ...IC::initial, cap: cap, active: projectActive, now: now, counts: counts })) IntakePaused
+  else IntakeOpen
+pure def lawNotListedProjectNotDiscovered(known: ArtifactFacts): bool =
+  known.monthListing == NotListedThisMonth implies not(discoverable(known))
+pure def lawMonthListingFollowsTheRegistry(facts: PL::ListingFacts): bool =
+  (monthListingOf(facts) == ListedThisMonth) iff PL::listedThisMonth(facts)
+pure def lawPausedAtCapNotDiscovered(known: ArtifactFacts): bool =
+  known.intake == IntakePaused implies not(discoverable(known))
+pure def lawFailedCountReadPausesNothing(known: ArtifactFacts): bool =
+  discoverable({ ...known, intake: IntakeUnread }) iff discoverable({ ...known, intake: IntakeOpen })
+pure def lawUnreadCountsPauseNothing(cap: int, projectActive: bool, now: int, counts: List[IC::StoredCount]): bool =
+  intakeListingOf(false, cap, projectActive, now, counts) == IntakeUnread
+  and intakeListingOf(true, cap, projectActive, now, List()) == IntakeOpen
+pure def lawRecentCountAtCapPauses(cap: int, now: int, counts: List[IC::StoredCount]): bool =
+  (cap >= IC::minCap and counts.some(c => IC::countAtCap(cap, c, now)))
+    implies intakeListingOf(true, cap, true, now, counts) == IntakePaused
+pure def lawListingGatesServeByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
   route != DiscoveryRoute implies
-    artifactAnswer(route, { ...known, monthListing: UnfundedThisMonth })
-      == artifactAnswer(route, { ...known, monthListing: ListedThisMonth })
-pure def lawDiscoveryIsInstallerGateListedThisMonth(view: F::ProjectView, listing: MonthListing): bool =
-  discoverable({ ...factsOfView(view), monthListing: listing }) iff (F::installable(view) and listing != UnfundedThisMonth)
+    artifactAnswer(route, { ...known, monthListing: NotListedThisMonth, intake: IntakePaused })
+      == artifactAnswer(route, { ...known, monthListing: ListedThisMonth, intake: IntakeOpen })
+pure def lawDiscoveryIsInstallerGateListedAndOpen(view: F::ProjectView, listing: MonthListing, intake: IntakeListing): bool =
+  discoverable({ ...factsOfView(view), monthListing: listing, intake: intake })
+    iff (F::installable(view) and listing == ListedThisMonth and intake != IntakePaused)
 ```
 
 ### Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD
@@ -510,9 +532,11 @@ pure def lawMissingSourceFailsBuild(identityValid: bool): bool = not(protocolPub
 
 ```quint
 pure val servedFacts: ArtifactFacts = { read: L::Listed, active: true, skillFields: true, clearance: ClearanceCleared,
-  templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth }
+  templateLoaded: true, templateVerified: true, artifactExists: true, readFailed: false, monthListing: ListedThisMonth,
+  intake: IntakeOpen }
 pure val knownValues = Set(servedFacts, { ...servedFacts, active: false }, { ...servedFacts, read: L::Gone },
-  { ...servedFacts, monthListing: UnfundedThisMonth }, { ...servedFacts, monthListing: FundingUnread },
+  { ...servedFacts, monthListing: NotListedThisMonth }, { ...servedFacts, intake: IntakePaused },
+  { ...servedFacts, intake: IntakeUnread },
   { ...servedFacts, read: L::NotFound }, { ...servedFacts, clearance: ClearanceUnverified },
   { ...servedFacts, clearance: ClearanceRefused }, { ...servedFacts, skillFields: false },
   { ...servedFacts, templateVerified: false }, { ...servedFacts, readFailed: true })
@@ -521,7 +545,12 @@ pure val openProjectView: F::ProjectView = { registered: true, retired: false, l
 pure val viewValues = Set(openProjectView, { ...openProjectView, paused: true }, { ...openProjectView, flagged: true },
   { ...openProjectView, retired: true }, { ...openProjectView, cleared: false })
 pure val repositoriesValues = Set(List(), List({ id: "o/r", lastAlias: "" }, { id: "o/s", lastAlias: "n/s" }))
-pure val listingValues = Set(ListedThisMonth, UnfundedThisMonth, FundingUnread)
+pure val listingValues = Set(ListedThisMonth, NotListedThisMonth)
+pure val intakeValues = Set(IntakeOpen, IntakePaused, IntakeUnread)
+pure val capValues = Set(0, 1, 3, 4)
+pure val nowValues = Set(0)
+pure val countsValues = Set(List(), List(IC::unread), List({ read: true, count: 3, observedAt: 0 }),
+  List(IC::unread, { read: true, count: 3, observedAt: -72 }), List({ read: true, count: 3, observedAt: -73 }))
 pure val factsValues = PL::listingValues
 pure val projectIdValues = Set("p")
 pure val artifactNameValues = Set("SKILL.md", "review/SKILL.md", "terms.json")

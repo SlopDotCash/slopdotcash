@@ -289,19 +289,24 @@ recipient still belongs to its kind's audience at preparation, from the
 current project, enforcement, appeal and penalty records and the
 administrator and moderator sets of the current configuration snapshot;
 otherwise it answers `Denied` and the attempt is suppressed. A payout
-exception reaches only the project's current
+exception reaches the project's current
 [payout audience](./payoutAudience.md): its steward when the steward is a
 GitHub user account, the account that listed the project when the steward is
 a GitHub Organization, and that Organization steward when no lister is
 recorded; the `steward` fact holds exactly when
-`payoutExceptionAudience` of the current project and the recipient holds. A
+`payoutExceptionAudience` of the current project and the recipient holds. An
+owner cut's notice (keyed `monthly-cut:<project>:<period>:<sequence>`, its
+subject that project) also reaches the contributor that cut record names: the
+`cutContributor` fact. A
 project ban made by the vetting service reaches a current owner, a current
 affected contributor or current staff (an administrator or moderator),
 whichever writer won the shared notice key. Every other project-owner notice (ready, revision, scan
 failed, installation lost, quarantined, banned, reinstatement requested,
 reinstated, reinstatement denied) reaches a current owner, or current staff
 when its action path is the administration page. A reinstatement review
-reaches a current moderator. A scam-closure account review reaches a current
+reaches a current moderator only while the request it names is undecided (the
+`requestOpen` fact: no later enforcement record of the project has decided
+it, as the [moderation](./moderation.md) queue folds it). A scam-closure account review reaches a current
 moderator who is not the closed account's author, and only while the scam
 penalty is not reversed. An escalated Slopbot appeal reaches a current
 moderator who is not its appellant while the appeal is open; a points
@@ -316,7 +321,7 @@ import payoutAudience as PA from "./payoutAudience"
 type AppealSource = NoAppeal | EscalatedAppeal | DisputeOpened | DisputeResolved
 type NoticeAudience = { steward: bool, owner: bool, affectedContributor: bool, administrator: bool, moderator: bool,
   vettingBan: bool, staffPath: bool, appeal: AppealSource, appellant: bool, escalated: bool, resolved: bool,
-  scamPenaltyStands: bool, author: bool }
+  scamPenaltyStands: bool, author: bool, cutContributor: bool, requestOpen: bool }
 pure def ownerKind(kind: Kind): bool = kind == ProjectReady or kind == ProjectRevision or kind == ProjectScanFailed
   or kind == ProjectInstallationLost or kind == ProjectQuarantined or kind == ProjectBanned
   or kind == ReinstatementRequested or kind == ProjectReinstated or kind == ReinstatementDenied
@@ -329,10 +334,10 @@ pure def appealAudience(audience: NoticeAudience): bool =
   else false
 pure def audienceHolds(kind: Kind, audience: NoticeAudience): bool =
   val staff = audience.administrator or audience.moderator
-  if (kind == PayoutException) audience.steward
+  if (kind == PayoutException) audience.steward or audience.cutContributor
   else if (kind == ProjectBanned and audience.vettingBan) audience.owner or audience.affectedContributor or staff
   else if (ownerKind(kind)) audience.owner or (audience.staffPath and staff)
-  else if (kind == ReinstatementReview) audience.moderator
+  else if (kind == ReinstatementReview) audience.moderator and audience.requestOpen
   else if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands and not(audience.author)
   else if (kind == SlopbotAppealReview) appealAudience(audience)
   else true
@@ -344,21 +349,32 @@ pure def lawFormerOwnerLosesOwnerNotices(noticeKind: Kind, audience: NoticeAudie
     implies not(audienceHolds(noticeKind, audience))
 pure def lawScamReviewNeverReachesAuthorOrAfterReversal(audience: NoticeAudience): bool =
   (audience.author or not(audience.scamPenaltyStands)) implies not(audienceHolds(SlopbotScamReview, audience))
-pure def lawPayoutExceptionOnlyToSteward(audience: NoticeAudience): bool =
-  audienceHolds(PayoutException, audience) iff audience.steward
+pure def lawPayoutExceptionOnlyToItsAudience(audience: NoticeAudience): bool =
+  audienceHolds(PayoutException, audience) iff (audience.steward or audience.cutContributor)
+pure def lawDecidedReinstatementMailsNobody(audience: NoticeAudience): bool =
+  not(audience.requestOpen) implies not(audienceHolds(ReinstatementReview, audience))
 pure val audienceValues = Set(
   { steward: true, owner: false, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
-    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false,
+    cutContributor: false, requestOpen: false },
   { steward: false, owner: false, affectedContributor: true, administrator: false, moderator: false, vettingBan: true,
-    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false,
+    cutContributor: false, requestOpen: false },
   { steward: false, owner: false, affectedContributor: false, administrator: true, moderator: false, vettingBan: false,
-    staffPath: true, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+    staffPath: true, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false,
+    cutContributor: false, requestOpen: false },
   { steward: false, owner: false, affectedContributor: false, administrator: false, moderator: true, vettingBan: false,
-    staffPath: false, appeal: EscalatedAppeal, appellant: false, escalated: true, resolved: false, scamPenaltyStands: true, author: false },
+    staffPath: false, appeal: EscalatedAppeal, appellant: false, escalated: true, resolved: false, scamPenaltyStands: true, author: false,
+    cutContributor: false, requestOpen: true },
   { steward: false, owner: false, affectedContributor: false, administrator: false, moderator: true, vettingBan: false,
-    staffPath: false, appeal: DisputeOpened, appellant: true, escalated: true, resolved: true, scamPenaltyStands: false, author: true },
+    staffPath: false, appeal: DisputeOpened, appellant: true, escalated: true, resolved: true, scamPenaltyStands: false, author: true,
+    cutContributor: false, requestOpen: false },
   { steward: false, owner: true, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
-    staffPath: false, appeal: DisputeResolved, appellant: true, escalated: false, resolved: true, scamPenaltyStands: true, author: true })
+    staffPath: false, appeal: DisputeResolved, appellant: true, escalated: false, resolved: true, scamPenaltyStands: true, author: true,
+    cutContributor: false, requestOpen: false },
+  { steward: false, owner: false, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
+    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false,
+    cutContributor: true, requestOpen: false })
 ```
 
 ### Only independent provider evidence for the exact attempt and destination settles a send

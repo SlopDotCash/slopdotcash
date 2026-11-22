@@ -8,7 +8,10 @@ Both default to false. They are distinct from the two data options:
 `use_published_data`, for a manual main or development release, retains the
 last snapshot that environment published, and `discussion_resume_run`, for a
 manual main release only, resumes public PR discussion reads from a recent
-trusted main release attempt; the two exclude each other. The exact
+trusted main release attempt; the two exclude each other. `data_from_run`,
+for a manual main release with `use_published_data` only, takes the retained
+data from a completed trusted main release's own fresh collection instead of
+the live site ([release](./release.md)). The exact
 source is `scripts/ci-scope.mjs`,
 `.github/workflows/{deploy,formal,lemmascript}.yml` and
 `formal/models/release/ci_coverage.qnt`. Current Vibestack checked model and
@@ -23,13 +26,15 @@ Deploying pushes require full browser, model and proof coverage. Each manual
 option changes only its own lane selection. The common gates include both
 inventories, build and code, data, integration, installer, sandbox,
 environment, source and deployed-byte checks. Route and environment identity
-remain separate release admission rules.
+remain separate release admission rules. `data_from_run` is accepted only
+on an explicit manual main release that also asks for `use_published_data`,
+and changes no lane selection.
 
 ```quint
 type RunKind = DeployingPush | ManualDispatch | PullRequest | ScheduledNightly
 type Target = Main | Development | OtherBranch
 type Requests = { kind: RunKind, target: Target, skipProofs: bool, skipBrowserTests: bool,
-  resumeDiscussions: bool, usePublishedData: bool }
+  resumeDiscussions: bool, usePublishedData: bool, dataFromRun: bool }
 type ReleaseChecks = { eligible: bool, stateModels: bool, staticProofs: bool,
   browserSmoke: bool, browserComplete: bool, common: bool }
 pure def releaseTarget(request: Requests): bool = request.target == Main or request.target == Development
@@ -39,6 +44,7 @@ pure def explicitManual(request: Requests): bool = deploying(request) and reques
 pure def dataOptionsAllowed(request: Requests): bool =
   (request.resumeDiscussions implies explicitManual(request) and request.target == Main)
     and (request.usePublishedData implies explicitManual(request))
+    and (request.dataFromRun implies explicitManual(request) and request.target == Main and request.usePublishedData)
     and not(request.resumeDiscussions and request.usePublishedData)
 pure def coverage(request: Requests): ReleaseChecks =
   val allowed = deploying(request) and dataOptionsAllowed(request)
@@ -48,7 +54,8 @@ pure def coverage(request: Requests): ReleaseChecks =
     browserSmoke: manual and request.skipBrowserTests,
     browserComplete: allowed and not(manual and request.skipBrowserTests), common: allowed }
 pure def lawPushRunsEverything(request: Requests): bool =
-  (request.kind == DeployingPush and releaseTarget(request) and not(request.resumeDiscussions or request.usePublishedData)) implies
+  (request.kind == DeployingPush and releaseTarget(request)
+    and not(request.resumeDiscussions or request.usePublishedData or request.dataFromRun)) implies
     coverage(request).eligible and coverage(request).stateModels and coverage(request).staticProofs
       and coverage(request).browserComplete and not(coverage(request).browserSmoke) and coverage(request).common
 pure def lawOnlyManualCanOmit(request: Requests): bool = coverage(request).eligible implies
@@ -80,9 +87,13 @@ pure def lawResumeOnlyManualMain(request: Requests): bool =
   (coverage(request).eligible and request.resumeDiscussions) implies
     explicitManual(request) and request.target == Main and not(request.usePublishedData)
 pure def lawPushNeverTakesDataOptions(request: Requests): bool =
-  (request.kind == DeployingPush and (request.resumeDiscussions or request.usePublishedData)) implies not(coverage(request).eligible)
+  (request.kind == DeployingPush and (request.resumeDiscussions or request.usePublishedData or request.dataFromRun))
+    implies not(coverage(request).eligible)
 pure def lawPublishedDataOnlyManual(request: Requests): bool =
   (coverage(request).eligible and request.usePublishedData) implies explicitManual(request)
+pure def lawDataFromRunOnlyRetainedManualMain(request: Requests): bool =
+  (coverage(request).eligible and request.dataFromRun) implies
+    explicitManual(request) and request.target == Main and request.usePublishedData and not(request.resumeDiscussions)
 pure def lawResumeKeepsChecks(request: Requests): bool =
   coverage({ ...request, resumeDiscussions: false }).eligible implies
     (coverage({ ...request, resumeDiscussions: true }).eligible implies
@@ -156,7 +167,7 @@ pure def lawNightlyIsIndependent(request: Requests, defaultBranch: bool): bool =
 
 ```quint
 pure val defaultReleaseRequest: Requests = { kind: DeployingPush, target: Main, skipProofs: false, skipBrowserTests: false,
-  resumeDiscussions: false, usePublishedData: false }
+  resumeDiscussions: false, usePublishedData: false, dataFromRun: false }
 pure val requestValues = Set(defaultReleaseRequest,
   { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, skipProofs: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, skipBrowserTests: true },
@@ -168,7 +179,11 @@ pure val requestValues = Set(defaultReleaseRequest,
   { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, resumeDiscussions: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, usePublishedData: true },
   { ...defaultReleaseRequest, kind: ManualDispatch, resumeDiscussions: true, usePublishedData: true },
-  { ...defaultReleaseRequest, resumeDiscussions: true })
+  { ...defaultReleaseRequest, resumeDiscussions: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, usePublishedData: true, dataFromRun: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, target: Development, usePublishedData: true, dataFromRun: true },
+  { ...defaultReleaseRequest, kind: ManualDispatch, dataFromRun: true },
+  { ...defaultReleaseRequest, usePublishedData: true, dataFromRun: true })
 pure val responsesValues = Set(List(), List({ matchesLive: true, revalidated: true }),
   List({ matchesLive: false, revalidated: true }, { matchesLive: true, revalidated: false }))
 pure val fullReceipts: CheckReceipts = { common: true, modelInventory: true, proofInventory: true, stateModels: true,

@@ -13,4 +13,8 @@ PRD sections 6 and 11 govern fee-only services and SLOP buyback. No fee operatio
 - [Received-fee flow composition](./composition.md)
 - [Buyback sends and arrivals bound to the fee journals](./buybackBinding.md)
 - [Administrator fee report](./feeReport.md)
+- [Submission fee deposits of pull requests](./submissionFeeDeposits.md)
+- [Submission fee deposits of security reports](./submissionFeeReportDeposits.md)
+- [Submission fee resolver sends](./submissionFeeSends.md)
+- [Submission fee SLOP rate](./submissionFeeRate.md)
 - [Settlement and signer boundaries](../settlement/)

@@ -60,13 +60,16 @@ Ordinary and bounty projects follow the same predicates. Placement changes do
 not change funding, rewards, clearance or recorded obligations. The tier and
 these registry reads stay independent of funding. The home page lists every
 open Featured and Community project in its tier regardless of funding (owner
-decision, 17 November 2026, Slop development `47f9b35c1`). Only /sponsors and
-agent discovery leave out an active monthly pool that is not vault-backed
-this month, while a failed funding read lists every project; that month
-listing is `listedThisMonth` of the
-[monthly listing](../frontend/poolListing.md), applied on top of these
-predicates, and never moves a project between tiers. An honor-system promise
-changes no listing.
+decision, 17 November 2026, Slop development `47f9b35c1`). /sponsors applies
+`listedThisMonth` of the [monthly listing](../frontend/poolListing.md), a
+registry rule that reads no funding (Slop development `b1b08de50`,
+`src/lib/pool-funding.ts`), and agent discovery applies the
+[publication](../contributor/publication.md) rule, which imports it
+(`backend/projects/skill-publication.ts`); both also leave out a project
+paused at its [intake cap](./intakeCap.md). Those rules are stated there and
+not here; they apply on top of these predicates and never move a project
+between tiers, and `GET /api/v1/projects` stays unfiltered. An honor-system
+promise changes no listing.
 
 ```quint
 pure def lawFundingDoesNotChoosePlacement(project: P::Project, security: E::Enforcement, closure: R::Closure, tier: P::Tier): bool =

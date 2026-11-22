@@ -57,18 +57,32 @@ pure val publishedValues = Set(
 
 ### A manual main release on retained data prepares in its own concurrency group
 
-Preparation is grouped per pull request or ref and event, and only a pull
-request cancels a running preparation. A manual dispatch on `main` with
-`use_published_data` adds the suffix `-retained` to its group, so it can
-prepare beside a live collection of the same ref; the publication lock is
-unchanged.
+Preparation (the `prepare` job's concurrency group
+`slop-quality-<pull request number or ref>-<lane>` in
+`.github/workflows/deploy.yml`) is grouped per pull request, and per ref and
+event elsewhere, and only a pull request cancels a running preparation. On
+`main`, every run that is not a pull request shares one of two lanes: every
+fresh collection, a push, a schedule or a manual dispatch, shares the
+`collect` lane, because they spend one collector App allowance and a second
+waits for the first (operator decision, 19 November 2026); a run with
+`use_published_data` takes the `retained` lane, so it can prepare beside a
+live collection. The publication lock is unchanged.
 
 ```quint
-pure def retainedPreparationGroup(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
-  eventKind == R::WorkflowDispatch and branch == "main" and usePublishedData
+type PrepLane = PullRequestLane | MainCollect | MainRetained | RefEvent
+pure def preparationLane(eventKind: R::RefKind, branch: str, usePublishedData: bool): PrepLane =
+  if (eventKind == R::PullRequestRef) PullRequestLane
+  else if (branch == "main") (if (usePublishedData) MainRetained else MainCollect)
+  else RefEvent
 pure def cancelsRunningPreparation(eventKind: R::RefKind): bool = eventKind == R::PullRequestRef
-pure def lawOnlyManualMainRetainedSeparates(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
-  retainedPreparationGroup(eventKind, branch, usePublishedData) implies
-    (eventKind == R::WorkflowDispatch and not(cancelsRunningPreparation(eventKind)))
+pure def lawOnlyRetainedMainSeparates(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
+  preparationLane(eventKind, branch, usePublishedData) == MainRetained implies
+    (branch == "main" and usePublishedData and not(cancelsRunningPreparation(eventKind)))
+pure def lawFreshMainCollectionsShareOneLane(eventKind: R::RefKind): bool =
+  eventKind != R::PullRequestRef implies preparationLane(eventKind, "main", false) == preparationLane(R::BranchPush, "main", false)
+pure def lawRetainedNeverSharesFreshLane(eventKind: R::RefKind, otherKind: R::RefKind): bool =
+  preparationLane(eventKind, "main", true) != preparationLane(otherKind, "main", false) or eventKind == R::PullRequestRef
+pure def lawOnlyPullRequestLaneCancels(eventKind: R::RefKind, branch: str, usePublishedData: bool): bool =
+  cancelsRunningPreparation(eventKind) iff preparationLane(eventKind, branch, usePublishedData) == PullRequestLane
 pure val branchValues = Set("main", "development")
 ```

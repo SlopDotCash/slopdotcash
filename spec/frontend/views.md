@@ -68,6 +68,95 @@ pure val policyValues = Set(
 )
 ```
 
+### A published maintainer share shows this month's share, and next month's while a change waits
+
+The project page, the home card and /sponsors show the project's
+[maintainer share](../settlement/maintainerShare.md) only for a monthly pool
+whose registry base monthly amount (not a month override) is positive, and
+only while this month's share or the setting is above zero (development
+`src/lib/maintainer-share.mjs` `publishedMaintainerShare`,
+`maintainerShareNotice` and `maintainerShareCardLine` at `8660a6121`). This
+month's share is the first history entry whose month is this month or later,
+else the setting (`monthShareOf`); a change the owner made this month takes
+effect next month. While the two are equal one share is shown ("Maintainer
+share: 20% of the monthly amount, split among the maintainers who merge or
+close outside pull requests."; the card "Maintainer share 20%"); otherwise
+both, with the month the setting starts ("… 20% of the monthly amount this
+month, 10% from December, …"; the card "Maintainer share 10% from
+December"). A share of zero reads "none".
+
+```quint
+import payoutExclusions as X from "../settlement/payoutExclusions"
+type ShareHistoryEntry = { throughMonth: int, basisPoints: int }
+type ShareShown = NoShare | SameShare({ basisPoints: int })
+  | ChangingShare({ thisMonth: int, fromNext: int, fromPeriod: int })
+pure def monthShareOf(history: List[ShareHistoryEntry], setting: int, period: int): int =
+  history.select(e => period <= e.throughMonth).nthOr(0, { throughMonth: 0, basisPoints: setting }).basisPoints
+pure def shareShown(monthlyPool: bool, baseAmountPositive: bool, thisMonth: int, setting: int, period: int): ShareShown =
+  if (not(monthlyPool) or not(baseAmountPositive) or (thisMonth == 0 and setting == 0)) NoShare
+  else if (thisMonth == setting) SameShare({ basisPoints: thisMonth })
+  else ChangingShare({ thisMonth: thisMonth, fromNext: setting, fromPeriod: X::nextPeriod(period) })
+pure def shareHidden(shown: ShareShown): bool = match shown { | NoShare => true | _ => false }
+pure def shareChanging(shown: ShareShown, period: int): bool =
+  match shown { | ChangingShare(c) => c.fromPeriod == X::nextPeriod(period) and c.thisMonth != c.fromNext | _ => false }
+pure def lawNoAmountNoShare(monthlyPool: bool, thisMonth: int, setting: int, period: int): bool =
+  shareHidden(shareShown(monthlyPool, false, thisMonth, setting, period))
+pure def lawChangeShowsBothMonths(thisMonth: int, setting: int, period: int): bool =
+  (thisMonth != setting) implies shareChanging(shareShown(true, true, thisMonth, setting, period), period)
+pure def lawHistoryKeepsTheOpenMonth(setting: int, period: int, basisPoints: int): bool =
+  monthShareOf(List({ throughMonth: period, basisPoints: basisPoints }), setting, period) == basisPoints
+pure def lawNoHistoryIsTheSetting(setting: int, period: int): bool = monthShareOf(List(), setting, period) == setting
+pure def lawMonthShareIsAnEntryOrTheSetting(history: List[ShareHistoryEntry], setting: int, period: int): bool =
+  monthShareOf(history, setting, period) == setting
+    or history.some(e => e.throughMonth >= period and e.basisPoints == monthShareOf(history, setting, period))
+pure val thisMonthValues = Set(0, 2000)
+pure val settingValues = Set(0, 1000, 2000)
+pure val periodValues = Set(202611, 202612)
+pure val basisPointsValues = Set(0, 1500)
+pure val historyValues = Set(List(), List({ throughMonth: 202611, basisPoints: 2000 }),
+  List({ throughMonth: 202610, basisPoints: 500 }, { throughMonth: 202612, basisPoints: 1000 }))
+```
+
+### Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before
+
+The project page's suggested work reads the project's wanted issues from the
+stored [merge activity](../backend/mergeActivity.md) rows: only rows read
+with the project's current wanted label, each repository's issues in
+repository order and oldest first. Issues with no open pull request that
+closes them come first, then the others, each keeping that order, at most
+ten (development `src/lib/merge-activity.ts` `wantedIssues`,
+`src/lib/wanted-label.mjs` `WANTED_ISSUES_SHOWN` and `src/ProjectWork.tsx`
+at `8660a6121`); a taken one reads "Wanted · PR open". The public snapshot's
+suggestions follow, without any wanted issue's address (compared
+lowercased). A pending or failed wanted read lists no wanted issue and leaves
+the snapshot's suggestions as they were; the snapshot's error shows only
+while no wanted issue is listed.
+
+```quint
+type WantedIssue = { url: str, openPulls: int }
+type WantedRead = WantedPending | WantedFailed | WantedReady({ issues: List[WantedIssue] })
+pure val wantedShown = 10
+pure val noWanted: WantedIssue = { url: "", openPulls: 0 }
+pure def wantedOrder(issues: List[WantedIssue]): List[WantedIssue] =
+  issues.select(i => i.openPulls == 0).concat(issues.select(i => i.openPulls > 0))
+    .foldl(List(), (kept, i) => if (kept.length() < wantedShown) kept.append(i) else kept)
+pure def wantedListed(wantedRead: WantedRead): List[WantedIssue] =
+  match wantedRead { | WantedReady(r) => wantedOrder(r.issues) | _ => List() }
+pure def snapshotErrorShown(snapshotFailed: bool, wantedRead: WantedRead): bool =
+  snapshotFailed and wantedListed(wantedRead).length() == 0
+pure def lawUnclaimedFirst(issues: List[WantedIssue]): bool =
+  issues.some(i => i.openPulls == 0) implies wantedOrder(issues).nthOr(0, { ...noWanted, openPulls: 1 }).openPulls == 0
+pure def lawAtMostTen(issues: List[WantedIssue]): bool = wantedOrder(issues).length() <= wantedShown
+pure def lawFailedReadChangesNothing(snapshotFailed: bool): bool =
+  wantedListed(WantedFailed).length() == 0 and wantedListed(WantedPending).length() == 0
+    and snapshotErrorShown(snapshotFailed, WantedFailed) == snapshotFailed
+pure val issuesValues = Set(List(), List({ url: "a", openPulls: 1 }, { url: "b", openPulls: 0 }),
+  List({ url: "a", openPulls: 0 }, { url: "b", openPulls: 0 }, { url: "c", openPulls: 0 }, { url: "d", openPulls: 0 },
+    { url: "e", openPulls: 0 }, { url: "f", openPulls: 0 }, { url: "g", openPulls: 0 }, { url: "h", openPulls: 0 },
+    { url: "i", openPulls: 0 }, { url: "j", openPulls: 2 }, { url: "k", openPulls: 0 }))
+pure val wantedReadValues = Set(WantedPending, WantedFailed, WantedReady({ issues: List({ url: "a", openPulls: 1 }) }))
+```
+
 ### A cycle reminds viewers to check funding from seven days before close only for an unsettled monthly pool with a non-zero cap
 
 A public cycle record and its manifest do not establish the month's funding;
@@ -142,10 +231,13 @@ pure val requestedValues = Set(
   { projectFilter: "", monthFilter: "", stateFilter: "" })
 ```
 
-## Story: Read a contributor's profile and Points
+## Story: Read a contributor's profile
 
 > As a visitor or a member, I want a profile address to name the person who
-> holds that login now, and my own Points to add up the records they come from.
+> holds that login now. A profile shows the contribution record, payments and
+> penalties and the projects by name, and neither it nor the account menu
+> shows a recent, total or daily Points figure (development `src/Profiles.tsx`,
+> `src/ProfilePage.tsx` and `src/Points.tsx` `PointsNav` at `8660a6121`).
 
 ### A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login
 
@@ -209,48 +301,6 @@ pure val memberValues = Set(NoMember, MemberFound({ memberId: 1, memberLogin: "a
 pure val journalValues = Set(JournalPending, JournalLoaded({ entries: List({ id: 5, login: "bob" }) }),
   JournalLoaded({ entries: List({ id: 5, login: "bob" }, { id: 6, login: "bob" }) }))
 pure val memberIdValues = Set(1, 4)
-```
-
-### Recent Points sum each UTC day of the last days including today
-
-A profile groups Points awards by the UTC day they occurred, independent of
-payout eligibility, over the last `days` days ending today; Recent Points is
-the sum of those days. An award outside the window, or in the future, is not
-counted.
-
-```quint
-type DayAward = { day: int, amount: int }
-pure def recentPoints(awards: List[DayAward], today: int, days: int): int =
-  awards.foldl(0, (total, award) => total + (if (award.day <= today and award.day > today - days) award.amount else 0))
-pure def lawEmptyWindowIsZero(awards: List[DayAward], today: int, days: int): bool =
-  days <= 0 implies recentPoints(awards, today, days) == 0
-pure def lawTodayCounts(today: int, amount: int, days: int): bool =
-  days > 0 implies recentPoints(List({ day: today, amount: amount }), today, days) == amount
-pure def lawFutureAwardsDoNotCount(today: int, amount: int, days: int): bool =
-  recentPoints(List({ day: today + 1, amount: amount }), today, days) == 0
-pure val awardsValues = Set(List(), List({ day: 20400, amount: 3 }, { day: 20380, amount: 5 }))
-pure val todayValues = Set(20400)
-pure val daysValues = Set(0, 1, 30)
-pure val amountValues = Set(1, 7)
-```
-
-### The account menu total sums the signed-in member's Points records under the owner's chosen scope
-
-Owner decision frontend-ui:OD4 (ARCHITECTURE O25) is pending. The production
-behaviour is the default: the menu total is the member's total from the Points
-standings plus their historical welcome award and historical X award (no such
-award is made from 24 October 2026; earlier ones never change). Standings
-themselves count accepted work only ("Monthly and lifetime standings sum the
-same accepted-work history"). The alternative is a menu total of accepted work
-only, equal to the standings. A member missing from the standings counts zero
-there.
-
-```quint
-type MenuPoints = { standingTotal: int, welcomeAward: int, socialAward: int }
-pure def accountMenuTotal(menu: MenuPoints): int = menu.standingTotal + menu.welcomeAward + menu.socialAward
-pure def lawMenuTotalIncludesStandings(menu: MenuPoints): bool =
-  (menu.welcomeAward >= 0 and menu.socialAward >= 0) implies accountMenuTotal(menu) >= menu.standingTotal
-pure val menuValues = Set({ standingTotal: 30, welcomeAward: 10, socialAward: 0 }, { standingTotal: 0, welcomeAward: 0, socialAward: 5 })
 ```
 
 ## Story: Read the sponsor statistics without mistaking them for scores

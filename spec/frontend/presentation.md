@@ -10,23 +10,25 @@ contribution and reporting entry points usable independently of discovery.
 
 ### Home keeps distinct contribution and report entry points and generic agent setup
 
-Current security offers appear before project lists and rankings. Loading,
+Current security offers appear before the project lists. Loading,
 empty, stale or failed discovery never removes the generic agent setup.
 Offer data comes from its own authorized public read; failure never invents an
 offer. The section-order list specifies relative placement, not extra headings,
-cards or controls.
+cards or controls. Home reads no Points summary and has no rankings section
+(development `src/App.tsx` `HomePage` at `8660a6121`).
 
 ```quint
 import requests as R from "./requests"
-type HomeSection = ContributionEntry | PrivateReportEntry | SecurityOffers | ProjectList | Rankings
-pure val homeOrder = List(ContributionEntry, PrivateReportEntry, SecurityOffers, ProjectList, Rankings)
+type HomeSection = ContributionEntry | PrivateReportEntry | SecurityOffers | ProjectList
+pure val homeOrder = List(ContributionEntry, PrivateReportEntry, SecurityOffers, ProjectList)
 pure def genericAgentSetupAvailable(discovery: R::ReadStatus, clearedProjects: int): bool = true
 pure def contributionEntryAvailable(discovery: R::ReadStatus): bool = true
 pure def privateReportEntryAvailable(discovery: R::ReadStatus): bool = true
 pure def lawDiscoveryFailureKeepsEntryPoints(discovery: R::ReadStatus, clearedProjects: int): bool =
   genericAgentSetupAvailable(discovery, clearedProjects) and contributionEntryAvailable(discovery) and privateReportEntryAvailable(discovery)
 pure def lawOffersPrecedeDiscovery(order: List[HomeSection]): bool =
-  order == homeOrder implies order.nthOr(2, Rankings) == SecurityOffers and order.nthOr(3, Rankings) == ProjectList and order.nthOr(4, ProjectList) == Rankings
+  order == homeOrder implies order.nthOr(2, ProjectList) == SecurityOffers and order.nthOr(3, SecurityOffers) == ProjectList
+    and order.length() == 4
 ```
 
 ### The campaign keeps one stable accessible heading and respects reduced motion
@@ -121,7 +123,7 @@ pure val completeHeadingValues = headingValues
 pure val animatedTextValues = Set("", "MAKE MONEY SHIP", "MAKE MONEY SHIPPING OPEN SOURCE.")
 pure val firstFrameValues = Set("", "MAKE MONEY SHIP")
 pure val secondFrameValues = Set("MAKE MONEY SHIP", "MAKE MONEY SHIPPING OPEN SOURCE.")
-pure val orderValues = Set(homeOrder, List(ProjectList, SecurityOffers, Rankings))
+pure val orderValues = Set(homeOrder, List(ProjectList, SecurityOffers))
 pure val clearedProjectsValues = Set(0, 1, 2)
 pure val scrollOffsetValues = Set(0, 1, 1000)
 ```
@@ -145,7 +147,32 @@ change (development `src/ProjectProposalPage.tsx` at `67fd54fd4`). Existing hist
 review commitments retain their terms. A custom image falls back to the
 GitHub owner avatar and never uses a social-preview image.
 
+Review also offers the submission fee, wanted issues and the private report
+deposit, each starting checked for a new project, while Slopbot's automatic
+closure consent starts unchecked and a project saved without it reads
+unchecked ([closure consent](../backend/closureConsent.md),
+`defaultNewDraft`; the owner's decision of 13 November 2026 overrides
+development's checked default). A listing that is only a security program
+takes no contributions, so it publishes no closure consent, submission fee
+or wanted issues, and keeps the report deposit. Settings add the intake cap,
+empty (off) or a whole number from 1 to 500 ([intake cap](../backend/intakeCap.md)),
+and, for a monthly pool, the maintainer share, empty or a whole percent from
+0 to 30, where 0 is none ([maintainer share](../settlement/maintainerShare.md)).
+An invalid entry shows its error, blocks Publish and keeps the published
+value until it is corrected. Each changed row says what publishing it does:
+the vault, the monthly amount and the maintainer share take effect next
+month; the Slopbot settings, the report deposit, the image, headline,
+description and integration branch are live at once; any other change is
+live for a cleared project and otherwise needs a rescan. An integration
+branch change is refused beside any other change except the contribution
+section, its guide, scope and skill rules ("Save the other settings before changing the integration branch.")
+(development `src/ProjectProposalPage.tsx:187–220,1657–1676,2463–2510,2990–3020,3182–3198,3600–3615`
+at `8660a6121`).
+
 ```quint
+import closureConsent as CC from "../backend/closureConsent"
+import intakeCap as IC from "../backend/intakeCap"
+import maintainerShare as MS from "../settlement/maintainerShare"
 type SetupPresentation = { projectStep: bool, rewardsStep: bool, reviewStep: bool,
   publicRepositoryPicker: bool, repositoryUrlEntry: bool, selectedFactsLoaded: bool,
   publicPreview: bool, contributorSkillPreview: bool, reviewerSkillPreview: bool,
@@ -168,6 +195,55 @@ pure def projectImage(customImage: str, ownerAvatar: str): str =
   if (customImage != "") customImage else ownerAvatar
 pure def lawImageFallback(ownerAvatar: str): bool = projectImage("", ownerAvatar) == ownerAvatar
 pure def lawNoSecondReviewPool(view: SetupPresentation): bool = acceptedSetupPresentation(view) implies not(view.secondReviewPool)
+type ListingChoices = { closureConsent: bool, submissionFee: bool, wantedIssues: bool, reportDeposit: bool }
+type SettingEntry = EntryEmpty | EntryWhole({ whole: int }) | EntryInvalid
+type SettingField = VaultField | MonthlyField | MaintainerShareField | SlopbotField | ReportDepositField | ImageField
+  | HeadlineField | DescriptionField | IntegrationBranchField | ContributionGuideField | OtherField
+type SettingEffect = LiveNow | NextMonth | NeedsRescan
+pure val submissionFeeDefault = true
+pure val wantedIssuesDefault = true
+pure val reportDepositDefault = true
+pure val newChoices: ListingChoices = { closureConsent: CC::defaultNewDraft, submissionFee: submissionFeeDefault,
+  wantedIssues: wantedIssuesDefault, reportDeposit: reportDepositDefault }
+pure val branchConflictText = "Save the other settings before changing the integration branch."
+pure def publishedChoices(bountyOnly: bool, choices: ListingChoices): ListingChoices =
+  val consent = CC::consents(CC::newProjectConsent(if (bountyOnly) CC::BountyOnly else CC::OrdinarySetup, choices.closureConsent))
+  if (bountyOnly) { closureConsent: consent, submissionFee: false, wantedIssues: false, reportDeposit: choices.reportDeposit }
+  else { ...choices, closureConsent: consent }
+pure def intakeCapEntryValid(entry: SettingEntry): bool =
+  match entry { | EntryEmpty => true | EntryWhole(e) => e.whole >= IC::minCap and e.whole <= IC::maxCap | _ => false }
+pure def shareEntryValid(entry: SettingEntry): bool =
+  match entry { | EntryEmpty => true | EntryWhole(e) => e.whole >= 0 and e.whole * 100 <= MS::maxShareBasisPoints | _ => false }
+pure def entryNumber(entry: SettingEntry): int = match entry { | EntryWhole(e) => e.whole | _ => 0 }
+pure def entryOrPublished(valid: bool, entered: int, published: int): int = if (valid) entered else published
+pure def lawShareEntryAtMostThirtyPercent(entry: SettingEntry): bool =
+  shareEntryValid(entry) implies entryNumber(entry) * 100 <= MS::maxShareBasisPoints
+pure def lawIntakeCapEntryWithinLimits(entry: SettingEntry): bool =
+  (intakeCapEntryValid(entry) and entry != EntryEmpty) implies (entryNumber(entry) >= IC::minCap and entryNumber(entry) <= IC::maxCap)
+pure def changeEffect(field: SettingField, cleared: bool): SettingEffect =
+  if (field == VaultField or field == MonthlyField or field == MaintainerShareField) NextMonth
+  else if (field == SlopbotField or field == ReportDepositField or field == ImageField or field == HeadlineField
+    or field == DescriptionField or field == IntegrationBranchField or cleared) LiveNow
+  else NeedsRescan
+pure def branchChangeAllowed(branchChanged: bool, others: List[SettingField]): bool =
+  not(branchChanged) or others.every(f => f == ContributionGuideField)
+pure def lawNewSettingsStartOn(bountyOnly: bool): bool =
+  newChoices.submissionFee and newChoices.wantedIssues and newChoices.reportDeposit and not(newChoices.closureConsent)
+    and publishedChoices(bountyOnly, newChoices).reportDeposit
+pure def lawBountyOnlyTakesNoFee(choices: ListingChoices): bool =
+  val listed = publishedChoices(true, choices)
+  not(listed.closureConsent) and not(listed.submissionFee) and not(listed.wantedIssues)
+    and listed.reportDeposit == choices.reportDeposit
+pure def lawInvalidEntryKeepsPublished(entered: int, published: int): bool = entryOrPublished(false, entered, published) == published
+pure def lawBranchChangeStandsAlone(others: List[SettingField]): bool =
+  branchChangeAllowed(true, others) iff others.every(f => f == ContributionGuideField)
+pure def lawShareChangesNextMonth(cleared: bool): bool = changeEffect(MaintainerShareField, cleared) == NextMonth
+pure val choicesValues = Set(newChoices, { closureConsent: true, submissionFee: false, wantedIssues: true, reportDeposit: false })
+pure val entryValues = Set(EntryEmpty, EntryInvalid, EntryWhole({ whole: 0 }), EntryWhole({ whole: 30 }), EntryWhole({ whole: 31 }),
+  EntryWhole({ whole: 500 }), EntryWhole({ whole: 501 }))
+pure val othersValues = Set(List(), List(ContributionGuideField), List(ContributionGuideField, HeadlineField))
+pure val enteredValues = Set(0, 20)
+pure val publishedValues = Set(10)
 ```
 
 ### Setup readiness shows authority, Slopbot, security and funding separately

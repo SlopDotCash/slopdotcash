@@ -199,6 +199,31 @@ pure def lawFundingStatesAreDistinguishable(a: FundingObservation, b: FundingObs
   a != b implies U::distinguishable(fundingPresentation(a), fundingPresentation(b))
 ```
 
+### A contributor's projected amount leaves out the month's published maintainer share
+
+A published [maintainer share](../settlement/maintainerShare.md) leaves the
+monthly amount before the Points split, so the funding-backed projection,
+the cap simulation and their cents views each allocate the amount less the
+month's share: the amount times its basis points, divided by 10,000 and
+rounded down (development `src/lib/project-view.ts:736–760` at
+`8660a6121`). The month's share is its history entry, else the setting
+([views](./views.md), `monthShareOf`). A month in which nobody decides an
+outside pull request pays no share, so the projection is then lower than the
+proposal, never higher.
+
+```quint
+import maintainerShare as MS from "../settlement/maintainerShare"
+pure def contributorPool(amount: M::Amount, basisPoints: int): M::Amount =
+  if (basisPoints <= 0) amount
+  else M::subtractAmounts(amount,
+    M::divideAmounts(M::multiplyAmounts(amount, M::smallAmount(basisPoints)), M::smallAmount(MS::basisPointsDivisor)).quotient)
+pure def lawProjectionNeverAboveTheAmount(amount: M::Amount, basisPoints: int): bool =
+  (M::validAmount(amount) and basisPoints <= MS::maxShareBasisPoints)
+    implies M::compareAmounts(contributorPool(amount, basisPoints), amount) <= 0
+pure def lawNoShareKeepsTheAmount(amount: M::Amount): bool = contributorPool(amount, 0) == amount
+pure val basisPointsValues = Set(0, 2000, 3000)
+```
+
 ## Story: Read Points standings with equal ranks for equal totals
 
 ### Monthly and lifetime standings sum the same accepted-work history
@@ -244,7 +269,9 @@ Withdrawn when a withdrawal during the month left it short. Everything else,
 and any read that is loading, stale or failed, shows no vault-backed amount
 and never zero: points only, or, for a positive pool whose owner opted into
 an honor-system promise, the month's amount as a promise under the next rule
-(honor-system exception, 17 November 2026). The month-start read itself is retained once by the
+(honor-system exception, 17 November 2026). Home and /sponsors show a
+positive configured amount that is not vault-backed with its backing, as the
+rule after next says. The month-start read itself is retained once by the
 [vault snapshots](../settlement/vaultSnapshots.md).
 
 A vault whose contract supports month pledges (its cached read carries
@@ -340,6 +367,46 @@ pure val promiseValues = Set(
   { pool: { ...fundedPool, freeNow: List(15), withdrawnSince: true }, honorSystem: true, vaultUnread: false },
   { pool: { ...fundedPool, freeAtStart: List(15) }, honorSystem: false, vaultUnread: false },
   { pool: { ...fundedPool, amount: List(0) }, honorSystem: true, vaultUnread: false })
+```
+
+### Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted
+
+PRD section 6 (development `src/lib/pool-funding.ts` `listingPoolReward` and
+`src/App.tsx` `HomePage`, `src/PublicPages.tsx` `SponsorsPage` at
+`8660a6121`): Home and /sponsors show a monthly pool's configured amount for
+this month (`listedAmount`) whenever it is positive, with a tag. A Funded
+month is "Vaulted". Otherwise an owner's honor-system promise is "Promised"
+and any other pool "Configured", each beside the warning "Not vaulted", or
+"Vault funding unverified" while some recorded paying vault has neither a
+read free balance nor pledge support (`vaultUnread`, as for the promise). A
+zero amount and a reward that is not a monthly pool carry no tag. The
+project page keeps the rules above (`promiseWarning`): it shows an amount
+only while it is vault-backed or promised. The tag is presentation only:
+listing, discovery, `poolDisplay` and payment never read it.
+
+```quint
+type FundingTag = NoTag | Vaulted | Promised | Configured
+pure def listedAmount(promise: PromiseFacts): M::Amount = if (promise.pool.monthlyPool) promise.pool.amount else M::zero
+pure def fundingTag(promise: PromiseFacts): FundingTag =
+  if (not(promise.pool.monthlyPool) or not(M::positiveAmount(promise.pool.amount))) NoTag
+  else if (poolDisplay(promise.pool) == PoolFunded) Vaulted
+  else if (promise.honorSystem) Promised else Configured
+pure def listingWarning(promise: PromiseFacts): PromiseWarning =
+  if (fundingTag(promise) == NoTag or fundingTag(promise) == Vaulted) NoPromise
+  else if (promise.vaultUnread) PromisedUnverified else PromisedNotVaulted
+pure def listingWarningText(warning: PromiseWarning): str =
+  if (warning == PromisedNotVaulted) "Not vaulted" else if (warning == PromisedUnverified) "Vault funding unverified" else ""
+pure def lawVaultedOnlyWhenFunded(promise: PromiseFacts): bool =
+  (fundingTag(promise) == Vaulted) iff (poolDisplay(promise.pool) == PoolFunded)
+pure def lawConfiguredNeverClaimsAPromise(promise: PromiseFacts): bool =
+  fundingTag(promise) == Configured implies not(promise.honorSystem)
+pure def lawZeroAmountHasNoTag(promise: PromiseFacts): bool =
+  not(M::positiveAmount(promise.pool.amount)) implies fundingTag(promise) == NoTag
+pure def lawPromisedTagIsThePagePromise(promise: PromiseFacts): bool =
+  ((fundingTag(promise) == Promised) iff (promiseWarning(promise) != NoPromise))
+    and (fundingTag(promise) == Promised implies listingWarning(promise) == promiseWarning(promise))
+pure def lawVaultedNeedsNoWarning(promise: PromiseFacts): bool =
+  fundingTag(promise) == Vaulted implies listingWarning(promise) == NoPromise
 ```
 
 ### Slop's pages refuse a withdrawal below the promised amount
@@ -521,38 +588,29 @@ through the project's funders route, newest first, 50 a page with the full
 count, and shows each deposit's depositor, network, amount and block date.
 It is read only beside vault counters that are on record. Loading, empty
 ("No deposits recorded yet"), listed and failed are distinct, and a failed
-read offers Retry and is left only by a retry. A depositor is named by GitHub
-login only when exactly one public, open Slop account currently has that
-address registered (on Solana for a Solana deposit, on any EVM network for
-an EVM deposit); otherwise the address alone is shown. Private bounty vaults
-are not listed. The list is display evidence only: balances, funded months,
+read offers Retry and is left only by a retry. The server names each
+depositor ([deposit records](../settlement/vaultDeposits.md),
+`depositorLogin`): by GitHub login only when exactly one public, open Slop
+account currently has that address registered (on Solana for a Solana
+deposit, on any EVM network for an EVM deposit) and the wallet signed that
+registration; an unsigned registration neither names a depositor nor hides
+one; otherwise the address alone is shown. The page shows the name the
+server gives and never names a depositor itself. Private bounty vaults are
+not listed. The list is display evidence only: balances, funded months,
 listing and payment come from the finalized vault counters.
 
 ```quint
-type Registration = { login: str, publicAccount: bool, closed: bool }
 type FundersView = FundersHidden | FundersLoading | FundersError | NoFunders | FundersListed
 pure val noFundersText = "No deposits recorded yet"
-pure val fundersPage = 50
-pure def depositorLogin(registrations: List[Registration]): str =
-  val named = registrations.select(r => r.publicAccount and not(r.closed))
-  if (named.length() == 1) named.nthOr(0, { login: "", publicAccount: false, closed: false }).login else ""
 pure def fundersView(countersOnRecord: bool, status: R::ReadStatus): FundersView =
   if (not(countersOnRecord)) FundersHidden
   else if (status == R::Idle or status == R::Loading) FundersLoading
   else if (status == R::Current or status == R::Stale) FundersListed
   else if (status == R::Empty) NoFunders
   else FundersError
-pure def lawTwoAccountsNameNobody(account: Registration, otherAccount: Registration): bool =
-  (account.publicAccount and not(account.closed) and otherAccount.publicAccount and not(otherAccount.closed))
-    implies depositorLogin(List(account, otherAccount)) == ""
-pure def lawPrivateOrClosedAccountNamesNobody(account: Registration): bool =
-  (not(account.publicAccount) or account.closed) implies depositorLogin(List(account)) == ""
 pure def lawFundersNeedCounters(status: R::ReadStatus): bool = fundersView(false, status) == FundersHidden
 pure def lawFailedFundersReadOffersRetry(status: R::ReadStatus): bool =
   (status == R::Failed or status == R::Invalid or status == R::Unavailable) implies fundersView(true, status) == FundersError
-pure val accountValues = Set({ login: "alice", publicAccount: true, closed: false }, { login: "bob", publicAccount: false, closed: false },
-  { login: "carol", publicAccount: true, closed: true })
-pure val otherAccountValues = accountValues
 ```
 
 ## Story: See my contributor allocation on Payouts

@@ -57,7 +57,7 @@ type Assignment = { assessment: int, repository: int, identityEpoch: int, reques
 type Citation = { assessment: int, repository: int, identityEpoch: int, commit: int }
 type Scan = { assignment: Assignment, phase: Phase, attempts: int, staleTemplate: bool, successorTemplate: int,
   inventory: int, inventoryDigest: int, reviewed: int, deterministic: bool, ambiguous: bool, uncoveredExecutable: int, blocked: int,
-  primary: Review, escalation: Escalation, specialist: Review, synthesis: bool,
+  primary: Review, escalation: Escalation, specialist: Review, synthesis: bool, reviewBlocked: bool,
   refusal: Refusal, disposition: Disposition, confirmation: Confirmation,
   reused: bool, reuseOrigin: Citation, originPermanent: bool, retained: bool,
   digest: int, sends: int, acceptedDigest: int, recorded: Disposition, investigation: Investigation, investigationId: int }
@@ -66,7 +66,7 @@ pure val queuedAssignment: Assignment = { assessment: 1, repository: 1, identity
 pure val noCitation: Citation = { assessment: 0, repository: 0, identityEpoch: 0, commit: 0 }
 pure val initial: Scan = { assignment: queuedAssignment, phase: Queued, attempts: 0, staleTemplate: false, successorTemplate: 0,
   inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, ambiguous: false, uncoveredExecutable: 0, blocked: 0,
-  primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false,
+  primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false, reviewBlocked: false,
   refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation,
   reused: false, reuseOrigin: noCitation, originPermanent: false, retained: false,
   digest: 0, sends: 0, acceptedDigest: 0, recorded: NoDisposition, investigation: NoInvestigation, investigationId: 0 }
@@ -100,7 +100,7 @@ type ServiceFailure = ProcessKilled | SourceUnavailable | ReuseLookupFailed | Re
 pure def resetRun(target: Phase, s: Scan): Scan =
   { ...s, phase: target, inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, ambiguous: false,
     uncoveredExecutable: 0, blocked: 0, primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false,
-    refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: noCitation,
+    reviewBlocked: false, refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: noCitation,
     originPermanent: false, retained: false, digest: 0 }
 pure def canStart(s: Scan): bool = s.phase == Queued and not(s.staleTemplate)
 pure def start(s: Scan): Scan = { ...resetRun(Acquiring, s), attempts: s.attempts + 1 }
@@ -114,7 +114,7 @@ pure def alwaysQueuedHoldsNoRun(s: Scan): bool =
     s.inventory == 0 and s.reviewed == 0 and s.blocked == 0 and not(s.deterministic) and not(s.ambiguous) and
     s.primary == NotRun and s.disposition == NoDisposition and not(s.retained) and not(s.reused) and
     not(s.originPermanent) and s.refusal == NoRefusal and not(s.synthesis) and s.confirmation == NoConfirmation and
-    s.specialist == NotRun and s.escalation == NoEscalation and s.digest == 0 and s.sends == 0
+    s.specialist == NotRun and s.escalation == NoEscalation and s.digest == 0 and s.sends == 0 and not(s.reviewBlocked)
 pure def stepServiceFailureDecidesNothing(before: Scan, via: str, after: Scan): bool =
   via == "interrupt" implies after.recorded == before.recorded and
     (after.phase == Queued or after.phase == PublicationUnknown) and
@@ -250,18 +250,27 @@ inventory; the specialist is Surplus GPT-6.1 Terra, and no other profile
 reviews a scan. A high-risk result, or an ambiguous deterministic match, escalates
 to the specialist review before any clean or malicious decision. A declined
 review is incomplete. A provider outage returns the assessment to the queue.
-A model label never confirms malice.
+A model label never confirms malice. Any primary finding or risk above low
+escalates (`scanNeedsSpecialist` in `workers/verified-policy.ts`). A review
+that reports a high or critical finding or suspects malice is blocking: it
+escalates, and the scan can no longer be clean, whatever the specialist finds
+(`scanProblems` in `backend/vetting/scan-result.ts`, operator decision of
+19 November 2026, development commit `ec2e04a96`). Info, low and medium
+findings are advisory: they escalate and a completed specialist review clears
+them. A verified reviewer gap for content outside the acquired revision is
+advisory too and keeps no scan from being clean.
 
 ```quint
-type PrimaryOutcome = PrimaryClean | PrimaryEscalate | PrimaryDeclined | PrimaryUnavailable
-type SpecialistOutcome = SpecialistClean | SpecialistDeclined | SpecialistUnavailable
+type PrimaryOutcome = PrimaryClean | PrimaryEscalate | PrimaryBlocking | PrimaryDeclined | PrimaryUnavailable
+type SpecialistOutcome = SpecialistClean | SpecialistBlocking | SpecialistDeclined | SpecialistUnavailable
 pure def escalated(s: Scan): bool = s.escalation != NoEscalation
 pure def canReviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome): bool =
   s.phase == Reviewing and s.deterministic and s.reviewed == s.inventory and s.primary == NotRun
 pure def reviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome): Scan =
   if (primaryOutcome == PrimaryUnavailable) resetRun(Queued, s)
   else if (primaryOutcome == PrimaryDeclined) { ...s, primary: ReviewDeclined, phase: Evidence, disposition: DIncomplete }
-  else { ...s, primary: ReviewCompleted, escalation: if (primaryOutcome == PrimaryEscalate) HighRisk else NoEscalation }
+  else { ...s, primary: ReviewCompleted, reviewBlocked: primaryOutcome == PrimaryBlocking,
+    escalation: if (primaryOutcome == PrimaryEscalate or primaryOutcome == PrimaryBlocking) HighRisk else NoEscalation }
 pure def canEscalateSpecialist(s: Scan, reason: Escalation): bool =
   s.phase == Reviewing and s.primary == ReviewCompleted and not(escalated(s)) and reason != NoEscalation and
   (reason == Ambiguous implies s.ambiguous)
@@ -271,7 +280,7 @@ pure def canReviewSpecialist(s: Scan, specialistOutcome: SpecialistOutcome): boo
 pure def reviewSpecialist(s: Scan, specialistOutcome: SpecialistOutcome): Scan =
   if (specialistOutcome == SpecialistUnavailable) resetRun(Queued, s)
   else if (specialistOutcome == SpecialistDeclined) { ...s, specialist: ReviewDeclined, phase: Evidence, disposition: DIncomplete }
-  else { ...s, specialist: ReviewCompleted }
+  else { ...s, specialist: ReviewCompleted, reviewBlocked: s.reviewBlocked or specialistOutcome == SpecialistBlocking }
 pure def specialistSettled(s: Scan): bool = (s.ambiguous implies escalated(s)) and (escalated(s) implies s.specialist == ReviewCompleted)
 pure def alwaysDeclinedIsIncomplete(s: Scan): bool =
   (s.primary == ReviewDeclined or s.specialist == ReviewDeclined) implies s.disposition == DIncomplete
@@ -285,8 +294,8 @@ pure val reasonValues = Set(Ambiguous, HighRisk)
 
 The repository synthesis yields clean only when every entry was reviewed, the
 deterministic checks ran, no executable content is uncovered, the primary
-review completed and every required specialist review completed. Anything
-else is incomplete. Malice requires a confirmation with basis
+review completed, every required specialist review completed and neither
+review was blocking. Anything else is incomplete. Malice requires a confirmation with basis
 `reproducible-behavior` or `verified-source-evidence` from the separate
 trusted reviewer outside the guest and model context (`PUBLICATION.md`), and
 an ambiguous or high-risk finding first needs the completed specialist review.
@@ -295,9 +304,11 @@ an ambiguous or high-risk finding first needs the completed specialist review.
 pure def reviewsComplete(s: Scan): bool = s.primary == ReviewCompleted and specialistSettled(s)
 pure def cleanEvidence(s: Scan): bool =
   s.reviewed == s.inventory and s.deterministic and s.uncoveredExecutable == 0 and s.blocked == 0 and reviewsComplete(s) and s.synthesis
+    and not(s.reviewBlocked)
 pure def canSynthesize(s: Scan): bool = s.phase == Reviewing and s.deterministic and s.reviewed == s.inventory and reviewsComplete(s)
 pure def synthesize(s: Scan): Scan =
-  { ...s, synthesis: true, phase: Evidence, disposition: if (s.uncoveredExecutable == 0 and s.blocked == 0) DClean else DIncomplete }
+  { ...s, synthesis: true, phase: Evidence,
+    disposition: if (s.uncoveredExecutable == 0 and s.blocked == 0 and not(s.reviewBlocked)) DClean else DIncomplete }
 pure def canConfirmMalice(s: Scan, confirmation: Confirmation): bool =
   s.phase == Reviewing and s.deterministic and s.primary == ReviewCompleted and confirmation != NoConfirmation and
   specialistSettled(s)
@@ -577,6 +588,8 @@ pure def sometimesPublicationRejected(s: Scan): bool = s.phase == PublicationRej
 pure def sometimesSuperseded(s: Scan): bool = s.phase == Superseded
 pure def sometimesInvestigationBlocksPass(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and s.retained and not(passes(s))
 pure def sometimesUncoveredIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.synthesis
+pure def sometimesBlockingReviewIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.synthesis and s.reviewBlocked
+  and s.specialist == ReviewCompleted
 pure def sometimesBlockedArtifactIncomplete(s: Scan): bool = s.phase == Recorded and s.recorded == DIncomplete and s.blocked > 0
 ```
 

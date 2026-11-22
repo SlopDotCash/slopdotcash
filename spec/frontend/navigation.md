@@ -15,6 +15,7 @@ reject external redirects and invalid route parameters before making an event.
 ```quint
 type Page = Home | Projects | Project | AddProject | ManageProject | Profile | Rankings | Cycle | Settings | Payouts | Inbox | Report | Recovery | Administration | Gone
   | HowItWorks | Sponsors | CycleArchive | Login | VettingEvidence | SecurityCases | SecurityProgram
+  | SubmissionFee | ReportDeposit
 type Navigation = { page: Page, returnPage: Page, actor: int, epoch: int, privateEpoch: int, privateRows: int }
 pure val initial: Navigation = { page: Home, returnPage: Home, actor: 0, epoch: 0, privateEpoch: 0, privateRows: 0 }
 pure def privatePage(page: Page): bool = page == AddProject or page == ManageProject or page == Settings or
@@ -114,8 +115,10 @@ here (`pageOf` in [fragments and document heads](./routes.md)), and the
 unknown route is Gone. Three pages have no address of their own: Projects is
 the project list on Home, Report is the report form inside the security
 program, and Recovery is the payout consent section of Payouts. Login is
-public. Only the private pages need a signed-in account; every other
-destination opens signed out.
+public, and so are the two [pay pages](./feePages.md), SubmissionFee and
+ReportDeposit: any wallet may pay and none needs an account. Only the
+private pages need a signed-in account; every other destination opens
+signed out.
 
 ```quint
 pure def routedPage(page: Page): Page =
