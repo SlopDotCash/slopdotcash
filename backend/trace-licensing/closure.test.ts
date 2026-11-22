@@ -233,6 +233,9 @@ test("a repeated close writes no second closure event", async () => {
     // Closing deleted every session; give the closed member a fresh one so
     // the second request reaches the close batch itself.
     const again = "z".repeat(48);
+    // The schema refuses a session for a closed account; drop that trigger in
+    // this test database to simulate a session that outlived the closure.
+    h.sqlite.exec("DROP TRIGGER points_sessions_open_accounts");
     h.sqlite
       .query(
         "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,'2027-01-01T00:00:00.000Z')",
