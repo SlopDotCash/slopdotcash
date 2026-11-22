@@ -11,10 +11,12 @@ export type AgentPromptProps = {
   onCopy: (text: string) => Promise<void>;
   /** Offers the agent shortcuts beside the prompt. */
   openIn?: boolean;
+  /** The skill address the shortcuts that take no prompt install, as a path on this site. */
+  skillPath?: string;
 };
 
 /** The agent prompt, its copy control and, beside them, the shortcuts that open it in a named agent. */
-export function AgentPrompt({ prompt, origin, onCopy, openIn = false }: AgentPromptProps) {
+export function AgentPrompt({ prompt, origin, onCopy, openIn = false, skillPath }: AgentPromptProps) {
   const copyOnOpen = () => void onCopy(prompt).then(undefined, () => undefined);
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -23,7 +25,7 @@ export function AgentPrompt({ prompt, origin, onCopy, openIn = false }: AgentPro
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>Open in</span>
           <ul className="flex flex-wrap items-center gap-1">
-            {agentLinks(prompt, origin).map((link) => (
+            {agentLinks(prompt, origin, skillPath).map((link) => (
               <li key={link.agent}>
                 <a
                   href={link.href}

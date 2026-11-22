@@ -1,0 +1,275 @@
+// spec/slopbot/readyLabel.md, "The owner's settings are off unless saved on, and stay within their bounds"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"
+import { readyLabelSetting } from "@repo/backend/client"
+import { first, sql } from "@repo/platform/d1"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { RegistryManifests } from "@repo/ports/backend"
+import type { ReadyLabelConfig } from "../../gen/backend__readyLabelSettings.ts"
+import { type MergeState, type PullReview, type ReadyFacts, type ReviewDecision, type SlopbotReviewRow, approvesAtHead, changedFilePageLimit, enabledSettings, latestDecisions, permissionLookupLimit, readyLabelOn, requestsChanges, reviewPageLimit, savedSetting, verdictOf, writerApprovals, writerRequestedChanges } from "../../gen/slopbot__readyLabel.effect.vibe"
+import { slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { reviewCommentMarker } from "../../gen/slopbot__review.effect.vibe"
+import { findReviewComment } from "../publish/comment.vibe"
+import { type Observed, type RepositoryRef, observe } from "../scope/facts.vibe"
+import { type GitHubFile, type ReadyCounts, changedFileOf, protectedDetail } from "./protectedPaths.ts"
+
+export interface ReadyItem extends RepositoryRef {
+  readonly number: number
+}
+
+export interface ReadySetting {
+  readonly observed: Observed
+  readonly saved: boolean
+  readonly settings: ReadyLabelConfig
+  readonly contributorWork: boolean
+  readonly labelOn: boolean
+}
+
+schema PullUser { readonly id: number; readonly type: string }
+schema PullLabel { readonly name: string }
+schema PullHead { readonly sha: string }
+schema PullRead {
+  readonly node_id: string
+  readonly number: number
+  readonly state: string
+  readonly draft?: boolean
+  readonly merged?: boolean
+  readonly mergeable?: boolean | null
+  readonly mergeable_state?: string | null
+  readonly head: PullHead
+  readonly user: PullUser | null
+  readonly labels?: ReadonlyArray<PullLabel>
+  readonly additions: number
+  readonly deletions: number
+  readonly changed_files: number
+}
+schema FileRead {
+  readonly filename: string
+  readonly previous_filename?: string
+  readonly status: string
+  readonly additions: number
+  readonly deletions: number
+  readonly patch?: string
+}
+schema ReviewUser { readonly id: number; readonly login: string; readonly type: string }
+schema ReviewRead { readonly user: ReviewUser | null; readonly state: string; readonly commit_id: string | null }
+schema PermissionUser { readonly id: number }
+schema PermissionRead { readonly permission: string; readonly user?: PermissionUser | null }
+schema VerdictRow { readonly status: string; readonly action: string | null; readonly verdict: string | null }
+schema KeptComment { readonly comment_id: number }
+schema CommentUser { readonly id: number }
+schema CommentRead { readonly id: number; readonly body: string | null; readonly user: CommentUser | null }
+
+export type Pull = typeof PullRead.Type
+
+export interface ReviewComment {
+  readonly id: number
+  readonly body: string
+}
+
+export interface ReadFacts {
+  readonly facts: ReadyFacts
+  readonly counts: ReadyCounts
+}
+
+const pageSize = 100
+const filePage = Schema.Array(FileRead)
+const reviewPage = Schema.Array(ReviewRead)
+const offSettings: ReadyLabelConfig = { ...enabledSettings, enabled: false }
+
+const mergeStates: Readonly<Record<string, MergeState>> = {
+  clean: "MergeClean",
+  has_hooks: "MergeHasHooks",
+  unknown: "MergeUnknown",
+  unstable: "MergeUnstable",
+  blocked: "MergeBlocked",
+  behind: "MergeBehind",
+  dirty: "MergeDirty",
+  draft: "MergeDraft",
+}
+
+const decisions: Readonly<Record<string, ReviewDecision>> = {
+  APPROVED: "ReviewApproved",
+  CHANGES_REQUESTED: "ReviewChangesRequested",
+  DISMISSED: "ReviewDismissed",
+}
+
+function repositoryPath(item: ReadyItem) {
+  return `/repositories/${item.repositoryId}`
+}
+
+export function pullOpen(pull: Pull) {
+  return pull.state === "open" && pull.merged !== true
+}
+
+export function pullLabelled(pull: Pull, label: string) {
+  return (pull.labels ?? []).some((entry) => entry.name === label)
+}
+
+effect function manifestOf(projectId: string | undefined) {
+  if (projectId === undefined) return undefined
+  const registered = try (try RegistryManifests).project(projectId)
+  if (registered === undefined) return undefined
+  return Effect.try(() => JSON.parse(registered.manifest) as unknown) catch () => undefined
+}
+
+export effect function readySetting(ref: RepositoryRef) {
+  const observed = try observe(ref)
+  const setting = readyLabelSetting(try manifestOf(observed.projectId))
+  const saved = setting.tag === "ReadyLabelPresent"
+  const settings: ReadyLabelConfig = setting.tag === "ReadyLabelPresent"
+    ? { enabled: setting.enabled, approvals: setting.approvals, maxChangedLines: setting.maxChangedLines, maxChangedFiles: setting.maxChangedFiles, protectedPaths: setting.protectedPaths }
+    : offSettings
+  const contributorWork = slopbotScope(observed.observation) === "Contributor"
+  return { observed, saved, settings, contributorWork, labelOn: readyLabelOn(savedSetting(saved, settings), contributorWork) } satisfies ReadySetting
+}
+
+export effect function readPull(item: ReadyItem) {
+  const github = try GitHub
+  return github.json(`${repositoryPath(item)}/pulls/${item.number}`, PullRead) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+}
+
+effect function absentOrMalformed(error: GitHubFailure) {
+  if (error._tag === "NotFound" || error._tag === "GitHubMalformed") return undefined
+  throw error
+}
+
+effect function verdictAt(item: ReadyItem, nodeId: string, head: string) {
+  const row: typeof VerdictRow.Type | undefined = try first(VerdictRow, sql`SELECT status, action, verdict FROM slopbot_reviews
+    WHERE repository_id = ${item.repositoryId} AND item_node_id = ${nodeId} AND revision = ${head}
+    ORDER BY created_at DESC LIMIT 1`)
+  const text = row?.verdict ?? null
+  const parsed = text === null ? undefined : Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  const verdict = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as { readonly category?: unknown; readonly limitations?: unknown } : undefined
+  const limitations = verdict?.limitations
+  const reviewRow: SlopbotReviewRow = {
+    found: row !== undefined,
+    running: row?.status === "running",
+    completed: row?.status === "completed",
+    parsed: verdict !== undefined,
+    finding: verdict?.category !== "none",
+    commented: row?.action === "comment",
+    limitationsListed: Array.isArray(limitations),
+    limitations: Array.isArray(limitations) ? limitations.length : 0,
+  }
+  return verdictOf(reviewRow)
+}
+
+effect function changedFiles(item: ReadyItem, expected: number) {
+  const github = try GitHub
+  const files: Array<GitHubFile> = []
+  for (let page = 1; files.length < expected; page++) {
+    if (page > changedFilePageLimit) return undefined
+    const read = github.json(`${repositoryPath(item)}/pulls/${item.number}/files?per_page=${pageSize}&page=${page}`, filePage) catch effect (error) => try absentOrMalformed(error)
+    if (read === undefined) return undefined
+    files.push(...read)
+    if (read.length < pageSize) break
+  }
+  return files
+}
+
+effect function reviewsOf(item: ReadyItem) {
+  const github = try GitHub
+  const reviews: Array<typeof ReviewRead.Type> = []
+  for (let page = 1; page <= reviewPageLimit; page++) {
+    const read = github.json(`${repositoryPath(item)}/pulls/${item.number}/reviews?per_page=${pageSize}&page=${page}`, reviewPage) catch effect (error) => try absentOrMalformed(error)
+    if (read === undefined) return { complete: false, reviews }
+    reviews.push(...read)
+    if (read.length < pageSize) return { complete: true, reviews }
+  }
+  return { complete: false, reviews }
+}
+
+effect function writes(item: ReadyItem, reviewer: typeof ReviewUser.Type) {
+  const github = try GitHub
+  const permission = github.json(`${repositoryPath(item)}/collaborators/${encodeURIComponent(reviewer.login)}/permission`, PermissionRead) catch effect (error) => try absentOrMalformed(error)
+  return permission !== undefined && (permission.user === undefined || permission.user === null || permission.user.id === reviewer.id) && ["admin", "write"].includes(permission.permission)
+}
+
+function reviewOf(review: typeof ReviewRead.Type, head: string): PullReview {
+  return {
+    reviewer: review.user?.id ?? 0,
+    userAccount: review.user?.type === "User",
+    decision: decisions[review.state] ?? "ReviewCommented",
+    atHead: review.commit_id === head,
+    writeAccess: false,
+  }
+}
+
+effect function writerReviews(item: ReadyItem, head: string, author: number) {
+  const read = try reviewsOf(item)
+  const reviews = read.reviews.map((review) => reviewOf(review, head))
+  const users = new Map(read.reviews.flatMap((review) => review.user === null ? [] : [[review.user.id, review.user] as const]))
+  const candidates = latestDecisions(reviews).filter((review) => approvesAtHead(review, author) || requestsChanges(review, author))
+  const writers = new Set<number>()
+  if (read.complete && candidates.length <= permissionLookupLimit) {
+    for (const candidate of candidates) {
+      const user = users.get(candidate.reviewer)
+      if (user !== undefined && try writes(item, user)) writers.add(candidate.reviewer)
+    }
+  }
+  const fetched = { complete: read.complete, reviews: reviews.map((review) => ({ ...review, writeAccess: writers.has(review.reviewer) })) }
+  return { approvals: writerApprovals(fetched, author), changesRequested: writerRequestedChanges(fetched, author) }
+}
+
+export effect function factsAt(item: ReadyItem, pull: Pull, settings: ReadyLabelConfig) {
+  const head = pull.head.sha
+  const open = pullOpen(pull)
+  const overCap = pull.additions + pull.deletions > settings.maxChangedLines || pull.changed_files > settings.maxChangedFiles
+  const verdict = try verdictAt(item, pull.node_id, head)
+  const reviewable = open && pull.draft !== true && verdict === "VerdictNone" && !overCap
+  const files = reviewable ? try changedFiles(item, pull.changed_files) : undefined
+  const reviews = files === undefined ? { approvals: 0, changesRequested: false } : try writerReviews(item, head, pull.user?.id ?? 0)
+  const ownerPatterns = settings.protectedPaths.map((path) => path.pattern)
+  const facts: ReadyFacts = {
+    open,
+    draft: pull.draft === true,
+    mergeable: pull.mergeable === true,
+    mergeState: pull.mergeable_state === undefined || pull.mergeable_state === null ? "MergeNotReported" : mergeStates[pull.mergeable_state] ?? "MergeDirty",
+    verdict,
+    additions: pull.additions,
+    deletions: pull.deletions,
+    changedFiles: pull.changed_files,
+    filesRead: files !== undefined,
+    files: (files ?? []).map((file) => changedFileOf(file, ownerPatterns)),
+    approvals: reviews.approvals,
+    changesRequested: reviews.changesRequested,
+  }
+  const counts: ReadyCounts = {
+    additions: pull.additions,
+    deletions: pull.deletions,
+    changedFiles: pull.changed_files,
+    approvals: reviews.approvals,
+    mergeableState: pull.mergeable_state ?? null,
+    protectedDetail: files === undefined ? null : protectedDetail(files, ownerPatterns),
+  }
+  return { facts, counts } satisfies ReadFacts
+}
+
+export function unreadFacts(pull: Pull | undefined): ReadFacts {
+  const open = pull === undefined || pullOpen(pull)
+  const sizes = { additions: pull?.additions ?? 0, deletions: pull?.deletions ?? 0, changedFiles: pull?.changed_files ?? 0 }
+  return {
+    facts: { ...sizes, open, draft: pull?.draft === true, mergeable: false, mergeState: "MergeNotReported", verdict: "VerdictMissing", filesRead: false, files: [], approvals: 0, changesRequested: false },
+    counts: { ...sizes, approvals: 0, mergeableState: pull?.mergeable_state ?? null, protectedDetail: null },
+  }
+}
+
+effect function keptComment(nodeId: string) {
+  const kept: typeof KeptComment.Type | undefined = try first(KeptComment, sql`SELECT comment_id FROM slopbot_item_comments WHERE item_node_id = ${nodeId}`)
+  return kept?.comment_id
+}
+
+export effect function reviewComment(item: ReadyItem, projectId: string, nodeId: string, appUser: number) {
+  const kept = try keptComment(nodeId)
+  const found = kept !== undefined ? kept : try findReviewComment({ ref: item, projectId, number: item.number, itemNodeId: nodeId, appUser })
+  if (found === undefined) return undefined
+  const github = try GitHub
+  const comment = github.json(`${repositoryPath(item)}/issues/comments/${found}`, CommentRead) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  if (comment === undefined || comment.id !== found || comment.body === null || comment.user?.id !== appUser || !comment.body.startsWith(reviewCommentMarker)) return undefined
+  return { id: comment.id, body: comment.body } satisfies ReviewComment
+}

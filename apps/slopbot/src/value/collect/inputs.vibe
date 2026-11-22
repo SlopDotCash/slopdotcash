@@ -1,0 +1,426 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub } from "@repo/platform/github"
+import { Graphql, type HistoryPage, type HistorySource, ValueFeedUnavailable as FeedOutage, valueHistoryPage, workUnitHistory } from "@repo/points/collect"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { type AttributionHold, type CensusOutcome, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
+import { absentOn404, loadPolicy } from "../../context/load.vibe"
+import { type CommitPages, publicationCommitPages } from "../../import/commitPages.vibe"
+import { Acceptance } from "../evidence/acceptance.vibe"
+import { collectEvidence } from "../evidence/collect.vibe"
+import { type ContextSelection, collectContext, validContextSelections } from "../evidence/context.vibe"
+import { type Actor, EvidenceRefused, type RegisteredRepository, type RelatedPullRequest, evidenceMatchesRepository, findRepository } from "../evidence/types.vibe"
+import { validateEvidenceAssessment, valueRubricVersion } from "../inference/assessment.vibe"
+import { producerRecognized } from "../inference/publish.vibe"
+import { retainedCopyBindings } from "../retained/copy.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+import { referenceDiscovery } from "./discussion.vibe"
+
+export interface ValueInputsOptions {
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+  readonly discussionDeadlineMs?: number
+}
+
+schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean }
+
+schema OriginalPull { readonly node_id: string; readonly number: number; readonly html_url: string; readonly state: string; readonly merged_at: string | null }
+
+schema RecordIdentity {
+  readonly schemaVersion: string
+  readonly projectId: string
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pullRequestNodeId: string
+  readonly pullRequestNumber: number
+  readonly supersedes: string | null
+  readonly revisionReason: string | null
+}
+
+schema Producer {
+  readonly producerRevision: string
+  readonly assessedAt: string
+  readonly model: { provider: string; requested: string; reported: string }
+}
+
+const LatestFields = Schema.Struct({
+  contextPaths: Schema.optionalKey(Schema.Unknown),
+  assessment: Schema.optionalKey(Schema.Unknown),
+  headSha: Schema.optionalKey(Schema.Unknown),
+  mergeSha: Schema.optionalKey(Schema.Unknown),
+  occurredAt: Schema.optionalKey(Schema.Unknown),
+  policySha: Schema.optionalKey(Schema.Unknown),
+  sourceDigest: Schema.optionalKey(Schema.Unknown),
+  rubricVersion: Schema.optionalKey(Schema.Unknown),
+})
+
+const actorQuery = "query($ids:[ID!]!){nodes(ids:$ids){__typename ... on User{id login avatarUrl url} ... on Bot{id login avatarUrl url}} rateLimit{cost limit remaining resetAt}}"
+const valueRecordVersion = "slop-value-record:v1"
+const digestPattern = /^[a-f0-9]{64}$/u
+const shaPattern = /^[a-f0-9]{40}$/u
+const actorBatch = 100
+const recoveryPrefixes = ["Full diff required:", "Added binary implementation identity is unavailable:", "Added binary accepted identity is unavailable:"]
+const historyBytesInvalid = "Value history has invalid bytes or sequence"
+const historyIdentityInvalid = "Value history identity or predecessor is invalid"
+const producerInvalid = "Current value record has invalid producer identity"
+const assessmentInvalid = "Current value assessment does not validate against source"
+const scopeIncomplete = "Retained attribution needs complete, unambiguous original commit scope"
+
+interface Run {
+  readonly options: ValueInputsOptions
+  readonly census: ReadonlyMap<string, CensusOutcome>
+  readonly identities: Map<string, PublicRepository>
+  readonly sources: Map<string, WorkUnitSource>
+  readonly actors: Map<string, ValueActor>
+  readonly pages: CommitPages
+}
+
+interface CreditSource {
+  readonly actorNodeId: string
+  readonly originalPullRequestId: string
+  readonly originalPullRequestUrl: string
+  readonly originalCommitSha: string
+}
+
+type RetainedCredit =
+  | { readonly kind: "bound"; readonly bindings: ReadonlyMap<string, CreditSource> }
+  | { readonly kind: "incomplete"; readonly limitations: ReadonlyArray<string> }
+
+function refused(reason: string) {
+  return new EvidenceRefused({ reason })
+}
+
+function repositoryOf(url: string) {
+  const [owner = "", name = ""] = (URL.parse(url)?.pathname ?? "").split("/").filter((part) => part !== "")
+  return `${owner}/${name}`
+}
+
+function sameCensusFacts(left: CensusOutcome, right: CensusOutcome) {
+  return left.url === right.url && left.number === right.number && left.headRefOid === right.headRefOid
+    && left.updatedAt === right.updatedAt && left.mergedAt === right.mergedAt && left.closedAt === right.closedAt
+}
+
+effect function censusOf(input: ValueCensus) {
+  const census = new Map(input.value.map((outcome) => [outcome.id, outcome] as const))
+  if (census.size !== input.value.length) throw refused("Value census repeats a source")
+  const attributed = new Set<string>()
+  for (const outcome of input.attribution) {
+    if (attributed.has(outcome.id)) throw refused("Attribution census repeats a source")
+    attributed.add(outcome.id)
+    const prior = census.get(outcome.id)
+    if (prior !== undefined && !sameCensusFacts(prior, outcome)) throw refused("Attribution census disagrees with the value census")
+    census.set(outcome.id, outcome)
+  }
+  return census
+}
+
+function acceptedCommitOwners(census: ReadonlyMap<string, CensusOutcome>) {
+  const owners = new Map<string, string>()
+  const accepted = [...census.values()]
+    .filter((outcome) => outcome.mergedAt !== null)
+    .sort((left, right) => Date.parse(left.mergedAt ?? "") - Date.parse(right.mergedAt ?? "") || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  for (const outcome of accepted) {
+    const repository = repositoryOf(outcome.url).toLowerCase()
+    for (const commit of outcome.commits ?? []) {
+      const key = `${repository}\0${commit.oid}`
+      if (!owners.has(key)) owners.set(key, outcome.id)
+    }
+  }
+  return owners
+}
+
+effect function registered(run: Run, repositoryId: string) {
+  const repository = findRepository(run.options.repositories, repositoryId)
+  if (repository === undefined) throw refused("Value outcome repository is not registered")
+  const known = run.identities.get(repository.id)
+  if (known !== undefined) return { repository, identity: known }
+  const live = try absentOn404((try GitHub).json(`/repos/${repository.id}`, PublicRepository))
+  if (live === undefined || live.private !== false || (repository.expectedNodeId !== null && live.node_id !== repository.expectedNodeId)) throw refused("Value ingestion requires the registered public repository")
+  run.identities.set(repository.id, live)
+  return { repository, identity: live }
+}
+
+effect function policyAt(repositoryId: number, sha: string) {
+  const { files } = try loadPolicy(repositoryId, sha)
+  return { sha, text: files.some((file) => file.truncated) ? "" : files.map((file) => `${file.path}\n${file.text}`).join("\n\n") }
+}
+
+effect function hydrated(identity: PublicRepository, raw: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>) {
+  const evidence = try collectContext(raw.evidence, contextPaths)
+  if (identity.node_id !== evidence.repositoryNodeId || identity.id !== evidence.repositoryDatabaseId) throw refused("Merge reconstruction requires the verified public repository")
+  if (evidence.limitations.some((limitation) => recoveryPrefixes.some((prefix) => limitation.startsWith(prefix)))) throw refused("Value source needs public git object recovery")
+  return { ...raw, evidence } satisfies WorkUnitSource
+}
+
+function changedAfterCensus(evidence: WorkUnitSource["evidence"], id: string, identity: PublicRepository, outcome: CensusOutcome | undefined) {
+  if (evidence.repositoryNodeId !== identity.node_id || evidence.repositoryDatabaseId !== identity.id || evidence.pull.node_id !== id) return true
+  return outcome !== undefined && (evidence.pull.head.sha !== outcome.headRefOid || evidence.pull.merged_at !== outcome.mergedAt
+    || (outcome.mergedAt === null && evidence.pull.closed_at !== outcome.closedAt) || Date.parse(evidence.pull.updated_at) !== Date.parse(outcome.updatedAt))
+}
+
+effect function source(run: Run, repositoryId: string, number: number, id: string, contextPaths: ReadonlyArray<ContextSelection> = []) {
+  const { repository, identity } = try registered(run, repositoryId)
+  const cached = run.sources.get(id)
+  if (cached !== undefined) {
+    const { evidence } = cached
+    if (evidence.repository.toLowerCase() !== repository.id.toLowerCase() || evidence.repositoryNodeId !== identity.node_id || evidence.repositoryDatabaseId !== identity.id || evidence.pull.number !== number)
+      throw refused("Joint source identity changed between records")
+    return try hydrated(identity, cached, contextPaths)
+  }
+  const evidence = try provideService(collectEvidence({ repository: repository.id, number, policy: repository }), GitHub, try run.pages.wrap)
+  if (changedAfterCensus(evidence, id, identity, run.census.get(id))) throw refused("Value source changed after the outcome census")
+  const collected = { evidence, policy: try policyAt(identity.id, evidence.pull.base.sha) } satisfies WorkUnitSource
+  run.sources.set(id, collected)
+  return try hydrated(identity, collected, contextPaths)
+}
+
+function resolvedUser(node: unknown, id: string | undefined): ValueActor | undefined {
+  if (id === undefined || node === null || typeof node !== "object") return undefined
+  const fields = node as Readonly<Record<string, unknown>>
+  const login = fields["login"]
+  const avatarUrl = fields["avatarUrl"]
+  const url = fields["url"]
+  if (fields["id"] !== id || fields["__typename"] !== "User" || typeof login !== "string" || typeof avatarUrl !== "string" || typeof url !== "string") return undefined
+  const avatar = URL.parse(avatarUrl)
+  if (avatar === null) return undefined
+  const version = avatar.searchParams.get("v")
+  avatar.search = version === null ? "" : `v=${version}`
+  return { id, login, avatarUrl: avatar.toString(), url, kind: id.startsWith("BOT_") ? "Bot" : "User" }
+}
+
+effect function hydrateActors(run: Run, ids: Iterable<string>) {
+  const missing = [...new Set(ids)].filter((id) => !run.actors.has(id))
+  for (let offset = 0; offset < missing.length; offset += actorBatch) {
+    const batch = missing.slice(offset, offset + actorBatch)
+    const answer = try (try Graphql).execute(actorQuery, { ids: batch })
+    const nodes = answer["nodes"]
+    if (!Array.isArray(nodes) || nodes.length !== batch.length) throw refused("Value coauthor identities are incomplete")
+    const listed: ReadonlyArray<unknown> = nodes
+    for (const [index, node] of listed.entries()) {
+      const actor = resolvedUser(node, batch[index])
+      if (actor === undefined) throw refused("Value coauthor is not a resolved GitHub User identity")
+      run.actors.set(actor.id, actor)
+    }
+  }
+}
+
+function soleCreditActor(sourceAuthor: Actor, commitAuthor: Actor | null) {
+  const committed = commitAuthor === null ? null : { id: commitAuthor.node_id, kind: commitAuthor.type }
+  if (committed !== null && isCreditEligibleCommitAuthor(committed)) return committed.id
+  const fallback = { id: sourceAuthor.node_id, kind: sourceAuthor.type }
+  return isCreditEligibleCommitAuthor(fallback) ? fallback.id : undefined
+}
+
+function incomplete(limitations: ReadonlyArray<string>): RetainedCredit {
+  return { kind: "incomplete", limitations }
+}
+
+function retainedCredit(accepted: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>): RetainedCredit {
+  if (sources.some((entry) => entry.evidence.limitations.length > 0))
+    return incomplete(sources.flatMap((entry) => entry.evidence.limitations.map((limitation) => `#${entry.evidence.pull.number}: ${limitation}`)))
+  const retained = retainedCopyBindings(sources, { ordinaryCommitsOnly: true, acceptedSubset: false })
+  if (retained.limitations.length > 0) return incomplete(retained.limitations)
+  const resolved = new Map<string, CreditSource>()
+  for (const commit of accepted.evidence.commits) {
+    if (commit.parents.length > 1 || isCreditEligibleCommitAuthor(commit.author === null ? null : { id: commit.author.node_id, kind: commit.author.type })) continue
+    const bindings = [...retained.bindings.values()].filter((binding) => binding.integration.evidence.pull.node_id === accepted.evidence.pull.node_id && binding.acceptedCommitSha === commit.sha)
+    const [first] = bindings
+    if (first === undefined) continue
+    const attribution = accepted.evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+    const [entry] = attribution
+    const paths = entry?.changedPaths ?? null
+    const original = first.original.evidence
+    const originalCommit = original.commits.find((candidate) => candidate.sha === first.originalCommitSha)
+    if (accepted.evidence.limitations.length > 0 || original.limitations.length > 0 || attribution.length !== 1 || entry === undefined || entry.limitations.length > 0
+      || paths === null || paths.length === 0 || bindings.length !== paths.length || paths.some((path) => !bindings.some((binding) => binding.path === path))
+      || bindings.some((binding) => binding.original.evidence.pull.node_id !== original.pull.node_id || binding.originalCommitSha !== first.originalCommitSha)
+      || originalCommit === undefined || (originalCommit.author?.node_id ?? null) !== (commit.author?.node_id ?? null))
+      return incomplete([scopeIncomplete])
+    const actorNodeId = soleCreditActor(original.pull.user, originalCommit.author)
+    if (actorNodeId === undefined) return incomplete(["Retained attribution has no verified human source creator"])
+    resolved.set(commit.sha, { actorNodeId, originalPullRequestId: original.pull.node_id, originalPullRequestUrl: original.pull.html_url, originalCommitSha: originalCommit.sha })
+  }
+  return { kind: "bound", bindings: resolved }
+}
+
+interface Attribution {
+  readonly credits: RetainedCommitCredit[]
+  readonly holds: AttributionHold[]
+}
+
+effect function resolveRetainedAuthors(run: Run, outcome: CensusOutcome, owners: ReadonlyMap<string, string>, found: Attribution) {
+  const mergedAt = outcome.mergedAt
+  if (mergedAt === null || mergedAt === "") return
+  const repositoryId = repositoryOf(outcome.url)
+  const creditRepository = repositoryId.toLowerCase()
+  const eligible = new Set((outcome.commits ?? [])
+    .filter((commit) => commit.parentCount !== undefined && commit.parentCount <= 1 && !isCreditEligibleCommitAuthor(commit.author) && owners.get(`${creditRepository}\0${commit.oid}`) === outcome.id)
+    .map((commit) => commit.oid))
+  if (eligible.size === 0) return
+  const { identity } = try registered(run, repositoryId)
+  const discovery = try referenceDiscovery({ outcome, mergedAt, repository: repositoryId, repositoryNodeId: identity.node_id, deadlineMs: run.options.discussionDeadlineMs })
+  if (discovery.limitations.length > 0) {
+    found.holds.push({ sourceId: outcome.id, limitations: discovery.limitations })
+    return
+  }
+  const candidates = new Map<string, boolean>()
+  effect function isOriginal(reference: RelatedPullRequest) {
+    if (reference.repository.toLowerCase() !== repositoryId.toLowerCase() || reference.number >= outcome.number) return false
+    const cached = candidates.get(reference.id)
+    if (cached !== undefined) return cached
+    const pull = try absentOn404((try GitHub).json(`/repos/${repositoryId}/pulls/${reference.number}`, OriginalPull))
+    if (pull === undefined || pull.node_id !== reference.id || pull.number !== reference.number || pull.html_url !== reference.url) throw refused("Original attribution source identity is unavailable")
+    const original = pull.state === "closed" && pull.merged_at === null
+    candidates.set(reference.id, original)
+    return original
+  }
+  let hasOriginal = false
+  for (const reference of discovery.references) {
+    if (try isOriginal(reference)) hasOriginal = true
+  }
+  if (!hasOriginal) return
+  const accepted = try source(run, repositoryId, outcome.number, outcome.id)
+  const sources: WorkUnitSource[] = [accepted]
+  for (const reference of accepted.evidence.relatedPullRequests) {
+    if (!(try isOriginal(reference))) continue
+    const original = try source(run, repositoryId, reference.number, reference.id)
+    if (original.evidence.pull.state === "closed" && !original.evidence.pull.merged_at) sources.push(original)
+  }
+  if (sources.length === 1) return
+  const credit = retainedCredit(accepted, sources)
+  if (credit.kind === "incomplete") {
+    found.holds.push({ sourceId: outcome.id, limitations: credit.limitations })
+    return
+  }
+  const bindings = [...credit.bindings].filter(([sha]) => eligible.has(sha))
+  try hydrateActors(run, bindings.map(([, binding]) => binding.actorNodeId))
+  for (const [commitSha, binding] of bindings) {
+    const actor = run.actors.get(binding.actorNodeId)
+    if (actor === undefined || !isCreditEligibleCommitAuthor(actor)) throw refused("Retained source creator identity is unavailable")
+    found.credits.push({ pullRequestId: outcome.id, commitSha, actor, originalPullRequestId: binding.originalPullRequestId, originalPullRequestUrl: binding.originalPullRequestUrl, originalCommitSha: binding.originalCommitSha })
+  }
+}
+
+effect function historyRow(raw: unknown, cursor: number) {
+  const row = Schema.decodeUnknownEffect(WorkUnitHistoryRow)(raw) catch effect () => { throw refused(historyBytesInvalid) }
+  if (!Number.isSafeInteger(row.sequence) || row.sequence <= cursor || !digestPattern.test(row.record_digest) || (try sha256Hex(row.record_json)) !== row.record_digest || !Number.isFinite(Date.parse(row.recorded_at)))
+    throw refused(historyBytesInvalid)
+  return row
+}
+
+function identityMatches(record: RecordIdentity, source: WorkUnitSource, repository: RegisteredRepository, previous: WorkUnitHistoryRow | undefined) {
+  const { evidence } = source
+  const revision = record.revisionReason
+  return record.schemaVersion === valueRecordVersion && record.projectId === repository.projectId && [repository.id, ...repository.aliases].includes(record.repository)
+    && record.repositoryNodeId === evidence.repositoryNodeId && record.repositoryDatabaseId === evidence.repositoryDatabaseId
+    && record.pullRequestNodeId === evidence.pull.node_id && record.pullRequestNumber === evidence.pull.number
+    && record.supersedes === (previous?.record_digest ?? null)
+    && (previous === undefined ? revision === null : revision !== null && revision.trim() !== "")
+}
+
+effect function valueDecision(repository: RegisteredRepository, source: WorkUnitSource, history: HistorySource, first: HistoryPage) {
+  const rows: WorkUnitHistoryRow[] = []
+  let previous: WorkUnitHistoryRow | undefined = undefined
+  let latestJson: unknown = undefined
+  let cursor = 0
+  let page = first
+  while (true) {
+    for (const raw of page.records) {
+      const row = try historyRow(raw, cursor)
+      const parsed = Effect.try(() => JSON.parse(row.record_json) as unknown) catch () => undefined
+      const record = Schema.decodeUnknownEffect(RecordIdentity)(parsed) catch effect () => { throw refused(historyIdentityInvalid) }
+      if (!identityMatches(record, source, repository, previous)) throw refused(historyIdentityInvalid)
+      rows.push(row)
+      previous = row
+      latestJson = parsed
+      cursor = row.sequence
+    }
+    if (page.nextAfter === null) break
+    if (page.records.length === 0 || page.nextAfter !== cursor) throw refused("Value history cursor did not advance")
+    page = try valueHistoryPage(history, source.evidence.pull.number, cursor, source.evidence.repositoryNodeId)
+  }
+  const common = { history: rows, latestDigest: previous?.record_digest ?? null, implementationActorNodeIds: [...source.evidence.implementationActorNodeIds] }
+  if (previous === undefined) return { ...common, status: "missing" as const }
+  const latest = Schema.decodeUnknownEffect(LatestFields)(latestJson) catch effect () => { throw refused(historyIdentityInvalid) }
+  const selected = latest.contextPaths
+  if (selected !== undefined && !validContextSelections(selected)) throw refused("Value history context selection is invalid")
+  const evidence = try collectContext(source.evidence, selected ?? [])
+  const { policy } = source
+  if (evidence.limitations.length > 0 || policy.text.trim() === "") return { ...common, status: "incomplete" as const }
+  let sourceDigest = try sourceDigestOf(evidence, policy)
+  if (latest.sourceDigest !== sourceDigest && evidence.repairBodyEdit !== undefined) {
+    const { repairBodyEdit, ...historical } = evidence
+    if ((try sourceDigestOf(historical, policy)) === latest.sourceDigest) sourceDigest = latest.sourceDigest
+  }
+  if (!evidenceMatchesRepository(evidence, repository) || evidence.pull.state !== "closed" || latest.headSha !== evidence.pull.head.sha || latest.mergeSha !== evidence.pull.merge_commit_sha
+    || latest.occurredAt !== (evidence.pull.merged_at ?? evidence.pull.closed_at) || latest.policySha !== policy.sha || policy.sha !== evidence.pull.base.sha
+    || latest.sourceDigest !== sourceDigest || latest.rubricVersion !== valueRubricVersion)
+    return { ...common, status: "stale" as const }
+  const producer = Schema.decodeUnknownEffect(Producer)(latestJson) catch effect () => { throw refused(producerInvalid) }
+  if (!shaPattern.test(producer.producerRevision) || !Number.isFinite(Date.parse(producer.assessedAt)) || !producerRecognized(producer.model)) throw refused(producerInvalid)
+  const assessment = validateEvidenceAssessment(latest.assessment, evidence)
+  if (assessment === undefined) throw refused(assessmentInvalid)
+  return { ...common, status: assessment.status, record: latestJson, assessment }
+}
+
+effect function outcomeDecision(run: Run, outcome: CensusOutcome) {
+  const { repository, identity } = try registered(run, repositoryOf(outcome.url))
+  const history: HistorySource = { repository: repository.id, pinnedNodeId: repository.expectedNodeId }
+  const joint = try workUnitHistory(history, outcome.number, identity.node_id)
+  if (joint.rows.length > 0) throw refused("Joint value history requires the work-unit consumer")
+  const first = try valueHistoryPage(history, outcome.number, 0, identity.node_id)
+  if (first.records.length === 0 && first.nextAfter === null) return { status: "missing" as const, history: [], latestDigest: null, implementationActorNodeIds: [] }
+  const collected = try source(run, repository.id, outcome.number, outcome.id)
+  const decision = try valueDecision(repository, collected, history, first)
+  if (decision.status === "assessed") try hydrateActors(run, decision.implementationActorNodeIds)
+  return decision
+}
+
+effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
+  const census = try censusOf(input)
+  const run: Run = { options, census, identities: new Map(), sources: new Map(), actors: new Map(), pages: publicationCommitPages() }
+  const owners = acceptedCommitOwners(census)
+  const found: Attribution = { credits: [], holds: [] }
+  for (const outcome of input.attribution) {
+    try resolveRetainedAuthors(run, outcome, owners, found)
+  }
+  const valueDecisions: SourceDecision[] = []
+  for (const outcome of input.value) {
+    valueDecisions.push({ sourceId: outcome.id, decision: try outcomeDecision(run, outcome) })
+  }
+  return {
+    valueDecisions,
+    jointValueDecisions: [],
+    valueActors: [...run.actors.values()],
+    retainedCommitCredits: found.credits,
+    attributionHolds: found.holds,
+    heldWorkUnits: [],
+  } satisfies ValueInputsRead
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  const fields: Readonly<Record<string, unknown>> = { ...error }
+  for (const key of ["reason", "message", "issue"]) {
+    const value = fields[key]
+    if (typeof value === "string" && value !== "") return value
+  }
+  return error._tag
+}
+
+effect function answered<E extends { readonly _tag: string }>(read: ValueInputsRead!E) {
+  return read catch effect (error) => match (error) {
+    when FeedOutage: throw new ValueFeedUnavailable({ message: "The hosted value feed is unavailable" });
+    default: throw new ValueEvidenceRefused({ message: messageOf(error) });
+  }
+}
+
+export function collectValueInputs(options: ValueInputsOptions) {
+  return Layer.effect(ValueInputs, effect {
+    const services = try Effect.context<GitHub | Graphql | Acceptance | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+    return {
+      load: (census: ValueCensus) => answered(Effect.provideContext(loaded(options, census), services)),
+    }
+  })
+}

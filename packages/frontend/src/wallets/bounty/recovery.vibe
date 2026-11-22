@@ -4,7 +4,8 @@ import { storageKeys } from "../../platform/storage.vibe"
 import { type SolanaConnection, connectSolana, solanaSignMessage } from "../core/solana.vibe"
 import { type SlotStorage, readSlotText, writeSlotText } from "../core/slots.ts"
 import { openDirectPayment } from "./directPrompt.vibe"
-import { type HistorySignatureEntry, type PaymentCase, cancellationAuthority, expiredModes, historyAuthority, paidWith, paymentMessages, refused, sessionActor, verifyFoundPayment } from "./paymentCase.vibe"
+import type { HistoryResult } from "../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import { type HistorySignatureEntry, type PaymentCase, type RecoveryMessage, cancellationAuthority, expiredModes, historyAuthority, paidWith, paymentMessages, refused, sessionActor, verifyFoundPayment } from "./paymentCase.vibe"
 import { readHistory, signatureBytes, transactionOf } from "./records.ts"
 import type { SolanaPaymentForm } from "./solanaPayment.vibe"
 
@@ -51,16 +52,34 @@ export effect function checkExpiredPayment(storage: SlotStorage | undefined, own
   const actor = try sessionActor()
   const payerKey = publicKey(payer)
   if (actor === undefined || actor !== owner || connection.address !== payer || payerKey === undefined) throw refused(recoveryMessages.signIn)
-  const authority = historyAuthority(owner, seen)
   const tracked = form !== undefined && (try form.tracksHistory())
   const request = tracked && form !== undefined ? try form.beginHistory() : undefined
+  const checked = signedRecovery(storage, seen, connection, actor, payerKey, messages, recovery.generation)
+  if (request === undefined || form === undefined) return try checked
+  const next = checked catch effect (error) => {
+    try form.endHistory(request, "ScanIncomplete")
+    throw error
+  }
+  try form.endHistory(request, historyResult(seen, next))
+  return next
+}
+
+function historyResult(seen: PaymentCase, next: PaymentCase): HistoryResult {
+  if (paidWith(next, "") || next.settlement?.recovery?.mode === "payment-found") return "PaymentFound"
+  const plan = next.settlement?.ownerRequest?.solana
+  const successor = plan !== undefined && (next.settlement?.generation !== seen.settlement?.generation || plan.messageId !== seen.settlement?.ownerRequest?.solana?.messageId)
+  return successor ? "NoPaymentFound" : "ScanIncomplete"
+}
+
+effect function signedRecovery(storage: SlotStorage | undefined, seen: PaymentCase, connection: SolanaConnection, actor: string, payerKey: Uint8Array, messages: ReadonlyArray<RecoveryMessage>, generation: number) {
+  const authority = historyAuthority(actor, seen)
 
   effect function checkAuthority() {
     try authority.authorize
     if ((try sessionActor()) !== actor) throw refused(recoveryMessages.accountChanged)
   }
 
-  const key = historyKey(seen.id, recovery.generation, actor)
+  const key = historyKey(seen.id, generation, actor)
   const saved = { ...readHistory(readSlotText(storage, key)) }
   const signatures: HistorySignatureEntry[] = []
   for (const message of messages) {
@@ -81,12 +100,5 @@ export effect function checkExpiredPayment(storage: SlotStorage | undefined, own
     signatures.push({ messageId: message.messageId, signature })
   }
   try checkAuthority()
-  const next = try authority.recover(signatures)
-  if (request !== undefined && form !== undefined) {
-    const found = paidWith(next, "") || next.settlement?.recovery?.mode === "payment-found"
-    const plan = next.settlement?.ownerRequest?.solana
-    const successor = plan !== undefined && (next.settlement?.generation !== seen.settlement?.generation || plan.messageId !== seen.settlement?.ownerRequest?.solana?.messageId)
-    if (found || successor) try form.endHistory(request, found ? "PaymentFound" : "NoPaymentFound")
-  }
-  return next
+  return try authority.recover(signatures)
 }

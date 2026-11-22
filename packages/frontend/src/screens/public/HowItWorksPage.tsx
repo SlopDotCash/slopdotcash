@@ -1,6 +1,6 @@
 // spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
 import { ExternalLink, PageHeader } from "@repo/ui";
-import { Ban, BookOpen, CalendarCheck, CircleSlash, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
+import { Ban, BookOpen, CalendarCheck, CircleSlash, FolderPlus, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { Milestones, PaymentLifecycle, payoutTimeline } from "./PaymentLifecycle.tsx";
 import { ContributionPointTiers, PenaltyPointTable, pointsNotice } from "./PointsRules.tsx";
@@ -10,7 +10,8 @@ const link = "text-primary underline underline-offset-4 hover:decoration-2";
 interface PathStep {
   readonly icon: LucideIcon;
   readonly title: string;
-  readonly body: ReactNode;
+  readonly href?: string;
+  readonly body?: ReactNode;
 }
 
 function Path({ id, title, steps }: { id: string; title: string; steps: ReadonlyArray<PathStep> }) {
@@ -20,12 +21,20 @@ function Path({ id, title, steps }: { id: string; title: string; steps: Readonly
         {title}
       </h2>
       <ol className="flex flex-col gap-4">
-        {steps.map(({ icon: Icon, title: step, body }) => (
+        {steps.map(({ icon: Icon, title: step, href, body }) => (
           <li key={step} className="flex gap-3">
             <Icon aria-hidden className="mt-0.5 size-5 shrink-0 text-primary" />
             <div className="flex flex-col gap-1">
-              <strong className="font-semibold text-foreground">{step}</strong>
-              <p className="text-muted-foreground">{body}</p>
+              <strong className="font-semibold text-foreground">
+                {href ? (
+                  <a className={link} href={href}>
+                    {step}
+                  </a>
+                ) : (
+                  step
+                )}
+              </strong>
+              {body ? <p className="text-muted-foreground">{body}</p> : null}
             </div>
           </li>
         ))}
@@ -34,7 +43,7 @@ function Path({ id, title, steps }: { id: string; title: string; steps: Readonly
   );
 }
 
-function Explained({ id, title, children, aside }: { id?: string; title: string; children: ReactNode; aside?: ReactNode }) {
+function Explained({ id, title, children, aside }: { id?: string; title: string; children?: ReactNode; aside?: ReactNode }) {
   return (
     <section id={id} className="grid gap-6 lg:grid-cols-2">
       <div className="flex flex-col gap-3">
@@ -61,49 +70,43 @@ const contributorSteps: ReadonlyArray<PathStep> = [
     title: "1. Choose work",
     body: (
       <>
-        Find an active <a className={link} href="/#projects">project</a>, read its skill and choose unblocked work.
+        <a className={link} href="/">
+          Use the contributor skill
+        </a>{" "}
+        to find unblocked work.
       </>
     ),
   },
-  { icon: GitPullRequest, title: "2. Submit a PR", body: "Use any agent. Test the result and disclose the exact provider, model and client." },
-  { icon: ShieldCheck, title: "3. Maintainer review", body: "Maintainers accept the work. Accepted work and useful reviews earn Points." },
-  {
-    icon: Wallet,
-    title: "4. Points and payout",
-    body: (
-      <>
-        Track points and funded awards in <a className={link} href="/earnings">Payouts</a>. <a className={link} href="#payments">Payment stages and timing</a>.
-      </>
-    ),
-  },
+  { icon: GitPullRequest, title: "2. Submit a PR" },
+  { icon: ShieldCheck, title: "3. Maintainer review" },
+  { icon: Wallet, title: "4. Points and payout", href: "/earnings" },
 ];
 
 const maintainerSteps: ReadonlyArray<PathStep> = [
   {
-    icon: GitPullRequest,
-    title: "1. Add a project",
+    icon: FolderPlus,
+    title: "1. Add or resume",
     body: (
       <>
-        <a className={link} href="/projects/new">Add your repository and contribution rules</a>. Install free Slopbot and complete the security checks.
+        <a className={link} href="/?audience=maintainer">
+          Use the maintainer skill
+        </a>
+        .
       </>
     ),
   },
+  { icon: ShieldCheck, title: "2. Get ready", body: "GitHub access. Free Slopbot. Admission." },
+  { icon: ListChecks, title: "3. Maintain your project", body: "PRs, CI, rules and private reports." },
   {
     icon: Wallet,
-    title: "2. Fund the pool",
+    title: "4. Manage rewards",
     body: (
       <>
-        Only funds in the project vault pay awards. Unused funds roll over. <a className={link} href="/sponsors">Funding options</a>
-      </>
-    ),
-  },
-  { icon: ListChecks, title: "3. Adjust awards", body: "Change proposed amounts within the cap before the monthly cutoff." },
-  {
-    icon: CalendarCheck,
-    title: "4. Automatic payment",
-    body: (
-      <>
-        Funded awards pay at the <a className={link} href="#payments">monthly cutoff</a> unless you turn automatic payment off.
+        Funding is optional. Adjust allocations before the{" "}
+        <a className={link} href="#payments">
+          monthly cutoff
+        </a>
+        .
       </>
     ),
   },
@@ -121,15 +124,9 @@ export function HowItWorksPage() {
         <Path id="maintainer-path" title="For maintainers" steps={maintainerSteps} />
       </div>
       <Explained id="points" title="Points" aside={<ContributionPointTiers />}>
-        <p className="text-muted-foreground">
-          Slopbot sizes each accepted pull request with the tiers in this table and awards points. Every accepted merge earns at least 10 points. Only accepted-work points count toward payouts. Joining and connecting X earn no points.
-        </p>
+        <p className="text-muted-foreground">Min 10 points per accepted merge.</p>
       </Explained>
-      <Explained id="penalties" title="Penalties" aside={<PenaltyPointTable />}>
-        <p className="text-muted-foreground">
-          Slopbot applies this one published penalty table. A debit reduces only that UTC month's accepted-work points and never takes it below zero. A debit never changes an approved, scheduled, or paid award. Maintainers and authors outside the closure scope receive no penalty.
-        </p>
-      </Explained>
+      <Explained id="penalties" title="Penalties" aside={<PenaltyPointTable />} />
       <Explained
         title="Example allocation"
         aside={
@@ -146,15 +143,13 @@ export function HowItWorksPage() {
             ))}
           </dl>
         }
-      >
-        <p className="text-muted-foreground">Your points ÷ project points × funded pool = projected allocation.</p>
-      </Explained>
+      />
       <section className="flex flex-col gap-4">
         <h2 id="payments" className="text-xl font-semibold text-foreground">
           Payment stages
         </h2>
         <p className="text-muted-foreground">
-          After each UTC month ends, the owner has 72 hours to adjust awards. A cut below the proposed amount needs a public reason, and the contributor gets 24 hours of notice before the month locks. When payments are enabled, the vault then pays funded awards automatically unless the owner turned this off. Awards without a wallet remain reserved.
+          Funded awards pay automatically 72 h after month end unless the owner turned this off. Awards without a wallet stay reserved. A cut needs a public reason and 24 h notice.
         </p>
         <PaymentLifecycle />
       </section>
@@ -165,14 +160,15 @@ export function HowItWorksPage() {
         <div className="grid gap-8 lg:grid-cols-2">
           <Answer question="What work can I contribute?">
             <p>
-              Choose unblocked work in an active <a className={link} href="/#projects">project</a> and follow its contribution rules. You do not need to claim an issue.
-            </p>
-            <p>
-              Non-code work counts only on projects that opt in. The <a className={link} href="/projects/slopdotcash">Slop project</a> ran one round for October 2026: a tutorial, explainer, video, or support answer about Slop could receive a reviewed award of 1 to 8 points. That round closed on 28 October 2026. Check each project's current contribution rules before preparing non-code work.
+              Any unblocked work in an active{" "}
+              <a className={link} href="/#projects">
+                project
+              </a>
+              . No claim needed.
             </p>
           </Answer>
           <Answer question="When will my work show up?">
-            <p>Merged pull requests and their qualifying reviews appear at the next site update. There is no waiting period or minimum account age.</p>
+            <p>At the next site update.</p>
           </Answer>
           <Answer question="How do points work?">
             <p className="flex flex-wrap items-center gap-2 font-medium text-foreground">
@@ -208,24 +204,28 @@ export function HowItWorksPage() {
           </Answer>
           <Answer question="GitHub flagged my account. What happens to my work?">
             <p>
-              A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does not report accounts and cannot lift a flag. Appeal to GitHub through its{" "}
+              Appeal to GitHub (
               <ExternalLink className={link} href="https://support.github.com/contact/flagged">
                 flagged account form
-              </ExternalLink>{" "}
-              from the account&apos;s primary email.
-            </p>
-            <p>
-              Keep the same account. Sign-in and wallet registration are tied to it, and a new account inherits nothing. If GitHub prevents Slop from verifying your account, Slop sign-in will fail. Your wallet registrations are unchanged. If GitHub hides your pull requests, merged work may be missing from the site. Once GitHub restores access, eligible work can appear again after a successful Slop collection and site update.
+              </ExternalLink>
+              ). Keep the same account.
             </p>
           </Answer>
           <Answer question="How do I receive an award?">
             <p>
-              Add a wallet for your award's network in <a className={link} href="/account#wallets">Account wallets</a>. Wallet confirmation requires your signature. Follow the award and its payment status in{" "}
-              <a className={link} href="/earnings">Payouts</a>.
+              Add a wallet in{" "}
+              <a className={link} href="/account#wallets">
+                Settings
+              </a>
+              . Track it in{" "}
+              <a className={link} href="/earnings">
+                Payouts
+              </a>
+              .
             </p>
           </Answer>
           <Answer question="What does projected mean? Is the pool funded?">
-            <p>A live estimate at the project&apos;s cap. It is not a balance or a guarantee: a cap is a target, and only funds in the vault can be allocated. Funds added after a month freezes count toward later months.</p>
+            <p>An estimate at the cap, not a balance.</p>
           </Answer>
           <Answer question="Can the owner take this month's pool back?">
             <p>

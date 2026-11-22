@@ -127,6 +127,11 @@ export effect function solanaPromptOver(storage: ListedStorage | undefined, pref
   } satisfies SolanaJournal
 }
 
+export function submittedOf(state: SolanaPrompt): string {
+  const saved = visible(state)
+  return saved.candidate !== "" ? saved.candidate : saved.hash !== "" ? saved.hash : state.memory
+}
+
 export interface SolanaPaymentInput {
   readonly caseId: string
   readonly generation: number
@@ -185,9 +190,8 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     try authorize
   }
 
-  // Whether the browser slot can keep the signature: a signed reply that cannot be stored asks the owner to keep it.
-  effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string) {
-    return try prompt.written({ type: "walletReply", identity, reply, signature, stored: slotWritable(storage) }, adapter)
+  effect function reply(identity: string, reply: "Signed" | "Declined" | "Uncertain", signature: string, stored: boolean) {
+    return try prompt.written({ type: "walletReply", identity, reply, signature, stored: stored && slotWritable(storage) }, adapter)
   }
 
   effect function send<R>(connection: SolanaConnection, authority: Authority<R>) {
@@ -213,22 +217,22 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     }) catch effect (error) => {
       if (!requested) throw error
       if (error._tag === "WalletDeclined") {
-        try reply(identity, "Declined", "")
+        try reply(identity, "Declined", "", true)
         throw refused(solanaMessages.declined)
       }
-      try reply(identity, "Uncertain", "")
+      try reply(identity, "Uncertain", "", true)
       throw refused(solanaMessages.uncertain)
     }
     const signature = base58Encode(signed)
     if (!(try verifyMessageSignature(key, reviewed.message, signed))) {
-      const uncertain = try reply(identity, "Uncertain", "")
+      const uncertain = try reply(identity, "Uncertain", "", true)
       if (!isSolanaSignature(signature)) throw new WalletFailed({ message: solanaMessages.unsigned })
       let kept: SolanaPrompt | undefined = undefined
       if (uncertain !== undefined && canEnterCandidate(uncertain, visible(uncertain), signature, account)) kept = try prompt.written({ type: "enterCandidate", read: visible(uncertain), candidate: signature }, account)
       throw refused(`Submitted ${signature}. Keep this signature; it does not match the prepared request${kept === undefined ? " and could not be saved" : ""}.`)
     }
-    const after = try reply(identity, "Signed", signature)
-    if (after === undefined) throw refused(`Submitted ${signature}. Keep this signature; browser storage could not save it.`)
+    const after = (try reply(identity, "Signed", signature, true)) ?? (try reply(identity, "Signed", signature, false))
+    if (after === undefined || after.memory === signature) throw refused(`Submitted ${signature}. Keep this signature; browser storage could not save it.`)
     if (visible(after).hash !== signature) throw refused(`Submitted ${signature}. Keep this signature; the saved request changed.`)
     return signature
   }
@@ -259,7 +263,7 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     try guarded(authority.authorizeVerification)
     const read = visible(before)
     const candidate = entered?.trim() ?? ""
-    if (candidate !== "" && isSolanaSignature(candidate) && candidate !== read.candidate && canEnterCandidate(before, read, candidate, account)) {
+    if (candidate !== "" && isSolanaSignature(candidate) && candidate !== submittedOf(before) && canEnterCandidate(before, read, candidate, account)) {
       const saved = try prompt.written({ type: "enterCandidate", read, candidate }, account)
       if (saved === undefined) throw refused(solanaMessages.storageBlocked)
     }
@@ -267,8 +271,7 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
     if (!canVerify(ready, account)) throw refused(solanaMessages.uncertainShown)
     const checking = try prompt.written({ type: "verify" }, account)
     const request = checking?.request ?? ready.request
-    const saved = visible(try current())
-    const signature = saved.candidate !== "" ? saved.candidate : saved.hash
+    const signature = submittedOf(try current())
     const next = authority.verify([signature]) catch effect (error) => {
       try answered(request, "CheckUnavailable")
       throw error
@@ -289,7 +292,6 @@ export effect function openSolanaPayment(storage: ListedStorage | undefined, inp
 
   effect function beginHistory() {
     const state = try current()
-    if (state.phase === "HistoryCheck") return state.request
     const sessionId = try sessionActor()
     const sessionNumber = sessionId === undefined ? 0 : actorNumber(sessionId)
     if (!canCheckHistory(state, sessionNumber, account)) throw refused(paymentMessages.stateChanged)

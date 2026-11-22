@@ -1,14 +1,16 @@
-// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/screening.md, "Routing writes only private references for the current qualified version"
+// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/screening.md, "Routing writes only private references for the current qualified version"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
 import { type Notice, Notices } from "@repo/ports/operations"
 import type { Claim, Event, Input, Observation, Phase, Review, RevisionEvidence, Screening } from "../../gen/security__screening.ts"
 import { apply, decodeState } from "../../gen/security__screening.effect.vibe"
-import { noExclusions } from "../../gen/security__terms.effect.vibe"
+import { noExclusions, receiptExclusions } from "../../gen/security__terms.effect.vibe"
+import { scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { type Revision, revisionStatements } from "../intake/revision.vibe"
 import { StoredIntake } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
+import { caseTerms } from "../terms/receipt.vibe"
 
 export interface Loaded {
   readonly screening: Screening
@@ -40,6 +42,8 @@ export error ReplacementLost { submissionId: string }
 schema Owner { reporter_github_id: string }
 schema ReportDigest { content_sha256: string }
 schema NoticeVersion { version: number }
+schema ReceiptRow { policy_revision: number | null; terms: string | null; received_at: string | null }
+schema Finished { finished: number }
 
 const phases: Readonly<Record<string, Phase>> = { queued: "Queued", running: "Running", legitimate: "Legitimate", "needs-information": "NeedsInformation", spam: "Spam", unavailable: "Unavailable" }
 const phaseNames: Readonly<Record<Phase, string>> = { Queued: "queued", Running: "running", Legitimate: "legitimate", NeedsInformation: "needs-information", Spam: "spam", Unavailable: "unavailable" }
@@ -66,7 +70,15 @@ function startOf(row: StoredIntake) {
   return Number.isSafeInteger(millis) && millis > 0 ? millis : unknownStart
 }
 
-effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noticeRows]: ReadonlyArray<Rows>) {
+effect function exclusionsOf(receiptRows: Rows, manifestRows: Rows, finishRows: Rows) {
+  if ((try decoded(Finished, finishRows, "security screening finish")).length === 0) return noExclusions
+  const [receipt] = try decoded(ReceiptRow, receiptRows, "security screening receipt")
+  if (receipt === undefined) return noExclusions
+  const terms = try caseTerms({ terms: receipt.terms, policyRevision: receipt.policy_revision, receivedAt: receipt.received_at, publishedAt: null })
+  return receiptExclusions(withOwnerLines(terms, try scopeOfRows(manifestRows)))
+}
+
+effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noticeRows, receiptRows, manifestRows, finishRows]: ReadonlyArray<Rows>) {
   const [row] = try decoded(StoredIntake, intakeRows ?? [], "security screening")
   const [owner] = try decoded(Owner, ownerRows ?? [], "security screening reporter")
   if (row === undefined || owner === undefined) throw new ScreeningMissing({ submissionId: id })
@@ -83,7 +95,7 @@ effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noti
     routed: row.routed_at !== null,
     noticeVersions: notices,
     reportDigests: digests,
-    exclusions: noExclusions,
+    exclusions: try exclusionsOf(receiptRows ?? [], manifestRows ?? [], finishRows ?? []),
   })
   return { screening, row, reporterGithubId: owner.reporter_github_id } satisfies Loaded
 }
@@ -98,6 +110,9 @@ function aggregateOf(id: string) {
       sql`SELECT reporter_github_id FROM security_submissions WHERE id=${id}`,
       sql`SELECT content_sha256 FROM security_intake_reports WHERE submission_id=${id} ORDER BY version`,
       sql`SELECT DISTINCT CAST(substr(event_key, ${prefix.length + 1}) AS INTEGER) AS version FROM notifications WHERE substr(event_key, 1, ${prefix.length}) = ${prefix} AND kind = 'security_case' ORDER BY version`,
+      sql`SELECT c.policy_revision, c.terms, c.received_at FROM security_submission_intake i JOIN security_cases c ON c.id = i.case_id WHERE i.submission_id=${id}`,
+      sql`SELECT p.manifest FROM security_submission_intake i JOIN security_cases c ON c.id = i.case_id JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE i.submission_id=${id}`,
+      sql`SELECT 1 AS finished FROM security_intake_events WHERE submission_id=${id} AND kind='screen-finish' LIMIT 1`,
     ],
     decode: (found: ReadonlyArray<Rows>) => screeningOf(id, found),
   } satisfies Aggregate<Loaded, unknown, unknown>

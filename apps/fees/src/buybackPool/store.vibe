@@ -4,7 +4,7 @@ import { isoAt } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
-import { type Event, type Pool, NotAState, apply, decodeEvent, usdg as usdgAsset } from "../../gen/fees__buybackPool.effect.vibe"
+import { type Event, type Pool, NotAState, apply, decodeEvent } from "../../gen/fees__buybackPool.effect.vibe"
 import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../../gen/fees__buybackBinding.effect.vibe"
 import { NotAState as JournalNotAState, nonceFloor } from "../../gen/fees__conversion.effect.vibe"
 import type { Sender } from "../../gen/fees__runtime.effect.vibe"
@@ -14,8 +14,8 @@ import { verifiedEvmSend } from "../journal/signedSend.ts"
 import { aggregate as journalAggregate } from "../journal/store.vibe"
 import * as W from "../journal/writes.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { robinhoodUsdg, slopToken } from "../runtime/pins.ts"
-import { type ArrivalEntry, type Ledger, type PoolInstance, type SendRecord, arrivalOf, burnReasonText, closedUnlanded, decisionStateName, decodePool, poolReads, poolVersion, purchaseReasonText, receiptOf } from "./codec.vibe"
+import { slopToken } from "../runtime/pins.ts"
+import { type ArrivalEntry, type Ledger, type PoolInstance, type SendRecord, arrivalOf, assetToken, burnReasonText, closedUnlanded, decisionStateName, decodePool, poolReads, poolVersion, purchaseReasonText, receiptOf } from "./codec.vibe"
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"
@@ -90,6 +90,10 @@ effect function need<T>(value: T | undefined, event: string, issue: string) {
 
 effect function refuse(event: string, issue: string) {
   throw new PoolRefused({ event, issue })
+}
+
+effect function tokenOf(instance: PoolInstance, asset: number, event: string) {
+  return try need(assetToken(instance, asset), event, "the asset is none of the pool's Robinhood Chain fee assets")
 }
 
 function sendByTx(instance: PoolInstance, ledger: Ledger, tx: number, kind: SendRecord["kind"]) {
@@ -181,6 +185,7 @@ function signedRow(entry: Signed): Statement {
 
 interface Decided {
   readonly kind: "buyback" | "burn"
+  readonly token: string
   readonly id: string
   readonly runId: string
   readonly wallet: string
@@ -194,9 +199,8 @@ interface Decided {
 function decisionRow(entry: Decided): Statement {
   const decided = entry.next.decisions[entry.next.decisions.length - 1]
   const state = decisionStateName[decided?.state ?? "Pending"]
-  const token = entry.kind === "buyback" ? robinhoodUsdg : slopToken
   const route = entry.kind === "buyback" && decided?.state !== "NoRoute" && entry.quote !== undefined ? "kyberswap" : null
-  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, quote_value_micro, price_impact_bps, quote, state, reason, created_at, updated_at) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, 'robinhood', ${decided?.live === true ? "live" : "dry_run"}, ${entry.wallet}, ${token}, ${slopToken}, ${entry.amount}, ${route}, ${route === null ? null : entry.quote?.amountOut ?? null}, ${decided?.value ?? 0}, ${route === null ? null : entry.quote?.impactBps ?? null}, ${route === null ? null : entry.quote?.summary ?? null}, ${state}, ${entry.reason}, ${entry.now}, ${entry.now})`
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, quote_value_micro, price_impact_bps, quote, state, reason, created_at, updated_at) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, 'robinhood', ${decided?.live === true ? "live" : "dry_run"}, ${entry.wallet}, ${entry.token}, ${slopToken}, ${entry.amount}, ${route}, ${route === null ? null : entry.quote?.amountOut ?? null}, ${decided?.value ?? 0}, ${route === null ? null : entry.quote?.impactBps ?? null}, ${route === null ? null : entry.quote?.summary ?? null}, ${state}, ${entry.reason}, ${entry.now}, ${entry.now})`
 }
 
 effect function settlement(record: SendRecord, facts: Facts, event: string, now: string) {
@@ -206,7 +210,7 @@ effect function settlement(record: SendRecord, facts: Facts, event: string, now:
   return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
 }
 
-function evidenced(evidence: ReadonlyArray<IncomeEntry>, instance: PoolInstance, receipt: number) {
+function evidenced<T extends IncomeEntry>(evidence: ReadonlyArray<T>, instance: PoolInstance, receipt: number) {
   return evidence.find((entry) => receiptOf(instance.names, entry) === receipt)
 }
 
@@ -239,10 +243,7 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
     case "setReleaseVariable":
     case "verifyReadiness":
     case "beginRun":
-      return []
     case "reserveLocalShare":
-      // The pool's fee evidence is USDG only; another asset's share has no collected income to reserve from.
-      if (event.asset !== usdgAsset) return try refuse(event.type, "only the USDG fee share is collected into the pool")
       return []
     case "creditArrival": {
       if (arrivalFound(instance, event.arrival) === undefined) return try refuse(event.type, "the arrival is not a retained OrderArrived outcome of its source leg")
@@ -250,8 +251,8 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
     }
     case "recordRobinhoodFee": {
       const found = evidenced(instance.feeEvidence, instance, event.robinhoodFee.receipt)
-      if (found === undefined || event.robinhoodFee.asset !== usdgAsset || decimalOf(found.amount) !== String(event.robinhoodFee.amount) || found.chainTime !== event.robinhoodFee.chainTime)
-        return try refuse(event.type, "the fee is not a finalized USDG receipt of the Robinhood Chain fee wallet")
+      if (found === undefined || found.asset !== event.robinhoodFee.asset || decimalOf(found.amount) !== String(event.robinhoodFee.amount) || found.chainTime !== event.robinhoodFee.chainTime)
+        return try refuse(event.type, "the fee is not a finalized receipt of the Robinhood Chain fee wallet in this asset")
       return []
     }
     case "receiveSlopFee": {
@@ -264,9 +265,10 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
     case "decideBurn": {
       if (next.decisions.length === ledger.state.decisions.length) return []
       const purchasing = event.type === "decidePurchase"
-      const amount = purchasing ? String(event.quote.spent) : decimalOf(event.burnRequest.quantity)
+      const amount = purchasing ? String(event.quote.amountIn) : decimalOf(event.burnRequest.quantity)
       return [decisionRow({
         kind: purchasing ? "buyback" : "burn",
+        token: purchasing ? try tokenOf(instance, event.quote.asset, event.type) : slopToken,
         id: try randomId(),
         runId: try need(facts.runId, event.type, "the run is missing"),
         wallet: try need(facts.wallet, event.type, "the fee wallet is missing"),
@@ -284,7 +286,7 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
       const quote = try need(facts.quote, event.type, "the purchase quote is missing")
       const { gasId, statement } = try reserved(loaded, instance, { kind: "PurchaseSend", tx: event.quote.tx, signed, runId, wallet, now }, event.type)
       if (signed.expiresAt === undefined) return try refuse(event.type, "a purchase needs its router deadline")
-      return [statement, signedRow({ kind: "buyback", id: try randomId(), runId, wallet, token: robinhoodUsdg, amount: String(event.quote.spent), value: event.quote.spent, quoteAmountOut: quote.amountOut, minAmountOut: decimalOf(event.quote.minimum), impactBps: quote.impactBps, quote: quote.summary, signed, gasId, now })]
+      return [statement, signedRow({ kind: "buyback", id: try randomId(), runId, wallet, token: try tokenOf(instance, event.quote.asset, event.type), amount: String(event.quote.amountIn), value: event.quote.spent, quoteAmountOut: quote.amountOut, minAmountOut: decimalOf(event.quote.minimum), impactBps: quote.impactBps, quote: quote.summary, signed, gasId, now })]
     }
     case "burn": {
       const signed = try need(facts.signed, event.type, "the signed burn is missing")
@@ -330,7 +332,7 @@ function observed(instance: PoolInstance, ledger: Ledger, event: Event, next: Po
     case "verifyReadiness":
       return withRuntime(instance, next)
     case "beginRun": return { ...instance, runs: instance.runs + 1, runFrom: ledger.purchases }
-    case "reserveLocalShare": return { ...instance, reserved: [...instance.reserved, event.amount] }
+    case "reserveLocalShare": return { ...instance, reserved: [...instance.reserved, { asset: event.asset, amount: event.amount }] }
     case "recordRobinhoodFee": {
       const found = evidenced(instance.feeEvidence, instance, event.robinhoodFee.receipt)
       return found === undefined ? instance : { ...instance, fees: [...instance.fees, found] }
@@ -376,6 +378,8 @@ export effect function receive(instance: PoolInstance, input: unknown, by: Sende
 }
 
 export interface Approving {
+  readonly token: string
+  readonly value: number
   readonly amount: bigint
   readonly runId: string
   readonly wallet: string
@@ -388,7 +392,7 @@ effect function approvalWrites(loaded: Loaded, instance: PoolInstance, approving
   const tx = instance.names.number("tx", approving.signed.txId)
   const amount = approving.amount.toString()
   const { gasId, statement } = try reserved(loaded, instance, { kind: "PurchaseSend", tx, signed: approving.signed, runId: approving.runId, wallet: approving.wallet, now }, "approvePurchase")
-  return [statement, signedRow({ kind: "approval", id: try randomId(), runId: approving.runId, wallet: approving.wallet, token: robinhoodUsdg, amount, value: Number(approving.amount), quoteAmountOut: null, minAmountOut: null, impactBps: null, quote: approving.summary, signed: approving.signed, gasId, now })]
+  return [statement, signedRow({ kind: "approval", id: try randomId(), runId: approving.runId, wallet: approving.wallet, token: approving.token, amount, value: approving.value, quoteAmountOut: null, minAmountOut: null, impactBps: null, quote: approving.summary, signed: approving.signed, gasId, now })]
 }
 
 export effect function journalApproval(instance: PoolInstance, approving: Approving) {
@@ -442,6 +446,7 @@ export effect function settleClosed(instance: PoolInstance, id: string, facts: F
 
 export interface PrepareFailure {
   readonly kind: "buyback" | "burn"
+  readonly token: string
   readonly runId: string
   readonly wallet: string
   readonly amount: string
@@ -455,7 +460,7 @@ function preparedRow(entry: PrepareFailure, id: string, now: string): Statement 
   const buying = entry.kind === "buyback"
   const reason = `prepare: ${errorText(entry.detail)}`.slice(0, 500)
   const terms = buying ? entry.quote?.summary ?? null : JSON.stringify({ burn: entry.amount })
-  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, quote, state, reason, created_at, updated_at) VALUES (${entry.kind}, ${id}, ${entry.runId}, 'robinhood', 'live', ${entry.wallet}, ${buying ? robinhoodUsdg : slopToken}, ${slopToken}, ${entry.amount}, ${buying ? "kyberswap" : null}, ${entry.quote?.amountOut ?? null}, ${entry.minAmountOut}, ${entry.value}, ${entry.quote?.impactBps ?? null}, ${terms}, 'failed', ${reason}, ${now}, ${now})`
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, quote, state, reason, created_at, updated_at) VALUES (${entry.kind}, ${id}, ${entry.runId}, 'robinhood', 'live', ${entry.wallet}, ${entry.token}, ${slopToken}, ${entry.amount}, ${buying ? "kyberswap" : null}, ${entry.quote?.amountOut ?? null}, ${entry.minAmountOut}, ${entry.value}, ${entry.quote?.impactBps ?? null}, ${terms}, 'failed', ${reason}, ${now}, ${now})`
 }
 
 export effect function failPreparation(instance: PoolInstance, failure: PrepareFailure) {

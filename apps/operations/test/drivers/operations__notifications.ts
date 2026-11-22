@@ -35,6 +35,7 @@ const clock = settableClock(epoch + 1);
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer));
 const securityKinds: ReadonlySet<Kind> = new Set<Kind>(["SecurityCase", "SecurityReportReceived"]);
 const noConfig: NotifyConfig = { routes: [], generalEmail: false };
+const accountService = -8;
 
 interface World {
   readonly generation: number;
@@ -205,12 +206,39 @@ const view = (state: Inbox): Seen => {
   return { ...seen, evidence: [...state.evidence].sort((left, right) => left - right) };
 };
 
+interface Closing {
+  readonly actor: number;
+  readonly activity: boolean;
+  readonly security: boolean;
+}
+
+const closingOf = (raw: unknown): Closing | undefined => {
+  const enrollment = raw as { actor?: unknown; preference?: { activity?: unknown; security?: unknown } | null } | null;
+  if (typeof enrollment !== "object" || enrollment === null || !isInt(enrollment.actor)) return undefined;
+  const preference = enrollment.preference;
+  if (typeof preference !== "object" || preference === null || typeof preference.activity !== "boolean" || typeof preference.security !== "boolean") return undefined;
+  return { actor: enrollment.actor, activity: preference.activity, security: preference.security };
+};
+
+const closed = async (enrollment: Closing, by: number) => {
+  if (by !== accountService || enrollment.actor <= 0 || enrollment.activity || enrollment.security) return "refused";
+  const at = iso(clock.now());
+  await db.batch([
+    db.prepare("INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (?, 0, NULL, NULL, ?) ON CONFLICT (github_id) DO NOTHING")
+      .bind(githubId(enrollment.actor), at),
+    db.prepare("UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, destination_version = '', updated_at = ? WHERE github_id = ?")
+      .bind(at, githubId(enrollment.actor)),
+  ]);
+  return "accepted";
+};
+
 export const driver: Driver<Seen> & AsyncDisposable = {
   reset: () => {
     world = { generation: world.generation + 1, config: noConfig, keys: new Map() };
     clock.set(base() + 1);
   },
   dispatch: async (_key, event: Event, by) => {
+    if (event.type === "closeAccount") return closed({ actor: event.enrollment.actor, ...event.enrollment.preference }, Number(by));
     const change = changeOf(event);
     if (change === undefined) return "refused";
     const result = await settled(send(scope(), change, githubId(Number(by)), releaseOf(world.config)));
@@ -218,6 +246,10 @@ export const driver: Driver<Seen> & AsyncDisposable = {
   },
   receive: async (_key, raw, by) => {
     const copy = fieldsOnce(raw);
+    if (copy?.type === "closeAccount") {
+      const closing = closingOf(copy.enrollment);
+      return closing === undefined ? "refused" : closed(closing, Number(by));
+    }
     const decoded = Schema.decodeUnknownExit(Change)(copy === undefined ? raw : rawChangeOf(copy));
     if (Exit.isFailure(decoded)) return "refused";
     const result = await settled(send(scope(), decoded.value, githubId(Number(by)), releaseOf(world.config)));

@@ -175,7 +175,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     })
   })
 
-  it.effect('Answer repository access for the named account and repository only (spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login\'s base permission and never returns a token"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions")', () => effect {
+  it.effect('Answer repository access for the named account and repository only (spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login\'s base permission and never returns a token"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity")', () => effect {
     const slopbot = try Slopbot
     const maintainer = { repository: "ada/alpha", repositoryId: "7001", login: "bo", githubId: "202" }
     const quiet = slopbot.github.requests.length
@@ -198,12 +198,18 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const outage = try call(accessUrl(internal, maintainer))
     try orDie(Effect.try(() => slopbot.github.world.renameRepo("ada/charlie", "ada/charlie-next")))
     const renamed = try call(accessUrl(internal, { repository: "ada/charlie", repositoryId: "7003", login: "ada", githubId: "101" }))
+    const beforeRefresh = slopbot.github.requests.length
+    try call("https://slopbot.internal/__test/reporting-refresh", "POST")
+    const renamedReadiness = try promise(() => slopbot.db.prepare("SELECT repository_id, enabled, failure FROM repository_reporting_status WHERE project_id = 'charlie'").first())
+    const renamedReads = requestsSince(slopbot.github, beforeRefresh).filter((line) => line.includes("/ada/charlie"))
     try same({
       refused: refused.map((answer) => [answer.status, answer.body, answer.headers["cache-control"]]),
       silent,
       answers: answers.map((answer) => [answer.status, answer.body, answer.headers["cache-control"]]),
       outage: [outage.status, outage.body],
       renamed: [renamed.status, renamed.body],
+      renamedReadiness,
+      renamedReads,
       tokens: [...refused, ...answers, outage, renamed].filter((answer) => /gh[su]_/u.test(answer.text)).length,
     }, {
       refused: [
@@ -229,6 +235,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       ],
       outage: [503, { error: "unavailable" }],
       renamed: [503, { error: "unavailable" }],
+      renamedReadiness: { repository_id: null, enabled: null, failure: "unavailable" },
+      renamedReads: ["GET /repos/ada/charlie/installation 301"],
       tokens: 0,
     })
   })

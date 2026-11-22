@@ -9,7 +9,7 @@ import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/slopbot__jobQueue.conformance.ts";
 import type { Copy, Durable, Event, JobKind, JobQueue as Queue } from "../../gen/slopbot__jobQueue.ts";
 import { type DueTable, dueJobs, markDispatched } from "../../src/jobs/due.vibe";
-import { type Job, JobQueue, send } from "../../src/jobs/job.vibe";
+import { type Job, JobQueue, readyJob, send } from "../../src/jobs/job.vibe";
 import { type Handled, ReviewBusy, maxRetries, settle } from "../../src/jobs/retry.vibe";
 
 const base = Date.parse("2026-11-01T00:00:00.000Z");
@@ -60,6 +60,7 @@ function jobOf(key: string, kind: JobKind): Job {
     case "AppealDueJob": return { kind: "appeal_due", appealKey: rowKeyOf(key, kind), ...item };
     case "AppealCommandJob": return { kind: "appeal_command", command: "accept", ...item, senderId: 2 };
     case "HumanSignalJob": return { kind: "human_reopen", ...item, senderId: 2 };
+    case "ReadyLabelJob": return readyJob({ deliveryId: item.deliveryId, installationId: item.installationId, repositoryId: item.repositoryId, owner: item.owner, repo: item.repo, number: item.number });
     default: return { kind: "review", ...item };
   }
 }

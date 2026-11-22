@@ -1,4 +1,5 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"
+import { honorSystemValid } from "../../../gen/backend__projects.ts";
 import { githubUserIdFromNodeId } from "../nodeId.ts";
 import { legacyHolder } from "../store/legacy.ts";
 import { readyLabelProblem } from "./readyLabel.ts";
@@ -632,7 +633,7 @@ function validateReward(value: unknown, field: string, { allowLegacyExternalPriz
   }
   const monthlyCapMinor = minor(reward.monthlyCapMinor, `${field}.monthlyCapMinor`);
   const committedMinor = minor(reward.committedMinor, `${field}.committedMinor`);
-  if (Object.hasOwn(reward, "honorSystem") && (reward.honorSystem !== true || reward.kind !== "monthly-pool" || BigInt(monthlyCapMinor) === 0n)) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
+  if (Object.hasOwn(reward, "honorSystem") && !honorSystemValid({ monthlyPool: reward.kind === "monthly-pool", monthlyAmount: BigInt(monthlyCapMinor) > 0n ? 1 : 0, honor: reward.honorSystem === true ? "HonorTrue" : "HonorFalse" })) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") fail(`${field}.paymentMode is invalid`);
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);

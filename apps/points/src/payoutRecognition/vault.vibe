@@ -1,0 +1,130 @@
+// spec/points/payoutRecognition.md, "A finalized ordinary monthly vault payment earns recognition once per recipient, project and month"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"
+import { boundedBytes } from "@repo/platform/browser"
+import { type PublicVaultPayment, PublicVaultPaymentPage } from "@repo/ports/settlement"
+import type { Award } from "../kernels/records/canonical.ts"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export error VaultPayoutsUnreadable { message: string }
+
+export type PayoutActor = Award["actor"]
+export type VaultOrigin = "https://slop.cash" | "https://staging.slop.cash"
+
+export interface ActorVaultPayments { readonly actor: PayoutActor; readonly payments: ReadonlyArray<PublicVaultPayment> }
+
+interface Cursor { readonly after: number; readonly through: number | undefined; readonly total: number | undefined }
+
+const label = "payout history"
+const maxPageBytes = 1_048_576
+const readTimeoutMs = 30_000
+const readers = 8
+const pageRowLimit = 100
+const unavailable = "Published payout history unavailable"
+const invalidPage = "Invalid published payout history"
+const refusals = { history: "Invalid payout history", duplicate: "Duplicate payout record", count: "Payout history count differs", incomplete: "Incomplete payout history" }
+const monthPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const baseUnitsPattern = /^(?:0|[1-9][0-9]{0,38})$/u
+const maxBaseUnits = 340282366920938463463374607431768211455n
+
+export const escrowTestnets: ReadonlyMap<string, boolean> = new Map([
+  ["base-sepolia", true],
+  ["base-mainnet", false],
+  ["solana-devnet", true],
+  ["solana-testnet", true],
+  ["solana-mainnet", false],
+  ["robinhood-testnet", true],
+  ["robinhood-mainnet", false],
+  ["ethereum-sepolia", true],
+  ["ethereum", false],
+])
+
+export function numericGithubId(node: string) {
+  const id = githubUserIdFromNodeId(node)
+  return id === 0n ? undefined : String(id)
+}
+
+function baseUnits(text: string) {
+  return baseUnitsPattern.test(text) && BigInt(text) <= maxBaseUnits
+}
+
+export function paymentValid(payment: PublicVaultPayment) {
+  return Number.isSafeInteger(payment.assetDecimals) && payment.assetDecimals >= 0 && payment.assetDecimals <= 36 &&
+    baseUnits(payment.netBase) && (payment.contributionMonth === null || monthPattern.test(payment.contributionMonth)) &&
+    payment.transactionId !== "" && escrowTestnets.has(payment.network) && Number.isFinite(Date.parse(payment.indexedAt))
+}
+
+function count(value: number | null) {
+  return value !== null && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function pageAdmitted(page: PublicVaultPaymentPage, cursor: Cursor) {
+  const through = count(page.through)
+  const total = count(page.total)
+  if (through === undefined || total === undefined || page.payments.length > pageRowLimit) return false
+  if ((cursor.through !== undefined && through !== cursor.through) || (cursor.total !== undefined && total !== cursor.total)) return false
+  if (page.next === null) return true
+  const next = count(page.next)
+  return page.payments.length > 0 && next !== undefined && next > cursor.after && next <= through
+}
+
+effect function pageAt(url: string) {
+  const client = try HttpClient.HttpClient
+  const read = effect {
+    const response = try client.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } }))
+    if (response.status < 200 || response.status > 299) throw new VaultPayoutsUnreadable({ message: unavailable })
+    const bytes = boundedBytes(response, maxPageBytes, label) catch effect (error) => {
+      throw new VaultPayoutsUnreadable({ message: error._tag === "BodyTooLarge" ? `${label} exceeded the ${maxPageBytes}-byte limit` : error.reason })
+    }
+    return bytes
+  }
+  const bytes = timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" }), Duration.millis(readTimeoutMs)) catch effect (error) => {
+    throw error instanceof VaultPayoutsUnreadable ? error : new VaultPayoutsUnreadable({ message: unavailable })
+  }
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new VaultPayoutsUnreadable({ message: `${label} returned invalid JSON` })
+  }
+  const page = Schema.decodeUnknownEffect(PublicVaultPaymentPage)(value) catch effect () => {
+    throw new VaultPayoutsUnreadable({ message: invalidPage })
+  }
+  if (!page.payments.every(paymentValid)) throw new VaultPayoutsUnreadable({ message: invalidPage })
+  return value as PublicVaultPaymentPage
+}
+
+effect function completePayments(url: string) {
+  const payments: PublicVaultPayment[] = []
+  const ids = new Set<string>()
+  let cursor: Cursor = { after: 0, through: undefined, total: undefined }
+  while (true) {
+    const page = try pageAt(cursor.through === undefined ? url : `${url}?after=${cursor.after}&through=${cursor.through}`)
+    if (!pageAdmitted(page, cursor)) throw new VaultPayoutsUnreadable({ message: refusals.history })
+    for (const payment of page.payments) {
+      if (ids.has(payment.id)) throw new VaultPayoutsUnreadable({ message: refusals.duplicate })
+      ids.add(payment.id)
+      payments.push(payment)
+    }
+    if (payments.length > page.total || (page.next !== null && payments.length >= page.total)) throw new VaultPayoutsUnreadable({ message: refusals.count })
+    if (page.next === null) {
+      if (payments.length !== page.total) throw new VaultPayoutsUnreadable({ message: refusals.incomplete })
+      return payments as ReadonlyArray<PublicVaultPayment>
+    }
+    cursor = { after: page.next, through: page.through, total: page.total }
+  }
+}
+
+export effect function loadVaultPayouts(actors: Iterable<PayoutActor>, origin: VaultOrigin) {
+  const people = new Map<string, PayoutActor>()
+  for (const actor of actors) {
+    const id = numericGithubId(actor.id)
+    if (id !== undefined) people.set(id, actor)
+  }
+  const entries = [...people.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+  return try Effect.forEach(entries, ([id, actor]) => effect {
+    const payments = try completePayments(`${origin}/api/v1/payments/actors/${id}/vault-payments`)
+    return { actor, payments } satisfies ActorVaultPayments
+  }, { concurrency: readers })
+}

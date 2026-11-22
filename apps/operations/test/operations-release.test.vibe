@@ -1,6 +1,8 @@
 import { assert, layer } from "@effect/vitest"
 module stagedGitHub {
   import { execFileSync } from "node:child_process"
+  import { writeFileSync } from "node:fs"
+  import { join } from "node:path"
   import type { GitHubFake } from "@repo/platform/testing/github"
 
   export interface StagedRecord {
@@ -34,12 +36,18 @@ module stagedGitHub {
     })
   }
 
+  /** @throws {Error} */
+  export function advanceBranch(origin: string, name: string, file: string): void {
+    writeFileSync(join(origin, file), `advanced ${Date.now()}\n`)
+    execFileSync("git", ["-C", origin, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", `advance ${name}`])
+  }
+
   /** @throws {never} */
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
 }
-import { type StagedRecord, hangNext, refuseNext, stagedHistory } from stagedGitHub
+import { type StagedRecord, advanceBranch, hangNext, refuseNext, stagedHistory } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -51,7 +59,10 @@ import { BundleRefused } from "../src/release/manifest/inventory.vibe"
 import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
 import { StagingHistoryRefused } from "../src/release/run/history.vibe"
 import { writeCollection } from "../src/release/manifest/release.vibe"
-import { PublicationFailed, Publisher } from "../src/release/run/publisher.vibe"
+import { DataOptionsRefused } from "../src/release/coverage/options.vibe"
+import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
+import type { Service } from "../gen/operations__release.effect.vibe"
+import { Cloudflare, ToolFailed } from "../src/release/wrangler/cloudflare.vibe"
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
 import { runFacts } from "../src/release/run/facts.vibe"
 import { ReleaseRefused } from "../src/release/run/run.vibe"
@@ -86,6 +97,7 @@ function described(error: unknown) {
   if (error instanceof ReleaseStopped) return `ReleaseStopped:${error.outcome}`
   if (error instanceof ReleaseRefused) return `ReleaseRefused:${error.step}`
   if (error instanceof LockUnobserved) return "LockUnobserved"
+  if (error instanceof DataOptionsRefused) return "DataOptionsRefused"
   if (error instanceof BundleRefused) return "BundleRefused"
   if (error instanceof StagingHistoryRefused) return `StagingHistoryRefused: ${error.message.replace(/epoch seconds \d+/u, "epoch seconds N")}`
   return error instanceof Error ? error.name : String(error)
@@ -115,20 +127,42 @@ effect function git(directory: string, args: ReadonlyArray<string>) {
   return new TextDecoder().decode(bytes).trim()
 }
 
-function recorder(calls: string[]) {
+const recordedOrder: ReadonlyArray<Service> = ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"]
+
+function recorder(calls: string[], afterFirstWorker?: () => void) {
   effect function refused(stage: string) {
     calls.push(stage)
     throw new PublicationFailed({ stage, message: "dry run publishes nothing" })
   }
+  effect function published(service: Service, target: Target) {
+    calls.push(`publish ${service}`)
+    if (calls.filter((call) => call.startsWith("publish ")).length === 1) try Effect.sync(() => afterFirstWorker?.())
+    return target.sourceSha
+  }
   return Layer.succeed(Publisher, {
-    order: ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"],
-    prepare: () => refused("prepare"),
-    publish: (service) => refused(`publish ${service}`),
+    order: recordedOrder,
+    prepare: () => afterFirstWorker === undefined ? refused("prepare") : Effect.sync(() => { calls.push("prepare") }),
+    publish: (service, target) => afterFirstWorker === undefined ? refused(`publish ${service}`) : published(service, target),
     feeSettings: () => refused("feeSettings"),
     feeVersions: () => refused("feeVersions"),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),
+  })
+}
+
+function unreachableCloudflare(calls: string[]) {
+  effect function refused(step: string) {
+    calls.push(`cloudflare ${step}`)
+    throw new ToolFailed({ tool: "cloudflare", step, message: "dry run reads no provider" })
+  }
+  return Layer.succeed(Cloudflare, {
+    accountId: "0".repeat(32),
+    wrangler: (step) => refused(step),
+    docker: (step) => refused(step),
+    node: (step) => refused(step),
+    read: (step) => refused(step),
+    write: (step) => refused(step),
   })
 }
 
@@ -140,7 +174,7 @@ effect function written(path: string, text: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer.provide(systemGit, NodeServices.layer)), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one")', () => scoped(effect {
+  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const { fake, token } = try seeded()
@@ -197,12 +231,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
       return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
     }
-    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
+    effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle, afterFirstWorker?: () => void) {
       const run = effect {
         const facts = try runFacts()
         return try publishRelease({ environment, facts, bundle: from, receipts: receiptsPath, root, anchor })
       }
-      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls, afterFirstWorker), unreachableCloudflare(calls), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
       return try exit(provideService(Effect.provide(run, services), FetchHttpClient.Fetch, fake.fetch))
     }
     effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
@@ -246,6 +280,16 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const beforeCurrent = calls.splice(0)
     const current = try publishing("Production", complete)
     const currentCalls = calls.splice(0)
+    const movedEnded = try published("Production", complete, {}, initial, bundle, () => advanceBranch(origin, "main", "apps/operations/src/notice.txt"))
+    const movedStopped = Exit.isFailure(movedEnded) ? Cause.squash(movedEnded.cause) : undefined
+    const movedCalls = calls.splice(0)
+    const movedHead = try git(origin, ["rev-parse", "main"])
+    const movedAfterWorkers = {
+      outcome: described(movedStopped),
+      message: movedStopped instanceof ReleaseStopped ? movedStopped.message : "",
+      workersPublished: movedCalls.filter((call) => call.startsWith("publish ")).length > 1,
+      pagesCalled: movedCalls.some((call) => call === "site" || call === "deployments" || call === "served"),
+    }
 
     const stagingBundle = files.join(directory, "staging-bundle")
     try written(files.join(stagingBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
@@ -312,6 +356,42 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
       hangNext(fake, historyPage)
     }, 3)
+    const retainedBundle = files.join(directory, "retained-bundle")
+    try written(files.join(retainedBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
+    try written(files.join(retainedBundle, "site/skill-manifest.json"), "{}\n")
+    try written(files.join(retainedBundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(retainedBundle, "github/leaderboard.json"), "{\"records\":[{\"login\":\"retained\"}]}\n")
+    try written(files.join(retainedBundle, registrySnapshotPath), snapshot)
+    try writeCollection(retainedBundle, {
+      schemaVersion: 1,
+      environment: "staging",
+      kind: "retained",
+      registrySha256: try sha256Hex(snapshot),
+      githubSha256: try githubDigest(retainedBundle),
+      recordedAt: "2026-11-10T00:00:00.000Z",
+    })
+    const retainedManifested = try attempt(["manifest", "staging", retainedBundle])
+    const retainedReceipts = try receipts("retained-receipts", [...fullGates, "BrowserSmoke"], try sha256Hex(try fs.readFile(files.join(retainedBundle, "release-manifest.json"))))
+    const developmentRun: Readonly<Record<string, string>> = {
+      GITHUB_REF: "refs/heads/development",
+      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
+      GITHUB_JOB: "staging",
+      SLOP_GITHUB_ENVIRONMENT: "slop-staging",
+      STAGING_ORDER_RETRY_UNTIL: String(Math.floor((try Clock.currentTimeMillis) / 1_000) + 120),
+    }
+    try Effect.try(() => stagedHistory(fake, repository, inOrder))
+    const retainedPush = try publishing("Staging", retainedReceipts, developmentRun, initial, retainedBundle)
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true } }))
+    const dispatched = { ...developmentRun, GITHUB_EVENT_NAME: "workflow_dispatch" }
+    const retainedCoverage = try attempt(["coverage", "staging"], dispatched)
+    try Effect.try(() => stagedHistory(fake, repository, inOrder))
+    const retainedManual = try publishing("Staging", retainedReceipts, dispatched, initial, retainedBundle)
+    const retainedManualCalls = calls.splice(0)
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true, discussion_resume_run: "41" } }))
+    const retainedWithResume = try attempt(["coverage", "staging"], dispatched)
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+    const retained = { retainedManifested, retainedPush, retainedCoverage, retainedManual, retainedManualCalls, retainedWithResume }
+
     const staging = {
       stagingManifested,
       stagedInOrder: stagedInOrder.step,
@@ -366,7 +446,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
 
     try Effect.try(() => assert.deepStrictEqual({
       withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
-      current, currentCalls, advanced, advancedCalls, rewritten, rewrittenCalls,
+      current, currentCalls, movedAfterWorkers, retained, advanced, advancedCalls, rewritten, rewrittenCalls,
       staging, coverage,
     }, {
       withoutSite: "BundleRefused",
@@ -384,6 +464,15 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       beforeCurrent: [],
       current: "ReleaseStopped:PartiallyPublished",
       currentCalls: ["prepare"],
+      movedAfterWorkers: { outcome: "ReleaseStopped:PartiallyPublished", message: `Partial publication: Worker/services from ${tested} were published, but main changed to ${movedHead}. Pages was not published; this release failed and requires reconciliation.`, workersPublished: true, pagesCalled: false },
+      retained: {
+        retainedManifested: "ok",
+        retainedPush: "ReleaseRefused:retainSnapshot",
+        retainedCoverage: "ok",
+        retainedManual: "ReleaseStopped:PartiallyPublished",
+        retainedManualCalls: ["prepare"],
+        retainedWithResume: "DataOptionsRefused",
+      },
       advanced: "ok",
       advancedCalls: [],
       rewritten: "ReleaseStopped:Refused",

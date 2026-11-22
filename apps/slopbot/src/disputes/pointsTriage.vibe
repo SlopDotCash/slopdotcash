@@ -11,6 +11,7 @@ import { observe } from "../scope/facts.vibe"
 import { valueDraftOutput } from "./valueDraft.vibe"
 
 export error PointsTriageFailed { appealKey: string; reason: string }
+export error TriageCostsUnrecorded { appealKey: string; reason: string }
 
 export interface TriageReport {
   readonly processed: ReadonlyArray<string>
@@ -45,8 +46,14 @@ effect function availability(appealKey: string, projectId: string, appellantGith
 }
 
 effect function drafted<E, R>(appealKey: string, lease: Lease, installationId: number, item: string, mayCall: () => boolean!E!R) {
-  const outcome = try runRoute({ system: triageSystem, policy: triagePolicy, item }, "high", valueDraftOutput, mayCall)
-  try recordCalls(appealKey, installationId, "triage", outcome.calls)
+  const outcome = effect {
+    const routed = try runRoute({ system: triageSystem, policy: triagePolicy, item }, "high", valueDraftOutput, mayCall)
+    try recordCalls(appealKey, installationId, "triage", routed.calls)
+    return routed
+  } catch effect (error) => {
+    try Effect.logError("Points dispute triage calls left unrecorded", appealKey, error)
+    throw new TriageCostsUnrecorded({ appealKey, reason: "Points dispute triage calls started and their costs are not recorded" })
+  }
   const inFlight = { ...lease, callsInFlight: true }
   if (outcome.kind !== "answered") {
     try step(appealKey, { type: "failTriage", lease: inFlight })
@@ -73,12 +80,22 @@ effect function triage(appealKey: string, lease: Lease) {
   try step(appealKey, { type: "escalateDrafted", lease })
 }
 
+effect function triageOrUnavailable(appealKey: string, lease: Lease) {
+  const done = triage(appealKey, lease) catch effect (error) => {
+    if (error._tag === "TriageCostsUnrecorded") throw error
+    try Effect.logError("Points dispute triage unavailable", appealKey, error)
+    try step(appealKey, { type: "failTriage", lease })
+    return undefined
+  }
+  return done
+}
+
 export effect function processPointsDispute(appealKey: string) {
   if (!disputeKeyPattern.test(appealKey)) throw new PointsTriageFailed({ appealKey, reason: "Invalid Points dispute" })
   const claimed = try step(appealKey, { type: "claim" })
   if (!claimed.accepted || claimed.token === undefined) return
   const lease: Lease = { token: claimed.token, callsInFlight: false }
-  try ensuring(triage(appealKey, lease), effect { step(appealKey, { type: "release", lease }) catch () => undefined })
+  try ensuring(triageOrUnavailable(appealKey, lease), effect { step(appealKey, { type: "release", lease }) catch () => undefined })
 }
 
 export effect function processPendingPointsDisputes() {

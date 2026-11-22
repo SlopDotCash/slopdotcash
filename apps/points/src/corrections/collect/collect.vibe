@@ -1,6 +1,7 @@
-// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
 import { sha256Hex } from "@repo/platform/crypto"
 import { GitHub } from "@repo/platform/github"
+import { apply as applyCorrection, initial as openCorrection } from "../../../gen/points__corrections.effect.vibe"
 import type { Admission, Artifact, Output, RunAuthority, Scope } from "../../../gen/points__quotaRecovery.effect.vibe"
 import { RegistryProject, collectedTargets, registeredProjects, type CollectedTarget } from "../../census/projects.vibe"
 import { collectSearchReferences, searchReference } from "../../collect/merged/census.vibe"
@@ -10,7 +11,7 @@ import { Graphql, executeNodeBatch } from "../../ingestion/graphql.vibe"
 import { type Journal, journalText } from "../../kernels/records/canonical.ts"
 import { journalFile } from "../../kernels/records/ids.vibe"
 import { admitCampaign, finishCollection, identityOf, interrupted, runState } from "../../quotaRecovery/run.vibe"
-import { EvidenceCache, atomicJson, atomicText, readJson, retainedKeys } from "./cache.vibe"
+import { EvidenceCache, atomicJson, atomicText, metadataDocument, readJson, retainedKeys } from "./cache.vibe"
 import { type CorrectionBaseline, type CorrectionCandidate, type CorrectionManifest, type CorrectionPool, correctionBaseline, correctionRule, digestOf, encoded, hasBaselinePrefix, inventoryCorrectionPools } from "./inventory.vibe"
 import { type CensusMonth, canonicalInstant, censusMonths, historicalCutoff, isCanonicalInstant, isCensusMonth, wholeSecondIso } from "./calendar.vibe"
 import { assertCorrectionRegistry } from "./registry.vibe"
@@ -19,9 +20,10 @@ export const collectorWorkflow = ".github/workflows/points-implementation-correc
 export const newCampaignPageSize = 50
 
 export const preflightDocument = `query CorrectionRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id nameWithOwner isPrivate createdAt} rateLimit{cost limit remaining resetAt}}`
-const correctionActor = `fragment CorrectionActor on Actor { __typename login avatarUrl url ... on User { id } ... on Bot { id } ... on Mannequin { id } ... on Organization { id } }`
-export const metadataDocument = `query CorrectionMetadata($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest {id number title url body createdAt updatedAt mergedAt state author{...CorrectionActor} additions deletions baseRefName baseRefOid headRefOid repository{id nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{commit{id oid parents{totalCount} author{user{...CorrectionActor}}}}}}} rateLimit{cost limit remaining resetAt}} ${correctionActor}`
 const sourceBatchSize = 20
+export const acceptedObjectUnavailable = "accepted-object-unavailable"
+export const acceptedMergeIdentityUnavailable = "accepted-merge-identity-unavailable"
+export const earlierAcceptedObjectUnavailable = "earlier-accepted-object-unavailable"
 
 export error CollectionInvalid { message: string }
 export error CollectionInterrupted { message: string }
@@ -70,6 +72,27 @@ export interface Campaign {
 export interface SourceRead {
   readonly outcome: MergedOutcome
   readonly repositoryNodeId: string
+  readonly mergeCommit?: MergeCommit | null
+}
+
+export interface MergeCommit {
+  readonly oid: string
+}
+
+export type AcceptedObject =
+  | { readonly sha: string; readonly treeSha: string; readonly parents: ReadonlyArray<string> }
+  | { readonly sha: string; readonly unavailable: 404 | 422 }
+  | { readonly sha: null; readonly unavailable: "merge-identity" }
+
+export type SupplementSource = Pick<CorrectionCandidate, "sourceId" | "sourceUrl" | "occurredAt"> & (
+  | { readonly status: "source-unavailable" }
+  | { readonly status: "verified"; readonly outcome: MergedOutcome; readonly acceptedObject: AcceptedObject | null })
+
+export interface CensusSupplement {
+  readonly repositoryNodeId: string
+  readonly through: string
+  readonly sources: ReadonlyArray<SupplementSource>
+  readonly digest: string
 }
 
 export interface CollectedEvidence {
@@ -83,6 +106,7 @@ export interface CollectedEvidence {
   readonly owners: ReadonlyMap<string, string>
   readonly ownershipComplete: boolean
   readonly missingMonths: ReadonlyArray<string>
+  readonly supplementDigests: ReadonlyArray<string>
   readonly censusDigest: string
   readonly initialSearchPageSize: number
   readonly limitations: ReadonlyMap<string, string>
@@ -105,6 +129,7 @@ export interface CollectionReceipt {
   readonly ownershipComplete: boolean
   readonly initialSearchPageSize: number
   readonly missingMonths: ReadonlyArray<string>
+  readonly supplementDigests?: ReadonlyArray<string>
   readonly totalPositivePools: number
   readonly selectedPools: number
   readonly completeProofs: number
@@ -160,7 +185,9 @@ schema SourceMetadata {
   readonly mergedAt: string | null
   readonly url: string
   readonly repository: { readonly id: string; readonly nameWithOwner: string; readonly isPrivate: boolean } | null
+  readonly mergeCommit?: { readonly oid: string } | null
 }
+schema AcceptedCommit { readonly sha: string; readonly tree: { readonly sha: string }; readonly parents: ReadonlyArray<{ readonly sha: string }> }
 schema CensusPartHeader { readonly repositoryNodeId: string; readonly from: string; readonly to: string; readonly digest: string }
 
 const monthPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
@@ -256,13 +283,28 @@ effect function recoveredStatistics(target: CollectedTarget, repositoryNodeId: s
   return { additions, deletions, author } satisfies RecoveredStatistics
 }
 
-export function commitOwnersOf(outcomes: ReadonlyArray<MergedOutcome>) {
+function statisticsLoader(target: CollectedTarget) {
+  return commitLineLoader((repositoryNodeId, commit) => recoveredStatistics(target, repositoryNodeId, commit))
+}
+
+type StatisticsLoader = ReturnType<typeof statisticsLoader>
+
+function precedes(left: MergedOutcome, right: MergedOutcome) {
+  return Date.parse(left.mergedAt) < Date.parse(right.mergedAt) || (Date.parse(left.mergedAt) === Date.parse(right.mergedAt) && left.id < right.id)
+}
+
+function commitKey(repository: string, sha: string) {
+  return `${repository.toLowerCase()}\u0000${sha}`
+}
+
+export function commitOwnersOf(outcomes: ReadonlyArray<MergedOutcome>, fences: ReadonlyMap<string, string> = new Map()) {
   const ordered = [...outcomes].sort((left, right) => Date.parse(left.mergedAt) - Date.parse(right.mergedAt) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
   const owners = new Map<string, string>()
   for (const outcome of ordered) {
-    const repository = repositoryIdOf(outcome.url).toLowerCase()
-    for (const commit of outcome.commits ?? []) {
-      const key = `${repository}\u0000${commit.oid}`
+    const repository = repositoryIdOf(outcome.url)
+    const fence = fences.get(outcome.id)
+    for (const oid of [...(outcome.commits ?? []).map((commit) => commit.oid), ...(fence === undefined ? [] : [fence])]) {
+      const key = commitKey(repository, oid)
       if (!owners.has(key)) owners.set(key, outcome.id)
     }
   }
@@ -383,9 +425,12 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
   const outcomes: MergedOutcome[] = []
   const missingMonths: string[] = []
   const partDigests: string[] = []
+  const loaders = new Map<string, StatisticsLoader>()
   for (const plan of campaign.repositories) {
     const target = plan.repository
-    const loader = commitLineLoader((repositoryNodeId, commit) => recoveredStatistics(target, repositoryNodeId, commit))
+    const loader = statisticsLoader(target)
+    loaders.set(target.id, loader)
+    let earlierMonthMissing = false
     const partDirectory = `${options.directory}/census/${try digestOf(target.id)}`
     for (const interval of plan.months) {
       const partPath = `${partDirectory}/${interval.month}.json`
@@ -396,6 +441,7 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
       let part: { readonly repositoryNodeId: string; readonly from: string; readonly to: string; readonly outcomes: ReadonlyArray<MergedOutcome>; readonly digest: string } | undefined = undefined
       if (header !== undefined) part = { ...header, outcomes: [] }
       if (part !== undefined || options.month === interval.month || (options.month === undefined && options.sampleSourceIds === undefined)) {
+        if (part === undefined && earlierMonthMissing) throw invalid("Collect earlier census months first; later months reuse their commit statistics")
         try cache.allowRequests(part === undefined)
         const references = try Effect.ensuring(collectSearchReferences({
           target: { owner: target.owner, name: target.name, expectedNodeId: target.expectedNodeId },
@@ -425,6 +471,7 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
         }
       }
       if (part === undefined) {
+        earlierMonthMissing = true
         missingMonths.push(`${target.id}:${interval.month}`)
         continue
       }
@@ -435,15 +482,36 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
     }
   }
   if (new Set(outcomes.map((outcome) => outcome.id)).size !== outcomes.length) throw invalid("Monthly census repeats a source")
-  return { outcomes, missingMonths, partDigests }
+  return { outcomes, missingMonths, partDigests, loaders }
 }
 
-effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: Campaign, outcomes: ReadonlyArray<MergedOutcome>, limitations: Map<string, string>) {
-  const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]))
+type UnresolvedOwnership = (repository: string, sha: string, id: string) => boolean
+
+function unresolvedOwnership(unavailable: ReadonlyMap<string, MergedOutcome>, owners: ReadonlyMap<string, string>, byId: ReadonlyMap<string, MergedOutcome>): UnresolvedOwnership {
+  return (repository, sha, id) => {
+    const key = commitKey(repository, sha)
+    const earlier = unavailable.get(key)
+    if (earlier === undefined) return false
+    const owner = byId.get(owners.get(key) ?? "")
+    if (owner !== undefined && precedes(owner, earlier)) return false
+    const source = byId.get(id)
+    return source === undefined || precedes(earlier, source)
+  }
+}
+
+effect function supplementHolds(affects: boolean) {
+  const required = try applyCorrection(openCorrection, { type: "requireSupplement", affects }, "TrustedWorkflow")
+  const settled = try applyCorrection(required, { type: "verifySupplement", result: "SupplementUnavailable" }, "TrustedWorkflow")
+  return settled.supplementAffects && settled.supplement === "SupplementUnavailable"
+}
+
+effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: Campaign, byId: ReadonlyMap<string, MergedOutcome>, limitations: Map<string, string>, unresolved: UnresolvedOwnership) {
   const reads = new Map<string, SourceRead>()
   for (const plan of campaign.repositories) {
     const targets = selected.map((pool) => pool.candidate).filter((candidate) => repositoryIdOf(candidate.sourceUrl).toLowerCase() === plan.repository.id.toLowerCase())
     for (const candidate of targets) {
+      const objectLimitation = limitations.get(candidate.sourceId)
+      if (try supplementHolds(objectLimitation === acceptedObjectUnavailable || objectLimitation === acceptedMergeIdentityUnavailable)) continue
       const outcome = byId.get(candidate.sourceId)
       if (outcome === undefined) {
         limitations.set(candidate.sourceId, "source-unavailable")
@@ -465,6 +533,10 @@ effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: C
         || !commits.every((commit) => shaPattern.test(commit.oid) && [commit.parentCount, commit.additions, commit.deletions].every((count) => Number.isSafeInteger(count) && count >= 0))) {
         throw invalid("Complete census source identity or commit evidence is invalid")
       }
+      if (try supplementHolds(candidate.kind === "pull-request" && commits.some((commit) => commit.parentCount <= 1 && unresolved(plan.repository.id, commit.oid, candidate.sourceId)))) {
+        limitations.set(candidate.id, earlierAcceptedObjectUnavailable)
+        continue
+      }
       reads.set(candidate.sourceId, { outcome, repositoryNodeId: plan.nodeId })
     }
   }
@@ -476,12 +548,12 @@ interface StagedSource {
   readonly outcome: MergedOutcome
   readonly identities: ReadonlyArray<OutcomeCommitIdentity>
   readonly repositoryNodeId: string
+  readonly mergeCommit?: MergeCommit | null
 }
 
-effect function readSources(sources: ReadonlyArray<CorrectionCandidate>, target: CollectedTarget) {
+effect function readSources(sources: ReadonlyArray<CorrectionCandidate>, target: CollectedTarget, loader: StatisticsLoader = statisticsLoader(target)) {
   const complete = new Map<string, SourceRead>()
   const held = new Map<string, string>()
-  const loader = commitLineLoader((repositoryNodeId, commit) => recoveredStatistics(target, repositoryNodeId, commit))
   for (let offset = 0; offset < sources.length; offset += sourceBatchSize) {
     const batch = [...new Map(sources.slice(offset, offset + sourceBatchSize).map((source) => [source.sourceId, source])).values()]
     const data = try executeNodeBatch(metadataDocument, batch.map((source) => source.sourceId))
@@ -490,7 +562,7 @@ effect function readSources(sources: ReadonlyArray<CorrectionCandidate>, target:
     const staged: StagedSource[] = []
     for (const [index, candidate] of batch.entries()) {
       const value: unknown = nodes[index]
-      if (value === null || value === undefined) {
+      if (value === null) {
         held.set(candidate.sourceId, "source-unavailable")
         continue
       }
@@ -510,7 +582,7 @@ effect function readSources(sources: ReadonlyArray<CorrectionCandidate>, target:
       if (reference.outcome === null) throw invalid("Merged source outcome missing")
       const identities = try completeOutcomeCommits(reference, target)
       if (identities === null) throw invalid("Complete commit evidence missing")
-      staged.push({ candidate, outcome: reference.outcome, identities, repositoryNodeId: live.id })
+      staged.push({ candidate, outcome: reference.outcome, identities, repositoryNodeId: live.id, mergeCommit: node.mergeCommit })
     }
     const repositoryNodeId = staged[0]?.repositoryNodeId
     if (repositoryNodeId === undefined) continue
@@ -518,7 +590,7 @@ effect function readSources(sources: ReadonlyArray<CorrectionCandidate>, target:
     const lines = try loader.hydrate(repositoryNodeId, staged.flatMap((item) => item.identities))
     let cursor = 0
     for (const item of staged) {
-      complete.set(item.candidate.sourceId, { outcome: { ...item.outcome, commits: lines.slice(cursor, cursor + item.identities.length) }, repositoryNodeId })
+      complete.set(item.candidate.sourceId, { outcome: { ...item.outcome, commits: lines.slice(cursor, cursor + item.identities.length) }, repositoryNodeId, ...(item.mergeCommit === undefined ? {} : { mergeCommit: item.mergeCommit }) })
       cursor += item.identities.length
     }
   }
@@ -537,6 +609,115 @@ effect function sourceReads(selected: ReadonlyArray<CorrectionPool>, campaign: C
     for (const [id, reason] of loaded.held) limitations.set(id, reason)
   }
   return reads
+}
+
+effect function censusAcceptedObject(target: CollectedTarget, oid: string) {
+  const cache = try EvidenceCache
+  const path = `/repos/${target.owner}/${target.name}/git/commits/${oid}`
+  const differs = "Baseline census accepted object differs from the linked merge commit"
+  const previous = try cache.acceptedObject()
+  try cache.expectAcceptedObject(`${cache.githubOrigin}${path}`)
+  const read = effect {
+    const object = (try GitHub).json(path, AcceptedCommit) catch effect (error) => {
+      if (error._tag === "NotFound") return 404 as const
+      if (error._tag === "GitHubRefused" && error.status === 422) return 422 as const
+      if (error._tag === "GitHubMalformed") throw invalid(differs)
+      throw error
+    }
+    if (object === 404 || object === 422) return { sha: oid, unavailable: object } satisfies AcceptedObject
+    const parents = object.parents.map((parent) => parent.sha)
+    if (object.sha !== oid || !shaPattern.test(object.tree.sha) || !parents.every((parent) => shaPattern.test(parent)) || new Set(parents).size !== parents.length) throw invalid(differs)
+    return { sha: oid, treeSha: object.tree.sha, parents } satisfies AcceptedObject
+  }
+  return try Effect.ensuring(read, cache.expectAcceptedObject(previous))
+}
+
+effect function baselineSupplement(directory: string, plan: RepositoryPlan, through: string, candidates: ReadonlyArray<CorrectionCandidate>, loader: StatisticsLoader) {
+  const cache = try EvidenceCache
+  const path = `${directory}/census/${try digestOf(plan.repository.id)}/baseline-supplement.json`
+  const saved = try readJson(path)
+  const allowed = try cache.requestsAllowed()
+  try cache.allowRequests(saved === undefined)
+  const supplemented = effect {
+    const loaded = try readSources(candidates, plan.repository, loader)
+    const sources: SupplementSource[] = []
+    for (const { sourceId, sourceUrl, occurredAt } of candidates) {
+      const found = loaded.complete.get(sourceId)
+      if (found === undefined) {
+        if (loaded.held.get(sourceId) !== "source-unavailable") throw invalid("Baseline census source differs from the recorded accepted pool")
+        sources.push({ sourceId, sourceUrl, occurredAt, status: "source-unavailable" })
+        continue
+      }
+      const { outcome, mergeCommit } = found
+      const commits = outcome.commits ?? []
+      if (found.repositoryNodeId !== plan.nodeId || !Number.isSafeInteger(outcome.number) || outcome.number <= 0
+        || !(URL.parse(outcome.url)?.pathname.endsWith(`/pull/${outcome.number}`) ?? false)
+        || !commits.some((commit) => commit.oid === outcome.headRefOid) || !(mergeCommit === null || shaPattern.test(mergeCommit?.oid ?? ""))) {
+        throw invalid("Baseline census source lacks complete immutable identity or commit evidence")
+      }
+      let acceptedObject: AcceptedObject | null = null
+      if (mergeCommit === null || mergeCommit === undefined) acceptedObject = { sha: null, unavailable: "merge-identity" }
+      else if (!commits.some((commit) => commit.oid === mergeCommit.oid)) acceptedObject = try censusAcceptedObject(plan.repository, mergeCommit.oid)
+      sources.push({ sourceId, sourceUrl, occurredAt, status: "verified", outcome, acceptedObject })
+    }
+    const payload = { repositoryNodeId: plan.nodeId, through, sources }
+    const supplement = { ...payload, digest: try digestOf(payload) } satisfies CensusSupplement
+    if (saved === undefined) try atomicJson(path, supplement)
+    else if (encoded(saved) !== encoded(supplement)) throw invalid("Cached baseline census supplement differs from reconstructed raw evidence")
+    return supplement
+  }
+  return try Effect.ensuring(supplemented, cache.allowRequests(allowed))
+}
+
+effect function censusSupplements(directory: string, campaign: Campaign, pools: ReadonlyArray<CorrectionPool>, census: { readonly outcomes: ReadonlyArray<MergedOutcome>; readonly loaders: ReadonlyMap<string, StatisticsLoader> }, ownershipComplete: boolean, limitations: Map<string, string>) {
+  const outcomes = [...census.outcomes]
+  const seen = new Set(outcomes.map((outcome) => outcome.id))
+  const digests: string[] = []
+  const fences = new Map<string, string>()
+  const unavailable = new Map<string, MergedOutcome>()
+  if (!ownershipComplete) return { outcomes, digests, fences, unavailable }
+  for (const plan of campaign.repositories) {
+    const targets = new Map<string, CorrectionCandidate>()
+    for (const { candidate } of pools) {
+      if (seen.has(candidate.sourceId) || candidate.occurredAt >= campaign.through || repositoryIdOf(candidate.sourceUrl).toLowerCase() !== plan.repository.id.toLowerCase()) continue
+      const known = targets.get(candidate.sourceId)
+      const from = plan.months[0]?.from ?? ""
+      if (candidate.projectId !== plan.repository.projectId || !(Date.parse(candidate.occurredAt) >= Date.parse(from))
+        || (known !== undefined && (known.occurredAt !== candidate.occurredAt || known.sourceUrl !== candidate.sourceUrl))) {
+        throw invalid("Baseline census candidate identity differs within repository scope")
+      }
+      targets.set(candidate.sourceId, candidate)
+    }
+    if (targets.size === 0) continue
+    const loader = census.loaders.get(plan.repository.id)
+    if (loader === undefined) throw invalid("Baseline census statistics loader is unavailable")
+    const ordered = [...targets.values()].sort((left, right) => left.sourceId < right.sourceId ? -1 : left.sourceId > right.sourceId ? 1 : 0)
+    const supplement = try baselineSupplement(directory, plan, campaign.through, ordered, loader)
+    digests.push(supplement.digest)
+    for (const source of supplement.sources) {
+      if (source.status === "source-unavailable") {
+        limitations.set(source.sourceId, source.status)
+        continue
+      }
+      seen.add(source.sourceId)
+      outcomes.push(source.outcome)
+      const object = source.acceptedObject
+      if (object === null) continue
+      if ("unavailable" in object) {
+        if (object.sha === null) {
+          limitations.set(source.sourceId, acceptedMergeIdentityUnavailable)
+          continue
+        }
+        limitations.set(source.sourceId, acceptedObjectUnavailable)
+        const key = commitKey(plan.repository.id, object.sha)
+        const earlier = unavailable.get(key)
+        if (earlier === undefined || precedes(source.outcome, earlier)) unavailable.set(key, source.outcome)
+      } else if (object.parents.length === 1) {
+        fences.set(source.sourceId, object.sha)
+      }
+    }
+  }
+  return { outcomes, digests, fences, unavailable }
 }
 
 export effect function collectEvidence(options: CollectionOptions, inputs: CollectionInputs, provenance: Provenance) {
@@ -561,9 +742,17 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
   }
   const census = try monthlyCensus(options, campaign, scope.pageSize)
   const ownershipComplete = census.missingMonths.length === 0
-  const owners = ownershipComplete ? commitOwnersOf(census.outcomes) : new Map<string, string>()
+  const limitations = new Map<string, string>()
+  const supplemented = try censusSupplements(options.directory, campaign, pools, census, ownershipComplete, limitations)
+  const owners = ownershipComplete ? commitOwnersOf(supplemented.outcomes, supplemented.fences) : new Map<string, string>()
   if (try interrupted()) throw new CollectionInterrupted({ message: "Historical collection was interrupted before its census completed" })
-  const censusDigest = try digestOf({ repositories: campaign.repositories.map((plan) => ({ id: plan.repository.id, nodeId: plan.nodeId })), through: campaign.through, partDigests: census.partDigests })
+  const supplementDigests = supplemented.digests
+  const censusDigest = try digestOf({
+    repositories: campaign.repositories.map((plan) => ({ id: plan.repository.id, nodeId: plan.nodeId })),
+    through: campaign.through,
+    partDigests: census.partDigests,
+    ...(supplementDigests.length > 0 ? { supplementDigests } : {}),
+  })
   const selectedMonth = options.candidateMonth ?? options.month ?? (options.octoberOriginalCredit === true ? "2026-10" : undefined)
   const selected = pools.filter(({ candidate }) => candidate.occurredAt < campaign.before
     && (options.sampleSourceIds === undefined || options.sampleSourceIds.includes(candidate.sourceId))
@@ -571,8 +760,9 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
   if (options.sampleSourceIds !== undefined && !options.sampleSourceIds.every((id) => pools.some((pool) => pool.candidate.sourceId === id))) {
     throw invalid("Sample contains a source outside the positive pool inventory")
   }
-  const limitations = new Map<string, string>()
-  const reads = ownershipComplete ? try censusReads(selected, campaign, census.outcomes, limitations) : try sourceReads(selected, campaign, limitations)
+  const byId = new Map(supplemented.outcomes.map((outcome) => [outcome.id, outcome]))
+  const unresolved = unresolvedOwnership(supplemented.unavailable, owners, byId)
+  const reads = ownershipComplete ? try censusReads(selected, campaign, byId, limitations, unresolved) : try sourceReads(selected, campaign, limitations)
   for (const pool of selected) {
     const candidate = pool.candidate
     if (!ownershipComplete) limitations.set(candidate.id, "repository-ownership-census-incomplete")
@@ -585,10 +775,11 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     pools,
     selected,
     reads,
-    outcomes: census.outcomes,
+    outcomes: supplemented.outcomes,
     owners,
     ownershipComplete,
     missingMonths: census.missingMonths,
+    supplementDigests,
     censusDigest,
     initialSearchPageSize: scope.pageSize,
     limitations,
@@ -621,6 +812,7 @@ export effect function sealCollection(evidence: CollectedEvidence, proved: Prove
     ownershipComplete: evidence.ownershipComplete,
     initialSearchPageSize: evidence.initialSearchPageSize,
     missingMonths: evidence.missingMonths,
+    ...(evidence.supplementDigests.length > 0 ? { supplementDigests: evidence.supplementDigests } : {}),
     totalPositivePools: evidence.pools.length,
     selectedPools: evidence.selected.length,
     completeProofs: candidates.filter((candidate) => candidate.proof.status === "complete").length,

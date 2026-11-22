@@ -1,14 +1,18 @@
-// spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle"
+// spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/payoutRecognition.md, "A finalized ordinary monthly vault payment earns recognition once per recipient, project and month"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle"
 import { sha256Hex } from "@repo/platform/crypto"
+import type { PublicVaultPayment } from "@repo/ports/settlement"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
 import { type Store, advanceTo, command, hold } from "../journal/ledger.vibe"
-import { appended, commit, flush, rowsOf, sameAward, sendAll } from "../journal/rows.vibe"
-import type { CycleKind, CycleState, PaidRecipient, RecipientState } from "../../gen/points__payoutRecognition.ts"
-import { eligible, recognitionAmount } from "../../gen/points__payoutRecognition.effect.vibe"
+import { appended, commit, flush, rowsOf, sendAll } from "../journal/rows.vibe"
+import type { Event } from "../../gen/points__journal.effect.vibe"
+import type { CycleKind, CycleState, PaidRecipient, RecipientState, VaultPayment } from "../../gen/points__payoutRecognition.ts"
+import { eligible, recognitionAmount, vaultEligible, vaultRecognitionAmount } from "../../gen/points__payoutRecognition.effect.vibe"
+import { type ActorVaultPayments, escrowTestnets, numericGithubId, paymentValid } from "./vault.vibe"
 
 export error CycleIndexInvalid { reason: string }
+export error PayoutEvidenceInvalid { message: string }
 
 schema CycleActorRef { readonly id: string; readonly login: string }
 schema CycleContributorState = "approved" | "excluded" | "held" | "held-below-minimum" | "proposed" | "unclaimed" | "external-share" | "paid"
@@ -27,7 +31,9 @@ schema PaidCycle {
 }
 export schema PaidCycleIndex { readonly schemaVersion: "1"; readonly generatedAt: string; readonly cycles: ReadonlyArray<PaidCycle> }
 
-export interface Recognition { readonly paid: PaidRecipient; readonly award: Award }
+export type Recognition =
+  | { readonly kind: "cycle"; readonly paid: PaidRecipient; readonly award: Award }
+  | { readonly kind: "vault"; readonly vault: VaultPayment; readonly award: Award }
 
 const projectPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const cyclePattern = /^([0-9]{4})-(0[1-9]|1[0-2])$/u
@@ -119,7 +125,7 @@ export effect function decodeCycleIndex(text: string) {
   }
   const problem = indexProblem(index)
   if (problem !== undefined) throw new CycleIndexInvalid({ reason: problem })
-  return { index, digest: try sha256Hex(JSON.stringify(raw)) }
+  return { index, raw }
 }
 
 export effect function recognitions(index: PaidCycleIndex) {
@@ -130,6 +136,7 @@ export effect function recognitions(index: PaidCycleIndex) {
       if (!eligible(paid) || cycle.settledAt === null) continue
       const sourceId = `payout:${cycle.cycleId}:${contributor.actor.id}`
       found.push({
+        kind: "cycle",
         paid,
         award: {
           key: try pointKey({ projectId: cycle.projectId, actorId: contributor.actor.id, category: "payout-received", sourceId }),
@@ -149,17 +156,76 @@ export effect function recognitions(index: PaidCycleIndex) {
   return found
 }
 
+function netOf(netBase: string) {
+  return netBase === "0" ? 0 : Math.min(Number(netBase), Number.MAX_SAFE_INTEGER)
+}
+
+function byIndexing(left: PublicVaultPayment, right: PublicVaultPayment) {
+  return left.indexedAt.localeCompare(right.indexedAt) || left.id.localeCompare(right.id)
+}
+
+export effect function vaultRecognitions(vaults: ReadonlyArray<ActorVaultPayments>, digest: string) {
+  const found: Recognition[] = []
+  for (const { actor, payments } of vaults) {
+    if (numericGithubId(actor.id) === undefined) throw new PayoutEvidenceInvalid({ message: "Payout actor identity is unavailable" })
+    for (const payment of [...payments].sort(byIndexing)) {
+      if (!paymentValid(payment)) throw new PayoutEvidenceInvalid({ message: "Invalid public payout evidence" })
+      const testnet = escrowTestnets.get(payment.network)
+      const month = payment.contributionMonth
+      const vault: VaultPayment = {
+        project: payment.projectId,
+        actor: 1,
+        month: month === null ? 0 : periodOfCycle(month),
+        knownNetwork: testnet !== undefined,
+        testnet: testnet ?? true,
+        finalized: true,
+        ordinary: true,
+        netBase: netOf(payment.netBase),
+        indexedAt: instantOf(payment.indexedAt) ?? 0,
+        digest,
+      }
+      if (month === null || !vaultEligible(vault)) continue
+      const sourceId = `payout:${month}:${actor.id}`
+      found.push({
+        kind: "vault",
+        vault,
+        award: {
+          key: try pointKey({ projectId: payment.projectId, actorId: actor.id, category: "payout-received", sourceId }),
+          actor: { id: actor.id, login: actor.login },
+          projectId: payment.projectId,
+          category: "payout-received",
+          amount: vaultRecognitionAmount(vault),
+          occurredAt: payment.indexedAt,
+          sourceId,
+          sourceUrl: `https://slop.cash/cycles/${payment.projectId}/${month}`,
+          workUnitId: sourceId,
+          provisional: false,
+        },
+      })
+    }
+  }
+  return found
+}
+
+function scopeOf(award: Award) {
+  return `${award.projectId}\u0000${award.sourceId.split(":")[1] ?? ""}\u0000${numericGithubId(award.actor.id) ?? award.actor.id}`
+}
+
+function eventOf(item: Recognition, actor: number, month: number): Event {
+  return item.kind === "cycle"
+    ? { type: "recognize", paid: { ...item.paid, actor, cycle: month } }
+    : { type: "recognizeVaultPayment", v: { ...item.vault, actor, month } }
+}
+
 effect function recognized(store: Store, item: Recognition, digest: string, recordedAt: string) {
   const { award } = item
-  const prior = store.latest.get(award.key)
-  if (prior !== undefined && sameAward(prior.award, award)) return []
   const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
   const key = opened.names.keys.get(award.key)
   if (key === undefined || key.source !== key.workUnit || opened.names.opaque.has(award.key)) {
     hold(store, { subject: award.key, reason: "the recorded payout recognition is outside the journal model", digest })
     return []
   }
-  const refused = try sendAll(opened, [{ type: "recognize", paid: { ...item.paid, actor: key.actor, cycle: key.source } }])
+  const refused = try sendAll(opened, [eventOf(item, key.actor, key.source)])
   if (refused !== "") {
     hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
     return []
@@ -170,11 +236,18 @@ effect function recognized(store: Store, item: Recognition, digest: string, reco
   return rows
 }
 
-export effect function recognizePayouts(store: Store, indexText: string, recordedAt: string) {
-  const { index, digest } = try decodeCycleIndex(indexText)
+export effect function recognizePayouts(store: Store, indexText: string, recordedAt: string, vaults: ReadonlyArray<ActorVaultPayments> = []) {
+  const { index, raw } = try decodeCycleIndex(indexText)
+  const digest = try sha256Hex(JSON.stringify({ cycles: raw, vaults }))
   try advanceTo(store, recordedAt)
+  const seen = new Set(store.revisions.filter((row) => row.award.category === "payout-received").map((row) => scopeOf(row.award)))
   const buffer: Row[] = []
-  for (const item of try recognitions(index)) try commit(store, buffer, try recognized(store, item, digest, recordedAt))
+  for (const item of [...(try recognitions(index)), ...(try vaultRecognitions(vaults, digest))]) {
+    const scope = scopeOf(item.award)
+    if (seen.has(scope)) continue
+    seen.add(scope)
+    try commit(store, buffer, try recognized(store, item, digest, recordedAt))
+  }
   flush(store, buffer)
   store.generatedAt = recordedAt
   return buffer.length

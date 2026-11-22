@@ -2,10 +2,9 @@
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Coverage, type Journal, type Revision as Row, coverageText, revisionText } from "../kernels/records/canonical.ts"
 import { journalFile } from "../kernels/records/ids.vibe"
-import { instantOf } from "../kernels/records/instants.ts"
-import { categoryOf, ruleOf } from "../journal/ledger.vibe"
-import { compareCodeUnits } from "../client/snapshot/checks.vibe"
-import { type Revision, initial, noDecision, publicTotal } from "../../gen/points__journal.effect.vibe"
+import { projected, storeOf, viewLedger } from "../journal/ledger.vibe"
+import type { Registry } from "../client/snapshot/checks.vibe"
+import { isMember, publicTotal } from "../../gen/points__journal.effect.vibe"
 import { maxIndexBytes, maxRevisions, maxShardBytes, pointsRule, shardCount, shardPath } from "../client/journal.vibe"
 
 export error ProjectionInvalid { message: string }
@@ -27,7 +26,6 @@ const indexKeys = ["schemaVersion", "ruleVersion", "generatedAt", "coverage", "r
 const shardKeys = ["path", "sha256", "count"]
 const rowKeys = ["sequence", "revision"]
 const checksumMismatch = "Points shard checksum mismatch"
-const actorNumber = 1
 
 function invalid(message: string) {
   return new ProjectionInvalid({ message })
@@ -41,71 +39,27 @@ export function shardRows(journal: Journal) {
   return shards
 }
 
-function latestRows(journal: Journal) {
-  const latest = new Map<string, Row>()
-  for (const revision of journal.revisions) latest.set(revision.award.key, revision)
-  return [...latest.values()]
+effect function standing(journal: Journal, rows: ReadonlyArray<Row>, actorId: string, registry: Registry | undefined) {
+  const store = try storeOf(journal.generatedAt, [], rows)
+  const view = try projected(store, { awards: [], units: [], sources: [...new Set(rows.map((row) => row.award.sourceId))], view: { registry, actors: [] } })
+  const ledger = viewLedger(view)
+  const actor = [...view.names.actorIds].find(([, id]) => id === actorId)?.[0] ?? 0
+  return { member: isMember(ledger, actor), total: publicTotal(ledger, actor) }
 }
 
-effect function instant(text: string) {
-  const value = instantOf(text)
-  if (value === null) throw invalid("Invalid points instant")
-  return value
-}
-
-effect function modelRevision(row: Row, id: number, workUnit: number) {
-  const category = categoryOf(row.award.category)
-  const { rule, tableVersion } = ruleOf(row.sourceRule)
-  return {
-    id,
-    previous: 0,
-    key: { project: row.award.projectId, actor: category === "MergedWork" ? 0 : actorNumber, category, source: 0, workUnit },
-    amount: row.award.amount,
-    priorAmount: 0,
-    occurredAt: try instant(row.award.occurredAt),
-    recordedAt: try instant(row.recordedAt),
-    rule,
-    tableVersion,
-    sourceDigest: row.sourceDigest,
-    provisional: row.award.provisional,
-    decision: noDecision,
-    recipients: [],
-    completeLines: false,
-    shares: category === "MergedWork" ? [{ actor: actorNumber, points: row.award.amount }] : [],
-    debit: row.penalty?.debit ?? 0,
-    reversed: row.penalty !== undefined && row.penalty.reversedAt !== null,
-  } satisfies Revision
-}
-
-effect function actorTotal(rows: ReadonlyArray<Row>) {
-  const ordered = [...rows].sort((left, right) => compareCodeUnits(left.award.workUnitId, right.award.workUnitId) || compareCodeUnits(left.award.key, right.award.key))
-  const revisions: Revision[] = []
-  for (const [position, row] of ordered.entries()) revisions.push(try modelRevision(row, position + 1, position + 1))
-  return publicTotal({ ...initial, revisions, nextId: revisions.length + 1 }, actorNumber)
-}
-
-function counted(row: Row) {
-  return row.award.amount === 0 ? row.decision?.sourceId.startsWith("value:") === true : row.award.category !== "slopbot-penalty"
-}
-
-export effect function members(journal: Journal) {
+export effect function members(journal: Journal, registry?: Registry) {
   const logins = new Map<string, Row>()
+  const byActor = new Map<string, Row[]>()
   for (const revision of journal.revisions) {
+    byActor.set(revision.award.actor.id, [...byActor.get(revision.award.actor.id) ?? [], revision])
     if (revision.award.category === "slopbot-penalty") continue
     const prior = logins.get(revision.award.actor.id)
     if (prior === undefined || revision.recordedAt >= prior.recordedAt) logins.set(revision.award.actor.id, revision)
   }
-  const byActor = new Map<string, Row[]>()
-  const memberIds = new Set<string>()
-  for (const row of latestRows(journal)) {
-    const rows = byActor.get(row.award.actor.id) ?? []
-    rows.push(row)
-    byActor.set(row.award.actor.id, rows)
-    if (counted(row)) memberIds.add(row.award.actor.id)
-  }
   const found: Member[] = []
   for (const [id, rows] of byActor) {
-    if (memberIds.has(id)) found.push({ id, login: logins.get(id)?.award.actor.login ?? rows[0]?.award.actor.login ?? "", total: try actorTotal(rows) })
+    const { member, total } = try standing(journal, rows, id, registry)
+    if (member) found.push({ id, login: logins.get(id)?.award.actor.login ?? rows[0]?.award.actor.login ?? "", total })
   }
   return found
 }
@@ -123,7 +77,7 @@ function summaryText(journal: Journal, indexDigest: string, found: ReadonlyArray
   return `${JSON.stringify(summary)}\n`
 }
 
-export effect function projectionFiles(journal: Journal) {
+export effect function projectionFiles(journal: Journal, registry?: Registry) {
   const shards: string[] = []
   const entries: string[] = []
   for (const [position, rows] of shardRows(journal).entries()) {
@@ -134,7 +88,7 @@ export effect function projectionFiles(journal: Journal) {
   }
   const index = `{"schemaVersion":"1","ruleVersion":${JSON.stringify(journal.ruleVersion)},"generatedAt":${JSON.stringify(journal.generatedAt)},"coverage":[${journal.coverage.map((entry: Coverage) => coverageText(entry)).join(",")}],"revisionCount":${journal.revisions.length},"shards":[${entries.join(",")}]}`
   const indexDigest = try sha256Hex(index)
-  const found = try members(journal)
+  const found = try members(journal, registry)
   return { index: `${index}\n`, indexDigest, shards, summary: summaryText(journal, indexDigest, found), members: found } satisfies ProjectionFiles
 }
 

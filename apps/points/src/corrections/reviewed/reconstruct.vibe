@@ -1,0 +1,383 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/reviewedHistory.md, "An owner recipient correction redistributes an unchanged October pool by the reviewed weights"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers"; spec/points/journal.md, "An owner-reviewed recipient correction redivides the October pool it covers"
+import { millisOf } from "@repo/platform/clock"
+import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
+import { type Award, type Journal, type Revision as Row, type RevisionBody, journalText } from "../../kernels/records/canonical.ts"
+import { batchDigest, pointKey, pointRevisionId } from "../../kernels/records/ids.vibe"
+import { instantOf } from "../../kernels/records/instants.ts"
+import type { RepositoryRegistry } from "../../client/snapshot/schema.vibe"
+import { validateSnapshot } from "../../client/snapshot/validate.vibe"
+import { type Opened, type Repositories, type Store, advanceTo, command, finish, openStore, unitNameOf } from "../../journal/ledger.vibe"
+import { appended, commit, flush, rowsOf, sendAll } from "../../journal/rows.vibe"
+import { applySnapshot, octoberDuplicateRetirementDecision, octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
+import { isExtension, planCorrections } from "../apply/apply.vibe"
+import type { Collection } from "../apply/manifest.vibe"
+import { type ProjectOfRepository, sameSet } from "../apply/derive.vibe"
+import type { FreezeEvidence } from "../../../gen/points__periods.ts"
+import { periodOf } from "../../../gen/points__periods.effect.vibe"
+import type { Event } from "../../../gen/points__journal.effect.vibe"
+import type { MixedProof, PacketRun, RecipientCorrection } from "../../../gen/points__reviewedHistory.ts"
+import { initial as unbound, machineOver as bindingOver } from "../../../gen/points__reviewedHistory.effect.vibe"
+import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetirement, digestPattern, digestText, githubIdPattern, refusal, require } from "./packet.vibe"
+import { checkedRetirement } from "./retirement.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export interface ReconstructInput {
+  readonly packet: HistoricalPacket
+  readonly baseline: Journal
+  readonly now: string
+  readonly bans: ReadonlyMap<string, string>
+  readonly protection: ReadonlyArray<FreezeEvidence>
+  readonly registry: RepositoryRegistry
+  readonly repositories: Repositories
+  readonly projectOf: ProjectOfRepository
+}
+
+interface DecisionText {
+  readonly sourceId: string
+  readonly effectiveAt: string
+  readonly reason: string
+}
+
+const valuePolicyEffectiveAt = "2026-09-01T00:00:00.000Z"
+const githubLogin = /^[A-Za-z0-9-]{1,39}$/u
+const positiveWeight = /^[1-9][0-9]*$/u
+
+function latestOf(revisions: ReadonlyArray<Row>) {
+  const latest = new Map<string, Row>()
+  for (const revision of revisions) latest.set(revision.award.key, revision)
+  return latest
+}
+
+function inWindow(packet: HistoricalPacket, award: Award) {
+  return award.projectId === packet.projectId && award.occurredAt >= packet.sourceAudit.from && award.occurredAt < packet.sourceAudit.through
+}
+
+function poolRows(journal: Journal, projectId: string, sourceId: string, workUnitId: string) {
+  return [...latestOf(journal.revisions).values()].filter(({ award }) => award.projectId === projectId && award.sourceId === sourceId &&
+    award.workUnitId === workUnitId && award.category === "merged-pull-request")
+}
+
+function matchesPredecessors(rows: ReadonlyArray<Row>, expected: ReadonlyArray<{ readonly key: string; readonly revisionId: string }>) {
+  return rows.length === expected.length && new Set(expected.map((row) => row.key)).size === rows.length &&
+    rows.every((row) => expected.some((prior) => prior.key === row.award.key && prior.revisionId === row.id))
+}
+
+effect function appendAwards(journal: Journal, awards: ReadonlyArray<Award>, sourceDigest: string, sourceRule: string, recordedAt: string, decisions: ReadonlyMap<string, DecisionText>) {
+  const revisions = [...journal.revisions]
+  const latest = latestOf(journal.revisions)
+  for (const award of [...awards].sort((left, right) => left.key.localeCompare(right.key))) {
+    const previous = latest.get(award.key)
+    const decision = decisions.get(award.key)
+    if (previous !== undefined && JSON.stringify(previous.award) === JSON.stringify(award) && previous.penalty === undefined &&
+      (decision === undefined || (previous.decision?.sourceId === decision.sourceId && previous.decision.effectiveAt === decision.effectiveAt && previous.decision.reason === decision.reason))) continue
+    const body: RevisionBody = {
+      previous: previous?.id ?? null,
+      recordedAt,
+      sourceDigest,
+      sourceRule,
+      award,
+      ...(decision === undefined ? {} : { decision: { ...decision, delta: award.amount - (previous?.award.amount ?? 0) } }),
+    }
+    const row: Row = { id: try pointRevisionId(body), ...body }
+    revisions.push(row)
+    latest.set(award.key, row)
+  }
+  return { ...journal, generatedAt: recordedAt, revisions } satisfies Journal
+}
+
+effect function valued(input: ReconstructInput) {
+  const { packet, baseline } = input
+  if (packet.valueSnapshot === null) {
+    try require(packet.valueKeys.length === 0, "Value keys need a snapshot")
+    return baseline
+  }
+  const snapshot = try validateSnapshot(packet.valueSnapshot, input.registry)
+  try require(snapshot.valuePolicyEffectiveAt === valuePolicyEffectiveAt && snapshot.window.from === packet.sourceAudit.from && snapshot.window.to === packet.sourceAudit.through,
+    "Historical value snapshot has another window")
+  const coverage = snapshot.valueAssessmentCoverage ?? []
+  try require(coverage.length === packet.sourceAudit.sources.length && coverage.every((row) => packet.sourceAudit.sources.some((source) => source.id === row.pullRequestId &&
+    source.number === row.pullRequestNumber) && row.repository.toLowerCase() === packet.sourceAudit.repository.toLowerCase()), "Snapshot omits audited sources")
+  const digest = digestText(packet.valueSnapshot)
+  const scratch = try openStore(`${journalText(baseline)}\n`, null, input.protection)
+  try applySnapshot(scratch, input.repositories, snapshot, digest, snapshot.generatedAt)
+  const prior = latestOf(baseline.revisions)
+  const eligible = [...scratch.latest.values()].filter((row) => row.id !== prior.get(row.award.key)?.id && inWindow(packet, row.award) &&
+    row.decision?.sourceId.startsWith("value:") === true).map((row) => row.award.key)
+  try require(eligible.length === packet.valueKeys.length && eligible.every((key) => packet.valueKeys.includes(key)), "Reviewed values omit or add an assessed change")
+  const selected: Row[] = []
+  for (const key of packet.valueKeys) {
+    const row = scratch.latest.get(key)
+    try require(row !== undefined && row.decision?.sourceId.startsWith("value:") === true, "Missing reviewed value decision")
+    try require(row !== undefined && inWindow(packet, row.award) && row.award.category !== "payout-received", "Value award exceeds reviewed scope")
+    if (row !== undefined) selected.push(row)
+  }
+  const decisions = new Map<string, DecisionText>()
+  for (const row of selected) {
+    const decision = row.decision
+    if (decision !== undefined) decisions.set(row.award.key, { sourceId: decision.sourceId, effectiveAt: decision.effectiveAt, reason: decision.reason })
+  }
+  return try appendAwards(baseline, selected.map((row) => row.award), digest, snapshot.ruleVersion, snapshot.generatedAt, decisions)
+}
+
+function correctionProtection(input: ReconstructInput) {
+  const scopes = new Set(input.packet.corrections.candidates.map((candidate) => JSON.stringify([candidate.projectId, periodOf(instantOf(candidate.occurredAt) ?? -1)])))
+  return input.protection.filter((evidence) => scopes.has(JSON.stringify([evidence.project, evidence.period])))
+}
+
+effect function corrected(input: ReconstructInput, journal: Journal) {
+  const { corrections } = input.packet
+  try require(corrections.candidates.every((candidate) => candidate.projectId === input.packet.projectId), "Correction exceeds project scope")
+  const manifestDigest = digestText(corrections)
+  const complete = corrections.candidates.filter((candidate) => candidate.proof.status === "complete").length
+  const collection: Collection = {
+    manifest: corrections,
+    receipt: {
+      schemaVersion: "slop-reviewed-historical-points-v1",
+      manifestDigest,
+      through: corrections.generatedAt,
+      projects: [input.packet.projectId],
+      totalPositivePools: corrections.candidates.length,
+      completeProofs: complete,
+      heldProofs: corrections.candidates.length - complete,
+      ownershipComplete: false,
+      registryDigest: input.packet.manifestSha256,
+    },
+    manifestDigest,
+    chunkDigest: manifestDigest,
+  }
+  const planned = try planCorrections({
+    journal,
+    collection,
+    protection: correctionProtection(input),
+    bans: input.bans,
+    recordedAt: corrections.generatedAt,
+    mode: "apply",
+    reviewedDigest: manifestDigest,
+    projectOf: input.projectOf,
+  })
+  return planned.journal
+}
+
+function runOf(input: ReconstructInput): PacketRun {
+  return {
+    baselineMatches: true,
+    reviewedAt: millisOf(input.packet.reviewedAt),
+    baselineAt: millisOf(input.baseline.generatedAt),
+    now: millisOf(input.now),
+    valueKeysExact: true,
+    deltaInScope: true,
+    occurrencesKept: true,
+    candidateMatches: true,
+  }
+}
+
+effect function openedPool(journal: Journal, input: ReconstructInput, rows: ReadonlyArray<Row>, templates: ReadonlyArray<Award>, sourceId: string, message: string) {
+  const store = try openStore(`${journalText(journal)}\n`, null, input.protection)
+  try advanceTo(store, input.now)
+  const [first] = rows
+  const name = first === undefined ? "" : try unitNameOf(first.award)
+  const recorded = store.units.get(name)
+  try require(recorded !== undefined && sameSet([...recorded.keys], rows.map((row) => row.award.key)), message)
+  const opened = try command(store, { awards: templates, units: [name], sources: [sourceId] })
+  const unit = opened.names.units.get(name) ?? 0
+  try require(unit > 0 && !templates.some((award) => opened.names.opaque.has(award.key)), message)
+  return { store, opened, unit }
+}
+
+effect function appendedPool(pool: { readonly store: Store; readonly opened: Opened }, event: Event, templates: ReadonlyArray<Award>, sourceDigest: string, decisionSourceId: string, recordedAt: string, message: string) {
+  const refused = try sendAll(pool.opened, [event])
+  try require(refused === "", message)
+  const byActor = new Map(templates.map((award) => [award.actor.id, award] as const))
+  const provenance = { recordedAt, sourceDigest, decisionSourceId, effectiveAt: recordedAt }
+  const written: Row[] = []
+  for (const revision of try appended(pool.opened)) written.push(...(try rowsOf(pool.store, pool.opened, revision, byActor, provenance)))
+  const buffer: Row[] = []
+  try commit(pool.store, buffer, written)
+  flush(pool.store, buffer)
+  return { journal: (try finish(pool.store, recordedAt)).journal, written }
+}
+
+effect function checkedRecipients(input: ReconstructInput, correction: PacketRecipientCorrection, journal: Journal) {
+  const { packet } = input
+  try require(digestPattern.test(correction.evidenceSha256) && correction.claimIds.length > 0 && new Set(correction.claimIds).size === correction.claimIds.length,
+    "Recipient correction lacks reviewed evidence")
+  try require(correction.recipients.length > 0 && new Set(correction.recipients.map((row) => row.githubId)).size === correction.recipients.length, "Duplicate or missing recipients")
+  for (const recipient of correction.recipients) {
+    try require(String(githubUserIdFromNodeId(recipient.actor.id)) === recipient.githubId && githubIdPattern.test(recipient.githubId) &&
+      githubLogin.test(recipient.actor.login) && positiveWeight.test(recipient.weight) && Number.isSafeInteger(Number(recipient.weight)), "Invalid reviewed recipient")
+  }
+  try require(sha256Of(correction.evidence) === correction.evidenceSha256, "Reviewed recipient dossier changed")
+  const dossier = parsedJson(correction.evidence)?.value as { readonly sourceId?: unknown; readonly workUnitId?: unknown; readonly recipients?: unknown; readonly sourceSha256?: unknown; readonly acceptedClaimIds?: unknown } | undefined
+  const listed = Array.isArray(dossier?.recipients) ? dossier.recipients as ReadonlyArray<{ readonly githubId?: unknown; readonly weight?: unknown }> : []
+  const accepted = Array.isArray(dossier?.acceptedClaimIds) ? dossier.acceptedClaimIds as ReadonlyArray<unknown> : []
+  try require(dossier?.sourceId === correction.sourceId && dossier.workUnitId === correction.workUnitId && Array.isArray(dossier.recipients) &&
+    listed.length === correction.recipients.length && correction.recipients.every((recipient) => listed.some((row) => row.githubId === recipient.githubId && row.weight === recipient.weight)) &&
+    typeof dossier.sourceSha256 === "string" && digestPattern.test(dossier.sourceSha256) && Array.isArray(dossier.acceptedClaimIds) &&
+    accepted.every((id) => typeof id === "string" && digestPattern.test(id)) && accepted.length === correction.claimIds.length && new Set(accepted).size === accepted.length &&
+    accepted.every((id) => typeof id === "string" && correction.claimIds.includes(id)), "Recipient dossier scope differs")
+  try require(new Set(correction.expectedPredecessors.map((row) => row.key)).size === correction.expectedPredecessors.length &&
+    new Set(correction.expectedAfter.map((row) => row.key)).size === correction.expectedAfter.length, "Recipient correction repeats a key")
+  const candidate = packet.corrections.candidates.find((item) => item.sourceId === correction.sourceId && item.workUnitId === correction.workUnitId)
+  try require(candidate !== undefined, "Recipient correction lacks canonical source scope")
+  const proof = candidate?.proof
+  if (proof?.status === "complete" && proof.claims !== undefined) {
+    const claims = proof.claims
+    try require(correction.claimIds.length === claims.length && claims.every((claim) => correction.claimIds.includes(claim.id)), "Recipient claims differ from canonical proof")
+  }
+  const rows = poolRows(journal, packet.projectId, correction.sourceId, correction.workUnitId)
+  const [first] = rows
+  try require(first !== undefined && rows.every((row) => row.award.occurredAt.startsWith("2026-10-")), "Recipient exception requires recorded October implementation pool")
+  try require(matchesPredecessors(rows, correction.expectedPredecessors), "Recipient pool changed after owner review")
+  try require(rows.every((row) => row.award.occurredAt === first?.award.occurredAt && row.award.sourceUrl === first.award.sourceUrl), "Recipient pool has inconsistent source identity")
+  const occurred = Date.parse(first?.award.occurredAt ?? "")
+  for (const recipient of correction.recipients) {
+    const ban = input.bans.get(recipient.actor.id)
+    try require(ban === undefined || occurred < Date.parse(ban), "Recipient is banned for this award")
+  }
+  const total = rows.reduce((sum, row) => sum + row.award.amount, 0)
+  try require(total > 0 && Number.isSafeInteger(total), "Invalid recipient pool total")
+  const template = first?.award
+  const replacements: Award[] = []
+  for (const recipient of correction.recipients) {
+    const key = try pointKey({ projectId: packet.projectId, actorId: recipient.actor.id, category: "merged-pull-request", sourceId: correction.sourceId,
+      ...(candidate?.kind === "work-unit" ? { workUnitId: correction.workUnitId } : {}) })
+    if (template !== undefined) replacements.push({ ...template, key, actor: recipient.actor })
+  }
+  const zeroed = rows.filter((row) => !replacements.some((award) => award.key === row.award.key))
+  try require(correction.expectedAfter.length === replacements.length + zeroed.length &&
+    zeroed.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.actorId === row.award.actor.id && expected.amount === 0 &&
+      expected.occurredAt === row.award.occurredAt)) &&
+    replacements.every((award) => correction.expectedAfter.some((expected) => expected.key === award.key && expected.actorId === award.actor.id && expected.occurredAt === award.occurredAt)),
+    "Reviewed recipient result changed")
+  return { rows, total, replacements }
+}
+
+effect function recipientsCorrected(input: ReconstructInput, correction: PacketRecipientCorrection, journal: Journal) {
+  const checked = try checkedRecipients(input, correction, journal)
+  const changed = "Reviewed recipient result changed"
+  const pool = try openedPool(journal, input, checked.rows, checked.replacements, correction.sourceId, "Recipient pool changed after owner review")
+  const actors = new Map([...pool.opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
+  const ordered = [...checked.replacements].sort((left, right) => (actors.get(left.actor.id) ?? 0) - (actors.get(right.actor.id) ?? 0))
+  const weights = new Map(correction.recipients.map((recipient) => [recipient.actor.id, Number(recipient.weight)] as const))
+  const record: RecipientCorrection = {
+    uniqueUnit: true,
+    dossierBound: true,
+    claimsMatchProof: true,
+    octoberPool: true,
+    poolUnchanged: true,
+    oneIdentity: true,
+    bannedByOccurrence: false,
+    pool: checked.total,
+    recipients: ordered.map((award) => ({ actor: actors.get(award.actor.id) ?? 0, lines: weights.get(award.actor.id) ?? 0 })),
+    reviewedShares: ordered.map((award) => ({ actor: actors.get(award.actor.id) ?? 0, points: correction.expectedAfter.find((expected) => expected.key === award.key)?.amount ?? -1 })),
+  }
+  const digest = digestText(correction)
+  const event: Event = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberOriginalContributorDecision, digest }
+  const appendedRows = try appendedPool(pool, event, checked.replacements, digest, `owner_october_${correction.evidenceSha256}`, input.packet.reviewedAt, changed)
+  try require(appendedRows.written.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.amount === row.award.amount)), changed)
+  return appendedRows.journal
+}
+
+effect function retired(input: ReconstructInput, retirement: PacketRetirement, journal: Journal, context: { readonly retiring: ReadonlySet<string>; readonly validated: ReadonlyMap<string, string>; readonly rewarded: ReadonlyArray<Award> }) {
+  const { packet } = input
+  const source = retirement.source
+  const candidate = packet.corrections.candidates.find((item) => item.sourceId === source.sourceId && item.workUnitId === retirement.workUnitId)
+  const rows = poolRows(journal, packet.projectId, retirement.sourceId, retirement.workUnitId)
+  try require(candidate !== undefined && rows.length > 0 && rows.every(({ award }) => award.occurredAt === source.occurredAt && award.occurredAt.startsWith("2026-10-") &&
+    award.sourceUrl === source.sourceUrl) && matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
+  const templates = rows.map((row) => row.award)
+  const pool = try openedPool(journal, input, rows, templates, retirement.sourceId, "Duplicate pool changed after owner review")
+  const sources = new Map(pool.opened.names.sources)
+  let nextSource = Math.max(0, ...sources.values()) + 1
+  const sourceOf = (id: string) => {
+    const known = sources.get(id)
+    if (known !== undefined) return known
+    sources.set(id, nextSource)
+    nextSource += 1
+    return nextSource - 1
+  }
+  const objects = new Map<string, number>()
+  const objectOf = (text: string) => {
+    const known = objects.get(text)
+    if (known !== undefined) return known
+    objects.set(text, objects.size + 1)
+    return objects.size
+  }
+  const checked = try checkedRetirement({
+    packet,
+    retirement,
+    baseline: input.baseline,
+    latestBaseline: latestOf(input.baseline.revisions),
+    rewardedAwards: context.rewarded,
+    retiringSources: context.retiring,
+    validated: context.validated,
+    sourceOf,
+    objectOf,
+  })
+  const digest = digestText(retirement)
+  const event: Event = { type: "retireDuplicate", project: packet.projectId, unit: pool.unit, retirement: checked.record, packetRun: runOf(input), reason: octoberDuplicateRetirementDecision, digest }
+  const result = try appendedPool(pool, event, templates, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt, "Duplicate retirement does not meet the reviewed rules")
+  return { journal: result.journal, mixed: checked.mixed }
+}
+
+effect function boundMixed(proofs: ReadonlyArray<MixedProof>) {
+  const bindings = []
+  for (const proof of proofs) {
+    const held = try Ref.make(unbound)
+    const binding = try bindingOver(() => Ref.get(held), (next) => Ref.set(held, next))
+    binding.send({ type: "bindMixed", p: proof }) catch effect () => {
+      throw refusal("Submitted source and accepted squash bindings differ")
+    }
+    bindings.push(binding)
+  }
+  return bindings
+}
+
+export effect function reconstructHistoricalPoints(input: ReconstructInput) {
+  const { packet, baseline, now } = input
+  try require((try batchDigest(baseline)) === packet.baselineDigest && baseline.revisions.length === packet.baselineRevisionCount, "Published baseline changed")
+  try require(now >= packet.reviewedAt && now >= baseline.generatedAt, "Historical review is stale or in the future")
+  let result = try corrected(input, try valued(input))
+  const units = new Set<string>()
+  for (const correction of packet.recipientCorrections) {
+    const unit = JSON.stringify([correction.sourceId, correction.workUnitId])
+    try require(!units.has(unit), "Duplicate owner recipient correction")
+    units.add(unit)
+    result = try recipientsCorrected(input, correction, result)
+  }
+  const retirements = packet.duplicateRetirements ?? []
+  const retiring = new Set(retirements.map((item) => item.sourceId))
+  const rewarded = [...latestOf(result.revisions).values()].map((row) => row.award)
+  const validated = new Map<string, string>()
+  const mixed: MixedProof[] = []
+  for (const retirement of retirements) {
+    const unit = JSON.stringify([retirement.sourceId, retirement.workUnitId])
+    try require(!units.has(unit), "Duplicate owner correction")
+    units.add(unit)
+    const step = try retired(input, retirement, result, { retiring, validated, rewarded })
+    validated.set(retirement.source.sourceId, digestText(retirement.source))
+    mixed.push(...step.mixed)
+    result = step.journal
+  }
+  const bindings = try boundMixed(mixed)
+  try require(isExtension(baseline, result), "Historical candidate does not extend the published baseline")
+  const before = latestOf(baseline.revisions)
+  for (const row of result.revisions.slice(baseline.revisions.length)) {
+    try require(inWindow(packet, row.award) && row.award.category !== "payout-received", "Historical delta exceeds reviewed scope")
+    const previous = before.get(row.award.key)
+    try require(previous === undefined || previous.award.occurredAt === row.award.occurredAt, "Original occurrence changed")
+  }
+  try require((try batchDigest(result)) === packet.candidateDigest, "Canonical candidate differs from owner review")
+  for (const binding of bindings) {
+    binding.send({ type: "validate", packetRun: runOf(input) }) catch effect () => {
+      throw refusal("Submitted source and accepted squash bindings differ")
+    }
+  }
+  return result
+}

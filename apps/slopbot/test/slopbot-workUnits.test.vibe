@@ -266,6 +266,14 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       validateWorkUnitPartition(stacked, [{ claimIds: [claimA ?? ""] }]),
       validateWorkUnitPartition(stacked, [{ claimIds: [claimA ?? "", claimB ?? ""] }, { claimIds: [claimB ?? ""] }]),
     ], [true, false, false])
+    const reviewOnly = try preparedOf([sourceOf(world, {
+      number: 4,
+      author: world.ada,
+      headSha: world.third,
+      mergedAt: "2026-11-08T00:00:00Z",
+      changes: [{ sha: world.third, author: world.ada, parent: world.base, paths: [] }],
+    })], null)
+    try same([reviewOnly.evidence.claims, reviewOnly.evidence.limitations, validateWorkUnitPartition(reviewOnly.evidence, [])], [[], [], true])
 
     const root = try published([sourceOf(world, first)], null)
     const joined = try preparedOf([sourceOf(world, first), sourceOf(world, second)], "stacked successor joins its parent")

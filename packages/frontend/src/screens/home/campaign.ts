@@ -1,15 +1,7 @@
-// spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"
+// spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together"
+import { type Campaign, heroDeleteMs, heroGapMs, heroHoldMs, heroTypeMs } from "../../../gen/frontend__presentation.ts";
 
-export const campaignLead = "MAKE MONEY";
-
-export const campaignActions = ["SHIPPING OPEN SOURCE.", "SECURING THE WEB.", "HACKING THE PLANET.", "BUILDING AGI."] as const;
-
-export const campaignHeading = `${campaignLead} ${campaignActions[0]}`;
-
-const holdMs = 2_400;
-const typeMs = 55;
-const deleteMs = 30;
-const gapMs = 220;
+export type { Campaign };
 
 export type CampaignPhase = "holding" | "deleting" | "typing";
 
@@ -24,25 +16,28 @@ export interface CampaignTick {
   readonly next: CampaignFrame;
 }
 
-export const firstFrame: CampaignFrame = { action: 0, characters: campaignActions[0].length, phase: "holding" };
-
 /** @throws {never} */
-export function actionOf(frame: CampaignFrame): string {
-  return campaignActions[frame.action % campaignActions.length] ?? campaignActions[0];
+export function actionOf(campaign: Campaign, frame: CampaignFrame): string {
+  return campaign.actions[frame.action % campaign.actions.length] ?? "";
 }
 
 /** @throws {never} */
-export function campaignTick(frame: CampaignFrame): CampaignTick {
+export function firstFrameOf(campaign: Campaign): CampaignFrame {
+  return { action: 0, characters: actionOf(campaign, { action: 0, characters: 0, phase: "holding" }).length, phase: "holding" };
+}
+
+/** @throws {never} */
+export function campaignTick(campaign: Campaign, frame: CampaignFrame): CampaignTick {
   switch (frame.phase) {
     case "holding":
-      return { delayMs: holdMs, next: { ...frame, phase: "deleting" } };
+      return { delayMs: heroHoldMs, next: { ...frame, phase: "deleting" } };
     case "deleting":
       return frame.characters > 0
-        ? { delayMs: deleteMs, next: { ...frame, characters: frame.characters - 1 } }
-        : { delayMs: gapMs, next: { action: (frame.action + 1) % campaignActions.length, characters: 0, phase: "typing" } };
+        ? { delayMs: heroDeleteMs, next: { ...frame, characters: frame.characters - 1 } }
+        : { delayMs: heroGapMs, next: { action: (frame.action + 1) % campaign.actions.length, characters: 0, phase: "typing" } };
     case "typing":
-      return frame.characters < actionOf(frame).length
-        ? { delayMs: typeMs, next: { ...frame, characters: frame.characters + 1 } }
+      return frame.characters < actionOf(campaign, frame).length
+        ? { delayMs: heroTypeMs, next: { ...frame, characters: frame.characters + 1 } }
         : { delayMs: 1, next: { ...frame, phase: "holding" } };
     default: {
       const _exhaustive: never = frame.phase;
@@ -52,6 +47,6 @@ export function campaignTick(frame: CampaignFrame): CampaignTick {
 }
 
 /** @throws {never} */
-export function animatedHeading(frame: CampaignFrame): string {
-  return `${campaignLead} ${actionOf(frame).slice(0, frame.characters)}`;
+export function animatedHeading(campaign: Campaign, frame: CampaignFrame): string {
+  return `${campaign.lead} ${actionOf(campaign, frame).slice(0, frame.characters)}`;
 }

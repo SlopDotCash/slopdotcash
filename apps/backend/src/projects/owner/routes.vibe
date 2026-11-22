@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { isoNow } from "@repo/platform/clock"
 import { ConstraintViolation } from "@repo/platform/d1"
@@ -7,7 +7,6 @@ import { Roles } from "@repo/platform/roles"
 import type { AccountStanding, Event, Registry, RegistryRead } from "../../../gen/backend__projectComposition.effect.vibe"
 import { Rejected, clearanceOf, exclusionsMayBecome, unbanned } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { AuthorityRead, Creation, NewRepository, OwnerChange, RepositoryFacts } from "../../../gen/backend__projects.effect.vibe"
-import { licenseRecorded } from "../../../gen/backend__projects.effect.vibe"
 import { type Exclusion, covers, validList } from "../../../gen/settlement__payoutExclusions.effect.vibe"
 import { type AccessActor, type Checked, type RepositoryIdentity, currentPath, decided, modelRead, readAccess } from "../../authority/live.vibe"
 import { checkedIn, editedConsent, fundingChoiceOf, newProjectManifest, savedConsentOf, withConsent } from "../../closureConsent/form.vibe"
@@ -24,6 +23,7 @@ import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinanc
 import { type Json, appendedRepositories, classified, objectOf, same } from "./revisionChanges.ts"
 import { type Trusted, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
 import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
+import { managesContacts, publishedProgram, requestedStatus, stagedProgram, withBountyAmount } from "./securityProgram.vibe"
 import { primaryAuthority, primaryOf, refreshSetup } from "./setup.vibe"
 
 const contract = { "x-slop-project-api-contract": "project-registry-v1" }
@@ -153,7 +153,6 @@ function creationRefusal(event: Event, state: Registry, by: number, conflict: Re
   if (!exclusionsMayBecome(state, event.exclusions)) return exclusionsRefusal(state, event.exclusions)
   if (event.registry.restricted) return refusal(putProjectsById.repositoryRestricted, "This repository belongs to a restricted project; only reinstatement can list it again")
   const creation = event.creation
-  if (!licenseRecorded(creation.license)) return refusal(putProjectsById.invalidManifest, "Record the repository's root LICENSE facts (URL, commit and file digest) before creating the project")
   if (!creation.facts.public || creation.facts.owner === 0 || creation.facts.branch === 0) return refusal(getProjectSetupById.invalidManifestV3, "Repository or steward facts do not match GitHub")
   if (!creation.fieldsComplete) return refusal(putProjectsById.invalidManifest, "Complete the contribution rules that generate the project skills")
   return conflict
@@ -177,10 +176,6 @@ effect function decodedManifest(manifest: Json, trusted: Trusted) {
   const problem = definitionProblem(manifest, trusted)
   if (problem !== undefined) throw refusal(putProjectsById.invalidManifest, problem)
   return manifestOf(JSON.stringify(manifest), "submitted manifest") catch effect () => { throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid) }
-}
-
-function trustedOf(manifest: Json): Trusted {
-  return { escrow: manifest.escrow, securityBounty: manifest.securityBounty }
 }
 
 effect function registryFits(manifest: Json, replaces: boolean) {
@@ -264,10 +259,11 @@ effect function create(actor: Actor) {
   const request = try body(CreateRequest, 128)
   const submitted = objectOf(request.manifest)
   if (submitted === undefined) throw refusal(putProjectsById.invalidManifestProjectManifestIsInvalid)
-  const manifest = newProjectManifest(try withMonthlyAmount(try withVerifiedAsset(submitted, undefined), request.monthlyAmount))
-  const decoded = try decodedManifest(manifest, {})
-  const refused = try newProjectRefusal(manifest, { githubId: actor.githubId, githubLogin: actor.login }, false)
+  const staged = newProjectManifest(try withBountyAmount(try withMonthlyAmount(try withVerifiedAsset(submitted, undefined), request.monthlyAmount), undefined, request.bountyAmount))
+  const decoded = try decodedManifest(staged, { securityBounty: staged.securityBounty })
+  const refused = try newProjectRefusal(staged, { githubId: actor.githubId, githubLogin: actor.login }, false)
   if (refused !== undefined) throw refused
+  const manifest = staged.securityBounty === undefined ? staged : try publishedProgram({ projectId: decoded.id, actor, previous: undefined, next: staged, status: undefined, canManageContacts: false })
   const referrer = try resolveReferrer(request.referrer, manifest, actor)
   try registryFits(manifest, false)
   const checked = try authorized(manifest, accessActor(actor))
@@ -304,6 +300,7 @@ export interface Revision {
   readonly expectedRevision: unknown
   readonly reason?: unknown
   readonly monthlyAmount?: string
+  readonly bountyAmount?: string
 }
 
 interface Appended {
@@ -356,8 +353,6 @@ interface StepInput {
   readonly clearance: OwnerChange["clearance"]
 }
 
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision": one owner save is one
-// revision that may carry content and policy edits, the closure consent and appended repositories together.
 effect function ownerStep(input: StepInput) {
   const { authority, expectedRevision } = input
   const appends: NewRepository[] = []
@@ -413,21 +408,25 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   if (banned !== undefined) throw banned
   if (state.security.restriction !== "Clear") throw refusal(putProjectsById.projectRestrictedS409, `The project is ${restrictionWord(state)}; request reinstatement before changing it`)
   const checked = try authorized(current.manifest, accessActor(actor))
-  let prepared = try withMonthlyAmount(try withVerifiedAsset({ ...submitted, status: current.manifest.status, listingTier: current.manifest.listingTier }, current.manifest.rewardAsset), request.monthlyAmount)
+  let prepared = try withBountyAmount(try withMonthlyAmount(try withVerifiedAsset({ ...submitted, status: current.manifest.status, listingTier: current.manifest.listingTier }, current.manifest.rewardAsset), request.monthlyAmount), current.manifest.securityBounty, request.bountyAmount)
   const before = objectOf(current.manifest.reward)
   const after = objectOf(prepared.reward)
   if (before?.kind === "monthly-pool" && after?.kind === "monthly-pool" && (!same(current.manifest.rewardAsset, prepared.rewardAsset) || before.chain !== after.chain || before.currency !== after.currency)) {
     if (!same(before.cycleCaps, after.cycleCaps)) throw refusal(putProjectsById.financialChangeRestricted)
     prepared = { ...prepared, reward: Object.fromEntries(Object.entries(after).filter(([key]) => key !== "cycleCaps")) }
   }
-  if (!same(current.manifest.securityBounty, prepared.securityBounty)) throw refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
+  const programChanged = !same(current.manifest.securityBounty, prepared.securityBounty)
+  const programStatus = requestedStatus(prepared)
+  if (programChanged) prepared = stagedProgram(prepared)
   if (prepared.id !== projectId) throw refusal(putProjectsById.invalidManifestProjectIdCannotChange)
   const consent = editedConsent(current.manifest, prepared)
   prepared = consent.manifest
-  const trusted = trustedOf(current.manifest)
-  try decodedManifest(prepared, trusted)
+  try decodedManifest(prepared, { escrow: current.manifest.escrow, securityBounty: prepared.securityBounty })
+  const restricted = classified(current.manifest, prepared).restricted
+  if (restricted.length > 0) throw refusal(putProjectsById.ownerFieldRestricted, `These fields do not change through owner self-service: ${restricted.join(", ")}`)
+  if (programChanged) prepared = try publishedProgram({ projectId, actor, previous: current.manifest, next: prepared, status: programStatus, canManageContacts: managesContacts(current.manifest, actor, checked) })
+  const trusted: Trusted = { escrow: current.manifest.escrow, securityBounty: prepared.securityBounty }
   const changes = classified(current.manifest, prepared)
-  if (changes.restricted.length > 0) throw refusal(putProjectsById.ownerFieldRestricted, `These fields do not change through owner self-service: ${changes.restricted.join(", ")}`)
   if (changes.presentation.length + changes.executable.length + changes.financial.length === 0) throw refusal(putProjectsById.noChange)
   const now = try isoNow()
   const added = appendedRepositories(current.manifest, prepared) ?? []

@@ -27,15 +27,14 @@ import { Rejected as RequestRejected, apiStart } from "../../../gen/slopbot__val
 import { jointValueCall, singleRouteAllowed, singleValueCall, validateWorkUnitAssessment, valueRubricVersion } from "./assessment.vibe"
 import { type Registered, ValueRefused, assertListed, groupReadsFor, listedSources, loadValuePolicy, localAuthority, producerRecognized, publishValueAssessment, registeredProject, registeredSource, singleDecision } from "./publish.vibe"
 import { type InferenceChecks, type InferenceOutcome, producerIdentity, publishRetained, runValueInference } from "./run.vibe"
-import { InferenceConfig, budgetConfigured } from "./settings.vibe"
+import { InferenceConfig, budgetConfigured, subscriptionCutoff } from "./settings.vibe"
 
 export const runRequests = 10
 export const runMillis = 4 * 60 * 1000
 
-const passing: Omit<Gathered, "registry" | "occurredAt"> = {
+const passing: Omit<Gathered, "registry" | "occurredAt" | "valueStart"> = {
   threw: false,
   configured: true,
-  valueStart: apiStart,
   repositoryMatches: true,
   pull: "PullClosed",
   evidenceComplete: true,
@@ -245,13 +244,11 @@ function needsJoint(sources: ReadonlyArray<WorkUnitSource>, grouped: boolean) {
 
 effect function gather(job: ValueRequest, claim: Claim) {
   const observed = try observe({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
-  const start: Gathered = { ...passing, registry: observed.observation, occurredAt: 0 }
-  if (!mayAssessValue(slopbotScope(observed.observation))) return { gathered: start, sources: [] } satisfies Gathering
   const config = try InferenceConfig
+  const start: Gathered = { ...passing, registry: observed.observation, occurredAt: 0, valueStart: subscriptionCutoff(config.settings) }
+  if (!mayAssessValue(slopbotScope(observed.observation))) return { gathered: start, sources: [] } satisfies Gathering
   const configured = budgetConfigured(config.settings) && config.producerRevision !== undefined && (try Gateways).configured.size > 0
   if (!configured) return { gathered: { ...start, configured: false }, sources: [] } satisfies Gathering
-  // spec/slopbot/valueRequests.md: work accepted before the consumer's configured start is historical.
-  const valueStart = Math.floor((config.settings?.start ?? apiStart * 1000) / 1000)
   const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
   const repository = registered === undefined ? undefined : findRepository(registered.repositories, `${job.owner}/${job.repo}`)
   if (registered === undefined || repository === undefined) return { gathered: { ...start, repositoryMatches: false }, sources: [] } satisfies Gathering
@@ -264,8 +261,8 @@ effect function gather(job: ValueRequest, claim: Claim) {
     if (pull === "missing") return { gathered: { ...start, pull: "PullMissing" }, sources: [] } satisfies Gathering
     if (pull === "unreadable") return { gathered: { ...start, pull: "PullUnreadable" }, sources: [] } satisfies Gathering
     if (pull.state !== "closed") return { gathered: { ...start, pull: "PullOpen" }, sources: [] } satisfies Gathering
-    const occurred: Gathered = { ...start, valueStart, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
-    if (occurred.occurredAt <= 0 || occurred.occurredAt < valueStart) return { gathered: occurred, sources: [] } satisfies Gathering
+    const occurred: Gathered = { ...start, occurredAt: seconds(pull.merged_at ?? pull.closed_at) }
+    if (occurred.occurredAt <= 0 || occurred.occurredAt < occurred.valueStart) return { gathered: occurred, sources: [] } satisfies Gathering
     const evidence = try collectEvidence({ repository: repository.id, number: job.number, policy: repository })
     if (evidence.limitations.length > 0 && !noChangePromotionDeferralOnly(evidence) && !nativeMergeDeferralOnly(evidence))
       return { gathered: { ...occurred, evidenceComplete: false }, sources: [] } satisfies Gathering
@@ -292,7 +289,7 @@ export effect function consumeValueRequest(job: ValueRequest, run: Run) {
   const { claim } = claimed
   const gathering: Gathering = gather(job, claim) catch effect (error) => {
     try Effect.logWarning(JSON.stringify({ event: "value_request_retry", delivery: job.deliveryId, kind: typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown" }))
-    return { gathered: { ...passing, registry: { lookup: "NoRow", registeredId: 0, observedId: 0, rowActive: false, manifestActive: false, retirement: "NotRetired", restriction: "Clear", flags: "NotFlagged" }, occurredAt: 0, threw: true }, sources: [] } satisfies Gathering
+    return { gathered: { ...passing, registry: { lookup: "NoRow", registeredId: 0, observedId: 0, rowActive: false, manifestActive: false, retirement: "NotRetired", restriction: "Clear", flags: "NotFlagged" }, occurredAt: 0, valueStart: apiStart, threw: true }, sources: [] } satisfies Gathering
   }
   const outcome = recordOutcome(claim, gathering.gathered, gathering.sources) catch effect (error) => match (error) {
     when RequestRejected: "lease-lost" as const;

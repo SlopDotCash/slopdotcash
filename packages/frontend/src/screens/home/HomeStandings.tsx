@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
-import { DataState, Leaderboard } from "@repo/ui";
+import { DataState, Leaderboard, Spinner } from "@repo/ui";
 import type { Shown } from "./listing.ts";
 import { type LifetimeTotal, topStandings } from "./standings.ts";
 
@@ -21,7 +21,7 @@ export function HomeStandings({ totals }: HomeStandingsProps) {
           View leaderboard
         </a>
       </div>
-      <DataState status={totals.status} onRetry={totals.onRetry}>
+      <DataState status={totals.status} onRetry={totals.onRetry} skeleton={<Spinner label="Loading top contributors" />}>
         {rows.length === 0 ? <p className="text-muted-foreground">No contributors yet.</p> : <Leaderboard label="Contributor standings table" rows={rows} />}
       </DataState>
     </section>

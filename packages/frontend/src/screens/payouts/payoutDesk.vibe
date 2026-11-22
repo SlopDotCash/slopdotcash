@@ -6,7 +6,6 @@ import { BrowserSession } from "../../session/browserSession.vibe"
 import { actorNumber } from "../../session/session.vibe"
 import { type BindingView, PayoutBinding, type ReservedPayment, payoutBinding } from "../../wallets/core/binding.vibe"
 import { WalletChoice, type WalletOffer, walletChoiceServices } from "../../wallets/core/discovery.vibe"
-import type { SavedWallet } from "../../wallets/core/registration.vibe"
 
 export type { BindingView, WalletOffer }
 
@@ -78,23 +77,15 @@ effect function proceed(from: BindingView) {
   return view
 }
 
-export effect function openConsent(payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>) {
-  return try (try PayoutBinding).open(payment, actorId, saved)
+export effect function openConsent(payment: ReservedPayment, actorId: string) {
+  return try (try PayoutBinding).open(payment, actorId)
 }
 
-export effect function authorize(payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>, offer: number) {
+export effect function authorize(payment: ReservedPayment, actorId: string, offer: number) {
   const binding = try PayoutBinding
   const current = try binding.view()
-  if (current.consent.phase !== "Choosing") try binding.open(payment, actorId, saved)
+  if (current.consent.phase !== "Choosing") try binding.open(payment, actorId)
   return try proceed(try binding.choose(offer))
-}
-
-export effect function decideReplacement(replace: boolean) {
-  return try (try PayoutBinding).replace(replace)
-}
-
-export effect function signConnected() {
-  return try proceed(try (try PayoutBinding).view())
 }
 
 export effect function closeConsent() {

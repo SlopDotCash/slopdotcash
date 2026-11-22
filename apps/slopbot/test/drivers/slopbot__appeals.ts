@@ -59,6 +59,7 @@ function translated(event: Event): Event {
       return { ...event, subject: { ...event.subject, item: event.subject.item === "pr" ? node() : event.subject.item, revision: revision(event.subject.revision) } };
     case "accept":
     case "reject":
+    case "escalateBanAtAnswer":
       return { ...event, authority: { ...event.authority, item: event.authority.item === "pr" ? node() : event.authority.item } };
     case "maintainerReopen":
       return { ...event, decision: { ...event.decision, item: event.decision.item === "pr" ? node() : event.decision.item, revision: revision(event.decision.revision) } };

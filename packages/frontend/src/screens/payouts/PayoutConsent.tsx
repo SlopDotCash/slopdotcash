@@ -1,15 +1,14 @@
-// spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
+// spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"
 import type { AccountPayment, AccountWallet, PaymentsAccount } from "@repo/settlement/client";
 import { chainFamily, isNetworkKey } from "@repo/settlement/kernels/networks";
-import { Button, Dialog, DialogContent, type WalletOption } from "@repo/ui";
+import { Button, Dialog, DialogContent, Status, type WalletOption } from "@repo/ui";
 import { type Effect, Exit } from "effect";
 import { useState } from "react";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import type { AccessLost } from "../../wallets/core/binding.vibe";
-import { keptMessage } from "../../wallets/core/registration.vibe";
 import { ConsentReview } from "./ConsentReview.tsx";
 import { useFeed } from "./feed.ts";
-import { authorize, type BindingView, type ConsentRuntime, type ConsentServices, closeConsent, consentRuntime, decideReplacement, openConsent, reservedPayment, signConnected, watchOffers } from "./payoutDesk.vibe";
+import { authorize, type BindingView, type ConsentRuntime, type ConsentServices, closeConsent, consentRuntime, openConsent, reservedPayment, watchOffers } from "./payoutDesk.vibe";
 
 export type PayoutConsentProps = {
   /** The page's runtime, which knows the signed-in account. */
@@ -34,7 +33,6 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
   const reserved = reservedPayment(payment, claim);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<BindingView | undefined>(undefined);
   const [problem, setProblem] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -59,13 +57,12 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
       setNotice(next.notice);
       return;
     }
-    setView(next);
     setProblem(next.problem);
   };
 
   const begin = () => {
     setOpen(true);
-    void settle(openConsent(reserved, account.githubUserId, account.wallets));
+    void settle(openConsent(reserved, account.githubUserId));
   };
   const dismiss = () => {
     if (busy) return;
@@ -74,16 +71,23 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
     void consent.runPromiseExit(closeConsent());
   };
 
-  if (notice) return <p role="status" className="max-w-sm text-sm">{notice}</p>;
+  if (notice)
+    return (
+      <p role="status">
+        <Status presentation={{ tone: "Neutral", icon: "Clock", label: notice }} />
+      </p>
+    );
   return (
     <>
       {wallets.length === 0 ? (
         <Button asChild variant="secondary" size="sm">
-          <a href="/account#wallets">Authorize payout wallet</a>
+          <a href="/account#wallets" aria-label="Authorize payout wallet">
+            Authorize
+          </a>
         </Button>
       ) : (
-        <Button variant="secondary" size="sm" onClick={begin}>
-          Authorize payout wallet
+        <Button variant="secondary" size="sm" aria-label="Authorize payout wallet" onClick={begin}>
+          Authorize
         </Button>
       )}
       <Dialog open={open} onOpenChange={(next) => (next ? undefined : dismiss())}>
@@ -93,14 +97,9 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
             family={family}
             claimAddress={claim.address}
             wallets={wallets}
-            phase={view?.consent.phase ?? "Closed"}
-            walletAccount={view?.consent.walletAccount ?? ""}
             problem={problem}
-            notice={view?.consent.phase === "KeptSaved" ? keptMessage : (view?.notice ?? "")}
             busy={busy}
-            onSign={(wallet) => void settle(authorize(reserved, account.githubUserId, account.wallets, Number(wallet.id)))}
-            onReplace={(replace) => void settle(decideReplacement(replace))}
-            onContinue={() => void settle(signConnected())}
+            onSign={(wallet) => void settle(authorize(reserved, account.githubUserId, Number(wallet.id)))}
             onCancel={dismiss}
           />
         </DialogContent>

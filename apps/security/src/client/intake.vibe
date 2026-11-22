@@ -37,7 +37,7 @@ export schema SubmissionView {
   intake: IntakeView | null
 }
 
-export schema Submitted { replayed?: boolean; submission: SubmissionView }
+export schema Submitted { replayed?: boolean; authorizeUrl?: string; submission: SubmissionView }
 
 export schema IntakeReadiness {
   projectId: string

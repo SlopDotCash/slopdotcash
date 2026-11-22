@@ -1,6 +1,6 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
 import { vectors } from "../../../kernels/vectors.ts";
-import { manifest } from "./fixtures.ts";
+import { manifest, promised, promiseRows, revokedRows } from "./fixtures.ts";
 import type { PendingRepository } from "./manifest.schema.ts";
 import { afterPublish, type Edit, initialDraft, managedOf, pendingRepositories, pendingText, restoredEdit, reviewOf, type UpdateField, untouched, withField } from "./revision.ts";
 
@@ -153,5 +153,35 @@ export const anOutOfRangeReadyLabelShowsItsBoundsAndKeepsTheSavedSetting = vecto
     const review = edited(fields, withReady);
     const slopbot = review?.next.slopbot as { readyLabel?: unknown } | undefined;
     return [slopbot?.readyLabel, Object.entries(review?.errors ?? {}).filter(([field]) => field.startsWith("ready")).map(([, message]) => message)] as const;
+  },
+);
+
+const { slopbot: _consent, ...unconsented } = manifest;
+
+export const oneRevisionCarriesConsentThePromiseAndOtherEdits = vectors<readonly [Partial<Record<UpdateField, string>>, Record<string, unknown>], readonly [unknown, unknown, ReadonlyArray<string>, unknown]>(
+  [
+    [[{ automaticClosure: "true", honorSystem: "true", headline: "A faster engine for building open things." }, unconsented], [{ automaticClosure: true }, true, ["headline", "reward", "slopbot"], promiseRows]],
+    [[{ automaticClosure: "false", honorSystem: "false" }, promised], [{ automaticClosure: false }, undefined, ["reward", "slopbot"], revokedRows]],
+    [[{}, promised], [{ automaticClosure: true }, true, [], []]],
+  ],
+  ([fields, base]) => {
+    const review = edited(fields, base);
+    const reward = review?.next.reward as { honorSystem?: unknown } | undefined;
+    const changed = review ? [...review.changes.presentation, ...review.changes.executable, ...review.changes.financial, ...review.changes.restricted].sort() : [];
+    return [review?.next.slopbot, reward?.honorSystem, changed, review?.rows] as const;
+  },
+);
+
+export const leavingTheMonthlyPoolClearsThePromise = vectors<readonly [Record<string, unknown>, string], readonly [string, unknown]>(
+  [
+    [[promised, "monthly"], ["true", true]],
+    [[promised, "none"], ["false", undefined]],
+    [[manifest, "monthly"], ["false", undefined]],
+  ],
+  ([base, mode]) => {
+    const managed = managedOf(revision, base);
+    if (!managed) return ["", undefined] as const;
+    const review = reviewOf(managed, withField(untouched, "fundingMode", mode, revision), now);
+    return [review.value.honorSystem, (review.next.reward as { honorSystem?: unknown }).honorSystem] as const;
   },
 );

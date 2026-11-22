@@ -1,11 +1,14 @@
-// spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "Unit value changes only through a scored assessment or ratification of that unit"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
+// spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A recorded award follows the latest complete snapshot's score"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
 import { pointsOfThirdsText } from "../client/units/scoreUnits.ts"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
-import { type Event, type SourceActor, type SourceRule, noDecision } from "../../gen/points__journal.effect.vibe"
-import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, hold, instant, jointUnit, ownUnit, projectOf, ruleOf, workCounts } from "./ledger.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { type Decision, type Event, type SourceActor, type SourceCoverage, type SourceRule, type Supersession, noDecision } from "../../gen/points__journal.effect.vibe"
+import type { Provenance as Phase, Scored } from "../../gen/points__scoringPolicy.ts"
+import { findRepository } from "../client/snapshot/checks.vibe"
+import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, countsFromOf, hold, instant, jointUnit, ownUnit, projectOf, ruleOf, unitNameOf, workCounts } from "./ledger.vibe"
 import { reconcilePenalties } from "./penalties.vibe"
 import { appended, commit, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
 
@@ -26,6 +29,18 @@ const changedLineCount = /^(0|[1-9][0-9]*)$/u
 const omittedBeforePolicy = "review-credit-before-policy"
 const omittedOutsideWindow = "review-credit-outside-window"
 const valueDecision = /^value:[a-f0-9]{64}$/u
+const zeroingCoverage = new Set(["assessed", "human-ratified", "legacy-policy"])
+const pullUrl = /^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u
+const coverageStates: Readonly<Record<string, SourceCoverage>> = {
+  assessed: "CoverageAssessed",
+  "human-ratified": "CoverageRatified",
+  "legacy-policy": "CoverageLegacy",
+  stale: "CoverageStale",
+  incomplete: "CoverageIncomplete",
+  missing: "CoverageMissing",
+}
+const scorePhases: Readonly<Record<string, Phase>> = { assessed: "Assessed", "human-ratified": "Ratified" }
+const supersededReason = (reason: string) => `Prior credit was superseded by the current source-bound scoring decision. ${reason}`
 const reallocated = (total: number) =>
   `Complete primary-commit changed-line evidence reallocates the unchanged ${total} Points PR pool; this allocation-only correction does not reassess its value.`
 
@@ -74,7 +89,7 @@ export function batchOwnedKeys(store: Store) {
   for (const row of store.latest.values()) {
     const { award } = row
     if (award.amount > 0 && (award.category === "substantive-review" || award.category === "evaluated-contribution") &&
-      row.sourceRule === "slop-score-v2" && !covered.has(row.sourceDigest)) keys.add(award.key)
+      row.sourceRule === "slop-score-v2" && row.decision?.sourceId.startsWith("value:") !== true && !covered.has(row.sourceDigest)) keys.add(award.key)
   }
   return keys
 }
@@ -166,6 +181,144 @@ effect function checkOmissions(store: Store, repositories: Repositories, snapsho
   }
 }
 
+interface Superseding { readonly sourceId: string; readonly effectiveAt: string; readonly reason: string }
+interface Zeroing { readonly row: Row; readonly supersession: Supersession; readonly effectiveAt: string }
+
+function projectCollected(repositories: Repositories, snapshot: LeaderboardSnapshot, projectId: string, month: string) {
+  return repositories.registry.targets.every((repository) => repository.projectId !== projectId ||
+    (countsFromOf(repositories, repository.id)?.slice(0, 7) ?? "") > month ||
+    snapshot.repositories.some((collected) => collected.id === repository.id))
+}
+
+effect function decidedBy(event: ScoreEvent | undefined) {
+  if (event?.scoreDecisionSourceId === undefined || event.scoreDecisionAt === undefined) return undefined
+  return { sourceId: event.scoreDecisionSourceId, effectiveAt: try isoAt(millisOf(event.scoreDecisionAt)), reason: event.reason } satisfies Superseding
+}
+
+effect function supersededBy(store: Store, chosen: Superseding | undefined) {
+  if (chosen === undefined || decisionSourceOf([chosen.sourceId]) === "") return noDecision
+  const decision: Decision = {
+    basis: "Superseded", effectiveAt: Math.min(try instant(chosen.effectiveAt), store.now), reason: supersededReason(chosen.reason), delta: 0,
+    source: chosen.sourceId, valued: chosen.sourceId.startsWith("value:"),
+  }
+  return decision
+}
+
+effect function supersessions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, before: ReadonlyArray<Row>, supplied: ReadonlySet<string>, ownRecordMerges: ReadonlySet<string>, owned: ReadonlySet<string>, held: ReadonlySet<string>) {
+  const coverageByNumber = new Map<string, ValueCoverage>()
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const key = `${row.repository}\u0000${row.pullRequestNumber}`
+    if (!coverageByNumber.has(key)) coverageByNumber.set(key, row)
+  }
+  const excluded = new Set<string>()
+  const omitted = new Set<string>()
+  for (const exclusion of snapshot.reviewExclusions ?? []) {
+    const projectId = projectOf(repositories, exclusion.repository)
+    if (projectId === undefined) continue
+    const key = sourceKey(projectId, exclusion.reviewId)
+    if (exclusion.reason === omittedBeforePolicy || exclusion.reason === omittedOutsideWindow) omitted.add(key)
+    else excluded.add(key)
+  }
+  const parents = new Map<string, ScoreEvent>()
+  const joints = new Map<string, ScoreEvent>()
+  for (const event of snapshot.ledger) {
+    const source = event.scoreDecisionSourceId
+    if (event.actor.kind !== "User" || !workCounts(repositories, event.repository, event.occurredAt) || source === undefined || event.scoreDecisionAt === undefined) continue
+    parents.set(event.source.url.split("#")[0] ?? "", event)
+    if (event.category === "merged-pull-request" && event.workUnitId !== undefined && source.startsWith("value:") && (event.scoreThirds ?? event.points) > 0) {
+      joints.set(`${event.repository}\u0000${source}`, event)
+    }
+  }
+  const windowFrom = try instant(snapshot.window.from)
+  const windowTo = try instant(snapshot.window.to)
+  const policyFrom = instantOf(snapshot.valuePolicyEffectiveAt ?? "") ?? 0
+  const found: Zeroing[] = []
+  for (const previous of before) {
+    const award = previous.award
+    const merged = award.category === "merged-pull-request"
+    const source = sourceKey(award.projectId, award.sourceId)
+    if ((merged && held.has(source)) || (award.category === "substantive-review" && omitted.has(source))) continue
+    const own = merged && (try unitNameOf(award)) === ownUnit(award.projectId, award.sourceId)
+    const url = URL.parse(award.sourceUrl)
+    const match = url?.origin === "https://github.com" ? pullUrl.exec(url.pathname) : null
+    let coverageState: SourceCoverage = "CoverageNotApplicable"
+    let invalidated: Superseding | undefined
+    let absorbed: Superseding | undefined
+    let absorbs = false
+    if (snapshot.valueAssessmentCoverage !== undefined && match !== null) {
+      const repository = findRepository(repositories.registry, `${match[1]}/${match[2]}`)?.id ?? ""
+      const coverage = coverageByNumber.get(`${repository}\u0000${Number(match[3])}`)
+      coverageState = coverage === undefined ? "CoverageAbsent" : coverageStates[coverage.status] ?? "CoverageMissing"
+      const record = coverage?.pullRequestId === award.sourceId ? coverage.recordDigest ?? "" : ""
+      if (merged && own && coverage?.status === "assessed" && record !== "") absorbed = try decidedBy(joints.get(`${repository}\u0000value:${record}`))
+      if (merged && !own && (coverage?.status === "stale" || coverage?.status === "incomplete") && record !== "" && previous.decision?.sourceId === `value:${record}`) {
+        invalidated = { sourceId: previous.decision.sourceId, effectiveAt: snapshot.generatedAt, reason: `The current completion source marks this prior joint assessment ${coverage.status}.` }
+      }
+      absorbs = merged && !own && ownRecordMerges.has(source)
+      if ((coverage === undefined || !zeroingCoverage.has(coverage.status)) && invalidated === undefined && !absorbs) continue
+    }
+    const adverse = award.category === "substantive-review" && excluded.has(source)
+    const inside = award.occurredAt >= snapshot.window.from && award.occurredAt < snapshot.window.to
+    if (award.category === "payout-received" || award.category === "slopbot-penalty" || award.amount === 0 || owned.has(award.key) ||
+      supplied.has(award.key) || !(inside || adverse) || !projectCollected(repositories, snapshot, award.projectId, award.occurredAt.slice(0, 7))) continue
+    const chosen = invalidated ?? absorbed ?? (try decidedBy(parents.get(award.sourceUrl.split("#")[0] ?? "")))
+    found.push({
+      row: previous,
+      effectiveAt: chosen?.effectiveAt ?? store.generatedAt,
+      supersession: {
+        snapshotDigest: digest, windowFrom, windowTo, policyFrom, supplied: [], projectCollected: true, heldPool: false, coverage: coverageState,
+        invalidatesJoint: invalidated !== undefined, ownRecordAbsorbs: absorbs, review: adverse ? "AdverseExclusion" : "NotOmitted",
+        decision: try supersededBy(store, chosen),
+      },
+    })
+  }
+  return found
+}
+
+effect function zeroOne(store: Store, subject: string, rows: ReadonlyArray<Row>, zeroing: Zeroing, digest: string, recordedAt: string) {
+  const awards = rows.map((row) => row.award)
+  const opened = try command(store, { awards, units: [], sources: awards.map((award) => award.sourceId) })
+  const key = opened.names.keys.get(zeroing.row.award.key)
+  if (key === undefined || awards.some((award) => opened.names.opaque.has(award.key))) {
+    hold(store, { subject, reason: "the recorded history of this award is outside the journal model", digest })
+    return []
+  }
+  const refused = try sendAll(opened, [{ type: "zeroSuperseded", k: key, snapshot: zeroing.supersession }])
+  if (refused !== "") {
+    hold(store, { subject, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const provenance = { recordedAt, sourceDigest: digest, effectiveAt: zeroing.effectiveAt, decisionSourceId: zeroing.supersession.decision.source }
+  const templates = new Map(awards.map((award) => [award.actor.id, award] as const))
+  const zeroed: Row[] = []
+  for (const revision of try appended(opened)) zeroed.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+  return zeroed
+}
+
+effect function zeroSupersededCredit(store: Store, buffer: Row[], found: ReadonlyArray<Zeroing>, digest: string, recordedAt: string) {
+  const byUnit = new Map<string, Zeroing[]>()
+  for (const zeroing of found) {
+    const { award } = zeroing.row
+    if (award.category !== "merged-pull-request") {
+      try commit(store, buffer, try zeroOne(store, award.key, [zeroing.row], zeroing, digest, recordedAt))
+      continue
+    }
+    const unit = store.unitOfKey.get(award.key) ?? (try unitNameOf(award))
+    byUnit.set(unit, [...byUnit.get(unit) ?? [], zeroing])
+  }
+  for (const [unit, members] of byUnit) {
+    const [first] = members
+    if (first === undefined) continue
+    const named = new Set(members.map((zeroing) => zeroing.row.award.key))
+    const positive = [...store.units.get(unit)?.keys ?? []].filter((key) => (store.latest.get(key)?.award.amount ?? 0) > 0)
+    if (positive.some((key) => !named.has(key))) {
+      hold(store, { subject: unit, reason: "a superseded work unit is only partly absent from the snapshot", digest })
+      continue
+    }
+    try commit(store, buffer, try zeroOne(store, unit, members.map((zeroing) => zeroing.row), first, digest, recordedAt))
+  }
+}
+
 effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string, coverage: ValueCoverage, projectId: string, prior: ReadonlyArray<Row>, current: ReadonlyArray<Credited>, unavailable: ReadonlySet<string>) {
   const allocation = coverage.implementationAllocation
   const lines = changedLines(allocation)
@@ -229,11 +382,39 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
   const recorded = opened.names.units.get(unit)
   const state = try opened.machine.get()
   if (recorded !== undefined && store.units.has(unit)) {
-    const prior = state.revisions.find((revision) => revision.key.category === "MergedWork" && revision.key.workUnit === recorded)
-    if (prior === undefined) hold(store, { subject: unit, reason: "the recorded work unit is outside the journal model", digest })
-    else if (total !== prior.amount) hold(store, { subject: unit, reason: "a unit value changes only through a scored assessment or ratification", digest })
-    else if (sharesDiffer(prior.shares, members, opened.names.actorIds)) hold(store, { subject: unit, reason: "a recorded unit's shares change only through complete changed-line evidence", digest })
-    return []
+    const matching = state.revisions.filter((revision) => revision.key.category === "MergedWork" && revision.key.workUnit === recorded)
+    const prior = matching[matching.length - 1]
+    if (prior === undefined) {
+      hold(store, { subject: unit, reason: "the recorded work unit is outside the journal model", digest })
+      return []
+    }
+    if (total === prior.amount) {
+      if (sharesDiffer(prior.shares, members, opened.names.actorIds)) hold(store, { subject: unit, reason: "a recorded unit's shares change only through complete changed-line evidence", digest })
+      return []
+    }
+    if (members.some(({ award }) => award.provisional)) {
+      hold(store, { subject: unit, reason: "a unit value changes only through a scored assessment or ratification", digest })
+      return []
+    }
+    const status = coverage.get(first.award.sourceId)
+    const scored: Scored = {
+      phase: scorePhases[status?.status ?? ""] ?? "LegacyScored", project, unit: recorded, head: "", acceptedAt: 0, policy: "ValueV1",
+      legacyPoints: 0, points: total, frozen: false, frozenPoints: 0, held: false, pendingBand: 0, rubric: "", model: "", billingProven: false,
+    }
+    const refused = try sendAll(opened, [{ type: "rescoreUnit", s: scored, reason: first.event.reason, digest }])
+    if (refused !== "") {
+      hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
+      return []
+    }
+    const recordValue = status?.recordDigest === null || status?.recordDigest === undefined ? undefined : `value:${status.recordDigest}`
+    const provenance = {
+      recordedAt, sourceDigest: digest,
+      effectiveAt: first.event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(first.event.scoreDecisionAt)),
+      decisionSourceId: decisionSourceOf([first.event.scoreDecisionSourceId, recordValue, first.award.sourceId]),
+    }
+    const rows: Row[] = []
+    for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templatesOf(store, unit, members), provenance)))
+    return rows
   }
   const band = bandOf(total)
   if (band === undefined) {
@@ -278,8 +459,24 @@ export interface Context {
   readonly recordedAt: string
   readonly rule: SourceRule
   readonly projectCollected: boolean
-  readonly reason: string
+  readonly decided: boolean
   readonly confirmation?: boolean
+}
+
+export effect function scoreDecision(event: ScoreEvent) {
+  const source = decisionSourceOf([event.scoreDecisionSourceId])
+  if (source === "" || event.scoreDecisionAt === undefined) return noDecision
+  const decision: Decision = {
+    basis: "Reassessment", effectiveAt: try instant(try isoAt(millisOf(event.scoreDecisionAt))), reason: event.reason, delta: 0, source,
+    valued: source.startsWith("value:"),
+  }
+  return decision
+}
+
+effect function decisionRecorded(prior: Row, event: ScoreEvent) {
+  if (event.scoreDecisionSourceId === undefined || event.scoreDecisionAt === undefined) return true
+  return prior.decision?.sourceId === event.scoreDecisionSourceId && prior.decision.reason === event.reason &&
+    prior.decision.effectiveAt === (try isoAt(millisOf(event.scoreDecisionAt)))
 }
 
 export effect function creditAward(store: Store, repositories: Repositories, item: Credited, context: Context) {
@@ -301,12 +498,7 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
   }
   const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
   const effectiveAt = event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
-  // The producer's scoring decision is optional: a re-score without one appends a successor with no decision; one with
-  // a decision appends a reassessment carrying that decision's source, effective time and reason (applyPointsSnapshot).
-  const decision = event.scoreDecisionSourceId === undefined
-    ? noDecision
-    : { basis: "Reassessment" as const, effectiveAt: try instant(effectiveAt), reason: context.reason, delta: 0, source: event.scoreDecisionSourceId, valued: event.scoreDecisionSourceId.startsWith("value:") }
-  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, decision }])
+  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, decision: context.decided ? try scoreDecision(event) : noDecision }])
   if (refused !== "") {
     hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
     return []
@@ -326,6 +518,11 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
   try checkOmissions(store, repositories, snapshot)
   try advanceTo(store, recordedAt)
   const owned = batchOwnedKeys(store)
+  const before = [...store.latest.values()]
+  const existing = new Set(store.coverage.map((entry) => `${entry.repository}:${entry.digest}`))
+  for (const repository of snapshot.repositories) {
+    if (!existing.has(`${repository.id}:${digest}`)) store.coverage.push({ repository: repository.id, from: snapshot.window.from, to: snapshot.window.to, digest })
+  }
   const unavailable = new Set((snapshot.source.heldWorkUnits ?? []).flatMap((unit) => unit.sourceNodeIds))
   const snapshotAwards: Credited[] = []
   for (const event of snapshot.ledger) {
@@ -356,21 +553,22 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     if (merged && award.provisional && unavailable.has(award.sourceId) && recorded) continue
     credited.push(item)
   }
+  const ownRecordMerges = new Set(credited
+    .filter((item) => item.award.category === "merged-pull-request" && item.unit === ownUnit(item.award.projectId, item.award.sourceId))
+    .map((item) => sourceKey(item.award.projectId, item.award.sourceId)))
+  const supplied = new Set(credited.map((item) => item.award.key))
+  try zeroSupersededCredit(store, buffer, try supersessions(store, repositories, snapshot, digest, before, supplied, ownRecordMerges, owned, held), digest, recordedAt)
   for (const [unit, members] of groupsOf(credited)) try commit(store, buffer, try creditUnitGroup(store, repositories, snapshot, coverage, digest, recordedAt, unit, members))
   for (const item of credited) {
     const prior = store.latest.get(item.award.key)
-    if (item.award.category === "merged-pull-request" || (prior !== undefined && sameAward(prior.award, item.award))) continue
+    if (item.award.category === "merged-pull-request" || (prior !== undefined && sameAward(prior.award, item.award) && (try decisionRecorded(prior, item.event)))) continue
     const context = {
-      digest, recordedAt, rule: ruleOf(snapshot.ruleVersion).rule, reason: item.event.reason,
+      digest, recordedAt, rule: ruleOf(snapshot.ruleVersion).rule, decided: true,
       projectCollected: snapshot.repositories.some((repository) => repository.projectId === item.award.projectId),
     }
     try commit(store, buffer, try creditAward(store, repositories, item, context))
   }
   flush(store, buffer)
-  const existing = new Set(store.coverage.map((entry) => `${entry.repository}:${entry.digest}`))
-  for (const repository of snapshot.repositories) {
-    if (!existing.has(`${repository.id}:${digest}`)) store.coverage.push({ repository: repository.id, from: snapshot.window.from, to: snapshot.window.to, digest })
-  }
   try reconcilePenalties(store, repositories, snapshot, digest, recordedAt)
   store.generatedAt = recordedAt
   return true

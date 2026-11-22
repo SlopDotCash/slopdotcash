@@ -1,38 +1,45 @@
-// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"
+// spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Home shows the open Featured and Community projects in their own sections whatever this month's funding, leaving bounty cards to the security bounties section"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
 import { toAmount } from "@repo/settlement/kernels/amounts";
 import { Arbitrary } from "effect";
 import { contract } from "vibestack/testing";
 import { type PoolFacts, poolDisplay } from "../../../gen/frontend__projections.ts";
 import { hasProjectCardBounty, type SecurityProgramStatus } from "../../kernels/rewardSummary.ts";
 import { vectors } from "../../kernels/vectors.ts";
-import { bounty, community, funded, mergeLine, pledged, pointsOnly, pool, prize, tokenPool, unread, withdrawn } from "./fixtures.ts";
-import { cardLine, cardNotes, homeProjectOrder, homeProjects, homeSections, listedThisMonth, type ListedProject } from "./listing.ts";
+import { bounty, community, funded, pledged, pointsOnly, pool, prize, promised, reviewed, tokenPool, unread, unverified, withdrawn } from "./fixtures.ts";
+import { cardAmount, cardNote, homeProjectOrder, homeProjects, homeSections, listedThisMonth, type ListedProject } from "./listing.ts";
 
 const separateBounty = (status: SecurityProgramStatus): ListedProject => ({
   ...community[0]!,
   securityBounty: { rewardMode: "separate", status, eligibility: "in-scope-security", amount: { grossMinor: 50_000_000_000n, decimals: 6 }, funding: { state: "verified" } },
 });
 
-export const cardsHeadlineOnlyAnOpenOfferOrAFundedPool = vectors<ListedProject, ReturnType<typeof cardLine>>([
-  [pool, { amount: "$5,000/mo" }],
-  [{ ...pool, funding: withdrawn(5_000_000_000n) }, { amount: "Points only" }],
-  [{ ...pool, funding: pointsOnly }, { amount: "Points only" }],
-  [{ ...pool, funding: unread(5_000_000_000n) }, { amount: "Points only" }],
-  [{ ...pool, funding: pledged(5_000_000_000n) }, { amount: "$5,000/mo" }],
-  [bounty, { amount: "$50k / Critical", state: "Funding verified" }],
-  [prize, { amount: "$25k + points", state: "External prize" }],
-  [community[0]!, { amount: "Points only" }],
-  [separateBounty("open"), { amount: "$50k / Finding", state: "Funding verified" }],
-  [separateBounty("paused"), { amount: "Points only" }],
-  [separateBounty("closed"), { amount: "Points only" }],
-  [separateBounty("draft"), { amount: "Points only" }],
-], cardLine);
+export const cardsHeadlineAnOpenOfferAFundedOrPromisedPoolOrPointsOnly = vectors<ListedProject, string>([
+  [pool, "$5,000/mo"],
+  [{ ...pool, funding: withdrawn(5_000_000_000n) }, "Points only"],
+  [{ ...pool, funding: pointsOnly }, "Points only"],
+  [{ ...pool, funding: unread(5_000_000_000n) }, "Points only"],
+  [{ ...pool, funding: pledged(5_000_000_000n) }, "$5,000/mo"],
+  [{ ...pool, promise: { pool: pool.funding, honorSystem: true, vaultUnread: true } }, "$5,000/mo"],
+  [promised, "$250/mo · Promised · Not vaulted"],
+  [unverified, "$250/mo · Promised · Vault funding unverified"],
+  [{ ...promised, promise: { ...promised.promise!, honorSystem: false } }, "Points only"],
+  [{ ...promised, funding: pointsOnly, promise: { pool: pointsOnly, honorSystem: true, vaultUnread: false } }, "Points only"],
+  [bounty, "$50k / Critical"],
+  [prize, "Points + external prize"],
+  [community[0]!, "Points only"],
+  [separateBounty("open"), "$50k / Finding"],
+  [separateBounty("paused"), "Points only"],
+  [separateBounty("closed"), "Points only"],
+  [separateBounty("draft"), "Points only"],
+], cardAmount);
 
-export const cardNotesKeepStateThenMergeActivity = vectors<ListedProject, string[]>([
-  [pool, ["Last merge 2 days ago · 3 outside PRs waiting 7+ days"]],
-  [bounty, ["Funding verified"]],
-  [prize, ["External prize"]],
-], (project) => cardNotes(project, mergeLine(project)));
+export const cardsNoteOnlyACommittedReviewBudget = vectors<ListedProject, string | null>([
+  [pool, null],
+  [bounty, null],
+  [prize, null],
+  [reviewed, "+$300 reviews"],
+  [{ ...reviewed, reward: { ...reviewed.reward, reviewBudget: { ...reviewed.reward.reviewBudget!, fundingState: "pledged" } } }, null],
+], (project) => cardNote(project) ?? null);
 
 const statuses: ReadonlyArray<SecurityProgramStatus> = ["draft", "pending-approval", "open", "paused", "closed"];
 const fundings: ReadonlyArray<PoolFacts> = [funded(5_000_000_000n), withdrawn(5_000_000_000n), pointsOnly, unread(5_000_000_000n)];
@@ -40,12 +47,12 @@ const policies: ReadonlyArray<ListedProject> = [pool, bounty, prize, ...statuses
 
 export const aCardNamesABountyOnlyWhenItIsTheOpenOfferAndAnAmountOnlyWhenFunded = contract({
   input: Arbitrary.Constant(policies),
-  run: (projects) => projects.map(cardLine),
+  run: (projects) => projects.map(cardAmount),
   deterministic: true,
-  invariant: (projects, lines) =>
+  invariant: (projects, amounts) =>
     projects.every((project, index) => {
-      const { amount } = lines[index]!;
-      return (!/ \/ (Critical|Finding)$/u.test(amount) || hasProjectCardBounty(project)) && (!amount.endsWith("/mo") || poolDisplay(project.funding) === "PoolFunded");
+      const amount = amounts[index]!;
+      return !amount.includes("Promised") && (!/ \/ (Critical|Finding)$/u.test(amount) || hasProjectCardBounty(project)) && (!amount.endsWith("/mo") || poolDisplay(project.funding) === "PoolFunded");
     }),
 });
 
@@ -97,6 +104,10 @@ export const homeOrdersByShownMonthlyAmountThenGroupThenFeaturedThenRegistry = v
   [
     [pool, usdcPool("cycle-cap-larger", 1_000_000_000n, { funding: funded(9_000_000_000n) }), usdcPool("cycle-cap-smaller", 9_000_000_000n, { funding: funded(1_000_000_000n) })],
     ["cycle-cap-larger", "slopdotcash", "cycle-cap-smaller"],
+  ],
+  [
+    [community[0]!, usdcPool("smaller", 100_000_000n, { listingTier: "community" }), unverified, { ...promised, promise: { ...promised.promise!, honorSystem: false } }],
+    ["unverified-pool", "smaller", "community-1", "promised-pool"],
   ],
 ], (projects) => ids(homeProjectOrder(projects)));
 

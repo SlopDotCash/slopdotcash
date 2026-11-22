@@ -16,20 +16,14 @@ export type FundsAndAwardsProps = {
   networkPays: NetworkPays;
 };
 
-/** The vault's finalized totals and the owner's monthly awards, beside the reward summary; an external prize names its organizer. */
+/** The vault's finalized totals and the owner's monthly awards, beside the reward summary; an external prize shows neither. */
 export function FundsAndAwards({ runtime, project, awardMonths, networkPays }: FundsAndAwardsProps) {
   const funding = project.reward.kind === "external-prize-share" ? undefined : fundingProjectOf(project.record);
-  if (project.reward.kind !== "external-prize-share" && funding?.escrow === undefined) return null;
+  if (funding?.escrow === undefined) return null;
   return (
     <section id="funding" aria-label="Funds and awards" className="flex flex-col gap-8">
-      {funding === undefined ? (
-        <p>The organizer pays this prize.</p>
-      ) : (
-        <>
-          <EscrowFunding readOnly runtime={runtime} project={funding} />
-          <OwnerAwards runtime={runtime} project={funding} awardMonths={awardMonths} networkPays={networkPays} />
-        </>
-      )}
+      <EscrowFunding readOnly runtime={runtime} project={funding} />
+      <OwnerAwards runtime={runtime} project={funding} awardMonths={awardMonths} networkPays={networkPays} />
     </section>
   );
 }

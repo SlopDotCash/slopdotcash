@@ -4,7 +4,7 @@ import { GitHub } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
 import { Roles } from "@repo/platform/roles"
 import type { ImportMode, ImportRequest, ImportSource, Imports, Producer } from "../../gen/slopbot__historicalImport.ts"
-import { apply, decodeState, initial, machineOver, sourceIds } from "../../gen/slopbot__historicalImport.effect.vibe"
+import { acceptedBeforeStart, apply, decodeState, initial, machineOver, sourceIds } from "../../gen/slopbot__historicalImport.effect.vibe"
 import type { Installation } from "../../gen/slopbot__installation.ts"
 import { active } from "../../gen/slopbot__installation.effect.vibe"
 import { ImportReceipt } from "../client/import.vibe"
@@ -12,28 +12,19 @@ import { InstallationRow, installationOf } from "../installation/store.vibe"
 import { observe, unregistered } from "../scope/facts.vibe"
 import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"
 import { assessmentKeyStored, storedAssessmentKey, valueAssessmentKey, workUnitAssessmentKey } from "../value/history/read.vibe"
+import { type ValueSettingsVars, producerRevisionOf, subscriptionCutoff, valueSettings } from "../value/inference/settings.vibe"
 import { reached, withHistoricalIntakeDiagnostics } from "./diagnostics.vibe"
-import { type ValueSettingsVars, valueSettings } from "../value/inference/settings.vibe"
-import { apiStart } from "../../gen/slopbot__valueRequests.effect.vibe"
 
-export interface ImportVars extends ValueSettingsVars {
-  readonly SLOPBOT_PRODUCER_REVISION?: string
-}
-
-// spec/slopbot/historicalImport.md: the cutoff is the value consumer's configured start, or 1 November 2026 UTC when
-// the consumer has no valid settings (seconds, as the import machine counts them).
 export service ImportSettings {
   readonly producerRevision: string
   readonly cutoff: number
 }
 
-export function importSettings(vars: ImportVars) {
-  const revision = vars.SLOPBOT_PRODUCER_REVISION ?? ""
+export function importSettings(vars: ValueSettingsVars) {
   return Layer.effect(ImportSettings, effect {
-    const settings = try valueSettings(vars)
     return {
-      producerRevision: /^[a-f0-9]{40}$/u.test(revision) ? revision : "",
-      cutoff: settings === undefined ? apiStart : Math.floor(settings.start / 1000),
+      producerRevision: producerRevisionOf(vars) ?? "",
+      cutoff: subscriptionCutoff(try valueSettings(vars)),
     }
   })
 }
@@ -60,13 +51,9 @@ export interface AdmittedImport {
   readonly legacyPredecessors: ReadonlyArray<string>
   readonly revisionReason: string | null
   readonly bundle: Uint8Array | undefined
-  // The import cutoff in seconds; a joint import may also carry later closed, unmerged context sources.
   readonly cutoff: number
 }
 
-// spec/slopbot/historicalImport.md historicalWork: the prepared work-unit evidence of a joint import, which alone
-// shows its limitations and claims and whether a later source is indirectly accepted or credits, carries or accepts
-// a claim (development historicalSubscriptionWorkUnit).
 export interface PreparedSource {
   readonly pullRequestNodeId: string
   readonly indirectAcceptance: boolean
@@ -81,7 +68,6 @@ export interface PreparedFacts {
 
 export error ImportRefused { reason: string }
 
-// The admission decision a publication runs once its evidence is prepared and before it writes anything.
 export error PublicationFailed
 
 export type PublicationError = PublicationFailed | { readonly _tag: string }
@@ -271,8 +257,6 @@ effect function sourceFacts(selection: Selection, projects: Map<string, number>,
     return { source: { ...known, read: "PullUnreadable", occurredAt: 0, merged: false, indirectAcceptance: false, claimed: false }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
   }
   const pull = try github.json(`/repos/${selection.repository}/pulls/${selection.number}`, PullFacts, { limitBytes: githubLimitBytes })
-  // Whether a later closed, unmerged source is indirectly accepted, or credits, carries or accepts a claim, is known
-  // only from the prepared work-unit evidence; the publication supplies it before the decision (preparedRequest).
   return {
     source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at), merged: pull.merged_at !== null, indirectAcceptance: false, claimed: false },
     admitted: { ...identity, pullRequestNodeId: pull.node_id },
@@ -305,12 +289,6 @@ export effect function importsMachine(start: Imports) {
   return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
-function acceptedBefore(source: ImportSource, cutoff: number) {
-  return source.read === "PullClosed" && source.occurredAt > 0 && source.occurredAt < cutoff
-}
-
-// The request with the prepared evidence's limitation and claim counts, and each source's indirect acceptance and
-// claims read from it.
 export function preparedRequest(request: ImportRequest, facts: ReadonlyArray<SourceFacts>, prepared: PreparedFacts): ImportRequest {
   const sources = request.sources.map((source, index) => {
     const node = facts[index]?.admitted.pullRequestNodeId ?? ""
@@ -356,11 +334,9 @@ export effect function publishSubscription(administratorGithubId: string, input:
   const machine = try importsMachine(try admissionState(install, settings.cutoff, try assessmentKeyStored(assessmentKey), request))
   const decide = (decided: ImportRequest) => effect {
     const state = try machine.send({ type: "submit", request: decided })
-    if (state.last !== "Imported") throw new ImportRefused({ reason: "Historical assessment was refused" })
+    if (state.last === "Refused") throw new ImportRefused({ reason: "Historical assessment was refused" })
   }
-  // A request whose every source was accepted before the cutoff is decided from its GitHub facts alone; a joint
-  // request with a later context source is decided once the publication has prepared its work-unit evidence.
-  const deferred = joint && request.sources.some((source) => !acceptedBefore(source, settings.cutoff))
+  const deferred = joint && request.sources.some((source) => !acceptedBeforeStart(source, settings.cutoff))
   if (!deferred) try decide(request)
   const admit: Admit = (prepared) => effect {
     if (!deferred) return

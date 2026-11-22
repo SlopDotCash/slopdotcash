@@ -1,0 +1,248 @@
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { Actor } from "@repo/platform/http"
+import type { PrivateCase } from "../../gen/security__cases.ts"
+import { Rejected, apply, githubReceiptService, initial } from "../../gen/security__cases.effect.vibe"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { unpaidTerms } from "../../gen/security__terms.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import type { AnalysisReport } from "../analysis/prompts.ts"
+import { ghsaPattern, markerLine } from "../forwarding/advisories.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type FrozenTerms, type ReportingProgram, ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
+import { type CaseRole, caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { awardColumns, caseRecord } from "./rows.vibe"
+import { accessLog, caseNotices } from "./store.vibe"
+
+export interface PrivateReport {
+  readonly ghsa: string
+  readonly createdAt: string
+  readonly state: string
+  readonly author: { readonly githubId: string; readonly login: string }
+  readonly report: AnalysisReport
+  readonly referenceLines: ReadonlyArray<string>
+}
+
+export type PrivateReportList = { readonly kind: "ok"; readonly reports: ReadonlyArray<PrivateReport> } | { readonly kind: "unavailable" }
+
+export type Reconciled = { readonly kind: "ok"; readonly received: ReadonlyArray<string> } | { readonly kind: "unavailable" }
+
+export type ReconcileScope = "own" | "all"
+
+export interface ReceiptAt {
+  readonly policyRevision: number | null
+  readonly terms: FrozenTerms | undefined
+  readonly receiptTerms: ReceiptTerms
+}
+
+schema Held { id: string }
+schema Saved { marker: string }
+schema Claim { id: string; advisory_ghsa: string | null; reporter_github_id: string }
+schema Landed { revision: number; submission_state: string }
+
+const repositoryName = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/u
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const maxPages = 20
+const maxListBytes = 8 * 1024 * 1024
+const maxDescription = 60_000
+const referencePrefix = markerLine("")
+const githubVerifier = "github"
+const unavailable: PrivateReportList = { kind: "unavailable" }
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function text(value: unknown, max: number) {
+  return typeof value === "string" ? value.slice(0, max) : ""
+}
+
+function packagesOf(value: unknown) {
+  const entries = Array.isArray(value) ? value : []
+  return entries.map((entry) => record(record(entry)?.package)).map((found) => found === undefined ? "" : `${text(found.ecosystem, 40)}:${text(found.name, 200)}`).filter((name) => name.length > 1).slice(0, 20)
+}
+
+export function privateReportOf(value: unknown): PrivateReport | undefined {
+  const advisory = record(value)
+  if (advisory === undefined || record(advisory.submission) === undefined) return undefined
+  const author = record(advisory.author)
+  const ghsa = advisory.ghsa_id
+  const created = typeof advisory.created_at === "string" ? Date.parse(advisory.created_at) : Number.NaN
+  const authorId = author?.id
+  const login = author?.login
+  if (typeof ghsa !== "string" || !ghsaPattern.test(ghsa) || !Number.isFinite(created) || author === undefined || author.type !== "User") return undefined
+  if (typeof authorId !== "number" || !Number.isSafeInteger(authorId) || authorId <= 0 || typeof login !== "string" || !githubLogin.test(login)) return undefined
+  const description = typeof advisory.description === "string" ? advisory.description : ""
+  return {
+    ghsa,
+    createdAt: new Date(created).toISOString(),
+    state: text(advisory.state, 20),
+    author: { githubId: String(authorId), login },
+    report: {
+      summary: text(advisory.summary, 1024),
+      description: description.slice(0, maxDescription),
+      severity: typeof advisory.severity === "string" ? advisory.severity : null,
+      cvss: null,
+      cweIds: Array.isArray(advisory.cwe_ids) ? advisory.cwe_ids.filter((id): id is string => typeof id === "string").slice(0, 20) : [],
+      packages: packagesOf(advisory.vulnerabilities),
+    },
+    referenceLines: description.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.startsWith(referencePrefix)),
+  }
+}
+
+effect function advisoryReader(repository: string) {
+  if (!repositoryName.test(repository)) return undefined
+  const [owner = "", name = ""] = repository.split("/")
+  const app = try GitHubApp
+  const installation = app.installationFor(owner, name, { followRenamed: false }) catch () => undefined
+  if (installation === undefined) return undefined
+  return { path: `/repos/${owner}/${name}/security-advisories`, layer: app.asInstallation(installation, { repositories: [name], permissions: { repository_advisories: "read" } }) }
+}
+
+effect function listedAdvisories(repository: string) {
+  const reader = try advisoryReader(repository)
+  if (reader === undefined) return undefined
+  provide reader.layer {
+    return try (try GitHub).pages(`${reader.path}?sort=created&direction=asc`, Schema.Unknown, { maxPages, perPage: 100, limitBytes: maxListBytes })
+  }
+}
+
+effect function oneAdvisory(repository: string, ghsa: string) {
+  const reader = try advisoryReader(repository)
+  if (reader === undefined) return undefined
+  provide reader.layer {
+    return try (try GitHub).json(`${reader.path}/${ghsa}`, Schema.Unknown, { limitBytes: maxListBytes, followRenamed: false })
+  }
+}
+
+export effect function privateReports(repository: string) {
+  const items = listedAdvisories(repository) catch () => undefined
+  if (items === undefined) return unavailable
+  const reports = items.flatMap((item) => {
+    const report = privateReportOf(item)
+    return report === undefined ? [] : [report]
+  })
+  reports.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.ghsa.localeCompare(right.ghsa))
+  return { kind: "ok", reports } satisfies PrivateReportList
+}
+
+export effect function advisoryReport(repository: string, ghsa: string) {
+  if (!ghsaPattern.test(ghsa)) return undefined
+  const value = oneAdvisory(repository, ghsa) catch () => undefined
+  return privateReportOf(value)?.report
+}
+
+export effect function termsAtReceipt(projectId: string, receivedAt: string) {
+  const program = try (try ReportingPrograms).atReceipt({ projectId, receivedAt })
+  const receivedAtMs = millisOf(receivedAt)
+  if (program === undefined) return { policyRevision: null, terms: undefined, receiptTerms: unpaidTerms(0, receivedAtMs) } satisfies ReceiptAt
+  return { policyRevision: program.revision, terms: program.terms, receiptTerms: receiptTermsOf(program, millisOf(program.publishedAt), receivedAtMs) } satisfies ReceiptAt
+}
+
+effect function alreadyHeld(projectId: string, ghsa: string) {
+  const held = try first(Held, sql`SELECT id FROM security_cases WHERE project_id = ${projectId} AND submission_state = 'verified' AND (advisory_ghsa = ${ghsa} OR id IN (SELECT case_id FROM security_submissions WHERE project_id = ${projectId} AND advisory_ghsa = ${ghsa} AND state IN ('submitted', 'receipt-verified')))`)
+  return held !== undefined
+}
+
+effect function forwardOfSavedReport(projectId: string, report: PrivateReport) {
+  const saved = try rows(Saved, sql`SELECT s.marker FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = ${projectId} AND s.reporter_github_id = ${report.author.githubId} AND s.origin = 'slop'`)
+  const lines = new Set(report.referenceLines)
+  return saved.some((row) => lines.has(markerLine(row.marker)))
+}
+
+function roleOf(actor: Actor, reporterGithubId: string): CaseRole {
+  return actor.githubId === reporterGithubId ? "reporter" : "security-maintainer"
+}
+
+effect function settled(model: PrivateCase, listed: boolean, terms: ReceiptTerms) {
+  return apply(model, { type: "settleClaim", listed, terms }, githubReceiptService) catch effect (error) => {
+    if (!(error instanceof Rejected)) throw error
+    return undefined
+  }
+}
+
+effect function received(model: PrivateCase, terms: ReceiptTerms) {
+  return apply(model, { type: "receive", source: "GithubVerified", terms, history: "NewReceipt", gross: zero, reportVersion: 1 }, githubReceiptService) catch effect (error) => {
+    if (!(error instanceof Rejected)) throw error
+    return undefined
+  }
+}
+
+effect function claimOf(projectId: string, report: PrivateReport) {
+  const claim = try first(Held, sql`SELECT id FROM security_cases WHERE project_id = ${projectId} AND advisory_ghsa = ${report.ghsa} AND reporter_github_id = ${report.author.githubId} AND submission_state = 'claimed'`)
+  return claim === undefined ? undefined : try caseRecord(claim.id)
+}
+
+effect function receivedReport(projectId: string, program: ReportingProgram, report: PrivateReport, actor: Actor) {
+  if (try alreadyHeld(projectId, report.ghsa)) return undefined
+  if (try forwardOfSavedReport(projectId, report)) return undefined
+  const receipt = try termsAtReceipt(projectId, report.createdAt)
+  const claim = try claimOf(projectId, report)
+  const before = claim?.model ?? { ...initial, reporter: githubNumber(report.author.githubId) }
+  const next = claim === undefined ? try received(before, receipt.receiptTerms) : try settled(before, true, receipt.receiptTerms)
+  if (next === undefined) {
+    try Effect.logWarning("GitHub private report left without a case", { projectId, advisory: report.ghsa })
+    return undefined
+  }
+  const at = try isoNow()
+  const role = roleOf(actor, report.author.githubId)
+  const idempotencyKey = `receipt-${(try randomId()).replaceAll("-", "")}`
+  const caseId = claim?.row.id ?? `sc_${(try randomId()).replaceAll("-", "")}`
+  const revision = (claim?.row.revision ?? 0) + 1
+  const terms = receipt.terms === undefined ? null : JSON.stringify(receipt.terms)
+  const write = claim === undefined
+    ? caseInsert({ id: caseId, projectId, repository: program.repository, advisory: report.ghsa, reporter: report.author, ownerGithubId: null, at,
+      verified: { receivedAt: report.createdAt, verifiedBy: githubVerifier, policyRevision: receipt.policyRevision, terms: receipt.terms, award: next.award, source: "github-verified" } })
+    : sql`UPDATE security_cases SET submission_state = 'verified', received_at = ${report.createdAt}, received_at_source = 'github-verified', verified_at = ${at}, verified_by_github_id = ${githubVerifier}, policy_revision = ${receipt.policyRevision}, terms = ${terms}, award_state = ${awardColumns[next.award]}, reporter_github_login = ${report.author.login}, revision = revision + 1, updated_at = ${at} WHERE id = ${caseId} AND revision = ${claim.row.revision} AND submission_state = 'claimed' AND NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))`
+  const notices = try caseNotices({ caseId, revision, kind: "receive", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: report.author.githubId, detail: {}, program, relatedReview: false, at })
+  const written = (try D1).batch([
+    write,
+    caseEvent({ caseId, revision, kind: "receive", actorGithubId: actor.githubId, role, idempotencyKey, reason: null, evidenceReference: null, detail: { advisory: report.ghsa, receivedAt: report.createdAt, receivedAtSource: "github-verified", policyRevision: receipt.policyRevision }, at, guard: claim !== undefined }),
+    accessLog(caseId, actor.githubId, new Set([role]), "write", at),
+    ...notices,
+  ]) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
+    throw error
+  }
+  if (written === undefined) return undefined
+  const landed = try first(Landed, sql`SELECT revision, submission_state FROM security_cases WHERE id = ${caseId}`)
+  return landed?.submission_state === "verified" && landed.revision === revision ? caseId : undefined
+}
+
+effect function rejectUnconfirmed(projectId: string, program: ReportingProgram, reports: ReadonlyArray<PrivateReport>, actor: Actor, claimant: string | null) {
+  const claims = try rows(Claim, sql`SELECT id, advisory_ghsa, reporter_github_id FROM security_cases WHERE project_id = ${projectId} AND submission_state = 'claimed' AND (${claimant} IS NULL OR reporter_github_id = ${claimant})`)
+  for (const claim of claims) {
+    if (reports.some((report) => report.ghsa === claim.advisory_ghsa && report.author.githubId === claim.reporter_github_id)) continue
+    const current = try caseRecord(claim.id)
+    if (current === undefined) continue
+    const next = try settled(current.model, false, initial.terms)
+    if (next === undefined) continue
+    const at = try isoNow()
+    const role = roleOf(actor, claim.reporter_github_id)
+    const idempotencyKey = `receipt-${(try randomId()).replaceAll("-", "")}`
+    const revision = current.row.revision + 1
+    const notices = try caseNotices({ caseId: claim.id, revision, kind: "receipt-mismatch", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: claim.reporter_github_id, detail: {}, program, relatedReview: false, at })
+    try (try D1).batch([
+      sql`UPDATE security_cases SET submission_state = 'link-rejected', revision = revision + 1, updated_at = ${at} WHERE id = ${claim.id} AND revision = ${current.row.revision} AND submission_state = 'claimed'`,
+      caseEvent({ caseId: claim.id, revision, kind: "receipt-mismatch", actorGithubId: actor.githubId, role, idempotencyKey, reason: null, evidenceReference: null, detail: { advisory: claim.advisory_ghsa }, at, guard: true }),
+      ...notices,
+    ])
+  }
+}
+
+export effect function reconcileProgram(projectId: string, program: ReportingProgram, actor: Actor, scope: ReconcileScope) {
+  const list = try privateReports(program.repository)
+  if (list.kind !== "ok") return { kind: "unavailable" } satisfies Reconciled
+  const reports = scope === "own" ? list.reports.filter((report) => report.author.githubId === actor.githubId) : list.reports
+  const received: string[] = []
+  for (const report of reports) {
+    const caseId = try receivedReport(projectId, program, report, actor)
+    if (caseId !== undefined) received.push(caseId)
+  }
+  try rejectUnconfirmed(projectId, program, list.reports, actor, scope === "own" ? actor.githubId : null)
+  return { kind: "ok", received } satisfies Reconciled
+}

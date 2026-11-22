@@ -84,7 +84,6 @@ export interface ShownProject extends CardProject {
     readonly monthlyCapDisplay: string;
     readonly cycleCaps: ReadonlyArray<CycleCap>;
     readonly reviewBudget?: PoolCommitment;
-    // The owner's honor-system promise on a positive monthly pool (presentation only).
     readonly honorSystem?: boolean;
   };
   readonly rewardAsset?: RewardAsset;

@@ -1,10 +1,10 @@
-// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/security/enforcement.md, "An appended repository needs its own admission and the registry mirror stays current"; spec/security/enforcement.md, "The frozen migration-0075 rows cover only original repositories"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/security/enforcement.md, "An appended repository needs its own admission and the registry mirror stays current"; spec/security/enforcement.md, "The frozen migration-0075 rows cover only original repositories"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"; spec/security/enforcement.md, "Account entries share the project journal without changing its restriction"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch } from "@repo/platform/d1"
 import type { JournalRow, RegistryMirror } from "@repo/ports/security"
 import type { Disposition } from "../../gen/security__admission.ts"
-import type { Enforcement, Fence, Issuer, PinRead, RecordAction, RevisionPlan } from "../../gen/security__enforcement.ts"
-import { advanceDay, ban, canDenyAppeal, canJournalAccountAppeal, canJournalAccountDenial, canJournalAccountReinstatement, canObserveIdentity, canObserveRevision, canRequestAppeal, decideMalice, denyAppeal, flag, grantExemption, identityOf, initial, journalAccountAppeal, journalAccountDenial, journalAccountReinstatement, latestOf, observeIdentity, observeRevision, platform, quarantine, recognizeFrozen, recordResult, reinstate, reinstateFlagPause, requestAppeal, requestAssessment, requeueTemplate, revokeExemption, settlePendingRevision, withdrawFlag } from "../../gen/security__enforcement.effect.vibe"
+import type { Enforcement, Fence, GrantRequest, Issuer, PinRead, RecordAction, RevisionPlan } from "../../gen/security__enforcement.ts"
+import { advanceDay, ban, canDenyAppeal, canJournalAccountAppeal, canJournalAccountDenial, canJournalAccountReinstatement, canObserveIdentity, canObserveRevision, canRequestAppeal, canRequeueTemplate, decideMalice, denyAppeal, flag, grantExemption, identityOf, initial, journalAccountAppeal, journalAccountDenial, journalAccountReinstatement, latestOf, observeIdentity, observeRevision, platform, quarantine, recognizeFrozen, recordResult, reinstate, reinstateFlagPause, requestAppeal, requestAssessment, requeueTemplate, revokeExemption, settlePendingRevision, vettingService, withdrawFlag } from "../../gen/security__enforcement.effect.vibe"
 import { type AssessmentRow, type GrantRow, type ProjectHistory, jsonOf } from "./rows.vibe"
 
 export const dayMillis = 86_400_000
@@ -109,9 +109,6 @@ interface Expected {
   readonly issuer: Issuer
 }
 
-// spec/security/enforcement.md: a banned account's own appeal, a moderator's denial of the open account appeals and a
-// reinstatement of selected accounts take their sequence numbers in the project journal beside project records. A
-// denial is the project denial while a project appeal is open and the account denial otherwise.
 const kinds: Readonly<Record<string, ReadonlyArray<RecordAction>>> = {
   quarantine: ["RecordQuarantine"],
   ban: ["RecordBan"],
@@ -156,6 +153,7 @@ effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyA
       if (!canDenyAppeal(e, by, fenceOf(e))) throw unproducible(row, "denies no open project appeal")
       return denyAppeal(e, by, fenceOf(e))
     case "reinstate_accounts":
+      if (released.length === 0) throw unproducible(row, "releases no account")
       if (!canJournalAccountReinstatement(e, by, fenceOf(e), [...released])) throw unproducible(row, "reinstates accounts the account bans and appeals do not admit")
       return journalAccountReinstatement(e, by, fenceOf(e), [...released])
     default: throw unproducible(row, "has no enforcement transition")
@@ -206,7 +204,7 @@ function originalOf(revisions: ReadonlyArray<Revision>, frozenAt: string | null)
   return [...new Set((listedThen?.repositories ?? []).map((repository) => repository.githubId).filter((id) => id > 0))]
 }
 
-function grantRequestOf(grant: GrantRow) {
+function grantRequestOf(grant: GrantRow): GrantRequest {
   const repository = idOf(grant.repository_id)
   const steward = idOf(grant.steward_id)
   return {
@@ -215,7 +213,7 @@ function grantRequestOf(grant: GrantRow) {
     revision: grant.revision,
     manifestDigest: grant.revision,
     steward,
-    check: { actor: steward, repository, access: "AccessVerified" as const },
+    check: { actor: steward, repository, access: "AccessVerified" },
     decision: 1,
     reason: 1,
     confirmed: true,
@@ -286,7 +284,7 @@ effect function items(history: ProjectHistory, revisions: ReadonlyArray<Revision
     found.push({
       at: millisOf(row.requested_at), order: 2, index: row.row,
       apply: (e) => effect {
-        if (row.replaces_assessment_id !== null && latestOf(e, repository).state === "APending") return requeueTemplate(e, 0, repository, row.row)
+        if (row.replaces_assessment_id !== null && canRequeueTemplate(e, vettingService, repository, row.row)) return requeueTemplate(e, vettingService, repository, row.row)
         return requestAssessment(e, 0, repository, "AdminInvestigation", row.row)
       },
     })

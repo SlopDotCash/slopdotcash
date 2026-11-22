@@ -258,9 +258,9 @@ effect function securityResult<E, R>(judged: Judged, record: ClosureRecord, hook
   return try finished(judged, "label", `labeled (${category})`)
 }
 
-effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateObservation, cited: boolean, hooks: ClosureHooks<E, R>) {
+effect function labeledFirst<E, R>(judged: Judged, record: ClosureRecord, blockedClose: string | null, hooks: ClosureHooks<E, R>) {
   const { session, category } = judged
-  try commented(judged, "label", blockedReason(judged, gate, cited))
+  try commented(judged, "label", blockedClose)
   try requireScope(commentTargetOf(session), scopeOf(session))
   if (try hooks.reopened(session)) return try finished(judged, "comment", reopenedRevision)
   if (session.related !== undefined) {
@@ -273,7 +273,13 @@ effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateO
   try sendClosure(record, { type: "labelFinding" })
   try recordAction({ reviewKey: session.reviewKey, repositoryId: session.target.repositoryId, itemNodeId: session.context.issue.node_id, action: "label", detail: category })
   if (try hooks.reopened(session)) return try finished(judged, "label", reopenedRevision)
-  return try finished(judged, "label", `labeled (${category})`)
+  return undefined
+}
+
+effect function labeled<E, R>(judged: Judged, record: ClosureRecord, gate: GateObservation, cited: boolean, hooks: ClosureHooks<E, R>) {
+  const stopped = try labeledFirst(judged, record, blockedReason(judged, gate, cited), hooks)
+  if (stopped !== undefined) return stopped
+  return try finished(judged, "label", `labeled (${judged.category})`)
 }
 
 export effect function closeRecheck(request: CloseRequest) {
@@ -327,6 +333,8 @@ effect function deciding<E, R>(found: Finding, hooks: ClosureHooks<E, R>) {
     return { kind: "hold", hold: { ...judged, blockedClose } } satisfies ClosureDecision
   }
   if (closure.outcome === "CloseCandidate" && confirm !== undefined) {
+    const stopped = try labeledFirst(judged, record, null, hooks)
+    if (stopped !== undefined) return stopped
     return { kind: "close", request: { ...judged, confirm, penaltyEligible: session.routed.route === "MayCloseReview", dailyCap: session.context.config.dailyCloseCap } } satisfies ClosureDecision
   }
   const cited = citedByBoth(triage.verdict, confirm?.verdict, gate.receipts, try Clock.currentTimeMillis) !== undefined

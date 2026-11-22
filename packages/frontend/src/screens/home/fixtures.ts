@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"
+// spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"
 import { toAmount } from "@repo/settlement/kernels/amounts";
 import type { PoolFacts } from "../../../gen/frontend__projections.ts";
 import type { LifetimeTotal } from "./standings.ts";
@@ -90,7 +90,30 @@ export const community: ListedProject[] = Array.from({ length: 4 }, (_, index) =
   reward: { kind: "monthly-pool", monthlyCapMinor: 0n, monthlyCapDisplay: "0 USDC" },
 }));
 
-export const listed: ReadonlyArray<ListedProject> = [prize, bounty, ...community, tokenPool, pool];
+const promisedMonth: PoolFacts = { ...pointsOnly, amount: toAmount(250_000_000n) };
+
+export const promised: ListedProject = {
+  ...pool,
+  listingTier: "community",
+  id: "promised-pool",
+  slug: "promised-pool",
+  name: "Promised Pool",
+  funding: promisedMonth,
+  promise: { pool: promisedMonth, honorSystem: true, vaultUnread: false },
+  reward: { ...pool.reward, monthlyCapMinor: 250_000_000n, monthlyCapDisplay: "250 USDC" },
+};
+
+export const unverified: ListedProject = { ...promised, id: "unverified-pool", slug: "unverified-pool", name: "Unverified Pool", promise: { pool: promisedMonth, honorSystem: true, vaultUnread: true } };
+
+export const reviewed: ListedProject = {
+  ...pool,
+  id: "reviewed-pool",
+  slug: "reviewed-pool",
+  name: "Reviewed Pool",
+  reward: { ...pool.reward, reviewBudget: { committedMinor: 300_000_000n, fundingState: "committed", monthlyCapDisplay: "$500" } },
+};
+
+export const listed: ReadonlyArray<ListedProject> = [prize, bounty, ...community, tokenPool, pool, promised, unverified, reviewed];
 
 export const current = <T>(value: T): Shown<T> => ({ status: "Current", value });
 

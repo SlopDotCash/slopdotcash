@@ -1,0 +1,258 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+
+const moderatorA = "18633264"
+const moderatorB = "202660855"
+const administrator = "7"
+const responsible = "41"
+const steward = "51"
+const roles = { ADMIN_GITHUB_IDS: `${moderatorA},${moderatorB},${administrator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderatorA},${moderatorB}` }
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: 41, login: "responsible-41" })
+    github.world.addUser({ id: 18633264, login: "moderator-a" })
+  }))
+  return { github, net: internet({ github: github.handler }) }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const { net } = try World
+  return areaLayer({ root: new URL("..", import.meta.url).pathname, entry: "worker", d1: { SLOP_DB: "slop-private" }, vars: roles, internet: net })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  return path.reduce<unknown>((current, key) => typeof current === "object" && current !== null ? (current as Record<string, unknown>)[key] : undefined, value)
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer.body, "error") ?? null]
+}
+
+effect function member(githubId: string) {
+  const area = try Area
+  const token = `catchup3-admin-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+function manifest(id: string, status: string, listingTier: string, repositoryId: string, extra: Readonly<Record<string, unknown>> = {}) {
+  const repository = `owner/${id}`
+  return {
+    schemaVersion: "1",
+    id,
+    slug: id,
+    name: `Project ${id}`,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
+    listingTier,
+    status,
+    steward: { displayName: `member-${steward}`, kind: "individual", github: { actorId: steward, nodeId: `U_${steward}`, login: `member-${steward}`, type: "User", profileUrl: `https://github.com/member-${steward}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId, repositoryNodeId: `R_${repositoryId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+    ...extra,
+  }
+}
+
+interface Seeded {
+  readonly status: string
+  readonly tier: string
+  readonly kind: string
+}
+
+effect function project(id: string, revisions: ReadonlyArray<Seeded>, repositoryId: string) {
+  const area = try Area
+  const digests: string[] = []
+  let last = { text: "", digest: "", status: "" }
+  for (const [index, revision] of revisions.entries()) {
+    const text = JSON.stringify(manifest(id, revision.status, revision.tier, repositoryId))
+    const digest = try sha256Hex(text)
+    try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, index + 1, text, digest, "Seeded revision", index === 0 ? steward : null, index === 0 ? `member-${steward}` : null, `2026-11-0${index + 1}T00:00:00.000Z`)
+    if (index > 0) try area.sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, ?)", id, index + 1, revision.kind)
+    digests.push(digest)
+    last = { text, digest, status: revision.status }
+  }
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, last.status, revisions.length, last.text, last.digest, "2026-11-01T00:00:00.000Z", "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)", `owner/${id}`, id)
+  return digests
+}
+
+interface Journaled {
+  readonly projectId: string
+  readonly sequence: number
+  readonly action: string
+  readonly stateAfter: string
+  readonly appealAfter: string
+  readonly actor: string | null
+  readonly role: string
+  readonly repositoryId: string
+  readonly before: { readonly revision: number; readonly digest: string }
+  readonly after: { readonly revision: number; readonly digest: string } | null
+}
+
+const vettingIssuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malicious" })
+
+effect function journaled(entry: Journaled) {
+  const id = `enf_${entry.projectId.replaceAll("-", "")}${entry.sequence}`
+  try (try Area).sql(
+    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Seeded decision', 'seeded-evidence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    id, entry.projectId, entry.sequence, entry.action, entry.stateAfter, entry.appealAfter, entry.repositoryId, JSON.stringify([`owner/${entry.projectId}`]),
+    entry.actor, entry.actor === null ? null : `member-${entry.actor}`, entry.role === "vetting-service" ? vettingIssuer : null, entry.role,
+    entry.role === "vetting-service" ? "standing-rule" : entry.role === "banned-account" ? "account-request" : "admin-panel",
+    entry.before.revision, entry.before.digest, entry.after?.revision ?? null, entry.after?.digest ?? null, entry.after === null ? "no_revision_needed" : "revision_appended", `2026-11-1${entry.sequence}T00:00:00.000Z`,
+  )
+  return id
+}
+
+effect function decide(as: Session, projectId: string, json: unknown) {
+  return try (try Area).request(`/api/v1/admin/projects/${projectId}/enforcement`, { json, as })
+}
+
+effect function nextFence(as: Session, projectId: string) {
+  const listed = try (try Area).request("/api/v1/admin/projects", { as })
+  const entry = (field(listed.body, "projects") as ReadonlyArray<unknown>).find((candidate) => field(candidate, "id") === projectId)
+  return { expectedRevision: Number(field(entry, "revision")), expectedSequence: Number(field(entry, "enforcement", "nextSequence")) }
+}
+
+effect function act(as: Session, projectId: string, action: string, extra: Readonly<Record<string, unknown>> = {}) {
+  const fence = try nextFence(as, projectId)
+  return try decide(as, projectId, { action, reason: `${action} for the journey`, evidenceReference: "journey-evidence", ...fence, ...extra })
+}
+
+effect function appeal(as: Session, projectId: string) {
+  return try (try Area).request("/api/v1/project-appeals", { json: { projectId, reason: "I did not write that code", evidenceReference: "pr-12", appealScope: "account" }, as })
+}
+
+effect function exception(as: Session, projectId: string, expectedRevision: number, next: unknown) {
+  return try (try Area).request(`/api/v1/admin/projects/${projectId}/manifest`, { method: "PUT", json: { manifest: next, expectedRevision, reason: "Set the approved monthly vault policy" }, as })
+}
+
+const responsibleAccount = { githubLogin: "responsible-41" }
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An administrator exception replaces any manifest field in one revision (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project")', () => effect {
+    const area = try Area
+    const admin = try member(administrator)
+    const a = try member(moderatorA)
+    try project("vault-target", [{ status: "paused", tier: "community", kind: "Created" }], "3101")
+    try project("held-target", [{ status: "paused", tier: "community", kind: "Created" }], "3102")
+    const base = manifest("vault-target", "paused", "community", "3101")
+    const escrow = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "ethereum", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] }
+    const vaultPolicy = { ...base, name: "Vault target", reward: { ...base.reward, feeBasisPoints: 200 }, escrow }
+    const replaced = try exception(admin, "vault-target", 1, vaultPolicy)
+    const unchanged = try exception(admin, "vault-target", 2, vaultPolicy)
+    const stale = try exception(admin, "vault-target", 1, { ...vaultPolicy, name: "Vault target again" })
+    const stored = try area.sql("SELECT revision, json_extract(manifest, '$.reward.feeBasisPoints') AS fee, json_extract(manifest, '$.escrow.chain') AS chain, json_extract(manifest, '$.name') AS name FROM projects WHERE id = 'vault-target'")
+    const kinds = try area.sql("SELECT revision, kind FROM project_revision_kinds WHERE project_id = 'vault-target' ORDER BY revision")
+    const quarantined = try act(a, "held-target", "quarantine")
+    const restricted = try area.sql("SELECT revision, reason FROM project_revisions WHERE project_id = 'held-target' ORDER BY revision DESC LIMIT 1")
+    const record = try area.sql("SELECT id FROM project_enforcements WHERE project_id = 'held-target' ORDER BY sequence DESC LIMIT 1")
+    const relisted = try exception(admin, "held-target", 2, manifest("held-target", "paused", "community", "3102", { name: "Listed again" }))
+    try same({
+      replaced: [outcome(replaced), field(replaced.body, "project", "revision")],
+      refused: [outcome(unchanged), outcome(stale), outcome(relisted)],
+      stored,
+      kinds,
+      quarantine: [outcome(quarantined), String(restricted[0]?.reason ?? "").startsWith("Quarantined by a project moderator (enf_"), String(restricted[0]?.reason ?? "").includes(String(record[0]?.id ?? "-"))],
+    }, {
+      replaced: [[200, null], 2],
+      refused: [[422, "no_change"], [409, "stale_revision"], [409, "project_restricted"]],
+      stored: [{ revision: 2, fee: 200, chain: "ethereum", name: "Vault target" }],
+      kinds: [{ revision: 2, kind: "AdminException" }],
+      quarantine: [[200, null], true, true],
+    })
+  })
+
+  it.effect('An independent moderator decides an account appeal and a re-ban closes it (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project\'s open request"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified")', () => effect {
+    const area = try Area
+    const a = try member(moderatorA)
+    const b = try member(moderatorB)
+    const account = try member(responsible)
+    const active = { status: "active", tier: "community", kind: "Created" }
+    const retired = { status: "paused", tier: "retired", kind: "RestrictionRetirement" }
+    const restored = { status: "paused", tier: "community", kind: "CommunityRestored" }
+    const [first, second] = try project("appeal-demo", [active, retired], "3201")
+    try journaled({ projectId: "appeal-demo", sequence: 1, action: "ban", stateAfter: "banned", appealAfter: "none", actor: null, role: "vetting-service", repositoryId: "3201", before: { revision: 1, digest: first ?? "" }, after: { revision: 2, digest: second ?? "" } })
+    const banned = try act(a, "appeal-demo", "ban", { responsibleAccounts: [responsibleAccount] })
+    const appealed = try appeal(account, "appeal-demo")
+    const again = try appeal(account, "appeal-demo")
+    const bannerDecides = try act(a, "appeal-demo", "reinstate_accounts", { responsibleAccounts: [responsibleAccount] })
+    const independent = try act(b, "appeal-demo", "reinstate_accounts", { responsibleAccounts: [responsibleAccount] })
+    const releases = try area.sql("SELECT r.github_id FROM project_account_reinstatements r JOIN project_enforcements e ON e.id = r.enforcement_id WHERE e.project_id = 'appeal-demo'")
+    try project("clear-demo", [active], "3202")
+    const clearDenial = try act(b, "clear-demo", "deny_reinstatement")
+    const [r1, r2, r3, r4] = try project("reban-demo", [active, retired, restored, retired], "3203")
+    const fence = (revision: number, digest: string | undefined) => ({ revision, digest: digest ?? "" })
+    try journaled({ projectId: "reban-demo", sequence: 1, action: "ban", stateAfter: "banned", appealAfter: "none", actor: null, role: "vetting-service", repositoryId: "3203", before: fence(1, r1), after: fence(2, r2) })
+    const firstBan = try journaled({ projectId: "reban-demo", sequence: 2, action: "ban", stateAfter: "banned", appealAfter: "none", actor: moderatorA, role: "project-moderator", repositoryId: "3203", before: fence(2, r2), after: null })
+    try area.sql("INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (?, ?, ?)", firstBan, responsible, "responsible-41")
+    try journaled({ projectId: "reban-demo", sequence: 3, action: "request_reinstatement", stateAfter: "banned", appealAfter: "requested", actor: steward, role: "project-steward", repositoryId: "3203", before: fence(2, r2), after: null })
+    try journaled({ projectId: "reban-demo", sequence: 4, action: "reinstate", stateAfter: "clear", appealAfter: "granted", actor: moderatorB, role: "project-moderator", repositoryId: "3203", before: fence(2, r2), after: fence(3, r3) })
+    try journaled({ projectId: "reban-demo", sequence: 5, action: "ban", stateAfter: "banned", appealAfter: "none", actor: null, role: "vetting-service", repositoryId: "3203", before: fence(3, r3), after: fence(4, r4) })
+    const reAppealed = try appeal(account, "reban-demo")
+    const reBanned = try act(b, "reban-demo", "ban", { responsibleAccounts: [responsibleAccount] })
+    const afterReBan = try area.request("/api/v1/project-appeals", { as: account })
+    const reban = (field(afterReBan.body, "appeals") as ReadonlyArray<unknown>).find((entry) => field(entry, "projectId") === "reban-demo")
+    const appealOpenAgain = try appeal(account, "reban-demo")
+    try same({
+      banned: outcome(banned),
+      appeals: [outcome(appealed), field(appealed.body, "record", "actorRole"), outcome(again)],
+      decided: [outcome(bannerDecides), outcome(independent), field(independent.body, "record", "accountReinstatements")],
+      releases,
+      clearDenial: outcome(clearDenial),
+      reban: [outcome(reAppealed), outcome(reBanned), field(reban, "appeal"), outcome(appealOpenAgain)],
+    }, {
+      banned: [200, null],
+      appeals: [[200, null], "banned-account", [409, "appeal_open"]],
+      decided: [[403, "independent_review_required"], [200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
+      releases: [{ github_id: responsible }],
+      clearDenial: [409, "no_open_appeal"],
+      reban: [[200, null], [200, null], "none", [200, null]],
+    })
+  })
+})

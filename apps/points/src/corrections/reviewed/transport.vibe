@@ -1,0 +1,445 @@
+// spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
+import { boundedBytes } from "@repo/platform/browser"
+import { base64url, randomBytes } from "@repo/platform/crypto"
+import { parsedJson, sha256Of, textBytes, utf8Text } from "@repo/platform/git/bytes"
+import { type Compression, base64Bytes, base64urlKey, concatenated, hexBytes, inflated, openedFrame, packetNonce, sameBytes, sealedFrame } from "./bytes.ts"
+import { gitBytes } from "@repo/platform/git"
+import { type ReviewedRefused, digestPattern, require } from "./packet.vibe"
+
+export type StorageOperation = "bucket-read" | "bucket-create" | "managed-domain-read" | "custom-domain-read" | "object-read" | "object-write"
+export type PreviewOperation = "binding" | "session" | "upload" | "object"
+export type StagingPhase = "trusted-context" | "source-check" | "credentials" | "manifest" | "chunk-stage" | "completion-read"
+
+export error StorageRefused { operation: StorageOperation; httpStatus: number | null; cloudflareCode: number | null }
+export error PreviewRefused { operation: PreviewOperation; status: number | null }
+export error PacketStagingRefused { message: string }
+
+export schema PacketChunk { readonly sha256: string; readonly bytes: number }
+export schema PacketManifest {
+  readonly schemaVersion: "1"
+  readonly compression?: "br"
+  readonly rawSha256: string
+  readonly rawBytes: number
+  readonly compressedSha256: string
+  readonly compressedBytes: number
+  readonly chunks: ReadonlyArray<PacketChunk>
+}
+
+export interface PacketStorage<E, R> {
+  readonly check: (create: boolean) => void!E!R
+  readonly get: (manifest: PacketManifest, suffix: string) => (Uint8Array | null)!E!R
+  readonly putExact: (manifest: PacketManifest, suffix: string, bytes: Uint8Array) => void!E!R
+}
+
+interface Exchanged {
+  readonly status: number
+  readonly bytes: Uint8Array
+}
+
+const bucketName = "slop-reviewed-payouts"
+const previewName = "slop-reviewed-packet-preview"
+const previewBucket = "slop-vetting-evidence"
+const previewPrefix = "reviewed-payouts/v1"
+const previewConfig = "apps/app/wrangler/pages.production.jsonc"
+const cloudflare = "https://api.cloudflare.com/client/v4/accounts"
+const maximumChunkBytes = 393216
+const answerBytes = 1024 * 1024
+const isManifest = Schema.is(PacketManifest)
+
+export function packetFailure(phase: StagingPhase, error: unknown) {
+  const tagged = typeof error === "object" && error !== null && "_tag" in error ? error as { readonly _tag: string } : undefined
+  const storage = tagged?._tag === "StorageRefused" ? error as StorageRefused : undefined
+  const preview = tagged?._tag === "PreviewRefused" ? error as PreviewRefused : undefined
+  return {
+    error: "private_packet_staging_refused",
+    phase,
+    ...(storage === undefined ? {} : { storage: { operation: storage.operation, httpStatus: storage.httpStatus, cloudflareCode: storage.cloudflareCode } }),
+    ...(preview === undefined ? {} : { preview: { operation: preview.operation, httpStatus: preview.status } }),
+  }
+}
+
+export effect function parsePacketManifest(text: string) {
+  const value = parsedJson(text)?.value
+  const ok = isManifest(value)
+  const manifest = value as PacketManifest
+  const size = (bytes: number) => Number.isSafeInteger(bytes) && bytes > 0
+  const fields = ok && manifest.compression === "br"
+    ? "chunks,compressedBytes,compressedSha256,compression,rawBytes,rawSha256,schemaVersion"
+    : "chunks,compressedBytes,compressedSha256,rawBytes,rawSha256,schemaVersion"
+  try require(ok && Object.keys(manifest).sort().join(",") === fields && digestPattern.test(manifest.rawSha256) && digestPattern.test(manifest.compressedSha256) &&
+    size(manifest.rawBytes) && size(manifest.compressedBytes) && manifest.chunks.length > 0 &&
+    manifest.chunks.every((chunk) => Object.keys(chunk).sort().join(",") === "bytes,sha256" && digestPattern.test(chunk.sha256) && size(chunk.bytes) && chunk.bytes <= maximumChunkBytes) &&
+    manifest.chunks.reduce((sum, chunk) => sum + chunk.bytes, 0) === manifest.compressedBytes && JSON.stringify(manifest) === text, "Invalid private packet manifest")
+  return manifest
+}
+
+function chunkName(index: number) {
+  return `${index}.gzpart`
+}
+
+export effect function stageChunk<E, R>(storage: PacketStorage<E, R>, text: string, index: number, encoded: string) {
+  const manifest = try parsePacketManifest(text)
+  const expected = manifest.chunks[index]
+  try require(Number.isSafeInteger(index) && index >= 0 && expected !== undefined, "Invalid private chunk index")
+  const bytes = base64Bytes(encoded)
+  try require(bytes !== null, "Invalid private chunk encoding")
+  const chunk = bytes ?? new Uint8Array()
+  try require(chunk.length === expected?.bytes && sha256Of(chunk) === expected.sha256, "Private chunk differs from manifest")
+  try storage.check(true)
+  try storage.putExact(manifest, "manifest.json", textBytes(text))
+  try storage.putExact(manifest, chunkName(index), chunk)
+  try storage.check(false)
+  return { rawSha256: manifest.rawSha256, chunk: index, verified: true }
+}
+
+export effect function readPacket<E, R>(storage: PacketStorage<E, R>, text: string) {
+  const manifest = try parsePacketManifest(text)
+  try storage.check(false)
+  const stored = try storage.get(manifest, "manifest.json")
+  try require(stored !== null && utf8Text(stored) === text, "Stored private manifest differs")
+  const chunks: Uint8Array[] = []
+  for (const [index, expected] of manifest.chunks.entries()) {
+    const bytes = try storage.get(manifest, chunkName(index))
+    try require(bytes !== null && bytes.length === expected.bytes && sha256Of(bytes) === expected.sha256, "Private packet chunk is absent or changed")
+    chunks.push(bytes ?? new Uint8Array())
+  }
+  const compressed = concatenated(chunks)
+  try require(compressed.length === manifest.compressedBytes && sha256Of(compressed) === manifest.compressedSha256, "Private packet compression binding differs")
+  const compression: Compression = manifest.compression === "br" ? "br" : "gzip"
+  const raw = inflated(compressed, compression, manifest.rawBytes)
+  try require(raw !== null, "Private packet exceeds its exact reviewed size")
+  const bytes = raw ?? new Uint8Array()
+  try require(bytes.length === manifest.rawBytes && sha256Of(bytes) === manifest.rawSha256, "Private packet raw binding differs")
+  try storage.check(false)
+  return bytes
+}
+
+effect function exchanged(request: HttpClientRequest.HttpClientRequest, limitBytes: number) {
+  const client = try HttpClient.HttpClient
+  const sent = effect {
+    const response = try client.execute(request)
+    const bytes = try boundedBytes(response, limitBytes, "private packet storage")
+    return { status: response.status, bytes } satisfies Exchanged
+  }
+  return try timeout(provideService(sent, FetchHttpClient.RequestInit, { redirect: "error" }), Duration.seconds(30))
+}
+
+function jsonOf(bytes: Uint8Array): unknown {
+  const text = utf8Text(bytes)
+  return text === undefined ? undefined : parsedJson(text)?.value
+}
+
+function fieldOf(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>)[key] : undefined
+}
+
+function cloudflareCode(value: unknown) {
+  const errors = fieldOf(value, "errors")
+  const code = Array.isArray(errors) ? fieldOf(errors[0], "code") : undefined
+  return typeof code === "number" && Number.isSafeInteger(code) ? code : null
+}
+
+export function r2Storage(account: string, token: Redacted.Redacted<string>): PacketStorage<StorageRefused | ReviewedRefused, HttpClient.HttpClient> {
+  const root = `${cloudflare}/${account}/r2/buckets`
+  effect function call(path: string, operation: StorageOperation, method: "GET" | "POST" | "PUT", body?: Uint8Array | string) {
+    const base = HttpClientRequest.bearerToken(HttpClientRequest.make(method)(root + path), token)
+    const request = body === undefined ? base
+      : typeof body === "string" ? HttpClientRequest.bodyText(base, body, "application/json")
+      : HttpClientRequest.bodyUint8Array(base, body, "application/octet-stream")
+    const answer = exchanged(request, answerBytes * 64) catch effect () => {
+      throw new StorageRefused({ operation, httpStatus: null, cloudflareCode: null })
+    }
+    if (answer.status === 404) return null
+    if (answer.status < 200 || answer.status > 299) throw new StorageRefused({ operation, httpStatus: answer.status, cloudflareCode: cloudflareCode(jsonOf(answer.bytes)) })
+    return answer
+  }
+  effect function result(path: string, operation: StorageOperation, method: "GET" | "POST" = "GET", body?: string) {
+    const answer = try call(path, operation, method, body)
+    if (answer === null) return undefined
+    const value = jsonOf(answer.bytes)
+    if (fieldOf(value, "success") !== true) throw new StorageRefused({ operation, httpStatus: answer.status, cloudflareCode: cloudflareCode(value) })
+    return fieldOf(value, "result")
+  }
+  effect function check(create: boolean) {
+    let found = try result(`/${bucketName}`, "bucket-read")
+    if (found === undefined && create) {
+      try result("", "bucket-create", "POST", JSON.stringify({ name: bucketName }))
+      found = try result(`/${bucketName}`, "bucket-read")
+    }
+    try require(fieldOf(found, "name") === bucketName, "Private packet bucket unavailable")
+    const managed = try result(`/${bucketName}/domains/managed`, "managed-domain-read")
+    const custom = fieldOf(try result(`/${bucketName}/domains/custom`, "custom-domain-read"), "domains")
+    try require(fieldOf(managed, "enabled") === false && Array.isArray(custom) && custom.length === 0, "Packet bucket must remain private")
+  }
+  const key = (manifest: PacketManifest, suffix: string) => `/${bucketName}/objects/${manifest.rawSha256}/${manifest.compressedSha256}/${suffix}`
+  effect function get(manifest: PacketManifest, suffix: string) {
+    const answer = try call(key(manifest, suffix), "object-read", "GET")
+    return answer === null ? null : answer.bytes
+  }
+  effect function putExact(manifest: PacketManifest, suffix: string, bytes: Uint8Array) {
+    const before = try get(manifest, suffix)
+    if (before !== null) try require(sha256Of(before) === sha256Of(bytes), "Stored private packet bytes differ")
+    else try call(key(manifest, suffix), "object-write", "PUT", bytes)
+    const after = try get(manifest, suffix)
+    try require(after !== null && after.length === bytes.length && sha256Of(after) === sha256Of(bytes), "Private packet upload did not reconcile")
+  }
+  return { check, get, putExact }
+}
+
+interface PreviewObject {
+  readonly bytes: number
+  readonly sha256: string
+  readonly key: string
+  readonly aad: string
+}
+
+effect function previewObject(text: string, suffix: string) {
+  const manifest = try parsePacketManifest(text)
+  const chunk = /^(0|[1-9][0-9]*)\.gzpart$/u.test(suffix) ? manifest.chunks[Number(suffix.split(".")[0])] : undefined
+  const description = suffix === "manifest.json" ? { bytes: textBytes(text).length, sha256: sha256Of(text) } : chunk
+  if (description === undefined) throw new PreviewRefused({ operation: "object", status: null })
+  const key = `${previewPrefix}/${manifest.rawSha256}/${manifest.compressedSha256}/${suffix}`
+  return { bytes: description.bytes, sha256: description.sha256, key, aad: `${key}\u0000${sha256Of(text)}` } satisfies PreviewObject
+}
+
+export effect function encryptPacketObject(text: string, suffix: string, plain: Uint8Array, key: Uint8Array) {
+  const object = try previewObject(text, suffix)
+  if (key.length !== 32) throw new PreviewRefused({ operation: "binding", status: null })
+  if (plain.length !== object.bytes || sha256Of(plain) !== object.sha256) throw new PreviewRefused({ operation: "object", status: null })
+  return sealedFrame(key, packetNonce(key, object.aad, object.sha256), object.aad, plain)
+}
+
+export effect function decryptPacketObject(text: string, suffix: string, frame: Uint8Array, key: Uint8Array) {
+  const object = try previewObject(text, suffix)
+  if (key.length !== 32) throw new PreviewRefused({ operation: "binding", status: null })
+  const nonce = packetNonce(key, object.aad, object.sha256)
+  const plain = frame.length === object.bytes + 28 && sameBytes(frame.subarray(0, 12), nonce) ? openedFrame(key, nonce, object.aad, frame) : null
+  if (plain === null || plain.length !== object.bytes || sha256Of(plain) !== object.sha256) throw new PreviewRefused({ operation: "object", status: null })
+  return plain
+}
+
+export effect function previewWorker(text: string, key: Uint8Array) {
+  const manifest = try parsePacketManifest(text)
+  const names = ["manifest.json", ...manifest.chunks.map((_, index) => chunkName(index))]
+  const objects: Record<string, { readonly bytes: number; readonly nonce: string }> = {}
+  for (const name of names) {
+    const object = try previewObject(text, name)
+    objects[name] = { bytes: object.bytes + 28, nonce: hexBytes(packetNonce(key, object.aad, object.sha256)) }
+  }
+  return `
+const objects = ${JSON.stringify(objects)};
+const prefix = ${JSON.stringify(`${previewPrefix}/${manifest.rawSha256}/${manifest.compressedSha256}/`)};
+const headers = {"cache-control":"private, no-store", "content-type":"application/octet-stream", "x-content-type-options":"nosniff"};
+const hash = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2,"0")).join("");
+async function exact(body, expected) {
+  if (!body) return null;
+  const reader = body.getReader(); const parts=[]; let size=0;
+  try {
+    while (true) {
+      const item=await reader.read(); if (item.done) break;
+      size+=item.value.byteLength;
+      if (size>expected.bytes) { void reader.cancel().catch(()=>{}); return null; }
+      parts.push(item.value);
+    }
+  } finally { reader.releaseLock(); }
+  if (size!==expected.bytes) return null;
+  const bytes=new Uint8Array(size); let offset=0;
+  for (const part of parts) { bytes.set(part,offset); offset+=part.byteLength; }
+  const nonce=Array.from(bytes.subarray(0,12),byte=>byte.toString(16).padStart(2,"0")).join("");
+  return nonce===expected.nonce ? bytes : null;
+}
+export default {
+  async fetch(request, env) {
+    if (!env.PACKET_AUTH || request.headers.get("authorization")!=="Bearer "+env.PACKET_AUTH) return new Response(null,{status:403,headers});
+    const url=new URL(request.url); const suffix=url.pathname.slice("/packet/".length);
+    if (url.search || !url.pathname.startsWith("/packet/") || !Object.hasOwn(objects,suffix) || !["GET","PUT"].includes(request.method)) return new Response(null,{status:404,headers});
+    const expected=objects[suffix]; const key=prefix+suffix;
+    try {
+      if (!env.PACKET_STORE) return new Response(null,{status:503,headers});
+      let incoming;
+      if (request.method==="PUT") {
+        incoming=await exact(request.body,expected);
+        if (!incoming) return new Response(null,{status:400,headers});
+        const before=await env.PACKET_STORE.get(key);
+        if (!before) await env.PACKET_STORE.put(key,incoming,{onlyIf:{etagDoesNotMatch:"*"},httpMetadata:{contentType:"application/octet-stream"}});
+      }
+      const stored=await env.PACKET_STORE.get(key);
+      if (!stored) return new Response(null,{status:404,headers});
+      const bytes=await exact(stored.body,expected);
+      if (!bytes || (incoming && await hash(incoming)!==await hash(bytes))) return new Response(null,{status:409,headers});
+      return request.method==="GET" ? new Response(bytes,{headers}) : Response.json({bytes:expected.bytes},{headers:{"cache-control":"private, no-store"}});
+    } catch { return new Response(null,{status:503,headers}); }
+  }
+};`
+}
+
+type PreviewCall = (suffix: string, method: "GET" | "PUT", bytes?: Uint8Array) => (Uint8Array | null)!PreviewRefused | ReviewedRefused!HttpClient.HttpClient
+
+effect function previewApi(base: string, token: Redacted.Redacted<string>, path: string, operation: PreviewOperation, request: (url: string) => HttpClientRequest.HttpClientRequest = HttpClientRequest.get) {
+  const answer = exchanged(HttpClientRequest.bearerToken(request(base + path), token), answerBytes) catch effect () => {
+    throw new PreviewRefused({ operation, status: null })
+  }
+  const value = jsonOf(answer.bytes)
+  if (answer.status < 200 || answer.status > 299 || fieldOf(value, "success") !== true) throw new PreviewRefused({ operation, status: answer.status })
+  return fieldOf(value, "result")
+}
+
+effect function exchangedToken(href: string) {
+  const answer = exchanged(HttpClientRequest.get(href), answerBytes) catch () => undefined
+  const token = answer === undefined || answer.status < 200 || answer.status > 299 ? undefined : fieldOf(jsonOf(answer.bytes), "token")
+  return typeof token === "string" && token !== "" ? token : undefined
+}
+
+effect function previewSession(account: string, token: Redacted.Redacted<string>, text: string, key: Uint8Array) {
+  if (!/^[a-f0-9]{32}$/u.test(account) || Redacted.value(token) === "") throw new PreviewRefused({ operation: "session", status: null })
+  const base = `${cloudflare}/${account}`
+  const subdomain = fieldOf(try previewApi(base, token, "/workers/subdomain", "session"), "subdomain")
+  if (typeof subdomain !== "string" || !/^[a-z0-9-]+$/u.test(subdomain)) throw new PreviewRefused({ operation: "session", status: null })
+  const session = try previewApi(base, token, `/workers/scripts/${previewName}/subdomain/edge-preview`, "session")
+  let sessionToken = fieldOf(session, "token")
+  let hostname = `${previewName}.${subdomain}.workers.dev`
+  const exchange = fieldOf(session, "exchange_url")
+  if (typeof exchange === "string" && exchange !== "") {
+    const url = URL.parse(exchange)
+    if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "" || ![".workers.dev", ".cloudflareworkers.com"].some((suffix) => url.hostname.endsWith(suffix))) {
+      throw new PreviewRefused({ operation: "session", status: null })
+    }
+    hostname = previewName + url.hostname.slice(url.hostname.indexOf("."))
+    sessionToken = (try exchangedToken(url.href)) ?? sessionToken
+  }
+  if (typeof sessionToken !== "string" || sessionToken === "") throw new PreviewRefused({ operation: "session", status: null })
+  const uploadToken: string = sessionToken
+  const auth = base64url(try randomBytes(32))
+  const form = new FormData()
+  form.set("metadata", JSON.stringify({
+    main_module: "packet.js",
+    bindings: [{ name: "PACKET_STORE", type: "r2_bucket", bucket_name: previewBucket }, { name: "PACKET_AUTH", type: "secret_text", text: auth }],
+    compatibility_date: "2026-10-01",
+  }))
+  form.set("packet.js", new File([try previewWorker(text, key)], "packet.js", { type: "application/javascript+module" }))
+  form.set("wrangler-session-config", JSON.stringify({ workers_dev: true, minimal_mode: true }))
+  const upload = (url: string) => HttpClientRequest.bodyFormData(HttpClientRequest.setHeader(HttpClientRequest.post(url), "cf-preview-upload-config-token", uploadToken), form)
+  const previewToken = fieldOf(try previewApi(base, token, `/workers/scripts/${previewName}/edge-preview`, "upload", upload), "preview_token")
+  if (typeof previewToken !== "string" || previewToken === "") throw new PreviewRefused({ operation: "upload", status: null })
+  const manifest = try parsePacketManifest(text)
+  const call: PreviewCall = (suffix, method, bytes) => effect {
+    const target = HttpClientRequest.setHeaders(HttpClientRequest.make(method)(`https://${hostname}/packet/${suffix}`), {
+      authorization: `Bearer ${auth}`,
+      "cf-workers-preview-token": previewToken,
+      "content-type": "application/octet-stream",
+    })
+    const expected = suffix === "manifest.json" ? textBytes(text).length + 28 : (manifest.chunks[Number(suffix.split(".")[0])]?.bytes ?? 0) + 28
+    const maximum = method === "PUT" ? 160 : expected
+    const answer = exchanged(bytes === undefined ? target : HttpClientRequest.bodyUint8Array(target, bytes, "application/octet-stream"), maximum) catch effect () => {
+      throw new PreviewRefused({ operation: "object", status: null })
+    }
+    if (answer.status === 404) return null
+    if (answer.status < 200 || answer.status > 299) throw new PreviewRefused({ operation: "object", status: answer.status })
+    if (method === "GET" && answer.bytes.length !== expected) throw new PreviewRefused({ operation: "object", status: null })
+    return answer.bytes
+  }
+  return call
+}
+
+effect function previewBound() {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(previewConfig) catch effect () => {
+    throw new PreviewRefused({ operation: "binding", status: null })
+  }
+  const buckets = fieldOf(parsedJson(text)?.value, "r2_buckets")
+  if (!Array.isArray(buckets) || !buckets.some((binding) => fieldOf(binding, "binding") === "VETTING_EVIDENCE" && fieldOf(binding, "bucket_name") === previewBucket)) {
+    throw new PreviewRefused({ operation: "binding", status: null })
+  }
+}
+
+export effect function previewStorage(account: string, token: Redacted.Redacted<string>, secret: Redacted.Redacted<string>) {
+  const key = base64urlKey(Redacted.value(secret))
+  if (key === null) throw new PreviewRefused({ operation: "binding", status: null })
+  try previewBound()
+  const sessions = new Map<string, PreviewCall>()
+  effect function session(manifest: PacketManifest) {
+    const text = JSON.stringify(manifest)
+    const known = sessions.get(text)
+    if (known !== undefined) return known
+    const opened = try previewSession(account, token, text, key)
+    sessions.set(text, opened)
+    return opened
+  }
+  effect function get(manifest: PacketManifest, suffix: string) {
+    const frame = try (try session(manifest))(suffix, "GET")
+    return frame === null ? null : try decryptPacketObject(JSON.stringify(manifest), suffix, frame, key)
+  }
+  effect function putExact(manifest: PacketManifest, suffix: string, bytes: Uint8Array) {
+    const call = try session(manifest)
+    const text = JSON.stringify(manifest)
+    try call(suffix, "PUT", try encryptPacketObject(text, suffix, bytes, key))
+    const frame = try call(suffix, "GET")
+    const stored = frame === null ? null : try decryptPacketObject(text, suffix, frame, key)
+    if (stored === null || stored.length !== bytes.length || sha256Of(stored) !== sha256Of(bytes)) throw new PreviewRefused({ operation: "object", status: null })
+  }
+  effect function check(_create: boolean) {}
+  return { check, get, putExact } satisfies PacketStorage<PreviewRefused | ReviewedRefused, HttpClient.HttpClient>
+}
+
+export effect function reviewedStorage(account: string, token: Redacted.Redacted<string>) {
+  const transport = try Config.withDefault(Config.String("PRIVATE_PACKET_TRANSPORT"), "")
+  if (transport === "" || transport === "r2-api") {
+    try require(/^[a-f0-9]{32}$/u.test(account) && Redacted.value(token) !== "", "Private packet credentials unavailable")
+    return r2Storage(account, token)
+  }
+  try require(transport === "bound-preview", "Unknown private packet transport")
+  const secret = try Config.withDefault(Config.Redacted("PRIVATE_PACKET_ENCRYPTION_KEY"), Redacted.make(""))
+  return try previewStorage(account, token, secret)
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function gitLine(args: ReadonlyArray<string>, refusalMessage: string) {
+  const bytes = try gitBytes({ args, limit: 64 * 1024, seconds: 30 }, refusalMessage)
+  return (utf8Text(bytes) ?? "").trim()
+}
+
+export effect function trustedMain(message: string) {
+  try require((try environment("GITHUB_ACTIONS")) === "true" && (try environment("GITHUB_EVENT_NAME")) === "workflow_dispatch" &&
+    (try environment("GITHUB_REF")) === "refs/heads/main", message)
+}
+
+export effect function exactMainHead(message: string) {
+  const [current = ""] = (try gitLine(["ls-remote", "origin", "refs/heads/main"], message)).split(/\s/u)
+  const checkout = try gitLine(["rev-parse", "HEAD"], message)
+  try require(checkout === (try environment("GITHUB_SHA")) && current === checkout, message)
+}
+
+effect function staged(setPhase: (phase: StagingPhase) => void) {
+  try trustedMain("Require trusted main packet staging")
+  setPhase("source-check")
+  try exactMainHead("Private packet staging source changed")
+  const parts: string[] = []
+  for (let n = 1; n <= 16; n++) parts.push(try environment(`PRIVATE_PACKET_CHUNK_${n}`))
+  setPhase("credentials")
+  const storage = try reviewedStorage(try environment("CLOUDFLARE_ACCOUNT_ID"), try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make("")))
+  setPhase("manifest")
+  const manifestText = try environment("PRIVATE_PACKET_MANIFEST")
+  const manifest = try parsePacketManifest(manifestText)
+  const index = Number(try environment("PRIVATE_PACKET_CHUNK_INDEX"))
+  setPhase("chunk-stage")
+  const result = try stageChunk(storage, manifestText, index, parts.join(""))
+  const complete = index === manifest.chunks.length - 1
+  if (complete) {
+    setPhase("completion-read")
+    try readPacket(storage, manifestText)
+  }
+  return { ...result, complete }
+}
+
+export effect function stagePacket(args: ReadonlyArray<string>) {
+  if (args.length > 0) throw new PacketStagingRefused({ message: JSON.stringify(packetFailure("trusted-context", undefined)) })
+  let phase: StagingPhase = "trusted-context"
+  const refused = (error: unknown) => Effect.fail(new PacketStagingRefused({ message: JSON.stringify(packetFailure(phase, error)) }))
+  const result = try Effect.catchDefect(Effect.catch(staged((next) => {
+    phase = next
+  }), refused), refused)
+  try Console.log(JSON.stringify(result))
+}

@@ -1,4 +1,4 @@
-// spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "A penalty revision records one published debit request"
+// spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "A penalty revision records the debit applied against the month's credit"; spec/points/journal.md, "A retained-batch award the batch no longer supplies is zeroed once"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { RepositoryRegistry } from "../client/snapshot/schema.vibe"
 import { registryOf } from "../client/snapshot/checks.vibe"

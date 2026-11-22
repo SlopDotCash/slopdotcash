@@ -8,7 +8,7 @@ import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports
 import { Notices } from "@repo/ports/operations"
 import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, canObserveSettings, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, hasActor, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { excludedIn } from "../../gen/settlement__payoutExclusions.effect.vibe"
-import type { SettingsAuthority } from "../../gen/settlement__monthlySettings.effect.vibe"
+import { type SettingsAuthority, Rejected as SettingRejected } from "../../gen/settlement__monthlySettings.effect.vibe"
 import { type MonthlyAwardState, type MonthlyAwardView, type MonthlyCut, type MonthlyOwnerView } from "../client/monthly.vibe"
 import { getPaymentsProjectsByIdMonthlyByPeriod as viewRows, getPaymentsProjectsByIdMonthlyByPeriodCuts as cutRows, postPaymentsProjectsByIdMonthlyByPeriodAllocations as changeRows, postPaymentsProjectsByIdMonthlyByPeriodFinalize as finalizeRows, postPaymentsProjectsByIdMonthlySettings as settingRows } from "../client/refusals.vibe"
 import { formatBaseUnits, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
@@ -419,10 +419,10 @@ export effect function setMonthlyAutomatic(projectId: string, actor: Actor, auto
   const expectedSequence = (try loadSettings(projectId)).state.sequence
   const authorized = try authorize(projectId, actor, "owner")
   if (authorized.fact.banned) throw refused(settingRows.accountBanned)
-  // spec/settlement/monthlySettings.md: the shell reads the latest cut of each unfrozen month and passes lateCutNotice.
   const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
   if (automatic && blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
   const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized), lateCutNotice: blocked !== undefined }) catch effect (error) => match (error) {
+    when SettingRejected: throw (try afterRace(authorized, settingRows.settingChanged));
     when Conflict: throw (try afterRace(authorized, settingRows.settingChanged));
     when ProjectChanged: throw (try afterRace(authorized, settingRows.settingChanged));
     default: throw error;

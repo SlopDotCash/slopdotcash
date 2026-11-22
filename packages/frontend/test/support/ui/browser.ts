@@ -1,6 +1,7 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
 import { expect } from "vitest";
 import { commands } from "vitest/browser";
+import { loginPath } from "../../../src/platform/environment.ts";
 import type { Diagnostics, Op, Result, Role, Target, WalletSetup } from "./protocol.ts";
 
 export const origin = "https://slop.cash";
@@ -48,13 +49,9 @@ export const shown = (target: Target) => expect.poll(() => site.read(target), { 
 
 export const at = (path: string) => expect.poll(() => site.where(), { timeout: journeyMs }).toBe(`${origin}${path}`);
 
-export function loginPathFor(next: string): string {
-  return next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
-}
-
 export async function signIn(login: string, next: string, tab?: string) {
   await site.github(login);
-  await site.open(loginPathFor(next), tab);
+  await site.open(loginPath(next), tab);
   await shown(named("heading", "Log in", { level: 1 })).toMatchObject({ visible: true });
   await site.click(named("button", "Continue with GitHub"));
   await at(next);

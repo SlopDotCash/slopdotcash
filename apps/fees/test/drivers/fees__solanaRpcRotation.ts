@@ -1,4 +1,4 @@
-// spec/fees/solanaRpcRotation.md, "Each phase is in the receipt before the next starts, and phases only move forward"
+// spec/fees/solanaRpcRotation.md, "Each phase is in the receipt before the next starts, and phases only move forward"; spec/fees/solanaRpcRotation.md, "An uncertain activation keeps its lease until it expires, and every other end releases only its own lease"
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

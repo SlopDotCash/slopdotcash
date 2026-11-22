@@ -65,7 +65,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Layer.mergeAll(Started, noticePorts, webCrypto, clock.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Save each notice once with its source change, and follow the account\'s email enrollment (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Follow the account\'s email enrollment and closure"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent")', () => effect {
+  it.effect('Save each notice once with its source change, and follow the account\'s email enrollment (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Follow the account\'s email enrollment and closure"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure suppresses every waiting notice of the account in the same write")', () => effect {
     const db = try D1
     const notices = try Notices
     const first = [notice("wallet-claim:journey-1", "WalletChanged"), notice("payout-held:journey-1", "PayoutHeld")]
@@ -139,6 +139,28 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto, clock.layer), { excludeTes
       ],
       afterEarlierToken: ["wallet-claim:journey-4", 1, "queued", "later"],
       everyNotice: ["wallet-claim:journey-1", "payout-held:journey-1", "payout-exception:journey-1", "payout-held:journey-2", "wallet-claim:journey-2", "payout-held:journey-3", "wallet-claim:journey-3", "wallet-claim:journey-4"],
+    })
+
+    try send(inbox, { type: "save", notice: notice("payout-held:journey-5", "PayoutHeld") }, "", release)
+    try send(inbox, { type: "save", notice: notice("wallet-claim:journey-5", "WalletChanged") }, "", release)
+    try db.run(sql`UPDATE activity_notification_outbox SET state = 'sending', attempts = 1, claimed_at = ${sourceAt} WHERE event_key = 'wallet-claim:journey-4' AND recipient_github_id = ${member}`)
+    try db.batch([
+      sql`UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, destination_version = '', updated_at = ${sourceAt} WHERE github_id = ${member}`,
+      sql`UPDATE notification_email_verifications SET cancelled_at = ${sourceAt} WHERE github_id = ${member} AND consumed_at IS NULL AND cancelled_at IS NULL`,
+    ])
+    const closed = try observe(inbox, release)
+    try same({
+      outbox: (try outbox()).slice(-3),
+      states: closed.inbox.notices.slice(-3).map((held) => held.state),
+      everyNotice: (try inboxKeys(member)).slice(-3),
+    }, {
+      outbox: [
+        ["wallet-claim:journey-4", 1, "sending", "later"],
+        ["payout-held:journey-5", 0, "suppressed", "later"],
+        ["wallet-claim:journey-5", 1, "suppressed", "later"],
+      ],
+      states: ["Sending", "Suppressed", "Suppressed"],
+      everyNotice: ["wallet-claim:journey-4", "payout-held:journey-5", "wallet-claim:journey-5"],
     })
   })
 

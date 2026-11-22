@@ -1,0 +1,314 @@
+import { assert, it } from "@effect/vitest"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import type { GitHubFake } from "@repo/platform/testing/github"
+import { validateHistoricalDiscussion } from "../src/ingestion/historicalDiscussion.vibe"
+import { Graphql, availableBudget, graphqlClient, tryReferenceDiscussion } from "../src/ingestion/graphql.vibe"
+import { Ingestion, ingestion } from "../src/ingestion/read.vibe"
+import { fetcherOf, repository, seeded, start, statuses, withRateLimit } from "./support/u3/github.ts"
+
+const repoPath = `/repos/${repository}`
+const commitSha = "a".repeat(40)
+const commitPullsPath = `${repoPath}/commits/${commitSha}/pulls?per_page=100`
+const rateLimitQuery = "query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }"
+const graphqlMatch = /^POST \/graphql$/u
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function exact(method: string, path: string) {
+  return new RegExp(`^${`${method} ${path}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u")
+}
+
+function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<() => Response>) {
+  for (const reply of replies) fake.alterNext(match, reply)
+}
+
+const serverError = () => new Response("internal error", { status: 500 })
+const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
+const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
+
+it.live('Exact evidence pages retry a server error twice and a commit file page once without spending quota attempts (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const waits: number[] = []
+  const headers = { authorization: `Bearer ${world.token}` }
+
+  effect function scenario<A, E>(options: { readonly deadlineMs?: number; readonly requestTimeoutMs?: number; readonly blocked?: Deferred.Deferred<void> }, body: (client: HttpClient.HttpClient) => A!E) {
+    const transport = ingestion({
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
+      sleep: (millis) => effect {
+        waits.push(millis)
+        if (options.blocked === undefined) clock.advance(millis)
+        else {
+          try Deferred.succeed(options.blocked, undefined)
+          try Effect.never
+        }
+      },
+    })
+    provide Layer.provide(transport, outboundVia(fetcherOf(fake))), clock.layer {
+      const reads = try Ingestion
+      const value = try body(reads.client)
+      const checkpoint = reads.assertNoCheckpoint() catch (error) => error._tag
+      return { value, checkpoint }
+    }
+  }
+
+  effect function read(client: HttpClient.HttpClient, url: string, method: "GET" | "POST" | "PUT" = "GET") {
+    const from = fake.requests.length
+    const waited = waits.length
+    const answered = effect {
+      const response = try client.execute(HttpClientRequest.make(method)(url, { headers }))
+      return { status: response.status, body: try response.text }
+    }
+    const outcome = answered catch (error) => error._tag
+    return { outcome, statuses: statuses(fake, from), waits: waits.slice(waited) }
+  }
+
+  const authority = fake.authority
+  const pullFiles = [`${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`, `/repositories/7001/pulls/${world.pull}/files?per_page=100&page=2`]
+  const commitFiles = [`${repoPath}/commits/${world.commit}?per_page=100&page=1`, `/repositories/7001/commits/${world.commit}?per_page=100&page=2`]
+  const commitPulls = [commitPullsPath, `${commitPullsPath}&page=2`, `/repositories/7001/commits/${commitSha}/pulls?per_page=100`, `/repositories/7001/commits/${commitSha}/pulls?per_page=100&page=3`]
+  const finalBody = JSON.stringify({ message: "still unavailable", documentation_url: "help" })
+
+  const outcome = try scenario({}, (client) => effect {
+    const recoveredFiles = try Effect.forEach(pullFiles, (path) => effect {
+      answers(fake, exact("GET", path), [serverError, serverError])
+      const answer = try read(client, `${authority}${path}`)
+      return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
+    })
+    answers(fake, exact("GET", pullFiles[0] ?? ""), [serverError, serverError, () => new Response(finalBody, { status: 500, headers: { "content-type": "application/json" } })])
+    const persistentFiles = try read(client, `${authority}${pullFiles[0] ?? ""}`)
+    const recoveredCommits = try Effect.forEach(commitFiles, (path) => effect {
+      answers(fake, exact("GET", path), [validationFailed])
+      const answer = try read(client, `${authority}${path}`)
+      return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
+    })
+    answers(fake, exact("GET", commitFiles[0] ?? ""), [validationFailed, () => Response.json({ message: "Still unavailable", errors: ["commit"] }, { status: 422 })])
+    const persistentCommit = try read(client, `${authority}${commitFiles[0] ?? ""}`)
+    const otherValidation = try Effect.forEach([`${repoPath}/commits/${world.commit}`, `${repoPath}/commits/abcdef0?per_page=100&page=1`, pullFiles[0] ?? ""], (path) => effect {
+      answers(fake, exact("GET", path), [validationFailed])
+      return try read(client, `${authority}${path}`)
+    })
+    const recoveredPulls = try Effect.forEach(commitPulls, (path) => effect {
+      answers(fake, exact("GET", path), [serverError, serverError, () => Response.json([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])])
+      return try read(client, `${authority}${path}`)
+    })
+    answers(fake, exact("GET", commitPullsPath), [serverError, serverError, () => new Response("{incomplete upstream failure", { status: 500 })])
+    const persistentPulls = try read(client, `${authority}${commitPullsPath}`)
+    const outOfScope = try Effect.forEach([
+      commitPullsPath.replace(commitSha, "main"),
+      commitPullsPath.replace(commitSha, commitSha.slice(1)),
+      commitPullsPath.replace(commitSha, commitSha.toUpperCase()),
+      `${commitPullsPath}&page=0`,
+      `${commitPullsPath}&page=01`,
+      `${commitPullsPath}&page=1&extra=1`,
+      commitPullsPath.replace("per_page=100", "per_page=99"),
+      commitPullsPath.replace("?per_page=100", "?page=1&per_page=100"),
+      `/repositories/0/commits/${commitSha}/pulls?per_page=100`,
+      `${repoPath}/commits/${world.commit}?per_page=100&page=1`,
+    ], (path) => effect {
+      answers(fake, exact("GET", path), [serverError])
+      const answer = try read(client, `${authority}${path}`)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    const otherRequests = try Effect.forEach([
+      ["GET", `https://example.com${commitPullsPath}`],
+      ["GET", `http://api.github.com${commitPullsPath}`],
+      ["GET", `${authority}${commitPullsPath}#fragment`],
+      ["POST", `${authority}${commitPullsPath}`],
+      ["PUT", `${authority}${commitPullsPath}`],
+    ] as const, ([method, url]) => effect {
+      answers(fake, exact(method, commitPullsPath), [serverError])
+      const answer = try read(client, url, method)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    const otherStatuses = try Effect.forEach([403, 404, 422, 502], (status) => effect {
+      answers(fake, exact("GET", commitPullsPath), [() => Response.json({ message: "unavailable" }, { status })])
+      const answer = try read(client, `${authority}${commitPullsPath}`)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    const page1 = `${commitPullsPath}&page=1`
+    const page2 = `${commitPullsPath}&page=2`
+    answers(fake, exact("GET", page1), [serverError, () => Response.json([{ number: 1 }]), () => Response.json([{ number: 102 }])])
+    answers(fake, exact("GET", page2), [serverError, () => Response.json([{ number: 101 }])])
+    const live = [try read(client, `${authority}${page1}`), try read(client, `${authority}${page2}`), try read(client, `${authority}${page1}`)]
+    answers(fake, exact("GET", commitPullsPath), [serverError, limited, serverError, limited, limited, limited, limited])
+    const quotaKept = try read(client, `${authority}${commitPullsPath}`)
+    answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [() => new Response("missing", { status: 404 })])
+    const missing = try read(client, `${authority}${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`)
+    return { recoveredFiles, persistentFiles, recoveredCommits, persistentCommit, otherValidation, recoveredPulls, persistentPulls, outOfScope, otherRequests, otherStatuses, live, quotaKept, missing }
+  })
+
+  const deadlines = try Effect.forEach([[start + 1_000, 1], [start + 2_000, 2]] as const, ([deadlineMs, sent]) => scenario({ deadlineMs }, (client) => effect {
+    clock.set(start)
+    answers(fake, exact("GET", commitPullsPath), Array.from({ length: sent }, () => serverError))
+    return try read(client, `${authority}${commitPullsPath}`)
+  }))
+  const firstWait = try scenario({ deadlineMs: start + 1_000 }, (client) => effect {
+    clock.set(start)
+    answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [serverError])
+    return try read(client, `${authority}${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`)
+  })
+
+  const blocked = try Deferred.make<void>()
+  const cancelled = try scenario({ blocked }, (client) => effect {
+    const from = fake.requests.length
+    const waited = waits.length
+    answers(fake, exact("GET", commitPullsPath), [serverError])
+    const fiber = try Effect.forkChild(client.execute(HttpClientRequest.get(`${authority}${commitPullsPath}`, { headers })))
+    try Deferred.await(blocked)
+    try Fiber.interrupt(fiber)
+    return { statuses: statuses(fake, from), waits: waits.slice(waited) }
+  })
+
+  const incomplete = try scenario({ requestTimeoutMs: 10 }, (client) => effect {
+    answers(fake, exact("GET", commitPullsPath), [() => new Response(new ReadableStream({ start: (controller) => controller.enqueue(new TextEncoder().encode("partial")) }), { status: 500 })])
+    return try read(client, `${authority}${commitPullsPath}`)
+  })
+
+  const pulls = JSON.stringify([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])
+  const once = { statuses: [500], waits: [] }
+  try same(
+    {
+      recoveredFiles: outcome.value.recoveredFiles,
+      persistentFiles: outcome.value.persistentFiles,
+      recoveredCommits: outcome.value.recoveredCommits,
+      persistentCommit: outcome.value.persistentCommit,
+      otherValidation: outcome.value.otherValidation.map((answer) => ({ statuses: answer.statuses, waits: answer.waits })),
+      recoveredPulls: outcome.value.recoveredPulls,
+      persistentPulls: outcome.value.persistentPulls,
+      outOfScope: outcome.value.outOfScope,
+      otherRequests: outcome.value.otherRequests,
+      otherStatuses: outcome.value.otherStatuses,
+      live: outcome.value.live.map((answer) => ({ statuses: answer.statuses, waits: answer.waits })),
+      quotaKept: { statuses: outcome.value.quotaKept.statuses, waits: outcome.value.quotaKept.waits },
+      missing: outcome.value.missing,
+      checkpoint: outcome.checkpoint,
+      deadlines,
+      firstWait,
+      cancelled: cancelled.value,
+      incomplete: incomplete.value,
+    },
+    {
+      recoveredFiles: [{ statuses: [500, 500, 200], waits: [1_000, 2_000], status: 200 }, { statuses: [500, 500, 200], waits: [1_000, 2_000], status: 200 }],
+      persistentFiles: { outcome: { status: 500, body: finalBody }, statuses: [500, 500, 500], waits: [1_000, 2_000] },
+      recoveredCommits: [{ statuses: [422, 200], waits: [1_000], status: 200 }, { statuses: [422, 200], waits: [1_000], status: 200 }],
+      persistentCommit: { outcome: { status: 422, body: JSON.stringify({ message: "Still unavailable", errors: ["commit"] }) }, statuses: [422, 422], waits: [1_000] },
+      otherValidation: [{ statuses: [422], waits: [] }, { statuses: [422], waits: [] }, { statuses: [422], waits: [] }],
+      recoveredPulls: commitPulls.map(() => ({ outcome: { status: 200, body: pulls }, statuses: [500, 500, 200], waits: [1_000, 2_000] })),
+      persistentPulls: { outcome: { status: 500, body: "{incomplete upstream failure" }, statuses: [500, 500, 500], waits: [1_000, 2_000] },
+      outOfScope: Array.from({ length: 10 }, () => once),
+      otherRequests: Array.from({ length: 5 }, () => once),
+      otherStatuses: [{ statuses: [403], waits: [] }, { statuses: [404], waits: [] }, { statuses: [422], waits: [] }, { statuses: [502], waits: [] }],
+      live: [{ statuses: [500, 200], waits: [1_000] }, { statuses: [500, 200], waits: [1_000] }, { statuses: [200], waits: [] }],
+      quotaKept: { statuses: [500, 429, 500, 429, 429, 429, 429], waits: [1_000, 3_000, 2_000, 3_000, 3_000, 3_000] },
+      missing: { outcome: { status: 404, body: "missing" }, statuses: [404], waits: [] },
+      checkpoint: undefined,
+      deadlines: [
+        { value: { outcome: "HttpClientError", statuses: [500], waits: [] }, checkpoint: "IngestionCheckpoint" },
+        { value: { outcome: "HttpClientError", statuses: [500, 500], waits: [1_000] }, checkpoint: "IngestionCheckpoint" },
+      ],
+      firstWait: { value: { outcome: "HttpClientError", statuses: [500], waits: [] }, checkpoint: "IngestionCheckpoint" },
+      cancelled: { statuses: [500], waits: [1_000] },
+      incomplete: { outcome: "HttpClientError", statuses: [500], waits: [] },
+    },
+  )
+})
+
+it.live('An optional discussion probe reads once with two available points, waits once for a limit and never spends the fallback point (spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const waits: number[] = []
+  const resetAt = start + 3_600_000
+  const expected = { repository, repositoryNodeId: world.nodeId, number: 42, id: "PR_carrier", url: `https://github.com/${repository}/pull/42`, mergedAt: "2026-11-14T00:00:00.000Z", headSha: "a".repeat(40) }
+  const when = "2026-11-14T00:00:00Z"
+  const pull = { node_id: expected.id, number: expected.number, html_url: expected.url, body: null, state: "closed", merged_at: when, updated_at: when, head: { sha: expected.headSha }, comments: 1, review_comments: 2 }
+  const page = (nodes: ReadonlyArray<unknown>) => ({ totalCount: nodes.length, nodes, pageInfo: { hasNextPage: false } })
+  const row = (fragment: string, n: number) => ({ id: `row-${n}`, url: `${expected.url}#${fragment}${n}`, body: `Refs #${n}` })
+  const source = (n: number) => ({ __typename: "PullRequest", id: `PR_${n}`, number: n, url: `https://github.com/${repository}/pull/${n}`, repository: { nameWithOwner: repository, isPrivate: false } })
+  const rateLimit = { cost: 1, limit: 5_000, remaining: 399, resetAt: new Date(resetAt).toISOString() }
+  function discussion(threadHasNextPage: boolean, updatedAt: string) {
+    return {
+      repository: {
+        id: expected.repositoryNodeId,
+        isPrivate: false,
+        nameWithOwner: expected.repository,
+        pullRequest: {
+          id: expected.id, number: expected.number, url: expected.url, state: "MERGED", headRefOid: expected.headSha, mergedAt: when, updatedAt, body: null,
+          comments: page([row("issuecomment-", 5)]),
+          reviewThreads: page([{ id: "PRRT_10", comments: { ...page([row("discussion_r", 7)]), pageInfo: { hasNextPage: threadHasNextPage } } }, { id: "PRRT_9", comments: page([row("discussion_r", 6)]) }]),
+          timelineItems: { ...page([{ source: source(2) }]), totalCount: 36 },
+        },
+      },
+      rateLimit,
+    }
+  }
+  const client = graphqlClient({
+    token: Redacted.make(world.token),
+    sleep: (millis) => effect {
+      waits.push(millis)
+      clock.advance(millis)
+    },
+  })
+  provide Layer.provide(client, outboundVia(fetcherOf(fake))), clock.layer {
+    const graphql = try Graphql
+    const variables = { owner: "ada", name: "widgets", number: expected.number }
+
+    effect function loaded(remaining: number) {
+      withRateLimit(fake, remaining, resetAt)
+      try graphql.execute(rateLimitQuery)
+      return try availableBudget()
+    }
+
+    effect function probe(reply: (() => Response) | undefined, deadlineMs = clock.now() + 60_000) {
+      if (reply !== undefined) answers(fake, graphqlMatch, [reply])
+      const from = fake.requests.length
+      const waited = waits.length
+      const answered = effect {
+        const data = try tryReferenceDiscussion(variables, deadlineMs)
+        return data === null ? "no discovery" : validateHistoricalDiscussion(data, expected, pull) ?? "invalid discussion"
+      }
+      const outcome = answered catch (error) => `${error._tag} ${error.message}`
+      return { outcome, requests: fake.requests.length - from, waits: waits.slice(waited) }
+    }
+
+    const unreported = try probe(undefined)
+    const available = try loaded(400)
+    const discovered = try probe(() => Response.json({ data: discussion(false, when) }))
+    const partial = try probe(() => Response.json({ data: discussion(true, when) }))
+    const stale = try probe(() => Response.json({ data: discussion(false, "2026-11-13T20:00:00Z") }))
+    const rejected = try probe(() => Response.json({ errors: [{ message: "Unsupported discussion field" }] }))
+    const malformed = try probe(() => Response.json({ data: discussion(false, when), errors: {} }))
+    const expired = try probe(undefined, clock.now() - 1)
+    const checkpointed = try probe(() => Response.json({}, { status: 429 }), clock.now() + 30_000)
+    const forbidden = try probe(() => Response.json({}, { status: 403 }))
+    const resetUnavailable = try probe(() => Response.json({ errors: [{ type: "RATE_LIMITED" }] }))
+    const deferred = try probe(() => Response.json({}, { status: 429, headers: { "retry-after": "1" } }))
+    const low = try loaded(101)
+    const reserved = try probe(undefined)
+    try same(
+      { unreported, available, discovered, partial, stale, rejected, malformed, expired, checkpointed, forbidden, resetUnavailable, deferred, low, reserved },
+      {
+        unreported: { outcome: "no discovery", requests: 0, waits: [] },
+        available: 300,
+        discovered: { outcome: { commentBodies: ["Refs #5"], inlineBodies: ["Refs #6", "Refs #7"], timeline: [{ source: source(2) }] }, requests: 1, waits: [] },
+        partial: { outcome: "invalid discussion", requests: 1, waits: [] },
+        stale: { outcome: "invalid discussion", requests: 1, waits: [] },
+        rejected: { outcome: "no discovery", requests: 1, waits: [] },
+        malformed: { outcome: "no discovery", requests: 1, waits: [] },
+        expired: { outcome: "no discovery", requests: 0, waits: [] },
+        checkpointed: { outcome: "IngestionCheckpoint GitHub source collection reached its checkpoint deadline", requests: 1, waits: [] },
+        forbidden: { outcome: "GraphqlFailed GitHub GraphQL reference discovery is forbidden", requests: 1, waits: [] },
+        resetUnavailable: { outcome: "GraphqlFailed GitHub GraphQL quota reset is unavailable", requests: 1, waits: [] },
+        deferred: { outcome: "no discovery", requests: 1, waits: [1_000] },
+        low: 1,
+        reserved: { outcome: "no discovery", requests: 0, waits: [] },
+      },
+    )
+  }
+})

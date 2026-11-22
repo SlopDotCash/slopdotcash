@@ -1,6 +1,6 @@
-// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"
+// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
 import { assert, layer } from "@effect/vitest"
-import type { Fetcher } from "@repo/platform/bindings"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
 import { githubApp } from "@repo/platform/github/app"
@@ -9,16 +9,20 @@ import { rolesFrom } from "@repo/platform/roles"
 import type { Handler } from "@repo/platform/testing"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { Execution } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
 import { Request as WorkerRequest } from "miniflare"
+import { privateRoute } from "../src/analysis/route.vibe"
 import { IntakeApp } from "../src/forwarding/grant.vibe"
 import { forwardingRoutes } from "../src/forwarding/routes.vibe"
 import { intakeSettings } from "../src/intake/availability.vibe"
+import { intakeRoutes } from "../src/intake/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { type World, digest, origin, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { receiptNotices } from "./support/intake/notices.vibe"
 
 type WebHandler = (request: globalThis.Request) => Promise<globalThis.Response>
 
@@ -43,6 +47,7 @@ service Forwarding {
   readonly fake: GitHubFake
   readonly clock: SettableClock
   readonly handler: WebHandler
+  readonly pending: Array<Promise<unknown>>
 }
 
 const project = "intake-fixture"
@@ -95,7 +100,7 @@ function ports(clock: SettableClock) {
   )
 }
 
-function shellOf(world: World, fake: GitHubFake, clock: SettableClock) {
+function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: Array<Promise<unknown>>) {
   const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
   const github = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority }), Layer.mergeAll(outboundVia(viaFake), webCrypto, clock.layer))
   const base = Layer.mergeAll(
@@ -108,8 +113,11 @@ function shellOf(world: World, fake: GitHubFake, clock: SettableClock) {
     outboundVia(viaFake),
     Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), webOrigin: fake.webAuthority, apiOrigin: fake.authority } }),
     ports(clock),
+    receiptNotices,
+    Layer.succeed(Execution, { context: { waitUntil: (work) => { pending.push(work) } } satisfies ExecutionContext }),
   )
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github), base)
+  const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outboundVia(viaFake), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github, route), base)
 }
 
 const Started = Layer.effect(Forwarding, effect {
@@ -121,9 +129,13 @@ const Started = Layer.effect(Forwarding, effect {
     fake.world.addUser({ id: Number(reporter), login })
     fake.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
     fake.world.setPrivateReporting("slop-test/intake", true)
+    fake.world.addUser({ id: 31338, login: "someone-else" })
+    fake.world.addInstallation({ id: 4402, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
   }))
-  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(forwardingRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>, shellOf(world, fake, clock)), { disableLogger: true })), (made) => promise(() => made.dispose()))
-  return { world, fake, clock, handler: web.handler as unknown as WebHandler }
+  const pending: Array<Promise<unknown>> = []
+  const routes = Layer.mergeAll(forwardingRoutes, intakeRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, clock, pending)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, fake, clock, handler: web.handler as unknown as WebHandler, pending }
 })
 
 const sessions = new Map<string, string>()
@@ -280,6 +292,54 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       lost: [202, "uncertain", 3],
       early: [202, "uncertain", 4],
       reopened: [200, "draft", 5, true],
+    })
+  })
+  it.effect('A direct report verifies into a GitHub-verified case and a failed verification keeps the draft (spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => effect {
+    const forwarding = try Forwarding
+    const filed = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: login, summary: "Admin panel accepts a forged session", description: "A forged session cookie opens the admin panel without a password." })))
+    const foreign = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: "someone-else", summary: "Upload endpoint stores files outside the bucket", description: "A crafted file name writes outside the upload bucket." })))
+    const start = effect (key: string, advisory: string) => {
+      const created = try call(forwarding, "/api/v1/security-submissions", [], { projectId: project, idempotencyKey: key, origin: "direct", advisory })
+      return { created, id: shown(created).id }
+    }
+    const verify = (id: string) => `/api/v1/security-submissions/${id}/verify`
+    const direct = try start("direct-journey-0001", filed.ghsaId)
+    const withSlopOrigin = try call(forwarding, "/api/v1/security-submissions", [], { projectId: project, idempotencyKey: "direct-journey-0009", origin: "slop", advisory: filed.ghsaId })
+    const grant = try consented(forwarding, direct.id)
+    const stale = try call(forwarding, verify(direct.id), [grant], { expectedRevision: 9 })
+    const verified = try call(forwarding, verify(direct.id), [grant], { expectedRevision: 1 })
+    const again = try call(forwarding, verify(direct.id), [grant], { expectedRevision: 2 })
+    try promise(() => Promise.allSettled(forwarding.pending.splice(0)))
+    const linked = try promise(() => rows(forwarding.world, "SELECT c.submission_state, c.received_at_source, c.advisory_ghsa = s.advisory_ghsa AS same_advisory, (SELECT COUNT(*) FROM notifications n WHERE n.subject = c.id AND n.recipient_github_id = s.reporter_github_id) AS receipts FROM security_submissions s JOIN security_cases c ON c.id = s.case_id WHERE s.id=?", direct.id))
+
+    const unread = try start("direct-journey-0002", filed.ghsaId)
+    const unreadGrant = try consented(forwarding, unread.id)
+    try orDie(Effect.try(() => forwarding.fake.failNext(`GET /repos/slop-test/intake/security-advisories/${filed.ghsaId}`, { status: 502 })))
+    const inconclusive = try call(forwarding, verify(unread.id), [unreadGrant], { expectedRevision: 1 })
+    const notAuthor = try start("direct-journey-0003", foreign.ghsaId)
+    const notAuthorGrant = try consented(forwarding, notAuthor.id)
+    const mismatch = try call(forwarding, verify(notAuthor.id), [notAuthorGrant], { expectedRevision: 1 })
+    const failures = try promise(() => rows(forwarding.world, "SELECT state, failure_code, case_id FROM security_submissions WHERE id IN (?, ?) ORDER BY idempotency_key", unread.id, notAuthor.id))
+    try same({
+      created: [direct.created.status, shown(direct.created).state, shown(direct.created).advisory?.ghsa, typeof direct.created.body.authorizeUrl],
+      withSlopOrigin: refusal(withSlopOrigin),
+      stale: refusal(stale),
+      verified: brief(verified),
+      again: refusal(again),
+      linked,
+      inconclusive: brief(inconclusive),
+      mismatch: brief(mismatch),
+      failures,
+    }, {
+      created: [201, "draft", filed.ghsaId, "string"],
+      withSlopOrigin: [400, "report_required"],
+      stale: [409, "stale_revision"],
+      verified: [200, "receipt-verified", 2],
+      again: [409, "action_not_allowed"],
+      linked: [{ submission_state: "verified", received_at_source: "github-verified", same_advisory: 1, receipts: 1 }],
+      inconclusive: [202, "draft", 2],
+      mismatch: [200, "failed", 2],
+      failures: [{ state: "draft", failure_code: null, case_id: null }, { state: "failed", failure_code: "author-mismatch", case_id: null }],
     })
   })
 })

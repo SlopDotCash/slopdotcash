@@ -11,6 +11,7 @@ const site = "https://slop.test"
 const revision = "a".repeat(40)
 const seededAt = "2026-10-01T00:00:00.000Z"
 const sha = "0".repeat(64)
+const configuredStart = "2026-12-01T00:00:00.000Z"
 
 interface Answer {
   readonly status: number
@@ -24,6 +25,7 @@ interface Ask {
   readonly cookie?: string
   readonly origin?: string
   readonly json?: unknown
+  readonly padding?: number
 }
 
 service History {
@@ -97,7 +99,8 @@ effect function world(github: GitHubFake) {
     world.addRepo({ id: 7001, owner: "ada", name: "alpha", nodeId: "R_alpha01" })
     world.addRepo({ id: 7002, owner: "ada", name: "bravo", nodeId: "R_bravo02" })
     world.addPull({ repo: "ada/bravo", number: 7, author: "bo", state: "closed", mergedAt: "2026-10-15T00:00:00Z" })
-    world.addPull({ repo: "ada/bravo", number: 8, author: "bo", state: "closed", mergedAt: "2026-11-05T00:00:00Z" })
+    world.addPull({ repo: "ada/bravo", number: 9, author: "bo", state: "closed", mergedAt: "2026-12-05T00:00:00Z" })
+    world.addPull({ repo: "ada/bravo", number: 10, author: "bo", state: "closed", mergedAt: "2026-11-15T00:00:00Z" })
     world.addInstallation({ id: 501, account: "ada", repositories: ["alpha", "bravo"], permissions: { metadata: "read", pull_requests: "read" } })
     world.addInstallation({ id: 502, account: "ada", repositories: ["alpha"], permissions: { metadata: "read", pull_requests: "read" } })
   }))
@@ -110,7 +113,7 @@ const Started = Layer.effect(History, effect {
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { SLOPBOT_DB: "slop-private" },
-    vars: { SLOPBOT_APP_ID: github.app.id, SLOPBOT_APP_PRIVATE_KEY: github.app.privateKeyPem, SLOPBOT_PRODUCER_REVISION: revision, ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
+    vars: { SLOPBOT_APP_ID: github.app.id, SLOPBOT_APP_PRIVATE_KEY: github.app.privateKeyPem, SLOPBOT_PRODUCER_REVISION: revision, SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_VALUE_START_AT: configuredStart, ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
     outbound: github.handler,
   })), (started) => promise(() => started.dispose()))
   const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
@@ -127,7 +130,8 @@ const Started = Layer.effect(History, effect {
         ...ask.origin === undefined ? {} : { origin: ask.origin },
         ...ask.json === undefined ? {} : { "content-type": "application/json" },
       }
-      const response = await mf.dispatchFetch(url, { method: ask.method ?? (ask.json === undefined ? "GET" : "POST"), headers, body: ask.json === undefined ? undefined : JSON.stringify(ask.json) })
+      const body = ask.json === undefined ? undefined : JSON.stringify(ask.json) + " ".repeat(ask.padding ?? 0)
+      const response = await mf.dispatchFetch(url, { method: ask.method ?? (ask.json === undefined ? "GET" : "POST"), headers, body })
       const text = await response.text()
       const json = (response.headers.get("content-type") ?? "").includes("json") && text !== ""
       return { status: response.status, headers: Object.fromEntries(response.headers), text, body: json ? JSON.parse(text) as unknown : text }
@@ -168,6 +172,10 @@ const envelope = (pull: number) => ({
   sources: [{ repository: "ada/bravo", pullRequestNumber: pull, contextPaths: [] }],
   supersedes: null,
 })
+
+function producedBy(base: ReturnType<typeof envelope>, channel: string, provider: string) {
+  return { ...base, result: { ...base.result, provenance: { ...base.result.provenance, channel, provider } } }
+}
 
 const importUrl = `${site}/api/v1/slopbot/value-import`
 
@@ -268,19 +276,22 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('An administrator imports a pre-November subscription assessment once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
+  it.effect('An administrator imports a pre-November subscription assessment once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
     const journal = "SELECT COUNT(*) AS n FROM slopbot_value_journal"
     const steps = [
       try call(importUrl, { origin: "https://elsewhere.test", cookie: "7", json: envelope(7) }),
       try call(importUrl, { origin: site, json: envelope(7) }),
       try call(importUrl, { origin: site, cookie: "8", json: envelope(7) }),
       try call(importUrl, { origin: site, cookie: "7", json: { ...envelope(7), extra: true } }),
-      try call(importUrl, { origin: site, cookie: "7", json: envelope(8) }),
+      try call(importUrl, { origin: site, cookie: "7", json: envelope(9) }),
       try call(importUrl, { origin: site, cookie: "7", json: { ...envelope(7), installationId: 502 } }),
+      try call(importUrl, { origin: site, cookie: "7", json: producedBy(envelope(7), "codex-subscription", "openai") }),
     ]
     const refusedRows = try count(journal)
     const imported = try call(importUrl, { origin: site, cookie: "7", json: envelope(7) })
     const repeated = try call(importUrl, { origin: site, cookie: "7", json: envelope(7) })
+    const repeatedRows = try count(journal)
+    const configured = try call(importUrl, { origin: site, cookie: "7", json: producedBy(envelope(10), "claude-subscription", "anthropic"), padding: 30 * 1024 * 1024 })
     const feed = try call(`${worker}/v1/value-assessments?repository=ada/bravo&pull=7`)
     const receipt = imported.body as { readonly recordDigest: string; readonly sequence: number }
     const page = feed.body as { readonly records: ReadonlyArray<{ readonly record_digest: string; readonly record_json: string }>; readonly repositoryNodeId: unknown; readonly schemaVersion: unknown }
@@ -292,7 +303,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       steps: steps.map((answer) => [answer.status, answer.text]),
       refusedRows,
       imported: [imported.status, imported.headers["cache-control"], typeof receipt.recordDigest, receipt.sequence],
-      repeated: [repeated.status, repeated.text],
+      repeated: [repeated.status, repeated.body, repeatedRows],
+      configured: [configured.status, (configured.body as { readonly sequence?: unknown }).sequence],
       rows: try count(journal),
       feed: [page.schemaVersion, page.repositoryNodeId, page.records.map((record) => record.record_digest)],
       legacy: legacy.body,
@@ -305,11 +317,13 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         [409, '{"error":"assessment_not_published"}'],
         [409, '{"error":"assessment_not_published"}'],
         [409, '{"error":"assessment_not_published"}'],
+        [409, '{"error":"assessment_not_published"}'],
       ],
       refusedRows: 0,
       imported: [200, "private, no-store", "string", 1],
-      repeated: [409, '{"error":"assessment_not_published"}'],
-      rows: 1,
+      repeated: [200, imported.body, 1],
+      configured: [200, 2],
+      rows: 2,
       feed: ["slop-value-history:v1", "R_bravo02", [receipt.recordDigest]],
       legacy: { legacy: [receipt.recordDigest], verifiedLegacySources: [`R_bravo02/${stored.pullRequestNodeId ?? ""}`] },
       foreign: { legacy: [], verifiedLegacySources: [] },

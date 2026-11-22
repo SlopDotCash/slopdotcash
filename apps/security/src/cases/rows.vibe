@@ -3,7 +3,7 @@ import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
 import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
-import { type NotAState, decodeState, initial, noTriage } from "../../gen/security__cases.effect.vibe"
+import { type NotAState, decodeState, initial, noTriage, parseState } from "../../gen/security__cases.effect.vibe"
 import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
@@ -93,6 +93,7 @@ export interface CaseRecord {
   readonly members: ReadonlyArray<MemberRow>
   readonly triages: ReadonlyArray<TriageRow>
   readonly model: PrivateCase
+  readonly valid: boolean
 }
 
 export const caseId = /^sc_[A-Za-z0-9_-]{8,72}$/u
@@ -191,7 +192,7 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
   const deciders = numbers([...events.filter((event) => deciding.has(event.kind)).map((event) => event.actor_github_id), row.technical_decider_github_id, row.related_party_reviewer_github_id])
   const committed = row.award_state === "approved" || row.award_state === "reserved"
   const terms = verified ? withOwnerLines(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }), scope) : initial.terms
-  return try decodeState({
+  return {
     ...initial,
     reporter,
     submission: submissions[row.submission_state],
@@ -219,10 +220,10 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
     appealFrom: receiptOf(row.appeal_from_state),
     appealHistory: [...appealHistoryOf(events)],
     triage: triageOf(events, triages, terms),
-  } satisfies PrivateCase)
+  } satisfies PrivateCase
 }
 
-export function caseAggregate(id: string): Aggregate<CaseRecord | undefined, RowMismatch | NotAState, never> {
+export function caseAggregate(id: string, strict = true): Aggregate<CaseRecord | undefined, RowMismatch | NotAState, never> {
   return {
     name: `security case ${id}`,
     version: sql`SELECT coalesce((SELECT revision FROM security_cases WHERE id=${id}), 0) || '|' || coalesce((SELECT group_concat(appeal_revision || ':' || attempt || ':' || state, ',') FROM (SELECT appeal_revision, attempt, state FROM security_appeal_triages WHERE case_id=${id} ORDER BY appeal_revision, attempt)), '') AS version`,
@@ -240,7 +241,9 @@ export function caseAggregate(id: string): Aggregate<CaseRecord | undefined, Row
       const people = try decoded(MemberRow, members ?? [], "security case members")
       const attempts = try decoded(TriageRow, triages ?? [], "security appeal triages")
       const frozen = try frozenOf(row.terms)
-      return { row, frozen, events: journal, members: people, triages: attempts, model: try modelOf(row, frozen, journal, people, attempts, try scopeOfRows(manifests ?? [])) } satisfies CaseRecord
+      const candidate = try modelOf(row, frozen, journal, people, attempts, try scopeOfRows(manifests ?? []))
+      const parsed = strict ? try decodeState(candidate) : parseState(candidate)
+      return { row, frozen, events: journal, members: people, triages: attempts, model: parsed ?? candidate, valid: parsed !== undefined } satisfies CaseRecord
     },
   }
 }
@@ -248,4 +251,9 @@ export function caseAggregate(id: string): Aggregate<CaseRecord | undefined, Row
 export effect function caseRecord(id: string) {
   if (!caseId.test(id)) return undefined
   return (try load(caseAggregate(id))).state
+}
+
+export effect function shownRecord(id: string) {
+  if (!caseId.test(id)) return undefined
+  return (try load(caseAggregate(id, false))).state
 }

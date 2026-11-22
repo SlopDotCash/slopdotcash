@@ -7,7 +7,7 @@ import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { unpaidTerms } from "../../gen/security__terms.effect.vibe"
 import type { ProgramApprovers } from "../caseAuthority/snapshot.vibe"
 import { exclusionLengths } from "../program/exclusions.ts"
-import { scopeExclusions } from "../program/manifest.ts"
+import { programStatus, scopeExclusions } from "../program/manifest.ts"
 
 export type FrozenTerms = { readonly [key: string]: Json }
 
@@ -23,6 +23,7 @@ export interface ProgramAtReceipt {
   readonly revision: number
   readonly publishedAt: string
   readonly terms: FrozenTerms | undefined
+  readonly scoped?: boolean
   readonly excludedFindings?: ReadonlyArray<number>
 }
 
@@ -143,12 +144,12 @@ effect function atReceipt(read: { readonly projectId: string; readonly receivedA
   if (row === undefined) return undefined
   const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
   const bounty = manifest.securityBounty
+  const published = member(raw, "securityBounty")
+  const scoped = bounty !== undefined && programStatus(published) !== "Unpublished"
+  const scope = { revision: row.revision, publishedAt: row.created_at, scoped, excludedFindings: scoped ? exclusionLengths(scopeExclusions(published)) : [] }
   const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
-  // A published revision in force at receipt is a scope (spec/security/program.md receiptTerms): its owner exclusion
-  // lines are frozen whether or not the offer is open. An unpublished program (no bounty) gives none.
-  const excludedFindings = bounty === undefined ? undefined : exclusionLengths(scopeExclusions(member(raw, "securityBounty")))
-  if (!open) return { revision: row.revision, publishedAt: row.created_at, terms: undefined, excludedFindings } satisfies ProgramAtReceipt
-  return { revision: row.revision, publishedAt: row.created_at, terms: try frozenTerms(bounty, raw), excludedFindings } satisfies ProgramAtReceipt
+  if (!open) return { ...scope, terms: undefined } satisfies ProgramAtReceipt
+  return { ...scope, terms: try frozenTerms(bounty, raw) } satisfies ProgramAtReceipt
 }
 
 function unbanned(githubId: string): Statement {
@@ -185,11 +186,9 @@ function assetOf(terms: FrozenTerms) {
 
 export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number, receivedAtMs: number): ReceiptTerms {
   const terms = program.terms
-  if (terms === undefined) {
-    const unpaid = unpaidTerms(program.revision, receivedAtMs)
-    // Pending approval, paused and closed revisions are published: unpaid terms scoped by their exclusion lines.
-    return program.excludedFindings === undefined ? unpaid : { ...unpaid, scoped: true, excludedFindings: [...program.excludedFindings] }
-  }
+  const scoped = program.revision > 0 && program.scoped === true
+  const excludedFindings = scoped ? [...program.excludedFindings ?? []] : []
+  if (terms === undefined) return { ...unpaidTerms(program.revision, receivedAtMs), scoped, excludedFindings }
   return {
     revision: program.revision,
     publishedAt: publishedAtMs,

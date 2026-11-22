@@ -1,0 +1,75 @@
+// spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import type { GitHubFacts, Hydrated, OpenReference } from "../../census/collect.vibe"
+import type { Comment } from "../../kernels/scoring/selection.ts"
+import type { Actor } from "../../score/facts.vibe"
+import type { FileTarget } from "../merged/files.vibe"
+import { type IssueRecord, type PullRequestRecord, hydrateIssues, hydratePullRequests } from "../merged/hydrate.vibe"
+import type { Label, NodeReference, TextSource } from "../merged/wire.vibe"
+
+export interface OpenRecords {
+  readonly issues: Map<string, IssueRecord>
+  readonly pullRequests: Map<string, PullRequestRecord>
+}
+
+function commentOf(comment: TextSource): Comment {
+  return { id: comment.id, author: comment.author, association: comment.authorAssociation, createdAt: Date.parse(comment.createdAt), body: comment.body }
+}
+
+function shared(record: { readonly author: Actor | null; readonly title: string; readonly body: string; readonly labels: ReadonlyArray<Label>; readonly assignees: ReadonlyArray<Actor>; readonly comments: ReadonlyArray<TextSource> }) {
+  return {
+    open: true,
+    author: record.author,
+    slopbot: false,
+    title: record.title,
+    body: record.body,
+    labels: record.labels.map((label) => label.name),
+    assignees: [...record.assignees],
+    comments: record.comments.map(commentOf),
+  }
+}
+
+function pullRequestFacts(record: PullRequestRecord): GitHubFacts {
+  return {
+    ...shared(record),
+    kind: "PullRequestItem",
+    linkedPullRequests: 0,
+    draft: record.isDraft,
+    filesAvailable: record.files !== null,
+    reviewDecision: record.reviewDecision ?? "",
+    activeReviewRequests: record.activeReviewRequestCount,
+  }
+}
+
+function issueFacts(record: IssueRecord): GitHubFacts {
+  return {
+    ...shared(record),
+    kind: "IssueItem",
+    linkedPullRequests: record.referencedPullRequestIds?.length ?? 0,
+    draft: false,
+    filesAvailable: true,
+    reviewDecision: "",
+    activeReviewRequests: 0,
+  }
+}
+
+function nodeReference(reference: OpenReference): NodeReference {
+  return { id: reference.nodeId, kind: reference.kind === "IssueItem" ? "Issue" : "PullRequest", outcome: null, commitPage: null }
+}
+
+export function openRecords(): OpenRecords {
+  return { issues: new Map(), pullRequests: new Map() }
+}
+
+export function openHydration(target: FileTarget, repositoryId: string, records: OpenRecords) {
+  return (references: ReadonlyArray<OpenReference>) => effect {
+    const issues = try hydrateIssues(references.filter((reference) => reference.kind === "IssueItem").map(nodeReference), "open")
+    const pulls = try hydratePullRequests(references.filter((reference) => reference.kind === "PullRequestItem").map(nodeReference), "open", target, repositoryId)
+    for (const issue of issues) records.issues.set(issue.id, issue)
+    for (const pull of pulls) records.pullRequests.set(pull.id, pull)
+    const facts = new Map<string, GitHubFacts>([...issues.map((issue) => [issue.id, issueFacts(issue)] as const), ...pulls.map((pull) => [pull.id, pullRequestFacts(pull)] as const)])
+    return references.flatMap((reference) => {
+      const found = facts.get(reference.nodeId)
+      return found === undefined ? [] : [{ nodeId: reference.nodeId, facts: found } satisfies Hydrated]
+    })
+  }
+}

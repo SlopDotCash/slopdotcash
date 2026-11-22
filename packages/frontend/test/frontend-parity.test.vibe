@@ -1,8 +1,16 @@
 import { assert, describe, it, layer } from "@effect/vitest"
+import { api as backendApi } from "@repo/backend/client"
+import { api as contributorApi } from "@repo/contributor/client"
+import { api as feesApi } from "@repo/fees/client"
+import { api as operationsApi } from "@repo/operations/client"
 import { bundle } from "@repo/platform/testing"
 import { Area, type Answer, type Ask, areaLayer } from "@repo/platform/testing/area"
+import { api as pointsApi } from "@repo/points/client"
+import { api as securityApi } from "@repo/security/client"
+import { api as settlementApi } from "@repo/settlement/client"
+import { api as slopbotApi } from "@repo/slopbot/client"
 import { Request, Response } from "miniflare"
-import { type Probe, type Seen, type Surface, answered, cases, elsewhere, excuseOf, probeOf, replayDifference, replayRequest, rows, surfaces } from "./support/parity/tables.ts"
+import { type Probe, type Seen, type Surface, answered, cases, elsewhere, excuseOf, probeOf, replayDifference, replayRequest, rows, surfaces, undeclared } from "./support/parity/tables.ts"
 
 const shell = `<!doctype html><html lang="en"><head><title>Slop</title></head><body><div id="root"></div></body></html>`
 
@@ -56,7 +64,7 @@ effect function sent(probe: Probe) {
   return seenOf(try (try Area).request(probe.path, askOf(probe)))
 }
 
-describe('Every old route and Worker surface answers as the old application did (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/fees/runtime.md, "Story: Publish the fee Worker only from a reviewed release and its preflight"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login\'s base permission and never returns a token")', () => {
+describe(`Every old route and Worker surface answers as the old application did (spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/fees/runtime.md, "Story: Publish the fee Worker only from a reviewed release and its preflight"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token")`, () => {
   it("Each old route row and each recorded request belongs to exactly one successor surface, a journey that asserts it elsewhere, or a recorded reason", () => {
     const placed = rows.map((row) => [
       row.id,
@@ -64,6 +72,11 @@ describe('Every old route and Worker surface answers as the old application did 
     ] as const)
     assert.deepStrictEqual(placed.filter(([, count]) => count !== 1), [])
     assert.strictEqual(surfaces.reduce((count, surface) => count + surface.cases.length, 0), cases.length)
+  })
+
+  it("Every old /api/v1 route of the Pages origin is declared by an area's client api, or listed in conflicts.json or the decommission ledger with a reason", () => {
+    const declared = [backendApi, operationsApi, slopbotApi, securityApi, contributorApi, pointsApi, settlementApi, feesApi].flat()
+    assert.deepStrictEqual(undeclared(declared), [])
   })
 
   for (const surface of surfaces) {

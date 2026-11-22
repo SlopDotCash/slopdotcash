@@ -1,8 +1,8 @@
-// spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"
-import { isoNow, millisOf } from "@repo/platform/clock"
+// spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"; spec/slopbot/spendAlerts.md, "Surplus's own balance notification is the low-balance alert"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { type NonEmpty, RowMismatch, type Statement, decoded, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type CostRow, type FailureKind, NotAState, type Provider, type Receipt, type Spend, type Suppression, apply, claimedTop, decodeState, interval, monthTotal } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { type CostRow, type FailureKind, type FailureNotice, NotAState, type Provider, type Receipt, type Spend, type Suppression, apply, claimedTop, decodeState, interval, monthTotal, repeatSeconds, settleSeconds } from "../../gen/slopbot__spendAlerts.effect.vibe"
 import { budgetExhausted } from "../route/route.vibe"
 
 schema LedgerRow {
@@ -12,6 +12,7 @@ schema LedgerRow {
   provider: string
   outcome: string
   failure: string | null
+  review_key: string
   requested_model: string
   created_at: string
   billed: number
@@ -28,6 +29,7 @@ export interface LedgerCall {
   readonly id: number
   readonly month: string
   readonly known: boolean
+  readonly reviewKey: string
   readonly model: string
   readonly occurredAt: string
   readonly outcome: string
@@ -46,6 +48,11 @@ export interface ClaimedMilestone {
   readonly estimatedCalls: number
 }
 
+export interface Window {
+  readonly settled: string
+  readonly repeatSince: string
+}
+
 interface Scope {
   readonly name: string
   readonly costs: Statement
@@ -54,14 +61,10 @@ interface Scope {
 
 export const emptySpend: Spend = { costs: [], alerts: [], failures: [] }
 
-// Whole seconds since the epoch, as the spend machine counts time.
 export function secondsAt(iso: string) {
   const millis = millisOf(iso)
   return Number.isFinite(millis) && millis > 0 ? Math.floor(millis / 1000) : 0
 }
-
-const suppressions: Readonly<Record<string, Suppression>> = { "served-by-fallback": "ServedByFallback", "repeat-within-6h": "RepeatWithin6h" }
-const suppressionText: Readonly<Record<Exclude<Suppression, "NoSuppression">, string>> = { ServedByFallback: "served-by-fallback", RepeatWithin6h: "repeat-within-6h" }
 
 export function monthNumber(text: string) {
   return Number(text.slice(0, 4)) * 12 + Number(text.slice(5, 7))
@@ -69,6 +72,13 @@ export function monthNumber(text: string) {
 
 export function monthOf(iso: string) {
   return iso.slice(0, 7)
+}
+
+export effect function windowAt(now: number) {
+  return {
+    settled: try isoAt((now - settleSeconds + 1) * 1000 - 1),
+    repeatSince: try isoAt((now - repeatSeconds) * 1000),
+  } satisfies Window
 }
 
 export function failureKindOf(outcome: string, failure: string | null): FailureKind {
@@ -81,6 +91,17 @@ function receiptOf(outcome: string | null): Receipt {
   return outcome === "ambiguous" ? "Ambiguous" : "NoReceipt"
 }
 
+const suppressions: Readonly<Record<string, Suppression>> = { "served-by-fallback": "ServedByFallback", "repeat-within-6h": "RepeatWithin6h" }
+
+const suppressionText: Readonly<Record<Exclude<Suppression, "NoSuppression">, string>> = { ServedByFallback: "served-by-fallback", RepeatWithin6h: "repeat-within-6h" }
+
+effect function suppressionFrom(row: NoticeRow) {
+  if (row.suppression === null) return "NoSuppression" satisfies Suppression
+  const suppression = suppressions[row.suppression]
+  if (suppression !== undefined) return suppression
+  throw new RowMismatch({ text: "slopbot provider failure suppressions", issue: `call ${row.call_id} records an unknown reason` })
+}
+
 const providers: Readonly<Record<string, Provider>> = { orbio: "Orbio", surplus: "Surplus" }
 
 effect function providerOf(row: LedgerRow) {
@@ -91,7 +112,7 @@ effect function providerOf(row: LedgerRow) {
 }
 
 function costReads(scope: Statement) {
-  return sql`SELECT c.id, substr(c.created_at, 1, 7) AS month, coalesce(c.provider_cost_micro_usd, c.cost_micro_usd) AS amount, c.provider, c.outcome, c.failure, c.requested_model, c.created_at,
+  return sql`SELECT c.id, substr(c.created_at, 1, 7) AS month, coalesce(c.provider_cost_micro_usd, c.cost_micro_usd) AS amount, c.provider, c.outcome, c.failure, c.review_key, c.requested_model, c.created_at,
       coalesce(c.review_key, '') || ':' || coalesce(c.call_kind, '') AS job,
       CASE c.billing_rule WHEN 'call-v1' THEN c.billed_micro_usdc ELSE c.billable_cost_micro_usd END AS billed,
       (NOT EXISTS (SELECT 1 FROM slopbot_provider_failure_notices n WHERE n.call_id = c.id) AND (c.billing_rule = 'call-v1' OR c.outcome = 'failed'
@@ -116,7 +137,7 @@ function noticeReads(scope: Statement) {
 function version(scope: Scope) {
   return sql`SELECT (SELECT count(*) || ':' || coalesce(max(c.id), 0) FROM slopbot_costs c WHERE ${scope.costs})
     || '|' || coalesce((SELECT group_concat(month || ':' || threshold || ':' || coalesce(outcome, '-'), ',') FROM (${alertReads(scope.alerts)})), '')
-    || '|' || coalesce((SELECT group_concat(call_id || ':' || claimed || ':' || coalesce(outcome, '-'), ',') FROM (${noticeReads(scope.costs)})), '') AS version`
+    || '|' || coalesce((SELECT group_concat(call_id || ':' || claimed || ':' || coalesce(outcome, '-') || ':' || coalesce(suppression, '-'), ',') FROM (${noticeReads(scope.costs)})), '') AS version`
 }
 
 effect function ledgerOf([costRows, alertRows, noticeRows]: ReadonlyArray<Rows>) {
@@ -142,18 +163,16 @@ effect function ledgerOf([costRows, alertRows, noticeRows]: ReadonlyArray<Rows>)
       at: secondsAt(row.created_at),
     })
   }
-  const failures = []
+  const failures: FailureNotice[] = []
   for (const row of notices) {
-    const suppressed = row.suppression === null ? "NoSuppression" : suppressions[row.suppression]
-    if (suppressed === undefined) throw new RowMismatch({ text: "slopbot provider failure suppressions", issue: `call ${row.call_id} records an unknown reason` })
-    failures.push({ call: ordinal.get(row.call_id) ?? 0, claimed: row.claimed === 1, receipt: receiptOf(row.outcome), suppressed, recordedAt: row.recorded_at === null ? 0 : secondsAt(row.recorded_at) })
+    failures.push({ call: ordinal.get(row.call_id) ?? 0, claimed: row.claimed === 1, receipt: receiptOf(row.outcome), suppressed: try suppressionFrom(row), recordedAt: row.recorded_at === null ? 0 : secondsAt(row.recorded_at) })
   }
   const spend = try decodeState({
     costs: ledgerCosts,
     alerts: alerts.map((row) => ({ month: monthNumber(row.month), threshold: row.threshold, recorded: row.recorded, receipt: receiptOf(row.outcome) })),
     failures,
   })
-  const calls = costs.map((row) => ({ id: row.id, month: row.month, known: row.known === 1, model: row.requested_model, occurredAt: row.created_at, outcome: row.outcome, failure: row.failure }) satisfies LedgerCall)
+  const calls = costs.map((row) => ({ id: row.id, month: row.month, known: row.known === 1, reviewKey: row.review_key, model: row.requested_model, occurredAt: row.created_at, outcome: row.outcome, failure: row.failure }) satisfies LedgerCall)
   return { spend, calls } satisfies Ledger
 }
 
@@ -171,14 +190,13 @@ function months(texts: NonEmpty<string>): Scope {
   return { name: `slopbot spend in ${texts.join(", ")}`, costs: sql`substr(c.created_at, 1, 7) IN ${listed}`, alerts: sql`a.month IN ${listed}` }
 }
 
-// A failure notice is decided against its own call, the later calls of the same job (a fallback that served it) and
-// the calls whose notices were accepted in the last six hours (a repeat of the same model and failure text).
-function failureScope(callId: number): Scope {
+function failureScope(callId: number, window: Window): Scope {
   return {
     name: `slopbot provider call ${callId}`,
     costs: sql`(c.id = ${callId}
       OR (c.id > ${callId} AND c.review_key IS (SELECT f.review_key FROM slopbot_costs f WHERE f.id = ${callId}) AND c.call_kind IS (SELECT f.call_kind FROM slopbot_costs f WHERE f.id = ${callId}))
-      OR EXISTS (SELECT 1 FROM slopbot_provider_failure_receipts r WHERE r.call_id = c.id AND r.outcome = 'accepted' AND r.recorded_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-21600 seconds')))`,
+      OR EXISTS (SELECT 1 FROM slopbot_provider_failure_receipts r WHERE r.call_id = c.id AND r.outcome = 'accepted' AND r.recorded_at >= ${window.repeatSince})
+      OR (c.id < ${callId} AND c.created_at <= ${window.settled} AND EXISTS (SELECT 1 FROM slopbot_provider_failure_notices u WHERE u.call_id = c.id AND u.claimed_at IS NULL)))`,
     alerts: sql`0`,
   }
 }
@@ -226,10 +244,12 @@ export interface ClaimedFailure {
 }
 
 export effect function claimFailureNotice(callId: number) {
-  return try update(ledger(failureScope(callId)), (current) => effect {
-    const at = try isoNow()
+  const millis = try Clock.currentTimeMillis
+  const now = Math.floor(millis / 1000)
+  const at = try isoAt(millis)
+  return try update(ledger(failureScope(callId, try windowAt(now))), (current) => effect {
     const ordinal = ordinalOf(current, callId)
-    const next = try apply(current.spend, { type: "claimFailure", call: ordinal, now: secondsAt(at) })
+    const next = try apply(current.spend, { type: "claimFailure", call: ordinal, now })
     const suppressed = next.failures.find((notice) => notice.call === ordinal)?.suppressed ?? "NoSuppression"
     const claimed = current.calls.find((found) => found.id === callId)
     const writes = [sql`UPDATE slopbot_provider_failure_notices SET claimed_at = ${at} WHERE call_id = ${callId} AND claimed_at IS NULL`]
@@ -239,9 +259,11 @@ export effect function claimFailureNotice(callId: number) {
 }
 
 export effect function recordFailureReceipt(callId: number, accepted: boolean) {
-  return try update(ledger(failureScope(callId)), (current) => effect {
-    const at = try isoNow()
-    const next = try apply(current.spend, { type: "deliverFailure", call: ordinalOf(current, callId), accepted, now: secondsAt(at) })
+  const millis = try Clock.currentTimeMillis
+  const now = Math.floor(millis / 1000)
+  const at = try isoAt(millis)
+  return try update(ledger(failureScope(callId, try windowAt(now))), (current) => effect {
+    const next = try apply(current.spend, { type: "deliverFailure", call: ordinalOf(current, callId), accepted, now })
     return {
       value: next,
       writes: [sql`INSERT INTO slopbot_provider_failure_receipts (call_id, outcome, recorded_at) VALUES (${callId}, ${accepted ? "accepted" : "ambiguous"}, ${at})`],

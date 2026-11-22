@@ -481,7 +481,6 @@ export function publisher(options: PublisherOptions) {
     }
 
     effect function feeVersions(target: Target) {
-      try preparedFor(target)
       const state = try workerState()
       const latest = try inspectVersion(state.latest.id)
       const activeVersions: FeeVersionRead[] = []

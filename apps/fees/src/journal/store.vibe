@@ -1,9 +1,10 @@
-// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+import { type Hex, keccak256, parseTransaction, serializeTransaction } from "viem"
 import { D1, RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Event, type Fee, NotAState, type ProviderFinding, type Reservation, type Row, apply, day, decodeEvent, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
+import { type Event, type Fee, NotAState, type ProviderFinding, type RecordedSend, type Reservation, type Row, apply, day, decodeEvent, liabilityOf, maximumSafeValue, ownReservation, pendingIntent, recordedMaximum, vaultOf, wallet, worstCase } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Sender, dailyCeilingOf, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, type Intent, type Journal, type NameKind, type Names, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
 import { type EvmSend, type ReservedSend, verifiedEvmSend, verifiedSolanaSend } from "./signedSend.ts"
@@ -129,6 +130,22 @@ effect function boundEvm(send: EvmSend | undefined, nonce: number, maximumWei: b
   if (send === undefined) return
   if (send.nonce !== nonce) throw new JournalRefused({ event: event.type, issue: "the signed nonce is not the reserved one" })
   if (!withinReservation(send.gas, send.maxFeePerGas, maximumWei)) throw new JournalRefused({ event: event.type, issue: "the signed worst-case fee exceeds the reserved maximum" })
+}
+
+function sameRecorded(a: RecordedSend, b: RecordedSend) {
+  return a.token === b.token && a.kind === b.kind && a.tx === b.tx && a.nonce === b.nonce && a.gasLimit === b.gasLimit && a.fees.maxFee === b.fees.maxFee
+    && a.fees.priority === b.fees.priority && a.amountIn === b.amountIn && a.valueMicro === b.valueMicro && a.wallet === b.wallet
+    && (a.kind !== "Conversion" || a.minimumOutput === b.minimumOutput) && (a.kind === "Claim" || a.deadline === b.deadline)
+}
+
+effect function recordedIntentHash(rawTx: string, event: Event) {
+  return try Effect.try({
+    try: () => {
+      const { r: _r, s: _s, v: _v, yParity: _y, ...unsigned } = parseTransaction(rawTx as Hex)
+      return keccak256(serializeTransaction(unsigned))
+    },
+    catch: () => new JournalRefused({ event: event.type, issue: "the recorded bytes are not a complete EVM transaction" }),
+  })
 }
 
 effect function sameTx(names: Names, text: string | undefined, value: number, event: Event) {
@@ -291,6 +308,28 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
         now,
       })]
     }
+    case "importRecorded": {
+      const recorded = event.recorded
+      const record = try need(journal.unaccounted.find((entry) => entry.recorded.tx === recorded.tx), event, "the imported send is not an unreserved send of this journal")
+      if (!sameRecorded(record.recorded, recorded)) throw new JournalRefused({ event: event.type, issue: "the imported send differs from its recorded bytes" })
+      const intentHash = try recordedIntentHash(record.rawTx, event)
+      const checked = try need(try verifiedSend(current.network, { txId: record.txId, rawTx: record.rawTx, intentHash, wallet: record.wallet }, null, event), event, "only EVM sends are imported")
+      if (checked.nonce !== recorded.nonce || checked.gas.toString() !== String(recorded.gasLimit)) throw new JournalRefused({ event: event.type, issue: "the imported send differs from its recorded bytes" })
+      return W.importReservation({
+        id: `fee-gas-${try randomId()}`,
+        network,
+        wallet: record.wallet,
+        nonce: recorded.nonce,
+        intentHash,
+        runId: try runOf(event.runId),
+        maximumWei: try weiOf(recordedMaximum(current, recorded), current.network),
+        perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network),
+        perDayWei: try weiOf(dailyCeilingOf(current.network), current.network),
+        txId: record.txId,
+        conversionId: record.id,
+        createdAt: now,
+      })
+    }
     case "failPreparation": {
       const record = try sendOf(pendingIntent(current, event.runId).id)
       const held = journal.gas[ownReservation(current, event.runId).id - 1]
@@ -434,24 +473,6 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
         }),
       ]
     }
-    case "importRecorded": {
-      // A historical send an earlier Worker signed without a reservation: its existing row takes a signed, unsettled
-      // reservation of its own worst case, under the run's lease, outside both ceilings (development native-gas.ts
-      // importRecorded). The row is the recorded one, found by its transaction.
-      const recorded = event.recorded
-      const txId = try sameTx(names, facts.txId, recorded.tx, event)
-      const intentHash = try need(facts.intentHash, event, "the recorded send's intent hash is missing")
-      const feeWallet = try walletText(wallet(current))
-      const run = try runOf(event.runId)
-      const maximumWei = try weiOf(recordedMaximum(current, recorded), current.network)
-      return [sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose, imported)
-        SELECT ${`fee-gas-${try randomId()}`}, ${network}, ${feeWallet}, ${recorded.nonce}, ${intentHash}, ${run}, ${maximumWei}, ${try weiOf(transactionCeilingOf(current.network), current.network)}, ${try weiOf(dailyCeilingOf(current.network), current.network)}, 'signed', ${txId}, c.id, ${now}, 'fees', 1
-          FROM fee_conversions c
-         WHERE c.network = ${network} AND c.mode = 'live' AND (c.tx_id = ${txId} OR c.approval_tx_id = ${txId})
-           AND NOT EXISTS (SELECT 1 FROM fee_native_gas g WHERE g.network = ${network} AND g.tx_id = ${txId})
-           AND EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${network} AND run_id = ${run} AND expires_at >= ${now})
-         LIMIT 1`]
-    }
     default: {
       const _exhaustive: never = event
       return _exhaustive
@@ -468,6 +489,7 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
     asset: holding.asset,
     received: holding.feeIncome - holding.claimed,
     topUps: holding.topUps,
+    balance: holding.asset === "NativeAsset" ? undefined : holding.balance,
     vault: holding.vault > 0 ? try named(names, "vault", holding.vault, event) : undefined,
     vaultObserved: holding.vaultObserved,
   })

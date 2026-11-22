@@ -16,7 +16,7 @@ import { creditOf, usdg as usdgAsset } from "../gen/fees__buybackPool.effect.vib
 import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import type { BookedDirectFee } from "../src/buyback/income.vibe"
 import type { PoolInstance } from "../src/buybackPool/codec.vibe"
-import { poolInstance } from "../src/buybackPool/evidence.vibe"
+import { type PoolAsset, poolInstance } from "../src/buybackPool/evidence.vibe"
 import { type PoolResult, type PoolSettings, robinhoodPool } from "../src/buybackPool/run.vibe"
 import { type Facts, poolOf, send } from "../src/buybackPool/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
@@ -43,7 +43,10 @@ const start = 1794441600000
 const hour = 3600000
 const generation = 5
 const thresholdGeneration = 6
+const assetGeneration = 7
 const usdg = robinhoodUsdg as Address
+const other = "0x00000000000000000000000000000000000000e7" as Address
+const unvalued = "0x00000000000000000000000000000000000000e8" as Address
 const slop = slopToken as Address
 const router = kyberswap.router as Address
 const swapCaller = "0x0000000000000000000000000000000000000001" as Address
@@ -140,7 +143,8 @@ async function installed(robinhood: Anvil, out: string) {
   const { bytecode } = await artifact(`${out}/FeeConverterFixture.sol/FeeConverterUSDC.json`)
   const deployed = await robinhood.transact({ from: deployer.address, data: bytecode })
   if (deployed.contractAddress === undefined) throw new Error("FeeConverterUSDC was not deployed")
-  await robinhood.rpc("anvil_setCode", [usdg, await robinhood.rpc("eth_getCode", [deployed.contractAddress, "latest"])])
+  const tokenCode = await robinhood.rpc("eth_getCode", [deployed.contractAddress, "latest"])
+  for (const token of [usdg, other, unvalued]) await robinhood.rpc("anvil_setCode", [token, tokenCode])
   await robinhood.rpc("anvil_setCode", [slop, slopCode])
   await robinhood.rpc("anvil_setCode", [router, routerCode])
   await robinhood.rpc("anvil_setStorageAt", [slop, slotOf(router), word(10_000n * 10n ** 18n)])
@@ -160,6 +164,8 @@ const Started = Layer.effect(Fixture, effect {
   const quotes = quotesFake()
   quotes.kyberswap.route({ chain: "robinhood", tokenIn: usdg, tokenOut: slop, amountOut: (amount) => amount * usdgUnits, routerAddress: router, amountInUsd: "545", amountOutUsd: "545", gasUsd: "0.5", l1FeeUsd: "0" })
   quotes.kyberswap.route({ chain: "robinhood", tokenIn: slop, tokenOut: usdg, amountOut: (amount) => amount / usdgUnits, routerAddress: router, gasUsd: "0", l1FeeUsd: "0" })
+  quotes.kyberswap.route({ chain: "robinhood", tokenIn: other, tokenOut: usdg, amountOut: (amount) => amount / 2n, routerAddress: router, gasUsd: "0", l1FeeUsd: "0" })
+  quotes.kyberswap.route({ chain: "robinhood", tokenIn: other, tokenOut: slop, amountOut: (amount) => amount * usdgUnits, routerAddress: router, amountInUsd: "220", amountOutUsd: "220", gasUsd: "0.5", l1FeeUsd: "0" })
   quotes.kyberswap.route({ chain: "robinhood", tokenIn: kyberNative, tokenOut: usdg, amountOut: (wei) => (wei * 3n) / 1_000_000_000_000n, routerAddress: router, gasUsd: "0", l1FeeUsd: "0" })
   const net = try orDie(Effect.try(() => internet({ quotes: simpleMode(quotes.handler), rpc: { [robinhood.url]: forward(robinhood.url) } })))
   return { db: started.db, robinhood, fetch: asFetch(net.handler), quotes }
@@ -182,7 +188,7 @@ effect function opened(at: number) {
   const { db } = try Fixture
   const offset = offsetOf(at)
   const names = generationNames(at)
-  return { instance: { scope: `g${at}:`, offset, held: generationInstance(at, "Robinhood").held, names, wallet: walletOf(at), arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0 }, generation: at, offset, names, clock: settableClock(offset + start + 2 * hour), db } satisfies World
+  return { instance: { scope: `g${at}:`, offset, held: generationInstance(at, "Robinhood").held, names, wallet: walletOf(at), assets: [robinhoodUsdg], arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0 }, generation: at, offset, names, clock: settableClock(offset + start + 2 * hour), db } satisfies World
 }
 
 function services(world: World) {
@@ -222,9 +228,10 @@ effect function arrival(world: World, index: number, take: bigint, runId: string
   }, d1(world.db))
 }
 
-effect function instanceOf(world: World, bookedUsdg: ReadonlyArray<BookedDirectFee>, bookedSlop: ReadonlyArray<BookedDirectFee>) {
+effect function instanceOf(world: World, bookedUsdg: ReadonlyArray<BookedDirectFee>, bookedSlop: ReadonlyArray<BookedDirectFee>, others: ReadonlyArray<PoolAsset> = []) {
   const journalInstance = journalOf(world)
-  const built = try Effect.provide(poolInstance({ scope: journalInstance.scope, offset: world.offset, held: world.instance.held, names: world.names, wallet: walletOf(world.generation), journal: journalInstance, bookedUsdg, bookedSlop }), services(world))
+  const assets = [{ token: robinhoodUsdg, booked: bookedUsdg }, ...others]
+  const built = try Effect.provide(poolInstance({ scope: journalInstance.scope, offset: world.offset, held: world.instance.held, names: world.names, wallet: walletOf(world.generation), journal: journalInstance, assets, bookedSlop }), services(world))
   world.instance = built
   return built
 }
@@ -261,6 +268,14 @@ function recorded(run: PoolResult) {
   return [...run.records]
 }
 
+function routeCalls(quotes: QuotesFake, tokenIn: Address, tokenOut: Address) {
+  return quotes.calls.filter((call) => {
+    if (call.service !== "kyberswap") return false
+    const query = new URL(call.url).searchParams
+    return query.get("tokenIn") === tokenIn.toLowerCase() && query.get("tokenOut") === tokenOut.toLowerCase()
+  }).map((call) => new URL(call.url).searchParams.get("amountIn"))
+}
+
 function whole(amount: Pool["purchased"]) {
   return fromAmount(amount).toString()
 }
@@ -268,6 +283,8 @@ function whole(amount: Pool["purchased"]) {
 schema TxCheck { tx_id: string }
 schema SendCheck { kind: string; state: string; mode: string; reason: string | null; amount_in: string }
 schema DecisionCheck { state: string; mode: string; reason: string | null; amount_in: string; quote_value_micro: number | null }
+schema AssetDecisionCheck { token: string; state: string; reason: string | null; amount_in: string; quote_value_micro: number | null }
+schema AssetSendCheck { kind: string; token: string; state: string; amount_in: string; quote_value_micro: number | null }
 
 function purchaseQuotes(quotes: QuotesFake) {
   return quotes.calls.filter((call) => call.service === "kyberswap" && new URL(call.url).searchParams.get("tokenIn") === usdg.toLowerCase()).map((call) => new URL(call.url).searchParams.get("amountIn"))
@@ -416,6 +433,68 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       decisions: [
         ["pending", "dry_run", "below the minimum purchase value", "20000000", 20_000_000],
         ["quoted", "dry_run", null, "1000000000", 1_000_000_000],
+      ],
+    })
+  })
+
+  it.effect('A Robinhood fee asset other than USDG is valued in USDG before any SLOP route: valued below 25 USDG it waits, valued above it is quoted and then bought after the valuation with its own input and its USDG value, and a failed valuation is no route (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackPool.md, "Each purchase evaluation records why it waits, in the pinned order"; spec/fees/buybackPool.md, "One run cap, one rolling cap and one burn share bound the whole pool")', () => effect {
+    const { db, robinhood, quotes } = try Fixture
+    const world = try opened(assetGeneration)
+    const runId = try leased(world)
+    try promise(() => robinhood.rpc("anvil_setBalance", [walletOf(assetGeneration), word(10n ** 19n)]))
+    try stored(robinhood, router, word(0n), 0n)
+    for (const token of [other, unvalued]) try promise(() => robinhood.transact({ from: robinhood.accounts[0]?.address ?? walletOf(assetGeneration), to: token, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [walletOf(assetGeneration), 1_000_000_000n] }) }))
+    try finalize(robinhood)
+    const fee = (receipt: string, amount: bigint) => ({ receipt: `g${assetGeneration}-${receipt}`, amount, chainTime: start + hour })
+    const unvaluedFees: PoolAsset = { token: unvalued, booked: [fee("unvalued-1", 200_000_000n)] }
+    try instanceOf(world, [], [], [{ token: other, booked: [fee("other-1", 40_000_000n)] }, unvaluedFees])
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRun }, "ReleaseWorkflow")
+    try step(world, { type: "verifyReadiness" }, "Owner")
+    const waiting = try ran(world, runId)
+    const waitingCalls = { valued: routeCalls(quotes, other, usdg), routed: routeCalls(quotes, other, slop), unvalued: routeCalls(quotes, unvalued, slop) }
+    try instanceOf(world, [], [], [{ token: other, booked: [fee("other-1", 40_000_000n), fee("other-2", 400_000_000n)] }, unvaluedFees])
+    const quoting = try ran(world, runId)
+    const quotingCalls = { valued: routeCalls(quotes, other, usdg), routed: routeCalls(quotes, other, slop), unvalued: routeCalls(quotes, unvalued, slop) }
+    const decisions = try Effect.provide(rows(AssetDecisionCheck, sql`SELECT token, state, reason, amount_in, quote_value_micro FROM fee_conversions WHERE network = 'robinhood' AND kind = 'buyback' AND substr(run_id, 1, ${world.instance.scope.length}) = ${world.instance.scope} ORDER BY rowid`), d1(db))
+    try step(world, { type: "publishWorker", config: { ...dryRun, source: 2, buybackMode: "Live" } }, "ReleaseWorkflow")
+    const approving = try ran(world, runId)
+    try finalize(robinhood)
+    const purchasing = try ran(world, runId)
+    const reloaded = (try Effect.provide(poolOf(world.instance), services(world))).state
+    const signed = try Effect.provide(rows(AssetSendCheck, sql`SELECT kind, token, state, amount_in, quote_value_micro FROM fee_conversions WHERE network = 'robinhood' AND tx_id IS NOT NULL AND substr(run_id, 1, ${world.instance.scope.length}) = ${world.instance.scope} ORDER BY rowid`), d1(db))
+
+    try same({
+      assets: world.instance.assets,
+      credits: [creditOf(quoting.state, 1).credit, creditOf(quoting.state, 2).credit, creditOf(quoting.state, 3).credit],
+      waiting: recorded(waiting),
+      waitingCalls,
+      quoting: recorded(quoting),
+      quotingCalls,
+      decisions: decisions.map((row) => [row.token.toLowerCase(), row.state, row.state === "no_route" ? row.reason?.startsWith("value unavailable: ") === true : row.reason, row.amount_in, row.quote_value_micro]),
+      approving: recorded(approving),
+      purchasing: [recorded(purchasing), purchasing.state.purchaseAsset, purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditOf(purchasing.state, 2).credit],
+      reloaded: [reloaded.purchaseAsset, reloaded.purchase.phase, reloaded.purchase.amount, reloaded.runSpent, creditOf(reloaded, 2).credit, reloaded.purchaseSpends.map((spend) => spend.amount)],
+      signed: signed.map((row) => [row.kind, row.token.toLowerCase(), row.state, row.amount_in, row.quote_value_micro]),
+    }, {
+      assets: [robinhoodUsdg, other, unvalued],
+      credits: [0, 220_000_000, 100_000_000],
+      waiting: ["beginRun", "decidePurchase", "decidePurchase"],
+      waitingCalls: { valued: ["20000000"], routed: [], unvalued: [] },
+      quoting: ["beginRun", "decidePurchase", "decidePurchase"],
+      quotingCalls: { valued: ["20000000", "220000000"], routed: ["220000000"], unvalued: [] },
+      decisions: [
+        [other, "pending", "below the minimum purchase value", "20000000", 10_000_000],
+        [unvalued, "no_route", true, "100000000", 0],
+        [other, "quoted", null, "220000000", 110_000_000],
+        [unvalued, "no_route", true, "100000000", 0],
+      ],
+      approving: ["beginRun", "approvePurchase", "decidePurchase"],
+      purchasing: [["beginRun", "settleApproval", "purchase"], 2, "Submitted", 220_000_000, 110_000_000, 0],
+      reloaded: [2, "Submitted", 220_000_000, 110_000_000, 0, [110_000_000]],
+      signed: [
+        ["approval", other, "finalized", "220000000", 110_000_000],
+        ["buyback", other, "submitted", "220000000", 110_000_000],
       ],
     })
   })

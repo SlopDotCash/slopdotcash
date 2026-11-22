@@ -1,11 +1,12 @@
-// spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"
+// spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "A retained-batch award the batch no longer supplies is zeroed once"
 import { sha256Hex } from "@repo/platform/crypto"
 import { millisOf } from "@repo/platform/clock"
 import { ScoreEvent, scoreV2EffectiveAt } from "../client/snapshot/schema.vibe"
 import type { Revision as Row } from "../kernels/records/canonical.ts"
-import { type Repositories, type Store, advanceTo, projectOf } from "./ledger.vibe"
-import { commit, flush, sameAward } from "./rows.vibe"
-import { type Credited, UnregisteredRepository, awardFor, creditAward } from "./snapshot.vibe"
+import { retiredAwards } from "../evaluations/retired.vibe"
+import { type Repositories, type Store, advanceTo, command, hold, projectOf } from "./ledger.vibe"
+import { appended, commit, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
+import { type Credited, UnregisteredRepository, awardFor, batchOwnedKeys, creditAward } from "./snapshot.vibe"
 
 export error RetainedEventInvalid { position: number }
 
@@ -41,6 +42,37 @@ export effect function retainedDigest(reviewed: ReadonlyArray<unknown>) {
   return try sha256Hex(JSON.stringify(reviewed))
 }
 
+effect function omittedKeys(store: Store, repositories: Repositories, events: ReadonlyArray<ScoreEvent>) {
+  const supplied = new Set((try retainedAwards(repositories, events)).map((item) => item.award.key))
+  for (const retired of (try retiredAwards(store.revisions)).values()) supplied.add(retired.retained.award.key)
+  const listed = new Set(repositories.registry.projectIds)
+  return [...batchOwnedKeys(store)].filter((key) => {
+    const prior = store.latest.get(key)
+    return prior !== undefined && !supplied.has(key) && listed.has(prior.award.projectId)
+  })
+}
+
+effect function zeroOmitted(store: Store, key: string, digest: string, recordedAt: string) {
+  const prior = store.latest.get(key)
+  if (prior === undefined) return []
+  const { award } = prior
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const modelKey = opened.names.keys.get(key)
+  if (modelKey === undefined || opened.names.opaque.has(key)) {
+    hold(store, { subject: key, reason: "the recorded history of this award is outside the journal model", digest })
+    return []
+  }
+  const refused = try sendAll(opened, [{ type: "zeroRetainedOmission", k: modelKey, batch: { digest, supplied: [], listedProjects: [award.projectId] } }])
+  if (refused !== "") {
+    hold(store, { subject: key, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const provenance = { recordedAt, sourceDigest: digest, effectiveAt: recordedAt, decisionSourceId: "" }
+  const rows: Row[] = []
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, new Map([[award.actor.id, award]]), provenance)))
+  return rows
+}
+
 export effect function applyRetainedReviews(store: Store, repositories: Repositories, reviewed: ReadonlyArray<unknown>, recordedAt: string) {
   const digest = try retainedDigest(reviewed)
   try advanceTo(store, recordedAt)
@@ -48,19 +80,25 @@ export effect function applyRetainedReviews(store: Store, repositories: Reposito
   const covered = new Set(store.coverage.map((entry) => entry.digest))
   const changes: Row[] = []
   const confirmations: Credited[] = []
-  const recorded = { digest, recordedAt, rule: "ScoreV2" as const, projectCollected: true }
-  for (const item of try retainedAwards(repositories, events.filter((event) => event.category !== "evaluated-contribution"))) {
+  const recorded = { digest, recordedAt, rule: "ScoreV2" as const, projectCollected: true, decided: false }
+  const omitted = (try omittedKeys(store, repositories, events)).map((key) => ({ key, item: undefined }))
+  const supplied = (try retainedAwards(repositories, events.filter((event) => event.category !== "evaluated-contribution"))).map((item) => ({ key: item.award.key, item }))
+  for (const { key, item } of [...supplied, ...omitted].sort((left, right) => left.key.localeCompare(right.key))) {
+    if (item === undefined) {
+      try commit(store, changes, try zeroOmitted(store, key, digest, recordedAt))
+      continue
+    }
     const prior = store.latest.get(item.award.key)
     if (prior !== undefined && sameAward(prior.award, item.award)) {
       if (item.award.amount > 0 && item.award.category === "substantive-review" && covered.has(prior.sourceDigest)) confirmations.push(item)
       continue
     }
-    try commit(store, changes, try creditAward(store, repositories, item, { ...recorded, reason: "Retained review history records this award." }))
+    try commit(store, changes, try creditAward(store, repositories, item, recorded))
   }
   flush(store, changes)
   const confirmed: Row[] = []
   for (const item of [...confirmations].sort((left, right) => left.award.key.localeCompare(right.award.key))) {
-    try commit(store, confirmed, try creditAward(store, repositories, item, { ...recorded, reason: "Retained review history confirms this award.", confirmation: true }))
+    try commit(store, confirmed, try creditAward(store, repositories, item, { ...recorded, confirmation: true }))
   }
   flush(store, confirmed)
   store.generatedAt = recordedAt

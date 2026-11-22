@@ -20,7 +20,6 @@ const pendingMonth = sql`WITH monthly AS (
     FROM monthly
   ) SELECT month FROM pending WHERE recorded >= threshold ORDER BY month LIMIT 1`
 
-// The lowest unclaimed notice whose call is at least settleSeconds old, so the rest of its route is recorded first.
 const pendingNotice = sql`SELECT n.call_id FROM slopbot_provider_failure_notices n JOIN slopbot_costs c ON c.id = n.call_id
   WHERE n.claimed_at IS NULL AND c.created_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ${`-${settleSeconds} seconds`})
   ORDER BY n.call_id LIMIT 1`
@@ -42,7 +41,6 @@ export effect function dispatchSpendAlert() {
   if (!accepted) throw new NeedsReconciliation({ notice: "spend" })
 }
 
-// One run claims at most maxSuppressionsPerRun suppressed notices and sends at most one email.
 export effect function dispatchFailureAlert() {
   for (let suppressed = 0; suppressed < maxSuppressionsPerRun; suppressed += 1) {
     const pending = try first(PendingNotice, pendingNotice)

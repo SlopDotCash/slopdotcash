@@ -36,8 +36,6 @@ export effect function release(args: ReadonlyArray<string>) {
   const environment = environmentOf(first ?? "")
   const name = nameOf(first)
   if (command === "coverage" && environment !== undefined && third === undefined) {
-    // A production release must contain the last commit of the previous application history; the coverage run reads it
-    // from the checkout (the second argument, default ".").
     const facts = try runFacts()
     provide systemGit {
       const anchored = environment !== "Production" || (try isAncestor(second ?? ".", historyAnchor, facts.sha))

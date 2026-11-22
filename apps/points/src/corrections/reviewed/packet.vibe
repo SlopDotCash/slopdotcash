@@ -1,0 +1,182 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
+import { parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { CorrectionActor, CorrectionCommit, CorrectionManifest, CorrectionSource, ExpectedPredecessor } from "../apply/manifest.vibe"
+import { base64Bytes, inflated } from "./bytes.ts"
+
+export error ReviewedRefused { message: string }
+
+export schema ReviewedActor { readonly id: string; readonly login: string }
+export schema AuditedSource { readonly id: string; readonly number: number; readonly headSha: string; readonly mergedAt: string }
+export schema SourceAudit {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly from: string
+  readonly through: string
+  readonly sources: ReadonlyArray<AuditedSource>
+}
+export schema ReviewedRecipient { readonly actor: ReviewedActor; readonly githubId: string; readonly weight: string }
+export schema ExpectedAward { readonly key: string; readonly actorId: string; readonly amount: number; readonly occurredAt: string }
+export schema PacketRecipientCorrection {
+  readonly sourceId: string
+  readonly workUnitId: string
+  readonly recipients: ReadonlyArray<ReviewedRecipient>
+  readonly evidenceSha256: string
+  readonly evidence: string
+  readonly expectedAfter: ReadonlyArray<ExpectedAward>
+  readonly claimIds: ReadonlyArray<string>
+  readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
+}
+export schema ShaRef { readonly sha: string }
+export schema PromotionPull {
+  readonly node_id: string
+  readonly html_url: string
+  readonly state: string
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+  readonly head: ShaRef
+  readonly base: ShaRef
+}
+export schema MergeStats { readonly additions: number; readonly deletions: number; readonly total: number }
+export schema PromotionMerge { readonly sha: string; readonly parents: ReadonlyArray<ShaRef>; readonly stats: MergeStats; readonly files: ReadonlyArray<Schema.Unknown> }
+export schema TreeCommit { readonly sha: string; readonly tree: ShaRef; readonly parents: ReadonlyArray<ShaRef> }
+export schema PacketUnchangedPromotion { readonly sourceDigest: string; readonly pull: PromotionPull; readonly merge: PromotionMerge; readonly commits: ReadonlyArray<TreeCommit> }
+export schema AcceptedCommit { readonly sha: string; readonly sourceId: string }
+export schema RetainedObject { readonly sha: string; readonly raw: string }
+export schema AutomaticMerge { readonly baseParentSha: string; readonly gitVersion: "git version 2.56.0"; readonly automaticTree: string }
+export schema ContextSource {
+  readonly id: string
+  readonly number: number
+  readonly headSha: string
+  readonly baseSha: string
+  readonly mergedAt: string
+  readonly mergeSha: string
+  readonly historicalAwardRevisionId?: string
+  readonly reviewedBotFollowupShas?: ReadonlyArray<string>
+  readonly automaticMerge?: AutomaticMerge
+}
+export schema EarlierAcceptanceProof {
+  readonly commits: ReadonlyArray<AcceptedCommit>
+  readonly sourceBaseSha: string
+  readonly objects: ReadonlyArray<RetainedObject>
+  readonly contextSources: ReadonlyArray<ContextSource>
+}
+export schema PacketSquash {
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly repositoryNodeId: string
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly author: CorrectionActor | null
+  readonly commit: CorrectionCommit
+  readonly headCommit: string
+  readonly acceptedCommit: string
+}
+export schema PacketPromotion { readonly headCommit: string; readonly mergeCommit: string; readonly mergeSha: string }
+export schema RewardedUnit { readonly recordDigest: string; readonly recordJson: string; readonly claimId: string; readonly workUnitId: string; readonly awardSourceId: string }
+export schema PathCoverage { readonly commitSha: string; readonly path: string; readonly sourceId: string; readonly rewardedUnit?: RewardedUnit }
+export schema PacketRetirement {
+  readonly sourceId: string
+  readonly workUnitId: string
+  readonly source: CorrectionSource
+  readonly unchangedPromotion?: PacketUnchangedPromotion
+  readonly earlierSources: ReadonlyArray<CorrectionSource>
+  readonly earlierAcceptanceProof?: EarlierAcceptanceProof
+  readonly acceptedSquashes?: ReadonlyArray<PacketSquash>
+  readonly acceptedPromotion?: PacketPromotion
+  readonly coverage: ReadonlyArray<PathCoverage>
+  readonly evidence: string
+  readonly evidenceSha256: string
+  readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
+}
+export schema HistoricalPacket {
+  readonly schemaVersion: "1"
+  readonly projectId: string
+  readonly producerGithubId: string
+  readonly reviewerGithubId: string
+  readonly reviewedAt: string
+  readonly baselineDigest: string
+  readonly baselineRevisionCount: number
+  readonly candidateDigest: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly sourceAudit: SourceAudit
+  readonly valueSnapshot: Schema.Unknown
+  readonly valueKeys: ReadonlyArray<string>
+  readonly corrections: CorrectionManifest
+  readonly recipientCorrections: ReadonlyArray<PacketRecipientCorrection>
+  readonly duplicateRetirements?: ReadonlyArray<PacketRetirement>
+}
+
+export type Author = CorrectionActor | null
+
+export const historicalFrom = "2026-09-27T00:00:00.000Z"
+export const historicalThrough = "2026-11-01T00:00:00.000Z"
+export const octoberStart = "2026-10-01T00:00:00.000Z"
+export const mergeGitVersion = "git version 2.56.0"
+export const digestPattern = /^[a-f0-9]{64}$/u
+export const shaPattern = /^[a-f0-9]{40}$/u
+export const githubIdPattern = /^[1-9][0-9]{0,19}$/u
+
+const packetFields = "baselineDigest,baselineRevisionCount,candidateDigest,corrections,manifestSha256,producerGithubId,projectId,recipientCorrections,reviewedAt,reviewerGithubId,revision,schemaVersion,sourceAudit,valueKeys,valueSnapshot"
+const historicalProjects: ReadonlyArray<string> = ["eliza", "slopdotcash", "asi", "feed", "thenetwork"]
+const maximumPacketBytes = 256 * 1024 * 1024
+const isPacket = Schema.is(HistoricalPacket)
+
+export function refusal(message: string) {
+  return new ReviewedRefused({ message })
+}
+
+export effect function require(holds: boolean, message: string) {
+  if (!holds) throw refusal(message)
+}
+
+export function digestText(value: unknown) {
+  return sha256Of(JSON.stringify(value))
+}
+
+export function isIso(value: string | null): value is string {
+  if (value === null) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+}
+
+export function pullUrl(repository: string, number: number) {
+  return `https://github.com/${repository}/pull/${number}`
+}
+
+function objectKeys(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.keys(value) : []
+}
+
+export effect function decodePacketBytes(bytes: Uint8Array, digest: string) {
+  try require(digestPattern.test(digest), "Invalid reviewed packet digest")
+  try require(sha256Of(bytes) === digest, "Reviewed packet changed")
+  const text = utf8Text(bytes)
+  const raw = text === undefined ? undefined : parsedJson(text)?.value
+  try require(objectKeys(raw).filter((key) => key !== "duplicateRetirements").sort().join(",") === packetFields, "Unexpected reviewed packet fields")
+  try require(isPacket(raw), "Unexpected reviewed packet fields")
+  const packet = raw as HistoricalPacket
+  try require(packet.schemaVersion === "1" && historicalProjects.includes(packet.projectId), "Invalid historical project")
+  try require([packet.producerGithubId, packet.reviewerGithubId].every((id) => githubIdPattern.test(id)), "Missing review identity")
+  try require(isIso(packet.reviewedAt) && packet.reviewedAt >= "2026-11-14T00:00:00.000Z", "Invalid review date")
+  try require([packet.baselineDigest, packet.candidateDigest, packet.manifestSha256].every((id) => digestPattern.test(id)), "Invalid input binding")
+  try require(Number.isSafeInteger(packet.revision) && packet.revision > 0, "Invalid project revision")
+  try require(Number.isSafeInteger(packet.baselineRevisionCount) && packet.baselineRevisionCount >= 0, "Invalid baseline count")
+  const audit = packet.sourceAudit
+  try require(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(audit.repository) && audit.repositoryNodeId.length > 3, "Invalid audit repository")
+  try require(audit.from === historicalFrom && audit.through === historicalThrough, "Incomplete historical window")
+  try require(audit.sources.length > 0 && new Set(audit.sources.map((source) => source.id)).size === audit.sources.length, "Invalid source audit")
+  for (const source of audit.sources) {
+    try require(source.id !== "" && Number.isSafeInteger(source.number) && source.number > 0 && shaPattern.test(source.headSha) &&
+      isIso(source.mergedAt) && source.mergedAt >= audit.from && source.mergedAt < audit.through, "Invalid audited source")
+  }
+  try require(new Set(packet.valueKeys).size === packet.valueKeys.length, "Duplicate value keys")
+  return packet
+}
+
+export effect function decodeEncodedPacket(encoded: string, digest: string) {
+  const compressed = base64Bytes(encoded)
+  const bytes = compressed === null ? null : inflated(compressed, "gzip", maximumPacketBytes)
+  try require(bytes !== null, "Reviewed packet changed")
+  return try decodePacketBytes(bytes ?? new Uint8Array(), digest)
+}

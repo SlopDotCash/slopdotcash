@@ -138,7 +138,7 @@ function receiptDigestOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>)
 
 export function forwardingOf(row: SubmissionRow, history: ReadonlyArray<HistoryRow>, digests: ReadonlyArray<string>, volatile: Volatile): Forwarding | undefined {
   const phase = phases[row.state]
-  if (phase === undefined || row.origin !== "slop") return undefined
+  if (phase === undefined || (row.origin !== "slop" && row.origin !== "direct")) return undefined
   const sends = history.filter((entry) => entry.kind === "send")
   const last = history.at(-1)
   const bound = bindingCopiesOf(history)

@@ -1,0 +1,120 @@
+import { assert, describe, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { sha256Of, textBytes } from "@repo/platform/git/bytes"
+import type { Journal } from "../src/kernels/records/canonical.ts"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { type HistoricalPacket, decodePacketBytes } from "../src/corrections/reviewed/packet.vibe"
+import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
+import { reviewed } from "../src/programs/reviewed.vibe"
+import { periodOf } from "../gen/points__periods.effect.vibe"
+import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
+
+const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
+const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
+const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function rebuilt(packet: unknown, baseline: Journal) {
+  return try reconstructHistoricalPoints({
+    packet: packet as HistoricalPacket,
+    baseline,
+    now: time,
+    bans: new Map(),
+    protection: protectionFor(october),
+    registry,
+    repositories: repositoriesOf(registry, {}),
+    projectOf: () => "feed",
+  })
+}
+
+effect function outcome(packet: unknown, baseline: Journal) {
+  const result = rebuilt(packet, baseline) catch (error) => error._tag
+  return typeof result === "string" ? result : batchDigestOf(result)
+}
+
+function changed(change: (typeof changes)[number]) {
+  const f = mixedSubmittedAndSquashFixture()
+  const squash = f.retirement.acceptedSquashes?.[0]
+  if (squash === undefined || squash.author === null) throw Error("fixture squash")
+  if (change === "merge") f.context.mergeSha = f.prior.headSha
+  if (change === "author") squash.author = { ...squash.author, id: "U_other" }
+  if (change === "kind") squash.author = { ...squash.author, kind: "Bot" }
+  if (change === "head") squash.headSha = "1".repeat(40)
+  if (change === "repo") squash.repositoryNodeId = "R_other"
+  if (change === "date") squash.occurredAt = "2026-10-11T01:00:00.000Z"
+  if (change === "url") squash.sourceUrl = "https://github.com/feedforagents/feed/pull/3"
+  if (change === "submitted-output") {
+    f.prior.commits.push(squash.commit)
+    f.prior.commitCount += 1
+  }
+  if (change === "output-path") f.retirement.coverage = []
+  const [first] = f.retirement.coverage
+  if (change === "wrong-commit-path" && first !== undefined) first.commitSha = f.prior.headSha
+  if (change === "absent-context" && f.retirement.earlierAcceptanceProof !== undefined) f.retirement.earlierAcceptanceProof.contextSources = []
+  f.bind()
+  return f
+}
+
+describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
+  it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
+    provide webCrypto {
+      const f = mixedSubmittedAndSquashFixture()
+      const expected = f.bind()
+      try same(try rebuilt(f.packet, f.baseline), expected)
+    }
+  })
+
+  it.effect("path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path", () => effect {
+    provide webCrypto {
+      const f = mixedSubmittedAndSquashFixture(true)
+      const expected = f.bind()
+      try same(try outcome(f.packet, f.baseline), batchDigestOf(expected))
+      const submitted = f.retirement.source.commits.find((commit) => commit.files?.some((file) => file.path === "submitted.ts") === true)
+      const [file] = submitted?.files ?? []
+      if (submitted === undefined || file === undefined) throw Error("fixture submitted path")
+      file.additions = 2
+      submitted.additions = 2
+      f.bind()
+      try same(try outcome(f.packet, f.baseline), "ReviewedRefused")
+    }
+  })
+
+  it.effect("a mixed submitted and squash proof refuses every changed binding", () => effect {
+    provide webCrypto {
+      for (const change of changes) {
+        const f = changed(change)
+        const found = try outcome(f.packet, f.baseline)
+        try same([change, found === f.packet.candidateDigest], [change, false])
+      }
+    }
+  })
+
+  it.effect("the reviewed packet is read only under its exact digest", () => effect {
+    provide webCrypto {
+      const f = mixedSubmittedAndSquashFixture()
+      f.bind()
+      const bytes = textBytes(JSON.stringify(f.packet))
+      const decoded = try decodePacketBytes(bytes, sha256Of(bytes))
+      try same(try outcome(decoded, f.baseline), f.packet.candidateDigest)
+      const altered = decodePacketBytes(textBytes(JSON.stringify({ ...f.packet, reviewerGithubId: "43" })), sha256Of(bytes)) catch (error) => error._tag
+      try same(typeof altered === "string" ? altered : "decoded", "ReviewedRefused")
+      const stale = f.packet.baselineRevisionCount
+      f.packet.baselineRevisionCount = stale + 1
+      try same(try outcome(f.packet, f.baseline), "ReviewedRefused")
+    }
+  })
+
+  it.effect("an untrusted publication is refused before any private input is read", () => effect {
+    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+      const digest = sha256Of(actor.id)
+      const failure = try Effect.flip(reviewed(["registry.json", "--reviewed-sha256", digest]))
+      try same([failure._tag, failure.message.includes(digest)], ["ReviewedPublicationRefused", false])
+    }
+  })
+})

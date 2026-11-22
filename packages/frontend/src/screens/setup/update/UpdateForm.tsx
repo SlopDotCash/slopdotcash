@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"
 import { Button, Disclosure } from "@repo/ui";
 import { X } from "lucide-react";
 import { formatDate } from "../../projects/summary.ts";
@@ -108,7 +108,13 @@ export function UpdateForm({ review, manifest, shown, open, onOpen, onChange, on
       {review.monthly && !review.bountyOnly ? (
         <Disclosure {...group("rewards", "Monthly rewards")}>
           <div className="pt-2 text-foreground">
-            <FundingFields choice={choice} networkFixed={review.assetFixed} error={shown} onChange={(field, entry) => onChange(fundingFields[field], entry)} />
+            <FundingFields
+              choice={choice}
+              networkFixed={review.assetFixed}
+              error={shown}
+              onChange={(field, entry) => onChange(fundingFields[field], entry)}
+              promise={{ checked: value.honorSystem === "true", onChange: (checked) => onChange("honorSystem", String(checked)) }}
+            />
           </div>
         </Disclosure>
       ) : null}

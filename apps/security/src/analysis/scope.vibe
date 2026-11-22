@@ -39,8 +39,6 @@ export effect function receiptScope(projectId: string, policyRevision: number | 
   return try scopeOfManifest(found?.manifest)
 }
 
-// spec/security/program.md receiptTerms: a published revision in force at receipt is a scope, so its owner exclusion
-// lines are frozen with paid and unpaid terms alike (receipt/program.vibe atReceipt); an unpublished program gives none.
 export function withOwnerLines(terms: ReceiptTerms, scope: ReceiptScope): ReceiptTerms {
   if (scope.kind !== "scope") return terms
   if (terms.paidTerms) return { ...terms, excludedFindings: [...scope.ownerLines] }

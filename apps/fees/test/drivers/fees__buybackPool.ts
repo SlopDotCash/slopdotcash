@@ -12,6 +12,7 @@ import type { IncomeEntry } from "../../src/buyback/codec.vibe";
 import type { ArrivalEntry, PoolInstance } from "../../src/buybackPool/codec.vibe";
 import { type Facts, poolOf, send, sendFloors } from "../../src/buybackPool/store.vibe";
 import { runText } from "../../src/journal/codec.vibe";
+import { robinhoodUsdg } from "../../src/runtime/pins.ts";
 import { journal, send as journalSend } from "../../src/journal/store.vibe";
 import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "../support/journal.ts";
 
@@ -20,6 +21,7 @@ const buybackStart = 1_794_441_600_000;
 const gwei = 1_000_000_000n;
 const reservedUnits = 50_000;
 const receiptBase = { RobinhoodFee: 1_000_000, SlopFee: 2_000_000 } as const;
+const secondAsset = "0x00000000000000000000000000000000000000e7";
 const started = await journalDatabase("fee-buyback-pool-conformance");
 const clock = settableClock(0);
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(started.db), webCrypto, clock.layer));
@@ -41,7 +43,7 @@ function instanceOf(at: number, named: GenerationNames): PoolInstance {
   const journalInstance = generationInstance(at, "Robinhood");
   return {
     scope: journalInstance.scope, offset: offsetOf(at), held: journalInstance.held, names: named, wallet: journalInstance.held.wallets[0] ?? "", journal: journalInstance,
-    arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0,
+    assets: [robinhoodUsdg, secondAsset], arrivalEvidence: [], arrivals: [], feeEvidence: [], fees: [], reserved: [], slopEvidence: [], slopFees: [], runs: 0, runFrom: 0,
   };
 }
 
@@ -86,7 +88,7 @@ function shellEvent(event: Event): Event {
   switch (event.type) {
     case "recordRobinhoodFee": {
       const { shellId, entry } = shellReceipt("RobinhoodFee", event.robinhoodFee.receipt, { amount: amountOfNumber(event.robinhoodFee.amount), chainTime: event.robinhoodFee.chainTime });
-      pool = { ...pool, feeEvidence: [...pool.feeEvidence, entry] };
+      pool = { ...pool, feeEvidence: [...pool.feeEvidence, { ...entry, asset: event.robinhoodFee.asset }] };
       return { ...event, robinhoodFee: { ...event.robinhoodFee, receipt: shellId } };
     }
     case "receiveSlopFee": {

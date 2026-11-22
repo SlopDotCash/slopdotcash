@@ -5,7 +5,7 @@ import { D1, type Statement, first, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import { EmailConsent, EmailEnrollment, ProjectAudience, type ProjectView, Registry } from "@repo/ports/backend"
 import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
-import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
+import { type CaseNoticeAccess, SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import { SlopbotAudience } from "@repo/ports/slopbot"
 import { type AccessCheck, type AppealSource, type Kind, type Notice, type NoticeAudience, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
 import { inPayoutAudience } from "../../gen/operations__payoutAudience.effect.vibe"
@@ -35,10 +35,14 @@ export function factsOf(claimed: Pick<Claimed, "projection" | "id" | "recipient"
   return { kind: held.kind, eventKey: stored?.eventKey ?? "", recipient: claimed.recipient, subject: stored?.subject ?? "", essential: held.essential }
 }
 
+export function accessCheckOf(access: CaseNoticeAccess | undefined): AccessCheck {
+  if (access === undefined) return { tag: "Unavailable" }
+  return access.allowed ? { tag: "Allowed", acknowledgeHours: access.acknowledgeHours } : { tag: "Denied" }
+}
+
 export effect function caseAccess(caseId: string, githubId: string) {
   const access = (try SecurityNoticeAccess).forCase({ caseId, githubId }) catch () => undefined
-  if (access === undefined) return { tag: "Unavailable" } satisfies AccessCheck as AccessCheck
-  return (access.allowed ? { tag: "Allowed", acknowledgeHours: access.acknowledgeHours } : { tag: "Denied" }) satisfies AccessCheck as AccessCheck
+  return accessCheckOf(access)
 }
 
 schema Membership { readonly member: number }
