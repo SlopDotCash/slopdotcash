@@ -25,8 +25,10 @@ target names the case's reporter as the award actor, the case as the
 obligation, this bounty vault and the case's receipt-time asset. Only a
 committed standard 75/25 case holds that obligation, and every hold keeps
 matching its case. The bounty's reserved total is exactly what the vault
-holds in reserve. A confirmed award stays pending without a reservation while
-vault funds are short.
+holds in reserve. The vault's free amount, the latest funds snapshot and the
+bounty's reserved total are always valid amounts in integer base units. A
+confirmed award stays pending without a reservation while vault funds are
+short.
 
 ```quint
 import money as M from "./money"
@@ -126,6 +128,8 @@ pure def alwaysBountyReserveIsVaultReserve(s: PrivateAward): bool = M::equalAmou
 pure def alwaysBountyCoverIsVaultFree(s: PrivateAward): bool = s.bounty.funds.asset == "" or (s.bounty.funds.asset == s.settlement.vault.asset
   and (M::compareAmounts(s.bounty.reserved, s.bounty.funds.free) > 0
     or M::compareAmounts(M::subtractAmounts(s.bounty.funds.free, s.bounty.reserved), s.settlement.vault.free) <= 0))
+pure def alwaysCoverAmountsValid(s: PrivateAward): bool = M::validAmount(s.settlement.vault.free)
+  and M::validAmount(s.bounty.funds.free) and M::validAmount(s.bounty.reserved)
 pure def stepVaultReservationNeedsCommitment(before: PrivateAward, via: str, after: PrivateAward): bool =
   (after.settlement.payment.phase == P::VaultReserved and before.settlement.payment.phase != P::VaultReserved) implies
     (via == "decideAward" or via == "reviewRelated") and caseOf(after, after.vaultCase).commitment == C::VaultReservation
