@@ -297,6 +297,14 @@ pure def sometimesManualAwardOutsideMonth(s: MonthlySettlement): bool =
 ### Simulation samples
 
 These input sets bound simulation only.
+Discovered by simulation: a proven leaf needs two deposits, a root admission
+and the leaf itself at ever later finalized blocks, so the chain events are
+sixteen blocks fifty seconds apart inside the first window hour, and the
+coordinator clock and head reach the last of them; with eight blocks most
+traces had used the high blocks before admission. A single deposit of twelve
+funds the whole month at once: with only deposits of four and eight, the
+month was funded almost only with the banned recipient left out, whose total
+matches no signed root.
 
 ```quint
 pure val assetValues = Set(E::baseAsset)
@@ -306,8 +314,8 @@ pure val delayValues = Set(0)
 pure val capValues = Set(List(10))
 pure val turnOnValues = Set(true)
 pure val periodValues = Set(202611)
-pure val nowValues = Set(1796083300, 1796342400, 1796342500)
-pure val timeValues = Set(1796083300, 1796342400, 1796342600, 1796343100)
+pure val nowValues = Set(1796083300, 1796342400, 1796342500, 1796343200)
+pure val timeValues = Set(1796083300, 1796342400, 1796342600, 1796343100, 1796343200)
 pure val revisionValues = Set(MO::revisionSample)
 pure val automaticValues = Set(false)
 pure val settingsSequenceValues = Set(1)
@@ -318,12 +326,17 @@ pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
 pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
-  { vault: "vault", network: E::Base, token: "usdc", amount: List(8) })
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(8) },
+  { vault: "vault", network: E::Base, token: "usdc", amount: List(12) })
 pure val evValues = Set(
-  { block: 1, index: 0, time: 1796342400, transaction: "t1" }, { block: 2, index: 0, time: 1796342500, transaction: "t2" },
-  { block: 3, index: 0, time: 1796342600, transaction: "t3" }, { block: 4, index: 0, time: 1796342700, transaction: "t4" },
-  { block: 5, index: 0, time: 1796342800, transaction: "t5" }, { block: 6, index: 0, time: 1796342900, transaction: "t6" },
-  { block: 7, index: 0, time: 1796343000, transaction: "t7" }, { block: 8, index: 0, time: 1796343100, transaction: "t8" })
+  { block: 1, index: 0, time: 1796342400, transaction: "t1" }, { block: 2, index: 0, time: 1796342450, transaction: "t2" },
+  { block: 3, index: 0, time: 1796342500, transaction: "t3" }, { block: 4, index: 0, time: 1796342550, transaction: "t4" },
+  { block: 5, index: 0, time: 1796342600, transaction: "t5" }, { block: 6, index: 0, time: 1796342650, transaction: "t6" },
+  { block: 7, index: 0, time: 1796342700, transaction: "t7" }, { block: 8, index: 0, time: 1796342750, transaction: "t8" },
+  { block: 9, index: 0, time: 1796342800, transaction: "t9" }, { block: 10, index: 0, time: 1796342850, transaction: "t10" },
+  { block: 11, index: 0, time: 1796342900, transaction: "t11" }, { block: 12, index: 0, time: 1796342950, transaction: "t12" },
+  { block: 13, index: 0, time: 1796343000, transaction: "t13" }, { block: 14, index: 0, time: 1796343050, transaction: "t14" },
+  { block: 15, index: 0, time: 1796343100, transaction: "t15" }, { block: 16, index: 0, time: 1796343150, transaction: "t16" })
 pure val actorValues = Set(1, 2, 3)
 pure val byValues = Set("owner")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
