@@ -875,6 +875,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
 export async function verifyHistoricalAcceptedSquashes(
   packet: HistoricalPointsPacket,
   github: Pick<GitHubClient, "graphql" | "get">,
+  withObjects = withPublicGitObjects,
 ): Promise<void> {
   for (const retirement of packet.duplicateRetirements ?? []) {
     const proof = retirement.earlierAcceptanceProof;
@@ -887,7 +888,7 @@ export async function verifyHistoricalAcceptedSquashes(
       (source) => source.automaticMerge,
     );
     if (automatic.length)
-      await withPublicGitObjects(
+      await withObjects(
         repository,
         automatic.flatMap((source) => [source.headSha, source.mergeSha]),
         async (directory) => {
@@ -1023,7 +1024,7 @@ export async function verifyHistoricalAcceptedSquashes(
     );
     if (!audited) throw Error("Promotion source is outside the audit");
     const path = `${root}/pulls/${audited.number}`;
-    const repository = await github.get<{ node_id: string }>(root);
+    const repository = await github.get<PublicMergeRepository>(root);
     const pull = await github.get<Pull>(path);
     if (
       repository?.node_id !== retirement.source.repositoryNodeId ||
@@ -1081,6 +1082,40 @@ export async function verifyHistoricalAcceptedSquashes(
           current.user.type !== pull.user.type))
     )
       throw Error("Accepted promotion changed during collection");
+    if (retirement.earlierAcceptanceProof?.acceptedMergeEdges?.length) {
+      const mergeSha = pull.merge_commit_sha;
+      if (!mergeSha) throw Error("Accepted promotion merge is unavailable");
+      await withObjects(repository, [mergeSha], async (directory) => {
+        const git = async (...args: string[]) => {
+          const command = publicGitProcess(directory, args);
+          return (
+            await execute(command.file, command.args, command.options)
+          ).stdout.trim();
+        };
+        const [parentLine, acceptedTree] = await Promise.all([
+          git("show", "--no-patch", "--format=%P", mergeSha),
+          git("rev-parse", `${mergeSha}^{tree}`),
+        ]);
+        const parents = parentLine.split(" ");
+        if (
+          parents.length !== 2 ||
+          parents[1] !== pull.head.sha ||
+          !parents.every((parent) => /^[a-f0-9]{40}$/u.test(parent))
+        )
+          throw Error("Carried acceptance promotion has different parents");
+        const automatic = await git(
+          "merge-tree",
+          "--write-tree",
+          "--no-messages",
+          parents[0],
+          parents[1],
+        );
+        if (automatic !== acceptedTree)
+          throw Error(
+            "Carried acceptance promotion has independent merge changes",
+          );
+      });
+    }
   }
   const sources = new Map<string, HistoricalAcceptedSquash>();
   for (const retirement of packet.duplicateRetirements ?? []) {

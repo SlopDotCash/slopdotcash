@@ -161,6 +161,8 @@ export interface HistoricalPointsPacket {
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
       commits: { sha: string; sourceId: string }[];
+      /** Earlier GitHub acceptance objects carried as submitted merges. */
+      acceptedMergeEdges?: { sha: string; earlierSourceId: string }[];
       sourceBaseSha: string;
       objects: { sha: string; raw: string }[];
       contextSources: {
@@ -908,6 +910,7 @@ export function reconstructHistoricalPoints(
     const acceptedCommits = new Map(
       acceptedProof?.commits.map((item) => [item.sha, item.sourceId]),
     );
+    const acceptedMergeEdges = new Set<string>();
     if (acceptedProof) {
       check(
         acceptedCommits.size === acceptedProof.commits.length &&
@@ -1125,6 +1128,49 @@ export function reconstructHistoricalPoints(
           "Earlier acceptance does not cover the exact native commit",
         );
       }
+      for (const { sha, earlierSourceId } of acceptedProof.acceptedMergeEdges ??
+        []) {
+        const origin = earlier.get(earlierSourceId);
+        const context = acceptedProof.contextSources.find(
+          (item) => item.id === earlierSourceId,
+        );
+        const merge = objects.get(sha);
+        const member = source.commits.find((item) => item.sha === sha);
+        const ordinary = packet.corrections.candidates.find(
+          (item) =>
+            item.kind === "pull-request" &&
+            item.projectId === packet.projectId &&
+            item.sourceId === earlierSourceId &&
+            item.sourceIds.length === 1 &&
+            item.sourceIds[0] === earlierSourceId &&
+            item.occurredAt === origin?.occurredAt,
+        );
+        check(
+          !acceptedMergeEdges.has(sha) &&
+            !acceptedCommits.has(sha) &&
+            origin?.occurredAt &&
+            source.occurredAt &&
+            origin.occurredAt < source.occurredAt &&
+            !retiringSources.has(earlierSourceId) &&
+            context?.mergeSha === sha &&
+            merge?.parents.length === 2 &&
+            merge.parents[1] === origin.headSha &&
+            member?.parentCount === 2 &&
+            ordinary &&
+            rewardedAwards.some(
+              (award) =>
+                award.projectId === packet.projectId &&
+                award.category === "merged-pull-request" &&
+                award.sourceId === earlierSourceId &&
+                award.sourceUrl === origin.sourceUrl &&
+                award.occurredAt === origin.occurredAt &&
+                award.workUnitId === ordinary.workUnitId &&
+                award.amount > 0,
+            ),
+          "Earlier accepted merge edge is not bound to a retained ordinary award",
+        );
+        acceptedMergeEdges.add(sha);
+      }
     }
     const usedSquashes = new Set<string>();
     const expected: string[] = [];
@@ -1137,7 +1183,8 @@ export function reconstructHistoricalPoints(
           commit.parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)),
         "Duplicate commit identity is incomplete",
       );
-      if (acceptedCommits.has(commit.sha)) continue;
+      if (acceptedCommits.has(commit.sha) || acceptedMergeEdges.has(commit.sha))
+        continue;
       if (commit.parentCount > 1) {
         const resolutionFiles =
           commit.mergeResolution &&

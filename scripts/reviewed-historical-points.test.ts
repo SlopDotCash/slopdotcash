@@ -2037,6 +2037,116 @@ function earlierAcceptanceFixture() {
   return f;
 }
 
+function carriedEarlierMergeFixture() {
+  const f = earlierAcceptanceFixture();
+  const retirement = f.retirement;
+  const source = retirement.source;
+  const proof = retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  const context = proof.contextSources[0];
+  const oid = (raw: string) =>
+    createHash("sha1")
+      .update(`commit ${Buffer.byteLength(raw)}\0`)
+      .update(raw)
+      .digest("hex");
+  const tree = "e".repeat(40);
+  const nativeMerge = `tree ${tree}\nparent ${context.baseSha}\nparent ${context.headSha}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\nearlier acceptance with distinct tree\n`;
+  const nativeMergeSha = oid(nativeMerge);
+  context.mergeSha = nativeMergeSha;
+  source.headSha = nativeMergeSha;
+  source.commitCount += 1;
+  source.commits.push({
+    sha: nativeMergeSha,
+    parentCount: 2,
+    parentShas: [context.baseSha, context.headSha],
+    author: source.author,
+    firstAcceptedSourceId: source.sourceId,
+    additions: 0,
+    deletions: 0,
+  });
+  proof.objects.push({ sha: nativeMergeSha, raw: nativeMerge });
+  proof.acceptedMergeEdges = [
+    { sha: nativeMergeSha, earlierSourceId: context.id },
+  ];
+  const audited = f.packet.sourceAudit.sources.find(
+    (row) => row.id === source.sourceId,
+  );
+  if (!audited) throw Error("fixture audit");
+  audited.headSha = nativeMergeSha;
+  const next = `tree ${tree}\nparent ${context.baseSha}\nparent ${nativeMergeSha}\nauthor Human <human@example.test> 3 +0000\ncommitter Human <human@example.test> 3 +0000\n\npromotion of the accepted merge\n`;
+  retirement.acceptedPromotion = {
+    headCommit: nativeMerge,
+    mergeCommit: next,
+    mergeSha: oid(next),
+  };
+  retirement.evidence = JSON.stringify({
+    ...JSON.parse(retirement.evidence),
+    sourceSha256: hash(source),
+    earlierAcceptanceProofSha256: hash(proof),
+    acceptedPromotionSha256: hash(retirement.acceptedPromotion),
+  });
+  retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+  const original = f.baseline.revisions[0].award;
+  f.expected = appendPointAwards(
+    f.baseline,
+    [{ ...original, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        original.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(f.expected);
+  return f;
+}
+
+test("an imported exact acceptance edge preserves its earlier ordinary pool", () => {
+  const { packet, baseline, expected } = carriedEarlierMergeFixture();
+  expect(
+    reconstructHistoricalPoints(packet, baseline, time, new Map()),
+  ).toEqual(expected);
+});
+
+test("a carried merge must be the bound earlier GitHub acceptance", () => {
+  const { packet, baseline, retirement } = carriedEarlierMergeFixture();
+  const proof = retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  const edges = proof.acceptedMergeEdges;
+  if (!edges) throw Error("fixture edges");
+  edges[0].sha = proof.contextSources[0].headSha;
+  expect(() =>
+    reconstructHistoricalPoints(packet, baseline, time, new Map()),
+  ).toThrow(
+    "Earlier accepted merge edge is not bound to a retained ordinary award",
+  );
+  delete proof.acceptedMergeEdges;
+  expect(() =>
+    reconstructHistoricalPoints(packet, baseline, time, new Map()),
+  ).toThrow("Duplicate merge has unreviewed resolution work");
+});
+
+test("a positive award alone cannot prove an earlier ordinary acceptance", () => {
+  const { packet, baseline, retirement } = carriedEarlierMergeFixture();
+  const [origin] = retirement.earlierSources;
+  packet.corrections.candidates = packet.corrections.candidates.filter(
+    (candidate) => candidate.sourceId !== origin.sourceId,
+  );
+  expect(() =>
+    reconstructHistoricalPoints(packet, baseline, time, new Map()),
+  ).toThrow(
+    "Earlier accepted merge edge is not bound to a retained ordinary award",
+  );
+});
+
 function mixedSubmittedAndSquashFixture(perPathNative = false) {
   const f = earlierAcceptanceFixture();
   const retirement = f.retirement;
@@ -2411,9 +2521,13 @@ for (const fault of [
   "omitted-context",
   "source-author",
   "base-change",
+  "carried-native-objects-unavailable",
 ]) {
   test(`fresh earlier acceptance refuses ${fault}`, async () => {
-    const f = earlierAcceptanceFixture();
+    const carried = fault === "carried-native-objects-unavailable";
+    const f = carried
+      ? carriedEarlierMergeFixture()
+      : earlierAcceptanceFixture();
     const source = f.retirement.source;
     const earlier = f.retirement.earlierSources[0];
     const proof = f.retirement.earlierAcceptanceProof;
@@ -2429,57 +2543,70 @@ for (const fault of [
       earlier.commitCount = 0;
     }
     await expect(
-      verifyHistoricalAcceptedSquashes(f.packet, {
-        graphql: async <T>() =>
-          ({
-            node: {
-              id: source.sourceId,
-              headRefOid: source.headSha,
-              mergedAt: source.occurredAt,
-              repository: { id: source.repositoryNodeId },
-              mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
-            },
-          }) as T,
-        get: async <T>(path: string) => {
-          if (path === "/repos/feedforagents/feed")
-            return { node_id: source.repositoryNodeId } as T;
-          const isEarlier = path.includes("/pulls/2");
-          const item = isEarlier ? earlier : source;
-          if (path.includes("/commits?") || path.includes("/compare/")) {
-            const entries = [
-              {
-                sha: source.headSha,
-                parents: [{ sha: proof.sourceBaseSha }],
-                author: { node_id: actor.id, login: actor.login, type: "User" },
+      verifyHistoricalAcceptedSquashes(
+        f.packet,
+        {
+          graphql: async <T>() =>
+            ({
+              node: {
+                id: source.sourceId,
+                headRefOid: source.headSha,
+                mergedAt: source.occurredAt,
+                repository: { id: source.repositoryNodeId },
+                mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
               },
-            ];
-            return (
-              path.includes("/compare/")
-                ? { total_commits: 1, commits: entries }
-                : entries
-            ) as T;
-          }
-          return {
-            node_id: item.sourceId,
-            head: { sha: item.headSha },
-            base: {
-              sha:
-                fault === "base-change" ? "c".repeat(40) : proof.sourceBaseSha,
-            },
-            commits: isEarlier ? correctContextCount : correctSourceCount,
-            merged_at: item.occurredAt,
-            merge_commit_sha: isEarlier
-              ? proof.contextSources[0].mergeSha
-              : f.retirement.acceptedPromotion?.mergeSha,
-            user: {
-              node_id: fault === "source-author" ? "wrong" : actor.id,
-              login: actor.login,
-              type: "User",
-            },
-          } as T;
+            }) as T,
+          get: async <T>(path: string) => {
+            if (path === "/repos/feedforagents/feed")
+              return { node_id: source.repositoryNodeId } as T;
+            const isEarlier =
+              path.includes("/pulls/2") ||
+              (carried && path.includes(`...${earlier.headSha}`));
+            const item = isEarlier ? earlier : source;
+            if (path.includes("/commits?") || path.includes("/compare/")) {
+              const entries = item.commits.map((commit) => ({
+                sha: commit.sha,
+                parents: commit.parentShas?.map((sha) => ({ sha })),
+                author: { node_id: actor.id, login: actor.login, type: "User" },
+              }));
+              return (
+                path.includes("/compare/")
+                  ? { total_commits: entries.length, commits: entries }
+                  : entries
+              ) as T;
+            }
+            return {
+              node_id: item.sourceId,
+              head: { sha: item.headSha },
+              base: {
+                sha:
+                  fault === "base-change"
+                    ? "c".repeat(40)
+                    : proof.sourceBaseSha,
+              },
+              commits: isEarlier ? correctContextCount : correctSourceCount,
+              merged_at: item.occurredAt,
+              merge_commit_sha: isEarlier
+                ? proof.contextSources[0].mergeSha
+                : f.retirement.acceptedPromotion?.mergeSha,
+              user: {
+                node_id: fault === "source-author" ? "wrong" : actor.id,
+                login: actor.login,
+                type: "User",
+              },
+            } as T;
+          },
         },
-      }),
-    ).rejects.toThrow();
+        async (_repository, objects) => {
+          const acceptedSha = f.retirement.acceptedPromotion?.mergeSha;
+          if (!acceptedSha) throw Error("fixture promotion");
+          expect(objects).toEqual([acceptedSha]);
+          throw Error("Canonical promotion objects are unavailable");
+        },
+      ),
+    ).rejects.toThrow(
+      carried ? /Canonical promotion objects are unavailable/u : /./u,
+    );
   });
 }
 
