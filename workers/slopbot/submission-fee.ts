@@ -15,6 +15,7 @@
 import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEEP_LABEL,
   SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
   SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
   type SubmissionFeeNetwork,
@@ -23,6 +24,7 @@ import {
   submissionFeeOptions,
 } from "../../src/lib/submission-fee.mjs";
 import { submissionFeeSetting } from "../../src/lib/submission-fee-setting.mjs";
+import { WANTED_LABEL } from "../../src/lib/wanted-label.mjs";
 import type { Job } from "./contracts";
 import {
   type Exemption,
@@ -175,7 +177,14 @@ async function feeRates(db: store.D1Database): Promise<SubmissionFeeRate[]> {
 // The comment. Plain rules, every address Slop publishes for this fee, and no
 // promise beyond the rules themselves.
 
-export type FeeOutcomeWhy = "merged" | "undecided" | "closed";
+export type FeeOutcomeWhy =
+  | "merged"
+  | "undecided"
+  | "closed"
+  /** Closed without a merge, but it closed a wanted issue: invited work. */
+  | "wanted"
+  /** Closed a wanted issue, and a maintainer marked the fee to be kept. */
+  | "marked";
 export type FeeReleaseWhy = "setting-off" | "author-exempt";
 
 type CommentFacts = {
@@ -200,7 +209,8 @@ function outcomeRules(ways: readonly FeeWay[]): string[] {
   return [
     "- This pull request is merged: the deposit goes back to the wallet that paid it.",
     `- No maintainer merges or closes it within ${SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days of the deposit: the deposit goes back.`,
-    `- It is closed without a merge and is still closed ${SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days later: a ${stableNames(ways)} deposit is kept by Slop${slop ? ", and a SLOP deposit is burned" : ""}.`,
+    `- It closes an issue labelled \`${WANTED_LABEL}\` (labelled before this pull request was opened) and is closed without a merge: the deposit goes back, unless a maintainer adds the label \`${SUBMISSION_FEE_KEEP_LABEL}\` within ${SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days of the close.`,
+    `- Any other pull request closed without a merge and still closed ${SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days later: a ${stableNames(ways)} deposit is kept by Slop${slop ? ", and a SLOP deposit is burned" : ""}.`,
   ];
 }
 
@@ -256,10 +266,12 @@ export function feePaidComment(
       ? []
       : [
           facts.outcome.kind === "kept_due"
-            ? `**Fee kept.** This pull request stayed closed without a merge for ${SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days, so the deposit is kept: a ${stableNames(facts.ways)} deposit by Slop${facts.ways.some((way) => !way.stable) ? ", a SLOP deposit burned" : ""}.`
-            : facts.outcome.why === "merged"
-              ? "**Refund due.** This pull request was merged, so the deposit is due back to the wallet that paid it."
-              : `**Refund due.** No maintainer merged or closed this pull request within ${SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days of the deposit, so it is due back to the wallet that paid it.`,
+            ? `**Fee kept.** ${facts.outcome.why === "marked" ? `This pull request was closed without a merge and a maintainer added \`${SUBMISSION_FEE_KEEP_LABEL}\`` : `This pull request stayed closed without a merge for ${SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days`}, so the deposit is kept: a ${stableNames(facts.ways)} deposit by Slop${facts.ways.some((way) => !way.stable) ? ", a SLOP deposit burned" : ""}.`
+            : facts.outcome.why === "wanted"
+              ? `**Refund due.** This pull request closed a \`${WANTED_LABEL}\` issue and was not merged, and no maintainer added \`${SUBMISSION_FEE_KEEP_LABEL}\`, so the deposit is due back to the wallet that paid it.`
+              : facts.outcome.why === "merged"
+                ? "**Refund due.** This pull request was merged, so the deposit is due back to the wallet that paid it."
+                : `**Refund due.** No maintainer merged or closed this pull request within ${SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days of the deposit, so it is due back to the wallet that paid it.`,
         ];
   return [
     FEE_MARKER,
@@ -820,6 +832,14 @@ export type FeeOutcomeFacts = {
   /** Closed without a merge. */
   closed: boolean;
   closedAt: string | null;
+  /**
+   * The pull request closes an issue of its own repository that carried
+   * `slop-wanted` when the pull request was opened. null: not readable now.
+   * Read only for a closed pull request.
+   */
+  wanted: boolean | null;
+  /** A maintainer's `slop-keep-fee` label is on the pull request. */
+  keepMarked: boolean;
 };
 
 export type FeeOutcome =
@@ -848,9 +868,17 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
     // A deposit made after the close still gets the full wait.
     const due =
       Math.max(closedAt, paid) + SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS * DAY_MS;
-    return time >= due
-      ? { outcome: "kept_due", why: "closed", nextCheckAt: null }
-      : wait(due);
+    if (time < due) return wait(due);
+    // Invited work is not charged for losing to another pull request; only
+    // a maintainer's explicit mark keeps it. Unknown: ask GitHub again.
+    if (facts.wanted === null) return wait(time + FEE_RECHECK_MS);
+    if (facts.wanted && !facts.keepMarked)
+      return { outcome: "refund_due", why: "wanted", nextCheckAt: null };
+    return {
+      outcome: "kept_due",
+      why: facts.wanted ? "marked" : "closed",
+      nextCheckAt: null,
+    };
   }
   if (!Number.isFinite(paid)) return wait(time + FEE_RECHECK_MS);
   const due = paid + SUBMISSION_FEE_REFUND_UNDECIDED_DAYS * DAY_MS;
@@ -861,11 +889,126 @@ export function feeOutcome(facts: FeeOutcomeFacts, now: Date): FeeOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// Wanted work (operator decision, 22 November 2026; PRD section 5).
+
+const WANTED_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      createdAt
+      closingIssuesReferences(first: 10) {
+        nodes {
+          repository { databaseId }
+          timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], first: 100) {
+            nodes {
+              __typename
+              ... on LabeledEvent { createdAt label { name } }
+              ... on UnlabeledEvent { createdAt label { name } }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+type LabelEvent = {
+  __typename: string;
+  createdAt?: string;
+  label?: { name: string } | null;
+};
+
+type WantedAnswer = {
+  repository: {
+    pullRequest: {
+      createdAt: string;
+      closingIssuesReferences: {
+        nodes: {
+          repository: { databaseId: number } | null;
+          timelineItems: { nodes: LabelEvent[] };
+        }[];
+      };
+    } | null;
+  } | null;
+};
+
+/**
+ * True when an issue the pull request closes, in the same repository, carried
+ * the wanted label at the moment the pull request was opened. A label added
+ * later does not make a submitted pull request invited work.
+ */
+export function wantedAtOpen(answer: WantedAnswer, repositoryId: number) {
+  const pull = answer.repository?.pullRequest;
+  if (!pull) return false;
+  const opened = Date.parse(pull.createdAt);
+  return pull.closingIssuesReferences.nodes.some((issue) => {
+    if (issue.repository?.databaseId !== repositoryId) return false;
+    let on = false;
+    const events = issue.timelineItems.nodes
+      .filter(
+        (event) =>
+          event.label?.name === WANTED_LABEL &&
+          Number.isFinite(Date.parse(event.createdAt ?? "")) &&
+          Date.parse(event.createdAt ?? "") <= opened,
+      )
+      .sort(
+        (a, b) => Date.parse(a.createdAt ?? "") - Date.parse(b.createdAt ?? ""),
+      );
+    for (const event of events) on = event.__typename === "LabeledEvent";
+    return on;
+  });
+}
+
+/** Whether the pull request closes a wanted issue; null when unreadable. */
+async function closesWantedIssue(
+  github: GitHubClient,
+  job: PullRef & { repositoryId: number },
+): Promise<boolean | null> {
+  try {
+    const answer = await github.graphql<WantedAnswer>(WANTED_QUERY, {
+      owner: job.owner,
+      repo: job.repo,
+      number: job.number,
+    });
+    return wantedAtOpen(answer, job.repositoryId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create the keep label on the repository when it is missing, so a
+ * maintainer can pick it. Best effort: a failure never changes an outcome.
+ */
+async function ensureKeepLabel(github: GitHubClient, job: PullRef) {
+  try {
+    const name = encodeURIComponent(SUBMISSION_FEE_KEEP_LABEL);
+    const found = await github.request<unknown>(
+      "GET",
+      `/repos/${job.owner}/${job.repo}/labels/${name}`,
+    );
+    if (found.status === 200) return;
+    await github.request<unknown>(
+      "POST",
+      `/repos/${job.owner}/${job.repo}/labels`,
+      {
+        name: SUBMISSION_FEE_KEEP_LABEL,
+        color: "b60205",
+        description:
+          "A maintainer keeps this pull request's Slop submission fee.",
+      },
+    );
+  } catch {
+    // The maintainer can still create the label by hand.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The scheduled and event-driven check of one asked pull request.
 
 type Pull = {
   number: number;
   state: string;
+  created_at?: string;
   draft?: boolean;
   merged?: boolean;
   closed_at?: string | null;
@@ -1034,12 +1177,19 @@ export async function refreshSubmissionFee(
   let reason = "fee-paid";
   let nextCheckAt: string | null = null;
   if (row.outcome === null) {
+    const closed = pull.state !== "open" && !merged;
+    const wanted = closed ? await closesWantedIssue(github, job) : false;
+    if (wanted) await ensureKeepLabel(github, job);
     const decided = feeOutcome(
       {
         paidAt: row.paid_at,
         merged,
-        closed: pull.state !== "open" && !merged,
+        closed,
         closedAt: pull.closed_at ?? null,
+        wanted,
+        keepMarked: (pull.labels ?? []).some(
+          (label) => label.name === SUBMISSION_FEE_KEEP_LABEL,
+        ),
       },
       now,
     );
