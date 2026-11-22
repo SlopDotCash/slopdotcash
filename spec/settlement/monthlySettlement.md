@@ -552,7 +552,11 @@ funded month needs once (deploying, opening, observing the revision,
 proposing, freezing, creating the obligations, the root, its leaves, the
 cursor and the release) were drawn no more often than events that can
 repeat at every step, so each of them is now drawn about ten times as often
-as a repeatable event. In 400 traces of 40 events, a funded month is now
+as a repeatable event; events that only a found award enables (paying it and
+observing it reserved, paid or conflicting) and the underfunded notice,
+which only an uncovered fresh head enables, are drawn about six times as
+often, since they waste no step while disabled. The release is drawn a
+little more often than a leaf, since it applies only to an untouched month. In 400 traces of 40 events, a funded month is now
 reached in about half of them, an admitted root in a fifth, and a leaf in
 one in ten. The owner may also turn automatic payment on again, since the
 sampled setting only turned it off.
@@ -622,17 +626,17 @@ pure val approvalValues: Set[RR::ReserveRelease] = Set(approvalSample, { ...appr
   { ...approvalSample, root: "q", reserved: List(8), originalReserve: List(8) })
 pure val receiptValues: Set[RR::ReleaseReceipt] = Set({ attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: true, succeeded: true },
   { attempt: 1, root: "r", height: 2, releasedAmount: List(10), settledAmount: List(0), finalized: false, succeeded: true })
-pure val weight_materialize = 36
+pure val weight_materialize = 30
 pure val weight_deposit = 6
 pure val weight_propose = 30
 pure val weight_autoFreeze = 30
 pure val weight_createObligations = 30
-pure val weight_commitObligation = 1
+pure val weight_commitObligation = 2
 pure val weight_admitRoot = 48
 pure val weight_observeClock = 3
 pure val weight_withdraw = 1
-pure val weight_releaseReserve = 24
-pure val weight_upgradeToRelease = 3
+pure val weight_releaseReserve = 36
+pure val weight_upgradeToRelease = 4
 pure val weight_advanceCursor = 24
 pure val weight_advanceZeroRemaining = 24
 pure val weight_deploy = 18
@@ -641,12 +645,13 @@ pure val weight_observeEligibility = 3
 pure val weight_observeHead = 2
 pure val weight_observeRevision = 30
 pure val weight_commitManualAward = 2
-pure val weight_observeConflict = 2
-pure val weight_observeExistingAward = 2
-pure val weight_payAward = 2
-pure val weight_observePaid = 2
+pure val weight_observeConflict = 12
+pure val weight_observeExistingAward = 12
+pure val weight_payAward = 12
+pure val weight_observePaid = 12
 pure val weight_adjust = 1
 pure val weight_finalize = 1
 pure val weight_observeSettings = 1
 pure val weight_setMonthly = 1
+pure val weight_noteUnderfunded = 12
 ```
