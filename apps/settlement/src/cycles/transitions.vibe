@@ -1,0 +1,301 @@
+// spec/settlement/unsafeDestinations.md, "An existing cycle manifest keeps its identity"; spec/settlement/unsafeDestinations.md, "A new or changed cycle row keeps every trusted unsafe-destination report as an append-only prefix"; spec/settlement/unsafeDestinations.md, "An accepted unsafe-destination hold keeps its wallet, amount and zero approval"; spec/settlement/unsafeDestinations.md, "A changed cycle amount restarts its public review after the accepted proposal's last change and an unchanged one keeps its window"
+import { gitBytes } from "@repo/platform/git"
+import { lossyText, parsedJson, utf8Text } from "@repo/platform/git/bytes"
+import { type CycleRow, type Manifest, type TrustedReport, type UnsafeReport, everyPathKept, evidenceRow, holdKept, keepsTrustedHistory, manifestAdmitted, maxManifestBytes, maxManifests, maxReports, namedByPath, newManifestAllowed, prefixOf, reviewKept, sameAmounts, sameIdentity } from "../../gen/settlement__unsafeDestinations.effect.vibe"
+import { type UnsafeDestinationReport, minorValid, refusal, reportOf, utc, verifyReport } from "./reportProof.vibe"
+
+module limbs {
+  import { toAmount } from "../kernels/amounts.ts"
+  /** @throws {never} */
+  export function limbsOf(canonical: string): number[] { return toAmount(BigInt(canonical)) }
+}
+import { limbsOf } from limbs
+
+const ActorRef = Schema.Struct({ id: Schema.String, login: Schema.String })
+
+const AllocationRow = Schema.Struct({
+  intentId: Schema.String,
+  actor: ActorRef,
+  state: Schema.String,
+  suggestedMinor: Schema.String,
+  accruedMinor: Schema.optionalKey(Schema.String),
+  approvedMinor: Schema.String,
+  wallet: Schema.Unknown,
+  lines: Schema.optionalKey(Schema.Unknown),
+  hold: Schema.optionalKey(Schema.Unknown),
+  unsafeDestinationReports: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+})
+
+const RewardAllocationManifest = Schema.Struct({
+  kind: Schema.Literal("reward-allocation"),
+  projectId: Schema.String,
+  cycleId: Schema.String,
+  review: Schema.Struct({ lastMaterialChangeAt: Schema.String, endsAt: Schema.String }),
+  allocations: Schema.Array(AllocationRow),
+})
+
+const ContributionShareManifest = Schema.Struct({
+  kind: Schema.Literal("external-contribution-share"),
+  projectId: Schema.String,
+  cycleId: Schema.String,
+})
+
+const CycleManifest = Schema.Union([RewardAllocationManifest, ContributionShareManifest])
+
+const sha = /^[0-9a-f]{40}$/u
+const manifestPath = /^cycles\/[a-z0-9][a-z0-9-]{0,127}\/\d{4}-(?:0[1-9]|1[0-2])\/(?:proposal|allocation)\.json$/u
+const treeEntry = /^(\d{6}) (?:blob|tree|commit) ([0-9a-f]{40})\t(.+)$/u
+const jsonToken = /"(?:\\.|[^"\\])*"|[{}[\],:]|[^\s{}[\],:]+/gu
+const projectText = /^[a-z0-9][a-z0-9-]{0,127}$/u
+const cycleText = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const listingLimit = 2 * 1024 * 1024
+const sizeLimit = 1024
+const gitSeconds = 60
+const maxRowReports = 32
+const changedAmount = "A changed cycle amount must restart its public review after the accepted proposal's last change"
+const unchangedAmount = "An unchanged cycle amount must preserve the accepted proposal's public review window"
+
+interface Row {
+  readonly intentId: string
+  readonly actorId: string
+  readonly actor: string
+  readonly model: CycleRow
+  readonly reports: ReadonlyArray<UnsafeDestinationReport>
+}
+
+interface Parsed {
+  readonly projectId: string
+  readonly model: Manifest
+  readonly rows: ReadonlyArray<Row>
+}
+
+interface Budget {
+  spent: number
+}
+
+interface Trusted {
+  readonly projectId: string
+  readonly actorId: string
+  readonly reports: Map<string, UnsafeDestinationReport>
+}
+
+export interface Inspection {
+  readonly preservedFiles: number
+  readonly checkedFiles: number
+  readonly reports: ReadonlyArray<UnsafeDestinationReport>
+}
+
+export function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item: unknown) => canonical(item)).join(",")}]`
+  if (value !== null && typeof value === "object") {
+    const fields = value as Readonly<Record<string, unknown>>
+    return `{${Object.keys(fields).sort().map((key) => `${JSON.stringify(key)}:${canonical(fields[key])}`).join(",")}}`
+  }
+  return JSON.stringify(value) ?? ""
+}
+
+export function repeatsKey(source: string) {
+  const stack: Array<{ readonly keys: Set<string> | null; expectsKey: boolean }> = []
+  for (const token of source.matchAll(jsonToken)) {
+    const value = token[0]
+    if (value === "{") stack.push({ keys: new Set<string>(), expectsKey: true })
+    else if (value === "[") stack.push({ keys: null, expectsKey: false })
+    else if (value === "}" || value === "]") stack.pop()
+    else {
+      const frame = stack.at(-1)
+      if (value === "," && frame?.keys) frame.expectsKey = true
+      else if (value.startsWith('"') && frame?.keys && frame.expectsKey) {
+        const key = parsedJson(value)?.value
+        if (typeof key !== "string" || frame.keys.has(key)) return true
+        frame.keys.add(key)
+        frame.expectsKey = false
+      }
+    }
+  }
+  return false
+}
+
+function periodOf(cycleId: string) {
+  return Number(cycleId.slice(0, 4)) * 100 + Number(cycleId.slice(5, 7))
+}
+
+function reportModel(report: UnsafeDestinationReport): UnsafeReport {
+  return { commit: report.sourceCommit, period: periodOf(report.cycleId) }
+}
+
+function actorNumber(actors: Map<string, number>, actorId: string) {
+  const known = actors.get(actorId)
+  if (known !== undefined) return known
+  actors.set(actorId, actors.size + 1)
+  return actors.size
+}
+
+effect function git(root: string, args: ReadonlyArray<string>, limit: number) {
+  const bytes = gitBytes({ args: ["-C", root, "--literal-pathspecs", ...args], limit, seconds: gitSeconds }, "Git could not read the cycle transition") catch effect () => {
+    throw refusal("Git could not read the cycle transition")
+  }
+  return bytes
+}
+
+effect function manifests(root: string, revision: string) {
+  const listing = lossyText(try git(root, ["ls-tree", "-r", "-z", "--full-tree", revision, "--", "cycles"], listingLimit))
+  const found = new Map<string, string>()
+  for (const entry of listing.split("\0").filter((part) => part !== "")) {
+    const match = treeEntry.exec(entry)
+    if (match === null) throw refusal("Cycle tree contains an unsupported Git object")
+    const [, mode = "", oid = "", path = ""] = match
+    if (!manifestPath.test(path)) continue
+    if (mode !== "100644") throw refusal("Cycle manifests must remain regular non-executable files")
+    found.set(path, oid)
+    if (found.size > maxManifests) throw refusal("Cycle transition manifest count exceeds its limit")
+  }
+  return found
+}
+
+effect function rowOf(row: (typeof AllocationRow)["Type"], index: number, actors: Map<string, number>) {
+  const path = `allocations[${index}]`
+  if (!minorValid(row.suggestedMinor)) throw refusal(`${path}.suggestedMinor is invalid`)
+  if (!minorValid(row.approvedMinor)) throw refusal(`${path}.approvedMinor is invalid`)
+  if (row.accruedMinor !== undefined && !minorValid(row.accruedMinor)) throw refusal(`${path}.accruedMinor is invalid`)
+  const reports: UnsafeDestinationReport[] = []
+  const listed = row.unsafeDestinationReports
+  if (listed !== undefined) {
+    if (listed.length === 0 || listed.length > maxRowReports) throw refusal(`${path} unsafe destination history must contain 1 to 32 reports`)
+    for (let position = 0; position < listed.length; position++) reports.push(try reportOf(listed[position], row.actor.id, `${path}.unsafeDestinationReports[${position}]`))
+    if (new Set(reports.map((report) => report.sourceCommit)).size !== reports.length) throw refusal(`${path} unsafe destination report commits contains duplicates`)
+    if (row.accruedMinor !== undefined && row.accruedMinor !== row.suggestedMinor) throw refusal(`${path} unsafe destination carry must equal its reviewed suggested amount`)
+  }
+  const model: CycleRow = {
+    intent: row.intentId,
+    actor: actorNumber(actors, row.actor.id),
+    wallet: canonical(row.wallet ?? null),
+    suggested: limbsOf(row.suggestedMinor),
+    accrued: row.accruedMinor === undefined ? [] : limbsOf(row.accruedMinor),
+    approved: limbsOf(row.approvedMinor),
+    held: row.state === "held",
+    hold: row.hold === undefined ? "" : canonical(row.hold),
+    lines: row.lines === undefined ? "" : canonical(row.lines),
+    reports: reports.map(reportModel),
+  }
+  return { intentId: row.intentId, actorId: row.actor.id, actor: canonical(row.actor), model, reports } satisfies Row
+}
+
+effect function parsedManifest(bytes: Uint8Array, actors: Map<string, number>) {
+  const decoded = utf8Text(bytes)
+  const source = decoded === undefined ? undefined : decoded.replace(/^\uFEFF/u, "")
+  const parsed = source === undefined ? undefined : parsedJson(source)
+  if (source === undefined || parsed === undefined) throw refusal("Cycle manifest is not strict UTF-8 JSON")
+  if (repeatsKey(source)) throw refusal("Cycle manifest contains a duplicate JSON key")
+  const manifest = Schema.decodeUnknownEffect(CycleManifest)(parsed.value) catch effect () => {
+    throw refusal("Cycle manifest is neither a reward allocation nor an external contribution share")
+  }
+  if (!projectText.test(manifest.projectId) || !cycleText.test(manifest.cycleId)) throw refusal("Cycle manifest identity is invalid")
+  const period = periodOf(manifest.cycleId)
+  if (manifest.kind === "external-contribution-share")
+    return { projectId: manifest.projectId, rows: [], model: { project: manifest.projectId, period, kind: "ExternalContributionShare", rows: [], lastChange: 0, endsAt: 0 } } satisfies Parsed
+  if (!(try utc(manifest.review.lastMaterialChangeAt)) || !(try utc(manifest.review.endsAt))) throw refusal("allocation manifest.review is not a timestamp")
+  const rows: Row[] = []
+  for (let index = 0; index < manifest.allocations.length; index++) {
+    const row = manifest.allocations[index]
+    if (row !== undefined) rows.push(try rowOf(row, index, actors))
+  }
+  const model: Manifest = {
+    project: manifest.projectId,
+    period,
+    kind: "RewardAllocation",
+    rows: rows.map((row) => row.model),
+    lastChange: Date.parse(manifest.review.lastMaterialChangeAt),
+    endsAt: Date.parse(manifest.review.endsAt),
+  }
+  return { projectId: manifest.projectId, rows, model } satisfies Parsed
+}
+
+effect function manifestAt(root: string, oid: string, budget: Budget, actors: Map<string, number>) {
+  const size = Number(lossyText(try git(root, ["cat-file", "-s", oid], sizeLimit)).trim())
+  if (!Number.isSafeInteger(size) || !manifestAdmitted(size, budget.spent)) throw refusal("Cycle transition manifest bytes exceed their limit")
+  budget.spent += size
+  return try parsedManifest(try git(root, ["cat-file", "blob", oid], maxManifestBytes), actors)
+}
+
+effect function collect(reports: Map<string, UnsafeDestinationReport>, manifest: Parsed) {
+  for (const row of manifest.rows) {
+    for (const report of row.reports) {
+      const previous = reports.get(report.sourceCommit)
+      if (previous !== undefined && canonical(previous) !== canonical(report)) throw refusal("Cycle history contains conflicting report copies")
+      reports.set(report.sourceCommit, report)
+      if (reports.size > maxReports) throw refusal("Cycle transition report count exceeds its limit")
+    }
+  }
+}
+
+effect function remember(history: Map<string, Trusted>, manifest: Parsed) {
+  for (const row of manifest.rows) {
+    const key = `${manifest.projectId}:${row.actorId}`
+    const known = history.get(key) ?? { projectId: manifest.projectId, actorId: row.actorId, reports: new Map<string, UnsafeDestinationReport>() }
+    for (const report of row.reports) {
+      const prior = known.reports.get(report.sourceCommit)
+      if (prior !== undefined && canonical(prior) !== canonical(report)) throw refusal("Trusted cycle history contains conflicting report copies")
+      known.reports.set(report.sourceCommit, report)
+    }
+    if (known.reports.size > 0) history.set(key, known)
+  }
+}
+
+effect function rowsKept(accepted: Parsed, proposed: Parsed) {
+  for (const previous of accepted.rows) {
+    if (!evidenceRow(previous.model)) continue
+    const next = proposed.rows.find((row) => row.intentId === previous.intentId)
+    if (next === undefined || next.actor !== previous.actor) throw refusal("Unsafe destination history cannot remove or substitute its contributor row")
+    if (!prefixOf(previous.model.reports, next.model.reports)) throw refusal("Unsafe destination history must retain its exact append-only report prefix")
+    if (!holdKept(previous.model, next.model)) throw refusal("An accepted unsafe destination hold must retain its original wallet, amount, and zero approval")
+  }
+}
+
+export effect function inspectTransitions(root: string, baseSha: string, headSha: string) {
+  if (!sha.test(baseSha) || !sha.test(headSha)) throw refusal("Cycle transition requires immutable base and head SHAs")
+  if (lossyText(try git(root, ["rev-parse", "HEAD"], listingLimit)).trim() !== baseSha) throw refusal("Cycle transition checker must run from its exact trusted base checkout")
+  try git(root, ["cat-file", "-e", `${headSha}^{commit}`], sizeLimit)
+  const base = try manifests(root, baseSha)
+  const head = try manifests(root, headSha)
+  const headPaths = [...head.keys()]
+  const actors = new Map<string, number>()
+  const budget: Budget = { spent: 0 }
+  const reports = new Map<string, UnsafeDestinationReport>()
+  const accepted = new Map<string, Parsed>()
+  const history = new Map<string, Trusted>()
+  for (const [path, oid] of base) {
+    if (!everyPathKept([path], headPaths)) throw refusal(`Existing cycle manifest cannot be deleted or renamed: ${path}`)
+    const manifest = try manifestAt(root, oid, budget, actors)
+    try collect(reports, manifest)
+    accepted.set(path, manifest)
+    try remember(history, manifest)
+  }
+  const trusted: TrustedReport[] = [...history.values()].flatMap((entry) =>
+    [...entry.reports.values()].map((report) => ({ project: entry.projectId, actor: actorNumber(actors, entry.actorId), report: reportModel(report) })))
+  let checkedFiles = 0
+  for (const [path, oid] of head) {
+    if (base.get(path) === oid) continue
+    checkedFiles += 1
+    const before = accepted.get(path)
+    const after = try manifestAt(root, oid, budget, actors)
+    try collect(reports, after)
+    const [, projectId = "", cycleId = ""] = path.split("/")
+    if (!namedByPath(projectId, periodOf(cycleId), after.model)) throw refusal("Cycle manifest identity does not match its immutable path")
+    if (before !== undefined && !sameIdentity(before.model, after.model)) throw refusal("Existing cycle manifest identity cannot change")
+    if (after.model.kind !== "RewardAllocation") continue
+    const historyKept = before === undefined ? newManifestAllowed(after.model, trusted) : keepsTrustedHistory(after.model, trusted)
+    if (!historyKept) throw refusal("New or changed cycle rows must retain all trusted unsafe destination history")
+    if (before === undefined || before.model.kind !== "RewardAllocation") continue
+    if (!reviewKept(before.model, after.model)) throw refusal(sameAmounts(before.model, after.model) ? unchangedAmount : changedAmount)
+    try rowsKept(before, after)
+  }
+  return { preservedFiles: base.size, checkedFiles, reports: [...reports.values()] } satisfies Inspection
+}
+
+export effect function verifyTransitionAuthorities(root: string, baseSha: string, headSha: string) {
+  const inspection = try inspectTransitions(root, baseSha, headSha)
+  for (const report of inspection.reports) {
+    try verifyReport(report)
+  }
+  return { preservedFiles: inspection.preservedFiles, checkedFiles: inspection.checkedFiles, verifiedReports: inspection.reports.length }
+}

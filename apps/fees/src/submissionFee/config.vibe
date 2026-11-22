@@ -1,0 +1,130 @@
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"
+import type { FeeNetwork } from "../../gen/backend__submissionFeeTerms.ts"
+import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { decimal } from "../evm/abi.ts"
+
+export error SubmissionFeeConfigInvalid { issue: string }
+
+export type Mode = "off" | "dry_run" | "live"
+
+export interface SubmissionFeeEnv {
+  readonly SUBMISSION_FEE_MODE?: string
+  readonly RPC_URL_SUBMISSION_FEE_BASE?: string
+  readonly RPC_URL_SUBMISSION_FEE_ROBINHOOD?: string
+  readonly SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI?: string
+  readonly SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI?: string
+}
+
+export interface GasLimits {
+  readonly perTransactionWei: bigint
+  readonly perDayWei: bigint
+}
+
+export interface NetworkConfig {
+  readonly network: string
+  readonly chainId: number
+  readonly contract: string
+  readonly startBlock: number
+  readonly rpcUrl: Redacted.Redacted<string>
+  readonly confirmations: number
+  readonly scanPageBlocks: number
+  readonly gas: GasLimits
+}
+
+export interface PriceSource {
+  readonly rpcUrl: Redacted.Redacted<string>
+  readonly chainId: number
+  readonly stateView: string
+  readonly poolId: string
+  readonly label: string
+}
+
+export interface SubmissionFeeConfig {
+  readonly mode: Mode
+  readonly networks: ReadonlyArray<NetworkConfig>
+  readonly unset: ReadonlyArray<string>
+  readonly price: PriceSource
+}
+
+type RpcVariable = "RPC_URL_SUBMISSION_FEE_BASE" | "RPC_URL_SUBMISSION_FEE_ROBINHOOD"
+
+const robinhoodRpc = "https://rpc.mainnet.chain.robinhood.com"
+
+const endpoints: Readonly<Record<string, { readonly fallback: string; readonly variable: RpcVariable }>> = {
+  "base-mainnet": { fallback: "https://base-rpc.publicnode.com", variable: "RPC_URL_SUBMISSION_FEE_BASE" },
+  "robinhood-mainnet": { fallback: robinhoodRpc, variable: "RPC_URL_SUBMISSION_FEE_ROBINHOOD" },
+}
+
+export const officialPool = {
+  chainId: 4663,
+  stateView: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
+  poolId: "0x18f3778f93a34c08d41a03e6b3a466a37ec0fd1b019e43f622927ba0c339838b",
+  label: "uniswap-v4-stateview:robinhood-mainnet:slop-usdg",
+} as const
+
+const address = /^0x[0-9a-fA-F]{40}$/u
+
+effect function wei(value: string | undefined, name: string) {
+  const text = (value ?? "").trim()
+  const parsed = /^[1-9][0-9]{0,18}$/u.test(text) ? decimal(text) : undefined
+  if (parsed === undefined || parsed > 9007199254740991n) throw new SubmissionFeeConfigInvalid({ issue: `${name} must be a positive whole number of wei` })
+  return parsed
+}
+
+effect function rpc(value: string | undefined, fallback: string, name: string) {
+  const url = value?.trim() || fallback
+  if (!/^https?:\/\//u.test(url)) throw new SubmissionFeeConfigInvalid({ issue: `${name} must be an http(s) URL` })
+  return Redacted.make(url)
+}
+
+export effect function parseMode(env: SubmissionFeeEnv) {
+  const mode = (env.SUBMISSION_FEE_MODE ?? "off").trim()
+  if (mode !== "off" && mode !== "dry_run" && mode !== "live") throw new SubmissionFeeConfigInvalid({ issue: "SUBMISSION_FEE_MODE must be off, dry_run or live" })
+  return mode satisfies Mode
+}
+
+effect function served(terms: FeeNetwork, env: SubmissionFeeEnv, gas: GasLimits) {
+  const network = terms.network
+  if (terms.contract === "" || !address.test(terms.contract) || !Number.isSafeInteger(terms.startBlock) || terms.startBlock <= 0)
+    throw new SubmissionFeeConfigInvalid({ issue: `${network} needs both a contract address and a start block` })
+  const definition = isNetworkKey(network) ? NETWORKS[network] : undefined
+  const endpoint = endpoints[network]
+  const page = definition === undefined || definition.family !== "evm" ? 0 : Number(definition.scanPageBlocks)
+  if (definition === undefined || definition.family !== "evm" || definition.chainId !== terms.chainId || !Number.isSafeInteger(page) || page < 1
+    || !Number.isSafeInteger(terms.confirmations) || terms.confirmations < 1 || terms.tokens.length === 0 || endpoint === undefined)
+    throw new SubmissionFeeConfigInvalid({ issue: `${network} is not a registered fee network` })
+  return {
+    network,
+    chainId: terms.chainId,
+    contract: terms.contract.toLowerCase(),
+    startBlock: terms.startBlock,
+    rpcUrl: try rpc(env[endpoint.variable], endpoint.fallback, endpoint.variable),
+    confirmations: terms.confirmations,
+    scanPageBlocks: page,
+    gas,
+  } satisfies NetworkConfig
+}
+
+export effect function parseConfig(env: SubmissionFeeEnv, terms: ReadonlyArray<FeeNetwork>) {
+  const mode = try parseMode(env)
+  const gas = {
+    perTransactionWei: try wei(env.SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI"),
+    perDayWei: try wei(env.SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI, "SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI"),
+  } satisfies GasLimits
+  if (gas.perDayWei < gas.perTransactionWei) throw new SubmissionFeeConfigInvalid({ issue: "The daily native limit must cover one transaction limit" })
+  const networks: NetworkConfig[] = []
+  const unset: string[] = []
+  for (const network of [...terms].sort((left, right) => (left.network < right.network ? -1 : left.network > right.network ? 1 : 0))) {
+    if (network.contract === "" && network.startBlock === 0) unset.push(network.network)
+    else networks.push(try served(network, env, gas))
+  }
+  return {
+    mode,
+    networks,
+    unset,
+    price: {
+      ...officialPool,
+      rpcUrl: try rpc(env.RPC_URL_SUBMISSION_FEE_ROBINHOOD, robinhoodRpc, "RPC_URL_SUBMISSION_FEE_ROBINHOOD"),
+    },
+  } satisfies SubmissionFeeConfig
+}

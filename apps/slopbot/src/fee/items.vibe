@@ -1,0 +1,128 @@
+// spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"; spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type FeeDeposit, FeeOutcome, type FeePull, type FinalOutcome, type GoneDeposits, type ObservedDeposit, type SubmissionFeeItem, SubmissionFeeItems } from "@repo/ports/slopbot"
+
+export type DueOutcome = "refund_due" | "kept_due"
+
+export interface ItemAsk {
+  readonly pull: FeePull
+  readonly projectId: string
+  readonly item: string
+  readonly stableMinor: string
+  readonly askedAt: string
+}
+
+schema ItemRow {
+  readonly repository_id: number
+  readonly pull_number: number
+  readonly project_id: string
+  readonly item: string
+  readonly stable_minor: string
+  readonly asked_at: string
+  readonly paid_at: string | null
+  readonly paid_network: string | null
+  readonly paid_deposit_id: number | null
+  readonly outcome: FeeOutcome | null
+  readonly outcome_at: string | null
+}
+
+const itemColumns = sql`repository_id, pull_number, project_id, item, stable_minor, asked_at, paid_at, paid_network, paid_deposit_id, outcome, outcome_at`
+
+function itemOf(row: typeof ItemRow.Type): SubmissionFeeItem {
+  return {
+    repositoryId: row.repository_id,
+    pullNumber: row.pull_number,
+    projectId: row.project_id,
+    item: row.item,
+    stableMinor: row.stable_minor,
+    askedAt: row.asked_at,
+    paidAt: row.paid_at,
+    paidNetwork: row.paid_network,
+    paidDepositId: row.paid_deposit_id,
+    outcome: row.outcome,
+    outcomeAt: row.outcome_at,
+  }
+}
+
+export effect function itemByPull(pull: FeePull) {
+  const row: typeof ItemRow.Type | undefined = try first(ItemRow, sql`SELECT ${itemColumns} FROM submission_fee_items WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.pullNumber}`)
+  return row === undefined ? null : itemOf(row)
+}
+
+export effect function itemByHash(item: string) {
+  const row: typeof ItemRow.Type | undefined = try first(ItemRow, sql`SELECT ${itemColumns} FROM submission_fee_items WHERE item = ${item} ORDER BY repository_id, pull_number LIMIT 1`)
+  return row === undefined ? null : itemOf(row)
+}
+
+export function askItem(ask: ItemAsk) {
+  return sql`INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at)
+    VALUES (${ask.pull.repositoryId}, ${ask.pull.pullNumber}, ${ask.projectId}, ${ask.item}, ${ask.stableMinor}, ${ask.askedAt})
+    ON CONFLICT(repository_id, pull_number) DO UPDATE SET
+      project_id = excluded.project_id, stable_minor = excluded.stable_minor, asked_at = excluded.asked_at
+    WHERE submission_fee_items.paid_at IS NULL`
+}
+
+export function releaseItem(pull: FeePull) {
+  return sql`DELETE FROM submission_fee_items
+    WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.pullNumber} AND paid_at IS NULL AND paid_deposit_id IS NULL`
+}
+
+export function dueOutcome(pull: FeePull, outcome: DueOutcome, at: string) {
+  return sql`UPDATE submission_fee_items SET outcome = ${outcome}, outcome_at = ${at}
+    WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.pullNumber} AND paid_at IS NOT NULL AND outcome IS NULL`
+}
+
+export effect function setDueOutcome(pull: FeePull, outcome: DueOutcome, at: string) {
+  return (try (try D1).run(dueOutcome(pull, outcome, at))) === 1
+}
+
+function markPaid(deposit: FeeDeposit, pull: FeePull, at: string) {
+  return sql`UPDATE submission_fee_items
+      SET paid_at = COALESCE(paid_at, ${at}), paid_network = ${deposit.network}, paid_deposit_id = ${deposit.depositId}
+    WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.pullNumber}
+      AND ((paid_deposit_id IS NULL AND outcome IS NULL)
+           OR (paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}))`
+}
+
+function finalOutcome(deposit: FeeDeposit, outcome: FinalOutcome, at: string) {
+  return sql`UPDATE submission_fee_items SET outcome = ${outcome}, outcome_at = ${at}
+    WHERE paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}
+      AND (outcome IS NULL OR outcome IN ('refund_due', 'kept_due'))`
+}
+
+function unpayWhereGone(gone: GoneDeposits) {
+  if (gone.kind === "Reorganised") return sql`UPDATE submission_fee_items
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE paid_network = ${gone.network} AND outcome IS NULL
+      AND paid_deposit_id IN (SELECT deposit_id FROM submission_fee_deposits
+         WHERE network = ${gone.network} AND finalized_at IS NULL AND block_number <= ${gone.throughBlock})`
+  return sql`UPDATE submission_fee_items
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE paid_network = ${gone.network} AND outcome IS NULL
+      AND paid_deposit_id IN (SELECT deposit_id FROM submission_fee_deposits
+         WHERE network = ${gone.network} AND finalized_at IS NULL AND block_number BETWEEN ${gone.fromBlock} AND ${gone.toBlock}
+           AND deposit_id NOT IN (SELECT value FROM json_each(${JSON.stringify(gone.seen)})))`
+}
+
+function unpayChanged(observed: ObservedDeposit) {
+  return sql`UPDATE submission_fee_items
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE paid_network = ${observed.network} AND paid_deposit_id = ${observed.depositId} AND outcome IS NULL
+      AND EXISTS (SELECT 1 FROM submission_fee_deposits d
+                   WHERE d.network = ${observed.network} AND d.deposit_id = ${observed.depositId} AND d.finalized_at IS NULL
+                     AND NOT (d.item = ${observed.item} AND d.payer = ${observed.payer} AND d.token = ${observed.token}
+                              AND d.amount = ${observed.amount} AND d.kept_to = ${observed.keptTo} AND d.tx_hash = ${observed.txHash}
+                              AND d.block_number = ${observed.blockNumber} AND d.block_time = ${observed.blockTime}))`
+}
+
+export const SubmissionFeeItemsLive = Layer.effect(SubmissionFeeItems, effect {
+  const db = try D1
+  return {
+    byItem: (item) => provideService(itemByHash(item), D1, db),
+    byPull: (pull) => provideService(itemByPull(pull), D1, db),
+    markPaid: (deposit, pull, at) => effect { return markPaid(deposit, pull, at) },
+    finalOutcome: (deposit, outcome, at) => effect { return finalOutcome(deposit, outcome, at) },
+    unpayWhereGone: (gone) => effect { return unpayWhereGone(gone) },
+    unpayChanged: (observed) => effect { return unpayChanged(observed) },
+  } satisfies SubmissionFeeItems.Shape
+})

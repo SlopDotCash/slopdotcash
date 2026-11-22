@@ -1,0 +1,210 @@
+import { assert, it } from "@effect/vitest"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import type { GitHubFake } from "@repo/platform/testing/github"
+import { Ingestion, ingestion } from "../src/ingestion/read.vibe"
+import { type SearchPage, collectSearch, searchRange } from "../src/ingestion/search.vibe"
+import { fetcherOf, repository, seeded, start, statuses } from "./support/u3/github.ts"
+
+const repoPath = `/repos/${repository}`
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function exact(method: string, path: string) {
+  return new RegExp(`^${`${method} ${path}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u")
+}
+
+function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<() => Response>) {
+  for (const reply of replies) fake.alterNext(match, reply)
+}
+
+const serverError = () => new Response("internal error", { status: 500 })
+const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
+const gatewayFailed = () => new Response("bad gateway", { status: 502 })
+const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
+
+it.live('Per-item list pages retry two server errors and an exact commit file page two gateway errors on budgets of their own (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const authority = fake.authority
+  const waits: number[] = []
+  const headers = { authorization: `Bearer ${world.token}` }
+
+  effect function scenario<A, E>(options: { readonly deadlineMs?: number; readonly blocked?: Deferred.Deferred<void> }, body: (client: HttpClient.HttpClient) => A!E) {
+    const transport = ingestion({
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+      sleep: (millis) => effect {
+        waits.push(millis)
+        if (options.blocked === undefined) clock.advance(millis)
+        else {
+          try Deferred.succeed(options.blocked, undefined)
+          try Effect.never
+        }
+      },
+    })
+    provide Layer.provide(transport, outboundVia(fetcherOf(fake))), clock.layer {
+      const reads = try Ingestion
+      const value = try body(reads.client)
+      const checkpoint = reads.assertNoCheckpoint() catch (error) => error._tag
+      return { value, checkpoint }
+    }
+  }
+
+  effect function read(client: HttpClient.HttpClient, url: string, method: "GET" | "POST" = "GET") {
+    const from = fake.requests.length
+    const waited = waits.length
+    const answered = effect {
+      const response = try client.execute(HttpClientRequest.make(method)(url, { headers }))
+      return { status: response.status, body: try response.text }
+    }
+    const outcome = answered catch (error) => error._tag
+    return { outcome, statuses: statuses(fake, from), waits: waits.slice(waited) }
+  }
+
+  effect function scripted(client: HttpClient.HttpClient, path: string, replies: ReadonlyArray<() => Response>) {
+    answers(fake, exact("GET", path), replies)
+    const answer = try read(client, `${authority}${path}`)
+    return { statuses: answer.statuses, waits: answer.waits }
+  }
+
+  const pull = world.pull
+  const itemLists = [
+    `${repoPath}/pulls/${pull}/reviews?per_page=100&page=1`,
+    `${repoPath}/pulls/${pull}/comments?per_page=100&page=2`,
+    `${repoPath}/pulls/${pull}/commits?per_page=100`,
+    `${repoPath}/issues/${pull}/comments?per_page=100&page=1`,
+    `${repoPath}/issues/${pull}/events?per_page=100`,
+    `/repositories/7001/issues/${pull}/timeline?per_page=100&page=3`,
+  ]
+  const otherPages = [`${repoPath}/pulls/${pull}`, `${repoPath}/pulls/${pull}/reviews/9`, `${repoPath}/issues/${pull}`, `${repoPath}/issues/comments?per_page=100`]
+  const commitFiles = `${repoPath}/commits/${world.commit}?per_page=100&page=1`
+  const otherCommitFiles = `/repositories/7001/commits/${world.commit}?per_page=100&page=2`
+  const commitFilesUrl = `${authority}${commitFiles}`
+  const finalBody = "GitHub still cannot serve the commit file page"
+  const commit = JSON.stringify({ sha: world.commit, files: [{ filename: "source.ts" }] })
+  const recovered = () => new Response(commit, { status: 200, headers: { "content-type": "application/json" } })
+
+  const outcome = try scenario({}, (client) => effect {
+    const recoveredLists = try Effect.forEach(itemLists, (path) => scripted(client, path, [serverError, serverError, () => Response.json([{ id: 1 }])]))
+    const immediate = try Effect.forEach(otherPages, (path) => scripted(client, path, [serverError]))
+    const separateBudgets = try Effect.forEach([
+      [commitFiles, [gatewayFailed, validationFailed, gatewayFailed]],
+      [otherCommitFiles, [validationFailed, gatewayFailed, gatewayFailed]],
+    ] as const, ([path, failures]) => effect {
+      answers(fake, exact("GET", path), [...failures, recovered])
+      return try read(client, `${authority}${path}`)
+    })
+    answers(fake, exact("GET", commitFiles), [gatewayFailed, gatewayFailed, () => new Response(finalBody, { status: 502, statusText: "Still unavailable" })])
+    const persistent = try read(client, commitFilesUrl)
+    answers(fake, exact("GET", commitFiles), [gatewayFailed, limited, validationFailed, gatewayFailed, limited, limited, limited, limited])
+    const quotaKept = try read(client, commitFilesUrl)
+    const notCanonical = try Effect.forEach([
+      [`${repoPath}/commits/${world.commit}`, "GET"],
+      [`${repoPath}/commits/${world.commit}/pulls?per_page=100`, "GET"],
+      [`${repoPath}/pulls/${pull}/files?per_page=100&page=1`, "GET"],
+      [`${repoPath}/commits/main?per_page=100&page=1`, "GET"],
+      [`${repoPath}/commits/${world.commit.slice(1)}?per_page=100&page=1`, "GET"],
+      [commitFiles.replace("page=1", "page=01"), "GET"],
+      [`${commitFiles}&extra=1`, "GET"],
+      [commitFiles, "POST"],
+    ] as const, ([path, method]) => effect {
+      answers(fake, exact(method, path), [gatewayFailed])
+      const answer = try read(client, `${authority}${path}`, method)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    const elsewhere = try Effect.forEach([`${commitFilesUrl}#fragment`, `https://example.com${commitFiles}`], (url) => effect {
+      answers(fake, exact("GET", commitFiles), [gatewayFailed])
+      const answer = try read(client, url)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    return { recoveredLists, immediate, separateBudgets, persistent, quotaKept, notCanonical, elsewhere }
+  })
+
+  const checkpointed = try scenario({ deadlineMs: start + 1_000 }, (client) => effect {
+    clock.set(start)
+    answers(fake, exact("GET", commitFiles), [gatewayFailed])
+    return try read(client, commitFilesUrl)
+  })
+
+  const blocked = try Deferred.make<void>()
+  const cancelled = try scenario({ blocked }, (client) => effect {
+    const from = fake.requests.length
+    const waited = waits.length
+    answers(fake, exact("GET", commitFiles), [gatewayFailed])
+    const fiber = try Effect.forkChild(client.execute(HttpClientRequest.get(commitFilesUrl, { headers })))
+    try Deferred.await(blocked)
+    try Fiber.interrupt(fiber)
+    return { statuses: statuses(fake, from), waits: waits.slice(waited) }
+  })
+
+  const once = { statuses: [502], waits: [] }
+  try same(
+    { ...outcome, checkpointed, cancelled: cancelled.value },
+    {
+      value: {
+        recoveredLists: itemLists.map(() => ({ statuses: [500, 500, 200], waits: [1_000, 2_000] })),
+        immediate: otherPages.map(() => ({ statuses: [500], waits: [] })),
+        separateBudgets: [
+          { outcome: { status: 200, body: commit }, statuses: [502, 422, 502, 200], waits: [1_000, 1_000, 2_000] },
+          { outcome: { status: 200, body: commit }, statuses: [422, 502, 502, 200], waits: [1_000, 1_000, 2_000] },
+        ],
+        persistent: { outcome: { status: 502, body: finalBody }, statuses: [502, 502, 502], waits: [1_000, 2_000] },
+        quotaKept: { outcome: { status: 429, body: "limited" }, statuses: [502, 429, 422, 502, 429, 429, 429, 429], waits: [1_000, 3_000, 1_000, 2_000, 3_000, 3_000, 3_000] },
+        notCanonical: [once, once, once, once, once, once, once, once],
+        elsewhere: [once, once],
+      },
+      checkpoint: undefined,
+      checkpointed: { value: { outcome: "HttpClientError", statuses: [502], waits: [] }, checkpoint: "IngestionCheckpoint" },
+      cancelled: { statuses: [502], waits: [1_000] },
+    },
+  )
+})
+
+interface Reference {
+  readonly id: string
+}
+
+const from = Date.parse("2026-10-31T12:20:56Z")
+const to = Date.parse("2026-11-18T00:20:56Z")
+
+effect function driftingSplitSearch(reconcileOnRetry: boolean) {
+  const middle = Date.parse("2026-11-09T06:20:56Z")
+  const closedAt = [...Array.from({ length: 140 }, () => from), ...Array.from({ length: 447 }, () => middle)]
+  const parentRange = try searchRange(from, to)
+  const queries: string[] = []
+  const stats = { searchSliceCount: 0 }
+  let parentStarts = 0
+
+  function read(range: string, after: string | null): SearchPage<Reference> {
+    queries.push(range)
+    const [low = "", high = ""] = range.split("..")
+    const lowest = Date.parse(low)
+    const through = Date.parse(high) + 999
+    const ids = closedAt.flatMap((at, index) => (at >= lowest && at <= through ? [`I_${index}`] : []))
+    const offset = Number(after ?? 0)
+    const nodes = ids.slice(offset, offset + 100).map((id) => ({ id }))
+    const end = offset + nodes.length
+    if (range === parentRange && after === null) parentStarts += 1
+    const drift = range === parentRange && (!reconcileOnRetry || parentStarts === 1) ? 5 : 0
+    return { totalCount: ids.length + drift, nodes, hasNextPage: end < ids.length, endCursor: end < ids.length ? String(end) : null }
+  }
+
+  const collected = collectSearch({ read: (range, after) => Effect.sync(() => read(range, after)), id: (node: Reference) => node.id, stats }, from, to) catch (error) => `${error._tag}: ${error.message}`
+  return { collected: typeof collected === "string" ? collected : collected.map((node) => node.id), parentStarts, slices: stats.searchSliceCount, queries: queries.length }
+}
+
+it.effect('A split Search range whose children disagree with the parent is repeated once and a second disagreement refuses the snapshot (spec/points/census.md, "A split Search range whose children disagree with the parent count is repeated once"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass")', () => effect {
+  const reconciled = try driftingSplitSearch(true)
+  const drifting = try driftingSplitSearch(false)
+  const parentRange = try searchRange(from, to)
+  try same(
+    { reconciled, drifting },
+    {
+      reconciled: { collected: Array.from({ length: 587 }, (_, index) => `I_${index}`), parentStarts: 2, slices: 4, queries: 19 },
+      drifting: { collected: `SearchIncomplete: Split GitHub Search returned 587 unique references but parent reported 592 for ${parentRange}`, parentStarts: 2, slices: 6, queries: 26 },
+    },
+  )
+})

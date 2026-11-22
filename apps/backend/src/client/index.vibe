@@ -17,6 +17,8 @@ export * from "./identity.vibe"
 export * from "./projectSetup.vibe"
 export * from "./projects.vibe"
 export * from "./referrals.vibe"
+export * from "./submissionFee.vibe"
+export * from "./submissionFeeKernels.ts"
 export * from "./wallets.vibe"
 
 export const api: ReadonlyArray<AnyRoute> = [...accounts, ...email, ...projectSetup, ...projects, ...admin, ...wallets, ...binding, ...referrals]

@@ -1,5 +1,6 @@
-// spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"; spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"
+// spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"
 import { sha256Of } from "@repo/platform/git/bytes";
+import type { PrimaryOutcome, SpecialistOutcome } from "../../../gen/security__admission.ts";
 import { type Execution, type ScanResult, type ScanReview, resultProblems, scanSchema, specialistRequired } from "../../admission/result.ts";
 import { refusalInventory } from "../inspect/inspection.ts";
 import { SCAN_SURFACES, SCAN_THREATS, type RepositoryInspection } from "../inspect/model.ts";
@@ -23,14 +24,20 @@ export interface Composed {
 
 const encoder = new TextEncoder();
 
+export const coveredByBoundedScan: ReadonlySet<string> = new Set(["execution-dependencies-and-release-assets-not-acquired", "skill-template-inputs-not-acquired", "runtime-and-model-review-not-performed"]);
+
 /** @throws {never} */
 export function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
+  const covered = (area: (typeof SCAN_REVIEW_AREAS)[number]) => {
+    const state = evidence.verifiedCoverage === undefined ? evidence.coverage?.[area] : evidence.verifiedCoverage[area];
+    return state === "complete" || state === "outside-revision";
+  };
   const risk = !completed
     ? null
     : evidence.review.verdict === "malicious-suspected" || evidence.findings.some((finding) => finding.severity === "high" || finding.severity === "critical")
       ? "high"
-      : evidence.review.verdict === "findings" || evidence.coverage === null || SCAN_REVIEW_AREAS.some((area) => evidence.coverage?.[area] !== "complete")
+      : evidence.coverage === null || SCAN_REVIEW_AREAS.some((area) => !covered(area)) || evidence.findings.some((finding) => finding.severity === "medium")
         ? "ambiguous"
         : "low";
   return {
@@ -44,6 +51,26 @@ export function scanReview(evidence: ScannerEvidence): ScanReview {
     risk,
     findingCount: evidence.review.findingCount,
   };
+}
+
+/** @throws {never} */
+export function primaryOutcome(review: ScanReview): PrimaryOutcome {
+  if (review.status !== "completed") return "PrimaryDeclined";
+  if (review.risk === "high") return "PrimaryBlocking";
+  return review.verdict !== "no-findings" || review.risk !== "low" ? "PrimaryEscalate" : "PrimaryClean";
+}
+
+/** @throws {never} */
+export function specialistOutcome(review: ScanReview): SpecialistOutcome {
+  if (review.status !== "completed") return "SpecialistDeclined";
+  return review.risk === "high" ? "SpecialistBlocking" : "SpecialistClean";
+}
+
+/** @throws {never} */
+export function truncateVisibilityGap(gap: string): string {
+  const printable = gap.replace(/\p{Cc}/gu, " ");
+  const truncated = printable.slice(0, 300);
+  return (/[\uD800-\uDBFF]$/u.test(truncated) ? truncated.slice(0, -1) : truncated).trimEnd();
 }
 
 /** @throws {never} */
@@ -157,7 +184,7 @@ export function composeScanResult(input: {
     scan: { runId: input.runId, startedAt: input.startedAt, completedAt: input.completedAt, reportSha256: sha256Of(report) },
     coverage: inspection.coverage,
     checks: inspection.checks,
-    visibilityGaps: [...[...new Set([...inspection.visibilityGaps, ...input.primary.visibilityGaps, ...(input.specialist?.visibilityGaps ?? [])])].slice(0, 50 - truncationNotes.length), ...truncationNotes],
+    visibilityGaps: [...[...new Set([...inspection.visibilityGaps, ...input.primary.visibilityGaps, ...(input.specialist?.visibilityGaps ?? [])])].slice(0, 50 - truncationNotes.length), ...truncationNotes].map(truncateVisibilityGap),
     execution: input.execution,
     reusedAssessmentId: null,
     primaryReview: scanReview(input.primary),

@@ -1,10 +1,12 @@
-// spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division"
+// spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division"; spec/frontend/projections.md, "A contributor's projected amount leaves out the month's published maintainer share"
 import { githubUserIdFromNodeId } from "@repo/backend/nodeId";
 import { eventThirds, type GitHubActor, type LeaderboardSnapshot, type ModelAttribution, penaltyDeductions, pointsOf, type RepositoryRegistry, registryOf, type RunReceipt, type ScoreEvent, type ScoreOpportunity, scoreCaps, type WorkItem } from "@repo/points/client";
 import { allocate } from "@repo/settlement/kernels/allocate";
+import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
 import { parsePeriod, periodEndSeconds, periodStartSeconds } from "@repo/settlement/kernels/calendar";
 import { ordinaryFeeBase } from "@repo/settlement/kernels/fees";
-import { rankAt } from "../../gen/frontend__projections.ts";
+import { monthShareOf, type ShareEntry } from "../../gen/backend__projects.ts";
+import { contributorPool, rankAt } from "../../gen/frontend__projections.ts";
 
 export type ScoreCategory = "merged-pull-request" | "resolved-issue" | "material-test-change" | "evidence" | "substantive-review" | "evaluated-contribution";
 export type ExclusionRelationship = "owner" | "funded-employee" | "related-party";
@@ -32,6 +34,7 @@ export interface MonthlyPoolTerms {
   readonly cycleCaps: ReadonlyArray<CycleCap>;
   readonly fundingState: "committed" | "pledged";
   readonly escrow?: { readonly effectiveCycle: string; readonly chain: string };
+  readonly maintainerShare: { readonly setting: number; readonly history: ReadonlyArray<ShareEntry> };
 }
 
 export interface ExternalPrizeTerms {
@@ -434,6 +437,13 @@ function contributor(request: { readonly project: ProjectTerms; readonly cycleId
   };
 }
 
+/** The maintainer share in basis points the registry publishes for the month: the history entry that covers it, else the setting. @throws {RangeError} */
+export function shareBasisPoints(terms: Pick<MonthlyPoolTerms, "maintainerShare">, cycleId: string): number {
+  const period = parsePeriod(cycleId);
+  if (period === undefined) throw new RangeError("The cycle is not a UTC month");
+  return monthShareOf([...terms.maintainerShare.history], terms.maintainerShare.setting, period);
+}
+
 function rewardOf(project: ProjectTerms, cycleId: string, funding: FundingBasis | undefined, leaders: ReadonlyArray<ProjectContributor>): RewardedLeaders {
   const terms = project.reward;
   if (terms.kind === "external-prize-share") {
@@ -456,8 +466,10 @@ function rewardOf(project: ProjectTerms, cycleId: string, funding: FundingBasis 
   const funded = fundedMinor(funding ?? { fundingState: terms.fundingState, committedMinor: 0n, monthlyCapMinor: capMinor });
   const escrow = terms.escrow !== undefined && cycleId >= terms.escrow.effectiveCycle ? terms.escrow : undefined;
   const recipient = (gross: bigint) => (escrow === undefined ? gross : gross - ordinaryFeeBase(gross));
-  const projected = allocateByWeight(funded, leaders);
-  const simulated = allocateByWeight(capMinor, leaders);
+  const basisPoints = shareBasisPoints(terms, cycleId);
+  const afterShare = (amount: bigint) => fromAmount(contributorPool(toAmount(amount), basisPoints));
+  const projected = allocateByWeight(afterShare(funded), leaders);
+  const simulated = allocateByWeight(afterShare(capMinor), leaders);
   return {
     kind: "monthly-pool",
     leaders: leaders.map((leader, index) => ({ ...leader, simulatedMinor: recipient(simulated[index]), projectedMinor: recipient(projected[index]) })),

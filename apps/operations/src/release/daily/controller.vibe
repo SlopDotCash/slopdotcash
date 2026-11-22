@@ -81,7 +81,11 @@ const installationId = /^[1-9]\d{0,17}$/u
 
 type Inputs = Readonly<Record<string, string>>
 
-interface Release extends Omit<ReleaseRead, "checkpointSaved"> {
+interface Release {
+  readonly collected: boolean
+  readonly collectionFailed: boolean
+  readonly resumed: boolean
+  readonly published: boolean
   readonly profilesStartedAt: string | undefined
 }
 
@@ -121,9 +125,15 @@ function followedOf(run: WorkflowRun): FollowedRun {
 
 function decisionOf(run: WorkflowRun, jobs: ReadonlyArray<RunJob>, artifacts: ReadonlyArray<RunArtifact>, repository: string): Decision {
   const followed = followedOf(run)
-  const { profilesStartedAt: _started, ...release } = releaseOf(jobs)
-  const checkpointSaved = artifacts.some((artifact) => artifact.name === `leaderboard-discussions-${run.run_attempt}` && !artifact.expired)
-  const followUp = followUpOf(followed, repository, { ...release, checkpointSaved })
+  const read = releaseOf(jobs)
+  const release: ReleaseRead = {
+    collected: read.collected,
+    collectionFailed: read.collectionFailed,
+    resumed: read.resumed,
+    published: read.published,
+    checkpointSaved: artifacts.some((artifact) => artifact.name === `leaderboard-discussions-${run.run_attempt}` && !artifact.expired),
+  }
+  const followUp = followUpOf(followed, repository, release)
   if (followUp === "PublishCollection") return { action: "publish", reason: "its fresh collection succeeded but it did not publish" }
   if (followUp === "ResumeCollection") return { action: "resume", reason: "its collection failed after a checkpoint" }
   if (!(trustedMainRelease(followed, repository) && followed.completed)) return { action: "none", reason: "not a completed trusted main release" }
@@ -246,7 +256,7 @@ export effect function liveProfilesAt() {
   }
 }
 
-effect function dailyMachine() {
+export effect function dailyMachine() {
   const kept = try Ref.make(initial)
   return try machineOver(() => Ref.get(kept), (next) => Ref.set(kept, next))
 }
@@ -348,9 +358,12 @@ export function dailyAccess(access: Access) {
   const name = access.repository.split("/")[1] ?? ""
   return Layer.unwrap(Effect.provide(effect {
     const minted = try GitHubApp
-    const credential = minted.installationToken(app.installation, { repositories: [name], permissions: { actions: "write" } }) catch effect (error) => {
-      try Console.log(`Dispatch App token unavailable (${error._tag}); using GITHUB_TOKEN.`)
-      return access.fallback
+    const credential = effect {
+      return minted.installationToken(app.installation, { repositories: [name], permissions: { actions: "write" } }) catch effect (error) => {
+        const reason = error._tag === "GitHubMalformed" ? "invalid token" : error._tag === "NotFound" ? "HTTP 404" : error.status === undefined ? error._tag : `HTTP ${error.status}`
+        try Console.log(`Dispatch App token unavailable (${reason}); using GITHUB_TOKEN.`)
+        return access.fallback
+      }
     }
     return githubWith({ authority: githubApi, credential, userAgent, timeoutMs: defaultTimeoutMs })
   }, githubApp({ appId: app.clientId, privateKey: app.privateKey, userAgent })))

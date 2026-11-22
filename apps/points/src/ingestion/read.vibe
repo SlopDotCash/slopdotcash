@@ -22,7 +22,7 @@ const gitObject = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u
 const contentsRef = /^\?ref=[a-f0-9]{40}$/u
 const jsonType = /^application\/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)/iu
 const repositoryScope = /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u
-const pullFilesPath = /^\/pulls\/[1-9]\d*\/files$/u
+const itemListPath = /^\/(?:pulls\/[1-9]\d*\/(?:files|reviews|comments|commits)|issues\/[1-9]\d*\/(?:comments|events|timeline))$/u
 const commitPath = /^\/commits\/[a-f0-9]{40}$/u
 const commitPullsPath = /^\/commits\/[a-f0-9]{40}\/pulls$/u
 const commitFilesQuery = /^\?per_page=100&page=[1-9]\d*$/u
@@ -88,10 +88,11 @@ export function evidencePage(url: string): Page {
   const parsed = URL.parse(url)
   if (parsed === null) return "OtherPage"
   const path = repositoryScope.exec(parsed.pathname)?.[1] ?? ""
-  if (pullFilesPath.test(path)) return "PullFiles"
-  if (commitPath.test(path) && commitFilesQuery.test(parsed.search)) return "CommitFiles"
+  if (itemListPath.test(path)) return "ItemList"
   const plain = parsed.username === "" && parsed.password === "" && parsed.hash === ""
-  return plain && commitPullsPath.test(path) && commitPullsQuery.test(parsed.search) ? "CommitPulls" : "OtherPage"
+  if (!plain) return "OtherPage"
+  if (commitPath.test(path) && commitFilesQuery.test(parsed.search)) return "CommitFiles"
+  return commitPullsPath.test(path) && commitPullsQuery.test(parsed.search) ? "CommitPulls" : "OtherPage"
 }
 
 function transportError(request: HttpClientRequest.HttpClientRequest, description: string) {
@@ -198,9 +199,13 @@ export function ingestion(options: TransportOptions = {}) {
 
     effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
       let state = try machine.get()
+      const delayMs = state.wakeAt - state.now
+      const at = try isoAt(state.now)
       try Console.warn(JSON.stringify(state.pageWait
-        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }
-        : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+        ? { event: "github_ingestion_page_retry_wait", pageRetries: state.pageRetries, delayMs, at }
+        : state.gatewayWait
+          ? { event: "github_ingestion_gateway_retry_wait", gatewayRetries: state.gatewayRetries, delayMs, at }
+          : { event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs, at }))
       while (state.phase === "Waiting" && state.now < state.wakeAt) {
         try sleeping(state.wakeAt - state.now)
         state = try advanced(machine)

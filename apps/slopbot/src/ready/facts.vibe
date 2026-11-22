@@ -1,4 +1,4 @@
-// spec/slopbot/readyLabel.md, "The owner's settings are off unless saved on, and stay within their bounds"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"
+// spec/slopbot/readyLabel.md, "The owner's settings are off unless saved on, and stay within their bounds"; spec/slopbot/readyLabel.md, "Only the latest decision of each other account with write access counts, and only at the head"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"; spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"
 import { readyLabelSetting } from "@repo/backend/client"
 import { first, sql } from "@repo/platform/d1"
 import { GitHub, type GitHubFailure } from "@repo/platform/github"
@@ -7,6 +7,7 @@ import type { ReadyLabelConfig } from "../../gen/backend__readyLabelSettings.ts"
 import { type MergeState, type PullReview, type ReadyFacts, type ReviewDecision, type SlopbotReviewRow, approvesAtHead, changedFilePageLimit, enabledSettings, latestDecisions, permissionLookupLimit, readyLabelOn, requestsChanges, reviewPageLimit, savedSetting, verdictOf, writerApprovals, writerRequestedChanges } from "../../gen/slopbot__readyLabel.effect.vibe"
 import { slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import { reviewCommentMarker } from "../../gen/slopbot__review.effect.vibe"
+import { feeUnpaid } from "../fee/store.vibe"
 import { findReviewComment } from "../publish/comment.vibe"
 import { type Observed, type RepositoryRef, observe } from "../scope/facts.vibe"
 import { type GitHubFile, type ReadyCounts, changedFileOf, protectedDetail } from "./protectedPaths.ts"
@@ -222,6 +223,7 @@ export effect function factsAt(item: ReadyItem, pull: Pull, settings: ReadyLabel
   const files = reviewable ? try changedFiles(item, pull.changed_files) : undefined
   const reviews = files === undefined ? { approvals: 0, changesRequested: false } : try writerReviews(item, head, pull.user?.id ?? 0)
   const ownerPatterns = settings.protectedPaths.map((path) => path.pattern)
+  const unpaid = try feeUnpaid(item.repositoryId, item.number)
   const facts: ReadyFacts = {
     open,
     draft: pull.draft === true,
@@ -235,6 +237,7 @@ export effect function factsAt(item: ReadyItem, pull: Pull, settings: ReadyLabel
     files: (files ?? []).map((file) => changedFileOf(file, ownerPatterns)),
     approvals: reviews.approvals,
     changesRequested: reviews.changesRequested,
+    feeUnpaid: unpaid,
   }
   const counts: ReadyCounts = {
     additions: pull.additions,
@@ -251,7 +254,7 @@ export function unreadFacts(pull: Pull | undefined): ReadFacts {
   const open = pull === undefined || pullOpen(pull)
   const sizes = { additions: pull?.additions ?? 0, deletions: pull?.deletions ?? 0, changedFiles: pull?.changed_files ?? 0 }
   return {
-    facts: { ...sizes, open, draft: pull?.draft === true, mergeable: false, mergeState: "MergeNotReported", verdict: "VerdictMissing", filesRead: false, files: [], approvals: 0, changesRequested: false },
+    facts: { ...sizes, open, draft: pull?.draft === true, mergeable: false, mergeState: "MergeNotReported", verdict: "VerdictMissing", filesRead: false, files: [], approvals: 0, changesRequested: false, feeUnpaid: false },
     counts: { ...sizes, approvals: 0, mergeableState: pull?.mergeable_state ?? null, protectedDetail: null },
   }
 }

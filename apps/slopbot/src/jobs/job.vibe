@@ -1,4 +1,4 @@
-// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"
 import type { Queue } from "@repo/platform/bindings"
 
 export const appealCommands = ["accept", "reject", "uphold", "deny"] as const
@@ -80,7 +80,18 @@ export schema ReadyLabelJob {
   readonly number: number
 }
 
-export const JobSchema = Schema.Union([ReviewJob, AppealJob, AppealCommandJob, AppealDueJob, MaintainerHoldJob, ReadyLabelJob])
+export schema SubmissionFeeJob {
+  readonly kind: "submission_fee"
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: "pull_request"
+  readonly number: number
+}
+
+export const JobSchema = Schema.Union([ReviewJob, AppealJob, AppealCommandJob, AppealDueJob, MaintainerHoldJob, ReadyLabelJob, SubmissionFeeJob])
 
 export type Job = typeof JobSchema.Type
 
@@ -88,6 +99,12 @@ export type ReadyBase = Omit<ReadyLabelJob, "kind" | "itemKind">
 
 export function readyJob(base: ReadyBase): ReadyLabelJob {
   return { kind: "ready_label", itemKind: "pull_request", ...base }
+}
+
+export type FeeBase = Omit<SubmissionFeeJob, "kind" | "itemKind">
+
+export function feeJob(base: FeeBase): SubmissionFeeJob {
+  return { kind: "submission_fee", itemKind: "pull_request", ...base }
 }
 
 export error NotAJob { reason: string }

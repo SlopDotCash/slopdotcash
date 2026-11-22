@@ -1,13 +1,11 @@
 // spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/frontend/requests.md, "Only the current request may publish its validated result"
 import { type LookedUpMember, type Person, type XProfile, pointsMember, pointsPeople } from "@repo/backend/client"
 import { millisOf } from "@repo/platform/clock"
-import { PointsSummary, type ProfileIndex, assembleProjection, maxShardBytes, profileIndexOf, shardCount, shardPath } from "@repo/points/client"
+import { type ProfileIndex, assembleProjection, maxShardBytes, profileIndexOf, shardCount, shardPath } from "@repo/points/client"
 import { call } from "../platform/api.vibe"
 import { fetchBounded, fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Unreadable, resource } from "./resource.vibe"
 
-export const summaryPath = "/data/points-summary.json"
-export const summaryLimitBytes = 4_194_304
 export const journalIndexPath = "/data/points.json"
 export const journalIndexLimitBytes = 24 * 1024 * 1024
 export const profilesPath = "/data/profiles.json"
@@ -17,7 +15,6 @@ export const peopleLimitBytes = 24 * 1024 * 1024
 export const peoplePageSize = 25
 
 export const pointsMessages = {
-  summaryInvalid: "Points summary could not be verified",
   journalInvalid: "Invalid points index",
   pathInvalid: "Invalid points path",
   shardUnreadable: "Points shard unavailable",
@@ -27,7 +24,6 @@ export const pointsMessages = {
   memberInvalid: "Invalid community member",
 } as const
 
-const digest = /^[a-f0-9]{64}$/u
 const actorId = /^[A-Za-z0-9_=-]{4,256}$/u
 const login = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
 const xId = /^[0-9]{1,30}$/u
@@ -37,34 +33,6 @@ const uncached: globalThis.RequestInit = { cache: "no-store" }
 
 schema ShardEntry { readonly path: string }
 schema IndexShards { readonly shards: ReadonlyArray<ShardEntry> }
-
-function counted(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0
-}
-
-function summaryValid(summary: PointsSummary): boolean {
-  if (!Number.isFinite(millisOf(summary.generatedAt)) || !digest.test(summary.indexDigest) || !counted(summary.totals.contributors) || !counted(summary.totals.points)
-    || summary.contributors.length !== summary.totals.contributors) return false
-  let previous = Number.POSITIVE_INFINITY
-  const ids = new Set<string>()
-  for (const contributor of summary.contributors) {
-    if (contributor.actor.id === "" || contributor.actor.login === "" || !counted(contributor.total) || contributor.total === 0 || contributor.total > previous || ids.has(contributor.actor.id)) return false
-    previous = contributor.total
-    ids.add(contributor.actor.id)
-  }
-  return summary.contributors.reduce((sum, contributor) => sum + contributor.total, 0) === summary.totals.points
-}
-
-export effect function loadPointsSummary() {
-  const body = try fetchBounded(summaryPath, summaryLimitBytes, "points summary")
-  const summary = Schema.decodeUnknownEffect(PointsSummary)(body) catch effect () => { throw new Unreadable({ message: pointsMessages.summaryInvalid }) }
-  if (!summaryValid(summary)) throw new Unreadable({ message: pointsMessages.summaryInvalid })
-  return summary
-}
-
-export effect function pointsSummaryReads() {
-  return try resource((_key: string) => loadPointsSummary(), (summary: PointsSummary) => summary.contributors.length)
-}
 
 effect function utf8Text(bytes: Uint8Array, message: string) {
   return Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => { throw new Unreadable({ message }) }

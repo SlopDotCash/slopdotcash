@@ -1,0 +1,308 @@
+// spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "A deposit whose payout the token refuses is parked and never holds up the rest"
+import { type Address, EvmRpc, type Hex, evmRpc } from "@repo/platform/chain/evm"
+import { RpcMalformed, type RpcFailure, type RpcRefused } from "@repo/platform/chain/rpc"
+import { decimal, exactNumber, wholeBig } from "../evm/abi.ts"
+import { type ChainDeposit, type ResolveTransaction, type SendEntry, blockIso, decodeDeposit, decodeFeeLog, depositId, depositsCalldata, payoutFailedId, provesTransfer, resolveCalldata, transactionId } from "./abi.ts"
+import type { NetworkConfig } from "./config.vibe"
+
+export type { ChainDeposit, ResolveTransaction, SendEntry } from "./abi.ts"
+
+export error SubmissionFeeRefused { issue: string }
+export error GasBudget { issue: string }
+export error PayoutFailed { depositId: number }
+export error SendReverted { issue: string }
+export error ResolverSignRefused { issue: string }
+
+export type ChainFailure = RpcFailure | SubmissionFeeRefused | ResolverSignRefused
+
+interface EventPlace {
+  readonly txHash: string
+  readonly blockNumber: number
+  readonly blockHash: string
+  readonly logIndex: number
+}
+
+export interface DepositedEvent extends EventPlace {
+  readonly kind: "deposited"
+  readonly depositId: number
+  readonly item: string
+  readonly payer: string
+  readonly token: string
+  readonly amount: string
+  readonly keptTo: string
+}
+
+export interface ResolvedEvent extends EventPlace {
+  readonly kind: "resolved"
+  readonly depositId: number
+  readonly refunded: boolean
+}
+
+export interface ReclaimedEvent extends EventPlace {
+  readonly kind: "reclaimed"
+  readonly depositId: number
+}
+
+export type ChainEvent = DepositedEvent | ResolvedEvent | ReclaimedEvent
+
+export interface Heads {
+  readonly latest: number
+  readonly finalized: number
+}
+
+export interface Transfer {
+  readonly token: string
+  readonly recipient: string
+  readonly amount: string
+}
+
+export type ProbeResult = "ok" | "payout_failed" | "reverted"
+
+export interface PreparedSend {
+  readonly txId: Hex
+  readonly rawTx: Hex
+  readonly evmNonce: number
+  readonly maximumNativeWei: string
+}
+
+export type SendStatus =
+  | { readonly kind: "pending" }
+  | { readonly kind: "finalized"; readonly blockNumber: number }
+  | { readonly kind: "failed"; readonly reason: "resolve transaction reverted" | "nonce used by another finalized transaction" }
+  | { readonly kind: "rebroadcast" }
+
+export interface SendIdentity {
+  readonly network: string
+  readonly contract: string
+  readonly txId: string | null
+  readonly resolver: string | null
+  readonly evmNonce: number | null
+}
+
+export interface ResolverSigner {
+  readonly address: Address
+  sign(transaction: ResolveTransaction): Hex!ResolverSignRefused
+}
+
+export interface SubmissionFeeChain {
+  readonly network: NetworkConfig
+  chainId(): number!ChainFailure
+  heads(): Heads!ChainFailure
+  events(fromBlock: number, toBlock: number): ReadonlyArray<ChainEvent>!ChainFailure
+  blockTime(blockNumber: number, blockHash: string): string!ChainFailure
+  assertResolvedTransfer(event: ResolvedEvent, transfer: Transfer): void!ChainFailure
+  deposit(id: number): ChainDeposit!ChainFailure
+  address(): string | null
+  probe(entry: SendEntry): ProbeResult!ChainFailure
+  prepare<E, R>(entries: ReadonlyArray<SendEntry>, authorize: (maximumNativeWei: string) => void!E!R): PreparedSend!(ChainFailure | GasBudget | PayoutFailed | SendReverted | E)!R
+  broadcast(rawTx: Hex): void!ChainFailure
+  status(send: SendIdentity): SendStatus!ChainFailure
+}
+
+export interface SubmissionFeeChainOptions {
+  readonly network: NetworkConfig
+  readonly signer: ResolverSigner | null
+}
+
+const maxId = 9007199254740991n
+
+const refused = (issue: string) => new SubmissionFeeRefused({ issue })
+
+effect function safeId(value: bigint) {
+  const id = depositId(value)
+  if (id === undefined) throw refused("Deposit id out of range")
+  return id
+}
+
+effect function whole(value: number, issue: string) {
+  const number = wholeBig(value)
+  if (number === undefined || number < 0n) throw refused(issue)
+  return number
+}
+
+function reverted(error: RpcRefused) {
+  return (error.data !== undefined && error.data !== "0x") || error.code === 3 || /execution reverted/iu.test(error.message)
+}
+
+function chainOver(evm: EvmRpc.Shape, network: NetworkConfig, signer: ResolverSigner | null) {
+  const contract = network.contract
+  const target = contract as Address
+
+  effect function chainId() {
+    return Number(try evm.chainId())
+  }
+
+  effect function finalizedNumber() {
+    const block = evm.head("finalized") catch effect (error) => {
+      if (error._tag === "RpcMalformed") throw refused("Submission fee finality unavailable")
+      throw error
+    }
+    return block.number
+  }
+
+  effect function canonicalReceipt(hash: Hex) {
+    const receipt = try evm.receipt(hash)
+    if (receipt === undefined) return undefined
+    const block = try evm.blockByNumber(receipt.blockNumber)
+    if (block === undefined || block.hash !== receipt.blockHash || block.number !== receipt.blockNumber || block.transactions[receipt.transactionIndex] !== receipt.transactionHash)
+      throw refused("Submission fee receipt identity differs")
+    return receipt
+  }
+
+  effect function signing() {
+    if (signer === null) throw refused("Signing is disabled without SUBMISSION_FEE_RESOLVER_KEY")
+    return signer
+  }
+
+  effect function simulate(entries: ReadonlyArray<SendEntry>) {
+    const resolver = try signing()
+    return evm.call({ to: target, data: resolveCalldata(entries), block: "latest", from: resolver.address }) catch effect (error) => {
+      if (error._tag !== "RpcRefused") throw error
+      const id = payoutFailedId(error.data)
+      if (id !== undefined) throw new PayoutFailed({ depositId: try safeId(id) })
+      if (reverted(error)) throw new SendReverted({ issue: "The resolve simulation reverted" })
+      throw error
+    }
+  }
+
+  effect function heads() {
+    const latest = (try evm.head("latest")).number
+    const finalized = try finalizedNumber()
+    if (latest > maxId) throw refused("Block number out of range")
+    return { latest: Number(latest), finalized: Number(finalized) } satisfies Heads
+  }
+
+  effect function events(fromBlock: number, toBlock: number) {
+    const logs = try evm.logs({ address: target, topics: [], fromBlock: try whole(fromBlock, "Block number out of range"), toBlock: try whole(toBlock, "Block number out of range") })
+    const found: ChainEvent[] = []
+    for (const log of logs) {
+      if (log.address.toLowerCase() !== contract || log.removed) throw refused("Unexpected submission fee log")
+      const decoded = decodeFeeLog(log)
+      if (decoded.kind === "other") continue
+      if (decoded.kind === "malformed") throw refused("Malformed submission fee event")
+      const place = { txHash: log.transactionHash.toLowerCase(), blockNumber: Number(log.blockNumber), blockHash: log.blockHash.toLowerCase(), logIndex: log.logIndex } satisfies EventPlace
+      const id = try safeId(decoded.id)
+      if (decoded.kind === "deposited") {
+        if (decoded.amount <= 0n) throw refused("Unexpected deposit amount")
+        found.push({ kind: "deposited", depositId: id, item: decoded.item, payer: decoded.payer, token: decoded.token, amount: decoded.amount.toString(), keptTo: decoded.keptTo, ...place })
+      } else if (decoded.kind === "resolved") found.push({ kind: "resolved", depositId: id, refunded: decoded.refunded, ...place })
+      else found.push({ kind: "reclaimed", depositId: id, ...place })
+    }
+    return found.sort((left, right) => left.blockNumber - right.blockNumber || left.logIndex - right.logIndex)
+  }
+
+  effect function blockTime(blockNumber: number, blockHash: string) {
+    const block = try evm.blockByNumber(try whole(blockNumber, "Submission fee block unavailable"))
+    if (block === undefined || block.hash !== blockHash.toLowerCase()) throw refused("Submission fee block unavailable")
+    const at = blockIso(block.timestamp)
+    if (at === undefined) throw refused("Submission fee block time unavailable")
+    return at
+  }
+
+  effect function assertResolvedTransfer(event: ResolvedEvent, transfer: Transfer) {
+    const receipt = try canonicalReceipt(event.txHash.toLowerCase() as Hex)
+    if (receipt === undefined || receipt.status !== "success" || receipt.blockNumber > (try finalizedNumber())
+      || Number(receipt.blockNumber) !== event.blockNumber || receipt.blockHash !== event.blockHash.toLowerCase())
+      throw refused("Resolved receipt is not finalized evidence")
+    const resolved = receipt.logs.filter((log) => log.logIndex === event.logIndex && log.address.toLowerCase() === contract)
+    const amount = decimal(transfer.amount)
+    const moved = amount === undefined ? [] : receipt.logs.filter((log) => provesTransfer(log, { token: transfer.token, from: contract, to: transfer.recipient, amount }))
+    if (resolved.length !== 1 || moved.length < 1) throw refused("Resolved receipt does not prove the transfer")
+  }
+
+  effect function deposit(id: number) {
+    const record = decodeDeposit(try evm.call({ to: target, data: depositsCalldata(id), block: "latest" }))
+    if (record === undefined) throw new RpcMalformed({ method: "eth_call", issue: "the answer is not a deposits record" })
+    return record
+  }
+
+  effect function probe(entry: SendEntry) {
+    const simulated = effect {
+      try simulate([entry])
+      return "ok" satisfies ProbeResult
+    }
+    return simulated catch effect (error) => {
+      if (error._tag === "PayoutFailed") return "payout_failed" satisfies ProbeResult
+      if (error._tag === "SendReverted") return "reverted" satisfies ProbeResult
+      throw error
+    }
+  }
+
+  effect function feesPerGas() {
+    const base = (try evm.head("latest")).baseFeePerGas
+    if (base === undefined) throw refused("Submission fee base fee unavailable")
+    const priority = try evm.maxPriorityFee()
+    return { maxFeePerGas: (base * 12n) / 10n + priority, maxPriorityFeePerGas: priority }
+  }
+
+  effect function prepare<E, R>(entries: ReadonlyArray<SendEntry>, authorize: (maximumNativeWei: string) => void!E!R) {
+    const resolver = try signing()
+    const data = resolveCalldata(entries)
+    try simulate(entries)
+    const nonce = exactNumber(try evm.nonce(resolver.address, "pending"))
+    const gas = try evm.estimateGas({ to: target, data, from: resolver.address })
+    const fees = try feesPerGas()
+    if (nonce === undefined) throw refused("Submission fee nonce out of range")
+    const gasLimit = (gas * 13n + 9n) / 10n
+    const maximum = gasLimit * fees.maxFeePerGas
+    if (gasLimit <= 0n || fees.maxFeePerGas <= 0n || maximum > network.gas.perTransactionWei)
+      throw new GasBudget({ issue: "The transaction exceeds the native fee limit; nothing was signed" })
+    try authorize(maximum.toString())
+    const rawTx = try resolver.sign({ chainId: network.chainId, to: target, data, nonce, gas: gasLimit, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas })
+    return { txId: transactionId(rawTx), rawTx, evmNonce: nonce, maximumNativeWei: maximum.toString() } satisfies PreparedSend
+  }
+
+  effect function broadcast(rawTx: Hex) {
+    const observed = try chainId()
+    if (observed !== network.chainId) throw refused("Submission fee chain identity differs")
+    const hash = evm.sendRaw(rawTx) catch effect (error) => {
+      if (error._tag === "RpcRefused" && /already known/iu.test(error.message)) return undefined
+      throw error
+    }
+    if (hash !== undefined && hash !== transactionId(rawTx)) throw refused("Submission fee broadcast hash differs")
+  }
+
+  effect function status(send: SendIdentity) {
+    const { txId, resolver, evmNonce } = send
+    const observed = try chainId()
+    if (send.network !== network.network || send.contract !== contract || txId === null || resolver === null || evmNonce === null || observed !== network.chainId)
+      throw refused("Submission fee journal deployment differs")
+    const finalized = try finalizedNumber()
+    const hash = txId.toLowerCase() as Hex
+    const receipt = try canonicalReceipt(hash)
+    if (receipt !== undefined) {
+      if (receipt.blockNumber > finalized) return { kind: "pending" } satisfies SendStatus
+      if (receipt.from.toLowerCase() !== resolver || receipt.to?.toLowerCase() !== send.contract) throw refused("Submission fee receipt parties differ")
+      if (receipt.status !== "success") return { kind: "failed", reason: "resolve transaction reverted" } satisfies SendStatus
+      return { kind: "finalized", blockNumber: Number(receipt.blockNumber) } satisfies SendStatus
+    }
+    if ((try evm.transaction(hash)) !== undefined) return { kind: "pending" } satisfies SendStatus
+    const finalizedNonce = try evm.nonce(resolver as Address, "finalized")
+    if (finalizedNonce > (try whole(evmNonce, "Submission fee journal deployment differs"))) return { kind: "failed", reason: "nonce used by another finalized transaction" } satisfies SendStatus
+    return { kind: "rebroadcast" } satisfies SendStatus
+  }
+
+  return {
+    network,
+    chainId,
+    heads,
+    events,
+    blockTime,
+    assertResolvedTransfer,
+    deposit,
+    address: () => (signer === null ? null : signer.address.toLowerCase()),
+    probe,
+    prepare,
+    broadcast,
+    status,
+  } satisfies SubmissionFeeChain
+}
+
+export effect function submissionFeeChain(options: SubmissionFeeChainOptions) {
+  const url = Redacted.value(options.network.rpcUrl)
+  const chainId = wholeBig(options.network.chainId)
+  if (chainId === undefined) throw refused("Submission fee chain identity differs")
+  provide evmRpc({ urls: Redacted.make([url, url]), chainId }) {
+    return chainOver(try EvmRpc, options.network, options.signer)
+  }
+}

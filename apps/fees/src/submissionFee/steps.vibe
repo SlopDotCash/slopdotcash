@@ -1,0 +1,70 @@
+// spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"
+
+const marks = new WeakMap<object, string>()
+
+const safeName = /^[A-Za-z][A-Za-z0-9]{0,39}$/u
+
+const httpStatus = /^RPC HTTP failure: ([0-9]{3})$/u
+
+function mark(error: unknown, label: string) {
+  if (typeof error === "object" && error !== null && !marks.has(error)) marks.set(error, label)
+}
+
+export effect function step<A, E, R>(label: string, program: A!E!R) {
+  return program catch effect (error) => {
+    mark(error, label)
+    throw error
+  }
+}
+
+export function labelled<T extends object>(target: T, label: string): T {
+  const wrapped: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(target)) {
+    wrapped[key] = typeof value === "function"
+      ? (...args: ReadonlyArray<unknown>) => {
+          const result: unknown = value.apply(target, args)
+          return Effect.isEffect(result) ? step(`${label}.${key}`, result) : result
+        }
+      : value
+  }
+  return wrapped as T
+}
+
+interface ErrorFields {
+  readonly _tag?: unknown
+  readonly name?: unknown
+  readonly status?: unknown
+  readonly code?: unknown
+  readonly message?: unknown
+  readonly cause?: unknown
+}
+
+function statusOf(item: ErrorFields) {
+  if (Number.isSafeInteger(item.status)) return item.status
+  const found = item._tag === "RpcUnavailable" && typeof item.message === "string" ? httpStatus.exec(item.message) : null
+  return found === null ? undefined : Number(found[1])
+}
+
+export function failureReason(error: unknown): string {
+  const parts: string[] = []
+  let label = "unlabelled"
+  let current: unknown = error
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) break
+    const marked = marks.get(current)
+    if (marked !== undefined && label === "unlabelled") label = marked
+    const item: ErrorFields = current
+    const tag = typeof item._tag === "string" ? item._tag : item.name
+    const name = typeof tag === "string" && safeName.test(tag) ? tag : "Error"
+    const status = statusOf(item)
+    parts.push(`${name}${status === undefined ? "" : `:status-${status}`}${Number.isSafeInteger(item.code) ? `:code-${item.code}` : ""}`)
+    current = item.cause
+  }
+  return [label, ...parts].join("/").slice(0, 240)
+}
+
+export function message(error: unknown): string {
+  const tag = typeof error === "object" && error !== null && "_tag" in error ? error._tag : undefined
+  if (tag === "GasBudget") return "submission_fee_gas_budget"
+  return tag === "SubmissionFeeConfigInvalid" ? "submission_fee_invalid_input" : "submission_fee_operation_failed"
+}

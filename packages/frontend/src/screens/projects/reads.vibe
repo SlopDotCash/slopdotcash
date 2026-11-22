@@ -1,18 +1,19 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"
+import { MergeActivityAnswer } from "@repo/backend/client"
 import { millisOf } from "@repo/platform/clock"
 import type { RepositoryRegistry } from "@repo/points/client"
 import { CycleIndex, type DirectTransfer, cycleIndexUrl } from "@repo/settlement/client"
 import { Machine as ReadMachine } from "../../../gen/frontend__requests.effect.vibe"
 import type { PageRuntime } from "../../app/runtime.vibe"
 import { fetchBounded } from "../../platform/bounded.vibe"
-import { type MergeActivityIndex, type PoolFundingIndex, mergeActivityReads, poolFundingReads } from "../../reads/funding.vibe"
+import { type PoolFundingIndex, fundingLimitBytes, fundingMessages, mergeActivityPath, poolFundingReads } from "../../reads/funding.vibe"
 import { directTransferReads } from "../../reads/payments.vibe"
 import { Registry, type RegistryBoot, findProject, registryLayer } from "../../reads/registry.vibe"
 import { type Resource, Unreadable, resource } from "../../reads/resource.vibe"
 import { type Leaderboard, leaderboard } from "../../reads/snapshot.vibe"
 import { stale } from "../../reads/snapshotCache.vibe"
 import { type ShownProject, projectOf } from "./project.schema.ts"
-import { indexValid } from "./summary.ts"
+import { type MergeIndex, indexValid, mergeIndexValid } from "./summary.ts"
 
 export const discoveryPath = "/.well-known/slop/projects.json"
 export const discoveryLimitBytes = 4 * 1024 * 1024
@@ -70,11 +71,19 @@ effect function loadCycleIndex(attempt: number) {
   }
 }
 
+effect function loadMergeActivity() {
+  const body = try fetchBounded(mergeActivityPath, fundingLimitBytes, "merge activity")
+  const read = Schema.decodeUnknownEffect(MergeActivityAnswer)(body) catch effect () => { throw new Unreadable({ message: fundingMessages.mergeInvalid }) }
+  const index: MergeIndex = new Map(read.projects.map((project) => [project.projectId, project.repositories] as const))
+  if (!mergeIndexValid(index)) throw new Unreadable({ message: fundingMessages.mergeInvalid })
+  return index
+}
+
 type Board = Effect.Success<ReturnType<typeof leaderboard>>
 
 export service ProjectReads {
   readonly pool: ShownRead<PoolFundingIndex>
-  readonly merge: ShownRead<MergeActivityIndex>
+  readonly merge: ShownRead<MergeIndex>
   readonly discovery: ShownRead<ReadonlySet<string>>
   readonly direct: ShownRead<ReadonlyArray<DirectTransfer>>
   readonly cycles: ShownRead<CycleIndex>
@@ -86,7 +95,7 @@ const readsLayer = Layer.effect(ProjectReads, effect {
   const board = try leaderboard()
   return {
     pool: shownRead(try poolFundingReads()),
-    merge: shownRead(try mergeActivityReads()),
+    merge: shownRead(try resource((_key: string) => loadMergeActivity(), (index: MergeIndex) => index.size)),
     discovery: shownRead(try resource((_key: string) => loadDiscovery(), (cleared: ReadonlySet<string>) => cleared.size)),
     direct: shownRead(try directTransferReads()),
     cycles: shownRead(try resource((_key: string, attempt: number) => loadCycleIndex(attempt), (index: CycleIndex) => index.cycles.length)),

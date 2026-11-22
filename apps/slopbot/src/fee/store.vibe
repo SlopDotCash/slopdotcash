@@ -1,0 +1,162 @@
+// spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"
+import { millisOf } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import type { SubmissionFeeItem } from "@repo/ports/slopbot"
+import { type FeeGate, type FeeMode, type GateState, type Settlement, askLeaseSeconds, noItem } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+
+export const feeNeededReason = "fee-needed"
+export const feeNeededLabel = "slopbot:fee-needed"
+export const feePaidLabel = "slopbot:fee-paid"
+export const askLeaseMillis = askLeaseSeconds * 1000
+
+const reasonLimit = 300
+
+export interface PullRef {
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly number: number
+}
+
+export service SubmissionFeeMode {
+  readonly mode: FeeMode
+}
+
+export function feeModeOf(value: string | undefined): FeeMode {
+  return value === "live" ? "FeeLive" : value === "dry_run" ? "FeeDryRun" : "FeeOff"
+}
+
+export function submissionFeeMode(value: string | undefined) {
+  return Layer.succeed(SubmissionFeeMode, { mode: feeModeOf(value) })
+}
+
+export schema StoredGate = "recorded" | "asking" | "asked" | "paid" | "released"
+
+export schema GateRow {
+  readonly state: StoredGate
+  readonly reason: string
+  readonly comment_id: number | null
+  readonly updated_at: string
+  readonly next_check_at: string | null
+}
+
+export interface GateWrite {
+  readonly state: StoredGate
+  readonly reason: string
+  readonly commentId: number | null
+  readonly nextCheckAt: string | null
+}
+
+schema Found { readonly ok: number }
+
+const gateStates: Readonly<Record<StoredGate, GateState>> = {
+  recorded: "Recorded",
+  asking: "Asking",
+  asked: "Asked",
+  paid: "Paid",
+  released: "Released",
+}
+
+const settlements: Readonly<Record<string, Settlement>> = {
+  refund_due: "RefundDue",
+  kept_due: "KeptDue",
+  refunded: "Refunded",
+  kept: "Kept",
+}
+
+export function secondsOf(iso: string | null | undefined) {
+  if (iso === null || iso === undefined) return 0
+  const millis = millisOf(iso)
+  return Number.isFinite(millis) && millis > 0 ? Math.floor(millis / 1000) : 0
+}
+
+export function gateModel(gate: typeof GateRow.Type | undefined, item: SubmissionFeeItem | null, nowMillis: number): FeeGate {
+  return {
+    now: Math.max(1, Math.floor(nowMillis / 1000)),
+    gate: gate === undefined ? "NoGate" : gateStates[gate.state],
+    commentId: gate?.comment_id ?? 0,
+    nextCheckAt: secondsOf(gate?.next_check_at),
+    updatedAt: secondsOf(gate?.updated_at),
+    feeItem: item === null ? noItem : {
+      present: true,
+      paid: item.paidAt !== null,
+      paidAt: secondsOf(item.paidAt),
+      amountMinor: Number(item.stableMinor),
+      settlement: item.outcome === null ? "NoSettlement" : settlements[item.outcome] ?? "NoSettlement",
+    },
+    labelNeeded: gate?.state === "asked",
+    labelPaid: gate?.state === "paid",
+    reviewsQueued: 0,
+  }
+}
+
+export effect function gateRow(pull: PullRef) {
+  const row: typeof GateRow.Type | undefined = try first(GateRow, sql`SELECT state, reason, comment_id, updated_at, next_check_at
+    FROM slopbot_fee_gates WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.number}`)
+  return row
+}
+
+export function saveGate(pull: PullRef, next: GateWrite, at: string) {
+  return sql`INSERT INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
+    VALUES (${pull.repositoryId}, ${pull.number}, ${pull.installationId}, ${pull.owner}, ${pull.repo}, ${next.state}, ${next.reason.slice(0, reasonLimit)}, ${next.commentId}, ${at}, ${next.nextCheckAt})
+    ON CONFLICT(repository_id, pull_number) DO UPDATE SET
+      installation_id = excluded.installation_id, owner = excluded.owner, repo = excluded.repo,
+      state = excluded.state, reason = excluded.reason, comment_id = excluded.comment_id,
+      updated_at = excluded.updated_at, next_check_at = excluded.next_check_at`
+}
+
+export effect function keepGate(pull: PullRef, next: GateWrite, at: string) {
+  try (try D1).run(saveGate(pull, next, at))
+}
+
+export effect function recordOnly(pull: PullRef, at: string) {
+  try (try D1).run(sql`INSERT OR IGNORE INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
+    VALUES (${pull.repositoryId}, ${pull.number}, ${pull.installationId}, ${pull.owner}, ${pull.repo}, 'recorded', ${`${feeNeededReason}: record only, review ran`}, NULL, ${at}, NULL)`)
+}
+
+export effect function claimAsk(pull: PullRef, at: string, leaseBefore: string) {
+  const changes = try (try D1).run(sql`INSERT INTO slopbot_fee_gates (repository_id, pull_number, installation_id, owner, repo, state, reason, comment_id, updated_at, next_check_at)
+    VALUES (${pull.repositoryId}, ${pull.number}, ${pull.installationId}, ${pull.owner}, ${pull.repo}, 'asking', ${feeNeededReason}, NULL, ${at}, NULL)
+    ON CONFLICT(repository_id, pull_number) DO UPDATE SET
+      installation_id = excluded.installation_id, owner = excluded.owner, repo = excluded.repo,
+      state = 'asking', reason = excluded.reason, updated_at = excluded.updated_at, next_check_at = NULL
+    WHERE slopbot_fee_gates.state IN ('recorded', 'released')
+       OR (slopbot_fee_gates.state = 'asking' AND slopbot_fee_gates.updated_at <= ${leaseBefore})`)
+  return changes === 1
+}
+
+export effect function handBackLease(pull: PullRef, at: string, leaseBefore: string) {
+  try (try D1).run(sql`UPDATE slopbot_fee_gates SET updated_at = ${leaseBefore}
+    WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.number} AND state = 'asking' AND updated_at = ${at}`)
+}
+
+export effect function markAsked(pull: PullRef, commentId: number, at: string) {
+  try (try D1).run(sql`UPDATE slopbot_fee_gates SET state = 'asked', comment_id = ${commentId}, updated_at = ${at}
+    WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.number} AND state = 'asking'`)
+}
+
+export effect function claimCheck(pull: Pick<PullRef, "repositoryId" | "number">, nextCheckAt: string) {
+  try (try D1).run(sql`UPDATE slopbot_fee_gates SET next_check_at = ${nextCheckAt} WHERE repository_id = ${pull.repositoryId} AND pull_number = ${pull.number}`)
+}
+
+export effect function storedUnpaid(repositoryId: number, pullNumber: number) {
+  const found: typeof Found.Type | undefined = try first(Found, sql`SELECT 1 AS ok FROM slopbot_fee_gates g
+    JOIN submission_fee_items i ON i.repository_id = g.repository_id AND i.pull_number = g.pull_number
+    WHERE g.repository_id = ${repositoryId} AND g.pull_number = ${pullNumber} AND g.state IN ('asking', 'asked') AND i.paid_at IS NULL`)
+  return found !== undefined
+}
+
+export effect function feeUnpaid(repositoryId: number, pullNumber: number) {
+  const { mode } = try SubmissionFeeMode
+  if (mode !== "FeeLive") return false
+  return try storedUnpaid(repositoryId, pullNumber)
+}
+
+export effect function paidUndecided(repositoryId: number, pullNumber: number, unmarkedOnly: boolean) {
+  const found: typeof Found.Type | undefined = try first(Found, sql`SELECT 1 AS ok FROM submission_fee_items i
+    JOIN slopbot_fee_gates g ON g.repository_id = i.repository_id AND g.pull_number = i.pull_number
+    WHERE i.repository_id = ${repositoryId} AND i.pull_number = ${pullNumber} AND i.paid_at IS NOT NULL AND i.outcome IS NULL
+      AND (${unmarkedOnly ? 1 : 0} = 0 OR g.state <> 'paid')`)
+  return found !== undefined
+}

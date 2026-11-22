@@ -1,0 +1,289 @@
+// spec/slopbot/submissionFeeGate.md, "Story: Ask an outside contributor's deposit before the review, and never close for it"; spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full"
+import { assert, layer } from "@effect/vitest"
+import { FetchHttpClient } from "effect/http"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { IntakePause, type ProjectView, Registry, RegistryManifests, Restrictions, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
+import { gateSubmissionFee } from "../src/fee/gate.vibe"
+import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
+import { SubmissionFeeMode, feeUnpaid } from "../src/fee/store.vibe"
+import { webhookSettings } from "../src/ingress/webhook.vibe"
+import { type Job, JobQueue } from "../src/jobs/job.vibe"
+import { intakeFacts } from "../src/review/intake.vibe"
+
+const repo = "ada/widgets"
+const repositoryId = 8401
+const installationId = 9601
+const projectId = "fee-journeys"
+const t0 = Date.parse("2026-11-22T12:00:00.000Z")
+const day = 86_400_000
+const since = "2026-11-21T00:00:00.000Z"
+
+interface Fees {
+  readonly fake: GitHubFake
+  readonly db: D1Database
+  readonly clock: ReturnType<typeof settableClock>
+  readonly sent: Job[]
+  mode: "FeeOff" | "FeeDryRun" | "FeeLive"
+  manifest: string
+  paused: boolean
+  failLabels: boolean
+  readonly reports: Map<number, Record<string, unknown>>
+}
+
+service FeeWorld {
+  readonly fees: Fees
+  readonly services: Layer.Layer<never>
+}
+
+function iso(millis: number) {
+  return new Date(millis).toISOString()
+}
+
+function settingOn(on: boolean) {
+  return JSON.stringify({ id: projectId, slopbot: on ? { submissionFee: { enabled: true, amountMinor: "2000000" } } : {} })
+}
+
+function viewOf(): ProjectView {
+  return {
+    projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
+    retirement: "NotRetired", stewardGithubId: "100", stewardAccount: "UserSteward", listing: { fromApplication: false },
+    repositories: [{ id: String(repositoryId), nodeId: `R_${repositoryId}`, fullName: repo, integrationBranch: "main", aliases: [] }], closureConsent: false,
+  }
+}
+
+function handlerOf(fees: () => Fees) {
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init)
+    const current = fees()
+    const path = new URL(request.url).pathname
+    if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 })
+    const found = /\/pulls\/(\d+)$/u.exec(path)
+    const answer = await current.fake.handler(request)
+    const report = found === null || request.method !== "GET" ? undefined : current.reports.get(Number(found[1]))
+    if (report === undefined || answer.status !== 200) return answer
+    const pull = await answer.json() as Record<string, unknown>
+    return new Response(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
+  }
+}
+
+const World = Layer.effect(FeeWorld, effect {
+  const mf = startWorker({ d1: { FEE: "fee-journeys" } })
+  const applied = try Effect.promise(() => migrate(mf, "FEE", migrationsDir))
+  const failed = applied.find((entry) => entry.error !== undefined)
+  if (failed !== undefined) return try Effect.die(new Error(`migration ${failed.file} failed`))
+  const db = try Effect.promise(() => database(mf, "FEE"))
+  try Effect.promise(() => db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1)").bind(installationId, iso(t0)).run())
+  const fake = githubFake()
+  fake.world.addUser({ id: 100, login: "ada" })
+  fake.world.addUser({ id: 301, login: "carol" })
+  fake.world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" })
+  fake.world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } })
+  const clock = settableClock(t0)
+  const fees: Fees = { fake, db, clock, sent: [], mode: "FeeLive", manifest: settingOn(true), paused: false, failLabels: false, reports: new Map() }
+  const manifestRow = () => ({ projectId, active: true, revision: 1, manifest: fees.manifest, manifestSha256: "0".repeat(64), updatedAt: iso(t0) })
+  const ports = Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: () => Effect.succeed(viewOf()),
+      byRepository: () => Effect.succeed(viewOf()),
+      byPath: (fullName: string) => Effect.succeed(fullName.toLowerCase() === repo ? { match: "CurrentPath" as const, registeredRepositoryId: String(repositoryId), project: viewOf() } : undefined),
+      active: () => Effect.succeed([viewOf()]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("the fee journeys register no vault")),
+      fence: () => Effect.die(new Error("the fee journeys write no registry fence")),
+    }),
+    Layer.succeed(RegistryManifests, { current: () => Effect.sync(() => [manifestRow()]), project: () => Effect.sync(() => manifestRow()) }),
+    Layer.succeed(Restrictions, {
+      account: () => Effect.succeed({ banned: false }),
+      project: () => Effect.succeed({ restricted: false }),
+      fence: () => Effect.die(new Error("the fee journeys write no restriction fence")),
+      unbanned: () => Effect.die(new Error("the fee journeys write no restriction fence")),
+    }),
+    Layer.succeed(Enforcement, {
+      project: () => Effect.succeed({ restriction: "Clear" as const, enforcementGeneration: 0, clearanceGeneration: "0" }),
+      fence: () => Effect.die(new Error("the fee journeys write no enforcement fence")),
+    }),
+    Layer.succeed(SubmissionFeeRates, { all: () => Effect.succeed([]), newest: () => Effect.succeed(null), append: () => Effect.die(new Error("the fee journeys append no rate")) }),
+    Layer.succeed(SubmissionFeeSetting, { since: () => Effect.sync(() => fees.manifest === settingOn(true) ? since : null) }),
+    Layer.succeed(IntakePause, { paused: () => Effect.sync(() => fees.paused) }),
+    Layer.succeed(SubmissionFeeMode, { get mode() { return fees.mode } }),
+    Layer.succeed(JobQueue, { send: (job: Job) => Effect.sync(() => { fees.sent.push(job) }) }),
+  )
+  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(() => fees) as typeof globalThis.fetch))
+  const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-fee-journeys" }), http)
+  const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-journeys-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) })
+  return { fees, services: Layer.mergeAll(d1(db), webCrypto, clock.layer, ports, githubLayer, settings) as Layer.Layer<never> }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function at<A, E>(millis: number, program: A!E!unknown) {
+  const { fees, services } = try FeeWorld
+  fees.clock.set(millis)
+  const provided = Effect.provide(program, services) as Effect.Effect<A, E>
+  return try provided
+}
+
+effect function opened(title: string, openedAt: number) {
+  const { fees } = try FeeWorld
+  const number = fees.fake.world.addPull({ repo, author: "carol", title, headSha: "1".padStart(40, "0") })
+  fees.reports.set(number, { created_at: iso(openedAt) })
+  return number
+}
+
+function pullRef(number: number) {
+  return { installationId, repositoryId, owner: "ada", repo: "widgets", number }
+}
+
+effect function gated(number: number, millis: number) {
+  const { fees } = try FeeWorld
+  const exit = try Effect.exit(at(millis, gateSubmissionFee({ target: { pull: pullRef(number), projectId, itemNodeId: `PR_${number}`, appUser: fees.fake.app.bot.id }, exemption: "NotExempt", mayAsk: true })))
+  return exit._tag === "Success" ? exit.value : "failed"
+}
+
+effect function refreshed(number: number, millis: number) {
+  const job = { kind: "submission_fee" as const, deliveryId: `fee-${number}-${millis}`, installationId, repositoryId, owner: "ada", repo: "widgets", itemKind: "pull_request" as const, number }
+  return try at(millis, refreshSubmissionFee(job))
+}
+
+effect function seen(number: number) {
+  const { fees } = try FeeWorld
+  const pull = fees.fake.world.pull(repo, number)
+  const gate = try Effect.promise(() => fees.db.prepare("SELECT state, comment_id FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ state: string; comment_id: number | null }>())
+  const item = try Effect.promise(() => fees.db.prepare("SELECT stable_minor, paid_at IS NOT NULL AS paid, outcome FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ stable_minor: string; paid: number; outcome: string | null }>())
+  return {
+    gate: gate?.state ?? null,
+    item: item === null ? null : { stableMinor: item.stable_minor, paid: item.paid === 1, outcome: item.outcome },
+    labels: pull.labels.map((label) => label.name).sort(),
+    botComments: pull.comments.filter((comment) => comment.author.login === fees.fake.app.bot.login).length,
+  }
+}
+
+effect function paidBy(number: number, millis: number) {
+  const { fees } = try FeeWorld
+  try Effect.promise(() => fees.db.prepare("UPDATE submission_fee_items SET paid_at = ?, paid_network = 'base-mainnet', paid_deposit_id = ? WHERE repository_id = ? AND pull_number = ?").bind(iso(millis), number, repositoryId, number).run())
+}
+
+effect function closed(number: number, millis: number, merged: boolean) {
+  const { fees } = try FeeWorld
+  fees.reports.set(number, { ...fees.reports.get(number), state: "closed", merged, closed_at: iso(millis) })
+}
+
+layer(World, { timeout: "240 seconds" })((it) => {
+  it.effect('A new outside pull request is asked once under a lease, a failed label write lets the retry ask, record-only writes only the gate, and turning the setting off releases it (spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed")', () => effect {
+    const { fees } = try FeeWorld
+    const first = try opened("First sight", t0 - 1000)
+    const waits = try gated(first, t0)
+    const again = try gated(first, t0 + 1000)
+    const asked = try seen(first)
+    const flaky = try opened("Label write fails", t0 - 1000)
+    fees.failLabels = true
+    const failed = try gated(flaky, t0)
+    fees.failLabels = false
+    const retried = try gated(flaky, t0 + 60_000)
+    const older = try opened("Opened before the setting", Date.parse(since) - day)
+    const olderWaits = try gated(older, t0)
+    fees.mode = "FeeDryRun"
+    const recorded = try opened("Record only", t0 - 1000)
+    const recordWaits = try gated(recorded, t0)
+    fees.mode = "FeeLive"
+    fees.manifest = settingOn(false)
+    const releasedWaits = try gated(first, t0 + 2000)
+    fees.manifest = settingOn(true)
+    try same({ waits, again, asked, failed, retried, flaky: try seen(flaky), olderWaits, older: try seen(older), recordWaits, recorded: try seen(recorded), releasedWaits, released: try seen(first) }, {
+      waits: true,
+      again: true,
+      asked: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
+      failed: "failed",
+      retried: true,
+      flaky: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
+      olderWaits: false,
+      older: { gate: null, item: null, labels: [], botComments: 0 },
+      recordWaits: false,
+      recorded: { gate: "recorded", item: null, labels: [], botComments: 0 },
+      releasedWaits: false,
+      released: { gate: "released", item: null, labels: [], botComments: 1 },
+    })
+  })
+
+  it.effect('A paid fee swaps the label and queues the held review, merged is refund due, closed a week is kept due, a withdrawn payment asks again, and an unpaid pull request is not ready (spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
+    const { fees } = try FeeWorld
+    const merged = try opened("Merged after paying", t0 - 1000)
+    const kept = try opened("Closed after paying", t0 - 1000)
+    const withdrawn = try opened("Payment withdrawn", t0 - 1000)
+    for (const number of [merged, kept, withdrawn]) try gated(number, t0)
+    const unpaidBefore = try at(t0, feeUnpaid(repositoryId, merged))
+    for (const number of [merged, kept, withdrawn]) try paidBy(number, t0 + 1000)
+    fees.sent.length = 0
+    const dispatched = try at(t0 + 2000, dispatchFeeChecks())
+    const queued = fees.sent.map((job) => job.kind)
+    const paid = try refreshed(merged, t0 + 3000)
+    const paidState = try seen(merged)
+    try closed(merged, t0 + 4000, true)
+    const refund = try refreshed(merged, t0 + 5000)
+    try refreshed(kept, t0 + 3000)
+    try closed(kept, t0 + 4000, false)
+    const early = try refreshed(kept, t0 + 5000)
+    const late = try refreshed(kept, t0 + 4000 + 7 * day)
+    try refreshed(withdrawn, t0 + 3000)
+    try Effect.promise(() => fees.db.prepare("UPDATE submission_fee_items SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, withdrawn).run())
+    const askedAgain = try refreshed(withdrawn, t0 + 6000)
+    try same({
+      unpaidBefore,
+      dispatched,
+      queued,
+      paid: { review: paid.review, held: feeReviewJob({ kind: "submission_fee", deliveryId: "x", installationId, repositoryId, owner: "ada", repo: "widgets", itemKind: "pull_request", number: merged }, iso(t0)).kind },
+      paidState: { gate: paidState.gate, labels: paidState.labels },
+      refund: (try seen(merged)).item,
+      early: (try seen(kept)).item?.outcome ?? null,
+      late: (try seen(kept)).item,
+      lateReview: late.review,
+      askedAgain: askedAgain.review,
+      withdrawn: try seen(withdrawn),
+      unpaidAfter: try at(t0 + 7000, feeUnpaid(repositoryId, withdrawn)),
+      refundReview: refund.review,
+      earlyReview: early.review,
+    }, {
+      unpaidBefore: true,
+      dispatched: 3,
+      queued: ["submission_fee", "submission_fee", "submission_fee"],
+      paid: { review: true, held: "review" },
+      paidState: { gate: "paid", labels: ["slopbot:fee-paid"] },
+      refund: { stableMinor: "2000000", paid: true, outcome: "refund_due" },
+      early: null,
+      late: { stableMinor: "2000000", paid: true, outcome: "kept_due" },
+      lateReview: false,
+      askedAgain: false,
+      withdrawn: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
+      unpaidAfter: true,
+      refundReview: false,
+      earlyReview: false,
+    })
+  })
+
+  it.effect('A paused project holds only a new outside pull request that Slopbot never completed a review of (spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap"; spec/slopbot/review.md, "A bound review of a paused project\'s new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap")', () => effect {
+    const { fees } = try FeeWorld
+    const item = { projectId, repositoryId, authorId: 301, number: 4242 }
+    const open = try at(t0, intakeFacts(item))
+    fees.paused = true
+    const paused = try at(t0, intakeFacts(item))
+    try Effect.promise(() => fees.db.prepare("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, verdict, action, created_at) VALUES ('intake-reviewed', ?, ?, 'pull_request', 4242, 'PR_4242', 301, 'rev', 'content', 'policy', 'completed', NULL, 'comment', ?)").bind(installationId, repositoryId, iso(t0)).run())
+    const reviewed = try at(t0, intakeFacts(item))
+    fees.paused = false
+    try same({ open, paused, reviewed }, {
+      open: { paused: false, reviewedBefore: false },
+      paused: { paused: true, reviewedBefore: false },
+      reviewed: { paused: true, reviewedBefore: true },
+    })
+  })
+})

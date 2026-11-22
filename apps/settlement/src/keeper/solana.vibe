@@ -218,7 +218,7 @@ effect function readSolanaAward(context: SolanaContext, obligationId: string, gi
   const project = try finalizedProject(verified)
   if (project.mint !== deployment.asset || project.network !== digest(deployment.networkDomain)) throw refused("Project domain mismatch")
   const id = digest(obligationId.replace(/^0x/u, "").toLowerCase())
-  const parsed = /^[0-9]{1,20}$/u.test(githubUserId) ? decimal(githubUserId) : undefined
+  const parsed = /^(0|[1-9][0-9]{0,19})$/u.test(githubUserId) ? decimal(githubUserId) : undefined
   const actor = parsed === undefined ? undefined : u64(parsed)
   if (id === undefined || actor === undefined) throw refused("Finalized award mismatch")
   const read = decodeAward(try finalizedAccount(awardAddress(verified.program, verified.project, id)), verified.program)

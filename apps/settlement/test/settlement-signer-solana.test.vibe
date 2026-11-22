@@ -118,6 +118,7 @@ const accounts = new Map<string, FakeAccount>([
 ])
 
 const asked: string[] = []
+const fakeChain: { status: { readonly err: unknown; readonly confirmationStatus: string } | null; blockhash: string; lastValidBlockHeight: number } = { status: null, blockhash: genesis, lastValidBlockHeight: 500 }
 
 function accountAnswer(params: ReadonlyArray<unknown>) {
   const found = accounts.get(String(params[0]))
@@ -128,9 +129,9 @@ function chainAnswer(call: RpcCall): unknown {
   switch (call.method) {
     case "getGenesisHash": return genesis
     case "getAccountInfo": return accountAnswer(call.params)
-    case "getLatestBlockhash": return { context: { slot: 10 }, value: { blockhash: genesis, lastValidBlockHeight: 500 } }
+    case "getLatestBlockhash": return { context: { slot: 10 }, value: { blockhash: fakeChain.blockhash, lastValidBlockHeight: fakeChain.lastValidBlockHeight } }
     case "getBlockHeight": return 10
-    case "getSignatureStatuses": return { context: { slot: 10 }, value: (Array.isArray(call.params[0]) ? call.params[0] : []).map(() => null) }
+    case "getSignatureStatuses": return { context: { slot: 10 }, value: (Array.isArray(call.params[0]) ? call.params[0] : []).map(() => fakeChain.status === null ? null : { slot: 40, confirmations: null, ...fakeChain.status }) }
     default: return null
   }
 }
@@ -190,10 +191,21 @@ effect function prepared() {
   }
 }
 
-effect function journalled() {
+effect function refusal() {
   provide try signer() {
-    return try within(ordinaryScope, (entries) => entries.get(attemptKey))
+    try createJournal()
+    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => "reason" in error ? String(error.reason) : error._tag
   }
+}
+
+effect function journalled(key: string) {
+  provide try signer() {
+    return try within(ordinaryScope, (entries) => entries.get(key))
+  }
+}
+
+function transactionOf(entry: unknown) {
+  return typeof entry === "object" && entry !== null && "transactionId" in entry ? entry.transactionId : undefined
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
@@ -206,10 +218,10 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
     try seed("INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, transaction_id, state) VALUES (?, ?, 'claim-successor', ?, NULL, 'prepared')", idempotencyKey, obligationId, at)
 
     const unauthorized = try prepared()
-    const heldEntry = try journalled()
+    const heldEntry = try journalled(attemptKey)
     try authorize("claim-successor", successorWallet, successorDigest)
     const answer = try prepared()
-    const entry = try journalled()
+    const entry = try journalled(attemptKey)
     const stored = typeof entry === "object" && entry !== null ? entry as Readonly<Record<string, unknown>> : {}
     try Effect.try(() => assert.deepStrictEqual({
       unauthorized: [unauthorized, heldEntry],
@@ -220,6 +232,40 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       unauthorized: ["AttemptHeld", undefined],
       prepared: { transactionId: stored.transactionId, transaction: stored.raw },
       journalled: { obligationId, transactionId: stored.transactionId, raw: stored.raw, cosigner: successorWallet.address },
+      broadcast: [],
+    }))
+  })
+
+  it.effect('A finalized failed Solana binding is replaced once and a landed one is reconciled (spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block")', () => effect {
+    const failed = transactionOf(try journalled(attemptKey))
+    fakeChain.status = { err: { InstructionError: [0, { Custom: 6 }] }, confirmationStatus: "confirmed" }
+    const confirmedOnly = try refusal()
+    const afterConfirmed = transactionOf(try journalled(attemptKey))
+    fakeChain.status = { err: { InstructionError: [0, { Custom: 6 }] }, confirmationStatus: "finalized" }
+    fakeChain.blockhash = walletOf(0x41).address
+    fakeChain.lastValidBlockHeight = 600
+    const replaced = try prepared()
+    const fresh = transactionOf(try journalled(attemptKey))
+    const archived = transactionOf(try journalled(`${attemptKey}:expired:500`))
+    accounts.set(bindingAddress(program, project, u64(actor) as U64), { owner: program, executable: false, data: anchored("WalletBinding", 169, [
+      [8, digestBytes(successorDigest as Digest)], [40, keyBytes(identity.address)], [72, word(actor)], [80, domain()], [112, keyBytes(successorWallet.address)], [144, word(2n)],
+    ]) })
+    fakeChain.blockhash = walletOf(0x42).address
+    fakeChain.lastValidBlockHeight = 700
+    const landed = try refusal()
+    const unchanged = transactionOf(try journalled(attemptKey))
+    const notArchived = try journalled(`${attemptKey}:expired:600`)
+    try Effect.try(() => assert.deepStrictEqual({
+      confirmedOnly: [confirmedOnly, afterConfirmed],
+      replaced: typeof replaced === "string" ? replaced : replaced.transactionId,
+      kept: [archived, fresh === failed],
+      landed: [landed, unchanged, notArchived],
+      broadcast: asked.filter((method) => method === "sendTransaction"),
+    }, {
+      confirmedOnly: ["Existing transaction failed; reconcile before retry", failed],
+      replaced: fresh,
+      kept: [failed, false],
+      landed: ["Binding changed; finalized receipt reconciliation required", fresh, undefined],
       broadcast: [],
     }))
   })

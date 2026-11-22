@@ -13,6 +13,7 @@ import { pagesSecretNames, tableNames } from "../wrangler/outputs.vibe"
 import { ConfigRefused, type Reviewed, databaseOf, driftMessage, isolationIssue, mappedScripts, pagesOf, readReviewed, reviewOnlyKeys, secretDrift, siteOrigins } from "./config.vibe"
 import { migrationLedger } from "./migrations.vibe"
 import { type Overrides, type Publication, type SecretValues, checkedSecrets, configsFor, feeSettingsOf, plainRelease, privateBoundary, publicationOrder, publishContainerWorker, publishWorker, releaseSecrets, servingTag, withSecretsFile } from "./order.vibe"
+import { publishSubmissionFee, submissionFeeReviewOf } from "./submissionFee.vibe"
 import { tableOwners, undeclaredTable } from "./tables.vibe"
 
 export interface PublisherOptions {
@@ -350,6 +351,7 @@ export function publisher(options: PublisherOptions) {
         if ((try Ref.get(backupRetention)) !== true) throw refused("the backup Worker was not published with retention enabled in this run")
         return try servingTag(reviewed.file.name)
       }
+      if (service === "SubmissionFee") return try publishSubmissionFee(reviewed, ready.site, publication)
       const secrets = try releaseSecrets(workerUploads[target.environment][service] ?? [])
       if (service === "VettingBackup") {
         const overrides = { vars: { EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: ready.retention ? "enabled" : "off" }, withoutBindings: [] } satisfies Overrides
@@ -394,6 +396,13 @@ export function publisher(options: PublisherOptions) {
       const reviewed = onlyConfig(configsFor(ready.reviewed, "FeeConverter", target.environment))
       if (typeof reviewed === "string") throw refused(reviewed)
       return try feeSettingsOf(reviewed, try checkedSecrets(reviewed))
+    }
+
+    effect function submissionFee(target: Target) {
+      const ready = try preparedFor(target)
+      const reviewed = onlyConfig(configsFor(ready.reviewed, "SubmissionFee", target.environment))
+      if (typeof reviewed === "string") throw refused(reviewed)
+      return try submissionFeeReviewOf(reviewed, ready.site)
     }
 
     effect function site(target: Target) {
@@ -519,6 +528,7 @@ export function publisher(options: PublisherOptions) {
       publish: (service: Service, target: Target) => staged(`publish ${service}`, Effect.provide(publishService(service, target), services)),
       feeSettings: (target: Target) => staged("fee settings", Effect.provide(feeSettings(target), services)),
       feeVersions: () => staged("fee versions", Effect.provide(feeVersions(), services)),
+      submissionFee: (target: Target) => staged("submission fee", Effect.provide(submissionFee(target), services)),
       site: (target: Target) => staged("site", Effect.provide(site(target), services)),
       deployments: (target: Target, sinceMillis: number) => staged("deployments", Effect.provide(deployments(target, sinceMillis), services)),
       served: (target: Target, deploymentId: string) => staged("served", Effect.provide(served(target, deploymentId), services)),

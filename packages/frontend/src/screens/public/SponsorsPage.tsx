@@ -1,4 +1,5 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+import { fromAmount } from "@repo/settlement/kernels/amounts";
 import { DataState, Disclosure, ExternalLink, PageHeader } from "@repo/ui";
 import { ArrowRight, HandCoins } from "lucide-react";
 import type { ReactNode } from "react";
@@ -9,10 +10,10 @@ import { formatRewardMinor, networkLabel } from "../../kernels/assetText.ts";
 import { SOURCE_REPOSITORY } from "../../platform/site.ts";
 import { Chip } from "../admin/parts.tsx";
 import { FundedMeter } from "../cycles/CycleAllocation.tsx";
-import { type ListedProject, listedThisMonth, type Shown } from "../home/listing.ts";
+import { type ListedProject, onSponsors, type Shown, sponsorPoolLine } from "../home/listing.ts";
 import type { MergeLine } from "../home/ProjectCards.tsx";
 import { FundingStatus } from "./FundingStatus.tsx";
-import { type NetworkPays, sponsorPoolLabel } from "./funding.ts";
+import type { NetworkPays } from "./funding.ts";
 import { type LiveFootprint, WhoBuilds, whoBuildsDateLabel, type WhoBuildsSnapshot } from "./WhoBuilds.tsx";
 
 const link = "text-primary underline underline-offset-4 hover:decoration-2";
@@ -44,12 +45,13 @@ function Explained({ title, children, aside }: { title: string; children: ReactN
 
 function PoolLabel({ project }: { project: ListedProject }) {
   const prize = project.reward.kind === "external-prize-share" ? project.reward.externalOpportunity?.name : undefined;
-  return prize ? <Chip title={prize}>External</Chip> : sponsorPoolLabel(project);
+  return prize ? <Chip title={prize}>External</Chip> : sponsorPoolLine(project);
 }
 
 function SponsorCard({ project, mergeLine, networkPays }: { project: ListedProject; mergeLine: MergeLine; networkPays: NetworkPays }) {
   const merge = project.status === "active" ? mergeLine(project) : null;
   const budget = project.reward.reviewBudget;
+  const months = project.coverage?.tag === "Covers" ? fromAmount(project.coverage.months) : 0n;
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
       <a href={`/projects/${project.slug}/funding`} className="inline-flex items-center justify-between gap-2 font-semibold text-foreground hover:text-primary">
@@ -61,12 +63,14 @@ function SponsorCard({ project, mergeLine, networkPays }: { project: ListedProje
       </p>
       {project.reward.chain ? <p className="text-sm text-muted-foreground">{networkLabel(project.reward.chain)}</p> : null}
       <FundingStatus project={project} networkPays={networkPays} />
+      {months > 0n ? <small className="text-sm text-muted-foreground">{`Covers ${months} ${months === 1n ? "month" : "months"}`}</small> : null}
       {merge ? <small className="text-sm text-muted-foreground">{merge}</small> : null}
       {budget && reviewBudgetShown(budget.fundingState === "committed") ? (
         <small className="text-muted-foreground">
           <FundedMeter label="Reviews" fundedMinor={budget.committedMinor} funded={formatRewardMinor(budget.committedMinor)} cap={budget.monthlyCapDisplay} />
         </small>
       ) : null}
+      {project.shareLine ? <small className="text-sm text-muted-foreground">{project.shareLine}</small> : null}
     </li>
   );
 }
@@ -84,9 +88,10 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
             Add a project
           </a>
         </div>
+        <p className="text-muted-foreground">Anyone can deposit from their own wallet into a project's registered vault. Deposits are public. Depositors have no refund right, and the project owner can withdraw free funds, less a 2% fee.</p>
         <DataState status={projects.status} onRetry={projects.onRetry}>
           <ul aria-label="Project funding pools" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {listed.filter(listedThisMonth).map((project) => (
+            {listed.filter(onSponsors).map((project) => (
               <SponsorCard key={project.id} project={project} mergeLine={mergeLine} networkPays={networkPays} />
             ))}
           </ul>
@@ -137,8 +142,8 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
         <h2 className="text-xl font-semibold text-foreground">Public records</h2>
         <ul className="flex flex-col gap-2">
           <li>
-            <a className={link} href="/#leaderboard">
-              Live leaderboard
+            <a className={link} href="/points">
+              Contributors
             </a>
           </li>
           <li>

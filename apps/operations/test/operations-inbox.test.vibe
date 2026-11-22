@@ -353,4 +353,36 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
     })
   })
+
+  it.effect('A decided reinstatement request retires its review notice from the list, the unread count and mark-read (spec/operations/moderation.md, "Story: A moderator reads only what current authority allows and records each decision with a reason"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check")', () => effect {
+    const db = try D1
+    const projectId = "inbox-reinstatement"
+    const manifestSha = "e".repeat(64)
+    const record = (id: string, sequence: number, action: string, stateAfter: string, appealAfter: string, role: string, source: string, minute: number) =>
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES (${id}, ${projectId}, ${sequence}, ${action}, ${stateAfter}, ${appealAfter}, 'journey record', 'journey evidence', '9301', '["github:9301"]',
+          ${role === "project-steward" ? member : listedModerator}, ${role === "project-steward" ? "steward" : "placer"}, NULL, ${role}, ${source}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${at(minute)})`
+    const reviewKey = "reinstatement-review:enf_inbox_request"
+    const baseline = (try inbox(moderator)).unread
+    try save([notice(reviewKey, "ReinstatementReview", at(45), moderator, projectId, "/admin")], [
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'paused', 1, '{"id":"inbox-reinstatement"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
+      record("enf_inbox_quarantine", 1, "quarantine", "quarantined", "none", "project-moderator", "admin-panel", 41),
+      record("enf_inbox_request", 2, "request_reinstatement", "quarantined", "requested", "project-steward", "owner-request", 42),
+    ])
+    const listed = (answer: { unread: number; notifications: ReadonlyArray<Record<string, unknown>> }) =>
+      [answer.notifications.filter((item) => item.eventKey === reviewKey).map((item) => item.kind), answer.unread - baseline]
+    const open = listed(try inbox(moderator))
+    try db.batch([record("enf_inbox_ban", 3, "ban", "banned", "requested", "project-moderator", "admin-panel", 46)])
+    const appealKept = listed(try inbox(moderator))
+    try db.batch([record("enf_inbox_denial", 4, "deny_reinstatement", "banned", "denied", "project-moderator", "admin-panel", 47)])
+    const decided = listed(try inbox(moderator))
+    try ask("/api/v1/notifications/read", { as: moderator, json: { eventKeys: [reviewKey] } })
+    try same({ open, appealKept, decided, readAt: try readAt(reviewKey, moderator) }, {
+      open: [["reinstatement_review"], 1],
+      appealKept: [["reinstatement_review"], 1],
+      decided: [[], 0],
+      readAt: null,
+    })
+  })
 })
