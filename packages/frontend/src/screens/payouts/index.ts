@@ -1,5 +1,6 @@
 // spec/app/index.md, "Story: Open a page by its address"
 export { ConsentReview, type ConsentReviewProps } from "./ConsentReview.tsx";
+export { ContributorAllocationRow, type ContributorAllocationRowProps } from "./ContributorAllocationRow.tsx";
 export { PayoutAmount, type PayoutAmountProps } from "./PayoutAmount.tsx";
 export { PayoutConsent, type PayoutConsentProps } from "./PayoutConsent.tsx";
 export { PayoutRow, type PayoutRowProps } from "./PayoutRow.tsx";

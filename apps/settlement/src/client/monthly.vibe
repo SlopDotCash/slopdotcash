@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { getPaymentsProjectsByIdMonthlyByPeriod, postPaymentsProjectsByIdMonthlyByPeriodAllocations, postPaymentsProjectsByIdMonthlyByPeriodCommitment, postPaymentsProjectsByIdMonthlyByPeriodFinalize, postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment, postPaymentsProjectsByIdMonthlySettings } from "./refusals.vibe"
 
@@ -30,6 +30,7 @@ export schema MonthlyAsset {
 
 export schema MonthlyProposal {
   readonly capBase: string
+  readonly earlyCloseAt?: string
   readonly allocationSequence: number
   readonly allocations: ReadonlyArray<MonthlyAllocation>
   readonly latestCutAt: string | null

@@ -1,9 +1,8 @@
-// spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+// spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import { RowMismatch, sql } from "@repo/platform/d1"
 import { handle } from "@repo/platform/http"
 import { route } from "@repo/platform/route"
-import { Restrictions } from "@repo/ports/backend"
-import { PoolFactsView, PoolListing } from "@repo/ports/settlement"
+import { IntakeCounts, Restrictions } from "@repo/ports/backend"
 import { Clearance, Enforcement } from "@repo/ports/security"
 
 schema PlannedRestriction {
@@ -54,60 +53,55 @@ export const plannedSecurity = Layer.mergeAll(
   } satisfies Clearance.Shape),
 )
 
-schema PlannedPool {
+schema PlannedCount {
   readonly projectId: string
-  readonly pool: PoolFactsView
+  readonly openOutside: number
+  readonly observedAt: string
 }
 
-schema FundingPlan {
-  readonly answer: "Facts" | "Short" | "Fail" | "Nothing"
-  readonly pools: ReadonlyArray<PlannedPool>
+schema IntakePlan {
+  readonly answer: "Counts" | "Fail"
+  readonly counts: ReadonlyArray<PlannedCount>
 }
 
-schema FundingSeen {
-  readonly asked: ReadonlyArray<ReadonlyArray<string>>
+schema IntakeSeen {
+  readonly asked: number
   readonly logged: ReadonlyArray<string>
 }
 
-const funding: { plan: FundingPlan; asked: Array<ReadonlyArray<string>>; logged: string[] } = { plan: { answer: "Nothing", pools: [] }, asked: [], logged: [] }
+const intake: { plan: IntakePlan; asked: number; logged: string[] } = { plan: { answer: "Counts", counts: [] }, asked: 0, logged: [] }
 
-const pointsOnly: PoolFactsView = { read: "PoolCurrent", monthlyPool: false, period: 202611, amount: [0], priorAmount: [0], priorPending: false, freeNow: [0], monthStartRead: false, freeAtStart: [0], withdrawnSince: false, pledgeSupport: false, pledged: [0] }
-
-export const plannedFunding = Layer.mergeAll(
-  Layer.succeed(PoolListing, {
-    facts: (candidates) => effect {
-      funding.asked.push(candidates.map((candidate) => candidate.projectId))
-      const { answer, pools } = funding.plan
-      if (answer === "Fail") throw new RowMismatch({ text: "vault_snapshots", issue: "the planned funding read fails" })
-      if (answer === "Nothing") return undefined
-      return candidates.flatMap((candidate) => {
-        const planned = pools.find((entry) => entry.projectId === candidate.projectId)
-        if (planned !== undefined) return [planned]
-        return answer === "Short" ? [] : [{ projectId: candidate.projectId, pool: pointsOnly }]
-      })
+export const plannedIntake = Layer.mergeAll(
+  Layer.succeed(IntakeCounts, {
+    counts: () => effect {
+      intake.asked += 1
+      if (intake.plan.answer === "Fail") throw new RowMismatch({ text: "repository_merge_activity", issue: "the planned count read fails" })
+      const byProject = new Map<string, Array<{ readonly openOutside: number; readonly observedAt: string }>>()
+      for (const { projectId, openOutside, observedAt } of intake.plan.counts) byProject.set(projectId, [...byProject.get(projectId) ?? [], { openOutside, observedAt }])
+      return byProject
     },
-  } satisfies PoolListing.Shape),
+  } satisfies IntakeCounts.Shape),
   Logger.layer([Logger.make((options) => {
     const message: unknown = options.message
     const first = Array.isArray(message) ? message[0] : message
-    if (typeof first === "string") funding.logged.push(first)
+    if (typeof first === "string") intake.logged.push(first)
   })], { mergeWithExisting: true }),
 )
 
 const securityRoute = route({ method: "POST", path: "/api/v1/test/publication-security", access: "public", limitKib: 16, request: SecurityPlan, answer: SecurityPlan, rejected: "rejected", cache: "no-store" })
 
-const fundingRoute = route({ method: "POST", path: "/api/v1/test/publication-funding", access: "public", limitKib: 16, request: FundingPlan, answer: FundingSeen, rejected: "rejected", cache: "no-store" })
+const intakeRoute = route({ method: "POST", path: "/api/v1/test/publication-intake", access: "public", limitKib: 16, request: IntakePlan, answer: IntakeSeen, rejected: "rejected", cache: "no-store" })
 
 export const planRoutes = Layer.mergeAll(
   handle(securityRoute, (input) => effect {
     plan.current = input.body
     return plan.current
   }),
-  handle(fundingRoute, (input) => effect {
-    const seen = { asked: [...funding.asked], logged: [...funding.logged] }
-    funding.plan = input.body
-    funding.asked = []
-    funding.logged = []
+  handle(intakeRoute, (input) => effect {
+    const seen = { asked: intake.asked, logged: [...intake.logged] }
+    intake.plan = input.body
+    intake.asked = 0
+    intake.logged = []
     return seen
   }),
 )

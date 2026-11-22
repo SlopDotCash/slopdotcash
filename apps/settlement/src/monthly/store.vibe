@@ -14,6 +14,7 @@ import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
 import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { pledgedIn } from "../../gen/settlement__monthPledges.effect.vibe"
 import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
+import { earlyCloseAt } from "./closeout.vibe"
 import { PledgeRow, modelNetwork, storedPledgesOf } from "../vault/store.vibe"
 
 module limbs {
@@ -429,6 +430,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     publicCuts,
     notices,
     latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
+    earlyCloseAt: try earlyCloseAt(project, period),
   }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)

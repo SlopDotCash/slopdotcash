@@ -1,7 +1,7 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database, SqlValue } from "@repo/platform/bindings"
 import { type Hex } from "@repo/platform/chain/evm"
-import { SolanaRpc, address as solanaAddress, publicKey, solanaRpc } from "@repo/platform/chain/solana"
+import { type Address as SolanaAddress, SYSTEM_PROGRAM, SolanaRpc, address as solanaAddress, base58Decode, base58Encode, publicKey, solanaRpc } from "@repo/platform/chain/solana"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, type Statement, d1, first, rows, sql } from "@repo/platform/d1"
@@ -19,8 +19,9 @@ import { commitAwardCalldata, payCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { transactionId } from "../src/chain/evm/transactions.ts"
 import { type BindingInput, bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
-import { decodeProject } from "../src/chain/solana/accounts.ts"
-import { decodeEscrowCall } from "../src/chain/solana/instructions.ts"
+import { decodeBinding, decodeProject } from "../src/chain/solana/accounts.ts"
+import { type EscrowCall, decodeEscrowCall } from "../src/chain/solana/instructions.ts"
+import { bindingAddress } from "../src/chain/solana/pda.ts"
 import { parsePeriod } from "../src/kernels/calendar.ts"
 import { readMint } from "../src/kernels/token2022.ts"
 import { awardSource, executionSnapshot } from "../src/monthly/store.vibe"
@@ -29,11 +30,12 @@ import { type AttemptStatus, type PaymentRequest, ExecutorUnavailable, PaymentEx
 import { type Indexed, indexPaymentEvent, obligationState, reindexHeld } from "../src/payments/ledger.vibe"
 import { RecoveryFailed, reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
 import { ReconciliationRefused, readReconciliationPacket, reconcileReviewedPaymentEvents } from "../src/payments/reviewedEvents.vibe"
-import { type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
+import { type EventReference, type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
+import { verifyFinalized } from "../src/payments/verify.vibe"
 import { type LedgerAccess, reconciliationServices } from "../src/programs/reconcileEvents.vibe"
 import type { EvmDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
-import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, tokenProjects } from "./support/solana/escrow.ts"
+import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, nativeMonth, tokenProjects } from "./support/solana/escrow.ts"
 
 interface Script {
   readonly submits: PaymentRequest[]
@@ -43,6 +45,10 @@ interface Script {
 }
 
 type ReceiptEdit = (receipt: Readonly<Record<string, unknown>>) => unknown
+type EditKey = (method: string, first: string) => string | undefined
+
+const receiptEdits: EditKey = (method, first) => method === "eth_getTransactionReceipt" ? first.toLowerCase() : undefined
+const solanaEdits: EditKey = (method, first) => `${method} ${first}`
 
 service Journey {
   readonly escrow: EscrowStack
@@ -62,7 +68,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function editedAnswer(request: string, answer: string, edits: ReadonlyMap<string, ReceiptEdit>): string {
+function editedAnswer(request: string, answer: string, edits: ReadonlyMap<string, ReceiptEdit>, keyOf: EditKey): string {
   try {
     const calls: unknown = JSON.parse(request)
     const results: unknown = JSON.parse(answer)
@@ -71,8 +77,9 @@ function editedAnswer(request: string, answer: string, edits: ReadonlyMap<string
     const mapped = resultList.map((item) => {
       if (!isRecord(item) || !isRecord(item.result)) return item
       const call = callList.find((candidate) => isRecord(candidate) && candidate.id === item.id)
-      if (!isRecord(call) || call.method !== "eth_getTransactionReceipt" || !Array.isArray(call.params)) return item
-      const edit = edits.get(String(call.params[0]).toLowerCase())
+      if (!isRecord(call) || typeof call.method !== "string" || !Array.isArray(call.params)) return item
+      const key = keyOf(call.method, String(call.params[0]))
+      const edit = key === undefined ? undefined : edits.get(key)
       return edit === undefined ? item : { ...item, result: edit(item.result) }
     })
     return JSON.stringify(Array.isArray(results) ? mapped : mapped[0])
@@ -81,11 +88,11 @@ function editedAnswer(request: string, answer: string, edits: ReadonlyMap<string
   }
 }
 
-function tampering(upstream: string, edits: ReadonlyMap<string, ReceiptEdit>): Handler {
+function tampering(upstream: string, edits: ReadonlyMap<string, ReceiptEdit>, keyOf: EditKey): Handler {
   return async (request) => {
     const body = await request.text()
     const answer = await fetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body })
-    return new Response(editedAnswer(body, await answer.text(), edits), { status: answer.status, headers: { "content-type": "application/json" } })
+    return new Response(editedAnswer(body, await answer.text(), edits, keyOf), { status: answer.status, headers: { "content-type": "application/json" } })
   }
 }
 
@@ -94,7 +101,7 @@ const Started = Layer.effect(Journey, effect {
   chain.setFinalized(1_000_000_000_000n)
   const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
   const edits = new Map<string, ReceiptEdit>()
-  const tamper = try acquireRelease(promise(() => serve(tampering(chain.url, edits))), (served) => promise(() => served.close()))
+  const tamper = try acquireRelease(promise(() => serve(tampering(chain.url, edits, receiptEdits))), (served) => promise(() => served.close()))
   const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-journey" } })), (started) => promise(() => started.dispose()))
   const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
   const failed = applied.find((file) => file.error !== undefined)
@@ -828,16 +835,22 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
 service SolanaJourney {
   readonly escrow: SolanaEscrow
   readonly scenario: Scenario
+  readonly native: Scenario
   readonly db: D1Database
+  readonly edits: Map<string, ReceiptEdit>
+  readonly tampered: string
 }
 
 const SolanaStarted = Layer.effect(SolanaJourney, effect {
   const escrow = try acquireRelease(promise(() => escrowDeployment()), (deployed) => promise(() => deployed.close()))
   const scenario = try promise(() => tokenProjects(escrow))
+  const native = try promise(() => nativeMonth(escrow))
+  const edits = new Map<string, ReceiptEdit>()
+  const tamper = try acquireRelease(promise(() => serve(tampering(escrow.chain.validator.url, edits, solanaEdits))), (served) => promise(() => served.close()))
   const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-solana-journey" } })), (started) => promise(() => started.dispose()))
   const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((file) => file.error !== undefined)
   if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
-  return { escrow, scenario, db: try promise(() => database(mf, "SLOP_DB")) }
+  return { escrow, scenario, native, db: try promise(() => database(mf, "SLOP_DB")), edits, tampered: tamper.url }
 })
 
 const quietScript: Script = { submits: [], answers: [], statuses: new Map(), retirements: new Map() }
@@ -847,11 +860,19 @@ effect function onSolana<A, E>(program: A!E!Shelled) {
   return try on(db, quietScript, program)
 }
 
-effect function sentAs(label: string) {
-  const { scenario } = try SolanaJourney
+effect function sentIn(scenario: Scenario, label: string) {
   const sent = scenario.sent.find((entry) => entry.label === label)
   if (sent === undefined) return try die(new Error(`the scenario sent no ${label}`))
   return sent
+}
+
+effect function sentAs(label: string) {
+  const { scenario } = try SolanaJourney
+  return try sentIn(scenario, label)
+}
+
+function positionOf(program: SolanaAddress, instructions: ReadonlyArray<{ readonly program: SolanaAddress; readonly data: Uint8Array }>, call: EscrowCall["name"]) {
+  return instructions.findIndex((instruction) => instruction.program === program && decodeEscrowCall(instruction.data)?.name === call)
 }
 
 effect function solanaDeployment() {
@@ -876,16 +897,104 @@ effect function solanaDeployment() {
   }
 }
 
+effect function nativeDeployment() {
+  const { escrow, native } = try SolanaJourney
+  const [project, vault] = native.reads
+  if (project === undefined || vault === undefined) return try die(new Error("the scenario read no native project"))
+  const urls = Redacted.make([escrow.chain.validator.url])
+  provide solanaRpc({ urls, genesis: escrow.chain.validator.genesis }) {
+    const projectAccount = decodeProject(try (try SolanaRpc).account(project, "finalized"), native.program)
+    if (projectAccount.kind !== "decoded") return try die(new Error("the native project is missing"))
+    const deployment: SolanaPaymentDeployment = {
+      family: "solana", chain: "solana", projectId: "solana-native", network: "solana-localnet", vault, owner: projectAccount.value.owner,
+      feeRecipient: escrow.feeRecipient.address, scope: "Ordinary", rpc: urls, program: native.program, project, mint: SYSTEM_PROGRAM, genesis: escrow.chain.validator.genesis,
+    }
+    return deployment
+  }
+}
+
+effect function boundWallet(binding: SolanaAddress) {
+  const { escrow, scenario } = try SolanaJourney
+  provide solanaRpc({ urls: Redacted.make([escrow.chain.validator.url]), genesis: escrow.chain.validator.genesis }) {
+    const read = decodeBinding(try (try SolanaRpc).account(binding, "finalized"), scenario.program)
+    if (read.kind !== "decoded") return try die(new Error("the classic binding is missing"))
+    return read.value.destination
+  }
+}
+
 effect function solanaIndexed(deployment: SolanaPaymentDeployment, kind: "reserved" | "paid", label: string, call: "commit" | "pay", obligationId: string) {
   const { scenario } = try SolanaJourney
   const sent = try sentAs(label)
-  const position = sent.instructions.findIndex((instruction) => instruction.program === scenario.program && decodeEscrowCall(instruction.data)?.name === call)
-  return onSolana(indexPaymentEvent(deployment, { kind, transactionId: sent.signature, eventIndex: position, obligationId })) catch (error) => said(error)
+  return onSolana(indexPaymentEvent(deployment, { kind, transactionId: sent.signature, eventIndex: positionOf(scenario.program, sent.instructions, call), obligationId })) catch (error) => said(error)
 }
 
+effect function tamperedDeployment(deployment: SolanaPaymentDeployment) {
+  const { tampered } = try SolanaJourney
+  return { ...deployment, rpc: Redacted.make([tampered]) } satisfies SolanaPaymentDeployment
+}
+
+effect function throughSolana<A>(edits: ReadonlyArray<readonly [string, ReceiptEdit]>, program: A!!SolanaJourney) {
+  const { edits: active } = try SolanaJourney
+  for (const [key, edit] of edits) active.set(key, edit)
+  return try ensuring(program, sync(() => { for (const [key] of edits) active.delete(key) }))
+}
+
+effect function tamperedPayout(deployment: SolanaPaymentDeployment, obligationId: string, edits: ReadonlyArray<readonly [string, ReceiptEdit]>) {
+  return outcomeOf(try throughSolana(edits, solanaIndexed(try tamperedDeployment(deployment), "paid", "pay classic", "pay", obligationId)))
+}
+
+effect function nativeDestination(deployment: SolanaPaymentDeployment, reference: EventReference) {
+  const event = try onSolana(verifyFinalized(deployment, reference, undefined))
+  return event.destination
+}
+
+effect function nativeVerified(deployment: SolanaPaymentDeployment, reference: EventReference) {
+  return nativeDestination(deployment, reference) catch (error) => said(error)
+}
+
+effect function tamperedNative(deployment: SolanaPaymentDeployment, reference: EventReference, edits: ReadonlyArray<readonly [string, ReceiptEdit]>) {
+  return try throughSolana(edits, nativeVerified(try tamperedDeployment(deployment), reference))
+}
+
+function accountData(change: (data: Uint8Array, view: DataView) => void): ReceiptEdit {
+  return (reply) => {
+    const value = reply.value
+    if (!isRecord(value) || !Array.isArray(value.data)) return reply
+    const data = Uint8Array.from(atob(String(value.data[0])), (char) => char.charCodeAt(0))
+    change(data, new DataView(data.buffer))
+    return { ...reply, value: { ...value, data: [btoa(String.fromCharCode(...data)), "base64"] } }
+  }
+}
+
+const accountMissing: ReceiptEdit = (reply) => ({ ...reply, value: null })
+
+function metaEdited(change: (meta: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>): ReceiptEdit {
+  return (reply) => isRecord(reply.meta) ? { ...reply, meta: change(reply.meta) } : reply
+}
+
+const tokenBalancesGone = metaEdited((meta) => ({ ...meta, preTokenBalances: [], postTokenBalances: [] }))
+
+const lamportsMoved = metaEdited((meta) => ({
+  ...meta,
+  postBalances: Array.isArray(meta.postBalances) ? meta.postBalances.map((balance, at) => at > 0 && typeof balance === "number" && balance >= 1_000_000 ? balance - 1_000 : balance) : meta.postBalances,
+}))
+
+const transferAmountChanged = metaEdited((meta) => ({
+  ...meta,
+  innerInstructions: Array.isArray(meta.innerInstructions) ? meta.innerInstructions.map((group) => !isRecord(group) || !Array.isArray(group.instructions) ? group : {
+    ...group,
+    instructions: group.instructions.map((inner) => {
+      const data = isRecord(inner) ? base58Decode(String(inner.data)) : undefined
+      if (!isRecord(inner) || data === undefined || data.length !== 10 || data[0] !== 12) return inner
+      data[1] = (data[1] ?? 0) ^ 1
+      return { ...inner, data: base58Encode(data) }
+    }),
+  }) : meta.innerInstructions,
+}))
+
 layer(Layer.mergeAll(SolanaStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('Wrong mint and owner on Solana: a finalized payout checked against a deployment whose mint or owner differs from the project account is refused as paid evidence and the obligation stays reserved (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues")', () => effect {
-    const { escrow } = try SolanaJourney
+  it.effect('A reserved vault accepts an exact canonical scanner event on Solana: a payout checked against a deployment whose mint or owner differs is refused; an SPL payout records the bound wallet even when its account was emptied and closed in the same transaction or the actor has since rebound, while a missing or different binding, a destination that is not the bound wallet\'s account and a changed transfer amount are refused and record nothing; a native payout records the bound destination whatever else moved lamports in its transaction, and a payout from another vault is refused (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"; spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner")', () => effect {
+    const { escrow, scenario, native } = try SolanaJourney
     const { deployment, decimals } = try solanaDeployment()
     const now = try isoNow()
     try onSolana(effect { try (try D1).batch([snapshotRow(deployment.projectId, deployment.network, "solana", deployment.vault, deployment.mint, decimals, now)]) })
@@ -896,13 +1005,54 @@ layer(Layer.mergeAll(SolanaStarted, webCrypto, outbound), { excludeTestServices:
     if (otherMint === undefined) return try die(new Error("the token-2022 mint is not an address"))
     const wrongMint = outcomeOf(try solanaIndexed({ ...deployment, mint: otherMint }, "paid", "pay classic", "pay", award.awardId))
     const wrongOwner = outcomeOf(try solanaIndexed({ ...deployment, owner: escrow.identity.address }, "paid", "pay classic", "pay", award.awardId))
+    const [classicProject] = scenario.reads
+    if (classicProject === undefined) return try die(new Error("the scenario read no classic project"))
+    const binding = bindingAddress(scenario.program, classicProject, award.actor)
+    const wallet = try boundWallet(binding)
+    const otherWallet = publicKey(escrow.identity.address)
+    if (otherWallet === undefined) return try die(new Error("the identity is not a key"))
+    const bindingRead = `getAccountInfo ${binding}`
+    const payout = `getTransaction ${(try sentAs("pay classic")).signature}`
+    const refusals = [
+      try tamperedPayout(deployment, award.awardId, [[bindingRead, accountMissing]]),
+      try tamperedPayout(deployment, award.awardId, [[bindingRead, accountData((data) => { data[72] = (data[72] ?? 0) ^ 1 })]]),
+      try tamperedPayout(deployment, award.awardId, [[bindingRead, accountData((_data, view) => { view.setBigUint64(144, 0n, true) })]]),
+      try tamperedPayout(deployment, award.awardId, [[bindingRead, accountData((data) => { data.set(otherWallet, 112) })]]),
+      try tamperedPayout(deployment, award.awardId, [[payout, transferAmountChanged]]),
+    ]
+    const paidEvents = rows(Schema.Struct({ destination: Schema.NullOr(Schema.String) }), sql`SELECT json_extract(evidence_json, '$.destination') AS destination FROM payment_events WHERE obligation_id = ${award.awardId} AND kind = 'paid' ORDER BY rowid`)
+    const recordedBefore = try onSolana(paidEvents)
     const state = try onSolana(obligationState(deployment, award.awardId))
-    try same({ reserved, wrongMint, wrongOwner, phase: state?.investigation.phase, stored: state?.reservation.gross }, {
+    const closedAccount = try tamperedPayout(deployment, award.awardId, [[payout, tokenBalancesGone]])
+    const rebound = try tamperedPayout(deployment, award.awardId, [[payout, tokenBalancesGone], [bindingRead, accountData((data, view) => { data.set(otherWallet, 112); view.setBigUint64(144, 2n, true) })]])
+    const recorded = try onSolana(paidEvents)
+    const nativeProject = try nativeDeployment()
+    const nativeAward = (try sentIn(native, "commit leaf")).calls.find((call) => call.name === "commit_monthly_award")
+    if (nativeAward === undefined || nativeAward.name !== "commit_monthly_award") return try die(new Error("the native award was not committed"))
+    const nativePay = try sentIn(native, "pay")
+    const nativeReference: EventReference = { kind: "paid", transactionId: nativePay.signature, eventIndex: positionOf(native.program, nativePay.instructions, "pay_native"), obligationId: nativeAward.awardId }
+    const nativeOutcomes = {
+      plain: try nativeVerified(nativeProject, nativeReference),
+      lamportsMoved: try tamperedNative(nativeProject, nativeReference, [[`getTransaction ${nativePay.signature}`, lamportsMoved]]),
+      otherVault: try nativeVerified({ ...nativeProject, vault: deployment.vault }, nativeReference),
+    }
+    try same({ reserved, wrongMint, wrongOwner, refusals, recordedBefore, phase: state?.investigation.phase, stored: state?.reservation.gross, accepted: [closedAccount, rebound].map((outcome) => !outcome.startsWith("refused")), recorded, native: nativeOutcomes }, {
       reserved: "Recorded",
       wrongMint: "refused: Escrow owner, mint or fee recipient does not match reviewed deployment",
       wrongOwner: "refused: Escrow owner, mint or fee recipient does not match reviewed deployment",
+      refusals: [
+        "refused: Wallet binding missing",
+        "refused: Wallet binding differs from payment",
+        "refused: Wallet binding differs from payment",
+        "refused: Payout destination is not the bound wallet's account",
+        "refused: Payout transfer differs from award",
+      ],
+      recordedBefore: [],
       phase: "Reserved",
       stored: 1_000_000n,
+      accepted: [true, true],
+      recorded: [{ destination: wallet }],
+      native: { plain: native.reads[16], lamportsMoved: native.reads[16], otherVault: "refused: Escrow vault does not match reviewed deployment" },
     })
   })
 })

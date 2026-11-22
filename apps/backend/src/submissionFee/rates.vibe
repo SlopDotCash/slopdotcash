@@ -1,0 +1,31 @@
+// spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { type SlopRate, type SlopRateRow, SubmissionFeeRates } from "@repo/ports/backend"
+
+schema RateRow { effective_at: string; slop_per_usd: string }
+
+function rateOf(row: RateRow): SlopRate {
+  return { effectiveAt: row.effective_at, slopPerUsd: row.slop_per_usd }
+}
+
+export function appendRate(row: SlopRateRow) {
+  return sql`INSERT OR IGNORE INTO submission_fee_rates (effective_at, slop_per_usd, source, created_at) VALUES (${row.effectiveAt}, ${row.slopPerUsd}, ${row.source}, ${row.createdAt})`
+}
+
+export effect function allRates() {
+  return (try rows(RateRow, sql`SELECT effective_at, slop_per_usd FROM submission_fee_rates ORDER BY effective_at`)).map(rateOf)
+}
+
+export effect function newestRate() {
+  const row = try first(RateRow, sql`SELECT effective_at, slop_per_usd FROM submission_fee_rates ORDER BY effective_at DESC LIMIT 1`)
+  return row === undefined ? null : rateOf(row)
+}
+
+export const SubmissionFeeRatesLive = Layer.effect(SubmissionFeeRates, effect {
+  const db = try D1
+  return {
+    all: () => provideService(allRates(), D1, db),
+    newest: () => provideService(newestRate(), D1, db),
+    append: (row) => effect { return appendRate(row) },
+  } satisfies SubmissionFeeRates.Shape
+})

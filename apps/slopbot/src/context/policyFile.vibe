@@ -38,7 +38,7 @@ const defaultCategories: Readonly<Record<CategoryKey, ModeName>> = {
   duplicate: "close",
   out_of_scope: "label",
   busywork: "close",
-  missing_evidence: "label",
+  missing_evidence: "close",
   gaming: "close",
   low_quality: "label",
 }

@@ -16,7 +16,7 @@ effect function refreshedOnFocus(inbox: Inbox.Shape) {
   while (true) {
     try promise((signal) => nextRevalidation(signal))
     const shown = try inbox.view()
-    if (!shown.busy && (try browser.lifetime()).actorId !== 0) try inbox.load()
+    if (!shown.busy && (try browser.lifetime()).actorId !== 0) try inbox.recheck()
   }
 }
 

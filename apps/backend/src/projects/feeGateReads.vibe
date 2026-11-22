@@ -1,0 +1,51 @@
+// spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"
+import { millisOf } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { type IntakeCount, IntakeCounts, IntakePause, SubmissionFeeSetting } from "@repo/ports/backend"
+import { initial, paused } from "../../gen/backend__intakeCap.effect.vibe"
+import { hourOf } from "./mergeActivity/github.vibe"
+
+schema CapRow { active: number; cap: number | null }
+schema SinceRow { since: string | null }
+
+const noCounts: ReadonlyMap<string, ReadonlyArray<IntakeCount>> = new Map()
+
+function capOf(row: CapRow | undefined) {
+  const cap = row?.cap ?? 0
+  return Number.isSafeInteger(cap) ? cap : 0
+}
+
+effect function projectPaused(intake: IntakeCounts.Shape, projectId: string, at: string) {
+  const row = try first(CapRow, sql`SELECT status = 'active' AS active, CASE WHEN json_type(manifest, '$.slopbot.intakeCap') = 'integer' THEN json_extract(manifest, '$.slopbot.intakeCap') END AS cap FROM projects WHERE id = ${projectId}`)
+  if (row === undefined) return false
+  const found = intake.counts() catch () => noCounts
+  const counts = (found.get(projectId) ?? []).map((count) => ({ read: true, count: count.openOutside, observedAt: hourOf(millisOf(count.observedAt)) }))
+  return paused({ ...initial, cap: capOf(row), active: row.active === 1, now: hourOf(millisOf(at)), counts })
+}
+
+export function feeSettingSince(projectId: string) {
+  return sql`SELECT MIN(r.created_at) AS since FROM project_revisions r
+    WHERE r.project_id = ${projectId} AND r.revision > COALESCE((
+      SELECT MAX(off.revision) FROM project_revisions off
+      WHERE off.project_id = ${projectId}
+        AND COALESCE(json_extract(off.manifest, '$.slopbot.submissionFee.enabled'), 0) <> 1
+    ), 0)`
+}
+
+export const IntakePauseLive = Layer.effect(IntakePause, effect {
+  const db = try D1
+  const intake = try IntakeCounts
+  return {
+    paused: (projectId, at) => provideService(projectPaused(intake, projectId, at), D1, db),
+  } satisfies IntakePause.Shape
+})
+
+export const SubmissionFeeSettingLive = Layer.effect(SubmissionFeeSetting, effect {
+  const db = try D1
+  return {
+    since: (projectId) => provideService(effect {
+      const row = try first(SinceRow, feeSettingSince(projectId))
+      return row?.since ?? null
+    }, D1, db),
+  } satisfies SubmissionFeeSetting.Shape
+})

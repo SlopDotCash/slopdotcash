@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
 import { createHash } from "node:crypto";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
@@ -13,7 +13,7 @@ import type { AwardFact, Eligibility, Event, Monthly, RevisionFact } from "../..
 import { fromAmount } from "../../src/kernels/amounts.ts";
 import { type Period, formatPeriod, isPeriod } from "../../src/kernels/calendar.ts";
 import { ordinaryFeeBase } from "../../src/kernels/fees.ts";
-import { type MonthFacts, MonthlyFacts, loadMonth, manifestRelationships, sendMonth, withoutProposal } from "../../src/monthly/store.vibe";
+import { type MonthFacts, MonthlyFacts, awardSource, loadMonth, manifestRelationships, sendMonth, withoutProposal } from "../../src/monthly/store.vibe";
 
 const PROJECT = "eliza";
 const NETWORK = "base-sepolia";
@@ -27,8 +27,8 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const chainOf = (revision: RevisionFact) => fromAmount(revision.maximum) === u128 ? "base" : "solana";
 const policyOf = (revision: RevisionFact) => JSON.stringify([chainOf(revision), formatPeriod(revision.effectivePeriod as Period), revision.feePolicy, 200, 200]);
 
-const manifestOf = (revision: RevisionFact) => JSON.stringify({
-  id: PROJECT,
+const manifestOf = (project: string, revision: RevisionFact) => JSON.stringify({
+  id: project,
   status: "active",
   reward: {
     kind: "monthly-pool",
@@ -69,7 +69,7 @@ const registry = Layer.succeed(Registry, {
 });
 
 const runtimeOver = (db: Awaited<ReturnType<typeof database>>, clock: ReturnType<typeof settableClock>, facts: { eligibility: Eligibility; current: RevisionFact | undefined }) =>
-  ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, registry, Layer.succeed(MonthlyFacts, { of: () => Effect.sync(() => factsOf(facts)) })));
+  ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, registry, Layer.succeed(MonthlyFacts, { of: (projectId: string) => Effect.sync(() => factsOf(facts, projectId)) })));
 
 interface World {
   readonly mf: StartedWorker;
@@ -79,16 +79,17 @@ interface World {
   readonly facts: { eligibility: Eligibility; current: RevisionFact | undefined };
   readonly numbers: Map<number, number>;
   readonly digests: Map<string, string>;
+  project: string;
   period: number | undefined;
   closed: boolean;
 }
 
 let world: World | undefined;
 
-const factsOf = (facts: World["facts"]): MonthFacts => {
+const factsOf = (facts: World["facts"], project: string): MonthFacts => {
   const current = facts.current;
   if (current === undefined || current.number === 0) return { eligibility: facts.eligibility, current: undefined, served: SERVED };
-  const manifest = manifestOf(current);
+  const manifest = manifestOf(project, current);
   return { eligibility: facts.eligibility, current: { number: current.number, manifest, manifestSha256: sha(manifest) }, served: SERVED };
 };
 
@@ -100,7 +101,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: noEligibility, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), period: undefined, closed: false };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), project: PROJECT, period: undefined, closed: false };
 };
 
 const current = async () => world ??= await open();
@@ -108,14 +109,14 @@ const current = async () => world ??= await open();
 const outcome = (w: World, program: Effect.Effect<unknown, unknown, ManagedRuntime.ManagedRuntime.Services<World["runtime"]>>) => verdict(program, w.runtime);
 
 const registerRevision = async (w: World, revision: RevisionFact) => {
-  const manifest = manifestOf(revision);
+  const manifest = manifestOf(w.project, revision);
   const digest = sha(manifest);
-  const known = await w.db.prepare("SELECT revision FROM project_revisions WHERE project_id = ? AND manifest_sha256 = ?").bind(PROJECT, digest).all();
+  const known = await w.db.prepare("SELECT revision FROM project_revisions WHERE project_id = ? AND manifest_sha256 = ?").bind(w.project, digest).all();
   if (known.results.length > 0) return;
-  const taken = await w.db.prepare("SELECT 1 FROM project_revisions WHERE project_id = ? AND revision = ?").bind(PROJECT, revision.number).all();
+  const taken = await w.db.prepare("SELECT 1 FROM project_revisions WHERE project_id = ? AND revision = ?").bind(w.project, revision.number).all();
   const number = taken.results.length === 0 && revision.number > 0 ? revision.number : 1000 + w.numbers.size;
   w.numbers.set(number, revision.number);
-  await w.db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(PROJECT, number, manifest, digest, "conformance revision", new Date(START * 1000).toISOString()).run();
+  await w.db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(w.project, number, manifest, digest, "conformance revision", new Date(START * 1000).toISOString()).run();
 };
 
 const hexDigest = (w: World, digest: string) => {
@@ -126,15 +127,25 @@ const hexDigest = (w: World, digest: string) => {
 
 const forStore = (w: World, event: Event): Event => {
   if (event.type === "observeRevision") return { ...event, revision: stored(event.revision) };
-  if (event.type === "propose") return { ...event, snapshot: { ...event.snapshot, digest: event.snapshot.digest === "" ? "" : hexDigest(w, event.snapshot.digest) }, revision: stored(event.revision) };
+  if (event.type === "propose" || event.type === "proposeCloseout") return { ...event, snapshot: { ...event.snapshot, digest: event.snapshot.digest === "" ? "" : hexDigest(w, event.snapshot.digest) }, revision: stored(event.revision) };
   return event;
+};
+
+const importCloseout = async (w: World, snapshotDigest: string, next: Monthly, digests: readonly string[]) => {
+  const period = formatPeriod(w.period as Period);
+  const manifest = manifestOf(w.project, w.facts.current ?? next.currentRevision);
+  const at = new Date(w.clock.now()).toISOString();
+  await w.db.batch([
+    w.db.prepare("INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at, early_close_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(w.project, period, manifest, sha(manifest), snapshotDigest, fromAmount(next.cap).toString(), next.proposedShares.length, at, new Date(next.earlyCloseAt * 1000).toISOString()),
+    ...next.proposedShares.map((share, index) => w.db.prepare("INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (?, ?, ?, ?, ?, ?)").bind(w.project, period, String(share.actor), `user${share.actor}`, fromAmount(share.amount).toString(), digests[index] ?? "")),
+  ]);
 };
 
 const reasonOf = (event: Event) => event.type === "cut" ? "c".repeat(Math.max(event.reasonLength, 0)) : undefined;
 
 const recordInLedger = async (w: World, event: Event & { readonly award: AwardFact }) => {
-  const runRow = await w.db.prepare("SELECT network, vault, json_extract(snapshot, '$.asset') AS asset FROM monthly_payment_runs WHERE project_id = ? AND period = ?").bind(PROJECT, formatPeriod(w.period as Period)).all();
-  const obligation = await w.db.prepare("SELECT source_digest FROM monthly_payment_obligations WHERE project_id = ? AND period = ? AND github_user_id = ?").bind(PROJECT, formatPeriod(w.period as Period), String(event.award.source.actor)).all();
+  const runRow = await w.db.prepare("SELECT network, vault, json_extract(snapshot, '$.asset') AS asset FROM monthly_payment_runs WHERE project_id = ? AND period = ?").bind(w.project, formatPeriod(w.period as Period)).all();
+  const obligation = await w.db.prepare("SELECT source_digest FROM monthly_payment_obligations WHERE project_id = ? AND period = ? AND github_user_id = ?").bind(w.project, formatPeriod(w.period as Period), String(event.award.source.actor)).all();
   const network = String(runRow.results[0]?.network ?? NETWORK);
   const vault = String(runRow.results[0]?.vault ?? "");
   const source = String(obligation.results[0]?.source_digest ?? "");
@@ -144,37 +155,37 @@ const recordInLedger = async (w: World, event: Event & { readonly award: AwardFa
     await w.db.prepare("UPDATE payment_obligations SET state = 'paid', paid_transaction = ? WHERE network = ? AND vault = ? AND source_digest = ?").bind(`tx-${source}`, network, vault, source).run();
     return;
   }
-  await w.db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES (?, ?, ?, ?, 'base', ?, ?, 6, ?, ?, ?, 'reserved', ?)").bind(`obligation-${source}`, PROJECT, String(event.award.actor), network, vault, asset, gross.toString(), ordinaryFeeBase(gross).toString(), source, new Date(w.clock.now()).toISOString()).run();
+  await w.db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES (?, ?, ?, ?, 'base', ?, ?, 6, ?, ?, ?, 'reserved', ?)").bind(`obligation-${source}`, w.project, String(event.award.actor), network, vault, asset, gross.toString(), ordinaryFeeBase(gross).toString(), source, new Date(w.clock.now()).toISOString()).run();
 };
 
 const fundingOf = async (w: World) => {
-  const counts = await w.db.prepare("SELECT (SELECT count(*) FROM monthly_payment_obligations o WHERE o.network = r.network AND o.vault = r.vault) AS outstanding, (SELECT count(*) FROM payment_obligations p WHERE p.network = r.network AND p.vault = r.vault) AS reserved FROM monthly_payment_runs r WHERE r.project_id = ? AND r.period = ?").bind(PROJECT, formatPeriod(w.period as Period)).all();
+  const counts = await w.db.prepare("SELECT (SELECT count(*) FROM monthly_payment_obligations o WHERE o.network = r.network AND o.vault = r.vault) AS outstanding, (SELECT count(*) FROM payment_obligations p WHERE p.network = r.network AND p.vault = r.vault) AS reserved FROM monthly_payment_runs r WHERE r.project_id = ? AND r.period = ?").bind(w.project, formatPeriod(w.period as Period)).all();
   const row = counts.results[0];
   return { outstanding: Number(row?.outstanding ?? 0), reserved: Number(row?.reserved ?? 0) };
 };
 
 const settingsTo = async (w: World, automatic: boolean, sequence: number) => {
-  const found = await w.db.prepare("SELECT coalesce(max(sequence), 0) AS latest FROM monthly_payment_settings WHERE project_id = ?").bind(PROJECT).all();
-  for (let next = Number(found.results[0]?.latest ?? 0) + 1; next <= sequence; next++) await w.db.prepare("INSERT INTO monthly_payment_settings (project_id, sequence, automatic, actor_id, created_at) VALUES (?, ?, ?, '1', ?)").bind(PROJECT, next, automatic ? 1 : 0, new Date(w.clock.now()).toISOString()).run();
+  const found = await w.db.prepare("SELECT coalesce(max(sequence), 0) AS latest FROM monthly_payment_settings WHERE project_id = ?").bind(w.project).all();
+  for (let next = Number(found.results[0]?.latest ?? 0) + 1; next <= sequence; next++) await w.db.prepare("INSERT INTO monthly_payment_settings (project_id, sequence, automatic, actor_id, created_at) VALUES (?, ?, ?, '1', ?)").bind(w.project, next, automatic ? 1 : 0, new Date(w.clock.now()).toISOString()).run();
 };
 
 const initialView = (w: World): Monthly => ({
-  project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0,
+  project: w.project, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0,
   eligibility: w.facts.eligibility, revision: { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
   currentRevision: w.facts.current ?? { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
   cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0, trigger: "NoTrigger",
-  frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "",
+  frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "", earlyCloseAt: 0,
 });
 
 const view = (state: Monthly): Monthly => ({ ...state, underfundedNotice: false, coordinatorRetries: 0, pledgedVault: state.pledgedVault === state.currentRevision.vault ? state.pledgedVault : "" });
 
 const storePledge = async (w: World, vault: string) => {
-  await w.db.prepare("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, ?, ?, ?, '1000000', 1, '1', ?) ON CONFLICT (project_id, network, vault, period) DO UPDATE SET amount = excluded.amount, open = 1").bind(PROJECT, NETWORK, vault, formatPeriod(w.period as Period), new Date(w.clock.now()).toISOString()).run();
+  await w.db.prepare("INSERT INTO vault_month_pledges (project_id, network, vault, period, amount, open, block_number, observed_at) VALUES (?, ?, ?, ?, '1000000', 1, '1', ?) ON CONFLICT (project_id, network, vault, period) DO UPDATE SET amount = excluded.amount, open = 1").bind(w.project, NETWORK, vault, formatPeriod(w.period as Period), new Date(w.clock.now()).toISOString()).run();
 };
 
 const observed = async (w: World): Promise<Monthly> => {
   if (w.period === undefined) return view(initialView(w));
-  const loaded = await w.runtime.runPromise(loadMonth({ projectId: PROJECT, period: w.period as Period }));
+  const loaded = await w.runtime.runPromise(loadMonth({ projectId: w.project, period: w.period as Period }));
   const state = w.closed && loaded.state.phase === "Collecting" ? withoutProposal(loaded.state) : loaded.state;
   return view({
     ...state,
@@ -187,18 +198,20 @@ const observed = async (w: World): Promise<Monthly> => {
 const dispatch = async (event: Event): Promise<"accepted" | "refused"> => {
   const w = await current();
   if (event.type === "openMonth") {
-    if (w.period !== undefined || !isPeriod(event.period)) return "refused";
+    if (w.period !== undefined || event.project === "" || !isPeriod(event.period)) return "refused";
+    w.project = event.project;
     w.period = event.period;
     return "accepted";
   }
   if (w.period === undefined) return "refused";
-  const key = { projectId: PROJECT, period: w.period as Period };
+  const key = { projectId: w.project, period: w.period as Period };
   if (event.type === "observeClock") {
     const verdict = await outcome(w, sendMonth(key, event));
     if (verdict === "accepted") w.clock.set(event.now * 1000);
     return verdict;
   }
   const sent = forStore(w, event);
+  if (sent.type === "proposeCloseout") return outcome(w, Effect.tap(sendMonth(key, sent), (next) => Effect.flatMap(Effect.forEach(next.proposedShares, (share) => awardSource(w.project, key.period, share.actor)), (digests) => Effect.promise(() => importCloseout(w, sent.snapshot.digest, next, digests)))));
   const verdict = await outcome(w, sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])), funding: await fundingOf(w), reason: reasonOf(event) }));
   if (verdict !== "accepted") return verdict;
   if (event.type === "observeEligibility") w.facts.eligibility = event.eligibility;

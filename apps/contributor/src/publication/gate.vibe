@@ -4,7 +4,7 @@ import { type RegistryManifest, Restrictions } from "@repo/ports/backend"
 import { Clearance, Enforcement } from "@repo/ports/security"
 import { type PublicRead, publicRead } from "../../gen/backend__listing.effect.vibe"
 import { type Tier, initial as unregistered } from "../../gen/backend__projects.effect.vibe"
-import type { ArtifactFacts, ClearanceRead, MonthListing } from "../../gen/contributor__publication.effect.vibe"
+import type { ArtifactFacts, ClearanceRead, IntakeListing, MonthListing } from "../../gen/contributor__publication.effect.vibe"
 import { initial as unrestricted } from "../../gen/security__enforcement.effect.vibe"
 import { publishesGeneratedSkills } from "../render/publication.ts"
 
@@ -28,7 +28,7 @@ export effect function manifestOf(project: RegistryManifest) {
   return try Effect.try({ try: (): unknown => JSON.parse(project.manifest), catch: () => new RowMismatch({ text: `project ${project.projectId}`, issue: "the manifest is not JSON" }) })
 }
 
-export function optimistic(project: RegistryManifest, manifest: unknown, read: PublicRead, monthListing: MonthListing): ArtifactFacts {
+export function optimistic(project: RegistryManifest, manifest: unknown, read: PublicRead, monthListing: MonthListing, intake: IntakeListing): ArtifactFacts {
   return {
     read,
     active: project.active,
@@ -39,6 +39,7 @@ export function optimistic(project: RegistryManifest, manifest: unknown, read: P
     artifactExists: true,
     readFailed: false,
     monthListing,
+    intake,
   }
 }
 
@@ -55,7 +56,7 @@ export effect function publicReadOf(project: RegistryManifest, manifest: unknown
 export effect function gateOf(project: RegistryManifest) {
   const manifest = try manifestOf(project)
   const read = try publicReadOf(project, manifest)
-  return { project, manifest, facts: optimistic(project, manifest, read, "ListedThisMonth") } satisfies ProjectGate
+  return { project, manifest, facts: optimistic(project, manifest, read, "ListedThisMonth", "IntakeOpen") } satisfies ProjectGate
 }
 
 export effect function restrictionStateOf(projectId: string) {

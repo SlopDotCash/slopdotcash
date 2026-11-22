@@ -1,0 +1,80 @@
+// spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
+import { importLimitBytes } from "../client/import.vibe"
+
+export const intakeCorrelationHeader = "x-slop-intake-correlation"
+
+export const intakePhases = ["owner-admitted", "body-eof", "parsed", "heartbeat-queued", "rpc-dispatch", "terminal"] as const
+
+export type IntakePhase = (typeof intakePhases)[number]
+
+export type IntakeTerminalStatus = 200 | 400 | 409
+
+export interface PagesIntakeMilestone {
+  readonly event: "historical-intake-pages-milestone"
+  readonly correlation: string
+  readonly phase: IntakePhase
+  readonly elapsedMs: number
+  readonly bodyBytes: number | null
+  readonly terminalStatus: IntakeTerminalStatus | null
+}
+
+export interface MilestoneDetail {
+  readonly bodyBytes?: number
+  readonly terminalStatus?: IntakeTerminalStatus
+}
+
+export type IntakeObserver = (phase: IntakePhase, detail?: MilestoneDetail) => Effect.Effect<void>
+
+const milestoneEvent = "historical-intake-pages-milestone"
+const milestoneKeys = "bodyBytes,correlation,elapsedMs,event,phase,terminalStatus"
+const correlationPattern = /^[a-f0-9]{64}$/u
+const phaseNames: ReadonlySet<unknown> = new Set(intakePhases)
+const terminalStatuses: ReadonlySet<unknown> = new Set([200, 400, 409])
+
+export function isIntakeCorrelation(value: unknown): value is string {
+  return typeof value === "string" && correlationPattern.test(value)
+}
+
+function isPhase(value: unknown): value is IntakePhase {
+  return phaseNames.has(value)
+}
+
+function isTerminalStatus(value: unknown): value is IntakeTerminalStatus {
+  return terminalStatuses.has(value)
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+export const unobserved: IntakeObserver = () => Effect.void
+
+export effect function pagesIntakeObserver(correlation: unknown) {
+  if (!isIntakeCorrelation(correlation)) return unobserved
+  const started = try Clock.currentTimeMillis
+  const observer: IntakeObserver = (phase, detail = {}) => effect {
+    const now = try Clock.currentTimeMillis
+    const milestone: PagesIntakeMilestone = {
+      event: milestoneEvent,
+      correlation,
+      phase,
+      elapsedMs: Math.max(0, Math.round(now - started)),
+      bodyBytes: detail.bodyBytes ?? null,
+      terminalStatus: detail.terminalStatus ?? null,
+    }
+    try exit(Effect.logInfo(JSON.stringify(milestone)))
+  }
+  return observer
+}
+
+export function projectPagesIntakeMilestone(value: unknown, correlation: string): PagesIntakeMilestone | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  const row = value as Readonly<Record<string, unknown>>
+  if (Object.keys(row).sort().join() !== milestoneKeys || row.event !== milestoneEvent || !isIntakeCorrelation(row.correlation) || row.correlation !== correlation) return undefined
+  const { phase, elapsedMs, bodyBytes, terminalStatus } = row
+  if (!isPhase(phase) || !isCount(elapsedMs)) return undefined
+  const bytes = phase === "body-eof" ? (isCount(bodyBytes) && bodyBytes <= importLimitBytes ? bodyBytes : undefined) : (bodyBytes === null ? null : undefined)
+  const status = phase === "terminal" ? (isTerminalStatus(terminalStatus) ? terminalStatus : undefined) : (terminalStatus === null ? null : undefined)
+  if (bytes === undefined || status === undefined) return undefined
+  return { event: milestoneEvent, correlation, phase, elapsedMs, bodyBytes: bytes, terminalStatus: status }
+}

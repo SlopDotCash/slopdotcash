@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
 import { type InboxNotice, type NotificationsPage, acknowledgeCaseNotice, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark } from "@repo/operations/client"
 import { ActorChanged, type CallFailure, call } from "../../platform/api.vibe"
 import { type ReadFailure, type Resource, Unreadable, resource } from "../../reads/resource.vibe"
@@ -101,6 +101,7 @@ export service Inbox {
   readonly changes: Stream.Stream<InboxView>
   view(): InboxView!!
   load(): InboxView!!HttpClient.HttpClient
+  recheck(): InboxView!!HttpClient.HttpClient
   older(): InboxView!!HttpClient.HttpClient
   newer(): InboxView!!HttpClient.HttpClient
   markRead(eventKeys: ReadonlyArray<string>): InboxView!!HttpClient.HttpClient
@@ -193,11 +194,13 @@ export const inboxLayer = Layer.effect(Inbox, effect {
     return try revalidated(mine)
   }
 
-  effect function load() {
+  effect function reload(behind: boolean) {
     const mine = try begin()
-    try update((view) => ({ ...view, status: "loading" }))
+    try update((view) => behind && view.status === "ready" ? view : { ...view, status: "loading" })
     return try read(mine)
   }
+
+  const load = () => reload(false)
 
   effect function owns(mine: number, expected: string) {
     const found = session.current() catch () => undefined
@@ -264,6 +267,7 @@ export const inboxLayer = Layer.effect(Inbox, effect {
     changes: SubscriptionRef.changes(shown),
     view: () => SubscriptionRef.get(shown),
     load,
+    recheck: () => reload(true),
     effect older() {
       const shownNow = try SubscriptionRef.get(shown)
       const next = shownNow.page?.nextCursor ?? null

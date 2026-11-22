@@ -18,6 +18,7 @@ import { deploymentOrigins } from "@repo/platform/config"
 import { LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { BrowserSession, sessionServices } from "../../src/session/browserSession.vibe"
 import { EmailLink, emailActionLayer } from "../../src/session/emailAction.vibe"
+import { Session, viewActor } from "../../src/session/session.vibe"
 
 module world {
   import { Request as WebRequest, Response as WebResponse } from "miniflare"
@@ -215,6 +216,26 @@ effect function member(githubId: string) {
   return token
 }
 
+effect function recorded<A>(changes: Stream.Stream<A>) {
+  const seen: Array<A> = []
+  const subscribed = try Deferred.make<void>()
+  try Effect.forkChild(Stream.runForEach(changes, (value) => effect {
+    seen.push(value)
+    try Deferred.succeed(subscribed, undefined)
+  }))
+  try Deferred.await(subscribed)
+  return seen
+}
+
+effect function caughtUp<A>(seen: ReadonlyArray<A>, now: A) {
+  while (seen.at(-1) !== now) try Effect.yieldNow
+}
+
+effect function returnToTab(browser: BrowserSession.Shape, inbox: Inbox.Shape) {
+  try browser.observe("revalidate")
+  try inbox.recheck()
+}
+
 function notice(eventKey: string, kind: NoticeKind, minute: number, recipientGithubId: string, subject: string, actionPath: string): Notice {
   return { eventKey, recipientGithubId, kind, subject, actionPath, sourceAt: `2030-01-02T00:${String(minute).padStart(2, "0")}:00.000Z` }
 }
@@ -229,7 +250,7 @@ effect function readAt(eventKey: string, recipient: string) {
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Read the Inbox, mark notices read and acknowledge a case notice only as the signed-in recipient (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+  it.effect('Read the Inbox, mark notices read and acknowledge a case notice only as the signed-in recipient (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', () => effect {
     const { world } = try Browser
     const reader = "9300000101"
     const other = "9300000102"
@@ -273,6 +294,25 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       try browser.observe("load")
       const loaded = try readyFor(inbox.changes, reader)
       const unread = loaded.page === undefined ? [] : unreadKeys(loaded.page)
+      const session = try Session
+      const shownBefore = try session.view()
+      const inboxSeen = try recorded(inbox.changes)
+      const sessionSeen = try recorded(session.changes)
+      const returnedFrom = world.requests.length
+      try returnToTab(browser, inbox)
+      try returnToTab(browser, inbox)
+      try returnToTab(browser, inbox)
+      try caughtUp(inboxSeen, try inbox.view())
+      try caughtUp(sessionSeen, try session.view())
+      const sentOnReturn = world.requests.slice(returnedFrom)
+      const returned = {
+        routes: [...new Set(sentOnReturn)].sort(),
+        lists: sentOnReturn.filter((sent) => sent === "GET /api/v1/notifications").length,
+        inbox: [...new Set(inboxSeen.map((view) => view.status))],
+        session: [...new Set(sessionSeen.map((view) => view.status))],
+        keptSession: (try session.view()) === shownBefore,
+        recipient: (try inbox.view()).recipient,
+      }
       const marked = shape(try inbox.markRead(["project-revision:account-1"]))
       const caseNotice = (try inbox.view()).page?.notifications.find((row) => row.eventKey === "security-case:account-1")
       const acknowledged = shape(caseNotice === undefined ? try inbox.view() : try inbox.acknowledge(caseNotice))
@@ -280,9 +320,10 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       world.beforeNext("POST /api/v1/notifications/read", () => world.useCookie(otherToken))
       const raced = shape(try inbox.markRead(["award-reserved:account-1"]))
       const awardReadAt = try readAt("award-reserved:account-1", reader)
-      try browser.observe("changed")
+      try browser.observe("revalidate")
+      const switched = viewActor(try session.view())
       const otherInbox = shape(try readyFor(inbox.changes, other))
-      const steps = { signedOut, signedOutLists, loaded: shape(loaded), unread, marked, acknowledged, ignoredKeys, raced, awardReadAt, otherInbox }
+      const steps = { signedOut, signedOutLists, loaded: shape(loaded), unread, returned, marked, acknowledged, ignoredKeys, raced, awardReadAt, switched, otherInbox }
       try same(steps, {
         signedOut: { status: "signedOut", recipient: null, unread: undefined, rows: undefined, message: undefined, done: undefined, actionError: undefined, busy: false },
         signedOutLists: 0,
@@ -297,6 +338,14 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
           busy: false,
         },
         unread: ["security-case:account-1", "project-revision:account-1", "award-reserved:account-1"],
+        returned: {
+          routes: ["GET /api/v1/notifications", "GET /api/v1/project-session"],
+          lists: 3,
+          inbox: ["ready"],
+          session: ["signedIn"],
+          keptSession: true,
+          recipient: reader,
+        },
         marked: {
           status: "ready",
           recipient: reader,
@@ -338,6 +387,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
           busy: false,
         },
         awardReadAt: null,
+        switched: Number(other),
         otherInbox: {
           status: "ready",
           recipient: other,

@@ -1,6 +1,6 @@
-// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
 import { millisOf } from "@repo/platform/clock"
-import { type Assertion, type Audience, type Flow, type FlowMode, type FlowStatus, type GitHubIdentity, type RateScope, type RateWindow, decodeState } from "../../gen/backend__identity.effect.vibe"
+import { type Assertion, type Audience, type Flow, type FlowMode, type FlowStatus, type GitHubIdentity, type RateScope, type RateWindow, decodeState, websiteFlow } from "../../gen/backend__identity.effect.vibe"
 import type { IdentityAudience } from "../client/identity.vibe"
 import { localFlowOrigin } from "../local/origin.vibe"
 import type { Counted } from "./rateWindow.vibe"
@@ -72,6 +72,7 @@ function flowOf(row: FlowRow, id: number): Flow {
     github: githubOf(row.github_actor_id, row.github_login, row.github_node_id),
     createdAt: secondsOf(row.created_at),
     expiresAt: secondsOf(row.expires_at),
+    bound: websiteFlow(audienceOf[row.audience], modeOf(row.id)),
   }
 }
 

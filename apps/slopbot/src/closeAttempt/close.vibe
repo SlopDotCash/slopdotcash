@@ -1,4 +1,4 @@
-// spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation's recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+// spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation's recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "Only GitHub's own close event confirms and only a definitive refusal releases"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
 import { millisOf } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { D1, sql } from "@repo/platform/d1"
@@ -199,7 +199,7 @@ function closingOf(request: CloseRequest, record: AttemptRecord): Closing {
     author: session.context.issue.user,
     verdict: request.verdict,
     triage: request.triage.call,
-    confirm: request.confirm.call,
+    confirm: request.confirm?.call,
     reviewed: reviewDetails(session),
     penaltyEligible: request.penaltyEligible,
     labels: (session.context.issue.labels ?? []).map((label) => label.name),
@@ -232,7 +232,7 @@ effect function closing(request: CloseRequest) {
     revision: identity.revision,
     dailyCap: request.dailyCap,
     penaltyEligible: request.penaltyEligible,
-    recovery: recoveryJson(request.verdict, request.triage.call, request.confirm.call, candidate, fence.model),
+    recovery: recoveryJson(request.verdict, request.triage.call, request.confirm?.call, candidate, fence.model),
     fence: fence.capacity,
   })
   if (reserved.kind === "refused") {

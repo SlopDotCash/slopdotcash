@@ -1,0 +1,43 @@
+// spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"
+import { MAX_PROOF_BYTES, type ReportProof, proofFileNameProblem, proofPatchProblem } from "@repo/security/client"
+
+export const descriptionLimit = 65_000
+
+export const descriptionAccept = ".md,.markdown,.txt,text/markdown,text/plain"
+
+export error FileRefused { message: string }
+
+const notText = "The file must be text, not a binary file."
+
+export function byteCount(bytes: number): string {
+  return `${bytes.toLocaleString("en-US")} bytes`
+}
+
+effect function textOf(file: Blob, maxBytes: number) {
+  if (file.size > maxBytes) throw new FileRefused({ message: `The file must be at most ${byteCount(maxBytes)}.` })
+  const bytes = try tryPromise({
+    try: () => file.arrayBuffer(),
+    catch: () => new FileRefused({ message: notText }),
+  })
+  const text = try Effect.try({
+    try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    catch: () => new FileRefused({ message: notText }),
+  })
+  if (text.includes("\u0000")) throw new FileRefused({ message: notText })
+  return text
+}
+
+export effect function descriptionOf(file: Blob) {
+  const trimmed = (try textOf(file, descriptionLimit * 4)).trim()
+  if (trimmed.length > descriptionLimit) throw new FileRefused({ message: `The description must be at most ${descriptionLimit.toLocaleString("en-US")} characters.` })
+  return trimmed
+}
+
+export effect function proofOf(file: File) {
+  const nameProblem = proofFileNameProblem(file.name)
+  if (nameProblem !== null) throw new FileRefused({ message: nameProblem })
+  const patch = try textOf(file, MAX_PROOF_BYTES)
+  const problem = proofPatchProblem(patch)
+  if (problem !== null) throw new FileRefused({ message: problem })
+  return { fileName: file.name, patch } satisfies ReportProof
+}

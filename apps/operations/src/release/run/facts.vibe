@@ -17,6 +17,7 @@ export interface ManualOptions {
   readonly skipProofs: boolean
   readonly skipBrowserTests: boolean
   readonly usePublishedData: boolean
+  readonly dataFromRun: string
   readonly discussionResumeRun: string
   readonly bootstrap: boolean
 }
@@ -133,6 +134,7 @@ export effect function runFacts() {
       skipProofs: chosen(inputs, "skip_proofs"),
       skipBrowserTests: chosen(inputs, "skip_browser_tests"),
       usePublishedData: chosen(inputs, "use_published_data"),
+      dataFromRun: given(inputs, "data_from_run"),
       discussionResumeRun: given(inputs, "discussion_resume_run"),
       bootstrap: chosen(inputs, "bootstrap_staging_profiles"),
     },

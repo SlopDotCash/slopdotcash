@@ -9,7 +9,7 @@ import { nativeCostWithin } from "../kernels/budget.ts"
 import { parseNativeCostLimit } from "../kernels/amounts.ts"
 import type { EvmDeployment } from "../vault/policy.vibe"
 import { additionalFee, groupOf, reserveGas } from "./budget.vibe"
-import type { KeeperConfig } from "./config.vibe"
+import type { EvmKeeperConfig } from "./config.vibe"
 import { type GroupWork, type KeeperCore, bytesOf, withGroup } from "./lifecycle.vibe"
 import { signWithOperatorKey } from "./signer.vibe"
 import { RecordInvalid, inTransaction, keep, record, recordOf } from "./store.vibe"
@@ -42,7 +42,7 @@ export schema FeeReplacements {
 }
 
 export interface KeeperScope {
-  readonly config: KeeperConfig
+  readonly config: EvmKeeperConfig
   readonly mode: KeeperMode
   readonly core: KeeperCore
   readonly runId: number

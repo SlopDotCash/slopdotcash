@@ -2,6 +2,7 @@
 import { type ModelCall, type ModelReply, Provider as Gateways, type ProviderFailure, type Usage, providers } from "@repo/platform/providers"
 import { type Denial, blocksRoute } from "../../gen/slopbot__budgetBlocks.effect.vibe"
 import { type CallOutcome, type Provider, type ReviewStatus, expectedModel, initial, nextProvider, routeEnd } from "../../gen/slopbot__review.effect.vibe"
+import { type Explain, rejectionDetail, unreadableDetail } from "./refusal.ts"
 
 export type Gateway = "orbio" | "surplus"
 
@@ -33,6 +34,7 @@ export interface CallRecord {
   readonly priceKey: string
   readonly outcome: "ok" | "failed"
   readonly failure: CallFailure | null
+  readonly failureDetail?: string
   readonly usage: Usage
   readonly providerCostMicroUsd: number | null
   readonly providerRequestId: string | null
@@ -47,6 +49,7 @@ export interface Prompt {
 export interface Output<T> {
   readonly schema: Readonly<Record<string, unknown>>
   readonly validate: (value: unknown) => T | undefined
+  readonly explain?: Explain
 }
 
 export type Effort = "medium" | "high"
@@ -155,10 +158,12 @@ function failureOf(step: Step, failure: ProviderFailure): CallFailure {
 }
 
 function failedCall(base: CallRecord, step: Step, failure: ProviderFailure): CallRecord {
+  const refused = failureOf(step, failure)
   return {
     ...base,
     servedModel: failure.receipt.model,
-    failure: failureOf(step, failure),
+    failure: refused,
+    ...(refused === "schema-invalid verdict" ? { failureDetail: unreadableDetail(undefined) } : {}),
     usage: failure.receipt.usage ?? noUsage,
     providerCostMicroUsd: failure.receipt.costMicroUsd,
     providerRequestId: failure.receipt.requestId,
@@ -170,16 +175,18 @@ function repliedCall(base: CallRecord, reply: ModelReply): CallRecord {
 }
 
 effect function verdictOf<T>(reply: ModelReply, output: Output<T>) {
-  const value = Effect.try(() => JSON.parse(reply.text) as unknown) catch () => undefined
-  return value === undefined ? undefined : output.validate(value)
+  const parsed = Effect.try(() => ({ value: JSON.parse(reply.text) as unknown })) catch () => undefined
+  if (parsed === undefined || parsed.value === null) return { verdict: undefined, detail: unreadableDetail(reply.text) }
+  const verdict = output.validate(parsed.value)
+  return { verdict, detail: verdict === undefined ? rejectionDetail(parsed.value, output.schema, output.explain) : undefined }
 }
 
 effect function answered<T>(base: CallRecord, step: Step, reply: ModelReply, output: Output<T>) {
   const replied = repliedCall(base, reply)
   const denial: Denial = { source: step.gateway === "orbio" ? "OrbioFailure" : "SurplusOtherFailure", resetAt: 0, orbioServed: false }
   if (reply.model !== step.model) return { call: { ...replied, failure: "provider did not report the requested model" } satisfies CallRecord, denial, verdict: undefined }
-  const verdict = try verdictOf(reply, output)
-  if (verdict === undefined) return { call: { ...replied, failure: "schema-invalid verdict" } satisfies CallRecord, denial, verdict }
+  const { verdict, detail } = try verdictOf(reply, output)
+  if (verdict === undefined) return { call: { ...replied, failure: "schema-invalid verdict", ...(detail === undefined ? {} : { failureDetail: detail }) } satisfies CallRecord, denial, verdict }
   return { call: { ...replied, outcome: "ok" } satisfies CallRecord, denial, verdict }
 }
 

@@ -1,0 +1,98 @@
+// spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"
+import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import { type Registrant, depositorLogin, fundersPage } from "../../gen/settlement__vaultDeposits.effect.vibe"
+import type { VaultDeposit } from "../client/vault.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { chainFamily, isChain, isNetworkKey } from "../kernels/networks.ts"
+import { includeTestnets, testnetFilter } from "./records.vibe"
+
+schema StoredDeposit {
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly transaction_id: string
+  readonly event_index: number
+  readonly depositor: string
+  readonly amount: string
+  readonly block_time: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+}
+
+schema StoredRegistrant {
+  readonly chain: string
+  readonly wallet_address: string
+  readonly github_login: string
+  readonly wallet_signed: number
+  readonly private_account: number
+  readonly closed_account: number
+}
+
+schema DepositCount { readonly total: number }
+
+const evmTransaction = /^0x[0-9a-fA-F]{64}$/u
+const solanaTransaction = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u
+
+function registrantOf(row: StoredRegistrant): Registrant {
+  const solana = row.chain === "solana"
+  return {
+    login: row.github_login,
+    solana,
+    address: solana ? row.wallet_address : row.wallet_address.toLowerCase(),
+    walletSigned: row.wallet_signed === 1,
+    privateAccount: row.private_account === 1,
+    closedAccount: row.closed_account === 1,
+  }
+}
+
+effect function listed(projectId: string, row: StoredDeposit, registrants: Registrant[]) {
+  const chain = row.chain
+  if (!isChain(chain)
+    || !isNetworkKey(row.network)
+    || parseBaseUnits(row.amount) === undefined
+    || !Number.isSafeInteger(row.asset_decimals) || row.asset_decimals < 0 || row.asset_decimals > 36
+    || !(chainFamily(chain) === "evm" ? evmTransaction : solanaTransaction).test(row.transaction_id)
+    || !Number.isFinite(Date.parse(row.block_time))) throw new RowMismatch({ text: "vault deposit", issue: "Invalid stored vault deposit" })
+  const login = depositorLogin(chain === "solana", row.depositor, registrants)
+  return {
+    id: `${row.network}:${row.transaction_id}:${row.event_index}`,
+    projectId,
+    network: row.network,
+    chain,
+    vault: row.vault,
+    depositor: row.depositor,
+    githubLogin: login === "" ? null : login,
+    amountBase: row.amount,
+    assetAddress: row.asset_address,
+    assetDecimals: row.asset_decimals,
+    transactionId: row.transaction_id,
+    depositedAt: row.block_time,
+  } satisfies VaultDeposit
+}
+
+export effect function projectVaultDeposits(projectId: string) {
+  const shown = try includeTestnets()
+  const tier = testnetFilter(sql`d.network`, shown)
+  const page = try rows(StoredDeposit, sql`SELECT d.network, d.chain, d.vault, d.transaction_id, d.event_index, d.depositor, d.amount, d.block_time, s.asset_address, s.asset_decimals
+    FROM vault_deposits d
+    JOIN vault_snapshots s ON s.project_id = d.project_id AND s.network = d.network AND s.vault = d.vault
+    WHERE d.project_id = ${projectId}${tier}
+    ORDER BY d.block_time DESC, d.network, d.transaction_id DESC, d.event_index DESC
+    LIMIT ${fundersPage}`)
+  const counted = try first(DepositCount, sql`SELECT count(*) AS total
+    FROM vault_deposits d
+    JOIN vault_snapshots s ON s.project_id = d.project_id AND s.network = d.network AND s.vault = d.vault
+    WHERE d.project_id = ${projectId}${tier}`)
+  const registered = try rows(StoredRegistrant, sql`SELECT w.chain, w.wallet_address, w.github_login,
+      EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = w.id AND a.github_user_id = w.github_user_id) AS wallet_signed,
+      EXISTS (SELECT 1 FROM points_members p WHERE p.github_id = w.github_user_id AND p.public != 1) AS private_account,
+      EXISTS (SELECT 1 FROM points_members p WHERE p.github_id = w.github_user_id AND p.closed_at IS NOT NULL) AS closed_account
+    FROM effective_payment_wallet_claims w
+    WHERE EXISTS (SELECT 1 FROM vault_deposits d WHERE d.project_id = ${projectId}
+      AND ((d.chain = 'solana' AND w.chain = 'solana' AND d.depositor = w.wallet_address)
+        OR (d.chain != 'solana' AND w.chain != 'solana' AND d.depositor = lower(w.wallet_address))))`)
+  const registrants = registered.map(registrantOf)
+  const deposits: VaultDeposit[] = []
+  for (const row of page) deposits.push(try listed(projectId, row, registrants))
+  return { deposits, total: counted?.total ?? 0 }
+}

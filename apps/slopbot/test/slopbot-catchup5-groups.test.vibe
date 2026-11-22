@@ -1,0 +1,115 @@
+import { assert, layer } from "@effect/vitest"
+import { millisOf } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { collectEvidence } from "../src/value/evidence/collect.vibe"
+import type { RelatedPullRequest } from "../src/value/evidence/types.vibe"
+import { type GroupRepository, collectValueGroup } from "../src/value/workUnits/group.vibe"
+import { rewriteNext } from "./support/proofsWorker.vibe"
+import {
+  type World,
+  acceptance,
+  answerNext,
+  censusAnswer,
+  githubOver,
+  groupReadsOver,
+  groupRepository,
+  noRetainedCopies,
+  patchOf,
+  policyText,
+  registered,
+  repository,
+  seeded,
+  texts,
+} from "./support/workUnitsWorker.vibe"
+
+const startAt = millisOf("2026-11-01T00:00:00Z")
+const historicalNumber = 5
+const otherProject: GroupRepository = { id: "grace/other", projectId: "other", integrationBranch: "main", expectedNodeId: null, aliases: [], current: "grace/other" }
+
+service Journey {
+  readonly world: World
+}
+
+effect function withHistoricalPull(world: World) {
+  try Effect.try(() => {
+    const files = { "c.ts": texts["c.ts"] ?? "" }
+    const head = world.fake.world.addCommit(repository, { branch: "historical", parents: [world.base], message: "Add c early", author: "ada", date: "2026-10-20T00:00:00Z", files })
+    const merge = world.fake.world.addCommit(repository, { branch: "historical-merge", parents: [world.base, head], message: `Merge pull request #${historicalNumber}`, author: "ada", date: "2026-10-21T00:00:00Z", files })
+    world.fake.world.addPull({
+      repo: repository,
+      number: historicalNumber,
+      author: "ada",
+      title: "Add c early",
+      createdAt: "2026-10-20T00:00:00Z",
+      headSha: head,
+      commits: [head],
+      mergedAt: "2026-10-21T00:00:00Z",
+      mergeCommit: merge,
+      files: [{ path: "c.ts", status: "added", additions: 1, deletions: 0, patch: patchOf("c.ts") }],
+    })
+  })
+}
+
+const Started = Layer.unwrap(effect {
+  const world = try seeded()
+  try withHistoricalPull(world)
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "work-unit-groups-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  return Layer.mergeAll(d1(db), webCrypto, githubOver(world), noRetainedCopies, acceptance, Layer.succeed(Journey, { world }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function historicalReference(world: World): RelatedPullRequest {
+  const pull = world.fake.world.pull(repository, historicalNumber)
+  return { id: pull.nodeId, number: historicalNumber, url: `https://github.com/${repository}/pull/${historicalNumber}`, repository }
+}
+
+effect function grouped(world: World, related: ReadonlyArray<RelatedPullRequest>, extraCarriers: ReadonlyArray<number>) {
+  const [firstId, secondId] = world.pullIds
+  const collected = try collectEvidence({ repository, number: 1, policy: registered(world) })
+  const seed = { ...collected, relatedPullRequests: [...collected.relatedPullRequests, ...related] }
+  const [one, two, ...extra] = try Effect.try(() => [1, 2, ...extraCarriers].map((number) => world.fake.represent.pull(repository, number)))
+  try answerNext(world.fake, `/commits/${world.first}/pulls`, [one, two, ...extra])
+  try answerNext(world.fake, `/commits/${world.merged1}/pulls`, [one])
+  try answerNext(world.fake, `/commits/${world.second}/pulls`, [two])
+  try answerNext(world.fake, `/commits/${world.merged2}/pulls`, [two])
+  try rewriteNext(world.fake, "POST /graphql", censusAnswer(world, [
+    { id: firstId, number: 1, mergedAt: "2026-11-05T00:00:00Z", baseRefOid: world.base, headRefOid: world.first, mergeCommit: world.merged1, listed: [world.first], total: 1 },
+    { id: secondId, number: 2, mergedAt: "2026-11-06T00:00:00Z", baseRefOid: world.base, headRefOid: world.second, mergeCommit: world.merged2, listed: [world.first, world.second], total: 2 },
+  ]))
+  provide groupReadsOver() {
+    const group = try collectValueGroup({ evidence: seed, policy: { sha: world.base, text: policyText } }, startAt, [groupRepository(world), otherProject])
+    return group?.map(({ evidence }) => [evidence.pull.number, evidence.pull.node_id])
+  }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A group leaves out a referenced pull request of another project, of an unregistered repository or from before the start, and a carrier from before the start keeps it pending (spec/slopbot/workUnits.md, "Story: Prepare a group whose every claim is credited once"; spec/slopbot/workUnits.md, "A referenced pull request that can never join the group is left out instead of holding it"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+    const { world } = try Journey
+    const [firstId, secondId] = world.pullIds
+    const historical = historicalReference(world)
+    const referenced = try grouped(world, [
+      { id: "PR_kwDOother7", number: 7, url: "https://github.com/grace/other/pull/7", repository: "grace/other" },
+      { id: "PR_kwDOelsewhere8", number: 8, url: "https://github.com/eve/elsewhere/pull/8", repository: "eve/elsewhere" },
+      historical,
+      historical,
+    ], [])
+    const unrelatedReads = world.fake.requests.filter((request) => request.url.includes("/grace/other") || request.url.includes("/eve/elsewhere")).length
+    const carried = try grouped(world, [], [historicalNumber])
+
+    try same({ referenced, unrelatedReads, carried }, {
+      referenced: [[1, firstId], [2, secondId]],
+      unrelatedReads: 0,
+      carried: undefined,
+    })
+  })
+})

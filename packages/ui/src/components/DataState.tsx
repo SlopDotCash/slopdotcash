@@ -1,4 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
+import { RotateCcw } from "lucide-react";
 import type { ReadStatus } from "../../gen/frontend__requests.ts";
 import { readAnnouncement, readOffersRetry, readPresentation, readShowsRows } from "../../gen/ui__status.ts";
 import { cn } from "../lib/cn.ts";
@@ -23,6 +24,8 @@ export type DataStateProps = ComponentProps<"div"> & {
   skeleton?: ReactNode;
   /** The one control that fills an empty read, such as a `Button` that creates the first row. */
   emptyAction?: ReactNode;
+  /** When the retained rows were read, already formatted, such as a `<time>`: shown beside the stale notice. */
+  updatedAt?: ReactNode;
 };
 
 /**
@@ -32,20 +35,23 @@ export type DataStateProps = ComponentProps<"div"> & {
  * @design design.md#design-system
  */
 // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
-export function DataState({ status, children, onRetry, retryLabel = "Retry", skeleton, emptyAction, className, ...props }: DataStateProps) {
+export function DataState({ status, children, onRetry, retryLabel = "Retry", skeleton, emptyAction, updatedAt, className, ...props }: DataStateProps) {
   const presentation = readPresentation(status);
+  const stale = status === "Stale";
+  const retry = onRetry && readOffersRetry(status)
+    ? stale
+      ? <Button variant="ghost" size="icon" aria-label={retryLabel} title={retryLabel} onClick={onRetry}><RotateCcw aria-hidden /></Button>
+      : <Button variant="outline" size="sm" onClick={onRetry}>{retryLabel}</Button>
+    : null;
   const notice =
     status === "Current" ? null : status === "Loading" ? (
       <Status presentation={presentation} />
     ) : status === "Empty" ? (
       <EmptyState title={presentation.label} icon={<StatusIcon icon={presentation.icon} className="size-6" />}>{emptyAction}</EmptyState>
     ) : (
-      <Alert
-        variant={tones[presentation.tone].alert}
-        announcement="Silent"
-        action={onRetry && readOffersRetry(status) ? <Button variant="outline" size="sm" onClick={onRetry}>{retryLabel}</Button> : null}
-      >
+      <Alert variant={tones[presentation.tone].alert} announcement="Silent" action={retry}>
         <Status presentation={presentation} />
+        {stale && updatedAt ? <span className="text-sm text-muted-foreground"> · {updatedAt}</span> : null}
       </Alert>
     );
   // No `aria-busy` around the live region: a screen reader may hold back what changes under it, and "Loading" with it.

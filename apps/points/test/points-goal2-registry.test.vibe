@@ -1,0 +1,113 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
+import { registry } from "../src/programs/registry.vibe"
+import { readRegistry } from "../src/snapshot/adaptPr.vibe"
+
+const syncedAt = "2026-11-22T00:00:00.000Z"
+const skillSourcePath = "skills/project-contributor-template"
+
+interface Repository {
+  readonly id: string
+  readonly githubUrl: string
+  readonly aliases?: ReadonlyArray<string>
+  readonly nodeId?: string
+}
+
+function manifest(id: string, status: string, listingTier: string, committedMinor: string, nodeId: string | undefined, repositories: ReadonlyArray<Repository>) {
+  return {
+    schemaVersion: "1",
+    id,
+    status,
+    listingTier,
+    authority: nodeId === undefined ? { state: "unverified" } : { state: "verified", repositoryNodeId: nodeId },
+    reward: { committedMinor, monthlyCapMinor: committedMinor },
+    skill: { id: `${id}-contributor`, sourcePath: skillSourcePath },
+    repositories: repositories.map((repository) => ({ displayName: repository.id, description: `${id} repository`, integrationBranch: "main", ...repository })),
+    ...(status === "active" ? { contribution: { summary: `Improve ${id}` } } : {}),
+  }
+}
+
+const archive = manifest("archive", "paused", "retired", "0", undefined, [{ id: "ada/archive", githubUrl: "https://github.com/ada/archive" }])
+const gadgets = manifest("gadgets", "active", "listed", "900", "R_gadgets", [{ id: "ada/old-gadgets", githubUrl: "https://github.com/ada/gadgets", aliases: ["ada/gadgets-legacy"] }])
+const widgets = manifest("widgets", "active", "listed", "500", "R_widgets", [
+  { id: "ada/widgets", githubUrl: "https://github.com/ada/widgets" },
+  { id: "ada/widgets-docs", githubUrl: "https://github.com/ada/widgets-docs", nodeId: "R_docs" },
+])
+const projects = [archive, gadgets, widgets]
+
+function entry(project: (typeof projects)[number], repository: string, owner: string, name: string, nodeId: string, aliases: ReadonlyArray<string> = []) {
+  const found = project.repositories.find((candidate) => candidate.id === repository)
+  return {
+    id: repository,
+    owner,
+    name,
+    displayName: repository,
+    githubUrl: found?.githubUrl ?? "",
+    description: `${project.id} repository`,
+    integrationBranch: "main",
+    projectId: project.id,
+    nodeId,
+    aliases,
+  }
+}
+
+const expected: RepositoryRegistry = {
+  registered: [
+    entry(gadgets, "ada/old-gadgets", "ada", "gadgets", "R_gadgets", ["ada/gadgets-legacy"]),
+    entry(widgets, "ada/widgets", "ada", "widgets", "R_widgets"),
+    entry(widgets, "ada/widgets-docs", "ada", "widgets-docs", "R_docs"),
+    entry(archive, "ada/archive", "ada", "archive", ""),
+  ],
+  targets: [
+    entry(gadgets, "ada/old-gadgets", "ada", "gadgets", "R_gadgets", ["ada/gadgets-legacy"]),
+    entry(widgets, "ada/widgets", "ada", "widgets", "R_widgets"),
+    entry(widgets, "ada/widgets-docs", "ada", "widgets-docs", "R_docs"),
+  ],
+  projects: [{ id: "gadgets", skillSourcePath }, { id: "widgets", skillSourcePath }, { id: "archive", skillSourcePath }],
+}
+
+effect function snapshotText(listed: ReadonlyArray<unknown>) {
+  const revisions = []
+  for (const project of projects) {
+    revisions.push({ projectId: project.id, revision: 1, manifestSha256: try sha256Hex(JSON.stringify(project)), reason: "approved", createdAt: syncedAt, manifest: project })
+  }
+  return `${JSON.stringify({ schemaVersion: 1, syncedAt, projects: listed, revisions }, null, 2)}\n`
+}
+
+effect function written(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  try fs.writeFile(path, utf8(text))
+  return path
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto), { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect(`A release rebuilds the repository registry from its checked registry snapshot (spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/points/census.md, "Collection starts only for a collected project and never moves its window back"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see")`, () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const workspace = try fs.makeTempDirectoryScoped({ prefix: "slop-points-registry-" })
+    const output = files.join(workspace, "repository-registry.json")
+
+    const snapshot = try written(files.join(workspace, "snapshot.json"), try snapshotText(projects))
+    try registry([snapshot, output])
+    assert.deepStrictEqual(try readRegistry(output), expected)
+
+    const restrictedWidgets = { ...widgets, status: "paused", listingTier: "retired" }
+    const withheld = try written(files.join(workspace, "withheld.json"), try snapshotText([archive, gadgets, restrictedWidgets]))
+    try registry([withheld, output])
+    const kept = try readRegistry(output)
+    assert.deepStrictEqual(kept.targets, expected.targets.slice(0, 1))
+    assert.deepStrictEqual(kept.registered.map((repository) => repository.id), ["ada/old-gadgets", "ada/widgets", "ada/widgets-docs", "ada/archive"])
+
+    const tampered = try written(files.join(workspace, "tampered.json"), try snapshotText([archive, gadgets, { ...widgets, reward: { committedMinor: "5000", monthlyCapMinor: "5000" } }]))
+    const refused = try Effect.flip(registry([tampered, files.join(workspace, "tampered-registry.json")]))
+    assert.strictEqual(refused._tag, "RegistryRefused")
+    assert.isFalse(try fs.exists(files.join(workspace, "tampered-registry.json")))
+
+    const unsorted = try written(files.join(workspace, "unsorted.json"), try snapshotText([widgets, gadgets, archive]))
+    assert.strictEqual((try Effect.flip(registry([unsorted, output])))._tag, "RegistryRefused")
+
+    assert.strictEqual((try Effect.flip(registry([snapshot])))._tag, "RegistryUsage")
+  }))
+})

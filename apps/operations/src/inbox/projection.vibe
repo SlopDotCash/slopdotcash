@@ -1,9 +1,10 @@
-// spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"
+// spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"; spec/operations/moderation.md, "An enforcement record reaches its applicant and steward, and a reinstatement request the moderators who did not place it"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
-import { type Key, type Moderation, appealKey, initial, scamKey, visible } from "../../gen/operations__moderation.effect.vibe"
+import { type Key, type Moderation, appealKey, initial, noKey, scamKey, visible } from "../../gen/operations__moderation.effect.vibe"
 import { type DeliveryState, type EmailWord, type NoticeAudience, type Template, appealAudience, inboxItem, noNotice } from "../../gen/operations__notifications.effect.vibe"
 import { type EmailDelivery, type InboxNotice, NotificationKind, type NotificationsPage, isNotificationEventKey } from "../client/inbox.vibe"
+import { requestOpen } from "../notifications/audience.vibe"
 import { deliveryStates } from "../notifications/rows.vibe"
 
 module verified {
@@ -31,6 +32,7 @@ schema Facts {
   readonly dispute_appellant: number
   readonly dispute_resolved: number
   readonly resolution_notice: number
+  readonly request_open: number
 }
 
 schema Readable {
@@ -42,6 +44,7 @@ schema Readable {
   readonly dispute_appellant: number
   readonly dispute_resolved: number
   readonly resolution_notice: number
+  readonly request_open: number
 }
 
 schema UnreadGroup {
@@ -52,6 +55,7 @@ schema UnreadGroup {
   readonly dispute_appellant: number
   readonly dispute_resolved: number
   readonly resolution_notice: number
+  readonly request_open: number
   readonly count: number
 }
 
@@ -75,6 +79,7 @@ schema Listed {
   readonly dispute_appellant: number
   readonly dispute_resolved: number
   readonly resolution_notice: number
+  readonly request_open: number
 }
 
 const disputeKey = sql`n.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved')`
@@ -89,7 +94,8 @@ const facts = sql`CASE WHEN n.kind = 'slopbot_scam_review' THEN (SELECT p.author
     (SELECT p.appellant_github_id FROM points_disputes p WHERE ${disputeKey} AND p.escalated_at IS NOT NULL)) END AS case_appellant,
   CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.appellant_github_id = n.recipient_github_id) ELSE 0 END AS dispute_appellant,
   CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.resolved_at IS NOT NULL) ELSE 0 END AS dispute_resolved,
-  n.kind = 'slopbot_appeal_review' AND substr(n.event_key, -9) = ':resolved' AS resolution_notice`
+  n.kind = 'slopbot_appeal_review' AND substr(n.event_key, -9) = ':resolved' AS resolution_notice,
+  CASE WHEN n.kind = 'reinstatement_review' THEN ${requestOpen(sql`n.event_key`)} ELSE 1 END AS request_open`
 
 const appealResolved = sql`CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (
     SELECT 1 FROM slopbot_appeals ap WHERE 'slopbot-' || ap.appeal_key = n.event_key AND ap.resolved_at IS NOT NULL
@@ -117,7 +123,7 @@ function listing(recipient: string, cursor: Cursor | undefined): Statement {
 
 function unreadGroups(recipient: string): Statement {
   return sql`SELECT n.kind, ${facts}, count(*) AS count FROM notifications n
-    WHERE n.recipient_github_id = ${recipient} AND n.read_at IS NULL GROUP BY 1, 2, 3, 4, 5, 6, 7`
+    WHERE n.recipient_github_id = ${recipient} AND n.read_at IS NULL GROUP BY 1, 2, 3, 4, 5, 6, 7, 8`
 }
 
 function unreadAmong(recipient: string, eventKeys: ReadonlyArray<string>): Statement {
@@ -160,6 +166,7 @@ const reviewed = "reviewed"
 function reviewKey(kind: string): Key | undefined {
   if (kind === "slopbot_scam_review") return scamKey(reviewed)
   if (kind === "slopbot_appeal_review") return appealKey(reviewed)
+  if (kind === "reinstatement_review") return { ...noKey, kind: "ReinstatementReview", subject: reviewed }
   return undefined
 }
 
@@ -177,6 +184,8 @@ const disputeAppellant: NoticeAudience = {
   resolved: false,
   scamPenaltyStands: false,
   author: false,
+  cutContributor: false,
+  requestOpen: false,
 }
 
 export function shownTo(viewer: string, moderator: boolean, found: Facts): boolean {
@@ -192,6 +201,7 @@ export function shownTo(viewer: string, moderator: boolean, found: Facts): boole
     items: [{ key, recipient: 1, readAt: 0 }],
     penalties: found.penalty_author === null ? [] : [{ itemNode: reviewed, author: actor(found.penalty_author), reversed: found.penalty_reversed === 1 }],
     cases: found.case_appellant === null ? [] : [{ key: reviewed, appellant: actor(found.case_appellant), escalated: true, resolved: false }],
+    requests: [{ id: reviewed, open: found.request_open === 1 }],
   }
   return visible(review, 1, key)
 }

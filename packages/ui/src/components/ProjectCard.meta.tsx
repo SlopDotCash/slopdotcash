@@ -11,13 +11,15 @@ export const meta: ComponentMeta<ProjectCardProps> = {
     amount: "2,500.00 USDC",
     note: "This month",
   },
+  examples: { Monthly: { amount: "$1k", unit: "/mo", note: undefined }, Preview: { children: undefined } },
   play: {
     // spec/ui/controls.md, "The keyboard reaches a row of links in the order shown, and one navigation tab at most is current":
     // the whole card is one link, reached once and named by what it shows.
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-      const [card, ...others] = within(canvasElement).getAllByRole("link");
+      const canvas = within(canvasElement);
+      const [card, ...others] = canvas.getAllByRole("link");
       await userEvent.tab();
-      await expect([document.activeElement, others, card?.getAttribute("href"), card?.textContent?.startsWith("Umia Protocol")]).toEqual([card, [], "#umia", true]);
+      await expect([document.activeElement, others, card?.getAttribute("href"), canvas.getByRole("link", { name: /^Umia Protocol/ })]).toEqual([card, [], "#umia", card]);
       await userEvent.tab();
       await expect(canvasElement.contains(document.activeElement)).toBe(false);
     },

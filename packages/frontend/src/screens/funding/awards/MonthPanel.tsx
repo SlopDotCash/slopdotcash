@@ -182,9 +182,14 @@ function Proposal({ view, state, busy = false, savedActor, onSave, onFinalize }:
     });
   return (
     <>
+      {proposal.earlyCloseAt === undefined ? null : (
+        <p className="text-sm text-muted-foreground">
+          Contributions before <time dateTime={proposal.earlyCloseAt}>{formatDateTime(proposal.earlyCloseAt)}</time>.
+        </p>
+      )}
       <MetricGrid>
         <Metric label="Allocated" value={amount(sumOf(proposal.allocations.map((row) => row.grossBase)))} tone="Notice" />
-        <Metric label="Monthly cap" value={amount(proposal.capBase)} />
+        <Metric label={proposal.earlyCloseAt === undefined ? "Monthly cap" : "Prorated cap"} value={amount(proposal.capBase)} />
       </MetricGrid>
       {proposal.allocations.length === 0 ? (
         <p className="text-sm text-muted-foreground">No allocations</p>
@@ -199,7 +204,7 @@ function Proposal({ view, state, busy = false, savedActor, onSave, onFinalize }:
                 detail={`Proposed ${amount(row.proposedGrossBase)}`}
                 trailing={<AwardAmounts gross={amount(row.grossBase)} net={amount((BigInt(row.grossBase) - fee).toString())} fee={amount(fee.toString())} />}
                 actions={
-                  state.manages ? (
+                  state.manages && !state.month.fixed ? (
                     <AllocationEditor row={row} view={view} state={state} draft={draftOf(row)} busy={busy} saved={savedActor === row.githubUserId} onDraft={setDraft(row.githubUserId)} onSave={onSave} />
                   ) : undefined
                 }

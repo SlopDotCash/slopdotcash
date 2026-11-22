@@ -16,6 +16,7 @@ const penaltyRows: ReadonlyArray<PenaltyRow> = [
   { label: "Spam", category: "Spam" },
   { label: "Scam or malicious", category: "Scam" },
   { label: "Clear violation of a quoted project rule", category: "Busywork" },
+  { label: "Required evidence missing from a signed Slop PR", category: "MissingEvidence" },
   { label: "Low quality", category: "LowQuality" },
   { label: "Duplicate", category: "Duplicate" },
   { label: "Out of scope", category: "OutOfScope" },

@@ -42,12 +42,34 @@ module stagedGitHub {
     execFileSync("git", ["-C", origin, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-a", "-m", `advance ${name}`])
   }
 
+  export interface StagedProducer {
+    readonly id: number
+    readonly sha: string
+    readonly archive: string
+    readonly digest: string
+    readonly createdAt: string
+    readonly expired?: boolean
+    readonly step?: string
+  }
+
+  /** @throws {never} */
+  export function stagedProducer(fake: GitHubFake, repository: string, producer: StagedProducer): void {
+    const json = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    const run = `/repos/${repository}/actions/runs/${producer.id}`
+    const artifact = producer.id + 1
+    fake.alterNext(new RegExp(`^GET ${run}$`, "u"), json({ id: producer.id, repository: { full_name: repository }, head_repository: { full_name: repository }, head_branch: "main", event: "push", path: ".github/workflows/deploy.yml", status: "completed", head_sha: producer.sha, run_attempt: 2 }))
+    fake.alterNext(`GET ${run}/attempts/2/jobs`, json({ jobs: [{ name: "Prepare checked browser bundle", conclusion: "success", steps: [{ name: "Generate live contribution data", conclusion: producer.step ?? "success" }] }] }))
+    fake.alterNext(`GET ${run}/artifacts`, json({ artifacts: [{ id: artifact, name: `slop-source-${producer.sha}`, expired: producer.expired ?? false, created_at: producer.createdAt, digest: producer.digest, size_in_bytes: new TextEncoder().encode(producer.archive).byteLength, workflow_run: { id: producer.id, head_sha: producer.sha } }] }))
+    fake.alterNext(new RegExp(`^GET /repos/${repository}/actions/artifacts/${artifact}/zip$`, "u"), () => new Response(null, { status: 302, headers: { location: `https://artifacts.slop.invalid/${producer.id}.zip` } }))
+    fake.alterNext(new RegExp(`^GET /${producer.id}\\.zip$`, "u"), () => new Response(producer.archive, { status: 200 }))
+  }
+
   /** @throws {never} */
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
 }
-import { type StagedRecord, advanceBranch, hangNext, refuseNext, stagedHistory } from stagedGitHub
+import { type StagedProducer, type StagedRecord, advanceBranch, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -59,7 +81,8 @@ import { BundleRefused } from "../src/release/manifest/inventory.vibe"
 import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
 import { StagingHistoryRefused } from "../src/release/run/history.vibe"
 import { writeCollection } from "../src/release/manifest/release.vibe"
-import { DataOptionsRefused } from "../src/release/coverage/options.vibe"
+import { DataOptionsRefused, releaseCoverage } from "../src/release/coverage/options.vibe"
+import { CollectedDataRefused, restoreCollected } from "../src/release/run/restore.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
 import type { Service } from "../gen/operations__release.effect.vibe"
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
@@ -376,6 +399,57 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     try written(event, JSON.stringify({ repository: { full_name: repository } }))
     const retained = { retainedManifested, retainedPush, retainedCoverage, retainedManual, retainedManualCalls, retainedWithResume }
 
+    const dispatchedMain: Readonly<Record<string, string>> = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_TOKEN: token }
+    const restoredRoot = files.join(directory, "restored")
+    const collectedArchive = "PK collected ledger and profiles"
+    const collectedDigest = `sha256:${try sha256Hex(collectedArchive)}`
+    const restoredAt = try Clock.currentTimeMillis
+    const hoursAgo = (hours: number) => new Date(restoredAt - hours * 3_600_000).toISOString()
+    effect function restoring(name: string, producer: StagedProducer, dataRun = String(producer.id), usePublishedData = true) {
+      try Effect.try(() => stagedProducer(fake, repository, producer))
+      try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: usePublishedData, data_from_run: dataRun } }))
+      const out = files.join(restoredRoot, name)
+      const run = effect {
+        const facts = try runFacts()
+        return try restoreCollected({ facts, dataRun, out, root, anchor: initial, token: Redacted.make(token) })
+      }
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...dispatchedMain })), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
+      const ended = try exit(provideService(Effect.provide(run, services), FetchHttpClient.Fetch, fake.fetch))
+      const archived = try fs.exists(files.join(out, "bundle.zip"))
+      if (Exit.isSuccess(ended)) return { dataKind: ended.value.dataKind, restoredFrom: ended.value.restoredFrom, archived }
+      const error = Cause.squash(ended.cause)
+      return { refused: error instanceof CollectedDataRefused ? error.message : described(error), archived }
+    }
+    effect function covered(environment: "Production" | "Staging", inputs: Readonly<Record<string, string | boolean>>) {
+      try written(event, JSON.stringify({ repository: { full_name: repository }, inputs }))
+      const overrides = environment === "Production" ? dispatchedMain : dispatched
+      const ended = try exit(Effect.provide(effect { return try releaseCoverage(try runFacts(), environment, true) }, ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides }))))
+      if (Exit.isSuccess(ended)) return "ok"
+      const error = Cause.squash(ended.cause)
+      return error instanceof DataOptionsRefused ? `DataOptionsRefused: ${error.message}` : described(error)
+    }
+    const producer = (id: number): StagedProducer => ({ id, sha: initial, archive: collectedArchive, digest: collectedDigest, createdAt: hoursAgo(1) })
+    try Effect.try(() => stagedProducer(fake, repository, producer(7071)))
+    try written(event, JSON.stringify({ repository: { full_name: repository }, inputs: { use_published_data: true, data_from_run: "7071" } }))
+    const unanchoredCommand = try attempt(["restore-collection", "7071", files.join(restoredRoot, "command"), root], dispatchedMain)
+    const commandArchived = try fs.exists(files.join(restoredRoot, "command", "bundle.zip"))
+    const restoredCollection = {
+      superseded: try restoring("superseded", producer(7001)),
+      nonAncestor: try restoring("non-ancestor", { ...producer(7011), sha: stray }),
+      failedCollection: try restoring("failed-collection", { ...producer(7021), step: "skipped" }),
+      expired: try restoring("expired", { ...producer(7031), expired: true }),
+      weekOld: try restoring("week-old", { ...producer(7041), createdAt: hoursAgo(7 * 24) }),
+      digestMismatch: try restoring("digest-mismatch", { ...producer(7051), digest: `sha256:${"0".repeat(64)}` }),
+      ownRun: try restoring("own-run", producer(7061), "41"),
+      withoutPublished: try restoring("without-published", producer(7081), "7081", false),
+      unanchoredCommand,
+      commandArchived,
+      coverageRetained: try covered("Production", { use_published_data: true, data_from_run: "7001" }),
+      coverageWithoutPublished: try covered("Production", { data_from_run: "7001" }),
+      coverageStaging: try covered("Staging", { use_published_data: true, data_from_run: "7001" }),
+    }
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+
     const staging = {
       stagingManifested,
       stagedInOrder: stagedInOrder.step,
@@ -430,7 +504,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
 
     try Effect.try(() => assert.deepStrictEqual({
       withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
-      current, currentCalls, movedAfterWorkers, retained, advanced, advancedCalls, rewritten, rewrittenCalls,
+      current, currentCalls, movedAfterWorkers, retained, restoredCollection, advanced, advancedCalls, rewritten, rewrittenCalls,
       staging, coverage,
     }, {
       withoutSite: "BundleRefused",
@@ -456,6 +530,21 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
         retainedManual: "ReleaseStopped:PartiallyPublished",
         retainedManualCalls: ["prepare"],
         retainedWithResume: "DataOptionsRefused",
+      },
+      restoredCollection: {
+        superseded: { dataKind: "RetainedSnapshot", restoredFrom: 7001, archived: true },
+        nonAncestor: { refused: "Data producer is not a completed trusted main release", archived: false },
+        failedCollection: { refused: "Producer did not complete a fresh contribution collection", archived: false },
+        expired: { refused: "Checked bundle is expired, oversized or has unverified identity", archived: false },
+        weekOld: { refused: "Checked bundle is expired, oversized or has unverified identity", archived: false },
+        digestMismatch: { refused: "Bundle archive did not match its GitHub digest", archived: false },
+        ownRun: { refused: "Invalid collected data request", archived: false },
+        withoutPublished: { refused: "Invalid collected data request", archived: false },
+        unanchoredCommand: "ReleaseRefused:restoreCollection",
+        commandArchived: false,
+        coverageRetained: "ok",
+        coverageWithoutPublished: "DataOptionsRefused: Invalid collected data request",
+        coverageStaging: "DataOptionsRefused: Invalid collected data request",
       },
       advanced: "ok",
       advancedCalls: [],

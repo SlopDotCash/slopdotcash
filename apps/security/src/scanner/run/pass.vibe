@@ -73,7 +73,7 @@ effect function acquiredInputs(directory: string) {
     throw new QueuedInputsInvalid()
   }
   const templates: ScanInputFile[] = []
-  for (const input of queued.inputs) templates.push({ path: `${templatePrefix}/${input.path}`, bytes: try readAcquiredObject(directory, input.sha256) })
+  for (const input of queued.inputs) templates.push({ path: `${templatePrefix}/${input.path}`, bytes: try readAcquiredObject(directory, input.sha256), templateInput: true })
   return { repository: queued.repository, files: [...source.files, ...templates], acquisitionGaps: source.acquisitionGaps.filter((gap) => !coveredByBoundedScan.has(gap)) }
 }
 

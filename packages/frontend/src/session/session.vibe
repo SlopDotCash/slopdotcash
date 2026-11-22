@@ -1,4 +1,4 @@
-// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"
 import { type WebSession, projectSession } from "@repo/backend/client"
 import { type CallFailure, InvalidResponse, call } from "../platform/api.vibe"
 
@@ -48,7 +48,7 @@ export service Session {
   readonly changes: Stream.Stream<SessionView>
   view(): SessionView!!
   current(): (WebSession | null)!CallFailure!HttpClient.HttpClient
-  refresh(): Observation!!HttpClient.HttpClient
+  refresh(returned?: boolean): Observation!!HttpClient.HttpClient
 }
 
 function settled(read: WebSession | null | { readonly failure: CallFailure }): SessionView {
@@ -57,18 +57,30 @@ function settled(read: WebSession | null | { readonly failure: CallFailure }): S
   return { status: "signedIn", session: read }
 }
 
+function afterReturn(shown: SessionView, answer: SessionView): SessionView {
+  if (shown.status !== "signedIn") return answer
+  if (answer.status === "failed") return shown
+  return answer.status === "signedIn" && answer.session.githubId === shown.session.githubId ? shown : answer
+}
+
 export const sessionLayer = Layer.effect(Session, effect {
   const held = try SubscriptionRef.make<Published>({ generation: 0, view: { status: "checking" } })
   return {
     changes: Stream.map(SubscriptionRef.changes(held), (published) => published.view),
     view: effect () => (try SubscriptionRef.get(held)).view,
     current: () => currentSession(),
-    refresh: effect () => {
-      const mine = try SubscriptionRef.modify(held, (published) => [published.generation + 1, { generation: published.generation + 1, view: { status: "checking" } }] as const)
+    refresh: effect (returned?: boolean) => {
+      const mine = try SubscriptionRef.modify(held, (published): readonly [number, Published] => {
+        const generation = published.generation + 1
+        return [generation, { generation, view: returned === true ? published.view : { status: "checking" } }]
+      })
       const read = currentSession() catch (failure) => ({ failure })
-      const view = settled(read)
-      const current = try SubscriptionRef.modify(held, (published) => published.generation === mine ? [true, { generation: mine, view }] as const : [false, published] as const)
-      return { view, current }
+      const answer = settled(read)
+      return try SubscriptionRef.modify(held, (published): readonly [Observation, Published] => {
+        if (published.generation !== mine) return [{ view: answer, current: false }, published]
+        const view = afterReturn(published.view, answer)
+        return [{ view, current: true }, { generation: mine, view }]
+      })
     },
   }
 })

@@ -1,15 +1,16 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
-import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
-import { type NotAState, decodeState, initial, noTriage, parseState } from "../../gen/security__cases.effect.vibe"
+import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, RoutineMark, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
+import { type NotAState, decodeState, initial, noTriage, parseState, routineService } from "../../gen/security__cases.effect.vibe"
 import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { jsonValue } from "../analysis/prompts.ts"
 import { type ReceiptScope, receiptManifest, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
+import { routineActorGithubId, routineProofNextAction } from "../routine/reasons.ts"
 import type { FrozenTerms } from "../receipt/program.vibe"
 import { amountOf, caseTerms, frozenOf, fullAward, losses, severities } from "../terms/receipt.vibe"
 
@@ -55,6 +56,8 @@ export schema CaseRow {
   report_version: number | null
   reserved: number
   direct: number
+  next_action: string | null
+  next_action_due_at: string | null
 }
 
 export schema EventRow {
@@ -68,6 +71,8 @@ export schema EventRow {
   at: string
   idempotency_key: string
 }
+
+export schema ProofRequest { report_version: number | null }
 
 export schema MemberRow { github_id: string; github_login: string; added_at: string; revoked_at: string | null }
 
@@ -92,6 +97,7 @@ export interface CaseRecord {
   readonly events: ReadonlyArray<EventRow>
   readonly members: ReadonlyArray<MemberRow>
   readonly triages: ReadonlyArray<TriageRow>
+  readonly proofAsked: number
   readonly model: PrivateCase
   readonly valid: boolean
 }
@@ -102,7 +108,7 @@ export const caseColumns = sql`c.id, c.project_id, c.advisory_repository, c.advi
   (SELECT p.created_at FROM project_revisions p WHERE p.project_id = c.project_id AND p.revision = c.policy_revision) AS published_at,
   (SELECT i.report_version FROM security_submission_intake i WHERE i.case_id = c.id) AS report_version,
   EXISTS (SELECT 1 FROM security_award_reservations r WHERE r.case_id = c.id) AS reserved,
-  EXISTS (SELECT 1 FROM security_direct_awards d WHERE d.case_id = c.id) AS direct`
+  EXISTS (SELECT 1 FROM security_direct_awards d WHERE d.case_id = c.id) AS direct, c.next_action, c.next_action_due_at`
 
 const submissions: Readonly<Record<CaseRow["submission_state"], Submission>> = { claimed: "Claimed", verified: "Verified", "link-rejected": "LinkRejected" }
 export const receipts: Readonly<Record<CaseRow["receipt_state"], Receipt>> = { received: "Received", "needs-information": "NeedsInformation", triaging: "Triaging", confirmed: "Confirmed", duplicate: "Duplicate", "out-of-scope": "OutOfScope", rejected: "Rejected", disputed: "Disputed" }
@@ -118,6 +124,7 @@ export const appealColumns = { NoAppeal: "none", AppealOpen: "open", Upheld: "up
 export const relatedColumns = { NotAssessed: "not-assessed", Unrelated: "unrelated", RelatedParty: "related" } as const satisfies Readonly<Record<Related, CaseRow["related_party"]>>
 export const reviewColumns = { ReviewNotApplicable: "not-applicable", ReviewPending: "pending", ReviewApproved: "approved", ReviewRefused: "refused" } as const satisfies Readonly<Record<RelatedReview, CaseRow["related_party_review"]>>
 
+const routineClosedReceipts: ReadonlySet<CaseRow["receipt_state"]> = new Set(["duplicate", "out-of-scope", "rejected"])
 const deciding = new Set(["decide", "award", "decide-related-party", "decide-appeal"])
 const membership = new Set(["assign-triager", "revoke-triager"])
 
@@ -150,6 +157,7 @@ function appealHistoryOf(events: ReadonlyArray<EventRow>): ReadonlyArray<AppealR
   for (const event of events) {
     const detail = detailOf(event)
     if (event.kind === "appeal") from = receiptOf(typeof detail.from === "string" ? detail.from : null)
+    if (event.kind === "appeal" && detail.routine === true) history.push({ from, resolution: "Returned", by: routineService })
     if (event.kind === "decide-appeal") history.push({ from, resolution: detail.outcome === "uphold" ? "Upheld" : "Returned", by: githubNumber(event.actor_github_id) })
   }
   return history
@@ -177,6 +185,21 @@ function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<Triage
   }
 }
 
+function routineClosedRow(row: CaseRow, events: ReadonlyArray<EventRow>) {
+  if (!routineClosedReceipts.has(row.receipt_state) || row.technical_decider_github_id !== null || row.appeal_state !== "none") return false
+  return events.filter((event) => event.kind === "decide" || event.kind === "decide-appeal").at(-1)?.actor_github_id === routineActorGithubId
+}
+
+function routineMarkOf(row: CaseRow, events: ReadonlyArray<EventRow>, proofAsked: number): RoutineMark {
+  const clock = row.receipt_state === "needs-information" && row.next_action === routineProofNextAction && row.next_action_due_at !== null && proofAsked > 0
+  return {
+    closed: routineClosedRow(row, events),
+    returned: events.some((event) => event.kind === "appeal" && detailOf(event).routine === true),
+    proofAsked,
+    proofDueAt: clock ? millisOf(row.next_action_due_at ?? "") : 0,
+  }
+}
+
 function latestDecision(events: ReadonlyArray<EventRow>) {
   const decision = events.filter((event) => event.kind === "decide").at(-1)
   return decision === undefined ? {} : detailOf(decision)
@@ -186,7 +209,7 @@ function numbers(ids: ReadonlyArray<string | null>) {
   return ids.flatMap((id) => id === null ? [] : [githubNumber(id)]).filter((id) => id > 0)
 }
 
-effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: ReadonlyArray<EventRow>, members: ReadonlyArray<MemberRow>, triages: ReadonlyArray<TriageRow>, scope: ReceiptScope) {
+effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: ReadonlyArray<EventRow>, members: ReadonlyArray<MemberRow>, triages: ReadonlyArray<TriageRow>, scope: ReceiptScope, proofAsked: number) {
   const verified = row.submission_state === "verified"
   const reporter = githubNumber(row.reporter_github_id)
   const deciders = numbers([...events.filter((event) => deciding.has(event.kind)).map((event) => event.actor_github_id), row.technical_decider_github_id, row.related_party_reviewer_github_id])
@@ -220,6 +243,7 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
     appealFrom: receiptOf(row.appeal_from_state),
     appealHistory: [...appealHistoryOf(events)],
     triage: triageOf(events, triages, terms),
+    routine: routineMarkOf(row, events, proofAsked),
   } satisfies PrivateCase
 }
 
@@ -233,17 +257,20 @@ export function caseAggregate(id: string, strict = true): Aggregate<CaseRecord |
       sql`SELECT github_id, github_login, added_at, revoked_at FROM security_case_members WHERE case_id = ${id} ORDER BY added_at, github_id`,
       sql`SELECT appeal_revision, attempt, state, provider, model, prompt_revision, proposed_outcome, rationale, confidence, escalation_reasons, started_at, finished_at FROM security_appeal_triages WHERE case_id = ${id} ORDER BY appeal_revision, attempt`,
       receiptManifest(id),
+      sql`SELECT report_version FROM security_routine_decisions WHERE case_id = ${id} AND outcome = 'needs-proof' AND applied = 1 ORDER BY id DESC LIMIT 1`,
     ],
-    decode: ([cases, events, members, triages, manifests]: ReadonlyArray<Rows>) => effect {
+    decode: ([cases, events, members, triages, manifests, requests]: ReadonlyArray<Rows>) => effect {
       const [row] = try decoded(CaseRow, cases ?? [], "security case")
       if (row === undefined) return undefined
       const journal = try decoded(EventRow, events ?? [], "security case events")
       const people = try decoded(MemberRow, members ?? [], "security case members")
       const attempts = try decoded(TriageRow, triages ?? [], "security appeal triages")
       const frozen = try frozenOf(row.terms)
-      const candidate = try modelOf(row, frozen, journal, people, attempts, try scopeOfRows(manifests ?? []))
+      const [request] = try decoded(ProofRequest, requests ?? [], "security routine proof request")
+      const proofAsked = request?.report_version ?? 0
+      const candidate = try modelOf(row, frozen, journal, people, attempts, try scopeOfRows(manifests ?? []), proofAsked)
       const parsed = strict ? try decodeState(candidate) : parseState(candidate)
-      return { row, frozen, events: journal, members: people, triages: attempts, model: parsed ?? candidate, valid: parsed !== undefined } satisfies CaseRecord
+      return { row, frozen, events: journal, members: people, triages: attempts, proofAsked, model: parsed ?? candidate, valid: parsed !== undefined } satisfies CaseRecord
     },
   }
 }

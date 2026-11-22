@@ -1,0 +1,165 @@
+// spec/points/collectorToken.md, "Only a main collection of live data mints the App token, and any failure falls back to the workflow token"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"
+import { boundedBytes } from "@repo/platform/browser"
+import { ConfigInvalid } from "@repo/platform/config"
+import { base64url, rs256Sign, utf8 } from "@repo/platform/crypto"
+import { type CollectorRun, type Event, collectorGrant, initial, machineOver, renewalDue } from "../../gen/points__collectorToken.effect.vibe"
+import { graphqlUserAgent } from "./graphql.vibe"
+
+export const collectorApiOrigin = "https://api.github.com"
+export const mintTimeoutMs = 30_000
+export const mintAnswerBytes = 64 * 1024
+
+const minuteMs = 60_000
+const jwtBackdateSeconds = 60
+const jwtLifetimeSeconds = 540
+const installationPattern = /^[1-9]\d{0,17}$/u
+const repositoryPattern = /^[A-Za-z0-9_.-]+$/u
+const schemes: ReadonlyArray<string> = ["Bearer", "token"]
+
+export error MintFailed { message: string }
+
+interface RenewalSettings {
+  readonly clientId: string
+  readonly privateKey: Redacted.Redacted<string>
+  readonly installationId: string
+  readonly repository: string
+  readonly original: string
+}
+
+interface Minted {
+  readonly token: string
+  readonly expiresAt: number
+}
+
+const grantPermissions: Readonly<Record<string, "read">> = Object.fromEntries(
+  ([["contents", collectorGrant.contents], ["issues", collectorGrant.issues], ["pull_requests", collectorGrant.pullRequests]] as const)
+    .filter(([, access]) => access === "ReadAccess")
+    .map(([name]) => [name, "read"]),
+)
+
+function segment(value: unknown) {
+  return base64url(utf8(JSON.stringify(value)))
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+effect function trimmed(name: string) {
+  return (try Config.withDefault(Config.String(name), "")).trim()
+}
+
+effect function renewalSettings() {
+  const clientId = try trimmed("COLLECTOR_APP_CLIENT_ID")
+  const privateKey = try Config.withDefault(Config.Redacted("COLLECTOR_APP_PRIVATE_KEY"), Redacted.make(""))
+  const installationId = try trimmed("COLLECTOR_APP_INSTALLATION_ID")
+  const repository = try trimmed("COLLECTOR_APP_REPOSITORY")
+  const primary = try trimmed("GITHUB_TOKEN")
+  const original = primary !== "" ? primary : try trimmed("GH_TOKEN")
+  if (clientId === "" || Redacted.value(privateKey) === "" || installationId === "" || original === "") return undefined
+  if (!installationPattern.test(installationId)) throw new ConfigInvalid({ name: "COLLECTOR_APP_INSTALLATION_ID", issue: "COLLECTOR_APP_INSTALLATION_ID must be a positive integer" })
+  if (repository !== "" && !repositoryPattern.test(repository)) throw new ConfigInvalid({ name: "COLLECTOR_APP_REPOSITORY", issue: "COLLECTOR_APP_REPOSITORY must be a repository name" })
+  return { clientId, privateKey, installationId, repository, original } satisfies RenewalSettings
+}
+
+effect function appJwt(settings: RenewalSettings) {
+  const seconds = Math.floor((try Clock.currentTimeMillis) / 1_000)
+  const unsigned = `${segment({ alg: "RS256", typ: "JWT" })}.${segment({ iat: seconds - jwtBackdateSeconds, exp: seconds + jwtLifetimeSeconds, iss: settings.clientId })}`
+  const signature = rs256Sign(settings.privateKey, unsigned) catch effect () => {
+    throw new MintFailed({ message: "GitHub App private key is not a PEM private key" })
+  }
+  return `${unsigned}.${base64url(signature)}`
+}
+
+effect function mint(base: HttpClient.HttpClient, settings: RenewalSettings) {
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${try appJwt(settings)}`,
+    "content-type": "application/json",
+    "user-agent": graphqlUserAgent,
+    "x-github-api-version": "2022-11-28",
+  }
+  const body = { ...(settings.repository === "" ? {} : { repositories: [settings.repository] }), permissions: grantPermissions }
+  const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${collectorApiOrigin}/app/installations/${settings.installationId}/access_tokens`, { headers }), body)
+  const exchanged = effect {
+    const response = base.execute(request) catch effect () => {
+      throw new MintFailed({ message: "GitHub App token mint failed" })
+    }
+    if (response.status !== 201) throw new MintFailed({ message: `GitHub App token mint returned HTTP ${response.status}` })
+    const bytes = boundedBytes(response, mintAnswerBytes, "GitHub App token") catch effect () => {
+      throw new MintFailed({ message: "GitHub App token mint returned an invalid token" })
+    }
+    const answer = record(Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined)
+    const expiresAt = Date.parse(String(answer?.expires_at))
+    if (typeof answer?.token !== "string" || answer.token === "" || !Number.isFinite(expiresAt)) throw new MintFailed({ message: "GitHub App token mint returned an invalid token" })
+    return { token: answer.token, expiresAt } satisfies Minted
+  }
+  const redirectRefused = provideService(exchanged, FetchHttpClient.RequestInit, { redirect: "error" })
+  return timeout(redirectRefused, Duration.millis(mintTimeoutMs)) catch effect (error) => {
+    if (error._tag === "MintFailed") throw error
+    throw new MintFailed({ message: "GitHub App token mint timed out" })
+  }
+}
+
+function schemeOf(authorization: string | undefined, original: string) {
+  return schemes.find((scheme) => authorization === `${scheme} ${original}`)
+}
+
+export effect function collectorRun() {
+  const held = try Ref.make<CollectorRun>(initial)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function collectorRenewal() {
+  return Layer.effect(HttpClient.HttpClient, effect {
+    const base = try HttpClient.HttpClient
+    const settings = try renewalSettings()
+    if (settings === undefined) return base
+    const ref = try trimmed("GITHUB_REF")
+    const event = try trimmed("GITHUB_EVENT_NAME")
+    const startedAt = try Clock.currentTimeMillis
+    const machine = try collectorRun()
+    const chosen = try orDie(machine.send({ type: "chooseCredential", onMain: ref === "refs/heads/main", pullRequest: event.startsWith("pull_request"), usePublishedData: false, clientConfigured: true, minted: true }))
+    if (!chosen.renewal) return base
+    const lock = try Semaphore.make(1)
+    let current = settings.original
+    let validUntil = 0
+
+    effect function sent(next: Event) {
+      return try orDie(machine.send(next))
+    }
+
+    effect function advanced() {
+      const state = try machine.get()
+      const minutes = Math.floor(((try Clock.currentTimeMillis) - startedAt) / minuteMs) - state.now
+      return state.phase === "Collecting" && minutes > 0 ? try sent({ type: "tick", minutes }) : state
+    }
+
+    effect function renewed() {
+      const state = try advanced()
+      if (state.phase !== "Collecting") return current
+      if (!renewalDue(state)) {
+        try sent({ type: "request", toGitHubApi: true, mintSucceeds: false })
+        return current
+      }
+      const fresh = mint(base, settings) catch effect (error) => {
+        try Console.warn(JSON.stringify({ event: "github_app_token_refresh_failed", message: error.message, currentValidUntil: validUntil > 0 ? new Date(validUntil).toISOString() : null }))
+        return undefined
+      }
+      try sent({ type: "request", toGitHubApi: true, mintSucceeds: fresh !== undefined })
+      if (fresh !== undefined) {
+        current = fresh.token
+        validUntil = fresh.expiresAt
+      }
+      return current
+    }
+
+    return HttpClient.transform(base, (original, request) => effect {
+      const scheme = URL.parse(request.url)?.origin === collectorApiOrigin ? schemeOf(request.headers.authorization, settings.original) : undefined
+      if (scheme === undefined) return try original
+      const token = try Semaphore.withPermit(lock, renewed())
+      if (token === settings.original) return try original
+      return try base.execute(HttpClientRequest.setHeader(request, "authorization", `${scheme} ${token}`))
+    })
+  })
+}

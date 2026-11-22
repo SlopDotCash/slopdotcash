@@ -60,6 +60,7 @@ export effect function recordCalls(reviewKey: string, installationId: number, ca
         ${call.servedModel}, ${call.outcome}, ${call.failure}, ${call.usage.input}, ${call.usage.cacheWrite}, ${call.usage.cacheRead}, ${call.usage.output},
         ${priceVersion}, ${price.costMicroUsd}, 0, ${substituted || !price.listPrice ? "estimated" : "list-price"}, ${at}, ${call.providerCostMicroUsd},
         ${call.providerRequestId}, 'review-v2', 0)`)
+    if (call.outcome === "failed" && call.failureDetail) writes.push(sql`INSERT INTO slopbot_call_failure_details (call_id, detail, recorded_at) VALUES (last_insert_rowid(), ${call.failureDetail.slice(0, 200)}, ${at})`)
   }
   try (try D1).batch(writes)
 }

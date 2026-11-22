@@ -15,6 +15,7 @@ export const stagingSite = "https://staging.slop.cash"
 export const stagingIdentity = "https://identity-staging.slop.cash"
 
 const productionSite = "https://slop.cash"
+const bindingCookie = "__Host-slop_oauth_bind_"
 const audience = "slop-points-web"
 const rootAttempts = 6
 const rootTotalMillis = 30_000
@@ -27,8 +28,8 @@ function refused(message: string) {
   return new StagingRefused({ message })
 }
 
-function posted(origin: string, path: string, body: unknown, browserOrigin: string = stagingSite) {
-  return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${origin}${path}`, { headers: { origin: browserOrigin } }), body)
+function posted(origin: string, path: string, body: unknown, browserOrigin: string = stagingSite, cookie?: string) {
+  return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${origin}${path}`, { headers: { origin: browserOrigin, ...cookie === undefined ? {} : { cookie } } }), body)
 }
 
 effect function decoded<S extends Schema.Top>(schema: S, bytes: Uint8Array, message: string) {
@@ -78,13 +79,18 @@ effect function checkedFlow() {
   const start = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/start", { audience }))
   if (start.status !== 201 || start.headers["access-control-allow-origin"] !== stagingSite) throw refused(`Staging identity start failed: ${start.status}`)
   const flow = try decoded(Flow, start.bytes, "Staging identity start returned an unexpected flow")
+  const name = `${bindingCookie}${flow.flowId}`
+  const value = start.cookies[name]
+  if (value === undefined || value === "" || start.headers["access-control-allow-credentials"] !== "true") throw refused("Staging identity did not bind the flow to its browser")
   const authorization = Effect.try(() => new URL(flow.authorizationUrl)) catch () => undefined
   if (authorization === undefined || authorization.origin !== stagingIdentity || authorization.pathname !== "/v1/oauth/authorize") throw refused("Staging identity returned a different authority")
-  return { flow, authorization: authorization.href }
+  return { flow, authorization: authorization.href, binding: `${name}=${value}` }
 }
 
-effect function checkedAuthorization(url: string, clientId: string) {
-  const authorize = try acceptanceRequest(HttpClientRequest.get(url))
+effect function checkedAuthorization(url: string, clientId: string, binding: string) {
+  const unbound = try acceptanceRequest(HttpClientRequest.get(url))
+  if (unbound.status !== 403) throw refused("Staging authorized a flow in a browser that did not start it")
+  const authorize = try acceptanceRequest(HttpClientRequest.get(url, { headers: { cookie: binding } }))
   if (authorize.status !== 302) throw refused("Staging authorization redirect failed")
   const github = Effect.try(() => new URL(authorize.headers.location ?? "")) catch () => undefined
   if (github === undefined || github.origin !== "https://github.com" || github.pathname !== "/login/oauth/authorize"
@@ -95,9 +101,9 @@ effect function checkedAuthorization(url: string, clientId: string) {
 
 export effect function stagingBackend(clientId: string) {
   if (clientId.trim() === "") throw refused("GITHUB_APP_CLIENT_ID is required to check the staging OAuth application")
-  const { flow, authorization } = try checkedFlow()
-  try checkedAuthorization(authorization, clientId)
-  const poll = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/poll", { audience, flowId: flow.flowId, pollCapability: flow.pollCapability }))
+  const { flow, authorization, binding } = try checkedFlow()
+  try checkedAuthorization(authorization, clientId, binding)
+  const poll = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/poll", { audience, flowId: flow.flowId, pollCapability: flow.pollCapability }, stagingSite, binding))
   const pending = poll.status === 202 ? (try decoded(Poll, poll.bytes, "Staging did not persist and read its OAuth flow")).status : ""
   if (pending !== "pending") throw refused("Staging did not persist and read its OAuth flow")
   const forbidden = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/start", { audience }, productionSite))

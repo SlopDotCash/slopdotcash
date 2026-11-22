@@ -1,0 +1,77 @@
+// spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"
+import { rows, sql } from "@repo/platform/d1"
+import { type Actor, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { later } from "@repo/platform/worker"
+import { exactKeys } from "../cases/actions.vibe"
+import { type RoutineSource, adminLimits, backgroundLimits, runRoutineDecisions } from "./pass.vibe"
+import { type ActiveMode, type RoutineMode, routineMode } from "./tables.ts"
+
+export service RoutineSettings {
+  readonly mode: RoutineMode
+}
+
+export function routineSettings(value: string | undefined) {
+  return Layer.succeed(RoutineSettings, { mode: routineMode(value) })
+}
+
+schema Waiting { cases: number }
+
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const sweepMs = 60_000
+const sweep = { nextAt: 0 }
+
+export const readRoutine = route({ method: "GET", path: "/api/v1/security-routine", access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "no-store" })
+export const runRoutine = route({ method: "POST", path: "/api/v1/security-routine", access: "sessionWrite", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "no-store" })
+
+effect function routineSummary() {
+  const decisions = try rows(Schema.Struct({ mode: Schema.String, outcome: Schema.String, basis: Schema.String, holdReason: Schema.NullOr(Schema.String), cases: Schema.Number }), sql`SELECT d.mode, d.outcome, d.basis, d.hold_reason AS holdReason, COUNT(*) AS cases
+      FROM security_routine_decisions d
+     WHERE d.id = (SELECT MAX(x.id) FROM security_routine_decisions x WHERE x.case_id = d.case_id AND x.mode = d.mode)
+     GROUP BY d.mode, d.outcome, d.basis, d.hold_reason
+     ORDER BY d.mode, cases DESC`)
+  const runs = try rows(Schema.Struct({ mode: Schema.String, source: Schema.String, startedAt: Schema.String, finishedAt: Schema.NullOr(Schema.String), examined: Schema.Number, recorded: Schema.Number }), sql`SELECT mode, source, started_at AS startedAt, finished_at AS finishedAt, examined, recorded FROM security_routine_runs ORDER BY id DESC LIMIT 10`)
+  const [waiting] = try rows(Waiting, sql`SELECT COUNT(*) AS cases FROM security_cases WHERE submission_state = 'verified' AND receipt_state = 'received'`)
+  return { received: waiting?.cases ?? 0, decisions, runs }
+}
+
+effect function admitted(actor: Actor) {
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refuse(404, "not_found", "Not found")
+  return (try RoutineSettings).mode
+}
+
+effect function status(actor: Actor) {
+  const mode = try admitted(actor)
+  return json({ mode, limits: backgroundLimits, ...(try routineSummary()) }, 200, privateHeaders)
+}
+
+effect function ran(actor: Actor) {
+  const mode = try admitted(actor)
+  try exactKeys(try jsonBody(1), ["action"])
+  if (mode === "off") throw refuse(409, "routine_decisions_off", "Routine decisions are off")
+  const run = try runRoutineDecisions(mode, "admin", adminLimits)
+  if (run === undefined) throw refuse(409, "routine_pass_recent", "A pass started in the last three minutes. Try again shortly.")
+  return json({ mode: run.mode, examined: run.examined, recorded: run.recorded, ...(try routineSummary()) }, 200, privateHeaders)
+}
+
+effect function backgroundPass(mode: ActiveMode, source: RoutineSource) {
+  const failure = Effect.as(runRoutineDecisions(mode, source, backgroundLimits), undefined) catch effect (error) => {
+    return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
+  }
+  if (failure !== undefined) try Effect.logError("security routine decision pass failed", { failure })
+}
+
+export effect function routineSweep() {
+  const { mode } = try RoutineSettings
+  if (mode === "off") return
+  const nowMs = try Clock.currentTimeMillis
+  if (nowMs < sweep.nextAt) return
+  sweep.nextAt = nowMs + sweepMs
+  try later(backgroundPass(mode, "request"))
+}
+
+export const routineRoutes = Layer.mergeAll(
+  handleRaw(readRoutine, (input) => status(input.actor)),
+  handleRaw(runRoutine, (input) => ran(input.actor)),
+)
