@@ -96,20 +96,32 @@ lemma PresentationQuotient(a: int, b: int)
 lemma PresentationZerosFold(r: int, d: int, z0: int, k: int)
   requires 0 <= k <= 37 && 0 <= z0 && (k == 0 ==> z0 == 0) && (k > 0 ==> z0 < k)
   requires z0 <= d && belowScale(r, z0) == 0
-  ensures var z := Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), z0, decimalPlaces[k..]);
-    z >= z0 && z <= d && belowScale(r, z) == 0 &&
-    forall x :: k <= x < 37 && x <= d && belowScale(r, x) == 0 ==> x <= z
+  ensures z0 <= Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), z0, decimalPlaces[k..]) <= d
+  ensures belowScale(r, Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), z0, decimalPlaces[k..])) == 0
+  ensures forall x {:trigger belowScale(r, x)} :: k <= x < 37 && x <= d && belowScale(r, x) == 0 ==>
+    x <= Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), z0, decimalPlaces[k..])
   decreases 37 - k
 {
   PresentationPlaces();
+  var f := (zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros);
   if k == 37 {
     assert decimalPlaces[k..] == [];
+    assert Std.Collections.Seq.FoldLeft(f, z0, decimalPlaces[k..]) == z0;
   } else {
     var s := decimalPlaces[k..];
     assert s[0] == k;
     assert s[1..] == decimalPlaces[k + 1..];
-    var next := if ((k <= d) && (belowScale(r, k) == 0)) then k else z0;
+    var next := f(z0, k);
+    assert Std.Collections.Seq.FoldLeft(f, z0, s) == Std.Collections.Seq.FoldLeft(f, next, decimalPlaces[k + 1..]);
     PresentationZerosFold(r, d, next, k + 1);
+    var z := Std.Collections.Seq.FoldLeft(f, z0, s);
+    forall x {:trigger belowScale(r, x)} | k <= x < 37 && x <= d && belowScale(r, x) == 0
+      ensures x <= z
+    {
+      if x == k {
+        assert next == k;
+      }
+    }
   }
 }
 
@@ -117,49 +129,60 @@ lemma PresentationZerosFold(r: int, d: int, z0: int, k: int)
 // the remainder is a multiple of ten to them, and not of ten to one more.
 lemma PresentationTrailingZeros(r: int, d: int)
   requires 0 <= d <= 36 && 0 < r < tenTo(d)
-  ensures var z := trailingZeros(r, d);
-    0 <= z < d && r % tenTo(z) == 0 && r % tenTo(z + 1) != 0
+  ensures 0 <= trailingZeros(r, d) < d
+  ensures tenTo(trailingZeros(r, d)) > 0 && tenTo(trailingZeros(r, d) + 1) > 0
+  ensures r % tenTo(trailingZeros(r, d)) == 0 && r % tenTo(trailingZeros(r, d) + 1) != 0
 {
   PresentationTenToZero();
   PresentationQuotient(r, 1);
+  assert belowScale(r, 0) == 0;
   PresentationZerosFold(r, d, 0, 0);
   assert decimalPlaces[0..] == decimalPlaces;
   var z := trailingZeros(r, d);
+  assert z == Std.Collections.Seq.FoldLeft((zeros: int, place: int) => (if ((place <= d) && (belowScale(r, place) == 0)) then place else zeros), 0, decimalPlaces[0..]);
+  assert 0 <= z <= d && belowScale(r, z) == 0;
   PresentationTenToPositive(z);
   PresentationTenToPositive(d);
   PresentationQuotient(r, tenTo(z));
   PresentationQuotient(r, tenTo(d));
-  assert r % tenTo(d) == r;
+  assert r % tenTo(z) == 0;
+  assert belowScale(r, d) == r;
   assert z != d;
   PresentationTenToPositive(z + 1);
   PresentationQuotient(r, tenTo(z + 1));
   assert !(belowScale(r, z + 1) == 0);
+  assert r % tenTo(z + 1) != 0;
 }
 
 // Every remainder and quotient is taken with a positive power of ten.
 lemma PresentationShown(units: int, decimals: int)
   requires units >= 0 && validDecimals(decimals)
-  ensures var T := tenTo(decimals);
-    var r := units % T;
-    var s := showAmount(units, decimals);
-    s.whole == units / T &&
-    (r == 0 ==> s.fraction == 0 && s.fractionDigits == 0) &&
-    (r != 0 ==> var z := trailingZeros(r, decimals);
-      0 <= z < decimals && s.fractionDigits == decimals - z &&
-      s.fraction == r / tenTo(z) && r % tenTo(z) == 0 && r % tenTo(z + 1) != 0)
+  ensures tenTo(decimals) > 0
+  ensures showAmount(units, decimals).whole == units / tenTo(decimals)
+  ensures units % tenTo(decimals) == 0 ==> showAmount(units, decimals).fraction == 0 && showAmount(units, decimals).fractionDigits == 0
+  ensures units % tenTo(decimals) != 0 ==>
+    0 <= trailingZeros(units % tenTo(decimals), decimals) < decimals &&
+    tenTo(trailingZeros(units % tenTo(decimals), decimals)) > 0 &&
+    tenTo(trailingZeros(units % tenTo(decimals), decimals) + 1) > 0 &&
+    showAmount(units, decimals).fractionDigits == decimals - trailingZeros(units % tenTo(decimals), decimals) &&
+    showAmount(units, decimals).fraction == (units % tenTo(decimals)) / tenTo(trailingZeros(units % tenTo(decimals), decimals)) &&
+    (units % tenTo(decimals)) % tenTo(trailingZeros(units % tenTo(decimals), decimals)) == 0 &&
+    (units % tenTo(decimals)) % tenTo(trailingZeros(units % tenTo(decimals), decimals) + 1) != 0
 {
   var T := tenTo(decimals);
   PresentationTenToPositive(decimals);
   PresentationQuotient(units, T);
   var r := units % T;
   assert belowScale(units, decimals) == r;
+  assert scaledDown(units, decimals) == units / T;
   if r == 0 {
     PresentationQuotient(0, T);
+    assert trailingZeros(r, decimals) == decimals;
   } else {
     PresentationTrailingZeros(r, decimals);
     var z := trailingZeros(r, decimals);
-    PresentationTenToPositive(z);
     PresentationQuotient(r, tenTo(z));
+    assert scaledDown(r, z) == r / tenTo(z);
   }
 }
 
