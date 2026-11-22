@@ -266,6 +266,20 @@ test("malformed or source-inconsistent implementation proof cannot validate", ()
   }
 });
 
+test("a value score event requires an assessment digest in its coverage", () => {
+  const { current } = setup();
+  assertLeaderboardSnapshot(current);
+  const merge = current.ledger.find(
+    (event) => event.category === "merged-pull-request",
+  );
+  assert(merge);
+  merge.scoreDecisionAt = merge.occurredAt;
+  merge.scoreDecisionSourceId = "value:undefined";
+  expect(() => assertLeaderboardSnapshot(current)).toThrow(
+    "Value score event is not bound to its assessment coverage",
+  );
+});
+
 test("allocation proof rejects zero pools and hidden vendor or conflicting recipients", () => {
   for (const defect of ["zero-pool", "vendor", "conflicting-login"] as const) {
     const { current } = setup();
