@@ -1342,6 +1342,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/trace-licensing/handler.ts",
+      "sha256": "aa788b4d48e81dc2c482cc5ed8d8cebb6f311f9b1cb3f04f54b48f1b60a7b2d0",
+      "models": [],
+      "candidateLines": [
+        3, 8, 9, 10, 61, 66, 68, 165, 172, 195, 196, 264, 270, 272, 282, 284,
+        290, 293, 298, 299, 304, 383, 389, 412, 418, 427, 433, 435
+      ],
+      "review": "pending"
+    },
+    {
       "path": "backend/trace/auth.ts",
       "sha256": "72fc7a32af9df1ab599675b24ee7a68af7806a666b8d5362e1077d6e71370a23",
       "models": [
@@ -2360,7 +2370,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "015a289e1f2798b8ba152745161c2020c258ed515a6bb969816a858c29e69437",
+      "sha256": "6a2373f7ae9ba70a0ce77c4c3643638471b3fd1935fd30d54e47f8991d8cbcbb",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2371,7 +2381,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [566, 567, 603, 616],
+      "candidateLines": [573, 574, 610, 623],
       "review": "mapped-abstraction"
     },
     {

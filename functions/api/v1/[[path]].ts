@@ -74,6 +74,7 @@ import {
   privateIntakeStatus,
 } from "../../../backend/trace/cloudflare-persistence";
 import { handleTraceApi } from "../../../backend/trace/handler";
+import { handleTraceLicensing } from "../../../backend/trace-licensing/handler";
 import { githubFlaggerStanding } from "../../../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -498,6 +499,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralCode !== null) return referralCode;
+  const traceLicensing = await handleTraceLicensing(request, {
+    db,
+    sessionActor,
+    now,
+  });
+  if (traceLicensing !== null) return traceLicensing;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });
