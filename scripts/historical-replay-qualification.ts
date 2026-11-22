@@ -1,13 +1,16 @@
 import type { PointsJournal } from "../src/lib/points";
 import {
   assertHistoricalAssessmentFreshness,
+  type HistoricalAssessmentCatalog,
   readHistoricalAssessmentCatalog,
 } from "./historical-assessment-catalog";
 import {
   classifyHistoricalAssessmentScope,
+  type HistoricalAssessmentReceipt,
   type HistoricalContextGitHub,
 } from "./historical-assessment-reconciliation";
 import {
+  type VerifiedClosedReviews,
   verifyHistoricalClosedReviews,
   verifyHistoricalValueReplay,
 } from "./historical-value-replay";
@@ -69,7 +72,12 @@ export async function verifyHistoricalReplayQualification(
   enforcementGeneration: number,
   query: Query,
   github?: HistoricalContextGitHub,
-) {
+  integrationBranch?: string,
+): Promise<{
+  heads: HistoricalAssessmentCatalog["heads"];
+  closedReviews: VerifiedClosedReviews;
+  receipt: HistoricalAssessmentReceipt;
+}> {
   const { sourceAudit: audit } = packet;
   const qualification = packet.replayQualification?.qualificationSha256;
   if (
@@ -110,6 +118,7 @@ export async function verifyHistoricalReplayQualification(
     audit,
     scope.projectId,
     github,
+    integrationBranch ? { baseline, integrationBranch } : undefined,
   );
   if (
     heads.enforcementGeneration !== donor.enforcementGeneration ||
@@ -161,5 +170,5 @@ export async function verifyHistoricalReplayQualification(
       "Reviewed value projection differs from the trusted qualification",
     );
   await assertHistoricalAssessmentFreshness(scope, heads, query);
-  return { heads, closedReviews };
+  return { heads, closedReviews, receipt };
 }

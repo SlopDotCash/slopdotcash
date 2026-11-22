@@ -17,6 +17,7 @@ export type HistoricalClosedContextBindings = ReadonlyMap<
     headSha: string;
     occurredAt: string;
     standaloneReview?: true;
+    retainedMergeHold?: true;
   }
 >;
 
@@ -134,7 +135,12 @@ export function createMergedHistoricalReplaySnapshot(
       closedIds.has(source.nodeId),
     ) ||
     (complete.source.heldWorkUnits ?? []).some((unit) =>
-      unit.sourceNodeIds.some((id) => closedIds.has(id)),
+      unit.sourceNodeIds.some(
+        (id) =>
+          closedIds.has(id) &&
+          (!approvedContexts.get(id)?.retainedMergeHold ||
+            approvedContexts.get(id)?.digest !== unit.recordDigest),
+      ),
     ) ||
     (complete.reviewedImplementationUnits ?? []).some((unit) => {
       const binding = approvedContexts.get(unit.pullRequestId);

@@ -1,4 +1,5 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
+import { canonicalJson } from "../src/lib/canonical-json";
 import { createHistoricalLeaderboardSnapshot } from "../src/lib/leaderboard";
 import type {
   LeaderboardInput,
@@ -27,6 +28,7 @@ import {
 import type { LegacyAssessmentCatalogRow } from "./historical-assessment-catalog";
 import { classifyHistoricalAssessmentScope } from "./historical-assessment-reconciliation";
 import {
+  assertRemovedMergeGroupsPreserved,
   projectHistoricalValueChanges,
   verifyHistoricalClosedReviews,
   verifyHistoricalValueReplay,
@@ -594,4 +596,127 @@ test("closed review proof binds the assessed review and authenticated pre-close 
       github(),
     ),
   ).rejects.toThrow("absent from the assessed work unit");
+});
+
+test("removed merged members require an exact whole-group hold and prevent separate changes", async () => {
+  const prior = fixture();
+  const initial = await prior.review(empty());
+  const live = initial.receipt.records[0].sources[0];
+  const removed = {
+    ...live,
+    id: "PR_removed",
+    number: 19,
+    auditedHeadSha: null,
+    finding: "retained-removed-merge" as const,
+  };
+  const award = projectHistoricalValueChanges(
+    initial.packet,
+    empty(),
+    prior.snapshot,
+  ).rows[0].award;
+  const archived = {
+    ...award,
+    sourceId: removed.id,
+    key: pointKey(
+      scope.projectId,
+      award.actor.id,
+      "merged-pull-request",
+      removed.id,
+    ),
+    sourceUrl: `https://github.com/${repository}/pull/19`,
+  };
+  const baseline = appendPointAwards(
+    empty(),
+    [award, archived],
+    "1".repeat(64),
+    "slop-score-v2",
+    empty().generatedAt,
+  );
+  const held = fixture({ status: "missing" });
+  const { packet, receipt } = await held.review(baseline);
+  const digest = receipt.records[0].digest;
+  const snapshot = structuredClone(held.snapshot);
+  const coverage = snapshot.valueAssessmentCoverage?.[0];
+  if (!coverage) throw Error("Missing fixture coverage");
+  coverage.status = "unresolved";
+  coverage.recordDigest = digest;
+  snapshot.source.unavailableSources = [
+    { nodeId: removed.id, reason: "NOT_FOUND" },
+  ];
+  snapshot.source.heldWorkUnits = [
+    {
+      recordDigest: digest,
+      sourceNodeIds: [live.id, removed.id].sort(),
+      unavailableNodeIds: [removed.id],
+    },
+  ];
+  snapshot.source.counts.unavailableSources = 1;
+  snapshot.source.counts.unavailableMergedPullRequests = 0;
+  snapshot.source.counts.heldWorkUnits = 1;
+  const { receiptSha256: ignored, ...baseReceipt } = receipt;
+  expect(ignored).toHaveLength(64);
+  const body = {
+    ...baseReceipt,
+    records: [
+      {
+        ...receipt.records[0],
+        journal: "joint" as const,
+        sources: [live, removed],
+      },
+    ],
+  };
+  const revised = { ...body, receiptSha256: sha256Hex(canonicalJson(body)) };
+  const reviewed = { ...packet, valueSnapshot: snapshot, valueKeys: [] };
+  const detached = structuredClone(snapshot);
+  detached.source.heldWorkUnits = [];
+  detached.source.counts.heldWorkUnits = 0;
+  expect(() =>
+    verifyHistoricalValueReplay(reviewed, baseline, revised, snapshot),
+  ).not.toThrow();
+  expect(() =>
+    verifyHistoricalValueReplay(reviewed, baseline, revised, detached),
+  ).toThrow("did not retain the whole removed-merge group");
+  for (const row of baseline.revisions)
+    expect(() =>
+      assertRemovedMergeGroupsPreserved([row], revised, new Map()),
+    ).toThrow("would alter a retained removed-merge group");
+  expect(() =>
+    assertRemovedMergeGroupsPreserved([], revised, new Map()),
+  ).not.toThrow();
+  for (const sourceUrl of [
+    "https://slop.cash/profile/example",
+    "https://github.com/unregistered/repository/pull/19",
+  ]) {
+    const unrelated = {
+      ...baseline.revisions[0],
+      award: { ...award, sourceId: "unrelated", sourceUrl },
+    };
+    expect(() =>
+      assertRemovedMergeGroupsPreserved([unrelated], revised, new Map()),
+    ).not.toThrow();
+  }
+  const earlier = {
+    ...baseline.revisions[0],
+    award: {
+      ...award,
+      category: "substantive-review" as const,
+      sourceId: "PRR_held",
+      sourceUrl: `${archived.sourceUrl}#pullrequestreview-19`,
+    },
+  };
+  const relocated = {
+    ...earlier,
+    previous: earlier.id,
+    award: {
+      ...earlier.award,
+      sourceUrl: `https://github.com/${repository}/pull/20#pullrequestreview-19`,
+    },
+  };
+  expect(() =>
+    assertRemovedMergeGroupsPreserved(
+      [relocated],
+      revised,
+      new Map([[earlier.award.key, earlier]]),
+    ),
+  ).toThrow("would alter a retained removed-merge group");
 });

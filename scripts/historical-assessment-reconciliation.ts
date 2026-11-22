@@ -1,5 +1,6 @@
 /** Classify a protected, complete journal read without replaying value or awards. */
 import { canonicalJson } from "../src/lib/canonical-json";
+import { latestPoints, type PointsJournal } from "../src/lib/points";
 import { validRepositoryPath } from "../src/lib/project-contracts";
 import { sha256Hex } from "../src/lib/sha256";
 import type { GitHubClient } from "../workers/slopbot/github";
@@ -7,6 +8,7 @@ import { validValueContextSelections } from "../workers/slopbot/value-context";
 import type { ValueJournalRecord } from "../workers/slopbot/value-journal";
 import { validMergeRecipe } from "../workers/slopbot/value-merge-profile";
 import { isValueProducer } from "../workers/slopbot/value-producer";
+import { VALUE_REFERENCE_QUERY } from "../workers/slopbot/value-reference-query";
 import {
   type WorkUnitRecord,
   workUnitIdentity,
@@ -43,6 +45,7 @@ type SourceFinding =
   | "audited-head"
   | "stale-head"
   | VerifiedClosedFinding
+  | "retained-removed-merge"
   | "conflicting-audit-binding"
   | "missing-from-merged-audit"
   | "outside-audit";
@@ -390,7 +393,118 @@ async function jointHistory(
   return { sources, active: records.filter((_, index) => !used[index]) };
 }
 
-export type HistoricalContextGitHub = Pick<GitHubClient, "graphql" | "get">;
+export type HistoricalContextGitHub = Pick<GitHubClient, "graphql" | "get"> &
+  Partial<Pick<GitHubClient, "request">>;
+
+type HistoricalArchiveScope = {
+  baseline: PointsJournal;
+  integrationBranch: string;
+};
+
+type MissingJointSource = {
+  source: WorkUnitRecord["sources"][number];
+  standalone: boolean;
+};
+
+async function verifyRemovedMerges(
+  candidates: readonly MissingJointSource[],
+  github: HistoricalContextGitHub,
+  archive: HistoricalArchiveScope | undefined,
+  projectId: string,
+) {
+  const removed = new Set<string>();
+  if (!archive?.integrationBranch || !github.request) return removed;
+  const matchingAwards = new Map<string, Set<string>>();
+  for (const { award } of latestPoints(archive.baseline).values()) {
+    if (
+      award.projectId !== projectId ||
+      award.category !== "merged-pull-request" ||
+      award.amount <= 0
+    )
+      continue;
+    const occurrences = matchingAwards.get(award.sourceId) ?? new Set();
+    occurrences.add(
+      `${award.sourceUrl.toLowerCase()}\0${new Date(award.occurredAt).toISOString()}`,
+    );
+    matchingAwards.set(award.sourceId, occurrences);
+  }
+  for (const { source, standalone } of candidates) {
+    const root = `/repos/${source.repository}`;
+    if (
+      standalone ||
+      !source.mergeSha ||
+      !matchingAwards
+        .get(source.pullRequestNodeId)
+        ?.has(
+          `https://github.com/${source.repository.toLowerCase()}/pull/${source.pullRequestNumber}\0${new Date(source.occurredAt).toISOString()}`,
+        )
+    )
+      continue;
+    const pull = await github.request(
+      "GET",
+      `${root}/pulls/${source.pullRequestNumber}`,
+    );
+    if (pull.status !== 404) continue;
+
+    const [owner, name] = source.repository.split("/");
+    const result = await github.graphql<{
+      repository?: {
+        id: string;
+        isPrivate: boolean;
+        nameWithOwner: string;
+        issueOrPullRequest: unknown;
+      };
+    }>(VALUE_REFERENCE_QUERY, {
+      owner,
+      name,
+      number: source.pullRequestNumber,
+    });
+    const repository = result.repository;
+    ensure(
+      repository?.id === source.repositoryNodeId &&
+        repository.isPrivate === false &&
+        repository.nameWithOwner?.toLowerCase() ===
+          source.repository.toLowerCase() &&
+        repository.issueOrPullRequest === null,
+    );
+    const merge = await github.get<{ sha: string; parents: { sha: string }[] }>(
+      `${root}/git/commits/${source.mergeSha}`,
+    );
+    ensure(
+      merge?.sha === source.mergeSha &&
+        merge.parents?.length === 2 &&
+        matches(merge.parents[0]?.sha, SHA) &&
+        merge.parents[1]?.sha === source.headSha,
+    );
+    const branch = archive.integrationBranch
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+    const tip = await github.get<{
+      ref: string;
+      object: { type: string; sha: string };
+    }>(`${root}/git/ref/heads/${branch}`);
+    ensure(
+      tip?.ref === `refs/heads/${archive.integrationBranch}` &&
+        tip.object?.type === "commit" &&
+        matches(tip.object.sha, SHA),
+    );
+    const comparison = await github.get<{
+      status: string;
+      behind_by: number;
+      base_commit: { sha: string };
+      merge_base_commit: { sha: string };
+    }>(`${root}/compare/${source.mergeSha}...${tip.object.sha}?per_page=1`);
+    ensure(
+      (comparison?.status === "ahead" || comparison?.status === "identical") &&
+        comparison.behind_by === 0 &&
+        comparison.base_commit?.sha === source.mergeSha &&
+        comparison.merge_base_commit?.sha === source.mergeSha,
+    );
+    removed.add(source.pullRequestNodeId);
+  }
+  return removed;
+}
 
 type ClosedLifecycle = {
   __typename: string;
@@ -502,8 +616,11 @@ export function historicalClosedContextBindings(
   receipt: Pick<HistoricalAssessmentReceipt, "records">,
 ) {
   return new Map(
-    receipt.records.flatMap(({ digest, sources }) =>
-      sources
+    receipt.records.flatMap(({ digest, sources }) => {
+      const retainedMergeHold = sources.some(
+        ({ finding }) => finding === "retained-removed-merge",
+      );
+      return sources
         .filter(({ finding }) => isHistoricalClosedFinding(finding))
         .map(
           ({ id, number, headSha, occurredAt, finding }) =>
@@ -514,13 +631,16 @@ export function historicalClosedContextBindings(
                 number,
                 headSha,
                 occurredAt,
+                ...(retainedMergeHold
+                  ? { retainedMergeHold: true as const }
+                  : {}),
                 ...(finding === "verified-standalone-closed-review"
                   ? { standaloneReview: true as const }
                   : {}),
               },
             ] as const,
-        ),
-    ),
+        );
+    }),
   );
 }
 
@@ -532,6 +652,7 @@ function scopedRecord(
   byId: ReadonlyMap<string, SourceAudit["sources"][number]>,
   byNumber: ReadonlyMap<number, SourceAudit["sources"][number]>,
   verifiedClosed?: ReadonlyMap<string, VerifiedClosedFinding>,
+  removed?: ReadonlySet<string>,
 ): ScopedRecord {
   return {
     journal,
@@ -552,8 +673,10 @@ function scopedRecord(
               ? "audited-head"
               : "stale-head"
           : occurredAt >= audit.from && occurredAt < audit.through
-            ? (verifiedClosed?.get(source.pullRequestNodeId) ??
-              "missing-from-merged-audit")
+            ? removed?.has(source.pullRequestNodeId)
+              ? "retained-removed-merge"
+              : (verifiedClosed?.get(source.pullRequestNodeId) ??
+                "missing-from-merged-audit")
             : "outside-audit";
         return {
           id: source.pullRequestNodeId,
@@ -574,6 +697,7 @@ export async function classifyHistoricalAssessmentScope(
   audit: SourceAudit,
   projectId: string,
   github?: HistoricalContextGitHub,
+  archive?: HistoricalArchiveScope,
 ) {
   ensure(
     matches(projectId, PROJECT) &&
@@ -706,34 +830,45 @@ export async function classifyHistoricalAssessmentScope(
     record,
     initial: scopedRecord("joint", row, record.sources, audit, byId, byNumber),
   }));
+  const missingJointSources = jointSources.flatMap(({ initial, record }) => {
+    const standalone =
+      initial.sources.length === 1 &&
+      initial.sources[0].finding === "missing-from-merged-audit" &&
+      isStandaloneHistoricalReview(record);
+    if (
+      !standalone &&
+      !initial.sources.some(
+        ({ finding }) => finding === "audited-head" || finding === "stale-head",
+      )
+    )
+      return [];
+    const missing = new Set(
+      initial.sources
+        .filter(({ finding }) => finding === "missing-from-merged-audit")
+        .map(({ id }) => id),
+    );
+    return record.sources
+      .filter(
+        (source) =>
+          missing.has(source.pullRequestNodeId) &&
+          source.indirectAcceptance === undefined,
+      )
+      .map((source) => ({ source, standalone }));
+  });
+  if (archive) {
+    ensure(
+      archive.baseline.revisions.length === d1PointsCount &&
+        sha256Hex(JSON.stringify(archive.baseline)) === d1PointsDigest,
+    );
+  }
+  const removed = github
+    ? await verifyRemovedMerges(missingJointSources, github, archive, projectId)
+    : undefined;
   const verifiedClosed = github
     ? await verifyClosedContexts(
-        jointSources.flatMap(({ initial, record }) => {
-          const standalone =
-            initial.sources.length === 1 &&
-            initial.sources[0].finding === "missing-from-merged-audit" &&
-            isStandaloneHistoricalReview(record);
-          if (
-            !standalone &&
-            !initial.sources.some(
-              ({ finding }) =>
-                finding === "audited-head" || finding === "stale-head",
-            )
-          )
-            return [];
-          const missing = new Set(
-            initial.sources
-              .filter(({ finding }) => finding === "missing-from-merged-audit")
-              .map(({ id }) => id),
-          );
-          return record.sources
-            .filter(
-              (source) =>
-                missing.has(source.pullRequestNodeId) &&
-                source.indirectAcceptance === undefined,
-            )
-            .map((source) => ({ source, standalone }));
-        }),
+        missingJointSources.filter(
+          ({ source }) => !removed?.has(source.pullRequestNodeId),
+        ),
         github,
       )
     : undefined;
@@ -742,7 +877,7 @@ export async function classifyHistoricalAssessmentScope(
       scopedRecord("legacy", row, [record], audit, byId, byNumber),
     ),
     ...jointSources.map(({ row, record, initial }) =>
-      verifiedClosed?.size
+      verifiedClosed?.size || removed?.size
         ? scopedRecord(
             "joint",
             row,
@@ -751,6 +886,7 @@ export async function classifyHistoricalAssessmentScope(
             byId,
             byNumber,
             verifiedClosed,
+            removed,
           )
         : initial,
     ),

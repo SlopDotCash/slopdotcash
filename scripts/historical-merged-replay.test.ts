@@ -259,4 +259,26 @@ test("a jointly held closure is not equivalent to an unassessed ordinary closure
   expect(() =>
     createMergedHistoricalReplaySnapshot(input, scope, baseline),
   ).toThrow("closed-unmerged assessment");
+  const context = {
+    digest,
+    number: closed.number,
+    headSha: closed.headRefOid,
+    occurredAt: closed.closedAt,
+  };
+  expect(() =>
+    createMergedHistoricalReplaySnapshot(
+      input,
+      scope,
+      baseline,
+      new Map([[closed.id, context]]),
+    ),
+  ).toThrow("closed-unmerged assessment");
+  const retained = createMergedHistoricalReplaySnapshot(
+    input,
+    scope,
+    baseline,
+    new Map([[closed.id, { ...context, retainedMergeHold: true }]]),
+  );
+  expect(retained.source.heldWorkUnits).toEqual(input.source.heldWorkUnits);
+  expect(retained.ledger).toEqual(full.ledger);
 });

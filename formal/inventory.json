@@ -4523,9 +4523,11 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "sha256": "76d6851a4892ba60550e6584362fa038ab0fa2891eeb6ead29d64cab118732fe",
+      "sha256": "12cbdaef91ed34fb2920374514fad3963e5e243cbf44509eecb0063d138c158c",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [71, 194, 382, 399, 417, 427, 452, 477, 660, 668],
+      "candidateLines": [
+        74, 197, 385, 447, 493, 499, 513, 531, 541, 566, 591, 784, 792
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -4554,16 +4556,16 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "efdce1d57ede9c56b4dc62b9e53ee9586bed82b7c0b0f85bcdf6812465e97f54",
+      "sha256": "1ff730046cf774bf4b07b10bd3f04d90a89d661c5c8015663c32968ccee784fd",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [58, 85, 121, 122, 125, 126, 200],
+      "candidateLines": [59, 86, 122, 123, 126, 127, 206],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/historical-replay-qualification.ts",
-      "sha256": "776f63e081cd59ef4422a2a7d2c04530f433b44051b14cef679e882306a7e61e",
+      "sha256": "65921644330b63e015065ebceddc19098c1b0151d8506114c51082911dae4258",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [21, 120],
+      "candidateLines": [24, 129],
       "review": "mapped-abstraction"
     },
     {
@@ -4575,10 +4577,10 @@
     },
     {
       "path": "scripts/historical-value-replay.ts",
-      "sha256": "43a4e7858fcc8e0fe0e9adfa546b16cda49c0156cbdab365c96c4e8d61aeeba9",
+      "sha256": "c14d01bf8dc94fa74577bb7fd16d059d1b9f77b8ee36c341d14536d46ad52c80",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
       "candidateLines": [
-        111, 132, 203, 219, 220, 278, 361, 369, 371, 372, 375, 589, 601
+        111, 132, 203, 219, 220, 278, 425, 433, 435, 438, 439, 442, 656, 668
       ],
       "review": "mapped-abstraction"
     },
@@ -5409,14 +5411,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "a11f17f5fe583a201c69690f6443ce7de5e24f2ae472c66b66cdcf90a000b548",
+      "sha256": "1d52bdbec1977693f94897e1cdd540843894c6c807b7ea5e8ba5280284b02b64",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 244, 245, 246, 247, 249, 254, 297, 312, 313, 319, 320, 455, 1179,
-        1408, 1428, 1638, 1656, 1663, 1790, 1885, 2036
+        3, 246, 247, 248, 249, 251, 256, 299, 314, 315, 321, 322, 457, 1181,
+        1410, 1430, 1641, 1659, 1666, 1793, 1888, 2050
       ],
       "review": "mapped-abstraction"
     },
@@ -15770,7 +15772,7 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "0ff107811e27bc5042c35b0d946bbac5116894a9076bcbb9f2f11ac17e64ba75",
+      "sha256": "66e62ec40a56e9f6a483f6d91896b14e2620cc29a8840f9c5a5d025cfc40573b",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
@@ -15785,6 +15787,7 @@
       "scenarios": [
         "applyCannotEnterAuditTest",
         "bothCatalogsRequiredTest",
+        "changeToHeldMergeRefusesHistoricalReviewTest",
         "changedCheckpointRefusesReceiptTest",
         "changedReviewIdentityRefusesClosureReviewTest",
         "changedScopeCannotEnterAuditTest",
@@ -15793,7 +15796,9 @@
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
         "missingAnchorRefusesClosureReviewTest",
+        "missingNativeAcceptanceRefusesHistoricalReviewTest",
         "missingStandaloneSourceDigestRefusesClosureReviewTest",
+        "partialRemovedMergeHoldRefusesHistoricalReviewTest",
         "postCloseReviewCannotBeStagedTest",
         "privateReviewNeedsExactReadbackTest",
         "privateReviewNeedsOptInTest",
@@ -15801,7 +15806,8 @@
         "scopeChangeAfterPrivateStagingRefusesReceiptTest",
         "unrelatedAppendAllowsReceiptTest",
         "verifiedClosureReviewCanBeStagedTest",
-        "verifiedEmptyCutTest"
+        "verifiedEmptyCutTest",
+        "verifiedRemovedMergeKeepsPriorAwardsTest"
       ]
     },
     {

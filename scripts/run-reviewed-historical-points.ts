@@ -28,6 +28,7 @@ import {
 } from "./historical-assessment-catalog";
 import {
   classifyHistoricalAssessmentScope,
+  type HistoricalAssessmentReceipt,
   historicalClosedContextBindings,
 } from "./historical-assessment-reconciliation";
 import {
@@ -35,6 +36,7 @@ import {
   verifyHistoricalReplayQualification,
 } from "./historical-replay-qualification";
 import {
+  assertRemovedMergeGroupsPreserved,
   projectHistoricalValueChanges,
   type VerifiedClosedReviews,
   verifyHistoricalClosedReviews,
@@ -1630,6 +1632,7 @@ async function auditHistoricalAssessments(
     sourceAudit,
     projectId,
     github,
+    { baseline, integrationBranch: project.repositories[0].integrationBranch },
   );
   const report = {
     schemaVersion: "1",
@@ -1986,6 +1989,7 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
   }
   let assessmentHeads: HistoricalAssessmentJournalHeads;
   let closedReviews: VerifiedClosedReviews | undefined;
+  let assessmentReceipt: HistoricalAssessmentReceipt | undefined;
   if (packet.replayQualification) {
     setPhase("trusted replay receipt read");
     const donor = await readTrustedHistoricalReplay(
@@ -1993,16 +1997,20 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
       checkout,
     );
     setPhase("assessment qualification match");
-    ({ heads: assessmentHeads, closedReviews } =
-      await verifyHistoricalReplayQualification(
-        packet,
-        baseline,
-        donor,
-        checkout,
-        generation,
-        query,
-        github,
-      ));
+    ({
+      heads: assessmentHeads,
+      closedReviews,
+      receipt: assessmentReceipt,
+    } = await verifyHistoricalReplayQualification(
+      packet,
+      baseline,
+      donor,
+      checkout,
+      generation,
+      query,
+      github,
+      integration?.repository.integrationBranch,
+    ));
   } else {
     setPhase("assessment journal checkpoint read");
     if (process.env.HISTORICAL_POINTS_APPLY === "true")
@@ -2026,6 +2034,12 @@ async function main(setPhase: (phase: PublicationPhase) => void) {
     verifiedIdenticalAcceptedChanges,
     closedReviews,
   );
+  if (assessmentReceipt)
+    assertRemovedMergeGroupsPreserved(
+      candidate.revisions.slice(baseline.revisions.length),
+      assessmentReceipt,
+      latestPoints(baseline),
+    );
   setPhase("import preparation");
   const directory = join(
     process.env.RUNNER_TEMP ?? "",
