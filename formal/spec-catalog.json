@@ -23043,6 +23043,155 @@
       ]
     },
     {
+      "path": "spec/settlement/executorJournal.md",
+      "sha256": "bb8a8bfcd70ad5d502a3054fc6d0b957a6c337cb1780f69cab4d9a36d1670bdf",
+      "module": "settlement__executorJournal",
+      "stories": [
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it",
+          "line": 21
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / A step has at most one live attempt, and only a finalized revert frees its key for new bytes",
+          "line": 23,
+          "definitions": [
+            "StepKind",
+            "JournalKey",
+            "EntryPhase",
+            "Outcome",
+            "JournalEntry",
+            "Admission",
+            "Cursor",
+            "Journal",
+            "emptyJournal",
+            "initial",
+            "validKey",
+            "keyOf",
+            "rootKey",
+            "hasLive",
+            "hasSettled",
+            "admitted",
+            "admittedV2",
+            "admittedLegacy",
+            "leafCountOf",
+            "committed",
+            "fitsStep",
+            "canSendNew",
+            "sendNew",
+            "canRebroadcast",
+            "rebroadcast",
+            "totalValues",
+            "countValues",
+            "deliveredValues"
+          ]
+        },
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / Only the signer's finalized nonce and finalized receipts decide a step",
+          "line": 92,
+          "definitions": [
+            "canObserveFinalized",
+            "observeFinalized",
+            "admissionOf",
+            "admissionFrom",
+            "canObserveReceipt",
+            "noEntry",
+            "entryAt",
+            "observeReceipt",
+            "canObserveOtherCommit",
+            "observeOtherCommit",
+            "nonceValues",
+            "heightValues",
+            "timeValues",
+            "succeededValues"
+          ]
+        },
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / A live attempt settles once the finalized nonce passes it and the step is committed, and retires only on a finalized revert of an uncommitted step",
+          "line": 140,
+          "definitions": [
+            "finalizedRevert",
+            "retainedIds",
+            "canSettleStep",
+            "settleStep",
+            "canRetire",
+            "retire"
+          ]
+        },
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / The leaf cursor of an admitted root passes a leaf only when it is committed and its attempt is settled",
+          "line": 170,
+          "definitions": [
+            "cursorOf",
+            "canAdvanceCursor",
+            "advanceCursor",
+            "rootSettled",
+            "hasLiveRoot",
+            "periodValues",
+            "rootValues",
+            "journalKeyValues"
+          ]
+        },
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / The journal keeps every attempt, every committed step and every cursor",
+          "line": 202,
+          "definitions": [
+            "alwaysOneLiveAttemptPerKey",
+            "alwaysNoncesIssued",
+            "alwaysAttemptsSignedAsSteps",
+            "alwaysFinalizedWasBroadcast",
+            "alwaysOneRootPerPeriod",
+            "alwaysLeavesUnderAdmittedRoot",
+            "alwaysSettledCommitted",
+            "alwaysRetiredReverted",
+            "alwaysOutcomeFinalized",
+            "alwaysWinnerSucceeded",
+            "alwaysCursorBacked",
+            "entryKept",
+            "stepAttemptsRetained",
+            "stepRetiredRetained",
+            "stepSettledPermanent",
+            "stepNoNewBytesWhileLive",
+            "stepLegacyReconciledFirst",
+            "stepCommittedPermanent",
+            "stepCursorMonotone",
+            "stepFinalizedMonotone",
+            "sometimesResumedAfterLostCall",
+            "sometimesSentAgainAfterRevert",
+            "sometimesV2AfterLegacyReconciled",
+            "sometimesSettledAfterOtherSenderCommitted",
+            "sometimesCursorDone"
+          ]
+        },
+        {
+          "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / Observers of the journal accept only a later journal that keeps these rules",
+          "line": 270,
+          "definitions": [
+            "wellFormed",
+            "follows"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": [
+        {
+          "target": "./monthlyExecution.md",
+          "line": 17
+        },
+        {
+          "target": "./signer.md",
+          "line": 19
+        },
+        {
+          "target": "./monthlyExecution.md",
+          "line": 272
+        }
+      ]
+    },
+    {
       "path": "spec/settlement/feeReplacement.md",
       "sha256": "72fcc0d60e1bc02d77cea168e6c28d60d0b34e8c6be4faa08d4682007a288045",
       "module": "settlement__feeReplacement",
@@ -23107,7 +23256,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "fdaebe53ebcd50e9c893c9baf322155002a2ca40b1cd83733dae28e298ac8850",
+      "sha256": "b412ecb5b0826ea7133d1aabbaeca4f4d4213f79d63559d127ce543a4faa3f8b",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -23186,128 +23335,132 @@
           "line": 22
         },
         {
-          "target": "./octoberImport.md",
+          "target": "./executorJournal.md",
           "line": 23
         },
         {
-          "target": "./ownerTransactions.md",
+          "target": "./octoberImport.md",
           "line": 24
         },
         {
-          "target": "./payment.md",
+          "target": "./ownerTransactions.md",
           "line": 25
         },
         {
-          "target": "./paymentDispatch.md",
+          "target": "./payment.md",
           "line": 26
         },
         {
-          "target": "./paymentInvestigation.md",
+          "target": "./paymentDispatch.md",
           "line": 27
         },
         {
-          "target": "./evmScan.md",
+          "target": "./paymentInvestigation.md",
           "line": 28
         },
         {
-          "target": "./solanaScan.md",
+          "target": "./evmScan.md",
           "line": 29
         },
         {
-          "target": "./directTransfers.md",
+          "target": "./solanaScan.md",
           "line": 30
         },
         {
-          "target": "./publicRecords.md",
+          "target": "./directTransfers.md",
           "line": 31
         },
         {
-          "target": "./composition.md",
+          "target": "./publicRecords.md",
           "line": 32
         },
         {
-          "target": "./directBounty.md",
+          "target": "./composition.md",
           "line": 33
         },
         {
-          "target": "./privateAward.md",
+          "target": "./directBounty.md",
           "line": 34
         },
         {
-          "target": "./recovery.md",
+          "target": "./privateAward.md",
           "line": 35
         },
         {
-          "target": "./privateAward.md",
+          "target": "./recovery.md",
           "line": 36
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./privateAward.md",
           "line": 37
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 38
         },
         {
-          "target": "./attesterActivation.md",
+          "target": "./signer.md",
           "line": 39
         },
         {
-          "target": "./feeReplacement.md",
+          "target": "./attesterActivation.md",
           "line": 40
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./feeReplacement.md",
           "line": 41
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 42
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 43
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 44
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 45
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 46
         },
         {
-          "target": "./referralAccrual.md",
+          "target": "./referrals.md",
           "line": 47
         },
         {
-          "target": "./referralHolds.md",
+          "target": "./referralAccrual.md",
           "line": 48
         },
         {
-          "target": "./referralFiles.md",
+          "target": "./referralHolds.md",
           "line": 49
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralFiles.md",
           "line": 50
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 51
         },
         {
-          "target": "./referralWatch.md",
+          "target": "./referralDistributor.md",
           "line": 52
         },
         {
-          "target": "../fees/",
+          "target": "./referralWatch.md",
           "line": 53
+        },
+        {
+          "target": "../fees/",
+          "line": 54
         }
       ]
     },
@@ -24813,25 +24966,33 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "3ae7d69f430476b52f1528da5fc2de318c2a90f17d34fa53ee1f90b82af4cabc",
+      "sha256": "c5308ece8f5169a508e32e38e0f934756f71aec1b601f5d6c2251b287c2b2f59",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
           "heading": "Story: Execute every published month fairly and in a safe order",
-          "line": 14
+          "line": 19
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal",
+          "line": 334
         }
       ],
       "rules": [
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Each published month has one execution row, and only finalized evidence completes it",
-          "line": 16,
+          "line": 21,
           "definitions": [
             "RowPhase",
+            "Tree",
             "Row",
             "Execution",
             "batchLimit",
             "initial",
             "hasRow",
+            "recordedAwardsOf",
+            "sourceOf",
+            "validTree",
             "canPublish",
             "publish",
             "alwaysOneRowPerMonth",
@@ -24843,18 +25004,28 @@
             "periodValues",
             "networkValues",
             "vaultValues",
-            "byValues"
+            "byValues",
+            "treeR1",
+            "treeR2",
+            "treeValues"
           ]
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Each run attempts the least recently attempted rows first",
-          "line": 61,
+          "line": 105,
           "definitions": [
+            "windowOpen",
+            "selectable",
             "attemptedThisRun",
+            "inBatch",
             "canStartRun",
             "startRun",
             "leastRecent",
             "waitedOn",
+            "canSelectRow",
+            "selectRow",
+            "newerRootPending",
+            "batchComplete",
             "canMarkAttempt",
             "markAttempt",
             "alwaysRunBounded",
@@ -24865,23 +25036,34 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / A newer admitting root goes first, so no older leaf reverts it",
-          "line": 96,
+          "line": 181,
           "definitions": [
             "SendResult",
-            "newerRootPending",
+            "resultFits",
+            "fresh",
+            "newerRootIncomplete",
+            "liveAny",
+            "inFlight",
+            "olderStepInFlight",
+            "revertsIfSent",
             "canSubmit",
             "submit",
             "alwaysNoReorderingRevert",
+            "alwaysSentNoncesIssued",
+            "stepNoAdmissionWithoutAdmit",
+            "stepAdmissionUsesLatestAttempt",
             "sendResultValues"
           ]
         },
         {
-          "heading": "Story: Execute every published month fairly and in a safe order / Finalized evidence completes a submitted row, and a dropped submission is retried",
-          "line": 123,
+          "heading": "Story: Execute every published month fairly and in a safe order / Finalized evidence completes a submitted legacy or Solana row, and a dropped submission is retried",
+          "line": 296,
           "definitions": [
             "Landing",
+            "landingFits",
             "canObserveFinality",
             "observeFinality",
+            "alwaysLegacyCompleteSettled",
             "landingValues",
             "heightValues",
             "sometimesCompleted",
@@ -24889,20 +25071,131 @@
             "sometimesRetriedThenCompleted",
             "sometimesNewestFirst"
           ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / A row reads only a later, well-formed journal of its own month",
+          "line": 336,
+          "definitions": [
+            "monthOnly",
+            "admissionFits",
+            "canObserveJournal",
+            "observeJournal",
+            "stepJournalFollows",
+            "alwaysAdmittedRootIsRowRoot"
+          ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / A version 2 row completes once its root is settled and its cursor reaches the leaf count, or a verified V1 root won",
+          "line": 379,
+          "definitions": [
+            "v2Total",
+            "cursorDone",
+            "legacyWon",
+            "canComplete",
+            "complete",
+            "alwaysV2CompleteMeansCursorDone",
+            "otherSenderLeaf",
+            "sometimesCompletedAfterOtherSenderCommittedLeaves",
+            "sometimesV2CompletedByLegacyWinner",
+            "sometimesResumedAfterWindowClosed"
+          ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / The executor uses the latest authorization, and its cursor belongs to that root",
+          "line": 412,
+          "definitions": [
+            "laterAttempt",
+            "canSignAttempt",
+            "signAttempt",
+            "canReauthorize",
+            "reauthorize",
+            "alwaysLatestAttemptKnown",
+            "stepSequenceMonotone",
+            "stepAdmittedRootFixed",
+            "sometimesReauthorizedThenAdmitted",
+            "sequenceValues"
+          ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / A wrong admitted total is held and never completes; only a finalized whole release ends it",
+          "line": 467,
+          "definitions": [
+            "canObserveWrongTotal",
+            "observeWrongTotal",
+            "canObserveReleased",
+            "observeReleased",
+            "alwaysHeldTotalWrong",
+            "alwaysReleasedUntouched",
+            "stepWrongTotalNeverCompletes",
+            "stepReleasedPermanent",
+            "sometimesWrongTotalReleased",
+            "receiptSample",
+            "receiptValues"
+          ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / An EVM month whose window closed unadmitted is refused and leaves the batch",
+          "line": 519,
+          "definitions": [
+            "canRefuseUnadmitted",
+            "refuseUnadmitted",
+            "alwaysClosedUnadmitted",
+            "stepRefusalPermanent",
+            "sometimesClosedUnadmitted"
+          ]
+        },
+        {
+          "heading": "Story: Complete a version 2 month only from its journal / Simulation samples are finalized journals of each sampled month",
+          "line": 547,
+          "definitions": [
+            "entryOf",
+            "snapshot",
+            "v2Journal",
+            "monthJournal",
+            "journalValues"
+          ]
         }
       ],
       "imports": [
         "settlement__monthly",
-        "settlement__monthPledges"
+        "settlement__monthPledges",
+        "settlement__money",
+        "settlement__monthlyCommitment",
+        "settlement__executorJournal",
+        "settlement__reserveRelease"
       ],
       "references": [
         {
           "target": "./monthly.md",
-          "line": 11
+          "line": 15
+        },
+        {
+          "target": "./executorJournal.md",
+          "line": 17
         },
         {
           "target": "./monthPledges.md",
-          "line": 22
+          "line": 34
+        },
+        {
+          "target": "./executorJournal.md",
+          "line": 340
+        },
+        {
+          "target": "./monthlyCommitment.md",
+          "line": 346
+        },
+        {
+          "target": "./monthlyCommitment.md",
+          "line": 414
+        },
+        {
+          "target": "./reserveRelease.md",
+          "line": 475
+        },
+        {
+          "target": "./monthlyCommitment.md",
+          "line": 525
         }
       ]
     },
@@ -27261,7 +27554,7 @@
     },
     {
       "path": "spec/settlement/signer.md",
-      "sha256": "71d56faa2c674b400975fce8ed8eb12b0e5f2fd017d4c51dfe2a1b0b53c58f0f",
+      "sha256": "1c0bd4689fbf0c56292795f1ba6ea3ab1e95445f8a77eb95754a4993fa47830a",
       "module": "settlement__signer",
       "stories": [
         {
@@ -27270,7 +27563,7 @@
         },
         {
           "heading": "Story: Restrict every service operation",
-          "line": 197
+          "line": 201
         }
       ],
       "rules": [
@@ -27350,7 +27643,7 @@
         },
         {
           "heading": "Story: Journal one binding intent and keep both possible winners / Both possible winners stay retained",
-          "line": 177,
+          "line": 181,
           "definitions": [
             "alwaysCanonicalRetained",
             "stepRetainSignedBinding",
@@ -27365,7 +27658,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Each service key permits only its named operations and none can pay, withdraw or upgrade",
-          "line": 199,
+          "line": 203,
           "definitions": [
             "Operation",
             "Signer",
@@ -27380,7 +27673,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Every attester EVM transaction stays under its deployment gas ceiling, a 10 gwei fee cap and its frozen native-cost cap",
-          "line": 233,
+          "line": 237,
           "definitions": [
             "AttesterTransaction",
             "attesterFeeCap",
@@ -27392,7 +27685,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei",
-          "line": 265,
+          "line": 269,
           "definitions": [
             "CancellationFees",
             "cancellationGas",
@@ -27408,7 +27701,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / One binding consent spends at most one nonce per vault and actor",
-          "line": 300,
+          "line": 304,
           "definitions": [
             "ConsentBudget",
             "consentHistoryBound",
@@ -27423,7 +27716,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim",
-          "line": 332,
+          "line": 336,
           "definitions": [
             "BindingCandidate",
             "CandidateOrder",
@@ -27435,7 +27728,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester",
-          "line": 361,
+          "line": 365,
           "definitions": [
             "Stack",
             "ServiceNetwork",
@@ -27454,7 +27747,7 @@
         },
         {
           "heading": "Story: Restrict every service operation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 396,
+          "line": 400,
           "definitions": [
             "actorValues",
             "attemptValues",
@@ -27470,12 +27763,17 @@
         }
       ],
       "imports": [
+        "settlement__executorJournal",
         "settlement__money"
       ],
       "references": [
         {
           "target": "./bindingAuthority.md",
           "line": 15
+        },
+        {
+          "target": "./executorJournal.md",
+          "line": 168
         }
       ]
     },

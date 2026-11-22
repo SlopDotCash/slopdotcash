@@ -164,12 +164,16 @@ A Base bind transaction signed by a rotated-out authority, or with a stale
 expected version, reverts on chain. The journal retires it only from a
 finalized reverted receipt whose block is the canonical block, and keeps the
 retired attempt identity so it is never reused. Pending or ambiguous results
-remain held. A fresh intent may then authorize a new binding.
+remain held. A fresh intent may then authorize a new binding. This is the
+retirement rule of the [executor journal](./executorJournal.md): a revert
+retires an attempt only once it is finalized, here at the canonical block,
+and the retired identity is retained.
 
 ```quint
+import executorJournal as J from "./executorJournal"
 pure def canRetireReverted(b: Binding, receipt: FinalizedOutcome): bool =
-  b.phase == BindingPending and receipt.attempt == b.bindingAttempt and receipt.reverted
-    and receipt.block > 0 and receipt.block == receipt.canonicalBlock
+  b.phase == BindingPending and receipt.attempt == b.bindingAttempt
+    and J::finalizedRevert(receipt.reverted, receipt.block > 0 and receipt.block == receipt.canonicalBlock)
 pure def retireReverted(b: Binding, receipt: FinalizedOutcome): Binding =
   { ...b, phase: Retired, retired: b.retired.append(b.bindingAttempt), finalizedHeight: receipt.block }
 ```
@@ -182,7 +186,7 @@ pure def alwaysCanonicalRetained(b: Binding): bool = (b.phase == Bound or b.phas
 pure def stepRetainSignedBinding(before: Binding, after: Binding): bool =
   (before.bindingAttempt > 0 and after.phase != Authorized) implies
     after.bindingAttempt == before.bindingAttempt and after.signedAuthority == before.signedAuthority
-pure def stepRetiredRetained(before: Binding, after: Binding): bool = before.retired.every(a => after.retired.includes(a))
+pure def stepRetiredRetained(before: Binding, after: Binding): bool = J::retainedIds(before.retired, after.retired)
 pure def stepIntentsGrow(before: Binding, after: Binding): bool = after.latestIntent >= before.latestIntent
   and after.intent >= before.intent and after.authority >= before.authority
 pure def alwaysUnsignedHasNoAttempt(b: Binding): bool =
