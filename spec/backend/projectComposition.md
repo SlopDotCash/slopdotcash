@@ -49,8 +49,9 @@ import admission as A from "../security/admission"
 import projectRegistry as R from "./projectRegistry"
 import skillRendering as SR from "../contributor/skillRendering"
 import payoutExclusions as X from "../settlement/payoutExclusions"
-type Registry = { project: P::Project, security: E::Enforcement, exclusions: List[X::Exclusion] }
-pure val initial: Registry = { project: P::initial, security: E::initial, exclusions: List() }
+type Registry = { project: P::Project, security: E::Enforcement, exclusions: List[X::Exclusion], setupRead: RegistryObservation }
+pure val initial: Registry = { project: P::initial, security: E::initial, exclusions: List(),
+  setupRead: { revision: 0, enforcementGeneration: 0, clearanceGeneration: 0 } }
 pure def sync(p: P::Project, e: E::Enforcement): E::Enforcement =
   if (p.revision > e.revision and p.steward > 0 and p.creator > 0 and (e.creator == 0 or p.creator == e.creator))
     E::observeRevision(e, E::platform, p.revision, p.steward, p.creator) else e
@@ -101,7 +102,7 @@ pure def canCreate(c: Registry, by: int, creation: P::Creation, account: Account
 pure def create(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead,
   exclusions: List[X::Exclusion]): Registry =
   val p = P::create(c.project, by, creation)
-  { project: p, security: sync(p, c.security), exclusions: exclusions }
+  { ...c, project: p, security: sync(p, c.security), exclusions: exclusions }
 pure def canPublishApplication(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead,
   exclusions: List[X::Exclusion]): bool =
   P::canPublishApplication(c.project, by, creation) and unbanned(by, creation.facts.owner, account) and repositoryFree(P::primary(c.project), registry) and
@@ -109,7 +110,7 @@ pure def canPublishApplication(c: Registry, by: int, creation: P::Creation, acco
 pure def publishApplication(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead,
   exclusions: List[X::Exclusion]): Registry =
   val p = P::publishApplication(c.project, by, creation)
-  { project: p, security: sync(p, c.security), exclusions: exclusions }
+  { ...c, project: p, security: sync(p, c.security), exclusions: exclusions }
 pure def canCancelApplication(c: Registry, by: int): bool = P::canCancelApplication(c.project, by)
 pure def cancelApplication(c: Registry, by: int): Registry = { ...c, project: P::cancelApplication(c.project, by) }
 pure def canCancelUpdate(c: Registry, by: int): bool = P::canCancelUpdate(c.project, by)
@@ -146,7 +147,8 @@ admission too. Administrator investigations and flag recovery work on any
 registered project. A malicious result bans at once and, in the same batch,
 appends the restriction's paused, retired revision, or records it as pending
 when the manifest cannot take it, or needs none when the project is already
-retired.
+retired. A result is recorded only for a registered project, as every scan
+request needs one.
 
 ```quint
 type ManifestPolicy = PolicyAccepts | PolicyRefuses
@@ -162,7 +164,7 @@ pure def canRequestAssessment(c: Registry, by: int, repository: int, requestOrig
 pure def requestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): Registry =
   { ...c, security: E::requestAssessment(c.security, by, repository, requestOrigin, assessmentId) }
 pure def canRecordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): bool =
-  policyCurrent(c.project, policy) and
+  c.project.revision > 0 and policyCurrent(c.project, policy) and
   E::canRecordResult(c.security, by, scanOutcome, if (scanOutcome.disposition == A::DMalicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded)
 pure def recordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): Registry =
   val malicious = scanOutcome.disposition == A::DMalicious
@@ -183,7 +185,17 @@ no restriction holds and neither the acting account nor the steward is
 banned (activation is an owner-participation revision). It commits only
 against the revision, enforcement record count and clearance generation it
 read, so a scan result, grant, revocation or identity change recorded in
-between refuses it and the check runs again. Owner revisions,
+between refuses it and the check runs again. The check's read is its own
+event (`readSetup`, the reads at the start of `runSetupCheck`), recorded as
+`setupRead`; the setup refresh reruns the check after each recorded result,
+so a read older than the registry is eventually taken again (weakly fair).
+Discovered by simulation: with the read sampled from a fixed set of
+observations, a project cleared only by its frozen migration-0075 row
+(clearance generation 0), or one whose revision, enforcement records or
+clearance generation had grown past the sampled values, was ready but could
+never be activated, so a fair run stopped with it paused; the read is now
+taken from the state it observes, as often as activation is tried
+(`weight_readSetup`). Owner revisions,
 appended repositories, consent edits, vault registrations and placements are
 refused while any restriction holds (`project_restricted`), and for a banned
 acting account or steward. An owner revision that appends repositories
@@ -211,10 +223,13 @@ change never leaves the project collectable without clearance.
 
 ```quint
 pure def clearanceOf(e: E::Enforcement): P::Clearance = if (E::cleared(e)) P::ClearanceRetained else P::ClearanceMissing
-pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): bool =
+pure def canReadSetup(c: Registry): bool = c.project.revision > 0 and c.setupRead != observation(c)
+pure def readSetup(c: Registry): Registry = { ...c, setupRead: observation(c) }
+pure val fair_readSetup = "weak"
+pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): bool =
   P::canActivate(c.project, by, check) and E::mayContribute(c.security) and unbanned(by, c.project.steward, account) and
-  not(E::activeAccountBan(c.security, by)) and observed == observation(c)
-pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding, observed: RegistryObservation): Registry =
+  not(E::activeAccountBan(c.security, by)) and c.setupRead == observation(c)
+pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): Registry =
   val p = P::activate(c.project, by, check)
   { ...c, project: p, security: sync(p, c.security) }
 pure def ownerWriteAllowed(c: Registry, by: int, account: AccountStanding): bool =
@@ -234,7 +249,7 @@ pure def canPublishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, a
 pure def publishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
   appendReads: List[RegistryRead]): Registry =
   val p = P::publishOwnerRevision(c.project, by, change)
-  { project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
+  { ...c, project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
 pure def lawExecutableChangeNeedsClearance(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding,
   exclusions: List[X::Exclusion], appendReads: List[RegistryRead]): bool =
   (canPublishOwnerRevision(c, by, change, account, exclusions, appendReads) and change.executable) implies
@@ -245,7 +260,7 @@ pure def canPublishUpdate(c: Registry, by: int, change: P::OwnerChange, account:
 pure def publishUpdate(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding, exclusions: List[X::Exclusion],
   appendReads: List[RegistryRead]): Registry =
   val p = P::publishUpdate(c.project, by, change)
-  { project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
+  { ...c, project: p, security: sync(p, withAppends(change, c.security)), exclusions: exclusions }
 pure def canRemove(c: Registry, by: int, removal: P::Removal): bool =
   P::canRemove(c.project, by, removal) and c.security.restriction == E::Clear
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
@@ -267,7 +282,7 @@ pure def adminRevise(c: Registry, by: int, exception: P::Exception, exclusions: 
   val replaced = P::adminRevise(c.project, by, exception)
   val restricted = c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine
   val p = if (restricted and c.project.retirement == P::NotRetired) { ...replaced, retirement: P::RestrictionRetired } else replaced
-  { project: p, security: E::withRevisionLanded(restricted, sync(p, withExceptionAppends(exception, c.security))), exclusions: exclusions }
+  { ...c, project: p, security: E::withRevisionLanded(restricted, sync(p, withExceptionAppends(exception, c.security))), exclusions: exclusions }
 pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.project, by, tier) and c.security.restriction == E::Clear
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
   val p = P::place(c.project, by, tier)
@@ -307,6 +322,14 @@ and `decideMalice(fence, accounts)` of this machine together with [participation
 and `projectRequest` read from the same enforcement record whose open project
 appeal the security side reads; a refusal of either refuses both (shell
 obligation).
+
+Discovered by simulation: an account denial needs a
+malicious result, a moderator's malice decision naming the account, the
+account's appeal and a second moderator's denial, each under its exact fence,
+and at equal weight no trace or 200000-sample search reached it within the
+run cap, so the malice decision and the account appeal and denial are tried
+more often (`weight_decideMalice`, `weight_journalAccountAppeal`,
+`weight_journalAccountDenial`).
 
 ```quint
 pure def canFlag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): bool =
@@ -595,7 +618,6 @@ pure def renderedSkill(revision: int): SkillServing =
     served: SR::publish(SR::templateA, { digest: "d1", notes: List() }) }
 pure val skillValues = Set(renderedSkill(2), renderedSkill(1),
   { ...renderedSkill(2), served: SR::publish(SR::templateA, { digest: "d2", notes: List() }) })
-pure val observedValues = tuples(1.to(3), Set(0), 1.to(3)).map(x => { revision: x._1, enforcementGeneration: x._2, clearanceGeneration: x._3 })
 pure val exceptionValues = Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n })
   .union(Set(1, 2, 3).map(n => { ...P::exception1, expectedRevision: n, steward: 4 }))
   .union(Set(2, 3).map(n => { ...P::exception1, expectedRevision: n, tier: P::Retired }))
@@ -610,6 +632,7 @@ pure val weight_publishApplication = 10
 pure val weight_requestAssessment = 10
 pure val weight_recordResult = 10
 pure val weight_activate = 8
+pure val weight_readSetup = 8
 pure val weight_flag = 8
 pure val weight_requestAppeal = 5
 pure val weight_reinstate = 6
@@ -619,4 +642,7 @@ pure val weight_ban = 3
 pure val weight_grantExemption = 4
 pure val weight_adminRevise = 3
 pure val weight_remove = 3
+pure val weight_decideMalice = 6
+pure val weight_journalAccountAppeal = 6
+pure val weight_journalAccountDenial = 8
 ```
