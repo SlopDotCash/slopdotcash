@@ -93,6 +93,7 @@ import {
 import {
   type AcceptedImplementationProofs,
   type AcceptedImplementationSource,
+  acceptedOrdinaryCommitOid,
   loadAcceptedImplementationProofs,
 } from "./accepted-implementation-digests";
 import {
@@ -4886,6 +4887,7 @@ type PreviousImplementationMetadata =
 type PreviousImplementationRead = {
   candidates: Map<string, AcceptedImplementationSource[]>;
   unresolvedShapes: Set<string>;
+  acceptedOrdinaryOwners: Map<string, string>;
 };
 
 function observePreviousImplementation(
@@ -4893,6 +4895,7 @@ function observePreviousImplementation(
   candidate: AcceptedImplementationPredecessor,
   repositoryNodeId: string,
   path: string,
+  collectOrdinaryAcceptances: boolean,
 ): PreviousImplementationMetadata | undefined {
   if (value == null) return undefined;
   const row = asRecord(value, path);
@@ -4922,7 +4925,25 @@ function observePreviousImplementation(
   const count = commits.totalCount;
   if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
     return undefined;
-  if (count > 1 || row.changedFiles === 0) return { kind: "ineligible" };
+  if (row.changedFiles === 0) return { kind: "ineligible" };
+  if (count > 1) {
+    if (!collectOrdinaryAcceptances) return undefined;
+    // The prior positive award and the immutable GitHub acceptance can bind
+    // the exact accepted SHA even though this is not a single-commit diff
+    // candidate. A missing acceptance remains retryable in future collections.
+    if (row.mergeCommit == null || typeof row.headRefOid !== "string")
+      return undefined;
+    const acceptance = readImplementationAcceptance(
+      candidate.id,
+      asFullCommitSha(row.headRefOid, `${path}.headRefOid`),
+      row.mergeCommit,
+      path,
+    );
+    if (acceptance === null) return undefined;
+    if (acceptance !== "ineligible" && acceptedOrdinaryCommitOid(acceptance))
+      return { kind: "accepted-ordinary", source: acceptance };
+    return { kind: "ineligible" };
+  }
   // An empty submission list without a recorded merge leaves no bound shape.
   if (count === 0)
     return row.mergeCommit == null ? undefined : { kind: "ineligible" };
@@ -4985,12 +5006,31 @@ export async function readPreviousImplementationSources(
   shapes: ReadonlySet<string>,
   sources: readonly AcceptedImplementationPredecessor[],
   memo?: ImplementationMemo,
+  carriedOrdinaryOids: ReadonlySet<string> = new Set(),
 ): Promise<PreviousImplementationRead> {
   const candidates = new Map<string, AcceptedImplementationSource[]>();
   const unresolvedShapes = new Set<string>();
-  const consider = (observation: PreviousImplementationMetadata) => {
-    if (observation.kind === "ineligible" || !shapes.has(observation.shape))
-      return;
+  const acceptedOrdinarySources = new Map<
+    string,
+    AcceptedImplementationPredecessor
+  >();
+  const consider = (
+    observation: PreviousImplementationMetadata,
+    candidate: AcceptedImplementationPredecessor,
+  ) => {
+    if ("source" in observation) {
+      const oid = acceptedOrdinaryCommitOid(observation.source);
+      if (oid && carriedOrdinaryOids.has(oid)) {
+        const chosen = acceptedOrdinarySources.get(oid);
+        if (
+          !chosen ||
+          candidate.mergedAt < chosen.mergedAt ||
+          (candidate.mergedAt === chosen.mergedAt && candidate.id < chosen.id)
+        )
+          acceptedOrdinarySources.set(oid, candidate);
+      }
+    }
+    if (!("shape" in observation) || !shapes.has(observation.shape)) return;
     if (observation.kind === "unresolved") {
       unresolvedShapes.add(observation.shape);
       return;
@@ -5030,24 +5070,31 @@ export async function readPreviousImplementationSources(
         candidate,
         repositoryNodeId,
         `previous implementation sources[${index}]`,
+        carriedOrdinaryOids.size > 0,
       );
       if (observation) {
         // Retry missing acceptance evidence in later passes.
         if (observation.kind !== "unresolved")
           memo?.rememberPrevious(repositoryNodeId, candidate, observation);
-        consider(observation);
+        consider(observation, candidate);
       }
     }
   }
   const missing: AcceptedImplementationPredecessor[] = [];
   for (const candidate of sources) {
     const reuse = memo?.previous(repositoryNodeId, candidate);
-    if (reuse) consider(reuse);
+    if (reuse) consider(reuse, candidate);
     else missing.push(candidate);
   }
   for (const batch of chunks(missing, REVIEW_DETAIL_BATCH_SIZE))
     await read(batch);
-  return { candidates, unresolvedShapes };
+  return {
+    candidates,
+    unresolvedShapes,
+    acceptedOrdinaryOwners: new Map(
+      [...acceptedOrdinarySources].map(([oid, source]) => [oid, source.id]),
+    ),
+  };
 }
 
 export async function readImplementationProofs(
@@ -5599,6 +5646,7 @@ async function collectLeaderboardFromGitHub(
     assertHistoricalMergedCensus(historical.audit.sources, dedupedOutcomes);
   const acceptedImplementationDigests = new Map<string, string>();
   const previousImplementationDigests = new Set<string>();
+  const previousAcceptedOrdinaryOwners = new Map<string, string>();
   const unresolvedImplementationSources = new Set<string>();
   if (options.readAcceptedImplementation) {
     let previousJournal: PointsJournal | null | undefined;
@@ -5608,7 +5656,20 @@ async function collectLeaderboardFromGitHub(
       mergedPullRequestReferences,
     } of collections) {
       const current = implementationSourcesByShape(mergedPullRequestReferences);
-      if (current.size === 0) continue;
+      const carriedOrdinaryOids = new Set<string>();
+      if (!historical) {
+        for (const { outcome } of mergedPullRequestReferences) {
+          if (
+            !outcome?.commits?.length ||
+            outcome.commits.some(({ parentCount }) => parentCount === undefined)
+          )
+            continue;
+          for (const { oid, parentCount } of outcome.commits) {
+            if (parentCount === 1) carriedOrdinaryOids.add(oid);
+          }
+        }
+      }
+      if (current.size === 0 && carriedOrdinaryOids.size === 0) continue;
       if (previousJournal === undefined)
         previousJournal =
           (await options.readPreviousImplementationJournal?.()) ?? null;
@@ -5624,11 +5685,18 @@ async function collectLeaderboardFromGitHub(
               recordedThrough: now.toISOString(),
             }),
             options.implementationMemo,
+            carriedOrdinaryOids,
           )
         : {
             candidates: new Map<string, AcceptedImplementationSource[]>(),
             unresolvedShapes: new Set<string>(),
+            acceptedOrdinaryOwners: new Map<string, string>(),
           };
+      for (const [oid, sourceId] of prior.acceptedOrdinaryOwners)
+        previousAcceptedOrdinaryOwners.set(
+          `${repository.id.toLowerCase()}\0${oid}`,
+          sourceId,
+        );
       // Past candidates are already bound to latest positive ordinary Points.
       // Lookup equality is always by exact native bytes, never by file counts.
       const present = implementationDigestCandidates(
@@ -5973,6 +6041,7 @@ async function collectLeaderboardFromGitHub(
     ...valueInputs,
     acceptedImplementationDigests,
     previousImplementationDigests,
+    previousAcceptedOrdinaryOwners,
     unresolvedImplementationSources,
     valueContextPullRequests,
     valuePolicy: scoringPolicy,

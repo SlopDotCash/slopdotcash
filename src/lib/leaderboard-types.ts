@@ -784,6 +784,9 @@ export interface LeaderboardInput {
   acceptedImplementationDigests?: ReadonlyMap<string, string>;
   /** Exact repository and change keys tied to earlier positive ordinary awards. */
   previousImplementationDigests?: ReadonlySet<string>;
+  /** Repository and exact accepted SHA, owned by an earlier positive ordinary
+   * award outside the rolling window. Apply only to unassessed implementation. */
+  previousAcceptedOrdinaryOwners?: ReadonlyMap<string, string>;
   /** An earlier possible match has incomplete native acceptance evidence. */
   unresolvedImplementationSources?: ReadonlySet<string>;
   /** Trusted journal decisions verified against fresh complete source evidence. */

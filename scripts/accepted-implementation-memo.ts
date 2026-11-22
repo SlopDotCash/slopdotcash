@@ -1,11 +1,15 @@
 /** Trusted collection's private cache of GitHub observations and native proofs. */
 import { sha256Hex } from "../src/lib/sha256";
-import type { AcceptedImplementationSource } from "./accepted-implementation-digests";
+import {
+  type AcceptedImplementationSource,
+  acceptedOrdinaryCommitOid,
+} from "./accepted-implementation-digests";
 import type { AcceptedImplementationPredecessor } from "./accepted-implementation-history";
 import { COLLECTION_MEMO_FULL_INTERVAL_MS } from "./collection-memo";
 
 export type PreviousImplementationObservation =
   | { kind: "ineligible" }
+  | { kind: "accepted-ordinary"; source: AcceptedImplementationSource }
   | { kind: "candidate"; shape: string; source: AcceptedImplementationSource };
 
 interface PreviousEntry {
@@ -23,7 +27,7 @@ interface DigestEntry {
   observedAt: string | null;
 }
 
-const FORMAT = "slop-accepted-implementation-memo-v1";
+const FORMAT = "slop-accepted-implementation-memo-v2";
 const MAX_BYTES = 512 * 1024 * 1024;
 const MAX_ROWS = 200_000;
 const NODE_ID = /^[A-Za-z0-9_=+/-]{1,256}$/u;
@@ -136,6 +140,13 @@ function parseObservation(
   if ((value as { kind?: unknown } | null)?.kind === "ineligible") {
     record(value, ["kind"]);
     return { kind: "ineligible" };
+  }
+  if ((value as { kind?: unknown } | null)?.kind === "accepted-ordinary") {
+    const row = record(value, ["kind", "source"]);
+    const source = parseSource(row.source);
+    if (source.id !== expectedSource || !acceptedOrdinaryCommitOid(source))
+      invalid("ordinary accepted identity");
+    return { kind: "accepted-ordinary", source };
   }
   const row = record(value, ["kind", "shape", "source"]);
   if (row.kind !== "candidate") invalid("observation kind");

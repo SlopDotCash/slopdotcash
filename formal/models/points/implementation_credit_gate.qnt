@@ -3,8 +3,10 @@
 // @source scripts/value-ingestion.ts
 // @source scripts/retained-commit-credit.ts
 // @source scripts/generate-leaderboard.ts
+// @source scripts/accepted-implementation-memo.ts
 // @evidence scripts/retained-attribution-hold.test.ts
 // @evidence scripts/commit-credit.test.ts
+// @evidence scripts/leaderboard-source-recovery.test.ts
 // Finite selection gate for one accepted source. A complete first-owner proof
 // can show all ordinary commits already credited. An attribution proof gap is
 // distinct from transport/identity failure and never revokes retained Points.
@@ -25,6 +27,9 @@ module implementation_credit_gate {
     selectSource(hasCommitRows, false, rollingFallback and not(hasCommitRows), false)
   action selectPromotedAcceptance(earlierAcceptance: bool, sameRepository: bool, independentWork: bool): bool =
     selectSource(true, earlierAcceptance and sameRepository and not(independentWork), false, false)
+  action selectPreviousAcceptance(rollingFallback: bool, earlierPositive: bool, exactAcceptance: bool,
+    sameRepository: bool, independentWork: bool): bool =
+    selectPromotedAcceptance(rollingFallback and earlierPositive and exactAcceptance, sameRepository, independentWork)
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -49,6 +54,19 @@ module implementation_credit_gate {
     init.then(selectPromotedAcceptance(false, true, false)).then(credit)
       .expect(s.credited and invariant)
     .then(init).then(selectPromotedAcceptance(true, false, false)).then(credit)
+      .expect(s.credited and invariant)
+  run previouslyRewardedSquashCannotScoreAgainTest =
+    init.then(selectPreviousAcceptance(true, true, true, true, false))
+      .expect(s.duplicate and invariant).then(credit.fail())
+  run previousSquashDoesNotReplaceRatifiedOrIndependentlyAcceptedWorkTest =
+    init.then(selectPreviousAcceptance(false, true, true, true, false)).then(credit)
+      .expect(s.credited and invariant)
+    .then(init).then(selectPreviousAcceptance(true, true, true, true, true)).then(credit)
+      .expect(s.credited and invariant)
+  run onlyExactEarlierPositiveSquashCanWithholdCreditTest =
+    init.then(selectPreviousAcceptance(true, false, true, true, false)).then(credit)
+      .expect(s.credited and invariant)
+    .then(init).then(selectPreviousAcceptance(true, true, false, true, false)).then(credit)
       .expect(s.credited and invariant)
   run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
     .expect(s.retained == 10 and invariant).then(credit.fail())

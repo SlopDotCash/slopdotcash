@@ -49,6 +49,42 @@ test("restored evidence is reusable only with the same public identity and nativ
   expect(restored.serialize(codeDigest, at)).toBe(bytes);
 });
 
+test("a verified ordinary acceptance survives a warm read without trusting the old shape-only memo", () => {
+  const memo = new ImplementationMemo();
+  const squash = { ...source, mergeParentShas: [source.mergeParentShas[0]] };
+  const accepted = { kind: "accepted-ordinary", source: squash } as const;
+  memo.rememberPrevious(repo, prior, accepted);
+  const bytes = memo.serialize(codeDigest, at);
+  const read = (received: string, now = at) =>
+    ImplementationMemo.parse(received, codeDigest, new Date(now));
+  const restored = read(bytes);
+  expect(restored.previous(repo, prior)).toEqual(accepted);
+  expect(restored.previous("R_other", prior)).toBeUndefined();
+  expect(
+    read(
+      restored.serialize(codeDigest, "2026-11-05T00:00:00.000Z"),
+      "2026-11-09T00:00:00.000Z",
+    ).previous(repo, prior),
+  ).toBeUndefined();
+  expect(() =>
+    read(
+      bytes.replace(
+        "slop-accepted-implementation-memo-v2",
+        "slop-accepted-implementation-memo-v1",
+      ),
+    ),
+  ).toThrow("version or code digest");
+  for (const invalid of [
+    { ...squash, mergeSha: squash.headSha },
+    { ...squash, mergeParentShas: source.mergeParentShas },
+    { ...squash, mergeTreeSha: squash.firstParentTreeSha },
+  ]) {
+    const edited = JSON.parse(bytes);
+    edited.previous[0].observation.source = invalid;
+    expect(() => read(JSON.stringify(edited))).toThrow();
+  }
+});
+
 test("recollection discards only observations made in the failed pass", () => {
   const memo = new ImplementationMemo();
   memo.rememberPrevious(repo, prior, observation);

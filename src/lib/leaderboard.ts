@@ -3521,6 +3521,10 @@ function createSnapshotWithReviewCutoff(
     mergedPullRequestOutcomes,
     mode === "rolling",
   );
+  const fallbackCommitOwners =
+    mode === "rolling" && input.previousAcceptedOrdinaryOwners?.size
+      ? new Map([...commitOwners, ...input.previousAcceptedOrdinaryOwners])
+      : commitOwners;
   const outcomeById = new Map(
     mergedPullRequestOutcomes.map((pullRequest) => [
       pullRequest.id,
@@ -3531,13 +3535,14 @@ function createSnapshotWithReviewCutoff(
   // merge credit with (Score v2) or its author alone (Score v1 history).
   const mergeCreditActorsOf = (
     pullRequest: MergedPullRequestOutcome,
+    owners: ReadonlyMap<string, string> = commitOwners,
   ): GitHubActor[] => {
     if (
       parseIsoTime(pullRequest.mergedAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT)
     ) {
       return mergeCreditActors(
         pullRequest,
-        commitOwners,
+        owners,
         input.retainedCommitAuthors?.get(pullRequest.id),
       );
     }
@@ -3840,18 +3845,12 @@ function createSnapshotWithReviewCutoff(
       pullRequest.author && !isBotActor(pullRequest.author)
         ? pullRequest.author
         : null;
-    // Score v1 history credits the pull-request author only.
-    let actors = mergeCreditActorsOf(pullRequest);
-    const lineWeights = v2
-      ? mergeCreditLineWeights(
-          pullRequest,
-          commitOwners,
-          input.retainedCommitAuthors?.get(pullRequest.id),
-        )
-      : null;
+    // Review exclusions keep the full current credit actor census even when
+    // a previous acceptance withholds new provisional implementation credit.
+    const currentActors = mergeCreditActorsOf(pullRequest);
     creditActorIds.set(
       pullRequest.id,
-      new Set(actors.map((actor) => actor.id)),
+      new Set(currentActors.map((actor) => actor.id)),
     );
     if (attributionHeldSourceIds.has(pullRequest.id)) continue;
     // A joint member is scored by its unit, never by a superseded per-PR record.
@@ -3888,6 +3887,21 @@ function createSnapshotWithReviewCutoff(
       !ratification && valueDecision?.status === "assessed"
         ? valueDecision.record
         : null;
+    const implementationOwners =
+      !ratification && !valueRecord && joint?.status !== "assessed"
+        ? fallbackCommitOwners
+        : commitOwners;
+    let actors =
+      implementationOwners === commitOwners
+        ? currentActors
+        : mergeCreditActorsOf(pullRequest, implementationOwners);
+    const lineWeights = v2
+      ? mergeCreditLineWeights(
+          pullRequest,
+          implementationOwners,
+          input.retainedCommitAuthors?.get(pullRequest.id),
+        )
+      : null;
     const digest = implementationDigests?.get(pullRequest.id);
     const acceptanceKey = digest
       ? `${repositoryId.toLowerCase()}\0${digest}`
@@ -3905,8 +3919,9 @@ function createSnapshotWithReviewCutoff(
         isUnprovedZeroLinePromotion(
           pullRequest.commits ?? [],
           (commit) =>
-            commitOwners.get(`${repositoryId.toLowerCase()}\0${commit.oid}`) ===
-            pullRequest.id,
+            implementationOwners.get(
+              `${repositoryId.toLowerCase()}\0${commit.oid}`,
+            ) === pullRequest.id,
         ) ||
         input.unresolvedImplementationSources?.has(pullRequest.id) ||
         (acceptanceKey !== null &&
@@ -5674,14 +5689,15 @@ function createSnapshotWithReviewCutoff(
                 .every(
                   (commit) =>
                     isCreditEligibleCommitAuthor(commit.author) &&
-                    commitOwners.get(
+                    fallbackCommitOwners.get(
                       `${repository.toLowerCase()}\0${commit.oid}`,
                     ) === pull.id,
                 );
             const verifiedActors = completePrimaryAuthors
-              ? mergeCreditActorsOf(pull as MergedPullRequestOutcome).map(
-                  (actor) => actor.id,
-                )
+              ? mergeCreditActorsOf(
+                  pull as MergedPullRequestOutcome,
+                  fallbackCommitOwners,
+                ).map((actor) => actor.id)
               : [];
             const publishedActors = completePrimaryAuthors
               ? publishedLedger

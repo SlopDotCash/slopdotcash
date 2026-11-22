@@ -190,6 +190,22 @@ test("the fresh commit census requirement preserves the historical replay", () =
   expect(replay).toEqual(before);
 });
 
+test("rolling previous ownership does not affect the historical replay", () => {
+  const { historical } = fixture();
+  const before = createHistoricalLeaderboardSnapshot(historical, scope);
+  historical.previousAcceptedOrdinaryOwners = new Map(
+    historical.mergedPullRequestOutcomes.flatMap(({ commits }) =>
+      (commits ?? []).map(({ oid }) => [
+        `${scope.repository.toLowerCase()}\0${oid}`,
+        "PR_earlier_accepted",
+      ]),
+    ),
+  );
+  expect(createHistoricalLeaderboardSnapshot(historical, scope)).toEqual(
+    before,
+  );
+});
+
 test("a mismatched registry manifest or repository node ID fails closed", () => {
   const { historical } = fixture();
   expect(() =>

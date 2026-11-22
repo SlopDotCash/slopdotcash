@@ -742,8 +742,30 @@ function ratifiedSiblingSnapshot(
   // How the census describes the second pull request's commits. The last two
   // also add a third pull request whose claim is a second unit of the group.
   second: "one-author" | "sync-only" | "two-authors" = "one-author",
+  previousSquashes = false,
 ) {
   const input = penaltyScoreInput([], GENERATED_AT);
+  if (previousSquashes) {
+    input.previousAcceptedOrdinaryOwners = new Map(
+      input.mergedPullRequestOutcomes
+        .filter(({ id }) => id === "PR_november" || id === "PR_owner")
+        .flatMap(({ commits }) =>
+          (commits ?? []).map(({ oid }) => [
+            `slopdotcash/asi\0${oid}`,
+            "PR_earlier_accepted",
+          ]),
+        ),
+    );
+  }
+  for (const outcome of input.mergedPullRequestOutcomes) {
+    outcome.commits =
+      outcome.commits?.map((commit) => ({
+        ...commit,
+        parentCount: 1,
+        additions: 1,
+        deletions: 0,
+      })) ?? null;
+  }
   const pulls = ["PR_november", "PR_owner"].map((id) => {
     const pull = input.mergedPullRequests.find((record) => record.id === id);
     if (!pull) throw new Error("fixture pull request missing");
@@ -957,6 +979,10 @@ test("a maintainer ratification of one joint member leaves the other member its 
   ]);
   // Points the second author already holds for that merge are not zeroed.
   expect(secondAuthorPointsAfter(ratified)).toBe(10);
+  expect(ratifiedSiblingSnapshot(true, "one-author", true)).toEqual(ratified);
+  expect(ratifiedSiblingSnapshot(false, "one-author", true)).toEqual(
+    ratifiedSiblingSnapshot(false),
+  );
 });
 
 // Without proof of who implemented it, the per-pull-request path holds a

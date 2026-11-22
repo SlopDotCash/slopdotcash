@@ -3839,9 +3839,9 @@
     },
     {
       "path": "scripts/accepted-implementation-digests.ts",
-      "sha256": "d2f85164ae01cb5ac5502a866abdc55129e0c9e54c85f35af203627f56b39af1",
+      "sha256": "cb1033fd275028f05b75ffad9959c7cc721cb1aa97e0e122f6e7e46ed7f1410a",
       "models": ["formal/models/points/accepted_implementation_duplicates.qnt"],
-      "candidateLines": [81, 82, 144],
+      "candidateLines": [95, 96, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -3853,9 +3853,12 @@
     },
     {
       "path": "scripts/accepted-implementation-memo.ts",
-      "sha256": "437a7225299cf299a291b5d89eef141165c81cecb0b2c8470887db12ab6281a3",
-      "models": ["formal/models/points/incremental_collection.qnt"],
-      "candidateLines": [331],
+      "sha256": "0573899f50e20cbf34f628111ea6e481732441a60222676e2487b9ad89b3b221",
+      "models": [
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/incremental_collection.qnt"
+      ],
+      "candidateLines": [342],
       "review": "mapped-abstraction"
     },
     {
@@ -4399,7 +4402,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "ec30aaf0183873fd913fe5398ee4cfbb80eca6d39bac8a76c8e58f7b4b3fcf54",
+      "sha256": "2b5180706b5890800889dc7805be199fb132f9803867ef781951f37a285424df",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4414,16 +4417,16 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 223, 234, 243, 334, 346, 348, 351, 580, 668, 689, 725, 756, 821,
-        868, 896, 987, 1020, 1029, 1041, 1077, 1174, 1370, 1605, 1667, 1675,
-        1733, 1786, 1789, 1982, 1991, 1996, 2003, 2086, 2087, 2253, 2254, 2337,
-        2370, 2398, 2400, 2404, 2414, 2416, 2428, 2438, 2448, 2473, 2476, 2477,
-        2480, 2482, 2507, 2559, 2864, 2867, 3167, 3287, 3408, 3421, 3432, 3433,
-        3620, 3621, 3812, 3828, 3840, 3847, 3873, 3883, 3887, 3891, 3895, 3950,
-        3969, 3996, 4013, 4047, 4048, 4050, 4066, 4083, 4084, 4085, 4094, 4099,
-        4279, 4637, 4659, 4668, 4718, 4753, 4759, 4766, 4835, 4905, 5035, 5154,
-        5346, 5505, 5840, 5850, 5852, 5865, 5898, 5900, 5901, 5905, 5909, 5965,
-        6028, 6081, 6084, 6173, 6221, 6301, 6311, 6318
+        43, 224, 235, 244, 335, 347, 349, 352, 581, 669, 690, 726, 757, 822,
+        869, 897, 988, 1021, 1030, 1042, 1078, 1175, 1371, 1606, 1668, 1676,
+        1734, 1787, 1790, 1983, 1992, 1997, 2004, 2087, 2088, 2254, 2255, 2338,
+        2371, 2399, 2401, 2405, 2415, 2417, 2429, 2439, 2449, 2474, 2477, 2478,
+        2481, 2483, 2508, 2560, 2865, 2868, 3168, 3288, 3409, 3422, 3433, 3434,
+        3621, 3622, 3813, 3829, 3841, 3848, 3874, 3884, 3888, 3892, 3896, 3951,
+        3970, 3997, 4014, 4048, 4049, 4051, 4067, 4084, 4085, 4086, 4095, 4100,
+        4280, 4638, 4660, 4669, 4719, 4754, 4760, 4767, 4836, 4908, 5076, 5201,
+        5393, 5552, 5908, 5918, 5920, 5933, 5966, 5968, 5969, 5973, 5977, 6033,
+        6097, 6150, 6153, 6242, 6290, 6370, 6380, 6387
       ],
       "review": "mapped-abstraction"
     },
@@ -7105,17 +7108,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "299de1b1c021772bdedab19b1659a2e7a77ae4c894dc12abf1e6eb14394d3d7d",
+      "sha256": "2f4d95b7f0dc5bdf5d477d6c67b58849474674c1dcc82ee40f3c290cce069e3e",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 802, 829
+        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 805, 832
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "1cfc91eb1c2c8c93216fc4d2f1146fb1e5e9d37c47ce6ad652bfd52d9077053f",
+      "sha256": "92ced77620d449df5e51e082039b447ddf3026e8344a7377ba6c502ad8c1650a",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7134,13 +7137,13 @@
         1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
         2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
         2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2940, 2993,
-        3159, 3260, 3279, 3334, 3510, 3708, 3733, 3782, 3868, 3888, 4043, 4124,
-        4521, 4532, 4566, 4629, 4643, 4966, 5179, 5380, 5493, 5518, 5649, 5658,
-        5663, 5730, 5744, 6507, 6509, 6532, 6536, 6540, 6545, 6691, 6700, 6710,
-        6711, 6769, 6804, 6810, 6830, 6835, 6842, 6850, 6852, 6878, 6881, 6895,
-        6897, 6918, 6920, 6924, 6927, 6932, 7124, 7126, 7385, 7429, 7492, 7493,
-        8372, 8373, 8374, 8375, 8392, 8402, 8413, 8429, 8518, 8589, 8590, 8617,
-        8824
+        3159, 3260, 3279, 3334, 3510, 3713, 3738, 3787, 3867, 3887, 3891, 4058,
+        4139, 4536, 4547, 4581, 4644, 4658, 4981, 5194, 5395, 5508, 5533, 5664,
+        5673, 5678, 5746, 5760, 6523, 6525, 6548, 6552, 6556, 6561, 6707, 6716,
+        6726, 6727, 6785, 6820, 6826, 6846, 6851, 6858, 6866, 6868, 6894, 6897,
+        6911, 6913, 6934, 6936, 6940, 6943, 6948, 7140, 7142, 7401, 7445, 7508,
+        7509, 8388, 8389, 8390, 8391, 8408, 8418, 8429, 8445, 8534, 8605, 8606,
+        8633, 8840
       ],
       "review": "mapped-abstraction"
     },
@@ -15873,8 +15876,9 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "d7d9b9ea892069d261111923d86e4847084bb86f9eec668339488b73dc2123cd",
+      "sha256": "0bea750c1c5e099e4a04d4ee46fa923f0b7cd362caa032b7439194e195f403c5",
       "sources": [
+        "scripts/accepted-implementation-memo.ts",
         "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
@@ -15892,6 +15896,9 @@
         "noCommitRowsHoldFreshCreditTest",
         "noRowsInHistoricalReplayKeepsFallbackTest",
         "nonemptyCommitCensusCanScoreTest",
+        "onlyExactEarlierPositiveSquashCanWithholdCreditTest",
+        "previousSquashDoesNotReplaceRatifiedOrIndependentlyAcceptedWorkTest",
+        "previouslyRewardedSquashCannotScoreAgainTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"
       ]

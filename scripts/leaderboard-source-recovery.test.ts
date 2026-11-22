@@ -17,6 +17,7 @@ import {
   awardForScore,
   latestPoints,
   type PointsJournal,
+  pointKey,
 } from "../src/lib/points";
 import { findProject } from "../src/lib/projects.mjs";
 import {
@@ -31,6 +32,7 @@ import {
 import { ImplementationMemo } from "./accepted-implementation-memo";
 import {
   collectSearchReferences,
+  type GenerateOptions,
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
   implementationDigestCandidates,
@@ -727,6 +729,7 @@ test("an older award is eligible only for its exact public merged source and rep
     expect(await read(node)).toEqual({
       candidates: new Map(),
       unresolvedShapes: new Set(),
+      acceptedOrdinaryOwners: new Map(),
     });
   for (const [parents, observation] of [
     [
@@ -799,17 +802,25 @@ test("selection reuses prior evidence across shapes but unresolved reads collect
       new Set([scope]),
       [prior],
       memo,
+      new Set([earlier.mergeCommit.oid]),
     );
   expect((await lookup(shape)).candidates.size).toBe(0);
   reply = { ...earlier, mergeCommit: null };
   expect((await lookup(shape)).unresolvedShapes).toEqual(new Set([shape]));
   expect(memo.previous("R_verified", prior)).toBeUndefined();
   reply = earlier;
-  expect((await lookup("99/100/1")).candidates.size).toBe(0);
+  const aliasWithoutShape = await lookup("99/100/1");
+  expect(aliasWithoutShape.candidates.size).toBe(0);
+  expect(aliasWithoutShape.acceptedOrdinaryOwners).toEqual(
+    new Map([[earlier.mergeCommit.oid, earlier.id]]),
+  );
   const reused = await lookup(shape);
   expect(reused.candidates.get(shape)?.map(({ id }) => id)).toEqual([
     earlier.id,
   ]);
+  expect(reused.acceptedOrdinaryOwners).toEqual(
+    aliasWithoutShape.acceptedOrdinaryOwners,
+  );
   expect(reused.unresolvedShapes.size).toBe(0);
   expect(calls).toBe(3);
 
@@ -938,6 +949,19 @@ const recordJson = JSON.stringify(record);
 const recordDigest = sha256(recordJson);
 /** A registered project that only the staging registry lists. */
 const STAGING_ONLY = "canonry";
+const priorSquashes = [retained.headRefOid, "d".repeat(40)].map(
+  (accepted, index) => ({
+    accepted,
+    pull: {
+      ...retained,
+      id: `PR_earlier_${index}`,
+      number: 98 + index,
+      url: `https://github.com/${repository.id}/pull/${98 + index}`,
+      mergedAt: `2026-10-0${index + 1}T00:00:00.000Z`,
+      headRefOid: "c".repeat(40),
+    },
+  }),
+);
 type Failure =
   | "forbidden"
   | "mixed"
@@ -1100,6 +1124,7 @@ async function fixture(
     | "open-files-later-changed"
     | "commit-lines-missing"
     | "commit-lines-negative"
+    | "cross-window-squash"
     | "open-reorder"
     | "open-skip",
   failure?: Failure,
@@ -1121,6 +1146,7 @@ async function fixture(
   let openPullRequestListings = 0;
   const comparisonPages: number[] = [];
   const commitLineBatches: string[][] = [];
+  const previousImplementationBatches: string[][] = [];
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
@@ -1138,6 +1164,35 @@ async function fixture(
   }));
   const sourceNodeFor = (pull: (typeof pulls)[number]) => {
     const node = nodeFor(pull);
+    if (mode === "cross-window-squash")
+      node.url = `https://github.com/${repository.id}/pull/${pull.number}`;
+    if (mode === "cross-window-squash" && pull.id === unaffected.id) {
+      const independent = node.commits.nodes[0].commit;
+      const carried = priorSquashes[1].accepted;
+      const edit = "e".repeat(40);
+      node.commits = connection([
+        {
+          commit: {
+            ...independent,
+            id: `C_${carried}`,
+            oid: carried,
+            additions: 120,
+            deletions: 0,
+          },
+        },
+        { commit: { ...independent, additions: 0, deletions: 2 } },
+        {
+          commit: {
+            ...independent,
+            id: `C_${edit}`,
+            oid: edit,
+            additions: 8,
+            deletions: 0,
+            author: nodeFor(retained).commits.nodes[0].commit.author,
+          },
+        },
+      ]);
+    }
     const firstCommit = node.commits.nodes[0] as {
       commit: { additions?: number; deletions: number };
     };
@@ -1216,7 +1271,34 @@ async function fixture(
         requests++;
         const data: Record<string, unknown> = {};
         let errors: unknown[] | undefined;
-        if (query.includes("query LeaderboardOutcomeCommitLines")) {
+        if (
+          mode === "cross-window-squash" &&
+          query.includes("query PreviousImplementationSources")
+        ) {
+          previousImplementationBatches.push(v.ids);
+          data.nodes = v.ids.map((id) => {
+            const { accepted, pull } = required(
+              priorSquashes.find(({ pull }) => pull.id === id),
+            );
+            const prior = nodeFor(pull);
+            return {
+              ...prior,
+              changedFiles: 3,
+              commits: { ...prior.commits, totalCount: 3 },
+              repository: {
+                id: nodeId(repository.owner, repository.name),
+                isPrivate: false,
+              },
+              mergeCommit: {
+                oid: accepted,
+                tree: { oid: "1".repeat(40) },
+                parents: connection([
+                  { oid: "a".repeat(40), tree: { oid: "2".repeat(40) } },
+                ]),
+              },
+            };
+          });
+        } else if (query.includes("query LeaderboardOutcomeCommitLines")) {
           commitLineBatches.push(v.ids);
           const lineSources = comparison
             ? [
@@ -1668,12 +1750,13 @@ async function fixture(
       openPullRequestListings,
       comparisonPages,
       commitLineBatches,
+      previousImplementationBatches,
       recoveredFiles,
       recoveryInputs,
       availabilityProbes,
       confirmationDelays,
     }),
-    generate: () =>
+    generate: (options: GenerateOptions = {}) =>
       runGenerator(
         output,
         {
@@ -1689,6 +1772,7 @@ async function fixture(
           jointSourceConfirmationDelay: async (milliseconds) => {
             confirmationDelays.push(milliseconds);
           },
+          ...options,
         },
       ),
     close: async () => {
@@ -1747,6 +1831,111 @@ function journalFor(
     GENERATED_AT,
   );
 }
+
+test("rolling collection reserves earlier accepted squashes from its prior positive Points source batch", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("cross-window-squash");
+  try {
+    const before = await f.generate();
+    const journal = appendPointAwards(
+      { ...journalFor(before), revisions: [] },
+      priorSquashes.map(({ pull }) => ({
+        ...awardForScore(
+          required(
+            before.ledger.find((event) => event.source.id === retained.id),
+          ),
+        ),
+        key: pointKey(
+          project.id,
+          required(retained.author).id,
+          "merged-pull-request",
+          pull.id,
+        ),
+        sourceId: pull.id,
+        sourceUrl: pull.url,
+        occurredAt: pull.mergedAt,
+        workUnitId: `wu_asi_pr_${pull.number}`,
+      })),
+      "a".repeat(64),
+      before.ruleVersion,
+      GENERATED_AT,
+    );
+    let journalReads = 0;
+    let nativeReads = 0;
+    const options: GenerateOptions = {
+      readPreviousImplementationJournal: async () => {
+        journalReads++;
+        return journal;
+      },
+      readAcceptedImplementation: async () => {
+        nativeReads++;
+        return { digests: new Map(), unavailable: new Set() };
+      },
+    };
+    const digest = "b".repeat(64);
+    const memo = new ImplementationMemo();
+    const cold = await f.generate({ ...options, implementationMemo: memo });
+    const warm = await f.generate({
+      ...options,
+      implementationMemo: ImplementationMemo.parse(
+        memo.serialize(digest, GENERATED_AT),
+        digest,
+        new Date(GENERATED_AT),
+      ),
+    });
+    for (const snapshot of [cold, warm]) {
+      assertLeaderboardSnapshot(snapshot);
+      expect(
+        snapshot.ledger.some((event) => event.source.id === retained.id),
+      ).toBe(false);
+      const points = applyPointsSnapshot(
+        journal,
+        snapshot,
+        "c".repeat(64),
+        snapshot.generatedAt,
+      );
+      expect(points.revisions.slice(0, 2)).toEqual(journal.revisions);
+      expect(
+        [...latestPoints(points).values()]
+          .map(({ award }) => award)
+          .filter(({ sourceId }) => sourceId === unaffected.id)
+          .map(({ actor, amount }) => [actor.id, amount])
+          .sort(),
+      ).toEqual(
+        [
+          [required(retained.author).id, 8],
+          [required(unaffected.author).id, 2],
+        ].sort(),
+      );
+      expect(
+        snapshot.ledger.some((event) =>
+          priorSquashes.some(({ pull }) => pull.id === event.source.id),
+        ),
+      ).toBe(false);
+    }
+    expect(nativeReads).toBe(0);
+    expect(journalReads).toBe(2);
+    expect(f.stats().previousImplementationBatches).toEqual([
+      priorSquashes.map(({ pull }) => pull.id),
+    ]);
+    const withdrawn = appendPointAwards(
+      journal,
+      journal.revisions.map(({ award }) => ({ ...award, amount: 0 })),
+      "e".repeat(64),
+      before.ruleVersion,
+      GENERATED_AT,
+    );
+    const noPriorCredit = await f.generate({
+      ...options,
+      readPreviousImplementationJournal: async () => withdrawn,
+      implementationMemo: memo,
+    });
+    expect(noPriorCredit.ledger).toEqual(before.ledger);
+    expect(f.stats().previousImplementationBatches).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});
 
 test("removed node is recorded after a complete recollection and both valid outcomes reach atomic output", async () => {
   setSystemTime(new Date(GENERATED_AT));
