@@ -7108,17 +7108,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "2f4d95b7f0dc5bdf5d477d6c67b58849474674c1dcc82ee40f3c290cce069e3e",
+      "sha256": "fd78094044ecbb74b575dfe8d71c4d2931a8f35ddafbc6636381bbc63c222efb",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 805, 832
+        71, 76, 281, 303, 351, 383, 441, 502, 510, 517, 557, 666, 697, 807, 834
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "92ced77620d449df5e51e082039b447ddf3026e8344a7377ba6c502ad8c1650a",
+      "sha256": "2c28be092c4a92add9be709dcb339488808731d28ac38ef2775f179ac2c04356",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
@@ -7137,13 +7137,13 @@
         1347, 1354, 1439, 1473, 1478, 1496, 1593, 2148, 2166, 2238, 2247, 2265,
         2274, 2282, 2304, 2319, 2328, 2336, 2382, 2432, 2482, 2537, 2554, 2555,
         2558, 2559, 2663, 2665, 2666, 2670, 2673, 2681, 2683, 2701, 2940, 2993,
-        3159, 3260, 3279, 3334, 3510, 3713, 3738, 3787, 3867, 3887, 3891, 4058,
-        4139, 4536, 4547, 4581, 4644, 4658, 4981, 5194, 5395, 5508, 5533, 5664,
-        5673, 5678, 5746, 5760, 6523, 6525, 6548, 6552, 6556, 6561, 6707, 6716,
-        6726, 6727, 6785, 6820, 6826, 6846, 6851, 6858, 6866, 6868, 6894, 6897,
-        6911, 6913, 6934, 6936, 6940, 6943, 6948, 7140, 7142, 7401, 7445, 7508,
-        7509, 8388, 8389, 8390, 8391, 8408, 8418, 8429, 8445, 8534, 8605, 8606,
-        8633, 8840
+        3159, 3260, 3279, 3334, 3510, 3714, 3739, 3788, 3869, 3889, 3893, 4077,
+        4158, 4555, 4566, 4600, 4663, 4677, 5000, 5213, 5414, 5527, 5552, 5683,
+        5692, 5697, 5765, 5779, 6545, 6547, 6570, 6574, 6578, 6583, 6729, 6738,
+        6748, 6749, 6807, 6842, 6848, 6868, 6873, 6880, 6888, 6890, 6916, 6919,
+        6933, 6935, 6956, 6958, 6962, 6965, 6970, 7162, 7164, 7423, 7467, 7530,
+        7531, 8410, 8411, 8412, 8413, 8414, 8431, 8441, 8452, 8456, 8479, 8568,
+        8647, 8648, 8676, 8883
       ],
       "review": "mapped-abstraction"
     },
@@ -7394,9 +7394,10 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "e813e0db33969b21f88e8891a61bc4f357c83125bed2c9f2bfe3171e1535c6cb",
+      "sha256": "2566953af33880f70cfff34211b26ac18c5e8e58cbf4e47da0455c6c4387f06f",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
@@ -7405,7 +7406,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [384, 869, 948, 1205, 1224, 1236, 1243],
+      "candidateLines": [384, 869, 948, 1205, 1226, 1238, 1245],
       "review": "mapped-abstraction"
     },
     {
@@ -15876,14 +15877,15 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "507e7f222f7725f1d973b43ed2b7f435b399ddb725d700cf8db50dcafc635a69",
+      "sha256": "92b34f5a3d763f34f7cf50be98c725e53ea1792e3e9e89f6f27043d5cc4f69ff",
       "sources": [
         "scripts/accepted-implementation-memo.ts",
         "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
         "src/lib/commit-credit.ts",
-        "src/lib/leaderboard.ts"
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts"
       ],
       "scenarios": [
         "acceptedSquashDoesNotSuppressIndependentWorkTest",
@@ -15901,6 +15903,7 @@
         "previousSubmittedCommitKeepsIndependentAndRatifiedWorkTest",
         "previousSubmittedCommitRequiresNativeAcceptanceTest",
         "previouslyRewardedSquashCannotScoreAgainTest",
+        "standaloneAssessmentWithEarlierAcceptanceNeedsJointReviewTest",
         "transportFailureDoesNotBecomeCreditTest",
         "zeroLineWorkWithIndependentPathsCanScoreTest"
       ]

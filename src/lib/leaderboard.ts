@@ -3521,10 +3521,11 @@ function createSnapshotWithReviewCutoff(
     mergedPullRequestOutcomes,
     mode === "rolling",
   );
-  const fallbackCommitOwners =
-    mode === "rolling" && input.previousAcceptedOrdinaryOwners?.size
-      ? new Map([...commitOwners, ...input.previousAcceptedOrdinaryOwners])
-      : commitOwners;
+  const previousAcceptedOrdinaryOwners =
+    mode === "rolling" ? input.previousAcceptedOrdinaryOwners : undefined;
+  const fallbackCommitOwners = previousAcceptedOrdinaryOwners?.size
+    ? new Map([...commitOwners, ...previousAcceptedOrdinaryOwners])
+    : commitOwners;
   const outcomeById = new Map(
     mergedPullRequestOutcomes.map((pullRequest) => [
       pullRequest.id,
@@ -3814,6 +3815,7 @@ function createSnapshotWithReviewCutoff(
     }
   >();
   const implementationHoldSourceIds = new Set<string>();
+  const standaloneReviewSources = new Set<string>();
   const scoredImplementationDigests = new Set(
     input.previousImplementationDigests,
   );
@@ -3985,6 +3987,23 @@ function createSnapshotWithReviewCutoff(
         throw new Error(
           "Overlapping accepted commits require joint value assessment",
         );
+      // A standalone assessment does not resolve overlap with a previously
+      // rewarded source. Hold its implementation credit for joint review.
+      if (
+        previousAcceptedOrdinaryOwners?.size &&
+        pullRequest.commits?.some((commit) => {
+          const previousOwner = previousAcceptedOrdinaryOwners.get(
+            `${repositoryId.toLowerCase()}\0${commit.oid}`,
+          );
+          return (
+            previousOwner !== undefined && previousOwner !== pullRequest.id
+          );
+        })
+      ) {
+        implementationHoldSourceIds.add(pullRequest.id);
+        standaloneReviewSources.add(pullRequest.id);
+        continue;
+      }
     }
     if (actors.length === 0) continue;
     const totalThirds =
@@ -5767,6 +5786,9 @@ function createSnapshotWithReviewCutoff(
                 !unavailableHeldSourceIds.has(pull.id)
                   ? null
                   : (decision?.latestDigest ?? null),
+              ...(standaloneReviewSources.has(pull.id) && decision?.latestDigest
+                ? { reviewAssessmentDigest: decision.latestDigest }
+                : {}),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
                 : {}),
@@ -8386,6 +8408,7 @@ export function assertLeaderboardSnapshot(
       if (
         ![
           "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+          "pullRequestId,pullRequestNumber,recordDigest,repository,reviewAssessmentDigest,status",
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
@@ -8428,6 +8451,17 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.reviewAssessmentDigest !== undefined) {
+        if (
+          row.status !== "incomplete" ||
+          row.recordDigest !== null ||
+          typeof row.reviewAssessmentDigest !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(row.reviewAssessmentDigest)
+        )
+          throw new Error(
+            "Review assessment coverage requires a held implementation source",
+          );
+      }
       if (row.implementationAllocation !== undefined) {
         const allocation = assertObject(
           row.implementationAllocation,
@@ -8584,6 +8618,14 @@ export function assertLeaderboardSnapshot(
       return match?.row;
     };
     for (const event of validatedLedger) {
+      if (
+        event.category === "merged-pull-request" &&
+        coverageRows.get(event.source.id)?.row.reviewAssessmentDigest !==
+          undefined
+      )
+        throw new Error(
+          "Held implementation source cannot publish merge credit",
+        );
       if (!event.scoreDecisionSourceId?.startsWith("value:")) continue;
       if (
         snapshot.valuePolicyEffectiveAt !== undefined &&
@@ -8600,14 +8642,15 @@ export function assertLeaderboardSnapshot(
       const row = coverageFor(event.id);
       // A ratification corrects only the implementation score; the
       // ratified source's review value still binds its assessment digest.
-      if (
-        !(
-          row?.status === "assessed" ||
-          (row?.status === "human-ratified" &&
-            event.category === "substantive-review")
-        ) ||
-        `value:${row.recordDigest}` !== event.scoreDecisionSourceId
-      )
+      const reviewEvent = event.category === "substantive-review";
+      const assessedDigest =
+        row?.status === "assessed" ||
+        (row?.status === "human-ratified" && reviewEvent)
+          ? row.recordDigest
+          : reviewEvent
+            ? row?.reviewAssessmentDigest
+            : undefined;
+      if (`value:${assessedDigest}` !== event.scoreDecisionSourceId)
         throw new Error(
           "Value score event is not bound to its assessment coverage",
         );

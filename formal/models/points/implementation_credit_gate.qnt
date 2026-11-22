@@ -1,11 +1,14 @@
 // @source src/lib/leaderboard.ts
 // @source src/lib/commit-credit.ts
+// @source src/lib/points.ts
 // @source scripts/value-ingestion.ts
 // @source scripts/retained-commit-credit.ts
 // @source scripts/generate-leaderboard.ts
 // @source scripts/accepted-implementation-memo.ts
 // @evidence scripts/retained-attribution-hold.test.ts
 // @evidence scripts/commit-credit.test.ts
+// @evidence scripts/implementation-line-scoring.test.ts
+// @evidence scripts/value-review-eligibility.test.ts
 // @evidence scripts/leaderboard-source-recovery.test.ts
 // Finite selection gate for one accepted source. A complete first-owner proof
 // can show all ordinary commits already credited. An attribution proof gap is
@@ -36,6 +39,8 @@ module implementation_credit_gate {
     selectSource(true, compare and nativeProof == "equal" and not(independentWork),
       compare and nativeProof == "unavailable", false)
   }
+  action selectStandaloneAssessment(rolling: bool, earlierAcceptedOverlap: bool): bool =
+    selectSource(true, false, rolling and earlierAcceptedOverlap, false)
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -86,6 +91,13 @@ module implementation_credit_gate {
       .then(credit).expect(s.credited and invariant)
     .then(init).then(selectPreviousAcceptance(true, true, false, true, false)).then(credit)
       .expect(s.credited and invariant)
+  run standaloneAssessmentWithEarlierAcceptanceNeedsJointReviewTest =
+    init.then(selectStandaloneAssessment(true, true))
+      .expect(s.retained == 10 and s.held and invariant).then(credit.fail())
+    .then(init).then(selectStandaloneAssessment(true, false))
+      .then(credit).expect(s.credited and invariant)
+    .then(init).then(selectStandaloneAssessment(false, true))
+      .then(credit).expect(s.credited and invariant)
   run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
     .expect(s.retained == 10 and invariant).then(credit.fail())
   run noCommitRowsHoldFreshCreditTest = init.then(selectCommitCensus(true, false))

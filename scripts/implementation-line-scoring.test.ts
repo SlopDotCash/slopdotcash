@@ -3,6 +3,7 @@ import {
   createLeaderboardSnapshot,
   repositoryIdFromUrl,
 } from "../src/lib/leaderboard";
+import { applyPointsSnapshot, emptyPointsJournal } from "../src/lib/points";
 import {
   AFTER_NOVEMBER,
   PENALIZED_AUTHOR,
@@ -222,6 +223,53 @@ test("a current assessment resolves an otherwise held empty acceptance", () => {
       (row) => row.pullRequestId === pull.id,
     ),
   ).toMatchObject({ status: "assessed", recordDigest: "d".repeat(64) });
+});
+
+test("a standalone assessment cannot credit work accepted before the rolling window", () => {
+  const fixture = sharedOutcome({ tiny: true });
+  const { input, pull } = fixture;
+  retainCarrierValuation(fixture);
+  const previous = createLeaderboardSnapshot(input);
+  const implementation = (
+    snapshot: ReturnType<typeof createLeaderboardSnapshot>,
+  ) =>
+    snapshot.ledger.filter((event) => event.category === "merged-pull-request");
+  const awarded = implementation(previous).filter(
+    (event) => event.source.id === pull.id,
+  );
+  expect(
+    awarded.reduce((sum, event) => sum + (event.scoreThirds ?? 0), 0),
+  ).toBe(24);
+
+  const copied = pull.commits?.[0];
+  if (!copied) throw new Error("missing earlier accepted commit");
+  input.previousAcceptedOrdinaryOwners = new Map([
+    [
+      `${repositoryIdFromUrl(pull.url).toLowerCase()}\0${copied.oid}`,
+      "PR_earlier_accepted",
+    ],
+  ]);
+  const held = createLeaderboardSnapshot(input);
+  expect(implementation(held)).toEqual(
+    implementation(previous).filter((event) => event.source.id !== pull.id),
+  );
+  expect(
+    held.valueAssessmentCoverage?.find((row) => row.pullRequestId === pull.id),
+  ).toMatchObject({
+    status: "incomplete",
+    recordDigest: null,
+    reviewAssessmentDigest: "d".repeat(64),
+  });
+
+  const at = input.windowTo;
+  const checkpoint = applyPointsSnapshot(
+    emptyPointsJournal(at),
+    previous,
+    "8".repeat(64),
+    at,
+  );
+  const result = applyPointsSnapshot(checkpoint, held, "9".repeat(64), at);
+  expect(result.revisions).toEqual(checkpoint.revisions);
 });
 
 test("a retained carrier-only valuation cannot hide missing multi-author line evidence", () => {
