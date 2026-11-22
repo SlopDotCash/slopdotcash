@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the published `lalalune/vibestack` `main`
-commit `06f20917a814eaa2b46478bb64e1eadab6c8cace`. The vendor update takes
+commit `d2cdc1deec41fcc845715776472208c1ae01f547`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
@@ -44,7 +44,7 @@ These local patches differ from that commit:
 | Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
 | Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md`, `.agents/skills/{prove,shell}/SKILL.md`, `vibestack/selftest.ts` | Slop keeps its project lint rules and guidance. Upstream #132 and its follow-up enforce the template's separate code policy |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
-| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
+| Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`. Nightly checks target the Slop application on `vibestack`. The root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
 `AGENTS.md` includes the Slop specification migration section, which names
 `lucide-react` as the single icon library and keeps pull-request narratives
