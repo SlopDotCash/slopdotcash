@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the published `lalalune/vibestack` `main`
-commit `b3b765413ec2fff8e3caa72dd8ae574382f12141`. The vendor update takes
+commit `e8db6e616d00b4c136acab918239bd32db7e630a`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
@@ -41,11 +41,12 @@ These local patches differ from that commit:
 | --- | --- | --- |
 | Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
 | `info` color, exported contrast and focus-ring boundary | `vibestack/design/tokens.ts`, `vibestack/design/test/`, root `package.json` export `./design/tokens` | Slop's tokens define `info`, which upstream rejects as an unknown token path; `ring` is held to 3:1 beside `input`; `@repo/ui` tests its colors with the token contrast function |
-| Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`; directories without a `package.json`, such as `packages/contracts`, are no workspace package; Foundry is installed beside Node |
+| Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
+| Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md`, `.agents/skills/{prove,shell}/SKILL.md`, `vibestack/selftest.ts` | Slop keeps its project lint rules and guidance. Upstream #132 and its follow-up enforce the template's separate code policy |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
 | Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
-`AGENTS.md` adds only the Slop specification migration section, which names
+`AGENTS.md` includes the Slop specification migration section, which names
 `lucide-react` as the single icon library and keeps pull-request narratives
 true to their diff. `.github/workflows/release.yml` is not vendored.
 

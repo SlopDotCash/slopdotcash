@@ -3302,7 +3302,12 @@ describe("the documents name what exists", () => {
     const studio = (ids: string[]) => ids.filter((id) => /^(vibestack-studio#(?!check)|@repo\/(ui#(build|typecheck)|design-system#build)|\/\/#lint:css)/.test(id));
     const append = (file: string, text = "\nMore words.\n") => () => fs.appendFileSync(path.join(root, file), text);
     const vibeDeclared = ["apps/app", "packages/ui", "vibestack/studio"].filter((dir) => read(`${dir}/tsconfig.json`, root).includes(".vibe/declarations")).map((dir) => `${JSON.parse(read(`${dir}/package.json`, root)).name}#typecheck`);
-    const [prose, selftest, fixture] = [await changedBy(append("spec/app/index.md")), await changedBy(append("vibestack/selftest.ts", "\n")), await changedBy(append("vibestack/fixtures/door.md"))];
+    const [prose, selftest, fixture, frameworkTest] = [
+      await changedBy(append("spec/app/index.md")),
+      await changedBy(append("vibestack/selftest.ts", "\n")),
+      await changedBy(append("vibestack/fixtures/door.md")),
+      await changedBy(append("vibestack/design/test/design.test.ts", "\n")),
+    ];
     for (const app of ["fees", "settlement"]) {
       const { dependencies, devDependencies } = manifest(`apps/${app}`);
       const workspaceBuilds = Object.entries({ ...dependencies, ...devDependencies })
@@ -3337,7 +3342,8 @@ describe("the documents name what exists", () => {
       devWaitsFor: tasks.get("vibestack-studio#dev")!.dependencies.toSorted(),
       prose: [studio(prose), prose.includes("@repo/app#test")],
       selftest: [studio(selftest), selftest.includes("//#build"), ["a", "b", "rest"].every((shard) => selftest.includes(`//#selftest:tools:${shard}`))],
-      fixture: studio(fixture),
+      fixture: { studio: studio(fixture), build: fixture.includes("//#build"), selftest: fixture.includes("//#selftest:tools:a") },
+      frameworkTest: { build: frameworkTest.includes("//#build"), test: frameworkTest.includes("//#test") },
       independentOwner: (await changedBy(() => {
         fs.mkdirSync(path.join(root, "packages/kit/spec"));
         fs.writeFileSync(path.join(root, "packages/kit/spec/index.md"), "# Standalone kit\n");
@@ -3353,7 +3359,10 @@ describe("the documents name what exists", () => {
       lintWaitsFor: vibeDeclared,
       devWaitsFor: ["@repo/design-system#build", "@repo/ui#build", "vibestack-studio#gen"],
       prose: [["@repo/ui#typecheck", "vibestack-studio#build", "vibestack-studio#test", "vibestack-studio#test:browser", "vibestack-studio#typecheck"], true],
-      selftest: [[], false, true], fixture: ["vibestack-studio#test"], independentOwner: true, leftovers: [],
+      selftest: [[], false, true],
+      fixture: { studio: ["vibestack-studio#test"], build: false, selftest: true },
+      frameworkTest: { build: false, test: true },
+      independentOwner: true, leftovers: [],
     }, "Slop's shared UI reads the product spec, so tooling and Studio builds have a root generation prerequisite");
   });
 });
