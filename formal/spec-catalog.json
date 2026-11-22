@@ -2148,7 +2148,7 @@
     },
     {
       "path": "spec/backend/projects.md",
-      "sha256": "6938209e46f3e3694ea74a3fe16a0aaf5f96839ae3d54aeb3e69e4e0ca4dad81",
+      "sha256": "ecebe9fa4da1bf5e53d417eef518f2f5ed989cc10a460ce51efc4f12c2972aad",
       "module": "backend__projects",
       "stories": [
         {
