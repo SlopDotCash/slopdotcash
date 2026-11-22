@@ -193,6 +193,14 @@ catalogs:
 overrides:
   '@effect/platform-node-shared': 4.1.1
 
+patchedDependencies:
+  picomatch@2.3.2:
+    hash: 64d05ffe43f43b7455e84fe2edac708d0077fc3fd735ae5e440657a29b0cbf59
+    path: patches/picomatch@2.3.2.patch
+  picomatch@4.0.7:
+    hash: d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c
+    path: patches/picomatch@4.0.7.patch
+
 importers:
 
   .:
@@ -7011,7 +7019,7 @@ snapshots:
     dependencies:
       handlebars: 4.7.10
       is-core-module: 2.18.0
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
 
   '@boundaries/policies@1.0.2':
     dependencies:
@@ -8737,7 +8745,7 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.10
       estree-walker: 2.0.2
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
 
   '@scure/base@1.2.6': {}
 
@@ -10282,9 +10290,9 @@ snapshots:
     dependencies:
       walk-up-path: 4.0.0
 
-  fdir@6.5.0(picomatch@4.0.7):
+  fdir@6.5.0(picomatch@4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)):
     optionalDependencies:
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
 
   fetch-blob@3.2.0:
     dependencies:
@@ -10649,7 +10657,7 @@ snapshots:
       jiti: 2.7.0
       oxc-parser: 0.156.0
       oxc-resolver: 11.24.2
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
       smol-toml: 1.9.1
       strip-json-comments: 5.0.3
       tinyglobby: 0.2.17
@@ -10812,7 +10820,7 @@ snapshots:
   micromatch@4.0.8:
     dependencies:
       braces: 3.0.3
-      picomatch: 2.3.2
+      picomatch: 2.3.2(patch_hash=64d05ffe43f43b7455e84fe2edac708d0077fc3fd735ae5e440657a29b0cbf59)
 
   mimic-fn@2.1.0: {}
 
@@ -11081,9 +11089,9 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@2.3.2: {}
+  picomatch@2.3.2(patch_hash=64d05ffe43f43b7455e84fe2edac708d0077fc3fd735ae5e440657a29b0cbf59): {}
 
-  picomatch@4.0.7: {}
+  picomatch@4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c): {}
 
   playwright-core@1.65.0: {}
 
@@ -11521,7 +11529,7 @@ snapshots:
       css-tree: 3.2.1
       ignore: 7.0.14
       import-meta-resolve: 4.2.0
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
       postcss: 8.5.32
       postcss-safe-parser: 7.1.0(postcss@8.5.32)
       postcss-selector-parser: 7.2.1
@@ -11570,8 +11578,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.7)
-      picomatch: 4.0.7
+      fdir: 6.5.0(picomatch@4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c))
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
 
   tinyrainbow@2.0.0: {}
 
@@ -11783,7 +11791,7 @@ snapshots:
   vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
       postcss: 8.5.32
       rolldown: 1.2.19
       tinyglobby: 0.2.17
@@ -11803,7 +11811,7 @@ snapshots:
       expect-type: 1.4.0
       magic-string: 1.4.5
       obug: 3.0.0
-      picomatch: 4.0.7
+      picomatch: 4.0.7(patch_hash=d6ad70ac0c68413fde247a033000d74909d2cfa5e9de6dcbd5480cce3e18ee2c)
       std-env: 4.3.0
       tinybench: 6.2.3
       tinyexec: 1.3.1

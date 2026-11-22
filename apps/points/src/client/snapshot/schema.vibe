@@ -339,9 +339,13 @@ export schema ValueCoverage {
   readonly pullRequestNumber: number
   readonly status: string
   readonly recordDigest: string | null
+  readonly reviewAssessmentDigest?: string
   readonly verifiedImplementationActorNodeIds?: ReadonlyArray<string>
   readonly implementationAllocation?: ImplementationAllocation
 }
+
+export schema ReviewedWorkUnit { readonly recordDigest: string; readonly workUnitId: string; readonly groupId: string }
+export schema ReviewedImplementationSource { readonly repository: string; readonly pullRequestId: string; readonly units: ReadonlyArray<ReviewedWorkUnit> }
 
 export schema PaymentReviewBasis {
   readonly policy: string
@@ -376,6 +380,7 @@ export schema LeaderboardSnapshot {
   readonly ledger: ReadonlyArray<ScoreEvent>
   readonly valuePolicyEffectiveAt?: string
   readonly valueAssessmentCoverage?: ReadonlyArray<ValueCoverage>
+  readonly reviewedImplementationUnits?: ReadonlyArray<ReviewedImplementationSource>
   readonly reviewExclusions?: ReadonlyArray<ReviewExclusion>
   readonly penalties?: ReadonlyArray<PublishedPenalty>
   readonly penaltyHistory?: ReadonlyArray<PenaltyHistoryRecord>
