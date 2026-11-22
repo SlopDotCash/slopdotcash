@@ -40,7 +40,7 @@ export service EvidenceCache {
   hits(): number!!
   counted(key: string): void!!
   expectAcceptedObject(url: string | undefined): void!!
-  acceptedObject(): string | undefined!!
+  acceptedObject(): (string | undefined)!!
 }
 
 function integrity(message: string) {

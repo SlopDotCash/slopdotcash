@@ -273,7 +273,7 @@ export default {
 };`
 }
 
-type PreviewCall = (suffix: string, method: "GET" | "PUT", bytes?: Uint8Array) => (Uint8Array | null)!PreviewRefused | ReviewedRefused!HttpClient.HttpClient
+type PreviewCall = (suffix: string, method: "GET" | "PUT", bytes?: Uint8Array) => (Uint8Array | null)!(PreviewRefused | ReviewedRefused)!HttpClient.HttpClient
 
 effect function previewApi(base: string, token: Redacted.Redacted<string>, path: string, operation: PreviewOperation, request: (url: string) => HttpClientRequest.HttpClientRequest = HttpClientRequest.get) {
   const answer = exchanged(HttpClientRequest.bearerToken(request(base + path), token), answerBytes) catch effect () => {

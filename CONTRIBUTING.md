@@ -297,14 +297,21 @@ preserved. Proof identity covers the verifier and solver contents, so moving
 an identical installation does not invalidate it and replacing an executable
 with the same version does; tests, drivers and explorations are keyed by the
 verifier too, since they may run proofs, as Studio's do. A process that
-outlives a reinstall, as `spec watch` does, reads Quint, LemmaScript and Dafny
-again once their installed files change. GitHub's local Turborepo cache keeps an entry for seven days after
-its last hit. The CI summary shows task times, cache status and exit codes.
-Simulation receipts include the installed Quint evaluator's bytes. The
-task runner adds that identity to simulation-capable tests and selftests.
-Generation, builds, typechecks and native contract checks keep their own keys.
-Turbo passes `QUINT_HOME` to tasks so they use the selected evaluator. Its
-bytes determine the fingerprint.
+outlives a reinstall, as `spec watch` does, reads the installed toolchain
+again on the next check. Simulations and proofs include the resolved package files
+and dependency links for Quint and LemmaScript. Each check shares an installation
+inventory across runs of the same tool and validates its files before publishing a batch.
+The first action, long actions, completed stages and the end of the check flush pending results.
+If a concurrent installation changes these files, the check discards the pending results
+and retries under the same project lock. It stops after two unsuccessful retries. A
+simulation also depends on the bytes of Quint's installed Rust evaluator. A
+run that installs its evaluator can produce a result; the next run records it
+against the installed binary. The task runner supplies the evaluator fingerprint
+to simulation-capable tests and selftests, leaving generation, builds and
+typechecks reusable before and after installation. Turbo passes `QUINT_HOME`
+to tasks so they use the selected evaluator. Its bytes determine the fingerprint.
+In CI, a Turborepo cache entry is
+kept for seven days after its last hit, which the run summary names.
 
 ### Seeds and budgets
 

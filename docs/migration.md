@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the published `lalalune/vibestack` `main`
-commit `06f20917a814eaa2b46478bb64e1eadab6c8cace`. The vendor update takes
+commit `46a5a5580a94fddc774e57c348bb108f483c9cb3`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
@@ -40,9 +40,9 @@ These local patches differ from that commit:
 | Patch | Files | Reason |
 | --- | --- | --- |
 | Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
-| `info` color, exported contrast and focus-ring boundary | `vibestack/design/tokens.ts`, `vibestack/design/test/`, root `package.json` export `./design/tokens` | Slop's tokens define `info`, which upstream rejects as an unknown token path; `ring` is held to 3:1 beside `input`; `@repo/ui` tests its colors with the token contrast function |
+| Exported contrast and positive design fixture | `vibestack/design/tokens.ts`, `vibestack/design/test/fixtures/good.tsx`, root `package.json` export `./design/tokens` | `@repo/ui` tests its colors with the exported contrast function; the positive lint fixture uses Slop's `shadow-panel` token. Upstream already supports the `info` color and focus-ring contrast |
 | Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
-| Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md`, `.agents/skills/{prove,shell}/SKILL.md`, `vibestack/selftest.ts` | Slop keeps its project lint rules and guidance. Upstream #132 and its follow-up enforce the template's separate code policy |
+| Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps its project lint rules and guidance. Upstream #132 and its follow-up enforce the template's separate code policy |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
 | Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
