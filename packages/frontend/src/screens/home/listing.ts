@@ -1,5 +1,5 @@
 // spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/poolListing.md, "A monthly pool is listed only while this month's configured amount is positive"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/frontend/poolListing.md, "Each home section orders stablecoin pools by shown monthly amount, then token pools, external prizes and points only, and breaks ties by Featured then registry order"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"
-import { fromAmount } from "@repo/settlement/kernels/amounts";
+import { formatBaseUnits, fromAmount } from "@repo/settlement/kernels/amounts";
 import type { Tier } from "../../../gen/backend__projects.ts";
 import { type HomeCard, type HomeEntry, homeBefore, homeDescriptionLimit, homeGroup, type ListingFacts, listedThisMonth as listedThisMonthOf, onHome } from "../../../gen/frontend__poolListing.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -101,10 +101,18 @@ export function listingOfMonth(project: Pick<ListedProject, "funding" | "promise
   return { amount: fromAmount(listedAmount(promise)), tag: fundingTag(promise), warning: listingWarningText(listingWarning(promise)) };
 }
 
+/** A month amount as the registry writes a monthly cap: whole dollars with two-digit cents only when there are some, or the token amount and its symbol. @throws {RangeError} */
+function monthAmountDisplay(amount: bigint, asset: ListedProject["rewardAsset"]): string {
+  if (asset !== undefined && asset.kind !== "stablecoin") return formatRewardMinor(amount, asset);
+  if (amount % 10_000n !== 0n) throw new RangeError("monthly cap must be cent-precise");
+  const cents = (amount % 1_000_000n) / 10_000n;
+  return `$${formatBaseUnits({ value: amount / 1_000_000n, decimals: 0 })}${cents === 0n ? "" : `.${cents.toString().padStart(2, "0")}`}`;
+}
+
 /** The month's configured amount as its registry display writes it, rewritten when a month cap replaces the default. @throws {RangeError} */
 function configuredDisplay(project: ListedProject, amount: bigint): string {
   const { reward } = project;
-  const display = amount === reward.monthlyCapMinor && !reward.cycleCaps?.length ? reward.monthlyCapDisplay : formatRewardMinor(amount, project.rewardAsset);
+  const display = amount === reward.monthlyCapMinor && !reward.cycleCaps?.length ? reward.monthlyCapDisplay : monthAmountDisplay(amount, project.rewardAsset);
   return formatRewardCapDisplay(display, project.rewardAsset);
 }
 

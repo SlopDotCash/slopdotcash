@@ -19,7 +19,7 @@ import { performed } from "../../src/cases/routes.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
 import { ReportingPrograms } from "../../src/receipt/program.vibe";
 import { slopReceipt } from "../../src/receipt/statements.vibe";
-import { remediationHandlersLive } from "../../src/remediation/routes.vibe";
+import { caseActionHandlersLive } from "../../src/cases/handlers.vibe";
 import { journalOf } from "../../src/remediation/store.vibe";
 import { receiptNotices } from "../support/intake/notices.vibe";
 
@@ -82,7 +82,7 @@ await db.batch([
 ]);
 
 const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)));
-const runtime = ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(remediationHandlersLive, awardClearancesLive), services));
+const runtime = ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(caseActionHandlersLive, awardClearancesLive), services));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {

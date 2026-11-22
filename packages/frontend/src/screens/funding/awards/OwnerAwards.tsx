@@ -17,6 +17,7 @@ import { useAwardAction, useFollowedMonth, useMonthView } from "./hooks.ts";
 import { monthBounds, monthsBetween, monthText, savedCommitmentMonths, shiftMonth } from "./month.ts";
 import { MonthPanel } from "./MonthPanel.tsx";
 import { CommitmentResult, OwnerCommitment } from "./OwnerCommitment.tsx";
+import { OwnerReserveRelease } from "./ReserveRelease.tsx";
 
 export type OwnerAwardsProps = {
   /** The page's runtime, which knows the signed-in account. */
@@ -109,6 +110,11 @@ function AwardMonth({ project, period, account, githubId, loginHref, networkPays
                     }}
                   />
                 </>
+              ) : null
+            }
+            release={
+              deployment && family === "evm" ? (
+                <OwnerReserveRelease key={`${view.projectId}:${view.period}:${view.manifestSha256}`} runtime={runtime} view={view} account={account} onReleased={() => void refresh()} />
               ) : null
             }
           />

@@ -1,0 +1,90 @@
+// spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
+import { D1, type Statement, first, sql } from "@repo/platform/d1"
+import { DepositOutcomeReason, type ReportDeposit, ReportDeposits } from "@repo/ports/security"
+import { type FeeDeposit, FeeOutcome, type FinalOutcome, type GoneDeposits, type ObservedDeposit } from "@repo/ports/slopbot"
+
+schema DepositRow {
+  readonly case_id: string
+  readonly item: string
+  readonly slop_amount: string
+  readonly asked_at: string
+  readonly paid_at: string | null
+  readonly paid_network: string | null
+  readonly paid_deposit_id: number | null
+  readonly outcome: FeeOutcome | null
+  readonly outcome_reason: DepositOutcomeReason | null
+  readonly outcome_at: string | null
+}
+
+const columns = sql`case_id, item, slop_amount, asked_at, paid_at, paid_network, paid_deposit_id, outcome, outcome_reason, outcome_at`
+
+function depositOf(row: typeof DepositRow.Type): ReportDeposit {
+  return {
+    caseId: row.case_id,
+    item: row.item,
+    slopAmount: row.slop_amount,
+    askedAt: row.asked_at,
+    paidAt: row.paid_at,
+    paidNetwork: row.paid_network,
+    paidDepositId: row.paid_deposit_id,
+    outcome: row.outcome,
+    outcomeReason: row.outcome_reason,
+    outcomeAt: row.outcome_at,
+  }
+}
+
+effect function askedWhere(where: Statement) {
+  const row: typeof DepositRow.Type | undefined = try first(DepositRow, sql`SELECT ${columns} FROM security_report_deposits WHERE mode = 'asked' AND ${where}`)
+  return row === undefined ? null : depositOf(row)
+}
+
+export function markPaid(deposit: FeeDeposit, caseId: string, at: string) {
+  return sql`UPDATE security_report_deposits
+      SET paid_at = COALESCE(paid_at, ${at}), paid_network = ${deposit.network}, paid_deposit_id = ${deposit.depositId}
+    WHERE case_id = ${caseId} AND mode = 'asked'
+      AND ((paid_deposit_id IS NULL AND outcome IS NULL) OR (paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}))`
+}
+
+export function finalOutcome(deposit: FeeDeposit, outcome: FinalOutcome, at: string) {
+  return sql`UPDATE security_report_deposits SET outcome = ${outcome}, outcome_at = ${at}
+    WHERE mode = 'asked' AND paid_network = ${deposit.network} AND paid_deposit_id = ${deposit.depositId}
+      AND (outcome IS NULL OR outcome IN ('refund_due', 'kept_due'))
+      AND (${outcome} = 'refunded' OR outcome = 'kept_due')`
+}
+
+function unpayWhereGone(gone: GoneDeposits) {
+  if (gone.kind === "Reorganised") return sql`UPDATE security_report_deposits
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE mode = 'asked' AND paid_network = ${gone.network} AND outcome IS NULL
+      AND paid_deposit_id IN (SELECT deposit_id FROM submission_fee_deposits
+         WHERE network = ${gone.network} AND finalized_at IS NULL AND block_number <= ${gone.throughBlock})`
+  return sql`UPDATE security_report_deposits
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE mode = 'asked' AND paid_network = ${gone.network} AND outcome IS NULL
+      AND paid_deposit_id IN (SELECT deposit_id FROM submission_fee_deposits
+         WHERE network = ${gone.network} AND finalized_at IS NULL AND block_number BETWEEN ${gone.fromBlock} AND ${gone.toBlock}
+           AND deposit_id NOT IN (SELECT value FROM json_each(${JSON.stringify(gone.seen)})))`
+}
+
+function unpayChanged(observed: ObservedDeposit) {
+  return sql`UPDATE security_report_deposits
+      SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL
+    WHERE mode = 'asked' AND paid_network = ${observed.network} AND paid_deposit_id = ${observed.depositId} AND outcome IS NULL
+      AND EXISTS (SELECT 1 FROM submission_fee_deposits d
+                   WHERE d.network = ${observed.network} AND d.deposit_id = ${observed.depositId} AND d.finalized_at IS NULL
+                     AND NOT (d.item = ${observed.item} AND d.payer = ${observed.payer} AND d.token = ${observed.token}
+                              AND d.amount = ${observed.amount} AND d.kept_to = ${observed.keptTo} AND d.tx_hash = ${observed.txHash}
+                              AND d.block_number = ${observed.blockNumber} AND d.block_time = ${observed.blockTime}))`
+}
+
+export const ReportDepositsLive = Layer.effect(ReportDeposits, effect {
+  const db = try D1
+  return {
+    askedByItem: (item) => provideService(askedWhere(sql`item = ${item}`), D1, db),
+    askedByCase: (caseId) => provideService(askedWhere(sql`case_id = ${caseId}`), D1, db),
+    markPaid: (deposit, caseId, at) => effect { return markPaid(deposit, caseId, at) },
+    finalOutcome: (deposit, outcome, at) => effect { return finalOutcome(deposit, outcome, at) },
+    unpayWhereGone: (gone) => effect { return unpayWhereGone(gone) },
+    unpayChanged: (observed) => effect { return unpayChanged(observed) },
+  } satisfies ReportDeposits.Shape
+})

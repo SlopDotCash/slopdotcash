@@ -1,9 +1,10 @@
-// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee"
+// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee"; spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"
 import { RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { buybackStart } from "../../gen/fees__buyback.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import { amountOf as exactAmount, networkNames } from "../journal/codec.vibe"
+import type { KeptSubmissionFee } from "../submissionFee/income.vibe"
 import { type IncomeEntry, amountOf } from "./codec.vibe"
 
 export interface BookedDirectFee {
@@ -22,6 +23,8 @@ export interface IncomeQuery {
 
 schema IncomeRow { id: string; kind: "conversion" | "claim"; amount_out: string; finalized_at: string; tx_id: string | null; landed_tx_id: string | null }
 
+const escrowNetworks: Readonly<Record<Network, string | undefined>> = { Base: "base-mainnet", Ethereum: undefined, Robinhood: "robinhood-mainnet", Solana: undefined }
+
 function same(network: Network, column: Statement, value: string): Statement {
   return network === "Solana" ? sql`${column} = ${value}` : sql`lower(${column}) = lower(${value})`
 }
@@ -30,7 +33,7 @@ function earlier(a: IncomeEntry, b: IncomeEntry) {
   return a.chainTime - b.chainTime
 }
 
-export effect function incomeEvidence(query: IncomeQuery, booked: ReadonlyArray<BookedDirectFee>) {
+export effect function incomeEvidence(query: IncomeQuery, booked: ReadonlyArray<BookedDirectFee>, kept: ReadonlyArray<KeptSubmissionFee>) {
   const { network, wallet, usdc, scope, offset } = query
   const since = try isoAt(buybackStart + offset)
   const found = try rows(IncomeRow, sql`SELECT id, kind, amount_out, finalized_at, tx_id, landed_tx_id FROM fee_conversions WHERE network = ${networkNames[network]} AND substr(run_id, 1, ${scope.length}) = ${scope} AND ${same(network, sql`fee_wallet`, wallet)} AND mode = 'live' AND state = 'finalized' AND finalized_at >= ${since} AND ((kind = 'conversion' AND ${same(network, sql`target_token`, usdc)}) OR (kind = 'claim' AND ${same(network, sql`token`, usdc)})) ORDER BY finalized_at, rowid`)
@@ -43,5 +46,11 @@ export effect function incomeEvidence(query: IncomeQuery, booked: ReadonlyArray<
   const doubled = booked.find((fee) => claimed.has(fee.receipt.toLowerCase()))
   if (doubled !== undefined) throw new RowMismatch({ text: `direct-award fee ${doubled.receipt}`, issue: "a USDC direct-award receipt is also a payout-fee claim" })
   for (const fee of booked) if (fee.amount > 0n && fee.chainTime >= buybackStart) entries.push({ kind: "DirectFee", text: fee.receipt, amount: amountOf(fee.amount), chainTime: fee.chainTime })
+  const escrow = escrowNetworks[network]
+  for (const fee of kept) {
+    const chainTime = fee.chainTime - offset
+    if (escrow !== undefined && fee.deposit.startsWith(`${escrow}:`) && fee.token.toLowerCase() === usdc.toLowerCase() && fee.keptTo.toLowerCase() === wallet.toLowerCase() && fee.amount > 0n && chainTime >= buybackStart)
+      entries.push({ kind: "KeptSubmissionFee", text: fee.deposit, amount: amountOf(fee.amount), chainTime })
+  }
   return entries.sort(earlier)
 }

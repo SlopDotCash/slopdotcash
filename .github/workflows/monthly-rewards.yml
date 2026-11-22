@@ -1,0 +1,127 @@
+name: Propose monthly allocations
+
+on:
+  schedule:
+    - cron: "11 0 1-3 * *"
+  workflow_dispatch:
+    inputs:
+      cycle:
+        description: "Closed UTC month to propose (YYYY-MM); blank means previous month"
+        required: false
+        type: string
+
+concurrency:
+  group: slop-monthly-allocations-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+
+jobs:
+  dispatch:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch on main and development
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status=0
+          for ref in main development; do
+            if gh workflow run monthly-rewards.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"; then
+              echo "Dispatched monthly allocations on $ref."
+            else
+              echo "::error::Could not dispatch monthly allocations on $ref."
+              status=1
+            fi
+          done
+          exit "$status"
+
+  propose:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}
+    steps:
+      - name: Checkout trusted branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify trusted checkout
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Monthly allocation checkout $checked_out_sha does not match event SHA $GITHUB_SHA."
+            exit 1
+          fi
+      - uses: ./.github/actions/setup
+        with:
+          job: monthly-allocation
+          verification: "false"
+          publication: "true"
+      - name: Reject known production dependency vulnerabilities
+        run: pnpm audit --prod
+      - run: pnpm all build --filter=@repo/settlement
+      - name: Validate requested cycle
+        id: cycle
+        env:
+          REQUESTED_CYCLE: ${{ inputs.cycle }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED_CYCLE" ] && ! [[ "$REQUESTED_CYCLE" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+            echo "::error::Cycle must be YYYY-MM."
+            exit 1
+          fi
+          echo "cycle=$REQUESTED_CYCLE" >> "$GITHUB_OUTPUT"
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+      - name: Propose private allocations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+          CYCLE: ${{ steps.cycle.outputs.cycle }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CYCLE" ]; then
+            node apps/settlement/dist/programs/main.js propose-month --cycle "$CYCLE"
+          else
+            node apps/settlement/dist/programs/main.js propose-month
+          fi

@@ -1,0 +1,153 @@
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"
+import { ConfigInvalid } from "@repo/platform/config"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { recordRegistryDeposits } from "../deposits/record.vibe"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { coordinateMonthlyPayments } from "../monthly/coordinator.vibe"
+import { PaymentIndexerLive } from "../scan/index.vibe"
+import { PrivateLedger } from "../securityScope/engine.vibe"
+import { bindDestinations } from "../signer/binding.vibe"
+import { AttesterConfig, type AttesterVars, signerStack } from "../signer/evm.vibe"
+import { attestEvmMonth, publishMonthlyAuthorizations } from "../signer/monthlyRoot.vibe"
+import { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopedPins, type SignerScope, scopedAttesterConfig } from "../signer/privateScope.vibe"
+import { SolanaAttesterConfig, type SolanaAttesterVars, solanaAttesterConfig } from "../signer/solana.vibe"
+import { attestSolanaMonth } from "../signer/solanaMonthly.vibe"
+import { syncRegistryVaults } from "../vault/sync.vibe"
+import { CoordinatorFailed } from "./payments.vibe"
+import { isolated, reported } from "./steps.vibe"
+
+export interface AttesterEnv extends AttesterVars, SolanaAttesterVars, ScopedPins {
+  readonly PAYMENT_NETWORK?: string
+}
+
+export error AttesterRunFailed { failures: ReadonlyArray<string> }
+export error FamilyRefused { network: string }
+
+const pinBytes = 5_000
+const pinFrame = /^pins:v1:([1-9][0-9]*):([1-9][0-9]*):([a-f0-9]{64})$/u
+
+function framingInvalid(name: string) {
+  return new ConfigInvalid({ name, issue: "invalid deployment pin frame" })
+}
+
+export effect function pinsOf(env: object, name: "PAYMENT_DEPLOYMENTS" | "SECURITY_PAYMENT_DEPLOYMENTS") {
+  const vars = env as Readonly<Record<string, unknown>>
+  const value = vars[name]
+  const prefix = `${name}_PART_`
+  const partNames = Object.keys(vars).filter((key) => key.startsWith(prefix))
+  if (value !== undefined && typeof value !== "string") throw framingInvalid(name)
+  if (!(typeof value === "string" && value.startsWith("pins:")) && partNames.length === 0) return value
+  const frame = pinFrame.exec(typeof value === "string" ? value : "")
+  if (frame === null || partNames.length < 2 || Number(frame[1]) !== partNames.length) throw framingInvalid(name)
+  const parts: string[] = []
+  for (let index = 1; index <= partNames.length; index += 1) {
+    const part = vars[`${prefix}${index}`]
+    if (typeof part !== "string" || part.length === 0 || utf8(part).byteLength > pinBytes) throw framingInvalid(name)
+    parts.push(part)
+  }
+  const joined = parts.join("")
+  const bytes = utf8(joined).byteLength
+  if (bytes <= pinBytes || bytes !== Number(frame[2]) || (try sha256Hex(joined)) !== frame[3]) throw framingInvalid(name)
+  return joined
+}
+
+export effect function attesterNetwork(env: AttesterEnv) {
+  const network = env.PAYMENT_NETWORK ?? ""
+  if (!isNetworkKey(network)) throw new ConfigInvalid({ name: "PAYMENT_NETWORK", issue: "must name one registry network" })
+  const stack = signerStack(env.SIGNER_STACK)
+  if (stack === undefined || NETWORKS[network].testnet !== (stack === "TestStack")) throw new ConfigInvalid({ name: "PAYMENT_NETWORK", issue: "is not a network of this signer stack" })
+  return network
+}
+
+export function familyOf(network: NetworkKey) {
+  return NETWORKS[network].family
+}
+
+export effect function scopedPins(env: AttesterEnv) {
+  return {
+    PAYMENT_DEPLOYMENTS: try pinsOf(env, "PAYMENT_DEPLOYMENTS"),
+    SECURITY_PAYMENT_DEPLOYMENTS: try pinsOf(env, "SECURITY_PAYMENT_DEPLOYMENTS"),
+  } satisfies ScopedPins
+}
+
+export effect function evmConfig(env: AttesterEnv, scope: SignerScope) {
+  return try scopedAttesterConfig(scope, env, try scopedPins(env))
+}
+
+export effect function solanaConfig(env: AttesterEnv, scope: SignerScope) {
+  const pins = try scopedPins(env)
+  const text = pins[scope.pinsVar]
+  if (text === undefined || text.trim() === "") throw new ConfigInvalid({ name: scope.pinsVar, issue: "missing" })
+  const config = try solanaAttesterConfig(env, text)
+  const bounty = scope.kind === "security-bounty"
+  if (config.pins.some((pin) => (pin.payoutPolicy === "security-bounty") !== bounty)) throw new ConfigInvalid({ name: scope.pinsVar, issue: "pins a vault of the other payment scope" })
+  return config
+}
+
+export effect function pinnedScopes(env: AttesterEnv) {
+  const pins = try scopedPins(env)
+  const scopes: SignerScope[] = []
+  for (const scope of [ORDINARY_SCOPE, SECURITY_SCOPE]) {
+    const text = pins[scope.pinsVar]?.trim()
+    if (text !== undefined && text !== "" && text !== "[]") scopes.push(scope)
+  }
+  return scopes
+}
+
+effect function offFamily(network: string) {
+  throw new FamilyRefused({ network })
+}
+
+effect function monthly(scope: SignerScope, network: NetworkKey) {
+  if (scope.kind === "security-bounty") {
+    provide Layer.provideMerge(PaymentIndexerLive, PrivateLedger) {
+      const synced = try syncRegistryVaults([network], "security-bounty")
+      if (synced.failures.length > 0) throw new AttesterRunFailed({ failures: synced.failures })
+    }
+    return
+  }
+  const failures: string[] = []
+  const synced = try syncRegistryVaults([network], "ordinary")
+  failures.push(...synced.failures)
+  try isolated("coordinator", effect {
+    const report = try coordinateMonthlyPayments()
+    if (report.failures.length > 0) throw new CoordinatorFailed({ failures: report.failures.map((failure) => `${failure.key}: ${failure.reason}`) })
+  }, failures)
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const served: ReadonlySet<string> = new Set([network])
+  const report = familyOf(network) === "evm"
+    ? try publishMonthlyAuthorizations(served, now, { EvmV2: attestEvmMonth, SolanaV3: (request) => offFamily(request.network) })
+    : try publishMonthlyAuthorizations(served, now, { EvmV2: (request) => offFamily(request.network), SolanaV3: attestSolanaMonth })
+  failures.push(...report.failures)
+  try recordRegistryDeposits(synced.deployments, "ordinary")
+  if (failures.length > 0) throw new AttesterRunFailed({ failures })
+}
+
+effect function bindings(scope: SignerScope) {
+  const report = try bindDestinations(scope.journal, scope.tables)
+  if (report.failed !== 0) throw new AttesterRunFailed({ failures: [`${report.failed} destination bindings failed`] })
+  return report
+}
+
+effect function scopeRun(env: AttesterEnv, scope: SignerScope, network: NetworkKey, failures: string[]) {
+  if (familyOf(network) === "evm") {
+    const config = try evmConfig(env, scope)
+    provide AttesterConfig = config {
+      try isolated(`${scope.kind} monthly`, monthly(scope, network), failures)
+      try isolated(`${scope.kind} bindings`, bindings(scope), failures)
+    }
+    return
+  }
+  const config = try solanaConfig(env, scope)
+  provide SolanaAttesterConfig = config {
+    try isolated(`${scope.kind} monthly`, monthly(scope, network), failures)
+  }
+}
+
+export effect function attesterRun(env: AttesterEnv) {
+  const network = try attesterNetwork(env)
+  const scopes = try pinnedScopes(env)
+  const failures: string[] = []
+  for (const scope of scopes) try isolated(scope.kind, scopeRun(env, scope, network, failures), failures)
+  try reported("attester", failures)
+}

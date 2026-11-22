@@ -52,6 +52,7 @@ export const ProgramProject = Schema.Struct({
   name: Schema.String,
   links: Schema.optional(Schema.Struct({ repository: Schema.optional(Schema.String) })),
   securityBounty: Schema.optional(ProgramTerms),
+  security: Schema.optional(Schema.Struct({ reportDeposit: Schema.optional(Schema.Boolean) })),
 });
 
 export type ProgramFunding = typeof ProgramFunding.Type;

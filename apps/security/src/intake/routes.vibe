@@ -1,4 +1,4 @@
-// spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A restricted project's new reports wait for an owner decision"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A restricted project's new reports wait for an owner decision"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { randomId, randomToken, sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation } from "@repo/platform/d1"
@@ -15,6 +15,10 @@ import { postSecuritySubmissions as createRows, postSecuritySubmissionsByIdRepor
 import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
 import { slopReceipt } from "../receipt/statements.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeld } from "../deposit/held.vibe"
+import { depositView } from "../deposit/view.vibe"
+import { withDeposit } from "./list.vibe"
 import { RateLimited, admit, admitted, committed, objectKey, opened, putReport, upload } from "./attempt.vibe"
 import { IntakeSettings, cachedReadiness, projectId as projectIdPattern } from "./availability.vibe"
 import { type ParsedReport, type ReportRefusal, normalisedBytes, parseReport } from "./report.vibe"
@@ -84,10 +88,15 @@ effect function replayed(prior: SubmissionRow, projectId: string, digest: string
 }
 
 effect function shown(row: SubmissionRow) {
-  return decorated(row) catch effect (error) => match (error) {
+  const view = decorated(row) catch effect (error) => match (error) {
     when ReceiptMissing: throw refused(createRows.notFoundReportNotFound);
     default: throw error;
   }
+  if (view.intake === null) return view
+  const stored = try storedIntake(row.id)
+  const record = stored === undefined ? undefined : try caseStanding(stored.case_id)
+  if (stored === undefined || record === undefined) return view
+  return withDeposit(view, { row, stored, record }, try depositView(stored.case_id))
 }
 
 effect function reportingRepository(id: string) {
@@ -144,6 +153,7 @@ effect function create(actor: Actor) {
   const receiptTerms = receiptTermsOf(terms, millisOf(terms.publishedAt), receivedAtMs)
   const caseId = `sc_${(try randomId()).replaceAll("-", "")}`
   const programs = try ReportingPrograms
+  const ask = try depositAsk({ caseId, projectId, reporterGithubId: actor.githubId, at: receivedAt })
   const statements = slopReceipt({
     caseId,
     submissionId: attempt.submissionId,
@@ -159,6 +169,7 @@ effect function create(actor: Actor) {
     report: { key: attempt.objectKey, digest, bytes: bytes.length },
     ownerGithubId: program.approvers?.technical[0] ?? null,
     unbanned: try programs.unbanned(actor.githubId),
+    deposit: ask.statements,
   }) catch effect (error) => match (error) {
     when CaseRejected: throw refused(createRows.intakeUnavailable);
     default: throw error;
@@ -207,7 +218,7 @@ effect function revise(actor: Actor, id: string) {
   const record = try caseStanding(stored.case_id)
   if (record === undefined) throw refused(notFound)
   const digests = (try reportVersions(id)).map((version) => version.content_sha256)
-  const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
+  const screening = { ...screeningOf(stored, githubNumber(row.reporter_github_id), digests), depositHeld: try depositHeld(stored.case_id) }
   const current = caseOf(record, stored.report_version)
   const prepared = revisionEvidence(row, current, actor.githubId, { object: true, admitted: true })
   if (!revisionPermitted(screening, { ...prepared, allowedCaseState: true })) throw refused(reviseRows.reportNotEditable)

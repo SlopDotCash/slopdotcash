@@ -1,11 +1,12 @@
-// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"
+// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "A due row is claimed before its check is sent, every 10 minutes while pending for 14 days a head and every hour while ready"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"
 import type { Fetcher, Queue } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { outbound } from "@repo/platform/http"
 import { entrypoint } from "@repo/platform/entrypoints"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
 import { byCron, worker } from "@repo/platform/worker"
-import { MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import { refreshMergeActivity } from "@repo/backend/live"
+import { IntakeCountsLive, IntakePauseLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, SubmissionFeeRatesLive, SubmissionFeeSettingLive } from "@repo/backend/ports"
 import { RunEvidenceLive } from "@repo/contributor/live"
 import { noticePorts } from "@repo/operations/live"
 import { contributorAudience } from "@repo/points/live"
@@ -16,13 +17,18 @@ import { dispatchDueAppeals } from "../appeals/due.vibe"
 import { budgetJobs } from "../budget/store.vibe"
 import { pointsDisputeRoutes } from "../disputes/internalRoute.vibe"
 import { processPendingPointsDisputes } from "../disputes/pointsTriage.vibe"
+import { dispatchFeeChecks } from "../fee/dispatch.vibe"
+import { submissionFeeMode } from "../fee/store.vibe"
 import { feedRoutes } from "../feeds/routes.vibe"
 import { dispatchMaintainerHolds } from "../holds/record.vibe"
+import { historicalPublication } from "../import/publication.vibe"
+import { importSettings, publisherMethods } from "../import/publisher.vibe"
 import { ingressRoutes } from "../ingress/routes.vibe"
 import { type WebhookVars, WebhookSettings, webhookSettings } from "../ingress/webhook.vibe"
 import { type Job, jobQueue } from "../jobs/job.vibe"
 import { settle } from "../jobs/retry.vibe"
 import { refreshReportingReadiness } from "../readiness/reporting.vibe"
+import { dispatchReadyChecks } from "../ready/store.vibe"
 import { type ProviderKeys, routeProviders } from "../route/route.vibe"
 import { ParticipationLive } from "../routing/facts.vibe"
 import { spendJobs } from "../spend/jobs.vibe"
@@ -42,6 +48,7 @@ export interface Env extends AppVars, WebhookVars, ActivationVars, ValueSettings
   readonly SLOPBOT_QUEUE: Queue<Job>
   readonly SLOP_NOTIFY: Fetcher
   readonly VALUE_MERGE_VERIFIER: MergeVerifierBinding
+  readonly SUBMISSION_FEE_MODE?: string
 }
 
 const slopbotCron = "*/5 * * * *"
@@ -53,11 +60,11 @@ const jobSettings = Layer.effect(JobSettings, effect {
 })
 
 function services(env: Env) {
-  const base = Layer.mergeAll(appServices(env), rolesFrom(env), webhookSettings(env), closureActivation(env), inferenceConfig(env), jobQueue(env.SLOPBOT_QUEUE))
+  const base = Layer.mergeAll(appServices(env), rolesFrom(env), webhookSettings(env), closureActivation(env), inferenceConfig(env), jobQueue(env.SLOPBOT_QUEUE), submissionFeeMode(env.SUBMISSION_FEE_MODE))
   const providers = Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto))
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
   const enforcement = Layer.provideMerge(EnforcementRowsLive, notices)
-  const backend = Layer.provideMerge(Layer.mergeAll(MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, EnforcementLive), enforcement)
+  const backend = Layer.provideMerge(Layer.mergeAll(MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, EnforcementLive, Layer.provideMerge(IntakePauseLive, IntakeCountsLive), SubmissionFeeSettingLive, SubmissionFeeRatesLive), enforcement)
   const ports = Layer.provideMerge(Layer.mergeAll(ParticipationLive, RunEvidenceLive, retention, acceptanceWith(collectRetainedMergeReferences), mergeVerifierVia(env.VALUE_MERGE_VERIFIER), spendNotify(env.SLOP_NOTIFY), jobSettings), backend)
   return Layer.mergeAll(Layer.provideMerge(publicationChecks, ports), providers)
 }
@@ -67,13 +74,21 @@ const scheduled = byCron<Layer.Success<ReturnType<typeof services>>>({
     ...budgetJobs,
     { name: "slopbot maintainer holds", run: () => Effect.asVoid(dispatchMaintainerHolds()) },
     { name: "slopbot due appeals", run: () => Effect.asVoid(dispatchDueAppeals()) },
+    { name: "slopbot ready labels", run: () => Effect.asVoid(dispatchReadyChecks()) },
+    { name: "slopbot submission fees", run: () => Effect.asVoid(dispatchFeeChecks()) },
     { name: "slopbot points disputes", run: () => Effect.asVoid(processPendingPointsDisputes()) },
     { name: "slopbot value requests", run: () => Effect.asVoid(consumePendingValueRequests()) },
     ...spendJobs,
   ],
 })
 
-export const ReportingReadinessRefresher = entrypoint(services, { refreshReportingReadiness })
+function publisherServices(env: Env) {
+  return Layer.merge(Layer.provideMerge(historicalPublication, services(env)), importSettings(env))
+}
+
+export const ReportingReadinessRefresher = entrypoint(services, { refreshReportingReadiness, refreshMergeActivity })
+
+export const HistoricalValuePublisher = entrypoint(publisherServices, publisherMethods)
 
 export default worker({
   services,

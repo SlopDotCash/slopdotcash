@@ -8,6 +8,7 @@ import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { jsonValue } from "../analysis/prompts.ts"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { type ReceiptScope, receiptManifest, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { routineActorGithubId, routineProofNextAction } from "../routine/reasons.ts"
@@ -58,6 +59,7 @@ export schema CaseRow {
   direct: number
   next_action: string | null
   next_action_due_at: string | null
+  deposit_held: number
 }
 
 export schema EventRow {
@@ -108,12 +110,12 @@ export const caseColumns = sql`c.id, c.project_id, c.advisory_repository, c.advi
   (SELECT p.created_at FROM project_revisions p WHERE p.project_id = c.project_id AND p.revision = c.policy_revision) AS published_at,
   (SELECT i.report_version FROM security_submission_intake i WHERE i.case_id = c.id) AS report_version,
   EXISTS (SELECT 1 FROM security_award_reservations r WHERE r.case_id = c.id) AS reserved,
-  EXISTS (SELECT 1 FROM security_direct_awards d WHERE d.case_id = c.id) AS direct, c.next_action, c.next_action_due_at`
+  EXISTS (SELECT 1 FROM security_direct_awards d WHERE d.case_id = c.id) AS direct, c.next_action, c.next_action_due_at, ${depositHeldOn("c.id")} AS deposit_held`
 
 const submissions: Readonly<Record<CaseRow["submission_state"], Submission>> = { claimed: "Claimed", verified: "Verified", "link-rejected": "LinkRejected" }
 export const receipts: Readonly<Record<CaseRow["receipt_state"], Receipt>> = { received: "Received", "needs-information": "NeedsInformation", triaging: "Triaging", confirmed: "Confirmed", duplicate: "Duplicate", "out-of-scope": "OutOfScope", rejected: "Rejected", disputed: "Disputed" }
 const awards: Readonly<Record<CaseRow["award_state"], Award>> = { "not-applicable": "NotApplicable", pending: "Pending", ineligible: "Ineligible", reserved: "Reserved", "capacity-exhausted": "CapacityExhausted", approved: "Approved" }
-const appeals: Readonly<Record<CaseRow["appeal_state"], AppealState>> = { none: "NoAppeal", open: "AppealOpen", upheld: "Upheld", returned: "Returned" }
+export const appeals: Readonly<Record<CaseRow["appeal_state"], AppealState>> = { none: "NoAppeal", open: "AppealOpen", upheld: "Upheld", returned: "Returned" }
 const relations: Readonly<Record<CaseRow["related_party"], Related>> = { "not-assessed": "NotAssessed", unrelated: "Unrelated", related: "RelatedParty" }
 const reviews: Readonly<Record<CaseRow["related_party_review"], RelatedReview>> = { "not-applicable": "ReviewNotApplicable", pending: "ReviewPending", approved: "ReviewApproved", refused: "ReviewRefused" }
 const triageStates: Readonly<Record<TriageRow["state"], TriageState>> = { running: "TriageRunning", complete: "TriageComplete", failed: "TriageFailed", unavailable: "TriageUnavailable" }
@@ -200,9 +202,18 @@ function routineMarkOf(row: CaseRow, events: ReadonlyArray<EventRow>, proofAsked
   }
 }
 
+function latestDecisionEvent(events: ReadonlyArray<EventRow>) {
+  return events.filter((event) => event.kind === "decide").at(-1)
+}
+
 function latestDecision(events: ReadonlyArray<EventRow>) {
-  const decision = events.filter((event) => event.kind === "decide").at(-1)
+  const decision = latestDecisionEvent(events)
   return decision === undefined ? {} : detailOf(decision)
+}
+
+export function spamByPerson(events: ReadonlyArray<EventRow>) {
+  const decision = latestDecisionEvent(events)
+  return decision !== undefined && decision.actor_github_id !== routineActorGithubId && detailOf(decision).spam === true
 }
 
 function numbers(ids: ReadonlyArray<string | null>) {
@@ -244,13 +255,15 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
     appealHistory: [...appealHistoryOf(events)],
     triage: triageOf(events, triages, terms),
     routine: routineMarkOf(row, events, proofAsked),
+    depositHeld: row.deposit_held === 1,
+    spamMarked: spamByPerson(events),
   } satisfies PrivateCase
 }
 
 export function caseAggregate(id: string, strict = true): Aggregate<CaseRecord | undefined, RowMismatch | NotAState, never> {
   return {
     name: `security case ${id}`,
-    version: sql`SELECT coalesce((SELECT revision FROM security_cases WHERE id=${id}), 0) || '|' || coalesce((SELECT group_concat(appeal_revision || ':' || attempt || ':' || state, ',') FROM (SELECT appeal_revision, attempt, state FROM security_appeal_triages WHERE case_id=${id} ORDER BY appeal_revision, attempt)), '') AS version`,
+    version: sql`SELECT coalesce((SELECT revision FROM security_cases WHERE id=${id}), 0) || '|' || coalesce((SELECT group_concat(appeal_revision || ':' || attempt || ':' || state, ',') FROM (SELECT appeal_revision, attempt, state FROM security_appeal_triages WHERE case_id=${id} ORDER BY appeal_revision, attempt)), '') || '|' || coalesce((SELECT mode || ':' || coalesce(paid_at, '') || ':' || coalesce(outcome, '') FROM security_report_deposits WHERE case_id=${id}), '') AS version`,
     reads: [
       sql`SELECT ${caseColumns} FROM security_cases c WHERE c.id = ${id}`,
       sql`SELECT case_revision, kind, actor_github_id, actor_role, reason, evidence_reference, detail, at, idempotency_key FROM security_case_events WHERE case_id = ${id} ORDER BY case_revision`,

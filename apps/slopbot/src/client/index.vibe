@@ -1,3 +1,4 @@
+// spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions"
 import type { AnyRoute } from "@repo/platform/route"
 import { importApi } from "./import.vibe"
 import { assessmentApi } from "./inbox.vibe"

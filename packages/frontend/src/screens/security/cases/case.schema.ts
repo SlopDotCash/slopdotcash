@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
 import { Result, Schema } from "effect";
 
 const Login = Schema.Struct({ githubLogin: Schema.String });
@@ -112,6 +112,7 @@ export const SecurityCase = Schema.Struct({
   duplicateOf: Schema.optional(Schema.NullOr(Schema.String)),
   triagers: Schema.optional(Schema.Array(Triager)),
   events: Schema.optional(Schema.Array(CaseEvent)),
+  deposit: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 
 export const CaseList = Schema.Struct({

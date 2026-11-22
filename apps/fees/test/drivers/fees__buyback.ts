@@ -17,7 +17,7 @@ import { type GenerationNames, dayMs, generationInstance, generationNames, journ
 const senders: ReadonlyArray<Sender> = ["ReleaseWorkflow", "Owner", "Worker", "Other"];
 const buybackStart = 1_794_441_600_000;
 const gwei = 1_000_000_000n;
-const kinds = ["ConversionOutput", "UsdcClaim", "DirectFee", "RobinhoodFee"] as const;
+const kinds = ["ConversionOutput", "UsdcClaim", "DirectFee", "KeptSubmissionFee", "RobinhoodFee"] as const;
 const started = await journalDatabase("fee-buyback-conformance");
 const clock = settableClock(0);
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(started.db), webCrypto, clock.layer));

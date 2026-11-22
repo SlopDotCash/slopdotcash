@@ -1,4 +1,4 @@
-// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { type Statement, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
@@ -91,6 +91,7 @@ export interface SlopReceipt {
   readonly report: StoredReport
   readonly ownerGithubId: string | null
   readonly unbanned: Statement
+  readonly deposit?: ReadonlyArray<Statement>
 }
 
 function submissionExists(id: string) {
@@ -148,5 +149,6 @@ export effect function slopReceipt(input: SlopReceipt) {
       guard: true,
     }),
     ...notices,
+    ...input.deposit ?? [],
   ]
 }

@@ -1,0 +1,155 @@
+// spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"; spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"
+import { boundedBytes } from "@repo/platform/browser"
+import type { ProtectedPointMonth } from "../client/protectedMonths.vibe"
+import { type PrivateProtectionRead, type ProtectedMonth, type ProtectionAnswerShape, maxProtectionAnswerBytes, protectedMonthsPath, protectionReadResult, resolvedProtection } from "../../gen/points__protectedMonths.effect.vibe"
+import { monthPattern, periodNumber } from "./protection.vibe"
+
+export error ProtectedMonthsInvalid { message: string }
+error ProtectionReadRefused { reason: string }
+
+export interface ProtectionEnvironment {
+  readonly url: string
+  readonly token: Redacted.Redacted<string>
+}
+
+export interface PrivateProtection {
+  readonly months: ReadonlyArray<ProtectedPointMonth>
+  readonly everyMonthProjects: ReadonlyArray<string>
+}
+
+type JsonObject = Readonly<Record<string, unknown>>
+
+const committedPath = "data/points/protected-months.json"
+const readTimeoutMs = 30_000
+const answerKeys = ["everyMonthProjects", "generatedAt", "months", "schema"]
+const monthKeys = ["period", "projectId"]
+const fileOnly = "holding by data/points/protected-months.json only"
+
+function invalidCommitted() {
+  return new ProtectedMonthsInvalid({ message: "Invalid protected Points months" })
+}
+
+function refused(reason: string) {
+  return new ProtectionReadRefused({ reason })
+}
+
+function objectOf(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
+}
+
+function exactly(value: unknown, keys: ReadonlyArray<string>): JsonObject | undefined {
+  const found = objectOf(value)
+  return found !== undefined && JSON.stringify(Object.keys(found).sort()) === JSON.stringify(keys) ? found : undefined
+}
+
+function isProjectId(value: unknown): value is string {
+  return typeof value === "string" && value !== "" && !value.includes("\0")
+}
+
+export effect function committedMonths() {
+  const fs = try FileSystem.FileSystem
+  const text = try fs.readFileString(committedPath)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw invalidCommitted()
+  }
+  if (!Array.isArray(value)) throw invalidCommitted()
+  const months: ProtectedPointMonth[] = []
+  for (const entry of value) {
+    const month = exactly(entry, monthKeys)
+    if (month === undefined || typeof month.projectId !== "string" || month.projectId === "" || typeof month.period !== "string" || !monthPattern.test(month.period)) throw invalidCommitted()
+    months.push({ projectId: month.projectId, period: month.period })
+  }
+  return months
+}
+
+export effect function protectionEnvironment() {
+  const url = try Config.withDefault(Config.String("POINTS_PROTECTION_URL"), "")
+  const token = try Config.withDefault(Config.Redacted("POINTS_PROTECTION_TOKEN"), Redacted.make(""))
+  return { url, token } satisfies ProtectionEnvironment
+}
+
+effect function listed(value: unknown) {
+  if (!Array.isArray(value)) throw refused("invalid answer")
+  const entries: ReadonlyArray<unknown> = value
+  return entries
+}
+
+effect function answerOf(value: unknown, bytes: number) {
+  const answer = exactly(value, answerKeys)
+  if (answer === undefined || typeof answer.schema !== "string" || typeof answer.generatedAt !== "string" || Number.isNaN(Date.parse(answer.generatedAt))) throw refused("invalid answer")
+  const months: ProtectedPointMonth[] = []
+  for (const entry of try listed(answer.months)) {
+    const month = exactly(entry, monthKeys)
+    if (month === undefined || !isProjectId(month.projectId) || typeof month.period !== "string" || !monthPattern.test(month.period)) throw refused("invalid answer")
+    months.push({ projectId: month.projectId, period: month.period })
+  }
+  const everyMonthProjects: string[] = []
+  for (const project of try listed(answer.everyMonthProjects)) {
+    if (!isProjectId(project)) throw refused("invalid answer")
+    everyMonthProjects.push(project)
+  }
+  const shape = {
+    status: 200,
+    bytes,
+    exactShape: true,
+    schema: answer.schema,
+    monthEntries: months.length,
+    projectEntries: everyMonthProjects.length,
+    longestProjectId: Math.max(0, ...months.map((month) => month.projectId.length), ...everyMonthProjects.map((project) => project.length)),
+  } satisfies ProtectionAnswerShape
+  if (protectionReadResult(true, true, shape) !== "ReadAnswered") throw refused("invalid answer")
+  return { months, everyMonthProjects } satisfies PrivateProtection
+}
+
+export effect function readPrivateProtection(environment: ProtectionEnvironment, origin: string) {
+  const token = Redacted.value(environment.token)
+  if (environment.url === "" || token === "") return null
+  if (environment.url !== `${origin}${protectedMonthsPath}`) throw refused("the address is not this site's protected-point-months route")
+  const client = try HttpClient.HttpClient
+  const read = effect {
+    const response = try client.execute(HttpClientRequest.get(environment.url, { headers: { accept: "application/json", authorization: `Bearer ${token}` } }))
+    if (response.status !== 200) throw refused(`HTTP ${response.status}`)
+    const bytes = boundedBytes(response, maxProtectionAnswerBytes, "protected point months") catch effect (error) => {
+      throw refused(error._tag === "BodyTooLarge" ? "answer too large" : "invalid answer")
+    }
+    return bytes
+  }
+  const bytes = try timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" }), Duration.millis(readTimeoutMs))
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw refused("invalid answer")
+  }
+  return try answerOf(value, bytes.length)
+}
+
+function classOf(error: unknown): string {
+  if (typeof error !== "object" || error === null) return ""
+  if ("cause" in error && error.cause instanceof Error) return error.cause.name
+  if ("_tag" in error && typeof error._tag === "string") return error._tag
+  return error instanceof Error ? error.name : ""
+}
+
+function reasonOf(error: unknown): string {
+  if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "ProtectionReadRefused" && "reason" in error && typeof error.reason === "string") return error.reason
+  const name = classOf(error)
+  return /^[A-Za-z]{1,40}$/u.test(name) ? name : "Error"
+}
+
+effect function scopesOf(months: ReadonlyArray<ProtectedPointMonth>) {
+  const scopes: ProtectedMonth[] = []
+  for (const month of months) scopes.push({ project: month.projectId, period: try periodNumber(month.period) })
+  return scopes
+}
+
+export effect function resolveProtection(committed: ReadonlyArray<ProtectedPointMonth>, environment: ProtectionEnvironment, origin: string) {
+  const answered = readPrivateProtection(environment, origin) catch effect (error) => {
+    try Console.warn(`[points] private protected-months read failed (${reasonOf(error)}); ${fileOnly}`)
+    return "failed" as const
+  }
+  if (answered === null && environment.url !== "") try Console.log(`[points] private protected-months read is not configured (no token); ${fileOnly}`)
+  const scopes = try scopesOf(committed)
+  if (answered === null) return resolvedProtection(scopes, { result: "ReadNotConfigured", months: [], everyMonthProjects: [] })
+  if (answered === "failed") return resolvedProtection(scopes, { result: "ReadFailed", months: [], everyMonthProjects: [] })
+  try Console.log("[points] holding by data/points/protected-months.json and the private protected-months record")
+  const privateRead: PrivateProtectionRead = { result: "ReadAnswered", months: try scopesOf(answered.months), everyMonthProjects: [...new Set(answered.everyMonthProjects)] }
+  return resolvedProtection(scopes, privateRead)
+}

@@ -1,6 +1,7 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import { caseRecord, draft, headings, nowMs, submissions } from "./fixtures.ts";
+import { DepositLineView } from "./DepositLine.tsx";
 import type { SubmissionCardProps } from "./SubmissionCard.tsx";
 
 const onAct = fn();
@@ -31,6 +32,7 @@ export const meta: ComponentMeta<SubmissionCardProps> = {
     SendFromTab: { submission: submissions.unsentFromTab, caseRecord: undefined },
     NeedsGrant: { needsGrant: true },
     Collapsed: { expanded: false },
+    DepositNeeded: { deposit: <DepositLineView status={{ state: "needed", amountText: "395 SLOP", payPath: "/fee/report/sc_0123456789abcdef" }} end={{ status: "settled", href: null }} /> },
   },
   play: {
     // spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"

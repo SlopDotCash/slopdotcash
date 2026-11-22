@@ -1,0 +1,9 @@
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
+import { first } from "@repo/platform/d1"
+import { depositHeldFor } from "./hold.ts"
+
+schema Held { held: number }
+
+export effect function depositHeld(caseId: string) {
+  return (try first(Held, depositHeldFor(caseId))) !== undefined
+}

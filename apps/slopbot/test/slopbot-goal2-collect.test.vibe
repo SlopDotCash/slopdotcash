@@ -1,0 +1,35 @@
+// spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"
+import { assert, it } from "@effect/vitest"
+import { settableClock } from "@repo/platform/testing/clock"
+import { discussionCheckpoint } from "../src/programs/collect.vibe"
+
+const now = Date.parse("2026-11-22T12:00:00.000Z")
+const trusted = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "workflow_dispatch", SLOP_DISCUSSION_CHECKPOINT: "/tmp/discussions", SLOP_DISCUSSION_DEADLINE_MS: String(now + 3_600_000) }
+
+effect function checkpointUnder(variables: Readonly<Record<string, string>>) {
+  const clock = settableClock(now)
+  provide clock.layer, ConfigProvider.layer(ConfigProvider.fromUnknown(variables)) {
+    const found = effect {
+      const checkpoint = try discussionCheckpoint()
+      return checkpoint === undefined ? "none" : `${checkpoint.directory}@${checkpoint.deadlineMs}`
+    } catch effect (error) => error._tag
+    return found
+  }
+}
+
+it.effect('A resumed discussion read takes its checkpoint only from a trusted main run with a future deadline (spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response")', () => effect {
+  const outcomes = [
+    try checkpointUnder({ GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "push" }),
+    try checkpointUnder(trusted),
+    try checkpointUnder({ ...trusted, GITHUB_EVENT_NAME: "push" }),
+    try checkpointUnder({ ...trusted, GITHUB_EVENT_NAME: "pull_request" }),
+    try checkpointUnder({ ...trusted, GITHUB_REF: "refs/heads/development" }),
+    try checkpointUnder({ ...trusted, GITHUB_ACTIONS: "false" }),
+    try checkpointUnder({ ...trusted, SLOP_DISCUSSION_DEADLINE_MS: String(now) }),
+    try checkpointUnder({ ...trusted, SLOP_DISCUSSION_DEADLINE_MS: "soon" }),
+    try checkpointUnder({ ...trusted, SLOP_DISCUSSION_CHECKPOINT: "" }),
+  ]
+  const resumed = `/tmp/discussions@${now + 3_600_000}`
+  const invalid = "DiscussionCheckpointInvalid"
+  try Effect.sync(() => assert.deepStrictEqual(outcomes, ["none", resumed, resumed, invalid, invalid, invalid, invalid, invalid, invalid]))
+})

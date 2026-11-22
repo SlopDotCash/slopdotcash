@@ -266,7 +266,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
               Rev {submission.revision}
             </Chip>
             {submission.vaultSetup ? (
-              <a href="#project-vault" className="text-primary underline underline-offset-4">
+              <a href="#vault-setup" className="text-primary underline underline-offset-4">
                 Set up vault
               </a>
             ) : null}
@@ -288,7 +288,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
           )}
         </p>
       </div>
-      <Vault runtime={runtime} manifest={current.manifest} />
+      <Vault runtime={runtime} manifest={current.manifest} onVaultRegistered={onReload} />
       <p id="security-settings">
         <a href={`/projects/${manifest.slug}/security#security-settings`} className="text-primary underline underline-offset-4">
           Manage security bounty
@@ -298,27 +298,27 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   );
 }
 
-function Vault({ runtime, manifest }: { runtime: PageRuntime; manifest: unknown }) {
+function Vault({ runtime, manifest, onVaultRegistered }: { runtime: PageRuntime; manifest: unknown; onVaultRegistered: () => void }) {
   const managed = managedOf(0, manifest)?.manifest;
   const project = fundingProjectOf(manifest);
   if (managed === undefined || project === undefined || isBountyOnly(managed) || !managed.escrow || managed.reward.kind === "external-prize-share") return null;
   return (
     <div id="project-vault">
-      <PooledEscrow runtime={runtime} project={project} manifest={manifest} />
+      <PooledEscrow runtime={runtime} project={project} manifest={manifest} onVaultRegistered={onVaultRegistered} />
     </div>
   );
 }
 
-function PooledEscrow({ runtime, project, manifest }: { runtime: PageRuntime; project: FundingProject; manifest: unknown }) {
+function PooledEscrow({ runtime, project, manifest, onVaultRegistered }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; onVaultRegistered: () => void }) {
   const reads = useOnce(projectRuntime(runtime), "reads", () => projectReads());
-  return reads.status === "done" ? <CurrentPool runtime={runtime} project={project} manifest={manifest} pool={reads.value.pool} /> : <EscrowFunding runtime={runtime} project={project} />;
+  return reads.status === "done" ? <CurrentPool runtime={runtime} project={project} manifest={manifest} pool={reads.value.pool} onVaultRegistered={onVaultRegistered} /> : <EscrowFunding runtime={runtime} project={project} onVaultRegistered={onVaultRegistered} />;
 }
 
-function CurrentPool({ runtime, project, manifest, pool }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex> }) {
+function CurrentPool({ runtime, project, manifest, pool, onVaultRegistered }: { runtime: PageRuntime; project: FundingProject; manifest: unknown; pool: ShownRead<PoolFundingIndex>; onVaultRegistered: () => void }) {
   const read = useShownRead(pool, "all");
   const shown = projectOf(manifest);
   const facts = shown !== undefined && read.status === "Current" ? projectFunding({ project: shown, read: { status: read.status, vaults: read.value?.get(shown.id) }, networkPays, nowMs: Date.now() }).facts : undefined;
-  return <EscrowFunding runtime={runtime} project={project} pool={facts} />;
+  return <EscrowFunding runtime={runtime} project={project} pool={facts} onVaultRegistered={onVaultRegistered} />;
 }
 
 function ProjectEditor(props: EditorProps) {

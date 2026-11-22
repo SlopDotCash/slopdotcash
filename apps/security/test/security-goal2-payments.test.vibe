@@ -1,0 +1,211 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { Refused, outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { Authority, type Json, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { type ProgramFundsView, SecurityProgramFunds } from "@repo/ports/security"
+import { type CaseContext, type DirectPaymentAction, type DirectPaymentView, DirectPayments, type DirectRefusal, DirectRefused, DirectRoutes, type PaymentViewContext, SolanaPayerRefused } from "@repo/ports/settlement"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { awardClearancesLive } from "../src/bounty/store.vibe"
+import { caseActionHandlersLive } from "../src/cases/handlers.vibe"
+import { caseRecord } from "../src/cases/rows.vibe"
+import { acted, opened } from "../src/cases/routes.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { receiptNotices } from "./support/intake/notices.vibe"
+
+type Outcome =
+  | { readonly kind: "commit"; readonly answer: Json }
+  | { readonly kind: "moved" }
+  | { readonly kind: "refused"; readonly reason: DirectRefusal }
+  | { readonly kind: "payer"; readonly message: string }
+
+interface Asked {
+  readonly action: DirectPaymentAction
+  readonly context: CaseContext
+  readonly body: unknown
+}
+
+interface Script {
+  view: DirectPaymentView
+  outcome: Outcome
+  readonly asked: Asked[]
+  readonly viewed: PaymentViewContext[]
+}
+
+service Payments {
+  readonly world: World
+  readonly script: Script
+}
+
+const paid = "intake-fixture"
+const usdcBase = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const steward = "900"
+let keys = 0
+
+const openRail: DirectPaymentView = { paymentRail: "direct", railAvailable: true, settlementState: null, settlement: null, paymentNetworks: ["base-mainnet"], actions: ["consent-payment", "prepare-payment"] }
+
+const Started = Layer.effect(Payments, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  return { world, script: { view: openRail, outcome: { kind: "commit", answer: {} }, asked: [], viewed: [] } }
+})
+
+function fixture(projectId: string): ProjectView {
+  return {
+    projectId, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired",
+    stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }], closureConsent: false,
+  }
+}
+
+function vault(): ProgramFundsView {
+  return { currency: "USDC", decimals: 6, network: "base", freeMinor: "1500000", availableMinor: "1500000", snapshotAt: new Date(Date.now() - 60_000).toISOString(), assetAddress: usdcBase, deploymentNetwork: "base-mainnet" }
+}
+
+function settlementOf(script: Script) {
+  return Layer.effect(DirectPayments, effect {
+    const db = try D1
+    return {
+      act: (action, context, body, alongside) => effect {
+        script.asked.push({ action, context, body })
+        const outcome = script.outcome
+        if (outcome.kind === "refused") throw new DirectRefused({ reason: outcome.reason })
+        if (outcome.kind === "payer") throw new SolanaPayerRefused({ message: outcome.message })
+        if (outcome.kind === "moved") try db.run(sql`UPDATE security_cases SET revision = revision + 1 WHERE id = ${context.caseId}`)
+        try db.batch(alongside)
+        return outcome.kind === "commit" ? outcome.answer : {}
+      },
+      view: (context) => effect {
+        script.viewed.push(context)
+        return script.view
+      },
+    } satisfies DirectPayments.Shape
+  })
+}
+
+function shellOf(payments: Payments.Shape) {
+  const ports = Layer.mergeAll(
+    Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), pausedProjects: () => succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
+    Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, { account: () => succeed({ banned: false }), project: () => succeed({ restricted: false }), fence: () => succeed(sql`SELECT 1`), unbanned: () => succeed(sql`1`) } satisfies Restrictions.Shape),
+    Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: vault(), guards: [] }) } satisfies SecurityProgramFunds.Shape),
+    Layer.succeed(DirectRoutes, { route: () => succeed(undefined) } satisfies DirectRoutes.Shape),
+  )
+  const base = Layer.mergeAll(d1(payments.world.db), webCrypto, reportBucket(payments.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: "18633265", PROJECT_MODERATOR_GITHUB_IDS: "18633265" }), ports, receiptNotices)
+  const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
+  const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, settlementOf(payments.script)), base)
+  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive), programs)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function actor(githubId: string) {
+  return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+}
+
+effect function submit(world: World, as: string, summary: string) {
+  keys += 1
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: paid, idempotencyKey: `payment-journey-key-${keys}`.padEnd(20, "0"), origin: "slop", report: { summary, description: `${summary}, described with enough detail to reproduce it safely.`, severity: "critical" } } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return (answer.body as { readonly submission: { readonly caseId: string } }).submission.caseId
+}
+
+effect function act(as: string, caseId: string, action: string, fields: Readonly<Record<string, unknown>> = {}) {
+  keys += 1
+  const record = try caseRecord(caseId)
+  const body = { action, expectedRevision: record?.row.revision ?? 0, idempotencyKey: `payment-action-key-${keys}`.padEnd(20, "0"), ...fields }
+  return Effect.map(acted(actor(as), caseId, body), () => "done" as const) catch effect (error) => {
+    if (error instanceof Refused) return [error.status, error.code] as const
+    throw error
+  }
+}
+
+effect function shown(as: string, caseId: string) {
+  const answer = try opened(actor(as), caseId)
+  const view = answer.case as { readonly allowedActions: ReadonlyArray<string>; readonly paymentRail: string; readonly paymentState: string; readonly settlement: unknown; readonly paymentNetworks: ReadonlyArray<string> }
+  return { payments: view.allowedActions.filter((action) => action.endsWith("-payment")), rail: view.paymentRail, state: view.paymentState, settlement: view.settlement, networks: view.paymentNetworks }
+}
+
+effect function approvedCase(world: World) {
+  const caseId = try submit(world, reporter, "Stale oracle price lets a borrower drain the vault")
+  try act(maintainer, caseId, "decide", { outcome: "confirmed", severity: "critical", loss: "verified-potential", inScope: true, reason: "Reproduced against the deployed vault.", relatedParty: false, rootCauseKey: "payment-journey-oracle" })
+  const awarded = try act(maintainer, caseId, "award", { decision: "amount", reason: "The finding matches the published offer.", grossMinor: "1000000", paymentDeadline: "2099-01-01T00:00:00.000Z", confirmation: true })
+  if (awarded !== "done") return try die(new Error(`award not approved: ${String(awarded)}`))
+  return caseId
+}
+
+effect function events(world: World, caseId: string, kind: string) {
+  return try promise(() => rows(world, "SELECT case_revision, actor_github_id, actor_role, detail FROM security_case_events WHERE case_id = ? AND kind = ? ORDER BY case_revision", caseId, kind))
+}
+
+effect function paymentJourney(payments: Payments.Shape) {
+  const { world, script } = payments
+  const caseId = try approvedCase(world)
+  const approved = try caseRecord(caseId)
+  const before = approved?.row.revision ?? 0
+  const stored = approved?.row.payment_state
+  script.view = openRail
+  const reporterView = try shown(reporter, caseId)
+  const payerView = try shown(maintainer, caseId)
+  const outsider = try act(other, caseId, "consent-payment", { network: "base-mainnet", confirmation: true })
+  const payerConsent = try act(maintainer, caseId, "consent-payment", { network: "base-mainnet", confirmation: true })
+  script.outcome = { kind: "commit", answer: { network: "base-mainnet", publicChainVisibilityAccepted: true } }
+  const consent = try act(reporter, caseId, "consent-payment", { network: "base-mainnet", confirmation: true })
+  const consented = try events(world, caseId, "consent-payment")
+  script.outcome = { kind: "moved" }
+  const moved = try act(maintainer, caseId, "prepare-payment", { network: "base-mainnet", confirmation: true })
+  const prepared = try events(world, caseId, "prepare-payment")
+  script.outcome = { kind: "refused", reason: "paymentConsentRequired" }
+  const refusal = try act(maintainer, caseId, "prepare-payment", { network: "base-mainnet", confirmation: true })
+  script.outcome = { kind: "payer", message: "The payer wallet cannot sign this request" }
+  const payer = try act(maintainer, caseId, "prepare-payment", { network: "base-mainnet", confirmation: true })
+  script.outcome = { kind: "commit", answer: { generation: 1, targetId: "intent-1", state: "signature-required" } }
+  const recovery = try act(maintainer, caseId, "recover-payment", { confirmation: true })
+  const recovered = try events(world, caseId, "recover-payment")
+  script.view = { ...openRail, paymentRail: "escrow", settlementState: "needs-wallet", settlement: { state: "needs-wallet" }, actions: [] }
+  const settling = try shown(reporter, caseId)
+  try same({
+    reporterView, payerView, outsider, payerConsent, consent,
+    viewed: script.viewed.slice(0, 2).map((entry) => entry.viewer),
+    asked: script.asked.map((entry) => ({ action: entry.action, revisionFrom: entry.context.revision - before, reporter: entry.context.reporterGithubId, actor: entry.context.actorGithubId })),
+    consented: consented.map((event) => ({ revision: Number(event.case_revision) - before, role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
+    moved, prepared, refusal, payer,
+    recovery,
+    recovered: recovered.map((event) => ({ role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
+    settling,
+  }, {
+    reporterView: { payments: ["consent-payment"], rail: "direct", state: stored, settlement: null, networks: ["base-mainnet"] },
+    payerView: { payments: ["prepare-payment"], rail: "direct", state: stored, settlement: null, networks: ["base-mainnet"] },
+    outsider: [404, "not_found"],
+    payerConsent: [409, "action_not_allowed"],
+    consent: "done",
+    viewed: [{ payer: false, reporter: true }, { payer: true, reporter: false }],
+    asked: [
+      { action: "consent-payment", revisionFrom: 0, reporter, actor: reporter },
+      { action: "prepare-payment", revisionFrom: 1, reporter, actor: maintainer },
+      { action: "prepare-payment", revisionFrom: 2, reporter, actor: maintainer },
+      { action: "prepare-payment", revisionFrom: 2, reporter, actor: maintainer },
+      { action: "recover-payment", revisionFrom: 2, reporter, actor: maintainer },
+    ],
+    consented: [{ revision: 1, role: "reporter", detail: { network: "base-mainnet", publicChainVisibilityAccepted: true } }],
+    moved: [409, "stale_revision"],
+    prepared: [],
+    refusal: [409, "payment_consent_required"],
+    payer: [409, "payer_refused"],
+    recovery: "done",
+    recovered: [{ role: "security-maintainer", detail: { rail: "direct" } }],
+    settling: { payments: [], rail: "escrow", state: "needs-wallet", settlement: { state: "needs-wallet" }, networks: ["base-mainnet"] },
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Payment actions of an approved private award reach settlement under the current case roles and revision (spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+    const payments = try Payments
+    provide shellOf(payments) {
+      try paymentJourney(payments)
+    }
+  })
+})

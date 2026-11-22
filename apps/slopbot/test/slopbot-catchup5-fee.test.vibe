@@ -16,8 +16,11 @@ import { gateSubmissionFee } from "../src/fee/gate.vibe"
 import { feeReviewJob, refreshSubmissionFee } from "../src/fee/refresh.vibe"
 import { SubmissionFeeMode, feeUnpaid } from "../src/fee/store.vibe"
 import { webhookSettings } from "../src/ingress/webhook.vibe"
-import { type Job, JobQueue } from "../src/jobs/job.vibe"
+import { type Job, JobQueue, readyJob } from "../src/jobs/job.vibe"
+import { refreshReadyLabel } from "../src/ready/refresh.vibe"
 import { intakeFacts } from "../src/review/intake.vibe"
+
+const readyLabel = { enabled: true, approvals: 1, maxChangedLines: 400, maxChangedFiles: 20, protectedPaths: [] }
 
 const repo = "ada/widgets"
 const repositoryId = 8401
@@ -49,7 +52,7 @@ function iso(millis: number) {
 }
 
 function settingOn(on: boolean) {
-  return JSON.stringify({ id: projectId, slopbot: on ? { submissionFee: { enabled: true, amountMinor: "2000000" } } : {} })
+  return JSON.stringify({ id: projectId, slopbot: on ? { submissionFee: { enabled: true, amountMinor: "2000000" }, readyLabel } : { readyLabel } })
 }
 
 function viewOf(): ProjectView {
@@ -238,6 +241,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     try refreshed(withdrawn, t0 + 3000)
     try Effect.promise(() => fees.db.prepare("UPDATE submission_fee_items SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, withdrawn).run())
     const askedAgain = try refreshed(withdrawn, t0 + 6000)
+    const notReady = try at(t0 + 7000, refreshReadyLabel(readyJob({ deliveryId: `ready-${withdrawn}`, installationId, repositoryId, owner: "ada", repo: "widgets", number: withdrawn })))
     try same({
       unpaidBefore,
       dispatched,
@@ -251,6 +255,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
       askedAgain: askedAgain.review,
       withdrawn: try seen(withdrawn),
       unpaidAfter: try at(t0 + 7000, feeUnpaid(repositoryId, withdrawn)),
+      notReady,
       refundReview: refund.review,
       earlyReview: early.review,
     }, {
@@ -266,6 +271,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
       askedAgain: false,
       withdrawn: { gate: "asked", item: { stableMinor: "2000000", paid: false, outcome: null }, labels: ["slopbot:fee-needed"], botComments: 1 },
       unpaidAfter: true,
+      notReady: "not ready: its submission fee has not been paid",
       refundReview: false,
       earlyReview: false,
     })

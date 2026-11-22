@@ -453,7 +453,7 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Activity mail carries the one-click unsubscribe headers, an essential notice reaches the recipient\'s pilot unless security mail is off, a former owner gets nothing, a payout exception reaches a user steward or the lister of an Organization steward, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/moderation.md, "An enforcement record reaches its applicant and steward, and a reinstatement request the moderators who did not place it"; spec/operations/payoutAudience.md, "Story: A payout exception reaches an account that can sign in"; spec/operations/payoutAudience.md, "The account that listed a project is its source application\'s applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
+  it.effect('Activity mail carries the one-click unsubscribe headers, an essential notice reaches the recipient\'s pilot unless security mail is off, a former owner gets nothing, a payout exception reaches a user steward or the lister of an Organization steward, an owner cut's notice reaches only the contributor it names, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/moderation.md, "An enforcement record reaches its applicant and steward, and a reinstatement request the moderators who did not place it"; spec/operations/moderation.md, "An underfunded month asks the steward once, and each owner cut notifies its contributor once"; spec/operations/payoutAudience.md, "Story: A payout exception reaches an account that can sign in"; spec/operations/payoutAudience.md, "The account that listed a project is its source application\'s applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
     const db = try D1
     const { pilot, release } = try activityPilot()
     try save([
@@ -547,6 +547,24 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     for (const [, request] of reviews) reviewRows.push(try outbox(`reinstatement-review:${request}`, reviewer))
     try same(reviewRows.map((row) => [row.state, sentTo(row.id).map(([to]) => to)]), [
       ["provider-accepted", ["reviewer@slop.test"]],
+      ["suppressed", []],
+    ])
+
+    const cutKey = "monthly-cut:payout-user:2030-01:1"
+    try db.batch([
+      sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES ('payout-user', '2030-01', '{"id":"payout-user"}', ${manifestSha}, ${manifestSha}, '1000', 1, ${seededAt})`,
+      sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES ('payout-user', '2030-01', ${member}, 'member', '1000', ${manifestSha})`,
+      sql`INSERT INTO monthly_allocation_changes (project_id, period, sequence, github_user_id, gross_base, actor_id, created_at) VALUES ('payout-user', '2030-01', 1, ${member}, '400', ${userSteward}, ${seededAt})`,
+      sql`INSERT INTO monthly_allocation_cut_reasons (project_id, period, sequence, github_user_id, proposed_gross_base, gross_base, reason, actor_id, created_at)
+        VALUES ('payout-user', '2030-01', 1, ${member}, '1000', '400', 'The pull request was reverted after review.', ${userSteward}, ${seededAt})`,
+    ])
+    const cutRecipients = [member, second] as const
+    try save(cutRecipients.map((recipientGithubId) => ({ eventKey: cutKey, recipientGithubId, kind: "PayoutException", subject: "payout-user", actionPath: "/cycles/payout-user/2030-01", sourceAt: seededAt })))
+    try dispatch("activity", pilot, from, release)
+    const cutRows: OutboxState[] = []
+    for (const recipient of cutRecipients) cutRows.push(try outbox(cutKey, recipient))
+    try same(cutRows.map((row) => [row.state, sentTo(row.id).map(([to]) => to)]), [
+      ["provider-accepted", ["member@slop.test"]],
       ["suppressed", []],
     ])
 

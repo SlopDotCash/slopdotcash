@@ -1,0 +1,60 @@
+{
+  "name": "slop-payments-base-sepolia-staging-attester",
+  "main": "../dist/attester.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": []
+  },
+  "d1_databases": [
+    {
+      "binding": "PAYMENTS_DB",
+      "database_name": "slop-staging",
+      "database_id": "6fcddcc1-f3d7-4175-bdde-09afddd53a8a"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "JOURNAL",
+        "class_name": "PaymentSignerJournal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "PaymentSignerJournal"
+      ]
+    }
+  ],
+  "vars": {
+    "SLOP_ENVIRONMENT": "staging",
+    "SIGNER_STACK": "test",
+    "PAYMENT_NETWORK": "base-sepolia",
+    "PAYMENT_DEPLOYMENTS": "[]"
+  },
+  "expectedSecrets": [
+    "PAYMENT_RPC_URLS",
+    "TEST_SIGNER_PRIVATE_KEY"
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  }
+}

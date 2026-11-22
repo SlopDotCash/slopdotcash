@@ -1,12 +1,15 @@
+// spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import { area } from "@repo/platform/worker"
 import { SlopbotAudienceLive } from "./audience/port.vibe"
 import { api } from "./client/index.vibe"
+import { SubmissionFeeItemsLive } from "./fee/items.vibe"
 import { summaryRoutes } from "./feeds/summary.vibe"
 import { importRoutes } from "./import/routes.vibe"
 import { ReportingReadinessLive } from "./readiness/port.vibe"
 import { AssessmentQueueLive, assessmentRoutes } from "./value/inbox/routes.vibe"
 
 export { SlopbotAudienceLive } from "./audience/port.vibe"
+export { SubmissionFeeItemsLive } from "./fee/items.vibe"
 export { historicalValueImport, type HistoricalValueBinding } from "./import/routes.vibe"
 export { ReportingReadinessLive } from "./readiness/port.vibe"
 export { repositoryAccessReader } from "./value/inbox/access.vibe"
@@ -16,5 +19,5 @@ export const slopbot = area({
   name: "slopbot",
   api,
   routes: Layer.mergeAll(assessmentRoutes, summaryRoutes, importRoutes),
-  provides: Layer.mergeAll(ReportingReadinessLive, SlopbotAudienceLive, AssessmentQueueLive),
+  provides: Layer.mergeAll(ReportingReadinessLive, SlopbotAudienceLive, AssessmentQueueLive, SubmissionFeeItemsLive),
 })

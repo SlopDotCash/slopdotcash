@@ -1,4 +1,4 @@
-// spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
 import { isoAt } from "@repo/platform/clock"
 import { randomId, randomToken } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
@@ -12,6 +12,9 @@ import { qualified } from "../../gen/security__screening.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
 import { scheduleReceiptAnalysis } from "../assessment/routes.vibe"
 import { caseNotices } from "../cases/store.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeld } from "../deposit/held.vibe"
+import { depositRefusals } from "../deposit/refusals.ts"
 import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding, verifyForwarding } from "../client/forwarding.vibe"
 import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissions as createRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows, postSecuritySubmissionsByIdVerify as verifyRows } from "../client/refusals.vibe"
 import { type ReportingCache, projectId as projectPattern, reportingCache } from "../intake/availability.vibe"
@@ -317,6 +320,7 @@ effect function sendSubmission(actor: Actor, id: string) {
   if (failureClosed(forwarding, row)) throw refused(sendRows.submissionClosedThisSubmissionCannotBe)
   const stored = try storedIntake(row.id)
   if (stored === undefined || forwarding === undefined) throw refused(sendRows.screeningRequiredThisDraftNeedsMore)
+  if (try depositHeld(stored.case_id)) throw refused(depositRefusals.depositRequired)
   const digests = (try reportVersions(row.id)).map((version) => version.content_sha256)
   const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
   if (!qualified(screening)) throw refused(sendRows.screeningRequired)
@@ -393,6 +397,7 @@ effect function authorizeSubmission(actor: Actor, id: string) {
   if (row.state === "receipt-verified" || row.state === "abandoned") throw refused(authorizeRows.submissionClosed)
   if (row.state !== "submitting" && row.state !== "uncertain" && row.state !== "submitted") {
     const stored = try storedIntake(row.id)
+    if (stored !== undefined && (try depositHeld(stored.case_id))) throw refused(depositRefusals.depositRequired)
     if (stored !== undefined && !qualified(screeningOf(stored, githubNumber(row.reporter_github_id), []))) throw refused(authorizeRows.screeningRequired)
   }
   const flow = try beginAuthorization(app, { submissionId: row.id, githubId: actor.githubId, githubLogin: actor.login })
@@ -493,7 +498,8 @@ effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: numb
   const caseId = `sc_${(try randomId()).replaceAll("-", "")}`
   const acknowledgeHours = program?.acknowledgeHours ?? 0
   const guard = sql`(SELECT revision FROM security_submissions WHERE id = ${row.id}) = ${row.revision} AND (SELECT state FROM security_submissions WHERE id = ${row.id}) = ${row.state}`
-  const notices = try caseNotices({ caseId, revision: 1, kind: "submit-direct", idempotencyKey: `intake-${row.id}`, actorGithubId: row.reporter_github_id, reporterGithubId: row.reporter_github_id, detail: {}, program, relatedReview: false, at })
+  const ask = try depositAsk({ caseId, projectId: row.project_id, reporterGithubId: row.reporter_github_id, at })
+  const notices = try caseNotices({ caseId, revision: 1, kind: "submit-direct", idempotencyKey: `intake-${row.id}`, actorGithubId: row.reporter_github_id, reporterGithubId: row.reporter_github_id, detail: {}, program: ask.held ? undefined : program, relatedReview: false, at })
   const receiptNotice = try (try Notices).statements({
     notices: [{ eventKey: `security-receipt:${caseId}`, recipientGithubId: row.reporter_github_id, kind: "SecurityReportReceived", subject: caseId, actionPath: `/inbox?submission=${row.id}`, sourceAt: at }],
     onlyIf: sql`EXISTS(SELECT 1 FROM security_cases WHERE id=${caseId} AND submission_state='verified' AND verified_at IS NOT NULL)`,
@@ -506,6 +512,7 @@ effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: numb
     caseEvent({ caseId, revision: 1, kind: "submit-direct", actorGithubId: row.reporter_github_id, role: "reporter", idempotencyKey: `intake-${row.id}`, reason: null, evidenceReference: null, at, guard: true,
       detail: { submissionId: row.id, advisory: facts.ghsa, receivedAt: facts.createdAt, receivedAtSource: "github-verified", verifiedBy: "github", policyRevision: receipt.policyRevision } }),
     sql`INSERT INTO security_case_access_log (case_id, actor_github_id, actor_role, action, at) SELECT ${caseId}, ${row.reporter_github_id}, 'reporter', 'write', ${at} WHERE EXISTS (SELECT 1 FROM security_cases WHERE id = ${caseId})`,
+    ...ask.statements,
     ...receiptNotice,
     ...notices,
     ...transitionStatements(row, transition),

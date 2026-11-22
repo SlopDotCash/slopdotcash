@@ -10,9 +10,16 @@ on:
         type: boolean
         default: false
       use_published_data:
-        description: "Manual main release only: retain the last leaderboard and profiles published by production, with their original timestamps"
+        description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      data_from_run:
+        description: "Manual main release with use_published_data only: take the leaderboard and profiles from this completed main release's own fresh collection instead of the live site"
+        type: string
+        default: ""
+      discussion_resume_run:
+        description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
+        type: string
       rotate_robinhood_rpc_from:
         description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
         type: string
@@ -43,12 +50,103 @@ env:
   TURBO_CACHE: "local:rw"
 
 jobs:
+  restore_discussions:
+    name: Restore trusted production discussion reads
+    if: github.event_name == 'workflow_dispatch' && inputs.discussion_resume_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+    steps:
+      - name: Require a fresh main release
+        env:
+          USE_PUBLISHED_DATA: ${{ inputs.use_published_data }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$USE_PUBLISHED_DATA" = false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: restore-discussions
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/points
+      - name: Load the exact trusted main attempt's checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.discussion_resume_run }}
+        run: node apps/points/dist/programs/main.js snapshot restore-discussions
+      - name: Pass verified checkpoint to preparation
+        id: retained
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-leaderboard-discussions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/leaderboard-discussions
+          if-no-files-found: error
+          retention-days: 2
+
+  restore_collection:
+    name: Restore a trusted main release's collected data
+    if: github.event_name == 'workflow_dispatch' && inputs.data_from_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+    steps:
+      - name: Require a manual retained-data main release
+        env:
+          USE_PUBLISHED_DATA: ${{ inputs.use_published_data }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$USE_PUBLISHED_DATA" = true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: restore-collection
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/operations
+      - name: Load the exact trusted main attempt's collected data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DATA_RUN: ${{ inputs.data_from_run }}
+        run: node apps/operations/dist/programs/main.js release restore-collection "$DATA_RUN" "$RUNNER_TEMP/collected-data"
+      - name: Pass verified data to preparation
+        id: retained
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-collected-data-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collected-data
+          if-no-files-found: error
+          retention-days: 2
+
   prepare:
-    name: Prepare checked release bundle
+    name: Prepare checked browser bundle
+    needs: [restore_discussions, restore_collection]
+    if: >-
+      !cancelled() &&
+      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped') &&
+      (needs.restore_collection.result == 'success' || needs.restore_collection.result == 'skipped')
     runs-on: ubuntu-24.04
     concurrency:
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      group: slop-quality-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && (inputs.use_published_data == true && 'retained' || 'collect') || github.event_name }}
+      cancel-in-progress: false
     timeout-minutes: 360
     outputs:
       environment: ${{ steps.target.outputs.environment }}
@@ -63,6 +161,10 @@ jobs:
       VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'staging' || 'production' }}
       SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'slop-staging' || 'slop-production' }}
     steps:
+      - name: Reserve checked bundle preparation time
+        if: github.ref == 'refs/heads/main' && inputs.use_published_data != true
+        run: echo "SLOP_PREPARE_COLLECT_UNTIL_SECONDS=$(( $(date +%s) + 20820 ))" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -107,17 +209,17 @@ jobs:
           test -z "$ROBINHOOD_ROTATION"
           [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
 
-      - name: Require manual main release for published data
+      - name: Require manual main or development release for published data
         if: inputs.use_published_data == true
         env:
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "::error::Published data is limited to a manual main release."
-            exit 1
-          fi
+          case "$GITHUB_REF" in
+            refs/heads/main | refs/heads/development) ;;
+            *) echo "::error::Published data is limited to manual main or development releases."; exit 1 ;;
+          esac
           test "$BOOTSTRAP_STAGING_PROFILES" = "false"
 
       - name: Require a manual development run for staging profile bootstrap
@@ -158,7 +260,14 @@ jobs:
         id: coverage
         run: node apps/operations/dist/programs/main.js release coverage "$SLOP_RELEASE_ENVIRONMENT"
 
-      - name: Install the pinned merge collector
+      - name: Snapshot the D1 project registry for ingestion
+        run: |
+          set -euo pipefail
+          node apps/operations/dist/programs/main.js release registry "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
+          node apps/points/dist/programs/main.js registry "$BUNDLE/registry/snapshot.json" "$RUNNER_TEMP/repository-registry.json"
+
+      - name: Install the pinned merge collector for trusted Points ingestion
+        if: inputs.use_published_data != true
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -166,75 +275,114 @@ jobs:
           node apps/points/dist/programs/main.js git install "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
 
-      - name: Collect live GitHub contribution data
+      - name: Copy restored public discussion reads
+        if: github.event_name == 'workflow_dispatch' && inputs.discussion_resume_run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
+          path: ${{ runner.temp }}/leaderboard-discussions
+
+      - name: Mint collector token
+        id: collector-token
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          inputs.use_published_data != true &&
+          vars.COLLECTOR_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.COLLECTOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.COLLECTOR_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+
+      - name: Generate live contribution data
+        id: live_ledger
         if: inputs.use_published_data != true
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
+          collect=(node apps/slopbot/dist/programs/main.js collect "$RUNNER_TEMP/repository-registry.json")
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
+            mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
+            collector_started=$(date +%s)
+            collection_seconds=20700
+            preparation_seconds=$(( SLOP_PREPARE_COLLECT_UNTIL_SECONDS - collector_started ))
+            if [ "$preparation_seconds" -lt "$collection_seconds" ]; then
+              collection_seconds=$preparation_seconds
+            fi
+            collection_deadline=$(( collector_started + collection_seconds ))
+            export SLOP_DISCUSSION_DEADLINE_MS="$(( collection_deadline * 1000 ))"
+          fi
           feed_status=0
           for attempt in 1 2; do
+            attempt_command=("${collect[@]}")
+            if [ "$GITHUB_REF" = refs/heads/main ]; then
+              remaining_seconds=$(( collection_deadline - $(date +%s) ))
+              if [ "$remaining_seconds" -le 0 ]; then
+                if [ "$feed_status" -eq 75 ]; then
+                  break
+                fi
+                echo "::error::No time remains for live collection before checked bundle preparation."
+                exit 1
+              fi
+              attempt_command=(timeout --signal=TERM --kill-after=10s "$((remaining_seconds + 100))" "${collect[@]}")
+            fi
             feed_status=0
-            node apps/points/dist/programs/main.js collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE/github" || feed_status=$?
+            "${attempt_command[@]}" || feed_status=$?
             if [ "$feed_status" -ne 75 ]; then
               break
             fi
             if [ "$attempt" -eq 1 ]; then
+              if [ "$GITHUB_REF" = refs/heads/main ] && [ "$(( $(date +%s) + 60 ))" -ge "$collection_deadline" ]; then
+                break
+              fi
               echo "::warning::Hosted value feed unavailable; retrying in 60 seconds."
               sleep 60
             fi
           done
           if [ "$feed_status" -eq 75 ]; then
             echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
-            rm -rf "$BUNDLE/github"
-            mkdir -p "$BUNDLE/github"
             node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
             test -s "$BUNDLE/github/leaderboard.json"
           elif [ "$feed_status" -ne 0 ]; then
             exit "$feed_status"
-          fi
-
-      - name: Load validated published data for a manual release
-        if: inputs.use_published_data == true
-        run: |
-          set -euo pipefail
-          node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
-          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-            --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
-            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$RUNNER_TEMP/published-profiles.json"
-          node apps/points/dist/programs/main.js profiles extend "$RUNNER_TEMP/published-profiles.json"
-
-      - name: Bind the registry and GitHub collections
-        run: |
-          set -euo pipefail
-          if [ "${{ inputs.use_published_data == true }}" = true ]; then
-            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE" --retained
           else
-            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
+            mv public/data/leaderboard.json "$BUNDLE/github/leaderboard.json"
           fi
 
-      - name: Validate reward lifecycle and disclosures
-        run: |
-          set -euo pipefail
-          node apps/settlement/dist/programs/main.js disclosures --check
-          node apps/settlement/dist/programs/main.js cycle-index --out "$BUNDLE/site/data/cycles"
+      - name: Save public discussion reads for a subsequent trusted run
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          (steps.live_ledger.outcome == 'success' || steps.live_ledger.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: leaderboard-discussions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/leaderboard-discussions/*.bin
+          if-no-files-found: ignore
+          retention-days: 2
 
-      - name: Build the public Points and profile data
+      - name: Generate live contributor profiles
+        if: inputs.use_published_data != true
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          COLLECTOR_APP_CLIENT_ID: ${{ steps.collector-token.outputs.installation-id && vars.COLLECTOR_APP_CLIENT_ID || '' }}
+          COLLECTOR_APP_PRIVATE_KEY: ${{ steps.collector-token.outputs.installation-id && secrets.COLLECTOR_APP_PRIVATE_KEY || '' }}
+          COLLECTOR_APP_INSTALLATION_ID: ${{ steps.collector-token.outputs.installation-id }}
+          COLLECTOR_APP_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
+          GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles == true }}
         run: |
           set -euo pipefail
-          registry="$RUNNER_TEMP/repository-registry.json"
-          node apps/points/dist/programs/main.js registry "$BUNDLE/registry/snapshot.json" "$registry"
-          cp "$BUNDLE/github/leaderboard.json" "$BUNDLE/site/data/leaderboard.json"
-          node apps/points/dist/programs/main.js journal build "$registry" "$BUNDLE/site/data" "$BUNDLE/registry/snapshot.json" \
-            --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT"
-          if [ "${{ inputs.use_published_data == true }}" = true ]; then
-            node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
-            exit 0
-          fi
           previous="$RUNNER_TEMP/previous-profiles.json"
           if [ "$BOOTSTRAP_STAGING_PROFILES" = true ]; then
             cp data/profiles/seed.json "$previous"
@@ -256,6 +404,62 @@ jobs:
             echo "::warning::Profile census did not reconcile; retrying once."
           done
 
+      - name: Copy restored collected data
+        if: github.event_name == 'workflow_dispatch' && inputs.use_published_data == true && inputs.data_from_run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_collection.outputs.artifact_id }}
+          path: ${{ runner.temp }}/collected-data
+
+      - name: Load validated published data for a manual release
+        if: inputs.use_published_data == true
+        env:
+          DATA_FROM_RUN: ${{ inputs.data_from_run || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DATA_FROM_RUN" ]; then
+            test "$SLOP_RELEASE_ENVIRONMENT" = production
+            collected="$RUNNER_TEMP/collected"
+            node apps/points/dist/programs/main.js snapshot extract-collected "$RUNNER_TEMP/collected-data/bundle.zip" "$collected"
+            node apps/points/dist/programs/main.js snapshot restore-local "$collected" "$BUNDLE/github/leaderboard.json"
+            cp "$collected/profiles.json" "$RUNNER_TEMP/published-profiles.json"
+          else
+            node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+              "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$RUNNER_TEMP/published-profiles.json"
+          fi
+          node apps/points/dist/programs/main.js profiles extend "$RUNNER_TEMP/published-profiles.json"
+
+      - name: Bind the registry and GitHub collections
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.use_published_data == true }}" = true ]; then
+            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE" --retained
+          else
+            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
+          fi
+
+      - name: Validate reward lifecycle and disclosures
+        run: |
+          set -euo pipefail
+          node apps/settlement/dist/programs/main.js disclosures --check
+          node apps/settlement/dist/programs/main.js cycle-index --out "$BUNDLE/site/data/cycles"
+
+      - name: Build the public Points data
+        env:
+          POINTS_PROTECTION_URL: ${{ github.ref == 'refs/heads/main' && 'https://slop.cash/api/v1/operator/protected-point-months' || '' }}
+          POINTS_PROTECTION_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.POINTS_PROTECTION_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE/github/leaderboard.json" "$BUNDLE/site/data/leaderboard.json"
+          node apps/points/dist/programs/main.js journal build "$RUNNER_TEMP/repository-registry.json" "$BUNDLE/site/data" "$BUNDLE/registry/snapshot.json" \
+            --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT"
+          if [ "${{ inputs.use_published_data == true }}" = true ]; then
+            node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
+          fi
+
       - name: Assemble the release bundle
         run: |
           set -euo pipefail
@@ -273,6 +477,9 @@ jobs:
             fi
           done
 
+      - name: Publish the global skills, discovery index and sitemap
+        run: node apps/contributor/dist/programs/main.js site --out "$BUNDLE/site"
+
       - name: Bind the release manifest
         id: manifest
         run: |
@@ -288,6 +495,15 @@ jobs:
         with:
           name: slop-release-${{ github.sha }}
           path: ${{ runner.temp }}/slop-release
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Cloudflare Pages bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-source-${{ github.sha }}
+          path: ${{ runner.temp }}/slop-release/site
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
@@ -707,6 +923,13 @@ jobs:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
         run: node "$BUNDLE/apps/security/dist/programs/main.js" security-screening --mode execute
 
+      - name: Qualify private report routine decisions with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 6
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        run: node "$BUNDLE/apps/security/dist/programs/main.js" security-routine-qualification --mode execute
+
       - name: Require agent-client records for changed agent workflows
         if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
@@ -730,6 +953,9 @@ jobs:
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
+          PAYMENT_RPC_URLS: ${{ secrets.PAYMENT_RPC_URLS }}
+          OPERATOR_FEED_TOKEN: ${{ secrets.OPERATOR_FEED_TOKEN }}
+          POINTS_PROTECTION_TOKEN: ${{ secrets.POINTS_PROTECTION_TOKEN }}
           SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
@@ -743,6 +969,13 @@ jobs:
           deployment="$(sed -n 's/^\[Slop\] published and verified [0-9a-f]\{40\} as deployment \(.*\)$/\1/p' "$log" | tail -n 1)"
           echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
           echo "log=$log" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Cloudflare deployment commit metadata
+        if: steps.publish.outputs.deployment != ''
+        env:
+          DEPLOYMENT_ID: ${{ steps.publish.outputs.deployment }}
+          PUBLISH_LOG: ${{ steps.publish.outputs.log }}
+        run: grep -Fqx "[Slop] published and verified $GITHUB_SHA as deployment $DEPLOYMENT_ID" "$PUBLISH_LOG"
 
       - name: Capture and validate production evidence
         if: steps.publish.outputs.deployment != ''

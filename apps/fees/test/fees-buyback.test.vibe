@@ -12,6 +12,7 @@ import type { Event } from "../gen/fees__buyback.ts"
 import type { Network, Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import { type IncomeEntry, type Leg, incomeKey } from "../src/buyback/codec.vibe"
 import { incomeEvidence } from "../src/buyback/income.vibe"
+import { keptFees } from "../src/submissionFee/income.vibe"
 import { type LegResult, type LegSettings, arrivals, bridgeLeg } from "../src/buyback/leg.vibe"
 import { type Facts, ledgerOf, send } from "../src/buyback/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
@@ -263,12 +264,34 @@ effect function seed(db: D1Database, generation: number, id: string, kind: "conv
   }, d1(db))
 }
 
+interface KeptRow {
+  readonly network?: string
+  readonly token?: string
+  readonly amount?: string
+  readonly keptTo?: string
+  readonly state?: string
+  readonly accepted?: number
+  readonly finalizedAt?: string | null
+  readonly resolveTx?: string | null
+  readonly resolvedAt?: string | null
+}
+
+effect function deposited(world: World, id: number, fields: KeptRow = {}) {
+  const at = try isoAt(world.leg.offset + start + hour)
+  const resolvedAt = fields.resolvedAt === undefined ? at : fields.resolvedAt
+  const finalizedAt = fields.finalizedAt === undefined ? at : fields.finalizedAt
+  const resolveTx = fields.resolveTx === undefined ? `0x${(1000 + id).toString(16).padStart(64, "0")}` : fields.resolveTx
+  try Effect.provide(effect {
+    try (try D1).run(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at) VALUES (${fields.network ?? "base-mainnet"}, ${id}, ${`0x${"1".repeat(64)}`}, ${`0x${"a".repeat(40)}`}, ${fields.token ?? usdc}, ${fields.amount ?? "2000000"}, ${fields.keptTo ?? wallet(world).toLowerCase()}, ${`0x${id.toString(16).padStart(64, "0")}`}, ${100 + id}, ${at}, ${finalizedAt}, ${fields.accepted ?? 1}, ${fields.state ?? "kept"}, ${resolveTx}, ${resolvedAt})`)
+  }, d1(world.db))
+}
+
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee")', () => effect {
+  it.effect('Only finalized USDC outputs, USDC claims and booked direct fees from the activation instant count, each once (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
     const { db } = try Fixture
     try seed(db, 1, "1a", "conversion", usdc, "900000000", start - dayMs)
     try seed(db, 1, "1b", "conversion", usdc, "1200000000", start + hour)
@@ -277,8 +300,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const world = try opened(2, "Base")
     const booked = [{ receipt: "g1-direct-7", amount: 200000000n, chainTime: start + hour / 2 }, { receipt: "g1-direct-8", amount: 300000000n, chainTime: start - 1 }]
     const query = { network: "Base", wallet: generationInstance(1).held.wallets[0] ?? "", usdc, scope: "g1:", offset: offsetOf(1) } as const
-    const evidence = try Effect.provide(incomeEvidence(query, booked), services(world))
-    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }]), services(world)), "counted") catch (error) => error._tag
+    const evidence = try Effect.provide(incomeEvidence(query, booked, []), services(world))
+    const doubled = Effect.as(Effect.provide(incomeEvidence(query, [{ receipt: `0x${"1c".padStart(64, "0")}`, amount: 1n, chainTime: start + hour }], []), services(world)), "counted") catch (error) => error._tag
     world.leg = { ...world.leg, evidence }
     const [first] = evidence
     const early = first === undefined ? "missing" : try tried(world, { type: "recordIncome", key: incomeKey(world.leg, first), incomeAmount: first.amount, chainTime: start - 1 })
@@ -307,6 +330,55 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       income: [0, 0, 0, 2],
       sources: ["DirectFee", "ConversionOutput", "UsdcClaim"],
       repeated: "RowMismatch",
+    })
+  })
+
+  it.effect('A kept stablecoin submission fee sent to the fee wallet counts once as Base income from its finalized resolution at or after activation (spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
+    const world = try opened(7, "Base")
+    const since = try isoAt(world.leg.offset + start)
+    const before = try isoAt(world.leg.offset + start - 1000)
+    try deposited(world, 701)
+    try deposited(world, 702, { amount: "5000000" })
+    try deposited(world, 703, { network: "robinhood-mainnet", token: robinhoodUsdg, amount: "3000000" })
+    try deposited(world, 704, { token: robinhoodUsdg })
+    try deposited(world, 705, { keptTo: `0x${"7".repeat(40)}` })
+    try deposited(world, 706, { state: "refunded" })
+    try deposited(world, 707, { state: "reclaimed" })
+    try deposited(world, 708, { state: "kept_due", resolveTx: null, resolvedAt: null })
+    try deposited(world, 709, { state: "open", resolveTx: null, resolvedAt: null })
+    try deposited(world, 710, { finalizedAt: null })
+    try deposited(world, 711, { resolveTx: null })
+    try deposited(world, 712, { accepted: 0 })
+    try deposited(world, 713, { resolvedAt: before })
+    try deposited(world, 714, { resolvedAt: since, amount: "1000000" })
+    const base = try Effect.provide(keptFees({ network: "base-mainnet", since }), services(world))
+    const robinhood = try Effect.provide(keptFees({ network: "robinhood-mainnet", since }), services(world))
+    const kept = [...base, ...robinhood]
+    const query = { network: "Base", wallet: wallet(world), usdc, scope: world.leg.scope, offset: world.leg.offset } as const
+    const evidence = try Effect.provide(incomeEvidence(query, [], kept), services(world))
+    const ethereum = try Effect.provide(incomeEvidence({ ...query, network: "Ethereum", usdc: ethereumUsdc }, [], kept.map((fee) => ({ ...fee, token: ethereumUsdc }))), services(world))
+    world.leg = { ...world.leg, evidence }
+    for (const entry of evidence) try step(world, { type: "recordIncome", key: incomeKey(world.leg, entry), incomeAmount: entry.amount, chainTime: entry.chainTime })
+    const forged: IncomeEntry = { kind: "KeptSubmissionFee", text: "base-mainnet:705", amount: [0, 0, 2], chainTime: start + hour }
+    const unbacked = try tried(world, { type: "recordIncome", key: incomeKey(world.leg, forged), incomeAmount: forged.amount, chainTime: forged.chainTime })
+    const state = (try Effect.provide(ledgerOf(world.leg), services(world))).state
+    try deposited(world, 715, { amount: "2.5" })
+    const fractional = Effect.as(Effect.provide(keptFees({ network: "base-mainnet", since }), services(world)), "read") catch (error) => error._tag
+
+    try same({
+      evidence: evidence.map((entry) => [entry.kind, entry.text, fromAmount(entry.amount), entry.chainTime - start]),
+      ethereum,
+      unbacked,
+      income: fromAmount(state.income),
+      sources: state.sources.map((key) => key.kind),
+      fractional,
+    }, {
+      evidence: [["KeptSubmissionFee", "base-mainnet:714", 1_000_000n, 0], ["KeptSubmissionFee", "base-mainnet:701", 2_000_000n, hour], ["KeptSubmissionFee", "base-mainnet:702", 5_000_000n, hour]],
+      ethereum: [],
+      unbacked: "BuybackRefused",
+      income: 8_000_000n,
+      sources: ["KeptSubmissionFee", "KeptSubmissionFee", "KeptSubmissionFee"],
+      fractional: "RowMismatch",
     })
   })
 

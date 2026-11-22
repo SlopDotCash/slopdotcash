@@ -1,0 +1,51 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"
+import type { Fetcher } from "@repo/platform/bindings"
+import { byCron, worker } from "@repo/platform/worker"
+import { type PaymentsRun, runPayments } from "../jobs/payments.vibe"
+import { type LedgerVars, ledgerServices } from "../jobs/services.vibe"
+import type { NetworkKey } from "../kernels/networks.ts"
+import { type ExecutorBindings, executors } from "../payments/dispatch.vibe"
+import { servedNetworks } from "../vault/deployments.vibe"
+
+export interface Env extends LedgerVars {
+  readonly PAYMENT_NETWORKS?: string
+  readonly SECURITY_PAYMENT_NETWORKS?: string
+  readonly EVM_PAYMENT_EXECUTOR?: Fetcher
+  readonly SOLANA_PAYMENT_EXECUTOR?: Fetcher
+}
+
+export const paymentsCron = "*/5 * * * *"
+
+service PaymentsConfig {
+  readonly run: PaymentsRun
+}
+
+function bindingsOf(env: Env): ExecutorBindings {
+  return {
+    ...env.EVM_PAYMENT_EXECUTOR === undefined ? {} : { evm: env.EVM_PAYMENT_EXECUTOR },
+    ...env.SOLANA_PAYMENT_EXECUTOR === undefined ? {} : { solana: env.SOLANA_PAYMENT_EXECUTOR },
+  }
+}
+
+effect function configured(env: Env) {
+  const networks = try servedNetworks(env.PAYMENT_NETWORKS)
+  const securityNetworks: ReadonlyArray<NetworkKey> = env.SECURITY_PAYMENT_NETWORKS === undefined ? [] : try servedNetworks(env.SECURITY_PAYMENT_NETWORKS)
+  return { run: { networks, securityNetworks, executors: bindingsOf(env) } } satisfies PaymentsConfig.Shape
+}
+
+function services(env: Env) {
+  const config = Layer.effect(PaymentsConfig, configured(env))
+  const networks = Layer.unwrap(effect {
+    const { run } = try PaymentsConfig
+    return ledgerServices(env, [...run.networks, ...run.securityNetworks])
+  })
+  return Layer.mergeAll(config, Layer.provide(networks, config), executors(bindingsOf(env)))
+}
+
+export default worker({
+  services,
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text("Not found", { status: 404 })),
+  scheduled: byCron({
+    [paymentsCron]: [{ name: "payments", run: () => effect { try runPayments((try PaymentsConfig).run) } }],
+  }),
+})

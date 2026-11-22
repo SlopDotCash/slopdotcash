@@ -173,6 +173,7 @@ export function reasonText(reason: ReadyReason, counts: ReadyCounts, settings: R
     case "TooFewApprovals": return `${counts.approvals} of ${settings.approvals} required approvals at this commit from accounts with write access`;
     case "NotMergeable": return `GitHub does not report every check passing and the branch mergeable (${counts.mergeableState ?? "unknown"})`;
     case "CommentUnavailable": return "Slopbot's review comment is unavailable";
+    case "FeeUnpaid": return "its submission fee has not been paid";
     case "AllConditionsHold": return "all conditions hold";
     case "LabelOff": return "ready label is off for this project";
     case "HeadMoved": return "a new commit arrived during the check";

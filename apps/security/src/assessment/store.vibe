@@ -1,4 +1,4 @@
-// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A case received without Slop intake is qualified at its receipt version"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
@@ -15,6 +15,7 @@ import { type AnalysisProposal, analysisProposal } from "../analysis/proposals.v
 import { type AnalysisReport, type PriorCase, analysisMessage, analysisPrompt, analysisPromptRevision, digestInput, jsonValue, priorCaseLimit } from "../analysis/prompts.ts"
 import { type ReceiptScope, receiptManifest, receiptScope, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
+import { depositHeld } from "../deposit/held.vibe"
 import { advisoryReport } from "../receipt/github.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { StoredIntake, screeningOf } from "../intake/rows.vibe"
@@ -178,6 +179,7 @@ export effect function authorityAfter(caseId: string, held: Authority, snapshot:
 }
 
 export effect function started(caseId: string, event: Extract<Event, { type: "startAutomatic" | "startOwnerRun" }>, by: number, authority: Authority, expectedVersion?: number) {
+  if (try depositHeld(caseId)) throw new NotAssessable({ caseId })
   const ready = try privateRouteReady()
   const at = try isoAt(event.nowMs)
   return try update(aggregate(caseId, authority), (current) => effect {

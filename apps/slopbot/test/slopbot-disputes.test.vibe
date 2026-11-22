@@ -7,6 +7,7 @@ import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
 import { type RevisionBody, pointRevisionId } from "@repo/points/client"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -65,7 +66,7 @@ const Disputing = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.mergeAll(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "disputes",
       origin: "https://slopbot.internal",
       d1: { SLOPBOT_DB: "slop-private" },

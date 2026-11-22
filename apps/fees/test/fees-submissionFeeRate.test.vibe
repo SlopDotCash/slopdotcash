@@ -1,0 +1,171 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { SubmissionFeeRatesLive } from "@repo/backend/live"
+import type { D1Database } from "@repo/platform/bindings"
+import { millisOf } from "@repo/platform/clock"
+import { d1, rows, sql } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { type SubmissionFeeConfig, officialPool } from "../src/submissionFee/config.vibe"
+import { type RateResult, ratePass } from "../src/submissionFee/rate.vibe"
+import { journalDatabase } from "./support/journal.ts"
+
+interface Pool {
+  price: bigint | undefined
+  block: number
+}
+
+interface World {
+  readonly db: D1Database
+  readonly pool: Pool
+  readonly net: Internet
+  readonly clock: SettableClock
+}
+
+schema StoredRate { effective_at: string; slop_per_usd: string; source: string }
+
+schema Count { n: number }
+
+const hourMs = 3_600_000
+const rpcUrl = "https://rpc.robinhood.test/"
+const label = officialPool.label
+const day1 = millisOf("2026-12-01T00:07:00.000Z")
+const price = { ...officialPool, rpcUrl: Redacted.make(rpcUrl) }
+const dryRun: SubmissionFeeConfig = { mode: "dry_run", networks: [], unset: [], price }
+const off: SubmissionFeeConfig = { ...dryRun, mode: "off" }
+const firstRate = { effective_at: "2026-12-02T00:00:00.000Z", slop_per_usd: "75", source: `${label}:first` }
+
+function isqrt(value: bigint): bigint {
+  if (value < 2n) return value
+  let root = value
+  let next = (root + 1n) / 2n
+  while (next < root) {
+    root = next
+    next = (root + value / root) / 2n
+  }
+  return root
+}
+
+function slot0Of(whole: bigint | undefined) {
+  const sqrtPriceX96 = whole === undefined ? 0n : isqrt((whole * 10n ** 12n) << 192n) + 1n
+  return `0x${sqrtPriceX96.toString(16).padStart(64, "0")}${"0".repeat(192)}`
+}
+
+function answered(result: unknown) {
+  return Response.json({ jsonrpc: "2.0", id: 1, result })
+}
+
+function robinhood(pool: Pool): Handler {
+  return async (request) => {
+    const call = JSON.parse(await request.text()) as { readonly method: string }
+    switch (call.method) {
+      case "eth_chainId": return answered("0x1237")
+      case "eth_getBlockByNumber": {
+        pool.block += 1
+        return answered({ number: `0x${pool.block.toString(16)}`, hash: `0x${"ab".repeat(32)}`, parentHash: `0x${"cd".repeat(32)}`, timestamp: "0x0", transactions: [] })
+      }
+      case "eth_call": return answered(slot0Of(pool.price))
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${call.method}` } })
+    }
+  }
+}
+
+effect function opened(name: string) {
+  const database = try acquireRelease(promise(() => journalDatabase(name)), (started) => promise(() => started[Symbol.asyncDispose]()))
+  const pool: Pool = { price: 75n, block: 1000 }
+  return { db: database.db, pool, net: internet({ rpc: { [rpcUrl]: robinhood(pool) } }), clock: settableClock(day1) } satisfies World
+}
+
+effect function pass(world: World, at: number, config: SubmissionFeeConfig = dryRun) {
+  world.clock.set(at)
+  const services = Layer.provideMerge(SubmissionFeeRatesLive, Layer.mergeAll(d1(world.db), world.clock.layer))
+  return try Effect.provideService(Effect.provide(Effect.provide(ratePass(config), services), FetchHttpClient.layer), FetchHttpClient.Fetch, asFetch(world.net.handler))
+}
+
+effect function hours(world: World, from: number, count: number) {
+  let last: RateResult | null = null
+  for (let hour = 0; hour < count; hour += 1) last = try pass(world, from + hour * hourMs)
+  return last
+}
+
+effect function storedOf(world: World) {
+  return try Effect.provide(effect {
+    const rates = try rows(StoredRate, sql`SELECT effective_at, slop_per_usd, source FROM submission_fee_rates ORDER BY effective_at`)
+    const counted = try rows(Count, sql`SELECT COUNT(*) AS n FROM submission_fee_price_samples`)
+    return { rates, samples: counted[0]?.n ?? 0 }
+  }, d1(world.db))
+}
+
+layer(Layer.empty, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('The first SLOP rate needs a full day of hourly readings and takes effect at the next UTC hour, a second pass in that hour stores and sets nothing, and a rate seven days old is reset from the seven-day average (spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"; spec/fees/submissionFeeRate.md, "The rate pass stores readings and rates only as the rule allows"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-rate-weekly")
+    const before = try hours(world, day1, 23)
+    const unset = try storedOf(world)
+    const first = try pass(world, day1 + 23 * hourMs)
+    const again = try pass(world, millisOf("2026-12-01T23:40:00.000Z"))
+    const afterFirst = try storedOf(world)
+    world.pool.price = 80n
+    try hours(world, day1 + 24 * hourMs, 7 * 24 - 1)
+    const insideTheBand = try storedOf(world)
+    const weekly = try pass(world, millisOf("2026-12-09T00:07:00.000Z"))
+    const last = try storedOf(world)
+    try Effect.try(() => assert.deepStrictEqual(
+      { before, unset, first, again, afterFirst, insideTheBand: insideTheBand.rates, weekly, last: last.rates, unexpected: world.net.unexpected },
+      {
+        before: { sampled: true, sample: "stored", rate: null },
+        unset: { rates: [], samples: 23 },
+        first: { sampled: true, sample: "stored", rate: { slopPerUsd: "75", effectiveAt: "2026-12-02T00:00:00.000Z", reason: "first" } },
+        again: { sampled: false, sample: "already_read", rate: null },
+        afterFirst: { rates: [firstRate], samples: 24 },
+        insideTheBand: [firstRate],
+        weekly: { sampled: true, sample: "stored", rate: { slopPerUsd: "80", effectiveAt: "2026-12-09T01:00:00.000Z", reason: "weekly" } },
+        last: [firstRate, { effective_at: "2026-12-09T01:00:00.000Z", slop_per_usd: "80", source: `${label}:weekly` }],
+        unexpected: [],
+      },
+    ))
+  }))
+
+  it.effect('A sharp move resets the SLOP rate early from the 24-hour average in the first hour it leaves 3,500 to 6,500 basis points, and the new rate is not replaced while it stays inside (spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"; spec/fees/submissionFeeRate.md, "The rate pass stores readings and rates only as the rule allows")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-rate-drift")
+    try hours(world, day1, 24)
+    world.pool.price = 150n
+    const last = try hours(world, day1 + 24 * hourMs, 24)
+    const stored = try storedOf(world)
+    try Effect.try(() => assert.deepStrictEqual(
+      { last, rates: stored.rates },
+      {
+        last: { sampled: true, sample: "stored", rate: null },
+        rates: [firstRate, { effective_at: "2026-12-02T16:00:00.000Z", slop_per_usd: "110.294118", source: `${label}:drift` }],
+      },
+    ))
+  }))
+
+  it.effect('Off stores nothing, an unreadable pool stores no reading and keeps the last SLOP rate, and a rate seven days old waits for 84 readings of the week (spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"; spec/fees/submissionFeeRate.md, "The rate pass stores readings and rates only as the rule allows")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-rate-unreadable")
+    const switchedOff = try pass(world, day1, off)
+    const afterOff = try storedOf(world)
+    try hours(world, day1, 24)
+    world.pool.price = undefined
+    const unreadable = try hours(world, day1 + 24 * hourMs, 24 * 9)
+    const kept = try storedOf(world)
+    world.pool.price = 80n
+    const back = day1 + 24 * 10 * hourMs
+    const short = try hours(world, back, 83)
+    const waiting = try storedOf(world)
+    const enough = try pass(world, back + 83 * hourMs)
+    try Effect.try(() => assert.deepStrictEqual(
+      { switchedOff, afterOff, unreadable, kept, short, waiting, enough },
+      {
+        switchedOff: null,
+        afterOff: { rates: [], samples: 0 },
+        unreadable: { sampled: false, sample: "source_unavailable", rate: null },
+        kept: { rates: [firstRate], samples: 24 },
+        short: { sampled: true, sample: "stored", rate: null },
+        waiting: { rates: [firstRate], samples: 107 },
+        enough: { sampled: true, sample: "stored", rate: { slopPerUsd: "80", effectiveAt: "2026-12-14T12:00:00.000Z", reason: "weekly" } },
+      },
+    ))
+  }))
+})

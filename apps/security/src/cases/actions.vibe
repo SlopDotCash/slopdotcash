@@ -7,6 +7,7 @@ import type { Json } from "@repo/ports/backend"
 import type { Decision, Event, PrivateCase, ProjectClearance, Receipt } from "../../gen/security__cases.ts"
 import { Rejected, apply, committed as holdsAward, reporterRelated, routineAppealable, routineReturned } from "../../gen/security__cases.effect.vibe"
 import { postSecurityCasesByIdActions as rows } from "../client/refusals.vibe"
+import { depositRefusals as spamRows } from "../deposit/refusals.ts"
 import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
@@ -208,7 +209,7 @@ effect function decide(plan: Plan) {
   const { observed, body, actor } = plan
   const by = githubNumber(actor.githubId)
   const { row } = observed.record
-  try exactKeys(body, [...common, "outcome", "severity", "loss", "inScope", "reason", "relatedParty"], ["rootCauseKey", "duplicateOf", "evidenceReference", "evidenceDigest", "award"])
+  try exactKeys(body, [...common, "outcome", "severity", "loss", "inScope", "reason", "relatedParty"], ["rootCauseKey", "duplicateOf", "evidenceReference", "evidenceDigest", "award", "spam"])
   try requireRole(observed, "security-maintainer", rows.forbiddenSecurityMaintainersDecide)
   try requireAction(observed, by, "decide", rows.actionNotAllowedTheCaseDoesNotAllowDecideIn)
   if (holdsAward(observed.model)) throw refused(rows.awardObligationExists)
@@ -218,6 +219,9 @@ effect function decide(plan: Plan) {
   if (typeof body.inScope !== "boolean") throw refused(rows.invalidRequestInvalidInScope)
   if (typeof body.relatedParty !== "boolean") throw refused(rows.invalidRequestInvalidRelatedParty)
   const inScope = body.inScope
+  if (body.spam !== undefined && typeof body.spam !== "boolean") throw refused(spamRows.invalidSpam)
+  const spam = body.spam === true
+  if (spam && outcome !== "rejected") throw refused(spamRows.onlyRejectedSpam)
   const relatedParty = body.relatedParty || reporterRelated(observed.model)
   const text = try reason(body)
   const evidenceReference = try optionalText(body, "evidenceReference", 500, rows.invalidRequestInvalidEvidenceReference, rows.invalidRequestEvidenceReferenceMustBe1)
@@ -231,10 +235,10 @@ effect function decide(plan: Plan) {
   } else if (body.duplicateOf !== undefined) throw refused(rows.invalidRequestDuplicateOfAppliesOnlyTo)
   if ((outcome === "confirmed" || outcome === "duplicate") && rootCauseKey === null) throw refused(rows.invalidRequestRecordTheRootCause)
   if (outcome === "confirmed" && observed.record.frozen !== undefined && rootCauseKey !== null) try rootCauseFree(row.project_id, row.id, rootCauseKey)
-  const decision: Decision = { finding: outcomes[outcome] ?? "Rejected", severity: severities[severity], loss: losses[loss], inScope, rootCause: rootCauseKey === null ? 0 : 1, duplicateOf: duplicateOf === null ? 0 : 1, declareRelated: body.relatedParty }
+  const decision: Decision = { finding: outcomes[outcome] ?? "Rejected", severity: severities[severity], loss: losses[loss], inScope, rootCause: rootCauseKey === null ? 0 : 1, duplicateOf: duplicateOf === null ? 0 : 1, declareRelated: body.relatedParty, spam }
   const event: Event = { type: "decide", checkedEpoch: observed.epoch, version: observed.model.reportVersion, decision }
   const next = try stepped(observed.model, event, by, "decide", rows.actionNotAllowedTheCaseDoesNotAllowDecideIn)
-  const detail = { outcome, severity, loss, inScope, relatedParty, priority: severity === "critical" || loss === "verified-potential" || loss === "verified-actual" }
+  const detail = { outcome, severity, loss, inScope, relatedParty, ...spam ? { spam: true } : {}, priority: severity === "critical" || loss === "verified-potential" || loss === "verified-actual" }
   const decided = changeOf(plan, observed.model, next, {
     kind: "decide", role: "security-maintainer", reason: text, evidenceReference, detail, event,
     set: { severity, loss_finding: loss, root_cause_key: rootCauseKey, duplicate_of: duplicateOf, evidence_digest: evidenceDigest, technical_decider_github_id: actor.githubId },

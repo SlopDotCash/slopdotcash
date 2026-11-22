@@ -1,0 +1,47 @@
+// spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"
+import type { Award } from "../kernels/records/canonical.ts"
+import { type CandidateRevision, type Protection, heldRevisions } from "../../gen/points__protectedMonths.effect.vibe"
+import { type Store, index, instant } from "./ledger.vibe"
+
+function economic(award: Award) {
+  return JSON.stringify([
+    award.key,
+    award.actor.id,
+    award.projectId,
+    award.category,
+    award.amount,
+    award.occurredAt,
+    award.sourceId,
+    award.workUnitId,
+    award.category === "substantive-review" ? award.provisional : null,
+    award.category === "substantive-review" || award.category === "evaluated-contribution" ? award.sourceUrl : null,
+  ])
+}
+
+export effect function holdProtected(store: Store, known: ReadonlySet<string>, protection: Protection) {
+  const numbers = new Map(store.revisions.map((row, position) => [row.id, position + 1]))
+  const candidates: CandidateRevision[] = []
+  const published: CandidateRevision[] = []
+  for (const row of store.revisions) {
+    const candidate = {
+      id: numbers.get(row.id) ?? 0,
+      previous: row.previous === null ? 0 : numbers.get(row.previous) ?? 0,
+      payoutReceived: row.award.category === "payout-received",
+      economic: economic(row.award),
+      project: row.award.projectId,
+      occurredAt: try instant(row.award.occurredAt),
+    } satisfies CandidateRevision
+    candidates.push(candidate)
+    if (known.has(row.id)) published.push(candidate)
+  }
+  const held = new Set(heldRevisions(published, protection, candidates))
+  if (held.size === 0) return 0
+  const kept = store.revisions.filter((row) => !held.has(numbers.get(row.id) ?? 0))
+  store.revisions.splice(0, store.revisions.length, ...kept)
+  store.latest.clear()
+  store.keysBySource.clear()
+  store.units.clear()
+  store.unitsBySource.clear()
+  for (const row of store.revisions) try index(store, row)
+  return held.size
+}

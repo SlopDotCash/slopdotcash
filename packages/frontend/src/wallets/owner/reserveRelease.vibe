@@ -1,0 +1,114 @@
+// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
+import { releaseMonthlyReserveCalldata } from "@repo/settlement/chain/evm/monthlyRoot"
+import { type ReleaseAnswer, type ReleaseReady, monthlyReserveRelease } from "@repo/settlement/client"
+import { parsePeriod } from "@repo/settlement/kernels/calendar"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { type EvmConnection, evmRequest, sendTransaction } from "../core/evm.vibe"
+import { callPlan } from "./evmCalls.ts"
+import { type EvmVault, VaultActionRefused, requireVaultWallet } from "./evmVault.vibe"
+import type { EvmReleasePlan, OwnerPlan } from "./ownerPlans.schema.ts"
+
+export type { ReleaseReady }
+
+export type ReleaseStatus = "pending" | "failed" | "finalized"
+
+export type ReleaseHeldReason = Extract<ReleaseAnswer, { readonly status: "held" }>["reason"]
+
+export interface ReleaseMonth {
+  readonly projectId: string
+  readonly period: string
+  readonly manifestSha256: string
+  readonly network: string
+}
+
+export type ReleaseAsked = { readonly status: "held"; readonly reason: ReleaseHeldReason } | ReleaseReady
+
+export const releaseMessages = {
+  unavailable: "The release is unavailable. Retry.",
+  unverified: "The reserve could not be verified. Retry the check.",
+  differs: "The prepared release differs from this project and month.",
+  changed: "The reserve changed. Review it again.",
+  ownerWallet: "Connect the vault owner's wallet.",
+  status: "The release status could not be verified.",
+  cannot: "The reserve cannot be released.",
+  planUnreadable: "Saved request unreadable. Check wallet activity.",
+  released: "Released.",
+  failed: "Transaction failed. Nothing released.",
+  cleared: "Cleared.",
+  submitted: "Submitted",
+  finalizing: "Finalizing",
+} as const
+
+const heldMessages: Readonly<Partial<Record<ReleaseHeldReason, string>>> = {
+  "allocation-unavailable": "Allocation unavailable. Held.",
+  "allocation-mismatch": "Not proven faulty. Held.",
+  "no-wrong-sum-fault": "Total correct. Nothing to release.",
+  "prior-reserve-transition": "Already changed. Not repairable.",
+}
+
+export function heldMessage(reason: ReleaseHeldReason): string {
+  return heldMessages[reason] ?? releaseMessages.cannot
+}
+
+const limitBytes = 4_194_304
+const deadlineMs = 120_000
+
+function refused(message: string) {
+  return new VaultActionRefused({ message })
+}
+
+function failureMessage(failure: CallFailure): string {
+  return failure._tag === "Refused" && failure.message !== "" ? failure.message : releaseMessages.unverified
+}
+
+effect function asked(month: ReleaseMonth, body: Readonly<Record<string, unknown>>, expectedActor: string) {
+  const answer = call(monthlyReserveRelease, { params: { id: month.projectId, period: month.period }, body: { network: month.network, manifestSha256: month.manifestSha256, ...body } }, { limitBytes, deadlineMs, expectedActor }) catch effect (failure) => {
+    throw refused(failureMessage(failure))
+  }
+  return answer
+}
+
+export effect function requestRelease(month: ReleaseMonth, vault: string, expectedActor: string) {
+  const answer = try asked(month, {}, expectedActor)
+  if (answer.status === "held") return answer
+  if (answer.status !== "ready") throw refused(releaseMessages.unavailable)
+  const ready: ReleaseReady = answer
+  const { request } = ready
+  if (request.projectId !== month.projectId || request.period !== month.period || request.manifestSha256 !== month.manifestSha256 || request.network !== month.network
+    || ready.vault.toLowerCase() !== vault.toLowerCase() || !/^[a-f0-9]{64}$/u.test(ready.planId)) throw refused(releaseMessages.differs)
+  return ready
+}
+
+effect function releaseData(ready: ReleaseReady) {
+  const period = parsePeriod(ready.request.period)
+  if (period === undefined) throw refused(releaseMessages.differs)
+  const signature = ready.signatureHex.startsWith("0x") ? ready.signatureHex : `0x${ready.signatureHex}`
+  return try Effect.try({
+    try: () => releaseMonthlyReserveCalldata(period, { expectedRemaining: BigInt(ready.terms.expectedRemaining), releasedGross: BigInt(ready.terms.releasedGross) }, signature as `0x${string}`),
+    catch: () => refused(releaseMessages.differs),
+  })
+}
+
+export function releasePlanOf(from: string, vault: EvmVault, ready: ReleaseReady): EvmReleasePlan {
+  return { kind: "evmRelease", planId: ready.planId, call: callPlan(from, vault.chainId, { to: vault.vault, value: "0x0", data: ready.transaction.data.toLowerCase() }) }
+}
+
+export effect function sendEvmRelease<E>(connection: EvmConnection, vault: EvmVault, ready: ReleaseReady, beforePrompt: (plan: EvmReleasePlan) => void!E) {
+  try requireVaultWallet(connection, vault)
+  const owner = vault.owner.toLowerCase()
+  if (connection.address.toLowerCase() !== owner) throw refused(releaseMessages.ownerWallet)
+  const { transaction } = ready
+  const data = try releaseData(ready)
+  if (transaction.from.toLowerCase() !== owner || transaction.to.toLowerCase() !== vault.vault.toLowerCase() || transaction.value !== "0" || transaction.data.toLowerCase() !== data.toLowerCase()) throw refused(releaseMessages.changed)
+  const sent = { from: connection.address, to: vault.vault, value: "0x0", data: data.toLowerCase() }
+  try evmRequest(connection, "eth_estimateGas", [sent])
+  try requireVaultWallet(connection, vault)
+  return try sendTransaction(connection, vault.chainId, sent, beforePrompt(releasePlanOf(connection.address, vault, ready)))
+}
+
+export effect function checkRelease(month: ReleaseMonth, plan: OwnerPlan | undefined, transactionId: string, expectedActor: string) {
+  if (plan?.kind !== "evmRelease") throw refused(releaseMessages.planUnreadable)
+  const answer = try asked(month, { planId: plan.planId, transactionId }, expectedActor)
+  if (answer.status !== "pending" && answer.status !== "failed" && answer.status !== "finalized") throw refused(releaseMessages.status)
+  return answer.status satisfies ReleaseStatus
+}

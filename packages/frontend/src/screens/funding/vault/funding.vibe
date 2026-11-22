@@ -1,10 +1,10 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
 import { millisOf } from "@repo/platform/clock"
 import { U128_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { staleAfterMs } from "@repo/settlement/client"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
-import { type PoolFacts, owedNow } from "../../../../gen/frontend__projections.ts"
+import { type PoolFacts, type PublicFunding, type SavedFunding, owedNow, publicSendAllowed } from "../../../../gen/frontend__projections.ts"
 import { type Answer, Machine as VaultMachine } from "../../../../gen/frontend__ownerVault.effect.vibe"
 import { type Batch, Machine as BatchMachine } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
 import { zero } from "../../../../gen/settlement__money.ts"
@@ -15,6 +15,7 @@ import { formatAssetAmount, formatRewardMinor, knownAssetSymbol, networkLabel } 
 import { unreadLocks } from "../../../kernels/poolFunding.ts"
 import { untilTime } from "../../../platform/clock.vibe"
 import { browserServices } from "../../../platform/layer.vibe"
+import { type ProjectDeposits, fundersReads } from "../../../reads/funders.vibe"
 import { type VaultTotals, projectVaultReads } from "../../../reads/payments.vibe"
 import type { Resource } from "../../../reads/resource.vibe"
 import { nextRevalidation } from "../../../session/signals.ts"
@@ -24,7 +25,7 @@ import { type SolanaConnection, connectSolana } from "../../../wallets/core/sola
 import { sessionSlots } from "../../../wallets/core/slots.ts"
 import { batchFlow } from "../../../wallets/owner/batchedDeposit.vibe"
 import { baseUnits } from "../../../wallets/owner/commitmentCalls.ts"
-import { type ChainStatus, type MonthlySetting, type ProjectReward, type SettingReview, checkEvmSetting, evmVaultOf, familyOf, reviewEvmSetting, sendEvmSetting } from "../../../wallets/owner/commitments.vibe"
+import { type ChainStatus, type MonthlySetting, type ProjectReward, type SettingReview, checkEvmSetting, checkSolanaSetting, evmVaultOf, familyOf, reviewEvmSetting, reviewSolanaSetting, sendEvmSetting, sendSolanaSetting } from "../../../wallets/owner/commitments.vibe"
 import { batchCalls, batchPlan } from "../../../wallets/owner/evmCalls.ts"
 import { lockedTotal } from "../../../wallets/owner/evmMonthLock.vibe"
 import { monthName } from "../../../wallets/owner/monthLockPeriods.ts"
@@ -42,7 +43,7 @@ import { type SavedTransfer, type VaultKeys, evmTerms, sameBatch, savedSetting, 
 
 export type Family = "evm" | "solana"
 
-export type { MonthlySetting, SettingReview, TransferReview, VaultTotals, WalletOffer }
+export type { MonthlySetting, ProjectDeposits, PublicFunding, SettingReview, TransferReview, VaultTotals, WalletOffer }
 
 export type Connection =
   | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
@@ -88,6 +89,7 @@ export const fundingMessages = {
   cleared: "Local request cleared. Review again before sending.",
   reviewChanged: "The vault review changed. Review the action again before signing.",
   promiseUnread: "Withdrawals wait until this month's pool funding is read, so what contributors were shown stays in the vault. Deposits are open.",
+  manageWithdrawals: "Withdrawals are made from the project's manage page.",
 } as const
 
 type BatchFlow = Effect.Success<ReturnType<typeof batchFlow>>
@@ -109,6 +111,10 @@ export service VaultDesk {
 
 export service TotalsRead {
   readonly read: Resource<VaultTotals>
+}
+
+export service FundersRead {
+  readonly read: Resource<ProjectDeposits>
 }
 
 const shared = Layer.provideMerge(walletChoiceServices, browserServices)
@@ -173,6 +179,42 @@ export function totalsRuntime(projectId: string): TotalsRuntime {
   const made = ManagedRuntime.make(totalsServicesOf(), { memoMap: memo })
   totals.set(projectId, made)
   return made
+}
+
+export function fundersServicesOf() {
+  const read = Layer.effect(FundersRead, effect { return { read: try fundersReads() } })
+  return Layer.provideMerge(Layer.effect(ReadMachine, effect { return (try FundersRead).read.machine }), Layer.provideMerge(read, shared))
+}
+
+export type FundersRuntime = ManagedRuntime.ManagedRuntime<Layer.Success<ReturnType<typeof fundersServicesOf>>, Layer.Error<ReturnType<typeof fundersServicesOf>>>
+
+const funders = new Map<string, FundersRuntime>()
+
+export function fundersRuntime(projectId: string): FundersRuntime {
+  const known = funders.get(projectId)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(fundersServicesOf(), { memoMap: memo })
+  funders.set(projectId, made)
+  return made
+}
+
+export effect function showFunders(projectId: string) {
+  const { read } = try FundersRead
+  try read.select(projectId)
+  try read.load()
+  return read.value()
+}
+
+export function savedRequestHeld(project: FundingProject, deployment: FundingDeployment, period: string): boolean {
+  const keys = vaultKeys(project.id, deployment, period)
+  const storage = sessionSlots()
+  return [keys.transfer, keys.batch].some((key) => slotOfText(readText(storage, key)).kind === "owned")
+}
+
+export function savedFundingOf(batchSaved: boolean, transferSaved: boolean, label: string): SavedFunding {
+  if (batchSaved) return "SavedDeposit"
+  if (!transferSaved) return "NoSavedRequest"
+  return label === "Withdrawal" ? "SavedWithdrawal" : "SavedDeposit"
 }
 
 function refreshDelay(totals: VaultTotals | undefined, settledAt: number): number {
@@ -282,7 +324,12 @@ effect function guarded(operation: "deposit" | "withdraw", pool: PoolFacts | und
   if (operation === "withdraw" && monthlyPool && pool === undefined && (try orDie(Effect.try(() => pageGuardApplies(unreadPool, locks))))) throw stopped(fundingMessages.promiseUnread)
 }
 
-export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean) {
+effect function publicGuard(funding: PublicFunding | undefined, operation: "deposit" | "withdraw") {
+  if (funding !== undefined && !publicSendAllowed(funding, operation === "withdraw")) throw stopped(operation === "withdraw" ? fundingMessages.manageWithdrawals : fundingMessages.waiting)
+}
+
+export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean, funding?: PublicFunding) {
+  try publicGuard(funding, operation)
   const { evm, solana, page, batch, unreadPool } = try VaultDesk
   const facts = pool ?? unreadPool
   const cached: VaultLocks = { ...unreadLocks, cachedSupport: pledgeSupport }
@@ -306,7 +353,8 @@ export effect function reviewAction(connection: Connection, operation: "deposit"
   return { kind: "evm", review, batch: offered } satisfies ActionReview
 }
 
-export effect function sendAction(connection: Connection, reviewed: ActionReview, amount: string) {
+export effect function sendAction(connection: Connection, reviewed: ActionReview, amount: string, funding?: PublicFunding) {
+  try publicGuard(funding, reviewed.kind === "evm" ? reviewed.review.operation : reviewed.funding.plan.operation)
   const { evm, solana, page, batch } = try VaultDesk
   if (reviewed.kind === "solana") {
     if (solana === undefined || connection.family !== "solana") throw stopped(fundingMessages.unsupported)
@@ -474,29 +522,47 @@ export effect function saveDefault(automatic: boolean) {
   return try (try VaultDesk).monthly.saveSetting(automatic)
 }
 
+effect function settingReviewOf(connection: Connection, automatic: boolean, reward: ProjectReward) {
+  const { deployment, evm, solana } = try VaultDesk
+  if (connection.family === "solana" && solana !== undefined) return try reviewSolanaSetting(solana.projectId, deployment, solana.terms, connection.solana, automatic, reward)
+  if (connection.family === "evm" && evm !== undefined) return try reviewEvmSetting(connection.evm, evm, automatic, reward)
+  throw stopped(fundingMessages.unsupported)
+}
+
 export effect function reviewSetting(connection: Connection, automatic: boolean, reward: ProjectReward) {
-  const { evm, monthly } = try VaultDesk
-  if (evm === undefined || connection.family !== "evm") throw stopped(fundingMessages.unsupported)
-  const review = try reviewEvmSetting(connection.evm, evm, automatic, reward)
+  const { monthly } = try VaultDesk
+  const review: SettingReview = try settingReviewOf(connection, automatic, reward)
   const phase = (try monthly.machine.get()).setting.phase
   if (review.changes && phase !== "Reviewed") try monthly.review("Setting")
   return review
 }
 
-export effect function sendSetting(connection: Connection, target: MonthlySetting) {
-  const { evm, monthly } = try VaultDesk
+export effect function sendSetting(connection: Connection, review: SettingReview) {
+  const { deployment, evm, solana, monthly } = try VaultDesk
+  if (connection.family === "solana" && solana !== undefined) {
+    const wallet = connection.solana
+    return try monthly.submit("Setting", (before) => sendSolanaSetting(deployment.network, wallet, review, before))
+  }
   if (evm === undefined || connection.family !== "evm") throw stopped(fundingMessages.unsupported)
-  return try monthly.submit("Setting", (before) => sendEvmSetting(connection.evm, evm, target, before))
+  const wallet = connection.evm
+  return try monthly.submit("Setting", (before) => sendEvmSetting(wallet, evm, review.target, before))
+}
+
+effect function settingStatusOf(connection: Connection, plan: OwnerPlan | undefined, target: MonthlySetting, hash: string) {
+  const { deployment, evm, solana } = try VaultDesk
+  if (connection.family === "solana" && solana !== undefined) return try checkSolanaSetting(solana.projectId, deployment, connection.solana, plan, hash)
+  if (connection.family === "evm" && evm !== undefined) return try checkEvmSetting(connection.evm, evm, target, plan, hash)
+  throw stopped(fundingMessages.planUnreadable)
 }
 
 export effect function checkSetting(connection: Connection) {
-  const { evm, monthly } = try VaultDesk
+  const { monthly } = try VaultDesk
   const saved = try monthly.saved("Setting")
   const target = savedSetting(saved.plan)
   const hash = saved.attempt.hash !== "" ? saved.attempt.hash : saved.attempt.candidate
-  if (evm === undefined || connection.family !== "evm" || target === undefined) throw stopped(fundingMessages.planUnreadable)
+  if (target === undefined) throw stopped(fundingMessages.planUnreadable)
   if (hash === "") throw stopped(fundingMessages.enterHash)
-  const status = try checkEvmSetting(connection.evm, evm, target, saved.plan, hash)
+  const status: ChainStatus = try settingStatusOf(connection, saved.plan, target, hash)
   const result: ChainResult = status === "finalized" ? "FinalMatch" : status === "failed" ? "FinalFailure" : "StillPending"
   try monthly.check("Setting", () => Effect.succeed(result))
   return { status, enabled: target.enabled, hash } satisfies SettingChecked

@@ -1,0 +1,153 @@
+// spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/fees/submissionFeeReportDeposits.md, "A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"
+import { burnAddress, networkTerms, slopDecimals, slopRatesAt, slopShareBps, submissionFeeOptions } from "@repo/backend/client"
+import { isoNow } from "@repo/platform/clock"
+import { RowMismatch, first, sql } from "@repo/platform/d1"
+import { answered, fixedHeaders, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { SubmissionFeeRates } from "@repo/ports/backend"
+import { ReportDeposits } from "@repo/ports/security"
+import { SubmissionFeeItems } from "@repo/ports/slopbot"
+import { type ReportDepositAnswer, type ReportDepositWay, type SubmissionFeeItemAnswer, type SubmissionFeePaid, type SubmissionFeeRateAnswer, pullIdPattern, reportCasePattern, reportDepositRead, submissionFeePath, submissionFeeRate, submissionFeeRefusals } from "../client/submissionFee.vibe"
+import { reportNetwork } from "./judge.vibe"
+
+schema PaidDepositRow { token: string; amount: string; tx_hash: string; finalized_at: string | null; resolve_tx: string | null }
+
+interface PaidColumns {
+  readonly paidAt: string | null
+  readonly paidNetwork: string | null
+  readonly paidDepositId: number | null
+}
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+  readonly cache: string
+}
+
+const servedCache = cacheControl(submissionFeeRate.cache)
+const reportCache = cacheControl(reportDepositRead.cache)
+const notFound = { error: submissionFeeRefusals.notFound.error }
+
+effect function rates() {
+  return try (try SubmissionFeeRates).all()
+}
+
+effect function depositOf(row: PaidColumns) {
+  if (row.paidNetwork === null || row.paidDepositId === null) return undefined
+  return try first(PaidDepositRow, sql`SELECT token, amount, tx_hash, finalized_at, resolve_tx FROM submission_fee_deposits WHERE network = ${row.paidNetwork} AND deposit_id = ${row.paidDepositId}`)
+}
+
+function paidOf(row: PaidColumns, deposit: typeof PaidDepositRow.Type | undefined): SubmissionFeePaid | null {
+  if (row.paidAt === null || row.paidDepositId === null) return null
+  return {
+    at: row.paidAt,
+    network: row.paidNetwork,
+    depositId: row.paidDepositId,
+    token: deposit?.token ?? null,
+    amount: deposit?.amount ?? null,
+    transaction: deposit?.tx_hash ?? null,
+    finalized: deposit !== undefined && deposit.finalized_at !== null,
+  }
+}
+
+effect function storedRates() {
+  const all = try rates()
+  const at = try isoNow()
+  const inForce = slopRatesAt(all, at)
+  if (inForce === undefined) throw new RowMismatch({ text: "submission_fee_rates", issue: "a stored SLOP rate is not a valid rate" })
+  return { all, at, inForce }
+}
+
+effect function rateAnswer() {
+  const { inForce } = try storedRates()
+  return {
+    schema: "slop-submission-fee-rate-v1",
+    slopShareBps,
+    rate: inForce.current,
+    previous: inForce.previous,
+  } satisfies SubmissionFeeRateAnswer
+}
+
+effect function dueWays(stableMinor: string, paid: SubmissionFeePaid | null) {
+  if (paid !== null) return []
+  const stored = try storedRates()
+  return submissionFeeOptions(stableMinor, stored.all, stored.at)
+}
+
+effect function itemAnswer(repositoryId: string, pullNumber: string) {
+  if (!pullIdPattern.test(repositoryId) || !pullIdPattern.test(pullNumber)) return null
+  const row = try (try SubmissionFeeItems).byPull({ repositoryId: Number(repositoryId), pullNumber: Number(pullNumber) })
+  if (row === null) return null
+  const deposit = try depositOf(row)
+  const paid = paidOf(row, deposit)
+  const due = try dueWays(row.stableMinor, paid)
+  return {
+    schema: "slop-submission-fee-item-v1",
+    repositoryId: row.repositoryId,
+    pullNumber: row.pullNumber,
+    projectId: row.projectId,
+    item: row.item,
+    stableMinor: row.stableMinor,
+    askedAt: row.askedAt,
+    due,
+    paid,
+    outcome: row.outcome,
+    outcomeAt: row.outcomeAt,
+    resolveTransaction: deposit?.resolve_tx ?? null,
+  } satisfies SubmissionFeeItemAnswer
+}
+
+effect function reportWays(slopAmount: string, paid: SubmissionFeePaid | null, decided: boolean) {
+  if (paid !== null || decided) return []
+  const terms = networkTerms(reportNetwork)
+  const slop = terms.tokens.find((token) => token.kind === "SlopToken")
+  if (slop === undefined) return try die(new Error(`The published terms of ${reportNetwork} name no SLOP token`))
+  return [{ network: terms.network, chainId: terms.chainId, token: slop.address, symbol: "SLOP", decimals: slopDecimals, amount: slopAmount, contract: terms.contract, keptTo: burnAddress } satisfies ReportDepositWay]
+}
+
+effect function reportAnswer(caseId: string) {
+  if (!reportCasePattern.test(caseId)) return null
+  const row = try (try ReportDeposits).askedByCase(caseId)
+  if (row === null) return null
+  const deposit = try depositOf(row)
+  const paid = paidOf(row, deposit)
+  const due = try reportWays(row.slopAmount, paid, row.outcome !== null)
+  return {
+    schema: "slop-report-deposit-v1",
+    caseId: row.caseId,
+    item: row.item,
+    askedAt: row.askedAt,
+    due,
+    paid,
+    outcome: row.outcome,
+    outcomeReason: row.outcomeReason,
+    outcomeAt: row.outcomeAt,
+    resolveTransaction: deposit?.resolve_tx ?? null,
+  } satisfies ReportDepositAnswer
+}
+
+function found(body: unknown, cache: string): Answer {
+  return body === null ? { status: submissionFeeRefusals.notFound.status, body: notFound, cache } : { status: 200, body, cache }
+}
+
+effect function read(parts: ReadonlyArray<string>) {
+  if (parts.length === 1 && parts[0] === "rate") return found(try rateAnswer(), servedCache)
+  if (parts.length === 3 && parts[0] === "items") return found(try itemAnswer(parts[1], parts[2]), servedCache)
+  if (parts.length === 2 && parts[0] === "reports") return found(try reportAnswer(parts[1]), reportCache)
+  return found(null, servedCache)
+}
+
+effect function answer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const method = request.method
+  if (method !== "GET" && method !== "HEAD") return json({ error: submissionFeeRefusals.methodNotAllowed.error }, submissionFeeRefusals.methodNotAllowed.status, { "cache-control": servedCache })
+  const parts = new URL(request.originalUrl).pathname.slice(submissionFeePath.length).replace(/\/$/u, "").split("/").slice(1)
+  const served = try read(parts)
+  if (method === "HEAD") return HttpServerResponse.empty({ status: served.status, headers: { ...fixedHeaders, "cache-control": served.cache, "content-type": "application/json; charset=utf-8" } })
+  return json(served.body, served.status, { "cache-control": served.cache })
+}
+
+export const SubmissionFeeRoutes = Layer.mergeAll(
+  HttpRouter.add("*", "/api/v1/submission-fee", answered(answer())),
+  HttpRouter.add("*", "/api/v1/submission-fee/*", answered(answer())),
+)

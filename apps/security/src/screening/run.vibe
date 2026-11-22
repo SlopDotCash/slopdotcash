@@ -1,4 +1,4 @@
-// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
 import { first, sql } from "@repo/platform/d1"
 import { later } from "@repo/platform/worker"
 import type { Claim, Input, Observation, Phase, Screening } from "../../gen/security__screening.ts"
@@ -9,6 +9,7 @@ import { backgroundBudgetMs, privateCall, privateModel, privateProvider, private
 import { assessQualified } from "../assessment/routes.vibe"
 import type { ReceiptScope } from "../analysis/scope.vibe"
 import { caseReceipt, exactReport, priorCases } from "../assessment/store.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { routeQualified } from "./notify.vibe"
 import { claimOf, claimed, finished, screeningAt } from "./store.vibe"
 
@@ -57,6 +58,7 @@ effect function earlierEvidence(submissionId: string, facts: Facts, digest: stri
       AND NOT EXISTS (SELECT 1 FROM security_submissions s WHERE s.case_id = security_cases.id AND s.state IN ('failed', 'abandoned'))
       AND (created_at, rowid) < (${facts.created_at}, (SELECT rowid FROM security_cases WHERE id = ${facts.case_id}))
       AND id <> ${facts.case_id}
+      AND NOT ${depositHeldOn("security_cases.id")}
     LIMIT 1`)
   if (caseMatch !== undefined) return true
   const reportMatch = try first(Matched, sql`SELECT 1 AS matched FROM security_intake_reports r
@@ -66,6 +68,7 @@ effect function earlierEvidence(submissionId: string, facts: Facts, digest: stri
       AND s.state NOT IN ('failed', 'abandoned', 'draft')
       AND (s.created_at, s.rowid) < (${facts.created_at}, (SELECT rowid FROM security_submissions WHERE id = ${submissionId}))
       AND s.id <> ${submissionId}
+      AND NOT ${depositHeldOn("s.case_id")}
     LIMIT 1`)
   return reportMatch !== undefined
 }
@@ -105,6 +108,7 @@ export effect function screenSubmission(submissionId: string, run: ScreeningRun)
   const facts = try factsOf(submissionId)
   if (facts === undefined) return
   const { screening } = try screeningAt(submissionId)
+  if (screening.depositHeld) return
   if (qualified(screening)) {
     try routeQualified(submissionId, facts.project_id)
     return

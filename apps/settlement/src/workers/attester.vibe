@@ -1,0 +1,6 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
+import { attesterEntry } from "./attester.classes.ts"
+
+export { BindingRecovery, MonthlyReserveRelease, PaymentSignerJournal, SolanaBinding } from "./attester.classes.ts"
+
+export default attesterEntry

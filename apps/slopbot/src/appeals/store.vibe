@@ -5,7 +5,7 @@ import { type Aggregate, type Decision, type Rows, load, update } from "@repo/pl
 import { Restrictions } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
 import { closeConfidence, currentTableVersion, escalationDebit } from "../../gen/slopbot__categories.effect.vibe"
-import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
+import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, type SiblingStatus, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
 import { pointsPerThird, tableVersionOf } from "../closeAttempt/penalty.vibe"
 import type { AppealDueJob } from "../jobs/job.vibe"
 import { actionStatement } from "../publish/actions.vibe"
@@ -34,6 +34,7 @@ schema PenaltyRow { readonly category: string; readonly table_version: string; r
 schema BanRow { readonly banned: number }
 schema LeaseRow { readonly claim_token: string | null; readonly lease_expires_at: string | null }
 schema KeyRow { readonly appeal_key: string }
+schema SiblingRow { readonly denied: number | null; readonly escalated: number | null; readonly deny_draft: number | null }
 
 export type Stage = "draft" | "escalation" | "resolution"
 export type ResolverRole = "appellant" | "maintainer" | "moderator"
@@ -60,6 +61,7 @@ export interface Loaded {
   readonly row: typeof AppealRow.Type | undefined
   readonly candidate: AppealSubject
   readonly banned: boolean
+  readonly sibling: SiblingStatus
   readonly fenceHeld: boolean
   readonly at: string
   readonly millis: number
@@ -85,13 +87,20 @@ export const resolutionDays = resolutionSeconds / 86400
 export const appealPrefix = "appeal:"
 const postEvents: Readonly<Record<Stage, Event>> = { draft: { type: "postDraft" }, escalation: { type: "postEscalation" }, resolution: { type: "postResolution" } }
 
-const escalationTexts: Readonly<Record<Exclude<Escalation, "NotEscalated" | "DraftRejected">, string>> = {
+type HeldSibling = Exclude<SiblingStatus, "SiblingUnknown" | "NoSiblingHold">
+
+const escalationTexts: Readonly<Record<Exclude<Escalation, "NotEscalated" | "DraftRejected" | "SiblingHeld">, string>> = {
   MaliciousFinding: "the finding is a confirmed-malicious result",
   HighDebit: `the debit at stake is ${escalationDebit / pointsPerThird} thirds or more`,
   LowConfidence: `Slopbot confidence is below ${closeConfidence / 100}`,
   Overdue: `the appeal is unresolved ${resolutionDays} days after it opened`,
   ParticipationBan: "the appellant has an active participation ban",
   RetiredProject: "the project is retired, so Slopbot does not triage",
+}
+const siblingTexts: Readonly<Record<HeldSibling, string>> = {
+  SiblingDenied: "an earlier appeal of this item was denied",
+  SiblingEscalated: "an earlier appeal of this item awaits a moderator",
+  SiblingDenyDraft: "an earlier appeal of this item has a deny draft",
 }
 const rejectionTexts: Readonly<Record<"appellant" | "maintainer", string>> = {
   appellant: "the appellant rejected the draft",
@@ -121,14 +130,33 @@ export function categoryNameOf(category: AppealSubject["category"]): CategoryNam
   return categories.find((name) => findingOf(name) === category) ?? "none"
 }
 
-export function escalationText(escalation: Escalation, rejectedBy: "appellant" | "maintainer" = "appellant") {
-  if (escalation === "NotEscalated") return ""
-  return escalation === "DraftRejected" ? rejectionTexts[rejectedBy] : escalationTexts[escalation]
+function isHeld(sibling: SiblingStatus): sibling is HeldSibling {
+  return sibling in siblingTexts
+}
+
+export function escalationText(escalation: Escalation, rejectedBy: "appellant" | "maintainer", sibling: SiblingStatus) {
+  switch (escalation) {
+    case "NotEscalated":
+      return undefined
+    case "DraftRejected":
+      return rejectionTexts[rejectedBy]
+    case "SiblingHeld":
+      return isHeld(sibling) ? siblingTexts[sibling] : undefined
+    default:
+      return escalationTexts[escalation]
+  }
+}
+
+export function siblingStatusOf(row: typeof SiblingRow.Type | undefined): SiblingStatus {
+  if (row?.denied === 1) return "SiblingDenied"
+  if (row?.escalated === 1) return "SiblingEscalated"
+  return row?.deny_draft === 1 ? "SiblingDenyDraft" : "NoSiblingHold"
 }
 
 function escalationOf(text: string | null): Escalation | undefined {
   if (text === null) return "NotEscalated"
   if (text === rejectionTexts.appellant || text === rejectionTexts.maintainer) return "DraftRejected"
+  if (Object.values(siblingTexts).includes(text)) return "SiblingHeld"
   return (Object.keys(escalationTexts) as ReadonlyArray<keyof typeof escalationTexts>).find((escalation) => escalationTexts[escalation] === text)
 }
 
@@ -204,6 +232,11 @@ function penaltyRead(appealKey: string, at: string) {
     ORDER BY p.recorded_at DESC LIMIT 1`
 }
 
+function siblingRead(appealKey: string) {
+  return sql`SELECT MAX(resolution = 'denied') AS denied, MAX(escalated_at IS NOT NULL AND resolution IS NULL) AS escalated, MAX(resolution IS NULL AND draft = 'deny') AS deny_draft
+    FROM slopbot_appeals WHERE item_node_id = ${itemOfKey(appealKey)} AND appeal_key <> ${appealKey} AND appeal_key NOT LIKE 'value-appeal:%'`
+}
+
 function leaseRead(fence: PublicationFence | undefined) {
   return fence === undefined
     ? sql`SELECT NULL AS claim_token, NULL AS lease_expires_at WHERE 0`
@@ -257,13 +290,14 @@ function journalOf(row: typeof AppealRow.Type, posted: ReadonlyArray<typeof Post
 }
 
 effect function stateOf(appealKey: string, options: AppealOptions, rows: ReadonlyArray<Rows>) {
-  const [appealRows, postedRows, findingRows, penaltyRows, banRows, leaseRows] = rows
+  const [appealRows, postedRows, findingRows, penaltyRows, banRows, leaseRows, siblingRows] = rows
   const [row] = try decoded(AppealRow, appealRows ?? [], "slopbot appeal")
   const posted = try decoded(PostedRow, postedRows ?? [], "slopbot appeal comments")
   const [finding] = try decoded(FindingRow, findingRows ?? [], "slopbot appealed finding")
   const [penalty] = try decoded(PenaltyRow, penaltyRows ?? [], "slopbot appealed penalty")
   const [ban] = try decoded(BanRow, banRows ?? [], "slopbot appellant ban")
   const [lease] = try decoded(LeaseRow, leaseRows ?? [], "slopbot appeal publication")
+  const [siblings] = try decoded(SiblingRow, siblingRows ?? [], "slopbot sibling appeals")
   const millis = try Clock.currentTimeMillis
   const at = try isoAt(millis)
   const now = Math.floor(millis / 1000)
@@ -272,7 +306,8 @@ effect function stateOf(appealKey: string, options: AppealOptions, rows: Readonl
   const scope: ProjectScope = row === undefined ? options.opening?.scope ?? "ScopeActive" : try storedScope(row)
   const candidate = try subjectOf(appealKey, author, scope, finding, penalty)
   const banned = (ban?.banned ?? 0) === 1
-  if (row === undefined) return { appeal: { ...initial, now }, row, candidate, banned, fenceHeld, at, millis } satisfies Loaded
+  const sibling = siblingStatusOf(siblings)
+  if (row === undefined) return { appeal: { ...initial, now }, row, candidate, banned, sibling, fenceHeld, at, millis } satisfies Loaded
   const openedAt = seconds(row.opened_at)
   const queuedAt = row.queued_at === null ? 0 : seconds(row.queued_at)
   if (openedAt > now || queuedAt > now) throw new AppealClockBehind({ appealKey })
@@ -300,8 +335,9 @@ effect function stateOf(appealKey: string, options: AppealOptions, rows: Readonl
     postedEscalation: postedStage("escalation"),
     postedResolution: postedStage("resolution"),
     journal: journalOf(row, posted, resolvedBy),
+    sibling: "SiblingUnknown",
   } satisfies Appeal)
-  return { appeal, row, candidate, banned, fenceHeld, at, millis } satisfies Loaded
+  return { appeal, row, candidate, banned, sibling, fenceHeld, at, millis } satisfies Loaded
 }
 
 effect function appellantOf(appealKey: string, options: AppealOptions) {
@@ -314,13 +350,15 @@ effect function aggregateOf(appealKey: string, options: AppealOptions) {
   const banRead = appellant === undefined ? sql`SELECT 0 AS banned` : sql`SELECT CASE WHEN ${try (try Restrictions).unbanned(appellant)} THEN 0 ELSE 1 END AS banned`
   const at = try isoAt(try Clock.currentTimeMillis)
   const lease = leaseRead(options.fence)
+  const siblings = siblingRead(appealKey)
   const aggregate: Aggregate<Loaded, NotAState | RowMismatch | AppealClockBehind, never> = {
     name: `slopbot appeal ${appealKey}`,
     version: sql`SELECT coalesce((SELECT opened_at || ':' || coalesce(draft, '-') || ':' || coalesce(draft_confidence, '-') || ':' || coalesce(escalated_at, '-') || ':'
         || coalesce(queued_at, '-') || ':' || coalesce(resolved_at, '-') || ':' || coalesce(resolved_by, '-') FROM slopbot_appeals WHERE appeal_key = ${appealKey}), 'none')
       || '|' || (SELECT count(*) FROM (${postedRead(appealKey)})) || '|' || (SELECT banned FROM (${banRead}))
-      || '|' || coalesce((SELECT coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') FROM (${lease})), 'none') AS version`,
-    reads: [appealRead(appealKey), postedRead(appealKey), findingRead(appealKey, at), penaltyRead(appealKey, at), banRead, lease],
+      || '|' || coalesce((SELECT coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') FROM (${lease})), 'none')
+      || '|' || (SELECT coalesce(denied, '-') || ':' || coalesce(escalated, '-') || ':' || coalesce(deny_draft, '-') FROM (${siblings})) AS version`,
+    reads: [appealRead(appealKey), postedRead(appealKey), findingRead(appealKey, at), penaltyRead(appealKey, at), banRead, lease, siblings],
     decode: (rows) => stateOf(appealKey, options, rows),
   }
   return aggregate
@@ -370,15 +408,19 @@ effect function writesFor(appealKey: string, options: AppealOptions, loaded: Loa
         VALUES (${appealKey}, ${opening.repositoryId}, ${itemNodeId}, ${String(next.appellant)}, ${JSON.stringify({ ...opening.job, scope: next.subject.scope })}, ${at}, ${try isoAt(millis + resolutionSeconds * 1000)})`]
     }
     case "draft":
-      return [sql`UPDATE slopbot_appeals SET draft = ${event.uphold ? "uphold" : "deny"}, draft_confidence = ${step.confidence ?? event.confidenceHundredths / 100}, drafted_at = ${at}
+    case "draftFromEvidence":
+      return [sql`UPDATE slopbot_appeals SET draft = ${next.draft === "DraftUphold" ? "uphold" : "deny"}, draft_confidence = ${step.confidence ?? next.draftConfidence / 100}, drafted_at = ${at}
         WHERE appeal_key = ${appealKey} AND draft IS NULL AND resolved_at IS NULL`]
     case "escalateByCriteria":
     case "escalateRetired":
     case "escalateBanAtAnswer":
+    case "escalateSiblingAtAnswer":
     case "escalateOverdue":
-      return try escalationStatements(appealKey, itemNodeId, escalationText(next.escalation), next.notices, at)
-    case "reject":
-      return try escalationStatements(appealKey, itemNodeId, escalationText(next.escalation, answeredBy(before, step.by)), next.notices, at)
+    case "reject": {
+      const reason = escalationText(next.escalation, answeredBy(before, step.by), before.sibling)
+      if (reason === undefined) throw new RowMismatch({ text: "slopbot appeal", issue: `no escalation text for ${next.escalation}` })
+      return try escalationStatements(appealKey, itemNodeId, reason, next.notices, at)
+    }
     case "accept":
       return [resolvedWrite(appealKey, next.resolution, answeredBy(before, step.by), at)]
     case "moderatorDecide":
@@ -400,6 +442,7 @@ effect function writesFor(appealKey: string, options: AppealOptions, loaded: Loa
     }
     case "observeTime":
     case "observeBan":
+    case "observeSibling":
       return []
   }
 }

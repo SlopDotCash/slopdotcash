@@ -1,0 +1,31 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "A completed summary preserves each network result and retries allocate a fresh run"
+
+export error PaymentRunFailed { run: string; failures: ReadonlyArray<string> }
+
+function listed(value: unknown): ReadonlyArray<string> | undefined {
+  if (typeof value !== "object" || value === null || !("failures" in value) || !Array.isArray(value.failures)) return undefined
+  return value.failures.filter((failure): failure is string => typeof failure === "string")
+}
+
+function tagOf(value: unknown) {
+  return typeof value === "object" && value !== null && "_tag" in value && typeof value._tag === "string" ? value._tag : "failure"
+}
+
+export function describedFailures(step: string, cause: unknown): ReadonlyArray<string> {
+  const failures = listed(cause)
+  if (failures !== undefined && failures.length > 0) return failures.map((failure) => `${step}: ${failure}`)
+  return [`${step}: ${tagOf(cause)}`]
+}
+
+export effect function isolated<A, E, R>(step: string, program: A!E!R, failures: string[]) {
+  const outcome = try exit(program)
+  if (Exit.isSuccess(outcome)) return outcome.value
+  const described = describedFailures(step, Cause.squash(outcome.cause))
+  failures.push(...described)
+  try Effect.logError("payments step failed", { step, failures: described.length })
+  return undefined
+}
+
+export effect function reported(run: string, failures: ReadonlyArray<string>) {
+  if (failures.length > 0) throw new PaymentRunFailed({ run, failures })
+}

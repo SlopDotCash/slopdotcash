@@ -1,4 +1,4 @@
-// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"
 
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
@@ -83,5 +83,12 @@ export const getPointsJournal = {
     ...withOriginForbiddenV2,
     ...withRateLimited,
     notFoundNoStore: { status: 404, error: "not_found", headers: jsonNoStore },
+  },
+} as const
+
+export const getOperatorProtectedPointMonths = {
+  notFoundNoStore: { status: 404, error: "not_found", headers: { ...jsonNoStore, "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } },
+  otherMethods: {
+    methodNotAllowedNoStore: { status: 405, error: "method_not_allowed", headers: jsonNoStore },
   },
 } as const

@@ -18,11 +18,11 @@ export const meta: ComponentMeta<ProjectStepProps> = {
   play: {
     // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
     Default: async () => {
-      await expect(screen.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
+      await expect(["automatic-closure", "field-submissionFee", "field-wantedIssues", "field-reportDeposit"].map((id) => document.getElementById(id)?.getAttribute("aria-checked"))).toEqual(["false", "true", "true", "true"]);
     },
     // spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"
     Bounty: async () => {
-      await expect(screen.queryByRole("checkbox")).toBeNull();
+      await expect(["automatic-closure", "field-submissionFee", "field-wantedIssues", "field-reportDeposit"].map((id) => document.getElementById(id)?.getAttribute("aria-checked") ?? null)).toEqual([null, null, null, "true"]);
     },
     // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"
     Links: async () => {

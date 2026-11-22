@@ -5,6 +5,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { installationId, leaseAuthor, leaseRepository } from "./support/routingFixtures.vibe"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -62,7 +63,7 @@ const Routing = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.merge(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "routing",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: { GITHUB_API: seeded.fake.authority, GITHUB_TOKEN: seeded.token, TEST_MEMBERS: "301" },

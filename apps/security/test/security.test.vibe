@@ -1,0 +1,233 @@
+import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { noticePorts } from "@repo/operations/live"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ApprovedAwards } from "@repo/ports/security"
+import { DirectRoutes } from "@repo/ports/settlement"
+import { Request as WorkerRequest } from "miniflare"
+import { analysisPrompt, screeningPrompt } from "../src/analysis/prompts.ts"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { approvedAwardsLive } from "../src/bounty/port.vibe"
+import { awardClearancesLive } from "../src/bounty/store.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
+import { security } from "../src/live.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { routineSettings } from "../src/routine/routes.vibe"
+import { type World, digest, maintainer, origin, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+service Site {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly github: GitHubFake
+  readonly pending: Array<Promise<unknown>>
+  readonly handler: WebHandler
+}
+
+const surplusKey = "surplus-journey-key"
+const project = "intake-fixture"
+const moderator = "801"
+let keys = 0
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? fixture : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([fixture]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this journey registers no vault")),
+    fence: () => succeed(sql`1`),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+const qualifiedRoute = Layer.succeed(DirectRoutes, {
+  route: () => succeed({ qualified: true, observedAt: new Date().toISOString() }),
+} satisfies DirectRoutes.Shape)
+
+function servicesOf(world: World, fake: ProviderFake, github: GitHubFake) {
+  const viaProvider: Fetcher = { fetch: (sent) => fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]> }
+  const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: moderator }),
+    ports,
+    qualifiedRoute,
+    routineSettings(undefined),
+    reportDepositSettings(undefined),
+  )
+  const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaProvider), webCrypto))
+  const app = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.merge(outboundVia(viaGitHub), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, approvedAwardsLive, awardClearancesLive, route, app, outboundVia(viaGitHub), noticePorts, CallerLive), base)
+}
+
+const Started = Layer.effect(Site, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const fake = providerFake({ holdMs: 10 })
+  const github = try orDie(Effect.try(() => githubFake({ now: () => Date.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.addInstallation({ id: 4401, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
+  const routes = security.routes as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, servicesOf(world, fake, github)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return { world, fake, github, pending: [], handler: web.handler as WebHandler }
+})
+
+const cookies = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = cookies.get(githubId)
+  if (known !== undefined) return known
+  const token = `j${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"w".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 86_400_000).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  cookies.set(githubId, cookie)
+  return cookie
+}
+
+async function sent(site: Site.Shape, method: "GET" | "POST", path: string, as: string, body?: unknown): Promise<Answer> {
+  const cookie = await sessionCookie(site.world, as)
+  const execution: ExecutionContext = { waitUntil: (work) => { site.pending.push(work) } }
+  const headers: Record<string, string> = { cookie, "x-slop-expected-github-id": as, ...body === undefined ? {} : { "content-type": "application/json", origin } }
+  const response = await site.handler(new WorkerRequest(`${origin}${path}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } }) as unknown as globalThis.Request, Context.make(Execution, { context: execution }))
+  for (let work = site.pending.shift(); work !== undefined; work = site.pending.shift()) await work
+  const type = response.headers.get("content-type") ?? ""
+  return { status: response.status, body: type.startsWith("application/json") ? await response.json() as unknown : await response.text() }
+}
+
+effect function call(site: Site.Shape, method: "GET" | "POST", path: string, as: string, body?: unknown) {
+  return try promise(() => sent(site, method, path, as, body))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function said(found: ProviderCall | undefined) {
+  return found?.messages[0]?.content ?? ""
+}
+
+function promptFor(system: string, summary: string) {
+  return (found: ProviderCall) => found.system === system && said(found).includes(summary)
+}
+
+const legitimate: ProviderAnswer = { text: JSON.stringify({ decision: "legitimate", reason: "Concrete stale-price drain path.", duplicateCaseIds: [] }) }
+const assessed: ProviderAnswer = { text: JSON.stringify({ summary: "A stale price lets a borrower drain the pool.", severity: "high", potentialLoss: "likely", duplicateCaseIds: [], rootCauseKey: null, remediation: "Reject prices older than the heartbeat." }) }
+
+effect function act(site: Site.Shape, as: string, caseId: string, action: string, fields: Readonly<Record<string, unknown>>) {
+  const [current] = try promise(() => rows(site.world, "SELECT revision FROM security_cases WHERE id=?", caseId))
+  keys += 1
+  const body = { action, expectedRevision: Number(current?.revision ?? 0), idempotencyKey: `journey-action-key-${keys}`.padEnd(20, "0"), ...fields }
+  return try call(site, "POST", `/api/v1/security-cases/${caseId}/actions`, as, body)
+}
+
+function caseState(answer: Answer) {
+  const shown = (answer.body as { readonly case?: Readonly<Record<string, unknown>> }).case
+  return shown === undefined ? { status: answer.status, error: (answer.body as { readonly error?: unknown }).error } : { status: answer.status, receipt: shown.receiptState, award: shown.awardState }
+}
+
+effect function awardFor(caseId: string) {
+  return try (try ApprovedAwards).forCase(caseId)
+}
+
+effect function carried(site: Site.Shape) {
+  const { world, fake } = site
+  const summary = "Stale oracle price drains the lending pool"
+  const report = { summary, description: "A stale oracle read lets any borrower withdraw more than their collateral allows.", severity: "high" }
+  const received = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: project, idempotencyKey: "journey-report-key-0001", origin: "slop", report } }))
+  const submission = (received.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+  const receipt = try promise(() => rows(world, "SELECT c.id AS caseId, c.submission_state AS submission, c.receipt_state AS receipt, c.policy_revision AS policy, i.screening_state AS screening FROM security_cases c JOIN security_submission_intake i ON i.case_id = c.id WHERE i.submission_id = ?", submission.id))
+
+  fake.reply(promptFor(screeningPrompt, summary), legitimate)
+  fake.reply(promptFor(analysisPrompt, summary), assessed)
+  const screened = try call(site, "POST", `/api/v1/security-submissions/${submission.id}/screen`, reporter, { expectedRevision: 1 })
+  const routed = try promise(() => rows(world, "SELECT recipient_github_id AS recipient, subject FROM notifications WHERE event_key = ?", `security-route:${submission.id}:1`))
+  const assessment = try promise(() => rows(world, "SELECT case_id AS caseId, state, report_version AS version FROM security_case_analyses WHERE case_id = ?", submission.caseId))
+  const ownView = try call(site, "GET", `/api/v1/security-submissions/${submission.id}`, reporter)
+
+  const strangerDecide = try act(site, "49999", submission.caseId, "decide", { outcome: "confirmed", severity: "high", loss: "not-verified", inScope: true, reason: "Reproduced against the deployed vault.", relatedParty: false, rootCauseKey: "stale-oracle-price" })
+  const decided = try act(site, maintainer, submission.caseId, "decide", { outcome: "confirmed", severity: "high", loss: "not-verified", inScope: true, reason: "Reproduced against the deployed vault.", relatedParty: false, rootCauseKey: "stale-oracle-price" })
+  const awarded = try act(site, maintainer, submission.caseId, "award", { decision: "amount", reason: "The finding matches the published offer.", grossMinor: "1000000", paymentDeadline: "2099-01-01T00:00:00.000Z", confirmation: true })
+  const handed = try Effect.provide(awardFor(submission.caseId), Layer.provide(approvedAwardsLive, d1(world.db)))
+  const routine = try call(site, "GET", "/api/v1/security-routine", maintainer)
+
+  try same({
+    received: received.status,
+    receipt,
+    screened: screened.status,
+    routed,
+    assessment,
+    ownView: ownView.status,
+    strangerDecide: caseState(strangerDecide).status,
+    decided: caseState(decided),
+    awarded: caseState(awarded),
+    handed: handed === undefined ? undefined : { gross: handed.grossBaseUnits, rootCause: handed.rootCauseKey },
+    routine: routine.status,
+  }, {
+    received: 201,
+    receipt: [{ caseId: submission.caseId, submission: "verified", receipt: "received", policy: 1, screening: "queued" }],
+    screened: 200,
+    routed: [{ recipient: maintainer, subject: submission.caseId }],
+    assessment: [{ caseId: submission.caseId, state: "complete", version: 1 }],
+    ownView: 200,
+    strangerDecide: 404,
+    decided: { status: 200, receipt: "confirmed", award: "pending" },
+    awarded: { status: 200, receipt: "confirmed", award: "approved" },
+    handed: { gross: "1000000", rootCause: "stale-oracle-price" },
+    routine: 404,
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Carry one report from receipt through screening, owner routing, the maintainer assessment and a decided award handed to settlement, one case throughout, on the composed security routes (spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
+    try carried(try Site)
+  })
+})

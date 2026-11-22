@@ -1,0 +1,58 @@
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
+import { slopRatesAt } from "@repo/backend/client"
+import { type Statement, first, sql } from "@repo/platform/d1"
+import { Registry, SubmissionFeeRates } from "@repo/ports/backend"
+import { asks, initial } from "../../gen/security__reportDeposit.effect.vibe"
+import { reportDepositAmount, reportDepositItem, reportDepositOnManifest } from "../client/reportDeposit.ts"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { depositExempt } from "./exempt.vibe"
+import { ReportDepositSettings, depositModes } from "./settings.vibe"
+
+export interface DepositAskInput {
+  readonly caseId: string
+  readonly projectId: string
+  readonly reporterGithubId: string
+  readonly at: string
+}
+
+export interface DepositAsk {
+  readonly statements: ReadonlyArray<Statement>
+  readonly held: boolean
+}
+
+schema ProjectManifest { manifest: string }
+
+const nobody: DepositAsk = { statements: [], held: false }
+
+effect function asked(input: DepositAskInput) {
+  const { mode } = try ReportDepositSettings
+  if (mode === "off") return nobody
+  const stored = try first(ProjectManifest, sql`SELECT manifest FROM projects WHERE id = ${input.projectId}`)
+  const project = try (try Registry).project(input.projectId)
+  if (stored === undefined || project === undefined) return nobody
+  const projectOn = reportDepositOnManifest(stored.manifest)
+  const rate = projectOn ? slopRatesAt(try (try SubmissionFeeRates).all(), input.at)?.current?.slopPerUsd ?? null : null
+  const amount = reportDepositAmount(rate)
+  const item = reportDepositItem(input.caseId)
+  const rated = rate !== null && amount !== undefined && item !== undefined
+  const before = { ...initial, mode: depositModes[mode], projectOn }
+  if (!asks(before, false, rated)) return nobody
+  const program = try (try ReportingPrograms).current(input.projectId)
+  const exempt = try depositExempt({ project, program, reporterGithubId: input.reporterGithubId })
+  if (!asks(before, exempt, rated) || rate === null || amount === undefined || item === undefined) return nobody
+  const row = mode === "live" ? "asked" : "recorded"
+  return {
+    statements: [sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at)
+      SELECT ${input.caseId}, ${input.projectId}, ${item}, ${row}, ${amount}, ${rate}, ${input.at}
+       WHERE EXISTS (SELECT 1 FROM security_cases c WHERE c.id = ${input.caseId} AND c.project_id = ${input.projectId} AND c.created_at = ${input.at})
+         AND NOT EXISTS (SELECT 1 FROM security_report_deposits d WHERE d.case_id = ${input.caseId})`],
+    held: mode === "live",
+  } satisfies DepositAsk
+}
+
+export effect function depositAsk(input: DepositAskInput) {
+  return asked(input) catch effect (error) => {
+    try Effect.logError("security report deposit ask failed", { failure: typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown" })
+    return nobody
+  }
+}

@@ -1,0 +1,136 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type Statement } from "@repo/platform/d1"
+import { ReportDeposits } from "@repo/ports/security"
+import { type GoneDeposits, type ObservedDeposit, SubmissionFeeItems } from "@repo/ports/slopbot"
+import { tokenKind } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { confirmedPagesPerRun, finalizedPagesPerRun } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import { type DepositedEvent, type SubmissionFeeChain, SubmissionFeeRefused } from "./chain.vibe"
+import { observedOf } from "./codec.vibe"
+import type { NetworkConfig } from "./config.vibe"
+import { type Resolution, advanceCursor, cursor, recordResolution, removeMissing, removeReorganised, storedDeposit, upsertDeposit } from "./store.vibe"
+
+export interface Scanned {
+  readonly finalizedThrough: number
+  readonly recorded: number
+  readonly resolved: number
+}
+
+interface Source {
+  readonly token: string
+  readonly payer: string
+  readonly keptTo: string
+  readonly amount: string
+}
+
+function refused(issue: string) {
+  return new SubmissionFeeRefused({ issue })
+}
+
+effect function withTimes(network: string, chain: SubmissionFeeChain, events: ReadonlyArray<DepositedEvent>) {
+  const times = new Map<string, string>()
+  const observed: ObservedDeposit[] = []
+  for (const event of events) {
+    const key = `${event.blockNumber}:${event.blockHash}`
+    const known = times.get(key)
+    const time = known === undefined ? try chain.blockTime(event.blockNumber, event.blockHash) : known
+    times.set(key, time)
+    observed.push(observedOf(network, event, time))
+  }
+  return observed
+}
+
+effect function depositWrites(observed: ReadonlyArray<ObservedDeposit>, finalizedAt: string | null) {
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  const statements: Statement[] = []
+  for (const deposit of observed) statements.push(try items.unpayChanged(deposit), try reports.unpayChanged(deposit), upsertDeposit(deposit, finalizedAt))
+  return statements
+}
+
+effect function goneWrites(gone: GoneDeposits) {
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  return [try items.unpayWhereGone(gone), try reports.unpayWhereGone(gone)]
+}
+
+effect function resolutionWrites(network: string, resolution: Resolution) {
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  const deposit = { network, depositId: resolution.depositId }
+  const outcome = resolution.state === "kept" ? "kept" : "refunded"
+  return [recordResolution(network, resolution), try items.finalOutcome(deposit, outcome, resolution.at), try reports.finalOutcome(deposit, outcome, resolution.at)]
+}
+
+effect function finalizedPage(network: NetworkConfig, chain: SubmissionFeeChain, from: number, to: number) {
+  const seen = new Map<number, DepositedEvent>()
+  const resolutions: Resolution[] = []
+  for (const event of try chain.events(from, to)) {
+    if (event.blockNumber < from || event.blockNumber > to) throw refused("Event outside its page")
+    if (event.kind === "deposited") {
+      if (seen.has(event.depositId)) throw refused("Deposit id repeated in one page")
+      seen.set(event.depositId, event)
+      continue
+    }
+    const at = try chain.blockTime(event.blockNumber, event.blockHash)
+    if (event.kind === "reclaimed") {
+      resolutions.push({ depositId: event.depositId, state: "reclaimed", txHash: event.txHash, at })
+      continue
+    }
+    const pending = seen.get(event.depositId)
+    const stored = pending === undefined ? try storedDeposit(network.network, event.depositId) : null
+    const source: Source | null = pending ?? (stored !== null && stored.finalizedAt !== null ? stored : null)
+    if (source === null) throw refused("Resolved event for an unknown deposit")
+    if (tokenKind(network.network, source.token.toLowerCase()) !== "NoToken")
+      try chain.assertResolvedTransfer(event, { token: source.token, recipient: event.refunded ? source.payer : source.keptTo, amount: source.amount })
+    resolutions.push({ depositId: event.depositId, state: event.refunded ? "refunded" : "kept", txHash: event.txHash, at })
+  }
+  const finalizedAt = try isoNow()
+  const statements: Statement[] = [...(try depositWrites(try withTimes(network.network, chain, [...seen.values()]), finalizedAt))]
+  for (const resolution of resolutions) statements.push(...(try resolutionWrites(network.network, resolution)))
+  statements.push(...(try goneWrites({ kind: "Reorganised", network: network.network, throughBlock: to })))
+  statements.push(removeReorganised(network.network, to), advanceCursor(network.network, to + 1))
+  try (try D1).batch(statements)
+  return { recorded: seen.size, resolved: resolutions.length }
+}
+
+effect function confirmedWindow(network: NetworkConfig, chain: SubmissionFeeChain, start: number, confirmed: number) {
+  const found: DepositedEvent[] = []
+  let from = start
+  for (let pages = 0; pages < confirmedPagesPerRun && from <= confirmed; pages += 1) {
+    const to = Math.min(from + network.scanPageBlocks - 1, confirmed)
+    for (const event of try chain.events(from, to)) {
+      if (event.blockNumber < from || event.blockNumber > to) throw refused("Event outside its page")
+      if (event.kind === "deposited") found.push(event)
+    }
+    from = to + 1
+  }
+  const through = from - 1
+  if (through < start) return 0
+  const statements: Statement[] = [...(try depositWrites(try withTimes(network.network, chain, found), null))]
+  if (through === confirmed) {
+    const seen = found.map((event) => event.depositId)
+    statements.push(...(try goneWrites({ kind: "Missing", network: network.network, fromBlock: start, toBlock: through, seen })))
+    statements.push(removeMissing(network.network, start, through, seen))
+  }
+  if (statements.length > 0) try (try D1).batch(statements)
+  return found.length
+}
+
+export effect function scan(network: NetworkConfig, chain: SubmissionFeeChain) {
+  const { latest, finalized } = try chain.heads()
+  if (finalized > latest) throw refused("Finalized block is above the head")
+  let next = (try cursor(network.network)) ?? network.startBlock
+  let recorded = 0
+  let resolved = 0
+  for (let pages = 0; pages < finalizedPagesPerRun && next <= finalized; pages += 1) {
+    const to = Math.min(next + network.scanPageBlocks - 1, finalized)
+    const page = try finalizedPage(network, chain, next, to)
+    recorded += page.recorded
+    resolved += page.resolved
+    next = to + 1
+  }
+  const confirmed = latest - network.confirmations
+  if (next > finalized && confirmed > finalized) recorded += try confirmedWindow(network, chain, next, confirmed)
+  return { finalizedThrough: next - 1, recorded, resolved } satisfies Scanned
+}

@@ -1,8 +1,8 @@
-// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"
+// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/slopbot/composition.md, "A debit is written only by the confirmed close, keyed by the PR, never by a retry, reopen or appeal"; spec/slopbot/composition.md, "A confirmed maintainer reopen from the retained webhook source marks the attempt reopened, records the reopen and reverses the debit"; spec/slopbot/composition.md, "The author's appeal is triaged and decided once; an upheld appeal reverses the debit and reopens only Slopbot's own close"
 import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { D1, RowMismatch, type Statement, first, rows, sql } from "@repo/platform/d1"
 import { currentTableVersion, debitFor, moderatorReview } from "../../gen/slopbot__categories.effect.vibe"
-import { type ConfirmedClose, type Penalties, type PenaltyRow as Debit, type ReversalAuthority, canRecordPenalty, canReversePenalty, decodeState } from "../../gen/points__penalties.effect.vibe"
+import { type ConfirmedClose, type Penalties, type PenaltyRow as Debit, type ReversalAuthority, canRecordPenalty, canReversePenalty, decodeState, recordPenalty } from "../../gen/points__penalties.effect.vibe"
 import type { PenaltyNotice } from "../publish/comment.vibe"
 import { type CategoryName, categories, findingOf } from "../review/verdict.vibe"
 
@@ -30,6 +30,7 @@ export schema PenaltyRow {
 
 schema ReopenRow { readonly revision: string; readonly occurred_at: string; readonly sender_id: number }
 schema CoverageRow { readonly at: string | null }
+schema UpheldRow { readonly n: number }
 
 export interface PenaltyClose {
   readonly itemNodeId: string
@@ -88,7 +89,7 @@ effect function debitOf(row: typeof PenaltyRow.Type) {
   } satisfies Debit
 }
 
-effect function penaltiesOf(itemNodeId: string) {
+export effect function penaltiesOf(itemNodeId: string) {
   const found = try rows(PenaltyRow, sql`SELECT p.*, r.revision FROM slopbot_penalties p LEFT JOIN slopbot_reviews r ON r.review_key = p.review_key WHERE p.item_node_id = ${itemNodeId}`)
   const reopened = try rows(ReopenRow, sql`SELECT json_extract(reopen_source, '$.revision') AS revision, json_extract(reopen_source, '$.occurredAt') AS occurred_at,
       json_extract(reopen_source, '$.senderId') AS sender_id
@@ -117,12 +118,19 @@ export effect function recordPenaltyStatements(close: PenaltyClose) {
     period: periodNumber(close.closedAt.slice(0, 7)),
   }
   if (!canRecordPenalty(state, confirmed)) return []
+  const upheld = (try first(UpheldRow, sql`SELECT 1 AS n FROM slopbot_appeals WHERE appeal_key = ${`appeal:${close.itemNodeId}:${close.revision}`} AND resolution = 'upheld'`)) !== undefined
+  const reversedAt = try isoNow()
+  const authority: ReversalAuthority = { item: close.itemNodeId, revision: close.revision, at: seconds(reversedAt), reason: "AppealUpheld" }
+  const reversal = upheld && canReversePenalty(recordPenalty(state, confirmed), authority)
+    ? [sql`UPDATE slopbot_penalties SET reversed_at = ${reversedAt}, reversal = 'appeal_upheld'
+    WHERE item_node_id = ${close.itemNodeId} AND review_key = ${close.reviewKey} AND reversed_at IS NULL`]
+    : []
   return [sql`INSERT OR IGNORE INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category,
       table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
     SELECT ${close.itemNodeId}, ${close.repositoryId}, ${close.projectId}, ${String(close.authorId)}, ${close.category},
       ${penaltyTableVersion}, ${debitFor(currentTableVersion, finding) / pointsPerThird}, ${close.closedAt.slice(0, 7)}, ${moderatorReview(finding) ? 1 : 0},
       ${close.reviewKey}, ${close.closedAt}
-    WHERE NOT EXISTS (${confirmedReopen(close.itemNodeId, close.revision)})`]
+    WHERE NOT EXISTS (${confirmedReopen(close.itemNodeId, close.revision)})`, ...reversal]
 }
 
 export effect function activePenalty(itemNodeId: string) {

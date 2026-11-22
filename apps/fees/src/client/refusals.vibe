@@ -1,7 +1,9 @@
-// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"
 
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const textUncachedPlain = { "content-type": "text/plain;charset=UTF-8" } as const
+const jsonPublicMinute = { "cache-control": "public, max-age=60", "content-type": "application/json; charset=utf-8" } as const
+const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" } as const
 
 export const getAdminFeeConversions = {
   unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStore },
@@ -15,5 +17,15 @@ export const getAdminFeeConversions = {
 } as const
 
 export const feeConverterAnyAny = {
+  notFound: { status: 404, text: "Not found", headers: textUncachedPlain },
+} as const
+
+export const anySubmissionFee = {
+  notFound: { status: 404, error: "not_found", headers: jsonPublicMinute },
+  reportNotFound: { status: 404, error: "not_found", headers: jsonNoStore },
+  methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMinute },
+} as const
+
+export const submissionFeeAnyAny = {
   notFound: { status: 404, text: "Not found", headers: textUncachedPlain },
 } as const

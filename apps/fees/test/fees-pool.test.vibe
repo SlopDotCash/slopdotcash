@@ -17,6 +17,7 @@ import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import type { BookedDirectFee } from "../src/buyback/income.vibe"
 import type { PoolInstance } from "../src/buybackPool/codec.vibe"
 import { type PoolAsset, poolInstance } from "../src/buybackPool/evidence.vibe"
+import { type KeptSubmissionFee, keptFees } from "../src/submissionFee/income.vibe"
 import { type PoolResult, type PoolSettings, robinhoodPool } from "../src/buybackPool/run.vibe"
 import { type Facts, poolOf, send } from "../src/buybackPool/store.vibe"
 import { decodedApproval } from "../src/evm/abi.ts"
@@ -44,6 +45,7 @@ const hour = 3600000
 const generation = 5
 const thresholdGeneration = 6
 const assetGeneration = 7
+const keptGeneration = 8
 const usdg = robinhoodUsdg as Address
 const other = "0x00000000000000000000000000000000000000e7" as Address
 const unvalued = "0x00000000000000000000000000000000000000e8" as Address
@@ -228,12 +230,19 @@ effect function arrival(world: World, index: number, take: bigint, runId: string
   }, d1(world.db))
 }
 
-effect function instanceOf(world: World, bookedUsdg: ReadonlyArray<BookedDirectFee>, bookedSlop: ReadonlyArray<BookedDirectFee>, others: ReadonlyArray<PoolAsset> = []) {
+effect function instanceOf(world: World, bookedUsdg: ReadonlyArray<BookedDirectFee>, bookedSlop: ReadonlyArray<BookedDirectFee>, others: ReadonlyArray<PoolAsset> = [], kept: ReadonlyArray<KeptSubmissionFee> = []) {
   const journalInstance = journalOf(world)
   const assets = [{ token: robinhoodUsdg, booked: bookedUsdg }, ...others]
-  const built = try Effect.provide(poolInstance({ scope: journalInstance.scope, offset: world.offset, held: world.instance.held, names: world.names, wallet: walletOf(world.generation), journal: journalInstance, assets, bookedSlop }), services(world))
+  const built = try Effect.provide(poolInstance({ scope: journalInstance.scope, offset: world.offset, held: world.instance.held, names: world.names, wallet: walletOf(world.generation), journal: journalInstance, assets, bookedSlop, kept }), services(world))
   world.instance = built
   return built
+}
+
+effect function deposited(world: World, id: number, token: string, amount: string, keptTo: string) {
+  const at = try isoAt(world.offset + start + hour)
+  try Effect.provide(effect {
+    try (try D1).run(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at) VALUES ('robinhood-mainnet', ${id}, ${`0x${"1".repeat(64)}`}, ${`0x${"a".repeat(40)}`}, ${token}, ${amount}, ${keptTo}, ${`0x${id.toString(16).padStart(64, "0")}`}, ${100 + id}, ${at}, ${at}, 1, 'kept', ${`0x${(1000 + id).toString(16).padStart(64, "0")}`}, ${at})`)
+  }, d1(world.db))
 }
 
 function settingsOf(world: World, runId: string): PoolSettings {
@@ -398,6 +407,30 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         ["burn", "finalized", "live", null, (25n * 10n ** 18n).toString()],
         ["buyback", "failed", "live", "prepare: ", "300000000"],
       ],
+    })
+  })
+
+  it.effect('A kept USDG submission fee to the Robinhood Chain fee wallet joins the fee share, and kept SLOP sent to the burn address is never income (spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
+    const world = try opened(keptGeneration)
+    try deposited(world, 801, robinhoodUsdg, "3000000", walletOf(keptGeneration).toLowerCase())
+    try deposited(world, 802, slopToken, "75000000000000000000", burnAddress)
+    const since = try isoAt(world.offset + start)
+    const kept = try Effect.provide(keptFees({ network: "robinhood-mainnet", since }), services(world))
+    const built = try instanceOf(world, [], [], [], kept)
+    const state = (try Effect.provide(poolOf(world.instance), services(world))).state
+
+    try same({
+      fees: built.fees.map((fee) => [fee.kind, fee.text, fromAmount(fee.amount), fee.asset]),
+      reserved: built.reserved,
+      slopFees: built.slopFees,
+      usdgIncome: fromAmount(creditOf(state, usdgAsset).income),
+      slopIncome: fromAmount(state.localSlopIncome),
+    }, {
+      fees: [["KeptSubmissionFee", "robinhood-mainnet:801", 3_000_000n, 1]],
+      reserved: [{ asset: 1, amount: 1_500_000 }],
+      slopFees: [],
+      usdgIncome: 3_000_000n,
+      slopIncome: 0n,
     })
   })
 

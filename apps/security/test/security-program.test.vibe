@@ -8,7 +8,6 @@ import { privateRoute } from "../src/analysis/route.vibe"
 import { approvedAward } from "../src/bounty/port.vibe"
 import { type DirectRoute, DirectRoutes } from "@repo/ports/settlement"
 import { type ProgramChange, ProgramRefused, SecurityProgramFunds as ProgramFunds, SecurityProgramPublication } from "@repo/ports/security"
-import { SecurityProgramFunds } from "../src/bounty/funds.vibe"
 import { awardClearancesLive } from "../src/bounty/store.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
 import { acted } from "../src/cases/routes.vibe"
@@ -17,7 +16,7 @@ import type { ProgramFundsView } from "../src/program/manifest.ts"
 import { SecurityProgramPublicationLive } from "../src/program/publication.vibe"
 import { programOf } from "../src/program/store.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { remediationHandlersLive } from "../src/remediation/routes.vibe"
+import { caseActionHandlersLive } from "../src/cases/handlers.vibe"
 import { type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 import { receiptNotices } from "./support/intake/notices.vibe"
 
@@ -70,14 +69,13 @@ function shellOf(program: Program.Shape) {
     Layer.succeed(Registry, { project: (projectId) => succeed(fixture(projectId)), byRepository: () => succeed(undefined), byPath: () => succeed(undefined), active: () => succeed([]), pausedProjects: () => succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => succeed(sql`1`) } satisfies Registry.Shape),
     Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: read.actorGithubId === administrator ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
     Layer.succeed(Restrictions, { account: () => succeed({ banned: false }), project: () => succeed({ restricted: false }), fence: () => succeed(sql`SELECT 1`), unbanned: () => succeed(sql`1`) } satisfies Restrictions.Shape),
-    Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies SecurityProgramFunds.Shape),
     Layer.succeed(ProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies ProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(program.route.current) } satisfies DirectRoutes.Shape),
   )
   const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: `${administrator},${configured}`, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices)
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
   const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
-  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, remediationHandlersLive, SecurityProgramPublicationLive), programs)
+  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive, SecurityProgramPublicationLive), programs)
 }
 
 effect function same(actual: unknown, expected: unknown) {

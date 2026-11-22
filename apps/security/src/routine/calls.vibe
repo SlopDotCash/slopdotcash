@@ -1,5 +1,6 @@
 // spec/security/routineDecisions.md, "Two independent calls must agree before a close, and a plausible loss of funds closes nothing"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"
 import { isoAt } from "@repo/platform/clock"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { D1, rows, sql } from "@repo/platform/d1"
 import { type EarlierReport, type RoutineInput, type RoutineProposal, routineMessage, routinePrompt, routinePromptRevision, routineProposal } from "../analysis/prompts.ts"
 import { privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
@@ -18,7 +19,7 @@ export interface CallTarget {
 
 export type CallResult =
   | { readonly kind: "failed"; readonly calls: ReadonlyArray<CallAudit> }
-  | { readonly kind: "answered"; readonly first: RoutineProposal; readonly second: RoutineProposal; readonly calls: ReadonlyArray<CallAudit>; readonly closing: ReadonlyArray<string> }
+  | { readonly kind: "answered"; readonly first: RoutineProposal; readonly second: RoutineProposal; readonly calls: ReadonlyArray<CallAudit>; readonly closing: ReadonlyArray<string>; readonly proofFile: boolean }
 
 schema Earlier { id: string; summary: string | null }
 
@@ -39,6 +40,7 @@ effect function earlierReports(caseId: string) {
     WHERE r.id = ${caseId} AND c.project_id = r.project_id AND c.id <> r.id
       AND c.submission_state = 'verified'
       AND (c.received_at < r.received_at OR (c.received_at = r.received_at AND c.rowid < r.rowid))
+      AND NOT ${depositHeldOn("c.id")}
     ORDER BY c.received_at DESC, c.rowid DESC LIMIT ${earlierLimit}`)
   return found.flatMap((entry) => entry.summary === null || entry.summary === "" ? [] : [{ id: entry.id, summary: entry.summary.slice(0, earlierSummaryChars) } satisfies EarlierReport])
 }
@@ -70,5 +72,5 @@ export effect function routineCalls(target: CallTarget) {
     try Effect.logError("security routine decision call failed")
     return { kind: "failed", calls } satisfies CallResult
   }
-  return { kind: "answered", first, second, calls, closing } satisfies CallResult
+  return { kind: "answered", first, second, calls, closing, proofFile: report.proofOfConcept !== undefined && report.proofOfConcept !== null } satisfies CallResult
 }

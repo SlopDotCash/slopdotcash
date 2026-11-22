@@ -5,6 +5,7 @@ import { contributionLabels, type SkillRuleField } from "../fields/contribution.
 import { ChoiceField, SelectField, TextField } from "../fields/ProjectFields.tsx";
 import { ProjectImageField } from "../fields/ProjectImageField.tsx";
 import { ClosureConsent } from "./ClosureConsent.tsx";
+import { ContributionSettings } from "./ContributionSettings.tsx";
 
 export type ProjectStepProps = {
   proposal: Proposal;
@@ -53,7 +54,7 @@ const assignmentTerms: ReadonlyArray<TextOf> = [
   { field: "assignmentSignedAt", label: "Signed at", type: "datetime-local" },
 ];
 
-/** The Project step: repository and branch, the public listing and its links, the skill rules, closure consent and saved legal terms. */
+/** The Project step: repository and branch, the public listing and its links, the skill rules, closure consent, the fee, wanted issues and report deposit, and saved legal terms. */
 export function ProjectStep({ proposal: p, picker, branches, branchesLoading, extraRuleFields, imageKey, shown, onChange }: ProjectStepProps) {
   const text = ({ field, label, type }: TextOf) => <TextField key={field} label={label} name={field} type={type} value={p[field]} error={shown(field)} onChange={(value) => onChange(field, value)} />;
   const branchOptions =
@@ -91,6 +92,7 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
         ))}
       </div>
       {p.fundingMode === "bounty" ? null : <ClosureConsent value={p.automaticClosure} onChange={(value) => onChange("automaticClosure", value)} />}
+      <ContributionSettings bountyOnly={p.fundingMode === "bounty"} value={{ submissionFee: p.submissionFee, wantedIssues: p.wantedIssues, reportDeposit: p.reportDeposit }} onChange={onChange} />
       {p.copyrightModel !== "unknown" || p.inboundMode !== "unknown" ? (
         <section aria-label="Saved legal terms" className="flex flex-col gap-4">
           <ChoiceField label="Copyright model" name="copyrightModel" value={p.copyrightModel} options={copyrightModels} error={shown("copyrightModel")} onChange={(value) => onChange("copyrightModel", value)} />

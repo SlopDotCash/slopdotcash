@@ -1,24 +1,8 @@
 // spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
-import type { Statement } from "@repo/platform/d1"
-import type { Network, ReadFailure } from "@repo/ports/backend"
+import type { Network } from "@repo/ports/backend"
 import { DirectRoutes } from "@repo/ports/settlement"
-import type { ProgramFundsView, ProgramTerms } from "../program/manifest.ts"
 
-export interface ProgramFundsRead {
-  readonly funds: ProgramFundsView | undefined
-  readonly guards: ReadonlyArray<Statement>
-}
-
-export service SecurityProgramFunds {
-  read(request: { readonly projectId: string; readonly terms: ProgramTerms }): ProgramFundsRead!ReadFailure
-}
-
-export effect function programFundsOf(projectId: string, terms: ProgramTerms | undefined) {
-  const none: ProgramFundsRead = { funds: undefined, guards: [] }
-  const provider = try Effect.serviceOption(SecurityProgramFunds)
-  if (terms === undefined || Option.isNone(provider)) return none
-  return try provider.value.read({ projectId, terms })
-}
+export { programFundsOf } from "../program/funds.vibe"
 
 export effect function directRouteOf(asset: { readonly network: Network; readonly address: string }) {
   const provider = try Effect.serviceOption(DirectRoutes)

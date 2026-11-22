@@ -1,0 +1,483 @@
+// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"
+import { switchedOn as submissionFeeSwitchedOn } from "@repo/backend/client"
+import { reportDepositPath, submissionFeePath } from "@repo/fees/client"
+import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client"
+import { type ChainResult, type FreshRead, Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
+import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { networkLabel } from "../../kernels/assetText.ts"
+import { fetchBounded } from "../../platform/bounded.vibe"
+import { bootedRegistry, registryUnavailable } from "../../reads/registry.vibe"
+import type { WalletChoice } from "../../wallets/core/discovery.vibe"
+import { type EvmConnection, connectEvm } from "../../wallets/core/evm.vibe"
+import type { SlotStorage } from "../../wallets/core/slots.ts"
+import { type FeeCheck, type FeeReview, checkFeeBatch, checkFeeDeposit, depositMessages, reviewFeeDeposit, sendFeeBatch, sendFeeDeposit, switchFeeChain } from "../../wallets/fee/deposit.vibe"
+import { type Deposited, type FeeTerms, type FeeWay, type SavedDeposit, type SavedStep, depositedOf, feeDepositKey, keepDeposited, planText, publishedTerms, savedDepositOf, termsOf, wayKey } from "../../wallets/fee/feeCalls.ts"
+import { compareAndWrite, readText } from "../../wallets/owner/flowSlots.ts"
+import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage } from "../../wallets/owner/slotKeeper.vibe"
+import { type FeeRepository, type FeeSubject, type ShownRecord, checkedRecord, feeRatesOf, feeRepository, feeRoute, listsSlop, pullRequestSubject, reportCase, reportSubject, stillDue } from "./record.ts"
+
+export type { Deposited, FeeRepository, FeeReview, FeeWay, ShownRecord }
+
+export type PayAddress =
+  | { readonly kind: "pullRequest"; readonly owner: string; readonly repo: string; readonly number: string }
+  | { readonly kind: "report"; readonly caseId: string }
+
+export type Noun = "pull request" | "report"
+
+export interface FeeSetupShape {
+  readonly submissionFee: boolean
+  readonly reportDeposit: boolean
+  readonly terms: FeeTerms
+}
+
+export service FeeSetup: FeeSetupShape {}
+
+export const publishedSetup = Layer.succeed(FeeSetup, { submissionFee: submissionFeeSwitchedOn, reportDeposit: REPORT_DEPOSIT_SWITCHED_ON, terms: publishedTerms })
+
+export interface Reviewed {
+  readonly way: FeeWay
+  readonly facts: FeeReview
+}
+
+export interface FeeShown {
+  readonly record: ShownRecord | undefined
+  readonly message: string
+  readonly refreshFailed: boolean
+  readonly wallet: EvmConnection | undefined
+  readonly chosen: string
+  readonly reviewed: Reviewed | undefined
+  readonly saved: SavedDeposit | undefined
+  readonly unreadable: boolean
+  readonly deposited: Deposited | undefined
+  readonly notice: string
+  readonly error: string
+}
+
+export error PayRefused { message: string }
+
+const words = {
+  "pull request": {
+    unavailable: "The fee record is unavailable.",
+    refused: "The fee record for this pull request could not be checked against Slop's published addresses. Do not pay from this page.",
+    recorded: "Slop records the pull request as paid",
+    kept: "a kept fee",
+    alreadyPaid: "This pull request is already recorded as paid. Nothing was sent.",
+    changed: "The fee due for this pull request changed. Nothing was sent. Review the payment again.",
+  },
+  report: {
+    unavailable: "The deposit record is unavailable.",
+    refused: "The deposit record for this report could not be checked against Slop's published addresses. Do not pay from this page.",
+    recorded: "Slop records the deposit",
+    kept: "a kept deposit",
+    alreadyPaid: "The deposit for this report is already recorded. Nothing was sent.",
+    changed: "The deposit due for this report changed. Nothing was sent. Review the payment again.",
+  },
+} as const
+
+export const payMessages = {
+  slopUnread: "Slop's published SLOP rate could not be read just now, so the SLOP amount could not be checked. Nothing was sent. Try again, or pay in a stablecoin.",
+  onChain: (noun: Noun) => `A deposit from this browser tab is already on chain for this ${noun}. Nothing was sent.`,
+  reconnect: (wallet: string) => `Reconnect the wallet that submitted this payment: ${wallet}`,
+  chooseWallet: "Choose a wallet first.",
+  declined: "You declined the wallet request. Nothing was sent.",
+  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  unreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new payment.",
+  failed: "The transaction failed and no tokens moved. Review the payment, then retry.",
+  notSent: "Your wallet reports that this request was not sent. Review the payment, then retry.",
+  approval: "Token approval confirmed. Review the deposit to continue; nothing has been deposited yet.",
+  waitingWallet: "Submitted. Waiting for the transaction to reach a block.",
+  waiting: "Waiting for the transaction to reach a block.",
+  unsaved: (reference: string, batch: boolean) => `Submitted ${reference}. Keep this ${batch ? "batch reference" : "hash"}; the saved request changed.`,
+  verified: (network: string, hash: string) => `Deposit verified on the finalized ${networkLabel(network)} chain. ${hash}`,
+} as const
+
+const itemLimitBytes = 65_536
+const reportLimitBytes = 16_384
+const rateLimitBytes = 4_096
+const uncached: globalThis.RequestInit = { cache: "no-store" }
+const absent = { absent: true } as const
+
+const results: Readonly<Record<FeeCheck, ChainResult>> = {
+  pending: "StillPending",
+  notSent: "NotSent",
+  received: "ReceivedRead",
+  failed: "Reverted",
+  approvalConfirmed: "ApprovalRead",
+  finalized: "FinalRead",
+  mismatch: "FinalMismatch",
+}
+
+export type Needs = WalletChoice | HttpClient.HttpClient
+
+interface Attempted {
+  readonly check: FeeCheck
+  readonly failure: string
+}
+
+type Read =
+  | { readonly kind: "missing" }
+  | { readonly kind: "checked"; readonly checked: ReturnType<typeof checkedRecord> }
+  | { readonly kind: "failed" }
+
+export interface FeePay {
+  readonly noun: Noun
+  readonly address: PayAddress
+  readonly repository: FeeRepository | undefined
+  readonly machine: Machine.Shape
+  readonly changes: Stream.Stream<FeeShown>
+  open(): PayFlow!!HttpClient.HttpClient
+  shown(): FeeShown!!
+  reload(): PayFlow!!HttpClient.HttpClient
+  choose(key: string): FeeShown!!
+  connect(id: number): PayFlow!PayRefused!WalletChoice
+  review(): PayFlow!PayRefused!WalletChoice
+  pay(): string!PayRefused!Needs
+  check(candidate: string): PayFlow!!Needs
+  tabHidden(hidden: boolean): PayFlow!!
+  clearUnreadable(): boolean!!
+  follow(): void!!Needs
+}
+
+effect function fetched(path: string, limitBytes: number, label: string) {
+  provide FetchHttpClient.RequestInit = uncached {
+    const body: unknown = fetchBounded(path, limitBytes, label) catch effect (error) => {
+      if (error._tag === "Refused" && error.status === 404) return absent
+      throw error
+    }
+    return body
+  }
+}
+
+effect function readRates() {
+  const body: unknown = fetched(`${submissionFeePath}/rate`, rateLimitBytes, "submission fee rate") catch () => undefined
+  return body === absent ? undefined : feeRatesOf(body)
+}
+
+function subjectOf(address: PayAddress, repository: FeeRepository | undefined): FeeSubject | undefined {
+  if (address.kind === "report") {
+    const caseId = reportCase(address.caseId)
+    return caseId === undefined ? undefined : reportSubject(caseId)
+  }
+  const route = feeRoute(address.owner, address.repo, address.number)
+  return route === undefined || repository === undefined ? undefined : pullRequestSubject(repository.repositoryId, route.number)
+}
+
+function pathOf(subject: FeeSubject): string {
+  return subject.kind === "PullRequestFee" ? `${submissionFeePath}/items/${subject.repositoryId}/${subject.pullNumber}` : reportDepositPath(subject.caseId)
+}
+
+function startOf(attempt: Attempt | undefined, deposited: Deposited | undefined, nowMs: number): PayFlow {
+  const now = deposited === undefined ? initial.now : Math.max(initial.now, Math.floor(nowMs / 1000))
+  const start = deposited === undefined ? initial : { ...initial, now, depositedAt: Math.max(1, Math.min(now, Math.floor(deposited.at / 1000))) }
+  if (attempt === undefined || attempt.identity === "") return start
+  const sent = attempt.hash !== "" || attempt.candidate !== ""
+  return { ...start, phase: sent ? "Sent" : "Unclear", slot: attempt, walletHash: attempt.hash !== "", used: [attempt.identity] }
+}
+
+function hashOf(attempt: Attempt, saved: SavedDeposit): string {
+  if (saved.step === "batch") return saved.transaction !== "" ? saved.transaction : attempt.candidate
+  return attempt.hash !== "" ? attempt.hash : attempt.candidate
+}
+
+export effect function openPayPage(address: PayAddress, storage: SlotStorage | undefined) {
+  const pay = try feeDesk(address, storage)
+  try pay.open()
+  return pay
+}
+
+export effect function feeDesk(address: PayAddress, storage: SlotStorage | undefined) {
+  const setup = try FeeSetup
+  const crypto = try Experimental.Crypto.Crypto
+  const noun: Noun = address.kind === "report" ? "report" : "pull request"
+  const said = words[noun]
+  const route = address.kind === "pullRequest" ? feeRoute(address.owner, address.repo, address.number) : undefined
+  const boot = route === undefined ? undefined : try bootedRegistry()
+  const repository = route === undefined || boot === undefined ? undefined : feeRepository(route, boot)
+  const subject = subjectOf(address, repository)
+  const addressed = address.kind === "report" ? reportCase(address.caseId) !== undefined : route !== undefined
+  const registryFailed = boot?.error !== undefined && repository === undefined
+  const item = subject?.item ?? ""
+  const kept = subject === undefined ? undefined : storage
+  const keeper: SlotKeeper<"deposit"> = slotKeeper(kept, { deposit: feeDepositKey(item) })
+  const found = subject === undefined ? undefined : keeper.read("deposit")
+  const saved = found?.kind === "owned" ? savedDepositOf(found.slot.plan, setup.terms) : undefined
+  const unreadable = found?.kind === "unreadable" || (found?.kind === "owned" && saved === undefined)
+  const deposited = subject === undefined ? undefined : depositedOf(kept, item)
+  const held = try Ref.make<PayFlow>(startOf(found?.kind === "owned" && saved !== undefined ? found.slot.attempt : undefined, deposited, try Clock.currentTimeMillis))
+  const view = try SubscriptionRef.make<FeeShown>({ record: undefined, message: "", refreshFailed: false, wallet: undefined, chosen: "", reviewed: undefined, saved, unreadable, deposited, notice: "", error: "" })
+
+  effect function load() {
+    return try Ref.get(held)
+  }
+
+  effect function keep(next: PayFlow) {
+    const before = try Ref.get(held)
+    if (!sameSlot({ slot: before.slot, slotOwner: payer }, { slot: next.slot, slotOwner: payer })) try keeper.write("deposit", { slot: next.slot, slotOwner: payer })
+    try Ref.set(held, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+    return try keptOrChanged(Effect.ignore(machine.send(event, by)))
+  }
+
+  effect function shown() {
+    return try SubscriptionRef.get(view)
+  }
+
+  effect function update(change: (current: FeeShown) => FeeShown) {
+    try SubscriptionRef.update(view, change)
+    return try shown()
+  }
+
+  effect function observeNow() {
+    const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+    if (canObserveClock(try machine.get(), now, clock)) try sent({ type: "observeClock", now }, clock)
+  }
+
+  effect function readRecord() {
+    if (subject === undefined) return { kind: "failed" } satisfies Read
+    const body: unknown = fetched(pathOf(subject), subject.kind === "PullRequestFee" ? itemLimitBytes : reportLimitBytes, subject.kind === "PullRequestFee" ? "submission fee record" : "report deposit record") catch () => undefined
+    if (body === undefined) return { kind: "failed" } satisfies Read
+    if (body === absent) return { kind: "missing" } satisfies Read
+    const rates = listsSlop(body) ? try readRates() : undefined
+    return { kind: "checked", checked: checkedRecord(body, subject, setup.terms, rates) } satisfies Read
+  }
+
+  effect function reload() {
+    const read = try readRecord()
+    const state = try machine.get()
+    if (read.kind === "missing") {
+      if (canObserveNoRecord(state, reader)) try sent({ type: "observeNoRecord" }, reader)
+      try update((current) => ({ ...current, record: undefined, message: "", refreshFailed: false }))
+    } else if (read.kind === "checked") {
+      const { record, ratesRead, shown: fresh } = read.checked
+      if (canObserveRecord(state, record, ratesRead, reader)) try sent({ type: "observeRecord", record, ratesRead }, reader)
+      const after = try machine.get()
+      try update((current) => after.page === "Failed" ? { ...current, record: undefined, message: said.refused, refreshFailed: false } : { ...current, record: fresh, message: "", refreshFailed: false })
+    } else {
+      if (canReadFails(state, reader)) try sent({ type: "readFails" }, reader)
+      const after = try machine.get()
+      try update((current) => recordShown(after.page) ? { ...current, refreshFailed: true } : { ...current, record: undefined, message: registryFailed ? registryUnavailable : said.unavailable })
+    }
+    return try machine.get()
+  }
+
+  effect function reply(identity: string, outcome: "Signed" | "Declined" | "Uncertain", hash: string) {
+    if (canWalletReply(try machine.get(), identity, outcome, hash, adapter)) try sent({ type: "walletReply", identity, reply: outcome, hash }, adapter)
+  }
+
+  effect function reviewWith(connection: EvmConnection, way: FeeWay) {
+    try switchFeeChain(connection, way)
+    const facts = try reviewFeeDeposit(connection, way)
+    try update((current) => ({ ...current, reviewed: { way, facts } }))
+    return facts
+  }
+
+  effect function chosenWay() {
+    const current = try shown()
+    const ways = current.record?.due ?? []
+    return ways.find((way) => wayKey(way) === current.chosen) ?? ways[0]
+  }
+
+  effect function confirmFresh(way: FeeWay) {
+    const read = try readRecord()
+    const fresh = read.kind === "checked" && recordValid(read.checked.record, read.checked.ratesRead) ? read.checked.shown : undefined
+    if (read.kind === "failed") throw new PayRefused({ message: said.unavailable })
+    const answer: FreshRead = fresh !== undefined && fresh.paid === null && stillDue(fresh, way) ? "SameDue" : "ChangedDue"
+    if (canConfirmDue(try machine.get(), answer, reader)) try sent({ type: "confirmDue", fresh: answer }, reader)
+    if (answer === "SameDue") return
+    try reload()
+    throw new PayRefused({ message: fresh !== undefined && fresh.paid !== null ? said.alreadyPaid : way.kind === "slop" && fresh?.slopWithheld === true ? payMessages.slopUnread : said.changed })
+  }
+
+  effect function chainCheck(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt) {
+    if (saved.step !== "batch") return try checkFeeDeposit(connection, saved.way, item, hashOf(attempt, saved), saved.step)
+    const batched = try checkFeeBatch(connection, saved.way, item, attempt.hash, hashOf(attempt, saved))
+    if (batched.transaction !== "" && saved.transaction === "" && keeper.annotate("deposit", attempt.identity, planText({ ...saved, transaction: batched.transaction }))) {
+      try update((current) => ({ ...current, saved: { ...saved, transaction: batched.transaction } }))
+    }
+    return batched.status
+  }
+
+  effect function receivedNotice(way: FeeWay, hash: string) {
+    const network = networkLabel(way.network)
+    const blocks = termsOf(setup.terms, way.network)?.confirmations ?? 0
+    return `Deposit received in a ${network} block. ${said.recorded} once that block is ${blocks} blocks deep, usually within a few minutes. A refund or ${said.kept} is sent only after ${network} finalizes the block. You can leave this page. ${hash}`
+  }
+
+  effect function settle(result: ChainResult, saved: SavedDeposit, attempt: Attempt, origin: "AutoCheck" | "PayerCheck", connection: EvmConnection) {
+    const hash = hashOf(attempt, saved)
+    if (result === "FinalRead") {
+      const marker = { hash, network: saved.way.network, at: try Clock.currentTimeMillis }
+      keepDeposited(kept, item, marker)
+      try update((current) => ({ ...current, deposited: marker, reviewed: undefined, saved: undefined, notice: payMessages.verified(saved.way.network, hash), error: "" }))
+      try reload()
+    } else if (result === "ReceivedRead") {
+      const before = try shown()
+      const notice = try receivedNotice(saved.way, hash)
+      try update((current) => ({ ...current, notice, error: "" }))
+      if (before.notice !== notice) try reload()
+    } else if (result === "ApprovalRead") {
+      try update((current) => ({ ...current, reviewed: undefined, saved: undefined, chosen: wayKey(saved.way), notice: payMessages.approval, error: "" }))
+      reviewWith(connection, saved.way) catch () => undefined
+    } else if (result === "Reverted" || result === "NotSent") {
+      try update((current) => ({ ...current, reviewed: undefined, saved: undefined, notice: result === "Reverted" ? payMessages.failed : payMessages.notSent, error: "" }))
+    } else if (result === "FinalMismatch") {
+      try update((current) => ({ ...current, error: depositMessages.notRequest }))
+    } else {
+      const waiting = attempt.hash !== "" ? payMessages.waitingWallet : payMessages.waiting
+      try update((current) => ({ ...current, notice: origin === "PayerCheck" || current.notice.startsWith("Deposit received") ? waiting : current.notice }))
+    }
+  }
+
+  effect function attempted(connection: EvmConnection, saved: SavedDeposit, attempt: Attempt, origin: "AutoCheck" | "PayerCheck") {
+    if (origin === "PayerCheck") try switchFeeChain(connection, saved.way)
+    return { check: try chainCheck(connection, saved, attempt), failure: "" } satisfies Attempted
+  }
+
+  effect function checked(origin: "AutoCheck" | "PayerCheck") {
+    const by = origin === "AutoCheck" ? timer : payer
+    try observeNow()
+    const state = try machine.get()
+    const current = try shown()
+    const connection = current.wallet
+    const saved = current.saved
+    if (connection === undefined || saved === undefined || !canAsk(state, origin, by)) return state
+    try sent({ type: "ask", origin }, by)
+    const attempt = (try machine.get()).slot
+    const outcome: Attempted = attempted(connection, saved, attempt, origin) catch (error) => ({ check: "pending", failure: error.message })
+    const result = results[outcome.check]
+    if (canAnswer(try machine.get(), result, chainReader)) try sent({ type: "answer", result }, chainReader)
+    try settle(result, (try shown()).saved ?? saved, attempt, origin, connection)
+    try update((now) => ({ ...now, error: outcome.failure !== "" ? outcome.failure : result === "FinalMismatch" ? now.error : "" }))
+    return try machine.get()
+  }
+
+  effect function autoChecks() {
+    while (true) {
+      const before = try machine.get()
+      try sleep(autoAskDelay(before.autoAsks) * 1000)
+      if (canAsk(try machine.get(), "AutoCheck", timer)) try checked("AutoCheck")
+    }
+  }
+
+  effect function refreshes() {
+    while (true) {
+      try sleep(recordRefreshSeconds * 1000)
+      try observeNow()
+      if (recordRefreshDue(try machine.get())) try reload()
+    }
+  }
+
+  effect function submit(connection: EvmConnection, reviewed: Reviewed) {
+    const identity = try orDie(crypto.randomUUIDv4())
+    const step: SavedStep = reviewed.facts.batch ? "batch" : reviewed.facts.resetAllowance ? "reset" : reviewed.facts.approvalNeeded ? "approve" : "send"
+    const plan: SavedDeposit = { wallet: connection.address, way: reviewed.way, step, transaction: "" }
+    let prompted = false
+    const beforePrompt = effect {
+      const state = try machine.get()
+      if (keeper.unreadable("deposit")) throw new PayRefused({ message: payMessages.unreadable })
+      if (!keeper.writable()) {
+        try sent({ type: "send", identity, stored: false }, payer)
+        throw new PayRefused({ message: storageBlockedMessage })
+      }
+      keeper.propose("deposit", planText(plan))
+      if (!(try sent({ type: "send", identity, stored: true }, payer)) || (try machine.get()).slot.identity !== identity) throw new PayRefused({ message: state.slot.identity === "" ? slotChangedMessage : payMessages.unclear })
+      try update((current) => ({ ...current, saved: plan }))
+      prompted = true
+    }
+    const answer: string = (step === "batch" ? sendFeeBatch(connection, reviewed.way, item, beforePrompt) : sendFeeDeposit(connection, reviewed.way, item, step, beforePrompt)) catch effect (error) => {
+      if (error._tag === "FeeBatchUnavailable") try update((current) => ({ ...current, reviewed: { way: reviewed.way, facts: { ...reviewed.facts, batch: false } } }))
+      if (!prompted) {
+        if (error._tag === "PayRefused") throw error
+        throw new PayRefused({ message: error.message })
+      }
+      if (error._tag === "WalletDeclined" || error._tag === "FeeBatchUnavailable") {
+        try reply(identity, "Declined", "")
+        try update((current) => ({ ...current, saved: undefined }))
+        throw new PayRefused({ message: error._tag === "WalletDeclined" ? payMessages.declined : error.message })
+      }
+      try reply(identity, "Uncertain", "")
+      throw new PayRefused({ message: payMessages.unclear })
+    }
+    try reply(identity, "Signed", answer)
+    const recorded = (try machine.get()).slot.hash === answer
+    try update((current) => ({ ...current, reviewed: undefined, notice: recorded ? "" : payMessages.unsaved(answer, step === "batch") }))
+    return answer
+  }
+
+  const opening = {
+    subject: address.kind === "report" ? "ReportDeposit" : "PullRequestFee",
+    addressed,
+    registered: address.kind === "report" || repository !== undefined || registryFailed,
+    switchedOn: address.kind === "report" ? setup.reportDeposit : setup.submissionFee,
+  } as const
+
+  effect function open() {
+    if (canOpenPage(try machine.get(), opening.subject, opening.addressed, opening.registered, opening.switchedOn, bundle)) try sent({ type: "openPage", ...opening }, bundle)
+    if (addressed && (subject !== undefined || registryFailed)) try reload()
+    return try machine.get()
+  }
+
+  return {
+    noun,
+    address,
+    repository,
+    machine,
+    changes: SubscriptionRef.changes(view),
+    open,
+    shown,
+    reload,
+    choose: (key: string) => update((current) => ({ ...current, chosen: key, reviewed: undefined })),
+    connect: effect (id: number) => {
+      const connection = connectEvm(id, false) catch effect (error) => { throw new PayRefused({ message: error.message }) }
+      const current = try shown()
+      const paying = current.saved === undefined || current.saved.wallet === connection.address
+      if (canConnectWallet(try machine.get(), paying, adapter)) try sent({ type: "connectWallet", payingWallet: paying }, adapter)
+      if (!paying) throw new PayRefused({ message: payMessages.reconnect(current.saved?.wallet ?? "") })
+      try update((now) => ({ ...now, wallet: connection, reviewed: undefined, error: "" }))
+      return try machine.get()
+    },
+    review: effect () => {
+      const connection = (try shown()).wallet
+      const way = try chosenWay()
+      if (connection === undefined || way === undefined) throw new PayRefused({ message: payMessages.chooseWallet })
+      if (!canReview(try machine.get(), payer)) throw new PayRefused({ message: slotChangedMessage })
+      reviewWith(connection, way) catch effect (error) => { throw new PayRefused({ message: error.message }) }
+      try sent({ type: "review" }, payer)
+      return try machine.get()
+    },
+    pay: effect () => {
+      const current = try shown()
+      const connection = current.wallet
+      const reviewed = current.reviewed
+      if (connection === undefined || reviewed === undefined) throw new PayRefused({ message: payMessages.chooseWallet })
+      try observeNow()
+      if (depositedWithinHour(try machine.get())) throw new PayRefused({ message: payMessages.onChain(noun) })
+      try confirmFresh(reviewed.way)
+      return try submit(connection, reviewed)
+    },
+    check: effect (candidate: string) => {
+      const trimmed = candidate.trim()
+      if (trimmed !== "" && canEnterHash(try machine.get(), trimmed, payer)) try sent({ type: "enterHash", candidate: trimmed }, payer)
+      return try checked("PayerCheck")
+    },
+    tabHidden: effect (hidden: boolean) => {
+      if (canSetTabHidden(try machine.get(), hidden, tab)) try sent({ type: "setTabHidden", hidden }, tab)
+      return try machine.get()
+    },
+    clearUnreadable: effect () => {
+      if (!(try shown()).unreadable) return false
+      const text = readText(kept, feeDepositKey(item))
+      const cleared = keeper.clearUnreadable("deposit") || (text !== null && compareAndWrite(kept, feeDepositKey(item), text, null))
+      keeper.read("deposit")
+      if (cleared) try update((current) => ({ ...current, unreadable: false, saved: undefined }))
+      return cleared
+    },
+    follow: effect () => {
+      try Effect.all([autoChecks(), refreshes()], { concurrency: "unbounded", discard: true })
+    },
+  } satisfies FeePay
+}

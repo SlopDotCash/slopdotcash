@@ -1,0 +1,28 @@
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
+import { Roles } from "@repo/platform/roles"
+import { Authority, ProjectParticipation, type ProjectView } from "@repo/ports/backend"
+import type { ReportingProgram } from "../receipt/program.vibe"
+
+export interface ExemptionRead {
+  readonly project: ProjectView
+  readonly program: ReportingProgram | undefined
+  readonly reporterGithubId: string
+}
+
+function namedApprover(program: ReportingProgram | undefined, githubId: string) {
+  const approvers = program?.approvers
+  return approvers !== undefined && [...approvers.technical, ...approvers.financial, ...approvers.dispute].includes(githubId)
+}
+
+export effect function depositExempt(read: ExemptionRead) {
+  const { project, program, reporterGithubId } = read
+  const roles = try Roles
+  if ((try roles.has(reporterGithubId, "moderator")) || (try roles.has(reporterGithubId, "administrator"))) return true
+  if (project.stewardAccount === "UserSteward" && project.stewardGithubId === reporterGithubId) return true
+  if (namedApprover(program, reporterGithubId)) return true
+  if (try (try ProjectParticipation).participated(project.projectId, reporterGithubId)) return true
+  const repository = project.repositories[0]
+  if (repository === undefined) return false
+  const access = try (try Authority).repository({ actorGithubId: reporterGithubId, repositoryId: repository.id })
+  return access.installation === "Installed" && access.permission === "PermissionVerified"
+}

@@ -217,17 +217,17 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await shown(prompt).toMatchObject({ text: "Read https://slop.cash/contribute/SKILL.md and follow it." });
 
     expect(await copyOutcome()).toBe("Ready");
-    await site.click(named("button", "Copy"));
+    await site.click(named("button", "Copy agent prompt"));
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     const answered = await copyOutcome();
     if (answered === "Copied") await expect.poll(copyOutcome, { timeout: journeyMs }).toBe("Ready");
     else {
       expect(answered).toBe("CopyFailed");
-      await site.click(named("button", "Copy"));
+      await site.click(named("button", "Copy agent prompt"));
       await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     }
 
-    await site.click(named("button", "Copy"));
+    await site.click(named("button", "Copy agent prompt"));
     await expect.poll(copyOutcome, { timeout: journeyMs }).not.toBe("Ready");
     await site.click(named("button", "Maintainer"));
     await at("/?audience=maintainer");

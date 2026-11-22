@@ -2,6 +2,15 @@
 import { ProjectCard, Status, type StatusProps } from "@repo/ui";
 import { type CardReward, cardLines, cardReward, homeDescription, imageOf, type ListedProject, projectHref, type ShownTag } from "./listing.ts";
 
+/** The look of Home's section heading row, its title, a tier's title and a tier's note. */
+export const sectionHeading = "mb-12 flex flex-wrap items-center justify-between gap-6";
+export const sectionTitle = "m-0 max-w-200 text-5xl leading-display font-extrabold tracking-tighter text-foreground uppercase md:text-7xl lg:text-8xl";
+export const tierTitle = "mb-5 text-copy font-bold tracking-normal text-muted-foreground normal-case";
+export const tierNote = "-mt-3 mb-5 text-sm text-muted-foreground";
+
+/** Development's project grid: as many 340px columns as fit, one on a narrow screen. */
+export const projectGrid = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,21.25rem),1fr))] gap-5";
+
 export type MergeLine = (project: ListedProject) => string | null;
 
 const tagPresentations = {
@@ -28,7 +37,7 @@ export type ProjectGridProps = {
 /** The projects in the order given, as cards. */
 export function ProjectGrid({ projects }: ProjectGridProps) {
   return (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className={projectGrid}>
       {projects.map((project) => {
         const reward = cardReward(project);
         const lines = cardLines(project);

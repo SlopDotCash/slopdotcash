@@ -37,6 +37,7 @@ export schema SubmissionView {
   createdAt: string
   updatedAt: string
   intake: IntakeView | null
+  deposit?: unknown
 }
 
 export schema Submitted { replayed?: boolean; authorizeUrl?: string; submission: SubmissionView }

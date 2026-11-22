@@ -90,7 +90,7 @@ effect function paid(checked: Checked) {
   const { target, gate, item, model, facts, pull, at } = checked
   const comment = try commentFactsOf(checked)
   const paidFacts = { ...comment, paidNetwork: item.paidNetwork, paidDepositId: item.paidDepositId }
-  let commentId = gate.comment_id ?? 0
+  let commentId: number | null = gate.comment_id
   let review = false
   if (gate.state !== "paid") {
     if (pull.contributorScope) {
@@ -111,7 +111,7 @@ effect function paid(checked: Checked) {
       commentId = try writeFeeComment(target, commentId, feePaidComment({ ...paidFacts, outcome: note }))
     }
   }
-  try stepped(model, { type: "refreshPaid", facts, pull, commentId })
+  try stepped(model, { type: "refreshPaid", facts, pull, commentId: commentId ?? 0 })
   try keepGate(target.pull, { state: "paid", reason, commentId, nextCheckAt }, at)
   return done(gate.state === "paid" ? `submission fee: ${reason}` : "submission fee paid", review)
 }

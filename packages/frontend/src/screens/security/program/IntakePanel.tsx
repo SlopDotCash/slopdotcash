@@ -1,12 +1,15 @@
-// spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+// spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
 import { Button, ExternalLink, Spinner, Status } from "@repo/ui";
 import { ArrowRight, ExternalLink as ExternalLinkIcon, RotateCcw } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { DepositNotice } from "./DepositNotice.tsx";
 import type { ReadinessShown } from "./runtime.vibe";
 import { utc } from "./summary.ts";
 
 export type IntakePanelProps = {
   readiness: ReadinessShown;
+  /** The program's registry record, whose security settings decide the deposit notice. */
+  project: unknown;
   /** The report form, shown while Slop's private intake is on. */
   form: ReactNode;
   onCheck: () => void;
@@ -27,7 +30,7 @@ function CheckAgain({ busy, onCheck }: { busy: boolean; onCheck: () => void }) {
   );
 }
 
-function GitHubRoute({ readiness, onCheck }: Omit<IntakePanelProps, "form">) {
+function GitHubRoute({ readiness, onCheck }: Pick<IntakePanelProps, "readiness" | "onCheck">) {
   if (readiness.status === "checking") return <Spinner size="sm" label="Loading private reporting status…" />;
   if (readiness.status === "error")
     return (
@@ -75,7 +78,7 @@ function GitHubRoute({ readiness, onCheck }: Omit<IntakePanelProps, "form">) {
 }
 
 /** Where a private report goes: Slop's intake first, and GitHub's private route beside it. Never a public issue. */
-export function IntakePanel({ readiness, form, onCheck }: IntakePanelProps) {
+export function IntakePanel({ readiness, project, form, onCheck }: IntakePanelProps) {
   const stored = readiness.status === "checked" && readiness.value.storedIntake;
   const [open, setOpen] = useState<boolean | null>(null);
   return (
@@ -87,7 +90,12 @@ export function IntakePanel({ readiness, form, onCheck }: IntakePanelProps) {
         <Status presentation={{ tone: "Neutral", icon: "Lock", label: "Private" }} />
         {readiness.status === "checked" && readiness.value.paidParticipation !== "open" ? <Status presentation={{ tone: "Caution", icon: "Alert", label: "No paid reports" }} /> : null}
       </p>
-      {stored ? form : readiness.status === "checking" ? <Spinner size="sm" label="Checking private intake…" /> : <p role="status">Slop intake unavailable</p>}
+      {stored ? (
+        <>
+          <DepositNotice project={project} />
+          {form}
+        </>
+      ) : readiness.status === "checking" ? <Spinner size="sm" label="Checking private intake…" /> : <p role="status">Slop intake unavailable</p>}
       <details open={open ?? !stored} onToggle={(event) => setOpen(event.currentTarget.open)} className="group flex flex-col gap-3">
         <summary className="inline-flex cursor-pointer list-none items-center gap-1 self-start rounded-sm text-sm font-medium text-foreground hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden">
           GitHub option

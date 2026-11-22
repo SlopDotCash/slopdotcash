@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import { type RepositoryLookup, ownedRepositories as ownedRoute, repositoryFacts } from "@repo/backend/client"
 import { type CallFailure, call } from "../../platform/api.vibe"
 import { validRepositoryPath } from "./proposal.ts"
@@ -13,7 +13,24 @@ export const lookupMessages = {
   commits: "The repository branch commits are unavailable. Try again.",
 } as const
 
+export const branchMessages = {
+  different: "GitHub returned a different repository.",
+  failed: "Cannot load integration branches.",
+} as const
+
 export error LookupFailed { message: string }
+
+export interface IntegrationBranchChoice {
+  readonly name: string
+  readonly commitSha: string
+}
+
+export interface StoredRepository {
+  readonly path: string
+  readonly numericId: string
+  readonly nodeId: string
+  readonly integrationBranch: string
+}
 
 const commitPattern = /^[0-9a-f]{40}$/u
 const unexplained = /^The request failed with HTTP [0-9]+\.$/u
@@ -38,4 +55,11 @@ export effect function lookupRepository(repository: string) {
   const commits = Object.entries(facts.branchCommits)
   if (commits.some(([branch, commit]) => !facts.branches.includes(branch) || !commitPattern.test(commit))) throw new LookupFailed({ message: lookupMessages.commits })
   return facts
+}
+
+export effect function integrationBranchChoices(stored: StoredRepository) {
+  const facts = try lookupRepository(stored.path)
+  if (facts.numericId !== stored.numericId || facts.nodeId !== stored.nodeId) throw new LookupFailed({ message: branchMessages.different })
+  const choices: ReadonlyArray<IntegrationBranchChoice> = Object.entries(facts.branchCommits).filter(([name]) => name !== stored.integrationBranch).map(([name, commitSha]) => ({ name, commitSha }))
+  return choices
 }

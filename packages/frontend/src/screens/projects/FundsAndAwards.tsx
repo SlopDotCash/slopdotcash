@@ -9,7 +9,7 @@ export type FundsAndAwardsProps = {
   /** The page's runtime, which knows the signed-in account. */
   runtime: PageRuntime;
   /** The project as the registry lists it. */
-  project: Pick<ShownProject, "reward" | "record">;
+  project: Pick<ShownProject, "reward" | "record" | "status" | "rewardAsset">;
   /** The months the public cycle index lists for the project's award review. */
   awardMonths: ReadonlyArray<string>;
   /** Whether payments run on a network. */
@@ -22,7 +22,7 @@ export function FundsAndAwards({ runtime, project, awardMonths, networkPays }: F
   if (funding?.escrow === undefined) return null;
   return (
     <section id="funding" aria-label="Funds and awards" className="flex flex-col gap-8">
-      <EscrowFunding readOnly runtime={runtime} project={funding} />
+      <EscrowFunding runtime={runtime} project={funding} listing={{ active: project.status === "active", rewardAsset: project.rewardAsset, networkPays }} />
       <OwnerAwards runtime={runtime} project={funding} awardMonths={awardMonths} networkPays={networkPays} />
     </section>
   );

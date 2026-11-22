@@ -1,26 +1,11 @@
-// spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "A penalty revision records the debit applied against the month's credit"; spec/points/journal.md, "A retained-batch award the batch no longer supplies is zeroed once"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"
+// spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"
 import { sha256Hex } from "@repo/platform/crypto"
 import type { RepositoryRegistry } from "../client/snapshot/schema.vibe"
 import { registryOf } from "../client/snapshot/checks.vibe"
 import { validateSnapshot } from "../client/snapshot/validate.vibe"
-import type { FreezeEvidence } from "../../gen/points__periods.ts"
-import { type Repositories, finish, openStore } from "./ledger.vibe"
-import { reconcilePenalties } from "./penalties.vibe"
-import { applyRetainedReviews } from "./retained.vibe"
-import { applySnapshots } from "./snapshot.vibe"
+import type { Repositories } from "./ledger.vibe"
 
 export error SnapshotUnreadable { digest: string }
-
-export interface BuildInput {
-  readonly history: string
-  readonly published: string | null
-  readonly snapshots: ReadonlyArray<string>
-  readonly reviewed: ReadonlyArray<unknown>
-  readonly registry: RepositoryRegistry
-  readonly countsFrom: Readonly<Record<string, string>>
-  readonly freezes: ReadonlyArray<FreezeEvidence>
-  readonly recordedAt: string
-}
 
 export function repositoriesOf(registry: RepositoryRegistry, countsFrom: Readonly<Record<string, string>>): Repositories {
   return { registry: registryOf(registry), countsFrom: new Map(Object.entries(countsFrom)) }
@@ -34,13 +19,4 @@ export effect function readSnapshots(texts: ReadonlyArray<string>, registry: Rep
     read.push({ snapshot: try validateSnapshot(raw, registry), digest })
   }
   return read
-}
-
-export effect function buildJournal(input: BuildInput) {
-  const store = try openStore(input.history, input.published, input.freezes)
-  const repositories = repositoriesOf(input.registry, input.countsFrom)
-  try applySnapshots(store, repositories, try readSnapshots(input.snapshots, input.registry), input.recordedAt)
-  const retained = try applyRetainedReviews(store, repositories, input.reviewed, input.recordedAt)
-  try reconcilePenalties(store, repositories, undefined, retained, input.recordedAt)
-  return try finish(store, input.recordedAt)
 }

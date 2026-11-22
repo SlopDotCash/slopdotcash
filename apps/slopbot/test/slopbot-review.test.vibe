@@ -7,6 +7,7 @@ import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
 import { limitedAdvisory } from "../src/review/prompt.vibe"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -89,7 +90,7 @@ const reviewArea = (keys: Keys) => Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.merge(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "review",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: {

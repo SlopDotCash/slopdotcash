@@ -4,6 +4,7 @@ import type { D1Database } from "@repo/platform/bindings"
 import { bundle, database, migrate, startWorker } from "@repo/platform/testing"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
+import { journeyBuild } from "./support/journey.vibe"
 
 const internal = "https://slopbot.internal/v1/repository-access"
 const site = "https://slop.test/v1/repository-access"
@@ -84,7 +85,7 @@ effect function seeded(db: D1Database) {
 const Started = Layer.effect(Slopbot, effect {
   const github = try orDie(Effect.try(() => githubFake()))
   try world(github)
-  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "access" }))
+  const script = try promise(() => bundle(journeyBuild.root, { config: journeyBuild.config, entry: "access" }))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { SLOPBOT_DB: "slop-private" },

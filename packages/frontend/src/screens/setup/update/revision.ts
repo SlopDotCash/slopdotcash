@@ -1,11 +1,16 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"
 import { classified, type RevisionChanges } from "@repo/backend/revisionChanges";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isChain } from "@repo/settlement/kernels/networks";
 import { Result, Schema } from "effect";
+import { reportDepositOn } from "@repo/security/client";
 import { checkedOnLoad, consents, type SavedConsent, savedEdit } from "../../../../gen/backend__closureConsent.ts";
-import { honorSystemKept } from "../../../../gen/frontend__presentation.ts";
-import type { RepositoryLookup } from "@repo/backend/client";
+import { maxCap, minCap } from "../../../../gen/backend__intakeCap.ts";
+import { wantedLabelName } from "../../../../gen/backend__mergeActivity.ts";
+import { branchChangeAllowed, branchConflictText, changeEffect, entryNumber, entryOrPublished, honorSystemKept, intakeCapEntryValid, type SettingEffect, type SettingEntry, type SettingField, shareEntryValid } from "../../../../gen/frontend__presentation.ts";
+import { maxShareBasisPoints } from "../../../../gen/settlement__maintainerShare.ts";
+import { defaultMinor, maxMinor, minMinor, type RepositoryLookup, stableDecimals, submissionFeeSettingOf } from "@repo/backend/client";
+import type { IntegrationBranchChoice, StoredRepository } from "../../../flows/projects/github.vibe";
 import { boundedText, type FundingChoice, type MonthlyPoolValue, monthlyCapDisplay, monthlyPoolValue, type RewardAssetKind, rewardFields, validRepositoryPath } from "../../../flows/projects/proposal.ts";
 import { type AssetKind, assetSymbol, formatRewardCapDisplay } from "../../../kernels/assetText.ts";
 import { contributionLabels, type SkillRuleField, skillRuleFields } from "../fields/contribution.ts";
@@ -16,11 +21,11 @@ import { initialReadyDraft, nextReadyLabel, type ReadyField, readyErrors, readyF
 
 export type Json = Readonly<Record<string, unknown>>;
 
-export type UpdateField = "image" | "automaticClosure" | ReadyField | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "honorSystem" | "repositories";
+export type UpdateField = "image" | "automaticClosure" | ReadyField | "submissionFee" | "submissionFeeAmount" | "wantedIssues" | "reportDeposit" | "intakeCap" | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "honorSystem" | "maintainerShare" | "repositories";
 
 export type UpdateDraft = Readonly<Record<UpdateField, string>>;
 
-export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "honorSystem", "repositories"];
+export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "submissionFee", "submissionFeeAmount", "wantedIssues", "reportDeposit", "intakeCap", "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "honorSystem", "maintainerShare", "repositories"];
 
 export interface Edit {
   readonly fields: Partial<UpdateDraft> | null;
@@ -33,9 +38,12 @@ export interface Managed {
   readonly manifest: ManagedManifest;
 }
 
-export type ChangeField = "vault" | "slopbot" | "readyLabel" | "image" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly" | "honorSystem";
+export type ChangeField = "vault" | "slopbot" | "readyLabel" | "intakeCap" | "submissionFee" | "wantedIssues" | "reportDeposit" | "image" | "integrationBranch" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly" | "honorSystem" | "maintainerShare";
 
-export type ChangeEffect = "live" | "rescan" | "next-month";
+export interface BranchRequest {
+  readonly integrationBranch: IntegrationBranchChoice;
+  readonly contribution?: unknown;
+}
 
 export interface ChangeRow {
   readonly field: ChangeField;
@@ -63,6 +71,8 @@ export interface UpdateReview {
   readonly countsFrom: string;
   readonly nextCycle: string;
   readonly monthlyAmount: string | null;
+  readonly primary: StoredRepository | undefined;
+  readonly branchRequest: BranchRequest | undefined;
 }
 
 export const untouched: Edit = { fields: null, baseRevision: null };
@@ -77,6 +87,10 @@ const baseUnitsText = /^[0-9]+$/u;
 const assetFields = ["network", "assetKind", "tokenAddress", "tokenSymbol"] as const;
 const decodeManifest = Schema.decodeUnknownResult(ManagedManifest);
 const decodePending = Schema.decodeUnknownResult(Schema.Array(PendingRepository));
+const feeAmountPattern = /^(\d{1,4})(?:\.(\d{1,2}))?$/u;
+const capDigits = /^\d{1,6}$/u;
+const shareDigits = /^\d{1,2}$/u;
+const stableUnit = 10n ** BigInt(stableDecimals);
 
 function isJson(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -219,16 +233,95 @@ function assetKindOf(kind: string | undefined): RewardAssetKind {
   return kind === "token" ? "token" : kind === "native" ? "native" : "stablecoin";
 }
 
+function feeRecord(slopbot: unknown): Json | undefined {
+  const fee = recordOf(slopbot).submissionFee;
+  return isJson(fee) ? fee : undefined;
+}
+
+function feeText(minor: string): string {
+  return baseUnits(minor, stableDecimals, false) ?? "";
+}
+
+type FeeAmount = { readonly kind: "amount"; readonly minor: string } | { readonly kind: "invalid"; readonly error: string };
+
+/** The owner's typed fee as base units: at most two decimal places inside the allowed range; empty is the platform default. @throws {never} */
+export function feeAmountOf(text: string): FeeAmount {
+  const typed = text.trim().replace(/^\$/u, "").trim();
+  if (typed === "") return { kind: "amount", minor: String(defaultMinor) };
+  const match = feeAmountPattern.exec(typed);
+  const minor = match === null ? undefined : BigInt(match[1] ?? "0") * stableUnit + BigInt((match[2] ?? "").padEnd(stableDecimals, "0"));
+  return minor !== undefined && minor >= BigInt(minMinor) && minor <= BigInt(maxMinor)
+    ? { kind: "amount", minor: minor.toString() }
+    : { kind: "invalid", error: `Enter an amount from ${feeText(String(minMinor))} to ${feeText(String(maxMinor))}, with at most two decimal places.` };
+}
+
+function entryOf(typed: string, digits: RegExp): SettingEntry {
+  if (typed === "") return { tag: "EntryEmpty" };
+  return digits.test(typed) ? { tag: "EntryWhole", whole: Number(typed) } : { tag: "EntryInvalid" };
+}
+
+interface Entries {
+  readonly cap: number;
+  readonly capError: string | undefined;
+  readonly share: number;
+  readonly shareError: string | undefined;
+  readonly fee: Json | undefined;
+  readonly feeError: string | undefined;
+}
+
+function nextFee(current: Json | undefined, on: boolean, amount: FeeAmount): Json | undefined {
+  if (!on) return current?.enabled === true ? { ...current, enabled: false } : current;
+  if (amount.kind === "invalid") return current;
+  const published = current?.enabled === true ? (typeof current.amountMinor === "string" ? current.amountMinor : String(defaultMinor)) : undefined;
+  return published === amount.minor ? current : { enabled: true, amountMinor: amount.minor };
+}
+
+function entriesOf(manifest: ManagedManifest, value: UpdateDraft): Entries {
+  const cap = entryOf(value.intakeCap.trim(), capDigits);
+  const capValid = intakeCapEntryValid(cap);
+  const share = entryOf(value.maintainerShare.trim().replace(/%$/u, "").trim(), shareDigits);
+  const shareValid = shareEntryValid(share);
+  const amount = feeAmountOf(value.submissionFeeAmount);
+  const feeOn = value.submissionFee === "true";
+  return {
+    cap: entryOrPublished(capValid, entryNumber(cap), manifest.slopbot?.intakeCap ?? 0),
+    capError: capValid ? undefined : `Enter a whole number from ${minCap} to ${maxCap}, or leave it empty.`,
+    share: entryOrPublished(shareValid, entryNumber(share) * 100, manifest.reward.maintainerShare ?? 0),
+    shareError: shareValid ? undefined : `Enter a whole number from 0 to ${maxShareBasisPoints / 100}, or leave it empty.`,
+    fee: nextFee(feeRecord(manifest.slopbot), feeOn, amount),
+    feeError: feeOn && amount.kind === "invalid" ? amount.error : undefined,
+  };
+}
+
+function urlPath(url: string): string {
+  return URL.canParse(url) ? new URL(url).pathname.replace(/^\/|\/$/gu, "") : "";
+}
+
+/** The primary repository as stored: its path, GitHub ids and integration branch. @throws {never} */
+export function primaryRepository(manifest: ManagedManifest): StoredRepository | undefined {
+  const entry = manifest.repositories[0];
+  const authority = manifest.authority;
+  const path = urlPath(entry?.githubUrl ?? "");
+  if (entry?.integrationBranch === undefined || authority === undefined || !validRepositoryPath(path)) return undefined;
+  return { path, numericId: authority.repositoryId, nodeId: authority.repositoryNodeId, integrationBranch: entry.integrationBranch };
+}
+
 /** The form as the current revision fills it; closure consent is checked only by an exact saved yes. @throws {never} */
 export function initialDraft(manifest: ManagedManifest): UpdateDraft {
   const capMinor = manifest.reward.kind === "monthly-pool" ? (manifest.reward.monthlyCapMinor ?? "0") : "0";
   const asset = manifest.rewardAsset;
   const rules = Object.fromEntries(skillRuleFields.map((field) => [field, manifest.contribution?.[field] ?? ""])) as Record<SkillRuleField, string>;
+  const fee = feeRecord(manifest.slopbot);
   return {
     ...rules,
     image: manifest.image ?? "",
     automaticClosure: String(checkedOnLoad(priorConsent(manifest.slopbot))),
     ...initialReadyDraft(savedReadySettings(manifest)),
+    submissionFee: String(fee?.enabled === true),
+    submissionFeeAmount: feeText(typeof fee?.amountMinor === "string" ? fee.amountMinor : String(defaultMinor)),
+    wantedIssues: String(manifest.slopbot?.wantedIssues === true),
+    reportDeposit: String(reportDepositOn(manifest)),
+    intakeCap: manifest.slopbot?.intakeCap === undefined ? "" : String(manifest.slopbot.intakeCap),
     headline: manifest.headline,
     goal: manifest.description,
     website: manifest.links.website ?? "",
@@ -241,6 +334,7 @@ export function initialDraft(manifest: ManagedManifest): UpdateDraft {
     tokenSymbol: asset?.kind === "token" ? asset.symbol : "",
     monthlyAmount: capMinor === "0" ? "" : (baseUnits(capMinor, asset?.decimals ?? 6, false) ?? ""),
     honorSystem: String(manifest.reward.honorSystem === true),
+    maintainerShare: manifest.reward.maintainerShare === undefined ? "" : String(manifest.reward.maintainerShare / 100),
     repositories: "",
   };
 }
@@ -284,11 +378,13 @@ function fundingOf(manifest: ManagedManifest, value: UpdateDraft, touched: boole
   return { choice, amount: monthlyPoolValue(value.monthlyAmount, token), fixed, touched };
 }
 
-function errorsOf(value: UpdateDraft, added: ReadonlyArray<PendingRepository>, funding: Funding, bountyOnly: boolean): Readonly<Record<string, string>> {
+function errorsOf(value: UpdateDraft, added: ReadonlyArray<PendingRepository>, funding: Funding, bountyOnly: boolean, monthly: boolean, entries: Entries): Readonly<Record<string, string>> {
   const { choice, amount, fixed } = funding;
   const token = !bountyOnly && choice.mode === "monthly" && !fixed && choice.assetKind === "token" ? tokenProblem({ network: choice.network, assetKind: "token", tokenAddress: choice.tokenAddress, tokenSymbol: choice.tokenSymbol }) : undefined;
   const found: ReadonlyArray<readonly [string, string | undefined]> = [
     ...Object.entries(readyErrors(value)),
+    ["intakeCap", entries.capError],
+    ["submissionFeeAmount", entries.feeError],
     ["headline", lengthError(value.headline, 8, 120)],
     ["goal", lengthError(value.goal, 24, 600)],
     ["website", linkError(normalizeWebsiteInput(value.website))],
@@ -297,6 +393,7 @@ function errorsOf(value: UpdateDraft, added: ReadonlyArray<PendingRepository>, f
     ...skillRuleFields.map((field) => [field, value[field].trim() === "" ? undefined : lengthError(value[field], 1, 2_000)] as const),
     ["monthlyAmount", !bountyOnly && choice.mode === "monthly" && !amount.valid ? amount.error : undefined],
     ...(token ? [[token.field, token.message] as const] : []),
+    ["maintainerShare", !bountyOnly && monthly && choice.mode === "monthly" ? entries.shareError : undefined],
     ...added.map((entry, index) => [`addedRepository${index}`, lengthError(entry.entry.description, 12, 500)] as const),
   ];
   return Object.fromEntries(found.filter((entry): entry is readonly [string, string] => entry[1] !== undefined));
@@ -305,8 +402,8 @@ function errorsOf(value: UpdateDraft, added: ReadonlyArray<PendingRepository>, f
 /** @throws {never} */
 export function groupOf(field: string): FormGroup {
   if (field === "headline" || field === "goal" || field === "website" || field === "x") return "listing";
-  if (field.startsWith("addedRepository")) return "repositories";
-  if (field === "monthlyAmount" || field === "tokenAddress" || field === "tokenSymbol") return "rewards";
+  if (field.startsWith("addedRepository") || field === "integrationBranch") return "repositories";
+  if (field === "monthlyAmount" || field === "tokenAddress" || field === "tokenSymbol" || field === "maintainerShare") return "rewards";
   return skillRuleFields.some((rule) => rule === field) ? "moreRules" : "rules";
 }
 
@@ -318,24 +415,41 @@ interface Proposed {
   readonly bountyOnly: boolean;
   readonly countsFrom: string;
   readonly now: string;
+  readonly entries: Entries;
+  readonly branch: IntegrationBranchChoice | undefined;
+  readonly primary: StoredRepository | undefined;
 }
 
-function fundingFields({ managed: { raw, manifest }, value, funding: { choice, amount, fixed, touched }, bountyOnly, now }: Proposed): Json {
+function fundingFields({ managed: { raw, manifest }, value, funding: { choice, amount, fixed, touched }, bountyOnly, now, entries }: Proposed): Json {
   if (bountyOnly || manifest.reward.kind !== "monthly-pool") return {};
   const monthlyCapMinor = choice.mode === "monthly" && amount.valid ? amount.minor : "0";
   const cap = { monthlyCapMinor, monthlyCapDisplay: capDisplay(monthlyCapMinor, manifest.rewardAsset) };
-  const { honorSystem: _honorSystem, ...reward } = recordOf(raw.reward);
-  const promise = honorSystemKept(choice.mode === "monthly", value.honorSystem === "true") ? { honorSystem: true } : {};
+  const { honorSystem: _honorSystem, maintainerShare: _maintainerShare, ...reward } = recordOf(raw.reward);
+  const promise = {
+    ...(honorSystemKept(choice.mode === "monthly", value.honorSystem === "true") ? { honorSystem: true } : {}),
+    ...(choice.mode === "monthly" && entries.share > 0 ? { maintainerShare: entries.share } : {}),
+  };
   if (fixed || choice.mode === "none" || !touched) return { reward: { ...reward, ...cap, ...promise } };
   const fields = rewardFields(choice, now);
   return { ...fields, reward: { ...reward, ...fields.reward, rewardStartAt: reward.rewardStartAt, ...promise } };
 }
 
-function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft): Json {
+function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft, entries: Entries): Json {
   const saved = savedEdit(priorConsent(raw.slopbot), value.automaticClosure === "true");
   const readyLabel = nextReadyLabel(value, savedReadySettings(manifest));
-  const slopbot = { ...(saved === "Absent" ? {} : { automaticClosure: consents(saved) }), ...(readyLabel ? { readyLabel } : {}) };
+  const slopbot = {
+    ...(saved === "Absent" ? {} : { automaticClosure: consents(saved) }),
+    ...(readyLabel ? { readyLabel } : {}),
+    ...(entries.cap > 0 ? { intakeCap: entries.cap } : {}),
+    ...(entries.fee ? { submissionFee: entries.fee } : {}),
+    ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
+  };
   return Object.keys(slopbot).length === 0 ? {} : { slopbot };
+}
+
+function securityOf(raw: Json, value: UpdateDraft): Json {
+  const on = value.reportDeposit === "true";
+  return on === reportDepositOn(raw) ? {} : { security: { ...recordOf(raw.security), reportDeposit: on } };
 }
 
 function ownerLink(input: LinkInput, published: string | undefined): string | null {
@@ -343,12 +457,13 @@ function ownerLink(input: LinkInput, published: string | undefined): string | nu
 }
 
 function nextManifest(proposed: Proposed): Json {
-  const { managed: { raw, manifest }, value, added, countsFrom } = proposed;
+  const { managed: { raw, manifest }, value, added, countsFrom, entries } = proposed;
   return {
     ...raw,
     ...fundingFields(proposed),
     ...(added.length > 0 ? { repositories: [...listOf(raw.repositories), ...added.map(({ entry }) => ({ ...entry, description: entry.description.trim(), countsFrom }))] } : {}),
-    ...slopbotOf(raw, manifest, value),
+    ...slopbotOf(raw, manifest, value, entries),
+    ...securityOf(raw, value),
     image: value.image || undefined,
     headline: value.headline.trim(),
     description: value.goal.trim(),
@@ -357,23 +472,56 @@ function nextManifest(proposed: Proposed): Json {
   };
 }
 
-/** What publishing one changed field does: financial fields from next month, presentation at once, contribution rules at once only on a cleared scan. @throws {never} */
-export function changeEffect(field: ChangeField, executableCleared: boolean): ChangeEffect {
-  if (field === "vault" || field === "monthly") return "next-month";
-  return executableCleared || field === "slopbot" || field === "image" || field === "headline" || field === "description" ? "live" : "rescan";
+const settingFields: Readonly<Partial<Record<ChangeField, SettingField>>> = {
+  vault: "VaultField",
+  monthly: "MonthlyField",
+  maintainerShare: "MaintainerShareField",
+  slopbot: "SlopbotField",
+  readyLabel: "SlopbotField",
+  intakeCap: "SlopbotField",
+  submissionFee: "SlopbotField",
+  wantedIssues: "SlopbotField",
+  reportDeposit: "ReportDepositField",
+  image: "ImageField",
+  headline: "HeadlineField",
+  description: "DescriptionField",
+  integrationBranch: "IntegrationBranchField",
+  contributionGuide: "ContributionGuideField",
+};
+
+/** What publishing one changed field does, by the generated rule. @throws {never} */
+export function effectOf(field: ChangeField, executableCleared: boolean): SettingEffect {
+  return changeEffect(settingFields[field] ?? "OtherField", executableCleared);
+}
+
+function shareLabel(points: unknown): string {
+  return typeof points === "number" && Number.isInteger(points) && points >= 1 && points <= maxShareBasisPoints ? `${points / 100}%` : "None";
+}
+
+function capSummary(slopbot: unknown): string {
+  const cap = recordOf(slopbot).intakeCap;
+  return typeof cap === "number" ? `At ${cap} open outside pull request${cap === 1 ? "" : "s"}` : "Off";
+}
+
+function feeSummary(slopbot: unknown): string {
+  const fee = submissionFeeSettingOf(recordOf(slopbot).submissionFee);
+  return fee === null ? "Off" : `On: ${feeText(fee.amountMinor)} USDC or USDG`;
 }
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bountyOnly }: Proposed, next: Json): ReadonlyArray<ChangeRow> {
+function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bountyOnly, branch, primary }: Proposed, next: Json): ReadonlyArray<ChangeRow> {
   const contribution = recordOf(raw.contribution);
   const proposedContribution = recordOf(next.contribution);
   const proposedLinks = recordOf(next.links);
   const enabled = (vault: unknown) => (vault ? "Enabled" : "Not enabled");
   const promised = (reward: unknown) => (recordOf(reward).honorSystem === true ? "On" : "Off");
   const allowed = (slopbot: unknown) => (recordOf(slopbot).automaticClosure === true ? "Allowed" : "Not allowed");
+  const wanted = (slopbot: unknown) => (recordOf(slopbot).wantedIssues === true ? `On: ${wantedLabelName}` : "Off");
+  const deposit = (project: unknown) => (reportDepositOn(project) ? "On" : "Off");
+  const integrationBranch = primary?.integrationBranch ?? "";
   const names = (list: unknown) => listOf(list).map((entry) => text(recordOf(entry).id)).join(", ");
   const currency = text(recordOf(next.reward).currency);
   const decimals = manifest.rewardAsset?.decimals ?? 6;
@@ -392,13 +540,19 @@ function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bount
                 : "None",
           },
           { field: "honorSystem", label: "Honor-system promise", current: promised(raw.reward), proposed: promised(next.reward) },
+          { field: "maintainerShare", label: "Maintainer share", current: shareLabel(recordOf(raw.reward).maintainerShare), proposed: shareLabel(recordOf(next.reward).maintainerShare) },
         ]
       : [];
   const rows: ReadonlyArray<ChangeRow> = [
     { field: "vault", label: "Vault setup", current: enabled(raw.escrow), proposed: enabled(next.escrow) },
     { field: "slopbot", label: "Auto-close", current: allowed(raw.slopbot), proposed: allowed(next.slopbot) },
     { field: "readyLabel", label: "Slopbot ready label", current: readySummary(raw), proposed: readySummary(next) },
+    { field: "intakeCap", label: "Pause new contributors", current: capSummary(raw.slopbot), proposed: capSummary(next.slopbot) },
+    { field: "submissionFee", label: "Submission fee", current: feeSummary(raw.slopbot), proposed: feeSummary(next.slopbot) },
+    { field: "wantedIssues", label: "Wanted issues", current: wanted(raw.slopbot), proposed: wanted(next.slopbot) },
+    { field: "reportDeposit", label: "Report deposit", current: deposit(raw), proposed: deposit(next) },
     { field: "image", label: "Project image", current: text(raw.image), proposed: text(next.image) },
+    { field: "integrationBranch", label: "Integration branch", current: integrationBranch, proposed: branch?.name ?? integrationBranch },
     { field: "repositories", label: "Repositories", current: names(raw.repositories), proposed: names(next.repositories) },
     { field: "headline", label: "Short description", current: text(raw.headline), proposed: text(next.headline) },
     { field: "description", label: "Goal", current: text(raw.description), proposed: text(next.description) },
@@ -417,7 +571,7 @@ function touchedAsset(manifest: ManagedManifest, fields: Partial<UpdateDraft> | 
 }
 
 /** Everything the update form shows and publishes, from the current revision, the saved edit and the clock. @throws {never} */
-export function reviewOf(managed: Managed, edit: Edit, now: Date): UpdateReview {
+export function reviewOf(managed: Managed, edit: Edit, now: Date, branch?: IntegrationBranchChoice): UpdateReview {
   const { manifest } = managed;
   const initial = initialDraft(manifest);
   const value: UpdateDraft = { ...initial, ...(edit.fields ?? {}) };
@@ -427,17 +581,25 @@ export function reviewOf(managed: Managed, edit: Edit, now: Date): UpdateReview 
   const bountyOnly = isBountyOnly(manifest);
   const monthly = manifest.reward.kind === "monthly-pool";
   const countsFrom = nextUtcMonthStart(now);
-  const proposed: Proposed = { managed, value, added, funding, bountyOnly, countsFrom, now: now.toISOString() };
+  const entries = entriesOf(manifest, value);
+  const primary = primaryRepository(manifest);
+  const proposed: Proposed = { managed, value, added, funding, bountyOnly, countsFrom, now: now.toISOString(), entries, branch, primary };
   const next = nextManifest(proposed);
   const changes = classified(managed.raw, next);
+  const others: SettingField[] = [
+    ...changes.presentation.map((): SettingField => "OtherField"),
+    ...changes.financial.map((): SettingField => "MonthlyField"),
+    ...changes.executable.map((field): SettingField => (field === "contribution" ? "ContributionGuideField" : "OtherField")),
+  ];
+  const branchError = branch !== undefined && !branchChangeAllowed(true, others) ? branchConflictText : undefined;
   return {
     value,
     added,
     choice: funding.choice,
-    errors: errorsOf(value, added, funding, bountyOnly),
+    errors: { ...errorsOf(value, added, funding, bountyOnly, monthly, entries), ...(branchError === undefined ? {} : { integrationBranch: branchError }) },
     next,
     changes,
-    changed: changes.presentation.length + changes.executable.length + changes.financial.length > 0,
+    changed: branch !== undefined || changes.presentation.length + changes.executable.length + changes.financial.length > 0,
     rows: rowsOf(proposed, next),
     bountyOnly,
     monthly,
@@ -447,6 +609,8 @@ export function reviewOf(managed: Managed, edit: Edit, now: Date): UpdateReview 
     countsFrom,
     nextCycle: countsFrom.slice(0, 7),
     monthlyAmount: !bountyOnly && funding.choice.mode === "monthly" && changes.financial.length > 0 ? value.monthlyAmount.trim() : null,
+    primary,
+    branchRequest: branch === undefined ? undefined : { integrationBranch: branch, ...(changes.executable.includes("contribution") ? { contribution: next.contribution } : {}) },
   };
 }
 

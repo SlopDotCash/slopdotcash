@@ -128,7 +128,7 @@ function reasonOf(error: GitHubFailure): string {
   if (error._tag === "GitHubMalformed") return `GitHub refused the maintainer decision read: ${error.issue}`
   if (error._tag === "GitHubUnavailable") return `GitHub maintainer decision read failed: ${error.status === undefined ? "network failure" : `HTTP ${error.status}`}`
   if (error._tag === "RateLimited") return `GitHub maintainer decision read failed: HTTP ${error.status}`
-  if (error._tag === "GitHubRefused") return `GitHub answered HTTP ${error.status}`
+  if (error._tag === "GitHubRefused") return error.status === 403 ? "GitHub maintainer decision read failed: HTTP 403" : `GitHub answered HTTP ${error.status}`
   return `GitHub answered HTTP 404 for ${error.path}`
 }
 
@@ -150,11 +150,15 @@ effect function headDeletion(node: PullNode, login: string, closedAt: number) {
   const owner = node.headRepositoryOwner?.login
   const headForkOwnedByDecider = node.isCrossRepository && !headForkMissing && (owner === undefined || sameLogin(owner, login))
   let deciderDeletedHeadWithinWindow = false
-  for (const entry of node.refDeletions.nodes) {
-    const deleter = entry.actor?.login
-    if (deleter !== undefined && sameLogin(deleter, login)) {
+  if (!headForkMissing && !headForkOwnedByDecider) {
+    for (const entry of node.refDeletions.nodes) {
+      const deleter = entry.actor?.login
+      if (deleter === undefined || !sameLogin(deleter, login)) continue
       const at = try instant(entry.createdAt, "branch deletion time")
-      if (Math.abs(at - closedAt) <= deletionWindowMs) deciderDeletedHeadWithinWindow = true
+      if (Math.abs(at - closedAt) <= deletionWindowMs) {
+        deciderDeletedHeadWithinWindow = true
+        break
+      }
     }
   }
   return { headForkOwnedByDecider, headForkMissing, deciderDeletedHeadWithinWindow }
@@ -195,7 +199,7 @@ effect function page(github: GitHub.Shape, variables: Readonly<Record<string, un
   const answered = retry(github.graphql(decisionsQuery, variables, DecisionsPage), {
     times: 3,
     schedule: Schedule.exponential("2 seconds"),
-    while: (error: GitHubFailure) => error._tag === "GitHubUnavailable" || error._tag === "RateLimited",
+    while: (error: GitHubFailure) => error._tag === "GitHubUnavailable" || error._tag === "RateLimited" || (error._tag === "GitHubRefused" && error.status === 403),
   })
   return answered catch effect (error) => {
     throw unread(reasonOf(error))

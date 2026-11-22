@@ -1,4 +1,4 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
@@ -13,6 +13,8 @@ import { type PrivateReport, privateReports } from "../receipt/github.vibe"
 import { type ReportingProgram, termsAtReceipt } from "../receipt/program.vibe"
 import { type CaseRole, caseEvent, caseInsert } from "../receipt/statements.vibe"
 import { awardColumns, caseRecord } from "./rows.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeld } from "../deposit/held.vibe"
 import { accessLog, caseNotices } from "./store.vibe"
 
 export type Reconciled = { readonly kind: "ok"; readonly received: ReadonlyArray<string> } | { readonly kind: "unavailable" }
@@ -81,11 +83,14 @@ effect function receivedReport(projectId: string, program: ReportingProgram, rep
     ? caseInsert({ id: caseId, projectId, repository: program.repository, advisory: report.ghsa, reporter: report.author, ownerGithubId: null, at,
       verified: { receivedAt: report.createdAt, verifiedBy: githubVerifier, policyRevision: receipt.policyRevision, terms: receipt.terms, award: next.award, source: "github-verified" } })
     : sql`UPDATE security_cases SET submission_state = 'verified', received_at = ${report.createdAt}, received_at_source = 'github-verified', verified_at = ${at}, verified_by_github_id = ${githubVerifier}, policy_revision = ${receipt.policyRevision}, terms = ${terms}, award_state = ${awardColumns[next.award]}, reporter_github_login = ${report.author.login}, revision = revision + 1, updated_at = ${at} WHERE id = ${caseId} AND revision = ${claim.row.revision} AND submission_state = 'claimed' AND NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))`
-  const notices = try caseNotices({ caseId, revision, kind: "receive", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: report.author.githubId, detail: {}, program, relatedReview: false, at })
+  const ask = claim === undefined && role === "reporter" ? try depositAsk({ caseId, projectId, reporterGithubId: report.author.githubId, at }) : { statements: [], held: false }
+  const held = claim === undefined ? ask.held : try depositHeld(caseId)
+  const notices = try caseNotices({ caseId, revision, kind: "receive", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: report.author.githubId, detail: {}, program: held ? undefined : program, relatedReview: false, at })
   const written = (try D1).batch([
     write,
     caseEvent({ caseId, revision, kind: "receive", actorGithubId: actor.githubId, role, idempotencyKey, reason: null, evidenceReference: null, detail: { advisory: report.ghsa, receivedAt: report.createdAt, receivedAtSource: "github-verified", policyRevision: receipt.policyRevision }, at, guard: claim !== undefined }),
     accessLog(caseId, actor.githubId, new Set([role]), "write", at),
+    ...ask.statements,
     ...notices,
   ]) catch effect (error) => {
     if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined

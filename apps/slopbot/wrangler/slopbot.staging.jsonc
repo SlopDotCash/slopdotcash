@@ -13,6 +13,9 @@
       "migrations_dir": "../../../migrations"
     }
   ],
+  "services": [
+    { "binding": "VALUE_MERGE_VERIFIER", "service": "slop-vetting-sandbox-staging", "entrypoint": "MergeVerifier" }
+  ],
   "observability": {
     "enabled": false
   },

@@ -1,7 +1,11 @@
-// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/frontend/projections.md, "Payment states keep award, funding and settlement apart"; spec/frontend/vaultLocks.md, "A lock covers its count of months from the vault's current month, and an unreserved month is releasable from 00:00 UTC on the 4th of the second month after it"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
+import { defaultMinor, keptAfterClosedDays, refundUndecidedDays, stableDecimals } from "@repo/backend/client";
+import { REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS, REPORT_DEPOSIT_REFUND_SILENT_DAYS, REPORT_DEPOSIT_SWITCHED_ON, REPORT_DEPOSIT_USD_MINOR } from "@repo/security/client";
+import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { ExternalLink, PageHeader } from "@repo/ui";
 import { Ban, BookOpen, CalendarCheck, CircleSlash, FolderPlus, GitPullRequest, HandCoins, ListChecks, type LucideIcon, Search, ShieldCheck, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
+import { maxShareBasisPoints } from "../../../gen/settlement__maintainerShare.ts";
 import { Milestones, PaymentLifecycle, payoutTimeline } from "./PaymentLifecycle.tsx";
 import { ContributionPointTiers, PenaltyPointTable, pointsNotice } from "./PointsRules.tsx";
 
@@ -112,6 +116,12 @@ const maintainerSteps: ReadonlyArray<PathStep> = [
   },
 ];
 
+const submissionFee = defaultMinor / 10 ** stableDecimals;
+const depositSize = `a refundable deposit of about ${formatBaseUnits({ value: BigInt(REPORT_DEPOSIT_USD_MINOR), decimals: 6 })} US dollars of SLOP on Robinhood Chain`;
+const depositAsked = REPORT_DEPOSIT_SWITCHED_ON
+  ? `Yes, unless the project's owner turned it off. A private report filed through Slop needs ${depositSize}.`
+  : `Not yet. Slop has not switched the deposit on. Once it is on, a private report filed through Slop needs ${depositSize}, unless the project's owner turned it off.`;
+
 const formula = ["Your points", "÷", "Project points", "×", "Funded pool", "=", "Your share"];
 
 /** How Slop works: the contributor and maintainer paths, Points, penalties, payment stages and questions. */
@@ -201,6 +211,21 @@ export function HowItWorksPage() {
           </Answer>
           <Answer question="When are payouts sent?">
             <Milestones label="Monthly payout timeline" milestones={payoutTimeline} />
+          </Answer>
+          <Answer question="Can maintainers be paid?">
+            <p>
+              Yes, when a project sets a maintainer share. The owner can set aside up to {maxShareBasisPoints / 100}% of the monthly amount for the people who merge or close pull requests from outside contributors. It is split by how many each decided, and a close counts the same as a merge. Owners set it on the project&apos;s manage page, and a change starts with the next UTC month. In a month with no such decision, the whole amount stays with contributors.
+            </p>
+          </Answer>
+          <Answer question="Is there a fee to open a pull request?">
+            <p>
+              Only on a project whose owner turned on the refundable submission fee. There, Slopbot comments once on a pull request from an outside contributor with a link to its pay page on slop.cash, and holds its review until the fee is recorded. The fee is {submissionFee} USDC on Base or {submissionFee} USDG on Robinhood Chain unless the owner set another amount, or the same fee in SLOP on Robinhood Chain at half the price. It is a deposit: a merge sends it back, and so do {refundUndecidedDays} days without a maintainer decision. A pull request closed without a merge for {keptAfterClosedDays} days keeps it: a stablecoin fee goes to Slop and a SLOP fee is burned. An unpaid pull request is never closed for that reason, the fee does not buy a merge and scoring does not read it. Pay only through the page linked in Slopbot&apos;s own comment.
+            </p>
+          </Answer>
+          <Answer question="Is there a deposit to file a security report?">
+            <p>
+              {depositAsked} The report is stored at once and screened once the deposit is recorded; your Inbox shows the exact amount and links its pay page. The deposit is kept only if the report is closed as spam, as a duplicate or as out of scope and that close stands for {REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS} days with no open appeal: it is then sent to the burn address, so neither Slop nor the project receives it. It is sent back to the wallet that paid when the report gets its first response that is not one of those closes, or after {REPORT_DEPOSIT_REFUND_SILENT_DAYS} days with no response, or when the owner turns the deposit off. A report is never closed or deleted for an unpaid deposit. The deposit is public on chain and shows the wallet that paid, not the project or the report. Pay only through the page linked in your Inbox.
+            </p>
           </Answer>
           <Answer question="GitHub flagged my account. What happens to my work?">
             <p>

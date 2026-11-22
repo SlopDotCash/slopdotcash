@@ -22,7 +22,7 @@ export interface SponsorsReads {
   readonly projects: Shown<ReadonlyArray<ListedProject>>;
   readonly mergeLine: MergeLine;
   readonly networkPays: NetworkPays;
-  readonly whoBuilds: WhoBuildsSnapshot;
+  readonly whoBuilds: WhoBuildsSnapshot | undefined;
   readonly live: Shown<LiveFootprint>;
 }
 
@@ -44,8 +44,8 @@ function Explained({ title, children, aside }: { title: string; children: ReactN
 }
 
 function PoolLabel({ project }: { project: ListedProject }) {
-  const prize = project.reward.kind === "external-prize-share" ? project.reward.externalOpportunity?.name : undefined;
-  return prize ? <Chip title={prize}>External</Chip> : sponsorPoolLine(project);
+  const prize = project.reward.kind === "external-prize-share" ? project.reward.externalOpportunity : undefined;
+  return prize ? <Chip title={prize.name}>External</Chip> : sponsorPoolLine(project);
 }
 
 function SponsorCard({ project, mergeLine, networkPays }: { project: ListedProject; mergeLine: MergeLine; networkPays: NetworkPays }) {
@@ -133,11 +133,13 @@ export function SponsorsView({ projects, mergeLine, networkPays, whoBuilds, live
           </Explained>
         </div>
       </Disclosure>
-      <Disclosure summary={`Audience report · ${whoBuildsDateLabel(whoBuilds.generatedAt)}`}>
-        <div className="pt-2">
-          <WhoBuilds snapshot={whoBuilds} live={live} branch={branch} />
-        </div>
-      </Disclosure>
+      {whoBuilds === undefined ? null : (
+        <Disclosure summary={`Audience report · ${whoBuildsDateLabel(whoBuilds.generatedAt)}`}>
+          <div className="pt-2">
+            <WhoBuilds snapshot={whoBuilds} live={live} branch={branch} />
+          </div>
+        </Disclosure>
+      )}
       <section className="flex flex-col gap-3">
         <h2 className="text-xl font-semibold text-foreground">Public records</h2>
         <ul className="flex flex-col gap-2">

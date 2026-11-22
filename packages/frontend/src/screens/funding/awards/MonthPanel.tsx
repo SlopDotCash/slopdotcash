@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
 import { ordinaryFeeBase } from "@repo/settlement/kernels/fees";
 import type { MonthlyAllocation, MonthlyOwnerView, MonthlyRun } from "@repo/settlement/client";
 import { Button, Field, Input, Label, ListItem, Metric, MetricGrid, Status, Switch, Textarea } from "@repo/ui";
@@ -42,6 +42,8 @@ export type MonthPanelProps = {
   onReserve: (githubUserId: string) => void;
   /** The commitment in progress, shown under the final awards. */
   commitment?: ReactNode;
+  /** The wrong-total reserve repair of the month's vault, shown last. */
+  release?: ReactNode;
 };
 
 type Draft = { readonly value: string; readonly base: string; readonly reason: string };
@@ -265,7 +267,7 @@ function FinalAwards({ view, run, state, busy = false, onReserve, commitment }: 
 }
 
 /** One month of a project's awards for its owner: the finalization default, the editable allocations before the freeze, and the frozen awards with their reservation. */
-export function MonthPanel({ view, state, busy = false, manageHref, paymentsDisabled = false, savedActor, onSave, onFinalize, onAutomaticChange, onReserve, commitment }: MonthPanelProps) {
+export function MonthPanel({ view, state, busy = false, manageHref, paymentsDisabled = false, savedActor, onSave, onFinalize, onAutomaticChange, onReserve, commitment, release }: MonthPanelProps) {
   return (
     <div className="flex flex-col gap-4">
       <section aria-label="Monthly payment settings" className="flex flex-col gap-2">
@@ -286,6 +288,7 @@ export function MonthPanel({ view, state, busy = false, manageHref, paymentsDisa
       ) : (
         <FinalAwards view={view} run={view.run} state={state} busy={busy} onReserve={onReserve} commitment={commitment} />
       )}
+      {release}
     </div>
   );
 }

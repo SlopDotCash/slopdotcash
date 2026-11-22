@@ -1,10 +1,12 @@
-// spec/frontend/reportDetails.md, "Private report IDs scope both heading references"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"
+// spec/frontend/reportDetails.md, "Private report IDs scope both heading references"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
 import { Alert, Button, Disclosure, ExternalLink, Spinner, Status } from "@repo/ui";
 import { ArrowRight, Clock, LockKeyhole, Receipt, RotateCcw } from "lucide-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 import type { SubmissionView } from "@repo/security/client";
 import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import type { ReportDraft } from "../../../flows/security/private.vibe";
+import { reportDepositStatus } from "../../../projections/reportDeposit.ts";
+import { DepositLine } from "./DepositLine.tsx";
 import { run, useMounted, useOnce } from "./hooks.ts";
 import { ReportFields } from "./ReportFields.tsx";
 import { type ProgramRuntime, type SubmissionRequest, actOnSubmission, keepReportText, reconcileDue, storeReportText, submissionOpened } from "./runtime.vibe";
@@ -32,6 +34,8 @@ export type SubmissionCardProps = {
   needsGrant: boolean;
   /** The private report, read only when its authorized reader opens it. */
   report?: ReactNode;
+  /** The reporter's deposit line, when the report or its case carries one. */
+  deposit?: ReactNode;
   onAct: (request: SubmissionRequest) => void;
   onOpenCase: (caseId: string) => void;
 };
@@ -72,7 +76,7 @@ function SendFromTab({ submission, login, draft, busy, onDraft, onAct }: Pick<Su
 
 /** One private submission and the only actions its state allows; never its report text unless its reader opens it. */
 export function SubmissionCard(props: SubmissionCardProps) {
-  const { submission, caseRecord, headings, focused, expanded, onExpandedChange, nowMs, busy, error, needsGrant, report, onAct, onOpenCase } = props;
+  const { submission, caseRecord, headings, focused, expanded, onExpandedChange, nowMs, busy, error, needsGrant, report, deposit, onAct, onOpenCase } = props;
   const reference = reportReference(submission, caseRecord);
   const intake = submission.intake;
   return (
@@ -112,6 +116,7 @@ export function SubmissionCard(props: SubmissionCardProps) {
         </div>
       )}
       {intake !== null && submission.state !== "draft" ? <p className="text-sm text-muted-foreground">{githubSubmissionStatus(submission, nowMs)}</p> : null}
+      {deposit}
       <Disclosure summary={submissionStatus(submission, nowMs)} open={expanded} onOpenChange={onExpandedChange}>
         <div className="flex flex-col gap-3 pt-2 text-foreground">
           {intake === null ? null : (
@@ -176,6 +181,8 @@ export type SubmissionEntryProps = {
   login: string;
   submission: SubmissionView;
   caseRecord?: CaseSummary;
+  /** The `deposit` field of that case's read, shown before the report's own. */
+  caseDeposit?: unknown;
   focused: boolean;
   /** The private report, mounted by its reader under this report's heading references. */
   report?: (headings: DetailHeadings) => ReactNode;
@@ -188,7 +195,8 @@ type Acting = { readonly busy: boolean; readonly error: string | null; readonly 
 const idle: Acting = { busy: false, error: null, needsGrant: false };
 
 function Opened(props: SubmissionEntryProps & { headings: DetailHeadings; kept: ReportDraft }) {
-  const { section, owner, submission, focused, onUpdated, report, ...shown } = props;
+  const { section, owner, submission, focused, onUpdated, report, caseDeposit, ...shown } = props;
+  const deposit = reportDepositStatus(caseDeposit) ?? reportDepositStatus(submission.deposit);
   const [draft, setDraft] = useState(props.kept);
   const [acting, setActing] = useState(idle);
   const [expanded, setExpanded] = useState(focused || reportNeedsAction(submission));
@@ -224,6 +232,7 @@ function Opened(props: SubmissionEntryProps & { headings: DetailHeadings; kept: 
       submission={submission}
       focused={focused}
       report={report?.(props.headings)}
+      deposit={deposit === null ? undefined : <DepositLine section={section} status={deposit} />}
       expanded={expanded}
       onExpandedChange={setExpanded}
       draft={draft}
