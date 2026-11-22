@@ -98,7 +98,7 @@ const senderNumber = (by: unknown) => typeof by === "number" ? by : 0;
 const session = (by: unknown): Sender => ({ kind: "session", hash: typeof by === "number" && by > 0 ? world.sessions.get(by) ?? hex() : "" });
 const service = (by: unknown): Sender => ({ kind: "service", id: senderNumber(by) });
 
-const facts = (): Facts => ({ xConfigured: true, mailAvailable: true, pilot: { githubId: githubOf(11), version: world.versions.get(900) ?? "" }, assertion: undefined });
+const facts = (): Facts => ({ xConfigured: true, mailAvailable: true, pilot: { githubId: githubOf(11), version: world.versions.get(900) ?? "" }, assertion: undefined, ownerSession: githubOf(22) });
 
 async function seed() {
   const legacy = actorOf(1101);
