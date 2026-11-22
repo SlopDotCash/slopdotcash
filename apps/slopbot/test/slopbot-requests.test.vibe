@@ -8,6 +8,7 @@ import { settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { RegistryObservation } from "../gen/slopbot__repositoryScope.ts"
+import { apiStart } from "../gen/slopbot__valueRequests.effect.vibe"
 import { leaseSources } from "../src/value/requests/leases.vibe"
 import { type Gathered, type Run, claimRequest, nextDue, recordOutcome, resumeParked, startRun } from "../src/value/requests/store.vibe"
 import { type SiteEnv, idle, inboxSite, registryOver, slopbotAccess } from "./support/requestsWorker.vibe"
@@ -52,6 +53,7 @@ const publishable: Gathered = {
   threw: false,
   registry: activeRegistry,
   configured: true,
+  valueStart: apiStart,
   repositoryMatches: true,
   pull: "PullClosed",
   occurredAt: Math.floor(t0 / 1000),

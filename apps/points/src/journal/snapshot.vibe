@@ -4,7 +4,7 @@ import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEven
 import { pointsOfThirdsText } from "../client/units/scoreUnits.ts"
 import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
 import { pointKey } from "../kernels/records/ids.vibe"
-import type { Event, SourceActor, SourceRule } from "../../gen/points__journal.effect.vibe"
+import { type Event, type SourceActor, type SourceRule, noDecision } from "../../gen/points__journal.effect.vibe"
 import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, hold, instant, jointUnit, ownUnit, projectOf, ruleOf, workCounts } from "./ledger.vibe"
 import { reconcilePenalties } from "./penalties.vibe"
 import { appended, commit, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
@@ -197,7 +197,7 @@ effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapsh
   const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
   const recipients = [...lines].map(([actor, count]) => ({ actor: actors.get(actor) ?? 0, lines: count })).sort((left, right) => left.actor - right.actor)
   const total = prior.reduce((sum, row) => sum + row.award.amount, 0)
-  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: projectId, unit: recorded, recipients, completeLines: true, reason: reallocated(total), digest }])
+  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: projectId, unit: recorded, recipients, completeLines: true, reason: reallocated(total), digest, pullRequest: coverage.pullRequestId }])
   if (refused !== "") {
     hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
     return []
@@ -300,13 +300,19 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
     workUnit: key.workUnit, digest,
   }
   const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
-  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, reason: context.reason }])
+  const effectiveAt = event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
+  // The producer's scoring decision is optional: a re-score without one appends a successor with no decision; one with
+  // a decision appends a reassessment carrying that decision's source, effective time and reason (applyPointsSnapshot).
+  const decision = event.scoreDecisionSourceId === undefined
+    ? noDecision
+    : { basis: "Reassessment" as const, effectiveAt: try instant(effectiveAt), reason: context.reason, delta: 0, source: event.scoreDecisionSourceId, valued: event.scoreDecisionSourceId.startsWith("value:") }
+  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, decision }])
   if (refused !== "") {
     hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
     return []
   }
   const provenance = {
-    recordedAt, sourceDigest: digest, effectiveAt: event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt)),
+    recordedAt, sourceDigest: digest, effectiveAt,
     decisionSourceId: decisionSourceOf([event.scoreDecisionSourceId, award.sourceId]),
     confirmation: context.confirmation === true,
   }

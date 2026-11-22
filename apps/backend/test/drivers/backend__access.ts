@@ -88,7 +88,7 @@ async function decisionOf(model: number): Promise<number> {
 
 function modelAppealIds(state: Access): Map<number, number> {
   const rows = new Set([...projects.values()].map((project) => project.row));
-  const ours = state.appeals.filter((appeal) => state.bans.some((ban) => ban.enforcement === appeal.enforcement && ban.target === appeal.target && rows.has(ban.project)));
+  const ours = state.appeals.filter((appeal) => rows.has(appeal.project));
   return new Map(ours.map((appeal, index) => [index + 1, appeal.id]));
 }
 
@@ -97,26 +97,19 @@ const decisionTypes = ["recordVettingBan", "decideProjectBan", "reinstateProject
 async function translated(event: Event): Promise<Event> {
   switch (event.type) {
     case "recordVettingBan":
-    case "decideProjectBan":
     case "reinstateProject":
       return { ...event, project: await projectOf(event.project), decision: await decisionOf(event.decision) };
+    case "decideProjectBan":
+      return { ...event, project: await projectOf(event.project), decision: await decisionOf(event.decision), accounts: event.accounts.map(actorOf) };
     case "reserveAward":
     case "payAward":
       throw new Error(`${event.type} needs settlement's reserved obligations, which no port exposes to the backend`);
-    case "identify":
-      throw new Error("identify has no stored record of its own: the shell records an identification only with the ban it names");
-    case "triageAppeal":
-      throw new Error("triageAppeal has no stored record: no table holds Slopbot's triage of an account-ban appeal");
-    case "ban":
-      return { ...event, enforcement: decisions.get(event.enforcement) ?? 0, target: actorOf(event.target) };
     case "appeal":
-      return { ...event, enforcement: decisions.get(event.enforcement) ?? 0 };
+      return { ...event, project: await projectOf(event.project) };
     case "reinstateAccounts":
       return { ...event, decision: await decisionOf(event.decision), project: await projectOf(event.project), targets: event.targets.map(actorOf) };
-    case "denyAppeal": {
-      const state = await runtime.runPromise(loadAccess());
-      return { ...event, appealId: modelAppealIds(state.state).get(event.appealId) ?? 0, decision: await decisionOf(event.decision) };
-    }
+    case "denyAppeal":
+      return { ...event, project: await projectOf(event.project), decision: await decisionOf(event.decision) };
   }
 }
 
@@ -125,11 +118,10 @@ function remember(model: Event, real: Event) {
   if ((decisionTypes as ReadonlyArray<string>).includes(model.type)) decisions.set(model.decision, real.decision);
 }
 
-const context = (by: number, real: Event, model: Event) => ({
+const context = (by: number) => ({
   actor: { githubId: String(by), login: `member-${by}` },
   reason: "Driven by the access conformance driver",
   evidenceReference: "driver",
-  logins: real.type === "ban" && model.type === "ban" ? { [String(real.target)]: `account-${model.target}` } : {},
   moderators: [...moderators].map(String),
 });
 
@@ -145,19 +137,22 @@ function recordOf(event: Extract<Event, { type: "recordVettingBan" | "decideProj
   return { id, projectId, action: "reinstate", stateAfter: "clear", appealAfter: "granted", actor, role: "project-moderator", source: "admin-panel", issuer: null, at };
 }
 
-function decided(real: Event, sender: number, model: Event) {
-  if (real.type !== "recordVettingBan" && real.type !== "decideProjectBan" && real.type !== "reinstateProject") return send(real, sender, context(sender, real, model));
+function decided(real: Event, sender: number) {
+  if (real.type !== "recordVettingBan" && real.type !== "decideProjectBan" && real.type !== "reinstateProject") return send(real, sender, context(sender));
   return Effect.gen(function* () {
     yield* admitted(real, sender);
     const db = yield* D1;
-    yield* db.batch([written(recordOf(real, sender))]);
+    const record = recordOf(real, sender);
+    // The moderator's decision on confirmed malice bans each named account in the same record.
+    const bans = real.type === "decideProjectBan" ? real.accounts.map((target) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${record.id}, ${String(target)}, ${`account-${modelActorOf(target)}`})`) : [];
+    yield* db.batch([written(record), ...bans]);
   });
 }
 
 async function dispatched(event: Event, by: number) {
   const real = await translated(event);
   const sender = actorOf(by);
-  const result = await outcome(decided(real, sender, event), runtime);
+  const result = await outcome(decided(real, sender), runtime);
   if (result === "accepted") remember(event, real);
   return result;
 }
@@ -171,13 +166,12 @@ async function observed(): Promise<Access> {
   const appealIds = new Map([...modelAppealIds(state)].map(([model, real]) => [real, model]));
   const bans = state.bans.filter((ban) => ours(ban.project));
   const releases = state.releases.filter((release) => bans.some((ban) => ban.enforcement === release.enforcement));
-  const identified = state.identified.filter((entry) => state.enforcements.some((record) => record.id === entry.enforcement && ours(record.project)));
   return {
+    moderators: state.moderators,
     enforcements: state.enforcements.filter((entry) => ours(entry.project)).map((entry) => ({ ...entry, id: decision(entry.id), project: byRow.get(entry.project) ?? 0, decidedBy: modelActorOf(entry.decidedBy) })),
-    identified: identified.map((entry) => ({ enforcement: decision(entry.enforcement), target: modelActorOf(entry.target), moderator: modelActorOf(entry.moderator) })),
     bans: bans.map((ban) => ({ enforcement: decision(ban.enforcement), project: byRow.get(ban.project) ?? 0, target: modelActorOf(ban.target), decidedBy: modelActorOf(ban.decidedBy) })),
     releases: releases.map((release) => ({ decision: decision(release.decision), enforcement: decision(release.enforcement), target: modelActorOf(release.target), decidedBy: modelActorOf(release.decidedBy) })),
-    appeals: state.appeals.filter((appeal) => appealIds.has(appeal.id)).map((appeal) => ({ ...appeal, id: appealIds.get(appeal.id) ?? 0, enforcement: decision(appeal.enforcement), target: modelActorOf(appeal.target), decidedBy: modelActorOf(appeal.decidedBy) })),
+    appeals: state.appeals.filter((appeal) => appealIds.has(appeal.id)).map((appeal) => ({ ...appeal, id: appealIds.get(appeal.id) ?? 0, project: byRow.get(appeal.project) ?? 0, target: modelActorOf(appeal.target), decidedBy: modelActorOf(appeal.decidedBy) })),
     awards: [],
     decisions: state.decisions.filter((real) => back.has(real) || state.enforcements.some((entry) => entry.id === real && ours(entry.project))).map(decision),
     lastAppeal: appealIds.size,

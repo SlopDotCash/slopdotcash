@@ -11,6 +11,7 @@ import { recordCalls } from "../../src/route/calls.vibe"
 import { type CallRecord, routeProviders, runRoute } from "../../src/route/route.vibe"
 import { spendJobs } from "../../src/spend/jobs.vibe"
 import { SpendNotify, spendNotify } from "../../src/spend/notify.vibe"
+import { testPrompt } from "./spendPrompt.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -20,7 +21,6 @@ export interface Env {
   readonly SURPLUS_API_KEY?: string
 }
 
-export const testPrompt = { system: "Review the one item you are shown.", policy: "Spam is unsolicited promotion.", item: "Buy cheap tokens now." }
 
 schema TestVerdict { category: string }
 

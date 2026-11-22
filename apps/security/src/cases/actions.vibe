@@ -33,8 +33,8 @@ export interface Planned {
 }
 
 const common = ["action", "expectedRevision", "idempotencyKey"]
-const githubIdPattern = /^[1-9]\d{0,19}$/u
-const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+export const githubIdPattern = /^[1-9]\d{0,19}$/u
+export const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
 const rootCausePattern = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u
 const sha256 = /^[0-9a-f]{64}$/u
 const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
@@ -79,7 +79,7 @@ effect function choice<T extends string>(body: Body, key: string, options: Reado
   return found
 }
 
-effect function timeField(body: Body, key: string, nowMs: number, past: boolean, invalid: Refusal) {
+export effect function timeField(body: Body, key: string, nowMs: number, past: boolean, invalid: Refusal) {
   const value = try stringField(body, key, timestamp, invalid)
   const time = millisOf(value)
   if (!Number.isFinite(time) || (past ? time > nowMs : time <= nowMs)) throw refuse(400, "invalid_request", `${key} must be a ${past ? "past" : "future"} UTC time`)

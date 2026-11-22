@@ -34,7 +34,7 @@ export type Column =
   | "submission_state" | "received_at" | "verified_at" | "verified_by_github_id" | "policy_revision" | "terms" | "owner_github_id"
   | "receipt_state" | "severity" | "loss_finding" | "root_cause_key" | "duplicate_of" | "evidence_digest" | "technical_decider_github_id"
   | "related_party" | "related_party_review" | "related_party_reviewer_github_id" | "award_state" | "award_gross_minor" | "award_gross_base"
-  | "payment_state" | "payment_deadline" | "appeal_state" | "appeal_from_state"
+  | "payment_state" | "payment_deadline" | "appeal_state" | "appeal_from_state" | "received_at_source" | "reporter_github_login"
 
 export type Assignments = Partial<Readonly<Record<Column, SqlValue>>>
 
@@ -174,6 +174,8 @@ const assignments: Readonly<Record<Column, (value: SqlValue) => Statement>> = {
   payment_deadline: (value) => sql`payment_deadline = ${value}`,
   appeal_state: (value) => sql`appeal_state = ${value}`,
   appeal_from_state: (value) => sql`appeal_from_state = ${value}`,
+  received_at_source: (value) => sql`received_at_source = ${value}`,
+  reporter_github_login: (value) => sql`reporter_github_login = ${value}`,
 }
 
 export function modelColumns(before: PrivateCase, next: PrivateCase): Assignments {

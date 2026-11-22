@@ -23,6 +23,7 @@ const Reward = Schema.Struct({
   cycleCaps: Schema.optional(Schema.Array(Schema.Struct({ cycleId: Schema.String, monthlyCapMinor: Schema.String }))),
   reviewBudget: Schema.optional(Budget),
   externalOpportunity: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String), advertisedAmountDisplay: Schema.optional(Schema.String) })),
+  honorSystem: Schema.optional(Schema.Boolean),
 });
 
 const Bounty = Schema.Struct({
@@ -83,6 +84,8 @@ export interface ShownProject extends CardProject {
     readonly monthlyCapDisplay: string;
     readonly cycleCaps: ReadonlyArray<CycleCap>;
     readonly reviewBudget?: PoolCommitment;
+    // The owner's honor-system promise on a positive monthly pool (presentation only).
+    readonly honorSystem?: boolean;
   };
   readonly rewardAsset?: RewardAsset;
   readonly securityBounty?: SecurityBounty & { readonly funding: { readonly state: string } };
@@ -128,6 +131,7 @@ export function projectOf(record: unknown): ShownProject | undefined {
       cycleCaps: caps.map((cap, index) => ({ cycleId: cap.cycleId, monthlyCapMinor: capMinors[index] ?? 0n })),
       reviewBudget: reward.reviewBudget && { committedMinor, fundingState: reward.reviewBudget.fundingState, monthlyCapDisplay: reward.reviewBudget.monthlyCapDisplay },
       externalOpportunity: reward.externalOpportunity,
+      honorSystem: reward.honorSystem,
     },
     rewardAsset: project.rewardAsset,
     securityBounty: bounty && { ...bounty, amount: { ...bounty.amount, grossMinor } },

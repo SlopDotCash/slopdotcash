@@ -37,6 +37,8 @@ effect function receiptOf(session: Session, row: Row, landed: Landed) {
     output: try exact(landed.output, row.id, "output"),
     actualNative: try exact(try unitsOf(landed.actualWei, session.state.network, `fee send ${row.id} native fee`), row.id, "actualNative"),
     finalized: true,
+    roleFree: landed.roleFree,
+    allowanceAtBlock: try exact(landed.allowance, row.id, "allowanceAtBlock"),
   } satisfies SendReceipt
 }
 

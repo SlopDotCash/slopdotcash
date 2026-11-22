@@ -1,23 +1,24 @@
 // spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
-import { isoNow } from "@repo/platform/clock"
+import { isoNow, millisOf } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
 import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
-import { NotAState, apply, initial } from "../../gen/security__cases.effect.vibe"
+import { NotAState, apply, canRecordAttested, initial } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
 import { analyze } from "../assessment/routes.vibe"
-import { repositoryAuthority } from "../caseAuthority/snapshot.vibe"
+import { AuthorityUnavailable, caseAuthority, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
 import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { projectId as projectPattern } from "../intake/availability.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
-import { ReportingPrograms } from "../receipt/program.vibe"
+import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
 import { caseEvent, caseInsert } from "../receipt/statements.vibe"
-import { type Body, exactKeys, planned } from "./actions.vibe"
+import { type Body, exactKeys, githubIdPattern, githubLogin, planned, timeField } from "./actions.vibe"
 import { CaseRow, caseColumns, caseRecord } from "./rows.vibe"
 import { type Observed, accessLog, audited, caseNotices, committed, observedAs, observedCase, refused } from "./store.vibe"
+import { checkReceipt } from "./receiptCheck.vibe"
 import { type Starter, scheduledTriage, triageMayStart, triaged } from "./triage.vibe"
 import { type ExtraActions, caseView, noExtraActions } from "./view.vibe"
 
@@ -213,6 +214,95 @@ export effect function claimed(actor: Actor, body: Body) {
   return answer({ case: try shownCase(observed, actor, true) }, 201)
 }
 
+schema Recorded { id: string; submission_state: string }
+schema RecordEvent { ok: number }
+
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed
+// legacy claim": a current security maintainer records a GitHub advisory's case directly (mode "record"), with
+// explicit confirmation, for a reporter other than themselves, at an attested past receipt time and under the terms
+// in force then. The case is verified at once with the maintainer-attested source (development createCase).
+export effect function recorded(actor: Actor, body: Body) {
+  try exactKeys(body, ["mode", "projectId", "advisory", "idempotencyKey", "reporterGithubId", "reporterGithubLogin", "receivedAt", "confirmation"])
+  const projectId = try stringField(body, "projectId", projectPattern, createRows.invalidRequestInvalidProjectId)
+  const advisory = try stringField(body, "advisory", ghsa, createRows.invalidRequestInvalidAdvisory)
+  const idempotencyKey = try stringField(body, "idempotencyKey", idempotencyPattern, createRows.invalidRequestInvalidIdempotencyKey)
+  const program = try (try ReportingPrograms).current(projectId)
+  if (program === undefined) throw refused(createRows.programNotFoundThisProjectHasNo)
+  const project = try (try Registry).project(projectId)
+  if (project === undefined || project.listingTier === "Retired") throw refused(createRows.projectNotFound)
+  const reporterGithubId = typeof body.reporterGithubId === "string" ? body.reporterGithubId : ""
+  // The caller's current authority over the project, read as a case scope with no case yet (caseAuthority).
+  const scope = { caseId: "", projectId, reporterGithubId, viewerGithubId: actor.githubId, program: program.approvers }
+  const snapshot = caseAuthority(scope, 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(actionRows.githubUnavailable);
+    default: throw error;
+  }
+  const by = githubNumber(actor.githubId)
+  if (!snapshot.authority.technical.includes(by) && reporterGithubId !== actor.githubId) throw refused(createRows.forbiddenOnlyASecurityMaintainer)
+  if (body.confirmation !== true) throw refused(createRows.confirmationRequired)
+  const reporterId = try stringField(body, "reporterGithubId", githubIdPattern, createRows.invalidRequestInvalidReporterGithubId)
+  const reporterLogin = try stringField(body, "reporterGithubLogin", githubLogin, createRows.invalidRequestInvalidReporterGithubLogin)
+  if (reporterId === actor.githubId) throw refused(createRows.conflicted)
+  const nowMs = try Clock.currentTimeMillis
+  const receivedAt = try timeField(body, "receivedAt", nowMs, true, createRows.invalidRequestInvalidReceivedAt)
+  const atReceipt = try (try ReportingPrograms).atReceipt({ projectId, receivedAt })
+  if (atReceipt === undefined) throw refused(createRows.programNotFoundThisProjectHasNo)
+  const terms = receiptTermsOf(atReceipt, millisOf(atReceipt.publishedAt), millisOf(receivedAt))
+  const fresh = { ...initial, reporter: githubNumber(reporterId), authority: snapshot.authority }
+  if (!canRecordAttested(fresh, by, snapshot.authority.epoch, terms, true)) throw refused(createRows.forbiddenOnlyASecurityMaintainer)
+  const after = try orDie(apply(fresh, { type: "recordAttested", checkedEpoch: snapshot.authority.epoch, terms, confirmed: true }, by))
+  const linked = try first(Linked, sql`SELECT case_id FROM security_submissions WHERE project_id = ${projectId} AND repository = ${program.repository} AND advisory_ghsa = ${advisory} AND case_id IS NOT NULL AND state IN ('submitted', 'receipt-verified') AND EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.submission_id = security_submissions.id)`)
+  if (linked !== undefined) {
+    const replay = try replayedRecord(linked.case_id, reporterId, actor, idempotencyKey)
+    if (replay !== undefined) return answer(replay)
+    throw refused(createRows.advisoryAlreadyRecorded)
+  }
+  const id = `sc_${(try randomId()).replaceAll("-", "")}`
+  const at = try isoNow()
+  const notices = try caseNotices({ caseId: id, revision: 1, kind: "record", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: reporterId, detail: {}, program, relatedReview: false, at })
+  const verified = { receivedAt, verifiedBy: actor.githubId, policyRevision: atReceipt.revision, terms: atReceipt.terms, award: after.award, source: "maintainer-attested" as const }
+  const written = (try D1).batch([
+    caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: reporterId, login: reporterLogin }, verified, ownerGithubId: actor.githubId, at }),
+    caseEvent({ caseId: id, revision: 1, kind: "record", actorGithubId: actor.githubId, role: "security-maintainer", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory, receivedAt, receivedAtSource: "maintainer-attested" }, at, guard: false }),
+    accessLog(id, actor.githubId, new Set(["security-maintainer"]), "write", at),
+    ...notices,
+  ]) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
+    throw error
+  }
+  if (written === undefined) {
+    // A rejected link is history; only a live case of this reporter and advisory answers. A record is a replay only
+    // when this exact request created the verified case.
+    const existing = try first(Recorded, sql`SELECT id, submission_state FROM security_cases WHERE project_id = ${projectId} AND advisory_ghsa = ${advisory} AND reporter_github_id = ${reporterId} AND submission_state <> 'link-rejected'`)
+    if (existing !== undefined) {
+      const replay = try replayedRecord(existing.id, reporterId, actor, idempotencyKey)
+      if (replay !== undefined) return answer(replay)
+      if (existing.submission_state === "claimed") throw refused(createRows.claimPending)
+    }
+    throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  }
+  const record = try caseRecord(id)
+  if (record === undefined) throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  return answer({ case: try shownCase(observed, actor, true) }, 201)
+}
+
+effect function replayedRecord(caseId: string, reporterId: string, actor: Actor, idempotencyKey: string) {
+  const record = try caseRecord(caseId)
+  if (record === undefined || record.row.reporter_github_id !== reporterId || record.row.submission_state !== "verified") return undefined
+  const own = try first(RecordEvent, sql`SELECT 1 AS ok FROM security_case_events WHERE case_id = ${caseId} AND case_revision = 1 AND kind = 'record' AND idempotency_key = ${idempotencyKey} AND actor_github_id = ${actor.githubId}`)
+  if (own === undefined) return undefined
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  if (observed.roles.size === 0) return undefined
+  try audited(caseId, actor.githubId, observed.roles)
+  return { replayed: true, case: try shownCase(observed, actor, true) }
+}
+
+effect function created(actor: Actor, body: Body) {
+  if (body.mode === "record") return try recorded(actor, body)
+  return try claimed(actor, body)
+}
+
 export type Performed =
   | { readonly kind: "answered"; readonly body: unknown }
   | { readonly kind: "changed"; readonly caseId: string }
@@ -242,6 +332,13 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     const by = githubNumber(actor.githubId)
     if (!triageMayStart(observed.model, by, observed.epoch, try Clock.currentTimeMillis)) throw refused(actionRows.analysisRunning)
     return { kind: "triage", caseId: row.id, starter: { kind: "moderator", by, epoch: observed.epoch, model: observed.model } } satisfies Performed
+  }
+  if (action === "check-receipt") {
+    try exactKeys(body, common)
+    const at = try isoNow()
+    const settled = try checkReceipt(observed, actor, at)
+    if (settled.change !== undefined) try committed({ observed, actor, change: settled.change, idempotencyKey, at })
+    return { kind: "changed", caseId: row.id } satisfies Performed
   }
   if (row.submission_state !== "verified" && action !== "verify-link" && action !== "reject-link") throw refused(actionRows.notVerified)
   const nowMs = try Clock.currentTimeMillis
@@ -284,6 +381,6 @@ effect function bodyOf(limitKib: number) {
 export const caseRoutes = Layer.mergeAll(
   handleRaw(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
   handleRaw(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
-  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => claimed(input.actor, body))),
+  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => created(input.actor, body))),
   handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
 )

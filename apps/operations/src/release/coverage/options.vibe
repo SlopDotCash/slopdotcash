@@ -22,9 +22,9 @@ export effect function selectCoverage(run: Run, facts: RunFacts) {
   try run.send({ type: "selectManualCoverage", skipProofs: facts.options.skipProofs, skipBrowserTests: facts.options.skipBrowserTests })
 }
 
-export effect function releaseCoverage(facts: RunFacts, environment: Environment) {
+export effect function releaseCoverage(facts: RunFacts, environment: Environment, anchored: boolean) {
   const run = try startRun(environment, facts.by)
-  try run.send({ type: "configure", environment, ref: facts.ref })
+  try run.send({ type: "configure", environment, ref: facts.ref, anchored })
   try selectCoverage(run, facts)
   const checks = coverage({ ...coverageRequest(try run.state()), usePublishedData: facts.options.usePublishedData })
   return {

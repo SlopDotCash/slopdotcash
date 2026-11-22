@@ -11,8 +11,17 @@
     "test:browser": "vitest run --project browser"
   },
   "dependencies": {
+    "@repo/backend": "workspace:*",
+    "@repo/contributor": "workspace:*",
     "@repo/design-system": "workspace:*",
+    "@repo/fees": "workspace:*",
     "@repo/frontend": "workspace:*",
+    "@repo/operations": "workspace:*",
+    "@repo/platform": "workspace:*",
+    "@repo/points": "workspace:*",
+    "@repo/security": "workspace:*",
+    "@repo/settlement": "workspace:*",
+    "@repo/slopbot": "workspace:*",
     "@repo/ui": "workspace:*",
     "effect": "4.1.1",
     "react": "catalog:",

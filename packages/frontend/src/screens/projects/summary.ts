@@ -4,6 +4,7 @@ import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settleme
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
 import type { ListingFacts } from "../../../gen/frontend__poolListing.ts";
+import { promiseText, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
@@ -73,8 +74,26 @@ export function projectListing({ project, funding }: { project: ShownProject; fu
   return listingOf({ status: project.status, securityBounty: project.securityBounty, funding: funding.facts });
 }
 
-/** The project as its reward summary may show it: an unfunded pool's cap reads as zero. @throws {never} */
+/**
+ * Whether an owner's honor-system promise shows for this month (spec/frontend/projections.md, "An owner's honor-system
+ * promise shows this month's amount as promised, never as vault-backed"). The promise replaces the not-listed notice.
+ * @throws {never}
+ */
+export function promised(project: ShownProject, funding: PoolFunding): boolean {
+  return promise(project, funding) !== "";
+}
+
+/** The summary line's promise warning, "Promised · Not vaulted" or "Promised · Vault funding unverified", or "". @throws {never} */
+export function promise(project: ShownProject, funding: PoolFunding): string {
+  return promiseText(promiseWarning({ pool: funding.facts, honorSystem: project.reward.honorSystem === true, vaultUnread: funding.vaultUnread }));
+}
+
+/**
+ * The project as its reward summary may show it: an unfunded pool's cap reads as zero, except that an owner's
+ * promise shows this month's amount. @throws {never}
+ */
 export function shownReward(project: ShownProject, funding: PoolFunding): ShownProject {
+  if (promised(project, funding)) return { ...project, reward: { ...project.reward, monthlyCapMinor: capOf(project, funding.period), cycleCaps: [] } };
   const zeroed = zeroedPoolCap(
     { monthlyPool: project.reward.kind === "monthly-pool", monthlyCapMinor: project.reward.monthlyCapMinor, hasCycleCaps: project.reward.cycleCaps.length > 0, assetKind: project.rewardAsset?.kind },
     funding,

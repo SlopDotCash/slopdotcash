@@ -1,5 +1,4 @@
 // spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"
-import { PAYOUT_FEE_BASIS_POINTS } from "@repo/settlement/kernels/networks";
 import { Address, Alert, Button, DialogDescription, DialogFooter, DialogTitle, Status, WalletChooser, type WalletOption } from "@repo/ui";
 import { ArrowDown, ShieldCheck } from "lucide-react";
 import type { Phase } from "../../../gen/frontend__walletConsent.ts";
@@ -64,7 +63,7 @@ export function ConsentReview({ payout, family, claimAddress, wallets, phase, wa
         <div className="flex flex-col gap-1">
           <dt className="text-sm font-medium text-foreground">You receive</dt>
           <dd>
-            <PayoutAmount {...netAmountProps(payout, `Fee (${PAYOUT_FEE_BASIS_POINTS / 100}%)`)} />
+            <PayoutAmount {...netAmountProps(payout)} />
           </dd>
         </div>
       </dl>

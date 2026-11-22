@@ -16,7 +16,7 @@ import { Enforcement, type Restriction } from "@repo/ports/security";
 import type { Driver, Options } from "../../gen/slopbot__historicalImport.conformance.ts";
 import type { Channel, Event, ImportRequest, ImportSource, ImportedRecord, Imports, Producer } from "../../gen/slopbot__historicalImport.ts";
 import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.ts";
-import { type AdmittedImport, HistoricalPublication, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
+import { type Admit, type AdmittedImport, HistoricalPublication, type PreparedFacts, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe";
 import { type Numbered, deliver, installationState } from "../../src/installation/store.vibe";
 import { appendValueRecord } from "../../src/value/history/store.vibe";
 
@@ -41,7 +41,6 @@ const rubricVersion = "slop-value-rubric:v1";
 const channels: Readonly<Record<Channel, { readonly channel: string; readonly provider: string }>> = {
   ChatgptSubscription: { channel: "chatgpt-subscription", provider: "openai" },
   ClaudeSubscription: { channel: "claude-subscription", provider: "anthropic" },
-  CodexSubscription: { channel: "codex-subscription", provider: "openai" },
 };
 
 const retirements: Readonly<Record<RegistryObservation["retirement"], Retirement>> = {
@@ -60,7 +59,9 @@ const enforcements: ReadonlyArray<{ readonly restriction: RegistryObservation["r
 ];
 
 let generation = 0;
-let platformProject = 0;
+// 1 November 2026 UTC in seconds, the value API start and the cutoff without a configured start.
+const apiStart = Date.UTC(2026, 10, 1) / 1000;
+let cutoff = apiStart;
 let installs: number[] = [];
 let records: ImportedRecord[] = [];
 let last: Imports["last"] = "NoImport";
@@ -109,6 +110,7 @@ function pullInput(repository: string, number: number, source: ImportSource | un
   if (source === undefined || source.read === "PullUnreadable") return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(1_790_000_000) };
   if (source.read === "PullOpen") return { repo: repository, number, author: "bo", state: "open" as const };
   if (source.occurredAt <= 0) unrealizable("a closed pull request always has a closing time");
+  if (!source.merged) return { repo: repository, number, author: "bo", state: "closed" as const, closedAt: iso(source.occurredAt) };
   return { repo: repository, number, author: "bo", state: "closed" as const, mergedAt: iso(source.occurredAt) };
 }
 
@@ -175,6 +177,8 @@ function registryOf(request: ImportRequest) {
       byRepository: (repositoryId) => Effect.succeed([...views.values()].find((entry) => entry.view.repositories.some((repository) => repository.id === repositoryId))?.view),
       byPath: (fullName) => Effect.succeed(lookups.get(fullName.toLowerCase())),
       active: () => Effect.succeed([...views.values()].map((entry) => entry.view)),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => Effect.succeed(sql`1`),
     }),
     Layer.succeed(Restrictions, {
@@ -248,13 +252,27 @@ const appendAdmitted = (admitted: AdmittedImport) => Effect.gen(function* () {
 
 type Base = Layer.Success<typeof webCrypto> | D1 | Registry;
 
+// The publication prepares the work-unit evidence; the driver's evidence is the model request's own limitation and
+// claim counts and each source's indirect acceptance and claims.
+let submitted: ImportRequest | undefined;
+
+function preparedOf(admitted: AdmittedImport): PreparedFacts | undefined {
+  const request = submitted;
+  if (request === undefined || admitted.mode !== "work-unit") return undefined;
+  return {
+    limitations: request.limitations,
+    claims: request.claims,
+    sources: admitted.sources.map((source, index) => ({ pullRequestNodeId: source.pullRequestNodeId, indirectAcceptance: request.sources[index]?.indirectAcceptance ?? true, claimed: request.sources[index]?.claimed ?? true })),
+  };
+}
+
 const recordingPublication = Layer.effect(HistoricalPublication, Effect.gen(function* () {
   const context = yield* Effect.context<Base>();
   return {
-    publish: (admitted: AdmittedImport) => appendAdmitted(admitted).pipe(
+    publish: (admitted: AdmittedImport, admit: Admit) => admit(preparedOf(admitted)).pipe(
+      Effect.flatMap(() => appendAdmitted(admitted).pipe(Effect.mapError(() => new PublicationFailed()))),
       Effect.tap(() => Effect.sync(() => { published.push(admitted); })),
       Effect.provide(context),
-      Effect.mapError(() => new PublicationFailed()),
     ),
   };
 }));
@@ -305,11 +323,12 @@ async function submit(request: ImportRequest) {
     http,
     Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), userAgent: "slopbot" }), http),
     rolesFrom({ ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: "" }),
-    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...platformProject > 0 ? { SLOPBOT_PLATFORM_PROJECT_ID: `project-${platformProject}` } : {} }),
+    importSettings({ SLOPBOT_PRODUCER_REVISION: revision, ...cutoff !== apiStart ? { SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_VALUE_START_AT: new Date(cutoff * 1000).toISOString() } : {} }),
     registry,
     Layer.provide(recordingPublication, registry),
   );
   published.length = 0;
+  submitted = request;
   const envelope = envelopeOf(request, await heads(request, fake));
   const exit = await runtime.runPromiseExit(Effect.provide(publishSubscription(actorOf(request), envelope, undefined), services));
   const [admitted] = published;
@@ -334,18 +353,19 @@ function view(state: Imports): Observed {
 export const driver: Driver<Observed> & AsyncDisposable = {
   reset: () => {
     generation++;
-    platformProject = 0;
+    cutoff = apiStart;
     installs = [];
     records = [];
     last = "NoImport";
     refusals = 0;
     keyOfDigest.clear();
   },
-  dispatch: (_key, event: Event) => {
+  dispatch: async (_key, event: Event) => {
     switch (event.type) {
-      case "recordPlatformProject": {
-        if (platformProject > 0 || event.project <= 0) return "refused";
-        platformProject = event.project;
+      case "recordCutoff": {
+        // The configured start is read again for every import; the driver sets the consumer's configuration.
+        if (event.cutoff < apiStart || event.cutoff === cutoff) return "refused";
+        cutoff = event.cutoff;
         return "accepted";
       }
       case "applyInstallation": {
@@ -364,7 +384,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   },
   observe: async () => {
     const install = await runtime.runPromise(installationState(installationId(), installDeliveries()));
-    return view({ records, keys: records.map((record) => record.key), last, refusals, platformProject, install });
+    return view({ records, keys: records.map((record) => record.key), last, refusals, cutoff, install });
   },
   [Symbol.asyncDispose]: async () => {
     await runtime.dispose();

@@ -37,7 +37,8 @@ const notices = {
 /** The project's agent setup: its own prompt once discovery lists it as cleared, else the generic prompt, which picks only cleared projects. */
 export function InstallPanel({ project, clearance, listing, origin, onCopy }: InstallPanelProps) {
   const ready = clearance === "ready";
-  const unlisted = clearance === "blocked" && showsNotListed(listing);
+  // Agent discovery never reads an honor-system promise, so the install panel's notice ignores it.
+  const unlisted = clearance === "blocked" && showsNotListed(listing, false);
   return (
     <div id="start" className="flex min-w-0 flex-col gap-3">
       <h2 className="text-xl font-semibold text-foreground">Copy this into your agent.</h2>

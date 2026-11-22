@@ -2,7 +2,7 @@
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nowSeconds } from "@repo/platform/clock"
 import { positiveAmount, zero } from "../../gen/settlement__money.effect.vibe"
-import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, purchaseDecision, purchaseInput, signs } from "../../gen/fees__buybackPool.effect.vibe"
+import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, creditOf, purchaseDecision, purchaseInput, signs, usdg as usdgAsset } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress, openSend } from "../../gen/fees__buyback.effect.vibe"
 import { amountOf, modelBalance } from "../buyback/codec.vibe"
 import { exactNumber, pausedCalldata, transferCalldata } from "../evm/abi.ts"
@@ -205,15 +205,17 @@ effect function buy(running: Running, purchaseQuote: PurchaseQuote, slippageBps:
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
 }
 
+// The pool buys with USDG, the reference asset, whose credit holds the arrivals and the USDG fee share; for USDG the
+// input and its value are the same amount.
 function unquoted(spent: number, balance: number): PurchaseQuote {
-  return { route: "RouteFound", tx: 0, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
+  return { route: "RouteFound", tx: 0, asset: usdgAsset, amountIn: spent, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
 }
 
 effect function purchaseLeg(running: Running) {
   const { state, settings } = running
-  if (openSend(state.purchase) || state.credit <= 0) return
+  if (openSend(state.purchase) || creditOf(state, usdgAsset).credit <= 0) return
   const balance = modelBalance(try tokenBalance(usdg, "finalized"))
-  const spent = purchaseInput(state, balance)
+  const spent = purchaseInput(state, usdgAsset, balance)
   if (spent <= 0) return
   const unrouted = unquoted(spent, balance)
   if (purchaseDecision(state, unrouted).state !== "Quoted") return try decidedPurchase(running, unrouted, {})
@@ -226,6 +228,8 @@ effect function purchaseLeg(running: Running) {
   const purchaseQuote: PurchaseQuote = {
     route: "RouteFound",
     tx: 0,
+    asset: usdgAsset,
+    amountIn: spent,
     spent,
     minimum: amountOf(priced.minAmountOut),
     gasValue: try exact(priced.gasCostMicro, "decidePurchase", "the purchase gas value"),

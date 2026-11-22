@@ -187,7 +187,7 @@ const rev1 = actor("rev1")
 const rev2 = actor("rev2")
 const substantive = "The retry loop now bounds every attempt and reports the last failure."
 
-it.effect('Merge deduplication: two PRs grouped into one work unit, and the same merge seen twice, are credited once and every unit keeps at least 10 Points (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration")', () => effect {
+it.effect('Merge deduplication: two PRs grouped into one work unit, and the same merge seen twice, are credited once and every unit keeps at least 10 Points (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration")', () => effect {
   const first = pull(101, "2026-11-03T10:00:00Z", alice, [commit("a1", alice, 30, 10)])
   const stacked = pull(102, "2026-11-05T10:00:00Z", bob, [commit("a1", alice, 30, 10), commit("b1", bob, 15, 5)])
   const unassessed = pull(103, "2026-11-07T10:00:00Z", carol, [commit("c1", carol, 5, 0)])
@@ -331,6 +331,31 @@ it.effect('Merge deduplication: two PRs grouped into one work unit, and the same
 const leo = actor("leo")
 const nia = actor("nia")
 const quin = actor("quin")
+
+it.effect('Merge commits: a synchronization merge adds nothing and holds nothing, a merge with one recorded resolution credits that resolution\'s lines, and one with several holds the unit (spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths")', () => effect {
+  const synced = pull(601, "2026-11-03T10:00:00Z", bob, [commit("s1", bob, 12, 3), commit("s2", alice, 400, 50, 2)])
+  const ordinary = try scoreSnapshot(facts([synced]))
+  try Effect.try(() => assert.deepStrictEqual(plain({ credited: ordinary.ledger.map((event) => [event.id, event.actor.login, event.scoreThirds]), held: ordinary.held }), {
+    credited: [["PR_601:merged", "bob", 1]],
+    held: [],
+  }))
+
+  const work = pull(602, "2026-11-04T10:00:00Z", alice, [commit("m1", alice, 15, 5)])
+  const resolved = pull(603, "2026-11-05T10:00:00Z", bob, [commit("m1", alice, 15, 5), commit("m2", bob, 900, 100, 2)])
+  const oneResolution = { ...unit("wu_slop_joint_resolved", "medium", [work, resolved], ["m1", "m2"], "Change with one conflict resolution."), mergeResolutions: [{ commit: "m2", additions: 7, deletions: 3 }] }
+  const single = try scoreSnapshot(facts([work, resolved], { joint: [decision("f", [work, resolved], [oneResolution])] }))
+  try Effect.try(() => assert.deepStrictEqual(plain({ credited: single.ledger.map((event) => [event.id, event.scoreThirds]), held: single.held }), {
+    credited: [["PR_603:joint:wu_slop_joint_resolved:merged:U_alice", 6], ["PR_603:joint:wu_slop_joint_resolved:merged:U_bob", 3]],
+    held: [],
+  }))
+
+  const several = { ...oneResolution, mergeResolutions: [{ commit: "m2", additions: 7, deletions: 3 }, { commit: "m2", additions: 1, deletions: 0 }] }
+  const held = try scoreSnapshot(facts([work, resolved], { joint: [decision("f", [work, resolved], [several])] }))
+  try Effect.try(() => assert.deepStrictEqual(plain({ credited: held.ledger.map((event) => event.id), held: held.held }), {
+    credited: [],
+    held: [{ sourceId: "PR_602", reason: "incomplete-lines" }, { sourceId: "PR_603", reason: "incomplete-lines" }],
+  }))
+})
 
 it.effect('Related-party ratification: a maintainer who shares the outcome, or a security-sensitive proposal, needs an independent co-ratifier, and only the verified authority can ratify (spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum")', () => effect {
   const automated: AutomatedReview = { id: "IC_auto1", kind: "comment", url: `https://github.com/${repository}/pull/701#IC_auto1`, author: quin, createdAt: "2026-11-07T10:00:00Z", reviewLoad: "deep", workUnitId: "wu_slop_auto", traceUpload: true }

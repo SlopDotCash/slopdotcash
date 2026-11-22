@@ -1,4 +1,4 @@
-// spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order"
+// spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order"
 import { rows, sql } from "@repo/platform/d1"
 import { answered, fixedHeaders, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"

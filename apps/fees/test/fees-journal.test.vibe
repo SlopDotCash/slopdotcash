@@ -34,7 +34,7 @@ function quote(token: number): Quote {
 }
 
 function approval(tx: number, nonce: number): SignedSend {
-  return { kind: "Approval", tx, nonce, gasLimit: 1000, fees: { maxFee: 40, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0 }
+  return { kind: "Approval", tx, nonce, gasLimit: 1000, fees: { maxFee: 40, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, toPinnedRouter: true, approvedAmount: 500000000, allowance: 0, pricedFeeMicro: 1000 }
 }
 
 function services(world: World) {
@@ -124,8 +124,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
 
     try advance(world, 180000)
     try step(world, { type: "renewLease", runId: 1 })
-    try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000 } })
-    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true }
+    try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000, pricedFeeMicro: 1000 } })
+    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, roleFree: false, allowanceAtBlock: 500000000 }
     const settled = try step(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const again = try tried(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const gas = try gasRows(world)

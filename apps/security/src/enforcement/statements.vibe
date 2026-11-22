@@ -13,11 +13,12 @@ export error DetailsMissing { event: string; needed: string }
 export const flagLifetimeMillis = 7_776_000_000
 const flagPauseReason = "Two distinct contributor flags paused the project. A clean fresh security scan reinstates it."
 
-const actions: Readonly<Record<RecordAction, string>> = { RecordQuarantine: "quarantine", RecordBan: "ban", RecordAppeal: "request_reinstatement", RecordReinstate: "reinstate", RecordDeny: "deny_reinstatement" }
+const actions: Readonly<Record<RecordAction, string>> = { RecordQuarantine: "quarantine", RecordBan: "ban", RecordAppeal: "request_reinstatement", RecordReinstate: "reinstate", RecordDeny: "deny_reinstatement", RecordAccountAppeal: "request_reinstatement", RecordAccountDenial: "deny_reinstatement", RecordAccountReinstatement: "reinstate_accounts" }
 const results: Readonly<Record<JournalEntry["result"], string>> = { RevisionAppended: "revision_appended", RevisionNotNeeded: "no_revision_needed", RevisionPending: "revision_pending" }
 const states: Readonly<Record<Enforcement["restriction"], string>> = { Clear: "clear", FlagQuarantine: "quarantined", ModeratorQuarantine: "quarantined", ServiceBan: "banned", ModeratorBan: "banned" }
 const appeals: Readonly<Record<Enforcement["appeal"], string>> = { NoAppeal: "none", AppealRequested: "requested", AppealGranted: "granted", AppealDenied: "denied" }
-const noticeKinds: Readonly<Record<RecordAction, NoticeKind>> = { RecordQuarantine: "ProjectQuarantined", RecordBan: "ProjectBanned", RecordAppeal: "ReinstatementRequested", RecordReinstate: "ProjectReinstated", RecordDeny: "ReinstatementDenied" }
+// An account reinstatement notifies neither the listing account nor the steward (spec/security/enforcement.md).
+const noticeKinds: Readonly<Record<RecordAction, NoticeKind | undefined>> = { RecordQuarantine: "ProjectQuarantined", RecordBan: "ProjectBanned", RecordAppeal: "ReinstatementRequested", RecordReinstate: "ProjectReinstated", RecordDeny: "ReinstatementDenied", RecordAccountAppeal: "ReinstatementRequested", RecordAccountDenial: "ReinstatementDenied", RecordAccountReinstatement: undefined }
 
 effect function stateOf(value: unknown, label: string) {
   const parsed = parseState(value)
@@ -120,7 +121,8 @@ effect function banAudience(change: EnforcementChange, id: string) {
 effect function noticesOf(change: EnforcementChange, after: Enforcement, journaled: Journaled, by: RecordedActor | undefined) {
   const notices = try Notices
   const { entry, id } = journaled
-  const owned = try notices.fanout({ eventKey: `project-enforcement:${id}`, recipients: owners(change.projectId), kind: noticeKinds[entry.kind], subject: change.projectId, actionPath: `/projects/${change.projectId}`, sourceAt: change.at, onlyIf: recorded(id) })
+  const ownerKind = noticeKinds[entry.kind]
+  const owned = ownerKind === undefined ? [] : try notices.fanout({ eventKey: `project-enforcement:${id}`, recipients: owners(change.projectId), kind: ownerKind, subject: change.projectId, actionPath: `/projects/${change.projectId}`, sourceAt: change.at, onlyIf: recorded(id) })
   const reviewers = after.moderators.filter((moderator) => !after.restrictedBy.includes(moderator) && !after.appellants.includes(moderator)).map(String)
   const toModerators = (kind: NoticeKind, key: string, recipients: ReadonlyArray<string>) =>
     recipients.filter((recipient) => recipient !== by?.githubId).map((recipient) => ({ eventKey: `${key}${id}`, recipientGithubId: recipient, kind, subject: change.projectId, actionPath: "/admin", sourceAt: change.at }) satisfies Notice)

@@ -49,6 +49,8 @@ const registry = Layer.mergeAll(
     byRepository: () => Effect.succeed(undefined),
     byPath: () => Effect.succeed(undefined),
     active: () => Effect.succeed([]),
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => Effect.succeed(sql`1`),
   }),
   Layer.succeed(Enforcement, {

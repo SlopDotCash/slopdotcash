@@ -207,7 +207,7 @@ effect function seedProject(id: string, text: string, key: string) {
 }
 
 effect function seedApplication(application: string, projectId: string, key: string, text: string, expectedRevision: number | null) {
-  try (try Area).sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', ?, ?)", application, projectId, key, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`, expectedRevision, expectedRevision === null ? null : "Clearer description")
+  try (try Area).sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z', ?, ?)", application, projectId, key, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`, expectedRevision, expectedRevision === null ? null : "Clearer description")
 }
 
 effect function seedExemption(projectId: string, sha256: string, githubId: number) {
@@ -520,7 +520,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const id = "pending-tool"
     const application = "app_pending0001"
     const text = JSON.stringify(manifest(try listed(id, "tool", primaryId)))
-    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'sent')", application, id, `member-${stewardId}/tool`, text, try sha256Hex(text), "Accepted pull requests with tests.", "43", "member-43", "2026-11-02T00:00:00.000Z")
+    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'sent', '2026-11-02T00:00:00.000Z')", application, id, `member-${stewardId}/tool`, text, try sha256Hex(text), "Accepted pull requests with tests.", "43", "member-43", "2026-11-02T00:00:00.000Z")
     const foreign = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: other })
     const cancelled = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: applicant })
     const again = try area.request(`/api/v1/project-applications/${application}/cancel`, { json: {}, as: applicant })

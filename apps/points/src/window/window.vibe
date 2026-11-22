@@ -103,12 +103,12 @@ effect function failRefresh(run: Machine.Shape) {
   try orDie(run.send({ type: "failRefresh" }))
 }
 
-export effect function publishRefresh<E, R, A, WE, WR>(run: Machine.Shape, refresh: Census!E!R, write: (window: Window) => A!WE!WR) {
-  const census = refresh catch effect (error) => {
+export effect function publishRefresh<E, R, A, WE, WR>(run: Machine.Shape, refresh: ReadonlyArray<Census>!E!R, write: (window: Window) => A!WE!WR) {
+  const censuses = refresh catch effect (error) => {
     try failRefresh(run)
     throw error
   }
-  const complete = { type: "completeCensus", c: census } as const
+  const complete = { type: "completeCensus" as const, censuses: [...censuses] }
   if (!enabled(try run.get(), complete)) {
     try failRefresh(run)
     throw new WindowRefused({ message: "The source census is not verified complete for this window; the previous window stays published" })

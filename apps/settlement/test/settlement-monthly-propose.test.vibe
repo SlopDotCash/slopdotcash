@@ -62,7 +62,7 @@ effect function registered(env: Env, projectId: string, monthlyCapMinor: string,
   const manifest = manifestOf(projectId, monthlyCapMinor)
   const manifestSha256 = try sha256Hex(manifest)
   try seed(env, "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
-  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: "77", repositories: [], closureConsent: false, ...view } satisfies ProjectView
+  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: "77", stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [], closureConsent: false, ...view } satisfies ProjectView
 }
 
 interface Ledger {
@@ -82,6 +82,8 @@ function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return views },
+    pausedProjects: () => Effect.succeed([]),
+    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
     fence: () => effect { return sql`1` },
   })
   const restrictions = Layer.succeed(Restrictions, {

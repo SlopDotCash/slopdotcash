@@ -3,7 +3,7 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import type { PrivateCase } from "../../gen/security__cases.ts"
-import { awardOpen, canAppeal, canRejectLink, receiptOpen } from "../../gen/security__cases.effect.vibe"
+import { awardOpen, canAppeal, canRejectLink, mayRequestReceiptCheck, receiptOpen } from "../../gen/security__cases.effect.vibe"
 import { assessmentRead } from "../assessment/routes.vibe"
 import { reporterView, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -46,7 +46,12 @@ function has(roles: ReadonlySet<CaseRole>, role: CaseRole) {
 export function caseActions(observed: Observed, viewer: number): ReadonlyArray<string> {
   const { model, roles, epoch } = observed
   const maintainer = has(roles, "security-maintainer")
-  if (model.submission !== "Verified") return model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
+  if (model.submission !== "Verified") {
+    if (model.submission !== "Claimed") return []
+    // spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"
+    const check = mayRequestReceiptCheck(model, viewer, epoch) ? ["check-receipt"] : []
+    return maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link", ...check] : check
+  }
   const actions: string[] = []
   const open = receiptOpen(model)
   if (has(roles, "reporter") && canAppeal(model, viewer)) actions.push("appeal")

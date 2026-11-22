@@ -1,13 +1,13 @@
-// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
+// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
 import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
 import { type DecisionRole, EnforcementRecord, EnforcementRows, type RecordDetails, type ReinstatementRead } from "@repo/ports/security"
-import type { Event as AccessEvent } from "../../../gen/backend__access.effect.vibe"
+import { type Event as AccessEvent, independentOf, latestRecord } from "../../../gen/backend__access.effect.vibe"
 import { type Event, type Registry, apply, canReinstate } from "../../../gen/backend__projectComposition.effect.vibe"
 import { allFreshAtPin, pinsComplete, platform } from "../../../gen/security__enforcement.effect.vibe"
 import { AccessRoutes, projectContract } from "../../access/routes.vibe"
-import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, decisionOf, dryRun, loadAccess, maliceDecision, projectAppeal, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
+import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, dryRun, loadAccess, maliceDecision, openAccountAppealsOf, projectAppeal, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
 import { AppealRequest, EnforcementRequest, enforcementDecision, enforcementPreview, projectAppeals } from "../../client/admin.vibe"
 import { postAdminProjectsByIdEnforcement, postProjectAppeals } from "../../client/refusals.vibe"
 import { AdminRoutes } from "../admin/routes.vibe"
@@ -158,43 +158,44 @@ function bannedIn(access: Loaded, projectId: string, githubId: string): boolean 
   return activeBans(access).some((ban) => ban.projectId === projectId && ban.githubId === githubId)
 }
 
-function latestEligibleBan(access: Loaded, projectId: string, githubId: string): number {
-  const record = activeBans(access).filter((ban) => ban.projectId === projectId && ban.githubId === githubId).at(-1)
-  const row = access.journal.find((entry) => entry.id === record?.recordId)
-  return row === undefined ? 0 : decisionOf(row.row)
-}
-
 effect function accountPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded) {
   const by = Number(request.actor.githubId)
   const name = try projectName(row)
   const project = access.numbers.get(request.projectId) ?? 0
-  const context = { actor: { githubId: request.actor.githubId, login: request.actor.login }, reason: request.reason, evidenceReference: request.evidenceReference, logins: {}, moderators: try moderators() }
+  const state = access.state
+  const context = { actor: { githubId: request.actor.githubId, login: request.actor.login }, reason: request.reason, evidenceReference: request.evidenceReference, moderators: try moderators() }
   if (request.action === "reinstate_accounts") {
     if (request.accounts.length === 0) throw refused(decisionRows.invalidRequestSelectTheAccountsTo)
-    for (const account of request.accounts) if (!bannedIn(access, request.projectId, account.githubId)) throw refused(decisionRows.accountNotBanned)
+    for (const account of request.accounts) {
+      if (!bannedIn(access, request.projectId, account.githubId)) throw refused(decisionRows.accountNotBanned)
+      if (!openAccountAppealsOf(state, project).some((appeal) => appeal.target === Number(account.githubId))) throw refused(decisionRows.noOpenAppealAccount)
+      if (!independentOf(state, by, project, Number(account.githubId))) throw refused(decisionRows.independentReviewRequiredAccount)
+    }
     const event: AccessEvent = { type: "reinstateAccounts", decision: access.nextDecision, project, targets: request.accounts.map((account) => Number(account.githubId)) }
     const after = try dryRun(access, event, by)
-    const open = after.appeals.some((appeal) => appeal.status === "AppealOpen" && after.bans.some((ban) => ban.project === project && ban.enforcement === appeal.enforcement && ban.target === appeal.target))
+    const open = openAccountAppealsOf(after, project).length > 0
     const kept = projectAppeal(access, request.projectId) === "requested"
     const preview = accountPreview(request, name, registry, access, open || kept ? "requested" : "granted", request.accounts)
     return { kind: "access", preview, event, by, context } satisfies Plan
   }
   if (request.action === "deny_reinstatement") {
-    const appeal = openAccountAppealId(access, project)
-    const event: AccessEvent = { type: "denyAppeal", appealId: appeal, decision: access.nextDecision }
+    // spec/backend/access.md canDenyAppeal: a restricted project whose latest record is a moderator's, with open
+    // account appeals that a moderator independent of every one of them decides together.
+    if (restrictionStateOf(access, request.projectId) === "clear") throw refused(decisionRows.noOpenAppeal)
+    if (latestRecord(state, project).role === "VettingRole") throw refused(decisionRows.maliciousDecisionRequired)
+    const open = openAccountAppealsOf(state, project)
+    if (open.length === 0) throw refused(decisionRows.noOpenAppeal)
+    if (!open.every((appeal) => independentOf(state, by, project, appeal.target))) throw refused(decisionRows.independentReviewRequiredAccount)
+    const event: AccessEvent = { type: "denyAppeal", project, decision: access.nextDecision }
     try dryRun(access, event, by)
     const preview = accountPreview(request, name, registry, access, "denied", [])
     return { kind: "access", preview, event, by, context } satisfies Plan
   }
-  const event: AccessEvent = { type: "appeal", enforcement: latestEligibleBan(access, request.projectId, request.actor.githubId) }
+  if (openAccountAppealsOf(state, project).some((appeal) => appeal.target === by)) throw refused(postProjectAppeals.appealOpen)
+  const event: AccessEvent = { type: "appeal", project }
   try dryRun(access, event, by)
   const preview = accountPreview(request, name, registry, access, "requested", [])
   return { kind: "access", preview, event, by, context } satisfies Plan
-}
-
-function openAccountAppealId(access: Loaded, project: number): number {
-  const state = access.state
-  return state.appeals.find((appeal) => appeal.status === "AppealOpen" && state.bans.some((ban) => ban.project === project && ban.enforcement === appeal.enforcement && ban.target === appeal.target))?.id ?? 0
 }
 
 function decisionRole(request: Request, registry: Registry): DecisionRole {

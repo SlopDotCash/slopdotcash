@@ -3,7 +3,7 @@ import { assert, layer } from "@effect/vitest"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { signature256 } from "@repo/platform/testing/github"
 import { maxRetries } from "../src/jobs/retry.vibe"
-import { busyNumber, lostQueueNumber } from "./support/ingressWorker.vibe"
+import { busyNumber, lostQueueNumber } from "./support/ingressNumbers.vibe"
 
 const secret = "ingress-webhook-secret"
 const appUserId = "424242"
@@ -152,7 +152,7 @@ layer(Ingress, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const lost = try delivered(area, "pull_request", reopen, { deliveryId: "r-reopen" })
     const pinned = try area.sql("SELECT reopen_source, processed_at FROM slopbot_deliveries WHERE delivery_id = 'r-reopen'")
     const changed = try delivered(area, "pull_request", { ...reopen, pull_request: { ...reopen.pull_request, head: { sha: "b".repeat(40) } } }, { deliveryId: "r-reopen" })
-    const kept = try area.sql("SELECT reopen_source FROM slopbot_deliveries WHERE delivery_id = 'r-reopen'")
+    const kept = try area.sql("SELECT reopen_source, processed_at FROM slopbot_deliveries WHERE delivery_id = 'r-reopen'")
     const unavailable = try delivered(area, "pull_request", { ...reopen, pull_request: { number: 12, node_id: "", updated_at: "yesterday" } }, { deliveryId: "r-unavailable" })
     try same({ failedLookup, afterLookup, lost, pinned, changed, kept, unavailable }, {
       failedLookup: [503, ""],

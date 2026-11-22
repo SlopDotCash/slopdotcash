@@ -181,7 +181,7 @@ export const payoutBinding = Layer.effect(PayoutBinding, effect {
     const connected = connectWith(offer, review) catch (error) => ({ failed: error })
     if ("failed" in connected) {
       try tell({ type: "close" }, asked.actor)
-      try tell({ type: "openReview", chain: walletChains[review.payment.chain] }, asked.actor)
+      try tell({ type: "openReview", chain: walletChains[review.payment.chain], surface: "PayoutDialog", claimWallet: review.payment.claimAddress }, asked.actor)
       try Ref.update(flow, (held) => ({ ...held, problem: connected.failed.message }))
       return try view()
     }
@@ -363,8 +363,9 @@ export const payoutBinding = Layer.effect(PayoutBinding, effect {
     open: effect (payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>) => {
       const state = try consent.get()
       const chain = walletChains[payment.chain]
-      if (!canOpenReview(state, chain, state.actor)) return try view()
-      try tell({ type: "openReview", chain }, state.actor)
+      // The payout dialog reviews the authorized claim and connects only the claim's address.
+      if (!canOpenReview(state, chain, "PayoutDialog", payment.claimAddress, state.actor)) return try view()
+      try tell({ type: "openReview", chain, surface: "PayoutDialog", claimWallet: payment.claimAddress }, state.actor)
       try Ref.set(flow, {
         review: { payment, actorId, saved, claimId: payment.claimId, connected: undefined, expected: undefined, terms: undefined, expectedVersion: "", expiresAt: "", prepared: undefined, signature: "", signed: undefined },
         problem: "",

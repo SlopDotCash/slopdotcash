@@ -58,7 +58,7 @@ const fixture: ProjectView = {
   manifestStatus: "Active",
   listingTier: "Community",
   retirement: "NotRetired",
-  stewardGithubId: "900",
+  stewardGithubId: "900", stewardAccount: "UserSteward", listing: { fromApplication: false },
   repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
   closureConsent: false,
 }
@@ -70,6 +70,8 @@ function ports(clock: SettableClock) {
       byRepository: () => succeed(undefined),
       byPath: () => succeed(undefined),
       active: () => succeed([fixture]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => succeed(sql`1`),
     } satisfies Registry.Shape),
     Layer.succeed(Authority, {

@@ -12,6 +12,7 @@ import { internet } from "@repo/platform/testing/internet"
 import { type QuotesFake, asFetch, kyberNative, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
 import { fromAmount } from "@repo/settlement/kernels/amounts"
 import type { Event, Pool } from "../gen/fees__buybackPool.ts"
+import { creditOf, usdg as usdgAsset } from "../gen/fees__buybackPool.effect.vibe"
 import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
 import type { BookedDirectFee } from "../src/buyback/income.vibe"
 import type { PoolInstance } from "../src/buybackPool/codec.vibe"
@@ -331,17 +332,17 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
 
     try same({
       forged,
-      loaded: { credit: loaded.credit, arrivals: loaded.arrivals.length, rhIncome: whole(loaded.rhIncome), rhCommitted: whole(loaded.rhCommitted) },
+      loaded: { credit: creditOf(loaded, usdgAsset).credit, arrivals: loaded.arrivals.length, rhIncome: whole(creditOf(loaded, usdgAsset).income), rhCommitted: whole(creditOf(loaded, usdgAsset).committed) },
       dry,
-      approving: [recorded(approving), approving.state.credit],
+      approving: [recorded(approving), creditOf(approving.state, usdgAsset).credit],
       exact: decodedApproval(approval.input),
-      purchasing: [recorded(purchasing), purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, purchasing.state.credit],
+      purchasing: [recorded(purchasing), purchasing.state.purchase.phase, purchasing.state.purchase.amount, purchasing.state.runSpent, creditOf(purchasing.state, usdgAsset).credit],
       burning: [recorded(burning), whole(burning.state.purchased), whole(burning.state.burnQuantity), burning.state.burn.phase],
       burned: [recorded(burned), whole(burned.state.burned), burned.state.burn.phase],
       afterBurn: [afterBurn.wallet.toString(), afterBurn.dead.toString()],
-      reapproving: [recorded(reapproving), reapproving.state.credit],
-      failing: [recorded(failing), failing.state.credit],
-      failed: [recorded(failed), failed.state.purchase.phase, failed.state.credit, failed.state.purchaseSpends.map((spend) => [spend.amount, spend.released])],
+      reapproving: [recorded(reapproving), creditOf(reapproving.state, usdgAsset).credit],
+      failing: [recorded(failing), creditOf(failing.state, usdgAsset).credit],
+      failed: [recorded(failed), failed.state.purchase.phase, creditOf(failed.state, usdgAsset).credit, failed.state.purchaseSpends.map((spend) => [spend.amount, spend.released])],
       paused: paused.map((run) => [recorded(run), run.state.decisions.filter((decision) => decision.leg === "BurnLeg").map((decision) => [decision.state, decision.reason])]),
       resumed: [recorded(resumed), whole(resumed.state.burnQuantity)],
       settled: [recorded(settled), whole(settled.state.burned), whole(settled.state.burnCommitted), settled.state.burn.phase],
@@ -404,7 +405,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same({
       waiting,
       unquoted,
-      quoting: [recorded(quoting), quoting.state.credit],
+      quoting: [recorded(quoting), creditOf(quoting.state, usdgAsset).credit],
       quoted,
       decisions: decisions.map((row) => [row.state, row.mode, row.reason, row.amount_in, row.quote_value_micro]),
     }, {

@@ -1,6 +1,6 @@
 // spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"
 import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
-import { type Environment, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, headAhead, serviceAt } from "../../../gen/operations__release.effect.vibe"
+import { type Environment, type FeeVersion, type FeeVersions, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, headAhead, serviceAt } from "../../../gen/operations__release.effect.vibe"
 import { type ReleaseWrite, mayWrite } from "../../../gen/operations__rpcRotationRun.effect.vibe"
 import { observeLock } from "../../publicationLock/group.vibe"
 import { thisRun } from "../../publicationLock/lock.vibe"
@@ -12,7 +12,7 @@ import { githubDigest, registryDigest } from "./collect.vibe"
 import { type RunFacts, environmentOf } from "./facts.vibe"
 import { type Heads, branchHeads, isAncestor } from "./heads.vibe"
 import { stagingHistory } from "./history.vibe"
-import { Publisher, type Target } from "./publisher.vibe"
+import { type FeeVersionRead, type FeeVersionsRead, Publisher, type Target } from "./publisher.vibe"
 import { type GateReceipts, readReceipts } from "./receipts.vibe"
 import { type Run, startRun } from "./run.vibe"
 
@@ -115,6 +115,18 @@ effect function settle(run: Run, order: ReadonlyArray<Service>, branch: string, 
   return "Superseded" satisfies Settled
 }
 
+const noFeeVersions: FeeVersions = { latestUpload: { versionId: 0, rotationLineage: 0 }, activeVersions: [] }
+
+// A version of 0 lineage carries no rotation markers; the run's ID map numbers each version and marker set.
+effect function feeVersionsOf(run: Run, read: FeeVersionsRead) {
+  const versionOf = effect (version: FeeVersionRead) => {
+    return { versionId: try run.idOf("fee-converter version", version.versionId), rotationLineage: version.rotation === "" ? 0 : try run.idOf("fee-converter rotation", version.rotation) }
+  }
+  const activeVersions: FeeVersion[] = []
+  for (const active of read.activeVersions) activeVersions.push(try versionOf(active))
+  return { latestUpload: try versionOf(read.latestUpload), activeVersions } satisfies FeeVersions
+}
+
 effect function publishServices(run: Run, heads: Heads, target: Target, branch: string) {
   const publisher = try Publisher
   for (const service of publisher.order) {
@@ -124,7 +136,9 @@ effect function publishServices(run: Run, heads: Heads, target: Target, branch: 
     if ((try settle(run, publisher.order, branch, target.sourceSha)) === "Superseded") return "Superseded" satisfies Settled
     const settings = service === "FeeConverter" ? (publisher.feeSettings(target) catch () => undefined) : undefined
     const feeConfig: WorkerConfig = settings === undefined ? inertFee : { ...settings, source: state.source }
-    if (!canPublishService(state, service, feeConfig, state.source)) {
+    const read = service === "FeeConverter" && run.environment === "Production" ? (publisher.feeVersions(target) catch () => undefined) : undefined
+    const versions = read === undefined ? noFeeVersions : try feeVersionsOf(run, read)
+    if (!canPublishService(state, service, feeConfig, state.source, versions)) {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
     }
@@ -132,7 +146,7 @@ effect function publishServices(run: Run, heads: Heads, target: Target, branch: 
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} publication failed: ${error.message}`, "abandon")
     }
-    const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0 }) catch () => undefined
+    const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0, versions }) catch () => undefined
     if (accepted === undefined) {
       try run.send({ type: "failService", service })
       return try stop(run, "PartiallyPublished", `${service} does not serve the tested source ${target.sourceSha} under its reviewed configuration`, "abandon")
@@ -195,11 +209,12 @@ effect function verifyServed(run: Run, target: Target, deploymentId: string) {
 
 export effect function release(input: ReleaseInput) {
   const { environment, facts } = input
-  if (environment === "Production" && !(try isAncestor(input.root, input.anchor, facts.sha))) {
+  const anchored = environment !== "Production" || (try isAncestor(input.root, input.anchor, facts.sha))
+  const run = try startRun(environment, facts.by)
+  try run.send({ type: "configure", environment, ref: facts.ref, anchored })
+  if ((try run.state()).phase === "Refused") {
     throw new ReleaseStopped({ outcome: "Refused", message: `Main ${facts.sha} does not contain ${input.anchor}, the last commit of the previous application history` })
   }
-  const run = try startRun(environment, facts.by)
-  try run.send({ type: "configure", environment, ref: facts.ref })
   if (!releaseWrites.every((write) => mayWrite(facts.mode, write))) {
     throw new ReleaseStopped({ outcome: "Refused", message: "An RPC rotation run publishes no Worker or static site" })
   }

@@ -74,8 +74,12 @@ interface Row {
 
 async function storedRows(key: string): Promise<ReadonlyArray<Row>> {
   const found = await db.prepare("SELECT project_revision, repository_key FROM repository_reporting_status WHERE project_id = ? ORDER BY rowid")
-    .bind(projectOf(key)).all<Row>();
-  return found.results;
+    .bind(projectOf(key)).all();
+  return found.results.map((row) => {
+    const { project_revision: revision, repository_key: repositoryKey } = row;
+    if (typeof revision !== "number" || typeof repositoryKey !== "string") throw new Error("repository_reporting_status row has an unexpected shape");
+    return { project_revision: revision, repository_key: repositoryKey };
+  });
 }
 
 async function storedOf(key: string, revision: number, repositoryKey: string): Promise<Stored | undefined> {

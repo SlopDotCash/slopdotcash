@@ -86,7 +86,7 @@ export effect function checkExpiredPayment(storage: SlotStorage | undefined, own
     const found = paidWith(next, "") || next.settlement?.recovery?.mode === "payment-found"
     const plan = next.settlement?.ownerRequest?.solana
     const successor = plan !== undefined && (next.settlement?.generation !== seen.settlement?.generation || plan.messageId !== seen.settlement?.ownerRequest?.solana?.messageId)
-    if (found || successor) try form.endHistory(request, found)
+    if (found || successor) try form.endHistory(request, found ? "PaymentFound" : "NoPaymentFound")
   }
   return next
 }

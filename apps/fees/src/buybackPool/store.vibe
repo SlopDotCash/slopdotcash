@@ -4,7 +4,7 @@ import { isoAt } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
-import { type Event, type Pool, NotAState, apply, decodeEvent } from "../../gen/fees__buybackPool.effect.vibe"
+import { type Event, type Pool, NotAState, apply, decodeEvent, usdg as usdgAsset } from "../../gen/fees__buybackPool.effect.vibe"
 import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../../gen/fees__buybackBinding.effect.vibe"
 import { NotAState as JournalNotAState, nonceFloor } from "../../gen/fees__conversion.effect.vibe"
 import type { Sender } from "../../gen/fees__runtime.effect.vibe"
@@ -239,7 +239,10 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
     case "setReleaseVariable":
     case "verifyReadiness":
     case "beginRun":
+      return []
     case "reserveLocalShare":
+      // The pool's fee evidence is USDG only; another asset's share has no collected income to reserve from.
+      if (event.asset !== usdgAsset) return try refuse(event.type, "only the USDG fee share is collected into the pool")
       return []
     case "creditArrival": {
       if (arrivalFound(instance, event.arrival) === undefined) return try refuse(event.type, "the arrival is not a retained OrderArrived outcome of its source leg")
@@ -247,7 +250,7 @@ effect function writesFor(loaded: Loaded, instance: PoolInstance, event: Event, 
     }
     case "recordRobinhoodFee": {
       const found = evidenced(instance.feeEvidence, instance, event.robinhoodFee.receipt)
-      if (found === undefined || decimalOf(found.amount) !== String(event.robinhoodFee.amount) || found.chainTime !== event.robinhoodFee.chainTime)
+      if (found === undefined || event.robinhoodFee.asset !== usdgAsset || decimalOf(found.amount) !== String(event.robinhoodFee.amount) || found.chainTime !== event.robinhoodFee.chainTime)
         return try refuse(event.type, "the fee is not a finalized USDG receipt of the Robinhood Chain fee wallet")
       return []
     }

@@ -1,7 +1,9 @@
 // spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"
-import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Schema } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { D1, type Statement, d1, sql } from "@repo/platform/d1";
+import { GitHub } from "@repo/platform/github";
+import { GitHubApp } from "@repo/platform/github/app";
 import { Refused, outbound } from "@repo/platform/http";
 import { Roles } from "@repo/platform/roles";
 import { database, migrate, startWorker, storage } from "@repo/platform/testing";
@@ -13,7 +15,7 @@ import type { Authority, Award, Event, PrivateCase, ProjectClearance } from "../
 import { privateRoute } from "../../src/analysis/route.vibe";
 import { AwardClearances } from "../../src/cases/clearance.vibe";
 import { caseRecord } from "../../src/cases/rows.vibe";
-import { claimed, performed } from "../../src/cases/routes.vibe";
+import { claimed, performed, recorded } from "../../src/cases/routes.vibe";
 import { type Starter, triageFinished, triageStarted } from "../../src/cases/triage.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
 import { ReportingPrograms } from "../../src/receipt/program.vibe";
@@ -53,7 +55,7 @@ const fixture: ProjectView = {
 };
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), pausedProjects: () => Effect.succeed([]), appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
@@ -84,6 +86,19 @@ const ports = Layer.mergeAll(
     }),
   }),
 );
+
+// GitHub's private-report list of the program repository, as the receipt check reads it through the Slop App.
+let advisories: ReadonlyArray<unknown> = [];
+const unused = () => Effect.die(new Error("the receipt check only lists the repository's advisories"));
+const githubApp = Layer.succeed(GitHubApp, {
+  appJwt: () => Effect.succeed("app-jwt"),
+  installationToken: unused,
+  installationFor: () => Effect.succeed("1"),
+  asInstallation: () => Layer.succeed(GitHub, {
+    json: unused, graphql: unused, bytes: unused, send: unused, status: unused,
+    pages: (path, schema) => path.startsWith(`/repos/${repository}/security-advisories`) ? Effect.orDie(Effect.forEach(advisories, (item) => Schema.decodeUnknownEffect(schema)(item))) : unused(),
+  }),
+});
 
 const pointerRevision = 1000;
 const projectOf = () => `${project}-g${generation}`;
@@ -119,7 +134,7 @@ async function seeded(receipt?: Receive["terms"]): Promise<string> {
   return projectId;
 }
 
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, githubApp, outbound, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {
@@ -236,6 +251,22 @@ async function claim(caseKey: string, by: unknown): Promise<Outcome> {
   return result;
 }
 
+// A current security maintainer records a GitHub advisory's case directly (case mode "record") at an attested past
+// receipt time, under the terms in force then.
+async function record(caseKey: string, event: Extract<Event, { type: "recordAttested" }>, by: unknown): Promise<Outcome> {
+  terms = storedTerms(event.terms);
+  const projectId = await seeded(terms);
+  clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+  const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "rvwx" : "hjmp"}`;
+  const result = await outcome(recorded(actorOf(by), {
+    mode: "record", projectId, advisory, idempotencyKey: key(), reporterGithubId: githubId(1), reporterGithubLogin: `member-${githubId(1)}`,
+    receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: event.confirmed,
+  }));
+  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
+  if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
+  return result;
+}
+
 async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome> {
   if (event.type === "observeAuthority") {
     if (event.snapshot.epoch <= snapshot.epoch) return "refused";
@@ -245,8 +276,32 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   if ("checkedEpoch" in event && event.checkedEpoch !== snapshot.epoch) return "refused";
   if (event.type === "receive") return cases.has(caseKey) ? "refused" : receive(caseKey, event);
   if (event.type === "claim") return cases.has(caseKey) ? "refused" : claim(caseKey, by);
+  if (event.type === "recordAttested") return cases.has(caseKey) ? "refused" : record(caseKey, event, by);
   const caseId = cases.get(caseKey);
   if (caseId === undefined) return "refused";
+  // Only the GitHub receipt service settles a claim: the claim's reporter asks for the check (check-receipt), and
+  // GitHub's complete private-report list answers, holding the claimant's report of the advisory or not.
+  if (event.type === "settleClaim") {
+    if (Number(by) !== -1) return "refused";
+    const record = await runtime.runPromise(caseRecord(caseId));
+    const row = record?.row;
+    if (row === undefined) return "refused";
+    if (event.listed) {
+      terms = storedTerms(event.terms);
+      await seeded(terms);
+      clock.set(Math.max(clock.now(), base() + event.terms.receivedAt + 1));
+    }
+    advisories = event.listed && row.advisory_ghsa !== null ? [{
+      ghsa_id: row.advisory_ghsa,
+      html_url: `https://github.com/${repository}/security/advisories/${row.advisory_ghsa}`,
+      created_at: new Date(base() + event.terms.receivedAt).toISOString(),
+      state: "triage",
+      submission: { accepted: false },
+      author: { id: Number(row.reporter_github_id), login: row.reporter_github_login, type: "User" },
+      description: "A reported finding.",
+    }] : [];
+    return act(caseKey, caseId, 1, "check-receipt");
+  }
   switch (event.type) {
     case "verifyLink": {
       terms = storedTerms(event.terms);

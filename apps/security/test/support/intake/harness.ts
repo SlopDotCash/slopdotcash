@@ -38,10 +38,14 @@ function bounty(fields: Readonly<Record<string, unknown>>): Readonly<Record<stri
   return { status: "open", amount: usdc, capacity: { awards: 3, closesAt: null, exhaustionRule: "close" }, approvers, intake, sponsor: { githubId: null, name: "Slop" }, ...fields };
 }
 
+export const pausedExclusion = "Losses that need the vault to stay paused for more than a week";
+const pausedScope = { sourceRevisions: [{ repository: "slop-test/intake", commit: "0".repeat(40) }], deployments: [], includedAssets: ["slop-test/intake"], excludedDependencies: [], excludedFindings: [pausedExclusion], testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds." };
+
 export const programs: Readonly<Record<string, Readonly<Record<string, unknown>> | undefined>> = {
   "intake-fixture": bounty({ eligibility: "in-scope-security", fundingPolicy: "after-approval" }),
   "intake-full": bounty({ amount: { ...usdc, grossMinor: "500001" }, capacity: { awards: 1, closesAt: null, exhaustionRule: "close" }, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 }, fundingPolicy: "after-approval" }),
   "intake-unpaid": bounty({ status: "paused" }),
+  "intake-scoped": bounty({ status: "paused", scope: pausedScope }),
   "intake-closed": bounty({ capacity: { awards: 3, closesAt: new Date(Date.now() - 3_600_000).toISOString(), exhaustionRule: "close" } }),
   "intake-restricted": undefined,
 };

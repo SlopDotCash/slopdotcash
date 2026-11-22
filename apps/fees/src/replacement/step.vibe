@@ -88,11 +88,13 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   const valueMicro = wholeBig(row.valueMicro)
   if (valueMicro === undefined) return wait("the send has no recorded value to bound its fee")
   if (priced === undefined || priced * 10n > valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
+  const pricedFeeMicro = exactNumber(priced)
+  if (pricedFeeMicro === undefined) return wait("the priced replacement fee exceeds the journal's exact range")
   try claimVerified(recorded, verifyClaim)
   return {
     kind: "Replace",
     intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro, preparation },
-    networkFee: { maxFeeNeeded, observedAt: fee.clock },
+    networkFee: { maxFeeNeeded, observedAt: fee.clock, pricedFeeMicro },
   } satisfies ReplacementPlan
 }
 

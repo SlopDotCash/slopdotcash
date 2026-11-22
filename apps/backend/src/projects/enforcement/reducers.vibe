@@ -1,4 +1,4 @@
-// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"
+// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"
 module verified {
   import * as H from "./history.ts"
   export type HistoryRow = H.HistoryRow

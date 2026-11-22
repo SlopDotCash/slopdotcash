@@ -1,10 +1,13 @@
 // spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { D1, type Statement, first, list, rows, sql } from "@repo/platform/d1"
-import { type Network, ProjectAudience, type ProjectListing, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { Roles } from "@repo/platform/roles"
+import { type Json, type Network, ProjectAudience, type ProjectListing, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions, type VaultRegistered, type VaultRegistration, VaultRegistrationRefused } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
 import { EnforcementRows } from "@repo/ports/security"
-import { currentPath } from "../authority/live.vibe"
+import { SlopbotAccess, currentPath } from "../authority/live.vibe"
 import { closureOf, listedById } from "../projectRegistry/claims.vibe"
 import { listedStablecoins, retirementOf, tierOf } from "./store/codec.vibe"
+import { registerOwnerVault } from "./vault/register.vibe"
 import { activeBans, unbanned, unbannedFence } from "./store/facts.vibe"
 import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from "./store/rows.vibe"
 
@@ -101,19 +104,87 @@ effect function active() {
   return views
 }
 
+effect function pausedProjects() {
+  const views: ProjectView[] = []
+  for (const { id } of try rows(ProjectId, sql`SELECT id FROM projects WHERE status = 'paused' ORDER BY id`)) {
+    const view = try projectView(id)
+    if (view !== undefined) views.push(view)
+  }
+  return views
+}
+
 export function registryFence(pin: RegistryPin): Statement {
   const [head, ...rest] = [...new Set(pin.repositoryKeys.map((key) => key.toLowerCase()))]
   const present = head === undefined ? sql`1` : sql`(SELECT count(DISTINCT k.repository_key) FROM project_repositories k WHERE k.project_id = p.id AND k.repository_key IN (${list([head, ...rest])})) = ${rest.length + 1}`
   return sql`EXISTS (SELECT 1 FROM projects p WHERE p.id = ${pin.projectId} AND p.revision = ${pin.revision} AND p.manifest_sha256 = ${pin.manifestSha256} AND p.status = 'active' AND json_extract(p.manifest, '$.status') = 'active' AND json_extract(p.manifest, '$.listingTier') <> 'retired' AND ${present})`
 }
 
+// spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer":
+// the registration is a project write. The registry layer cannot require the enforcement rows (security builds them
+// from this registry), so the write runs with the services of the worker that asks for it, and a worker composed
+// without them fails loudly rather than registering nothing.
+type VaultServices = D1 | Roles | Notices | EnforcementRows | Experimental.Crypto.Crypto | SlopbotAccess
+
+effect function vaultServices(built: Context.Context<never>) {
+  const services = Context.merge(built, try Effect.context<never>())
+  const missing = [
+    Option.isNone(Context.getOption(services, D1)) ? "D1" : "",
+    Option.isNone(Context.getOption(services, Roles)) ? "Roles" : "",
+    Option.isNone(Context.getOption(services, Notices)) ? "Notices" : "",
+    Option.isNone(Context.getOption(services, EnforcementRows)) ? "EnforcementRows" : "",
+    Option.isNone(Context.getOption(services, Experimental.Crypto.Crypto)) ? "Crypto" : "",
+    Option.isNone(Context.getOption(services, SlopbotAccess)) ? "SlopbotAccess" : "",
+  ].filter((name) => name !== "")
+  if (missing.length > 0) return try die(new Error(`Registering a vault needs ${missing.join(", ")} in this worker`))
+  return services as Context.Context<VaultServices>
+}
+
+function jsonOf(value: unknown): Json | undefined {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined
+  if (Array.isArray(value)) {
+    const items: Json[] = []
+    for (const item of value) {
+      const json = jsonOf(item)
+      if (json === undefined) return undefined
+      items.push(json)
+    }
+    return items
+  }
+  if (typeof value !== "object") return undefined
+  const entries: Array<readonly [string, Json]> = []
+  for (const [key, item] of Object.entries(value)) {
+    const json = jsonOf(item)
+    if (json === undefined) return undefined
+    entries.push([key, json])
+  }
+  return Object.fromEntries(entries)
+}
+
+effect function vaultRegistered(registration: VaultRegistration) {
+  const registered = registerOwnerVault(registration) catch effect (error) => {
+    if (error._tag === "NotAState" || error._tag === "RevisionMissing" || error._tag === "RevisionMismatch" || error._tag === "ApplicationMissing") return try die(error)
+    throw error
+  }
+  const project = try projectView(registration.projectId)
+  if (project === undefined) throw new VaultRegistrationRefused({ code: "stale_revision" })
+  const manifest = jsonOf(registered.manifest)
+  if (manifest === undefined) return try die(new RangeError(`The manifest of ${registration.projectId} is not JSON`))
+  return { project, manifest } satisfies VaultRegistered
+}
+
 export const RegistryLive = Layer.effect(Registry, effect {
   const db = try D1
+  const built = try Effect.context<never>()
   return {
+    appendVaultRegistration: (registration) => effect {
+      return try Effect.provide(vaultRegistered(registration), try vaultServices(built))
+    },
     project: (projectId) => provideService(projectView(projectId), D1, db),
     byRepository: (repositoryId) => provideService(byRepository(repositoryId), D1, db),
     byPath: (fullName) => provideService(byPath(fullName), D1, db),
     active: () => provideService(active(), D1, db),
+    pausedProjects: () => provideService(pausedProjects(), D1, db),
     fence: (pin) => effect { return registryFence(pin) },
   } satisfies Registry.Shape
 })

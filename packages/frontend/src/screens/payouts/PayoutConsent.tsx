@@ -96,7 +96,7 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
             phase={view?.consent.phase ?? "Closed"}
             walletAccount={view?.consent.walletAccount ?? ""}
             problem={problem}
-            notice={view?.consent.phase === "KeptSaved" ? keptMessage(family) : (view?.notice ?? "")}
+            notice={view?.consent.phase === "KeptSaved" ? keptMessage : (view?.notice ?? "")}
             busy={busy}
             onSign={(wallet) => void settle(authorize(reserved, account.githubUserId, account.wallets, Number(wallet.id)))}
             onReplace={(replace) => void settle(decideReplacement(replace))}

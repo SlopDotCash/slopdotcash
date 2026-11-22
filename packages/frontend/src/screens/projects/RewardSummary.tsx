@@ -3,11 +3,12 @@ import { ExternalLink } from "@repo/ui";
 import { formatPeriod } from "@repo/settlement/kernels/calendar";
 import type { ReactNode } from "react";
 import { notListedText, showsNotListed } from "../../../gen/frontend__poolListing.ts";
+import { promiseNoticeText } from "../../../gen/frontend__projections.ts";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import { projectRewardSummaries, type RewardSummary as Summary } from "../../kernels/rewardSummary.ts";
 import { bountyFundingLabel, compactPrizeLabel } from "../home/listing.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { formatMonth, projectListing, shownReward } from "./summary.ts";
+import { formatMonth, projectListing, promise, shownReward } from "./summary.ts";
 
 export type RewardSummaryProps = {
   /** The project as the registry lists it. */
@@ -19,7 +20,7 @@ export type RewardSummaryProps = {
 const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
 
 /** @throws {RangeError} */
-function lineOf(summary: Summary, project: ShownProject): ReactNode {
+function lineOf(summary: Summary, project: ShownProject, warning: string): ReactNode {
   switch (summary.kind) {
     case "monthly-pool":
       return (
@@ -34,6 +35,7 @@ function lineOf(summary: Summary, project: ShownProject): ReactNode {
             </>
           ) : null}
           {" monthly, split between contributors"}
+          {warning ? ` · ${warning}` : null}
         </>
       );
     case "security-bounty": {
@@ -56,15 +58,17 @@ function lineOf(summary: Summary, project: ShownProject): ReactNode {
 /** What the project rewards, in the words every registry reward model shares. */
 export function RewardSummary({ project, funding }: RewardSummaryProps) {
   const shown = shownReward(project, funding);
+  const warning = promise(project, funding);
   return (
     <div className="flex flex-col gap-1">
       {funding.display === "PoolWithdrawn" ? (
         <p className="font-medium text-warn">{`Funds were withdrawn from the vault during ${formatMonth(formatPeriod(funding.period))}; it no longer covers this month's amount.`}</p>
       ) : null}
-      {showsNotListed(projectListing({ project, funding })) ? <p className="text-lg font-medium text-foreground">{notListedText}</p> : null}
+      {showsNotListed(projectListing({ project, funding }), warning !== "") ? <p className="text-lg font-medium text-foreground">{notListedText}</p> : null}
+      {warning ? <p className="font-medium text-warn">{promiseNoticeText}</p> : null}
       {projectRewardSummaries(shown).map((summary) => (
         <p key={summary.kind} className="text-lg font-medium text-foreground">
-          {lineOf(summary, shown)}
+          {lineOf(summary, shown, warning)}
         </p>
       ))}
     </div>
