@@ -1,0 +1,173 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import type { LeaderboardSnapshot, ScoreEvent } from "../src/client/snapshot/schema.vibe"
+import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
+import type { Award, Journal, Revision as Row } from "../src/kernels/records/canonical.ts"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { type Store, openStore, storeOf } from "../src/journal/ledger.vibe"
+import { reconcilePenalties } from "../src/journal/penalties.vibe"
+import { applyRetainedReviews, retainedAwards, retainedEvents } from "../src/journal/retained.vibe"
+import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
+import { members } from "../src/publication/projections.vibe"
+import { periodOf } from "../gen/points__periods.ts"
+import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+
+const recordedAt = "2026-11-17T06:00:00.000Z"
+const valueDecision = `value:${"b".repeat(64)}`
+
+function frozenAt(projectId: string, occurredAt: string) {
+  return [{ project: projectId, period: periodOf(instantOf(occurredAt) ?? 0), phase: "Frozen" as const, obligationExists: false }]
+}
+
+function chainOf(store: Store, key: string) {
+  return store.revisions.filter((row) => row.award.key === key)
+}
+
+function refusedHolds(store: Store, key: string, event: string) {
+  return store.held.filter((held) => held.subject === key && held.reason === `the journal refused ${event}`).length
+}
+
+function row(id: string, actorId: string, award: Pick<Award, "category" | "amount" | "sourceId" | "sourceUrl" | "workUnitId">, extra: Partial<Row> = {}): Row {
+  return {
+    id,
+    previous: null,
+    recordedAt: "2026-11-01T00:00:00.000Z",
+    sourceDigest: "d".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: { key: id, actor: { id: actorId, login: actorId.toLowerCase() }, projectId: "eliza", occurredAt: "2026-10-05T00:00:00.000Z", provisional: false, ...award },
+    ...extra,
+  }
+}
+
+const reviewUrl = (pull: number, review: number) => `https://github.com/elizaOS/eliza/pull/${pull}#pullrequestreview-${review}`
+
+const totalsJournal: Journal = {
+  schemaVersion: "1",
+  ruleVersion: "slop-points-v1",
+  generatedAt: recordedAt,
+  coverage: [],
+  revisions: [
+    row("a1", "U_A", { category: "substantive-review", amount: 30, sourceId: "PRR_1", sourceUrl: reviewUrl(10, 1), workUnitId: "wu_1" }),
+    row("a2", "U_A", { category: "substantive-review", amount: 20, sourceId: "PRR_2", sourceUrl: reviewUrl(10, 2), workUnitId: "wu_2" }),
+    row("a3", "U_A", { category: "evaluated-contribution", amount: 60, sourceId: "IC_3", sourceUrl: reviewUrl(11, 3), workUnitId: "wu_3" }),
+    row("a4", "U_A", { category: "substantive-review", amount: 10, sourceId: "PRR_4", sourceUrl: reviewUrl(11, 4), workUnitId: "wu_4" }),
+    row("a5", "U_A", { category: "slopbot-penalty", amount: -15, sourceId: "PR_penalty_a", sourceUrl: "https://github.com/elizaOS/eliza/pull/12", workUnitId: "penalty_a" }, {
+      sourceRule: "slopbot-penalties-v1",
+      penalty: { category: "slop", debit: 15, reversedAt: null, reversal: null },
+      decision: { sourceId: "PR_penalty_a", effectiveAt: "2026-10-05T00:00:00.000Z", reason: "Slopbot slop penalty", delta: -15 },
+    }),
+    row("b1", "U_B", { category: "substantive-review", amount: 0, sourceId: "PRR_5", sourceUrl: reviewUrl(13, 5), workUnitId: "wu_5" }, {
+      decision: { sourceId: `value:${"c".repeat(64)}`, effectiveAt: "2026-10-05T00:00:00.000Z", reason: "assessed", delta: 0 },
+    }),
+    row("c1", "U_C", { category: "slopbot-penalty", amount: 0, sourceId: "PR_penalty_c", sourceUrl: "https://github.com/elizaOS/eliza/pull/14", workUnitId: "penalty_c" }, {
+      sourceRule: "slopbot-penalties-v1",
+      penalty: { category: "slop", debit: 15, reversedAt: null, reversal: null },
+      decision: { sourceId: "PR_penalty_c", effectiveAt: "2026-10-05T00:00:00.000Z", reason: "Slopbot slop penalty", delta: 0 },
+    }),
+  ],
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect(`Journal build follows development (spec/points/journal.md, "A retained-batch award the batch no longer supplies is zeroed once"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/journal.md, "A penalty revision records the debit applied against the month's credit"; spec/points/journal.md, "Public totals are views of the latest revisions, with penalties bounded by the month's credit"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision")`, () => effect {
+    const history = try promise(() => historyText())
+    const reviewed = try promise(() => reviewHistory())
+    const file = try promise(() => snapshotFile())
+    const repositories = repositoriesOf(registry, {})
+    const events = try retainedEvents(reviewed)
+
+    const retained = try openStore(history, null, [])
+    try applyRetainedReviews(retained, repositories, reviewed, recordedAt)
+    const owned = batchOwnedKeys(retained)
+    const target = (try retainedAwards(repositories, events)).find((item) => owned.has(item.award.key) && item.award.category === "substantive-review")
+    const targetKey = target?.award.key ?? ""
+    const omitting = reviewed.filter((_, position) => events[position] !== target?.event)
+    const ownedRow = retained.latest.get(targetKey)
+    try applyRetainedReviews(retained, repositories, omitting, recordedAt)
+    const zeroedChain = chainOf(retained, targetKey).length
+    const zeroed = retained.latest.get(targetKey)
+    try applyRetainedReviews(retained, repositories, omitting, recordedAt)
+    const decided = try storeOf(recordedAt, [], [
+      row("v1", "U_V", { category: "substantive-review", amount: 10, sourceId: "PRR_v1", sourceUrl: reviewUrl(20, 1), workUnitId: "wu_v1" }, {
+        decision: { sourceId: valueDecision, effectiveAt: "2026-10-05T00:00:00.000Z", reason: "assessed", delta: 10 },
+      }),
+      row("v2", "U_V", { category: "substantive-review", amount: 10, sourceId: "PRR_v2", sourceUrl: reviewUrl(20, 2), workUnitId: "wu_v2" }),
+    ])
+    try applyRetainedReviews(decided, repositories, [], recordedAt)
+    const frozenRetained = try openStore(history, null, frozenAt(ownedRow?.award.projectId ?? "", ownedRow?.award.occurredAt ?? ""))
+    try applyRetainedReviews(frozenRetained, repositories, reviewed, recordedAt)
+    try applyRetainedReviews(frozenRetained, repositories, omitting, recordedAt)
+
+    const snapshot = try decodeSnapshot(file.value)
+    const digest = try sha256Hex(file.text)
+    const store = try openStore(history, null, [])
+    try applySnapshots(store, repositories, [{ snapshot, digest }], recordedAt)
+    const inWindow = (entry: Row, category: string) => entry.sourceDigest === digest && entry.award.category === category && entry.award.amount > 0 &&
+      entry.award.occurredAt >= snapshot.window.from && entry.award.occurredAt < snapshot.window.to
+    const victim = [...store.latest.values()].find((entry) => inWindow(entry, "substantive-review"))
+    const merged = [...store.latest.values()].find((entry) => inWindow(entry, "merged-pull-request"))
+    const absent = (event: ScoreEvent, entry: Row | undefined) => event.source.id === entry?.award.sourceId && event.actor.id === entry.award.actor.id
+    const newer: LeaderboardSnapshot = { ...snapshot, generatedAt: "2026-10-02T00:00:00.000Z", ledger: snapshot.ledger.filter((event) => !absent(event, victim)) }
+    const newerDigest = try sha256Hex(JSON.stringify(newer))
+    try applySnapshots(store, repositories, [{ snapshot: newer, digest: newerDigest }], recordedAt)
+    const superseded = store.latest.get(victim?.award.key ?? "")
+    const uncovered: LeaderboardSnapshot = { ...newer, generatedAt: "2026-10-03T00:00:00.000Z", valueAssessmentCoverage: [], ledger: newer.ledger.filter((event) => !absent(event, merged)) }
+    try applySnapshots(store, repositories, [{ snapshot: uncovered, digest: try sha256Hex(JSON.stringify(uncovered)) }], recordedAt)
+    const frozen = try openStore(history, null, frozenAt(victim?.award.projectId ?? "", victim?.award.occurredAt ?? ""))
+    try applySnapshots(frozen, repositories, [{ snapshot, digest }, { snapshot: newer, digest: newerDigest }], recordedAt)
+
+    const earner = [...store.latest.values()].find((entry) => entry !== victim && inWindow(entry, "substantive-review"))
+    const earnerEvent = snapshot.ledger.find((event) => absent(event, earner))
+    const debitThirds = 3_000_000_000
+    const penalized: LeaderboardSnapshot = {
+      ...snapshot,
+      penalties: earnerEvent === undefined ? [] : [{
+        id: "penalty_e3", actor: earnerEvent.actor, repository: earnerEvent.repository, occurredAt: earner?.award.occurredAt ?? "", category: "slop",
+        tableVersion: "slopbot-penalties-v1", debitThirds,
+        source: { id: "PR_penalty_e3", kind: "pull-request", number: 1, title: "penalty", url: `https://github.com/${earnerEvent.repository}/pull/1` },
+      }],
+    }
+    const penaltyDigest = try sha256Hex(JSON.stringify(penalized))
+    try reconcilePenalties(store, repositories, penalized, penaltyDigest, recordedAt)
+    const penaltyRow = [...store.latest.values()].find((entry) => entry.award.sourceId === "PR_penalty_e3")
+    const afterPenalty = store.revisions.length
+    try reconcilePenalties(store, repositories, penalized, penaltyDigest, recordedAt)
+
+    const totals = [...(try members(totalsJournal))].sort((left, right) => left.id.localeCompare(right.id)).map((member) => ({ id: member.id, total: member.total }))
+
+    try Effect.try(() => assert.deepStrictEqual({
+      retained: {
+        zero: { amount: zeroed?.award.amount, follows: zeroed?.previous === ownedRow?.id, digest: zeroed?.sourceDigest === ownedRow?.sourceDigest, decided: zeroed?.decision !== undefined, appended: zeroedChain - chainOf(frozenRetained, targetKey).length },
+        replayed: chainOf(retained, targetKey).length === zeroedChain,
+        valueDecided: { owned: batchOwnedKeys(decided).has("v1"), unchanged: decided.latest.get("v1")?.id === "v1", undecided: decided.latest.get("v2")?.award.amount },
+        frozen: { amount: frozenRetained.latest.get(targetKey)?.award.amount === ownedRow?.award.amount, refused: refusedHolds(frozenRetained, targetKey, "zeroRetainedOmission") },
+      },
+      supersession: {
+        zero: { amount: superseded?.award.amount, follows: superseded?.previous === victim?.id, digest: superseded?.sourceDigest === newerDigest },
+        uncoveredPullRequest: store.latest.get(merged?.award.key ?? "")?.id === merged?.id && merged !== undefined,
+        frozen: { kept: (frozen.latest.get(victim?.award.key ?? "")?.award.amount ?? 0) > 0, refused: refusedHolds(frozen, victim?.award.key ?? "", "zeroSuperseded") },
+      },
+      penalty: {
+        applied: -(penaltyRow?.award.amount ?? 0) > 0,
+        bounded: -(penaltyRow?.award.amount ?? 0) < debitThirds * 10,
+        request: penaltyRow?.penalty?.debit,
+        replayed: store.revisions.length - afterPenalty,
+      },
+      totals,
+    }, {
+      retained: {
+        zero: { amount: 0, follows: true, digest: false, decided: false, appended: 1 },
+        replayed: true,
+        valueDecided: { owned: false, unchanged: true, undecided: 0 },
+        frozen: { amount: true, refused: 1 },
+      },
+      supersession: {
+        zero: { amount: 0, follows: true, digest: true },
+        uncoveredPullRequest: true,
+        frozen: { kept: true, refused: 1 },
+      },
+      penalty: { applied: true, bounded: true, request: debitThirds * 10, replayed: 0 },
+      totals: [{ id: "U_A", total: 75 }, { id: "U_B", total: 0 }],
+    }))
+  })
+})

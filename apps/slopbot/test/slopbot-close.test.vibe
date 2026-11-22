@@ -35,7 +35,7 @@ const qualified = JSON.stringify({
   qualifications: [qualification("Spam"), qualification("Scam")],
 })
 const projects = [repo, capped, brakes].map((target) => ({ projectId: target.projectId, path: target.path, repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: true }))
-const authors = ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "slow", "rej", "reo", "late", "dis", "wait", "act", "who", "kim"]
+const authors = ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "slow", "rej", "reo", "late", "dis", "wait", "act", "who", "kim", "rev"]
 const blockedByCapacity = "_This item was not closed: closure authority changed, the daily cap was reached, or a close is already pending._"
 
 function verdict(category: string, summary: string, quote: string) {
@@ -71,6 +71,7 @@ async function seed() {
     wait: await pullOf(world, repo.path, "wait", "WAIT-TOKEN tokens", spamText),
     act: await pullOf(world, repo.path, "act", "ACT-TOKEN tokens", spamText),
     who: await pullOf(world, repo.path, "who", "WHO-TOKEN tokens", spamText),
+    rev: await pullOf(world, repo.path, "rev", "REV-TOKEN airdrop", scamText),
   }
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
   const providers = providerFake()
@@ -253,13 +254,17 @@ effect function reopenOf(area: AreaShape, login: Author, revision: string, occur
 }
 
 layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('A confirmed close records the debit in GitHub\'s close month, a scam close adds the moderator label and one notice per moderator, and a reached cap or a tripped breaker labels instead (spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation\'s recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeCapacity.md, "Confirmed closes in the rolling day plus every unresolved attempt consume the daily cap"; spec/slopbot/closeCapacity.md, "The reopen-rate breaker stops new reservations after more than one in ten recent closes was reversed"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
+  it.effect('A confirmed close records the debit in GitHub\'s close month, every close candidate carries its category label before GitHub's close, a scam close with a moderator-review penalty adds the moderator label and one notice per moderator while one without a recorded penalty sends none, and a reached cap or a tripped breaker labels instead (spec/slopbot/closeAttempt.md, "A reservation needs a later recheck than the decision, the current fence and the review lease"; spec/slopbot/closeAttempt.md, "The request is sent at most once, by the reserving lease, on the reservation\'s recheck or a later one"; spec/slopbot/closeAttempt.md, "A close that a later recheck or capacity refuses is labeled instead and never retried for this revision"; spec/slopbot/closeAttempt.md, "A confirmed scam closure notifies each moderator once and adds the moderator label"; spec/slopbot/closeCapacity.md, "Confirmed closes in the rolling day plus every unresolved attempt consume the daily cap"; spec/slopbot/closeCapacity.md, "The reopen-rate breaker stops new reservations after more than one in ten recent closes was reversed"; spec/slopbot/closeCapacity.md, "A reservation is admitted only under the current registry fence and review lease, at most one pending per item"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
     const area = try Area
     const { items, net, providers } = try World
     try installed(area)
-    for (const login of ["mia", "sam", "cap1", "cap2", "brk1", "brk2"] as const) try eligible(area, login)
+    for (const login of ["mia", "sam", "cap1", "cap2", "brk1", "brk2", "rev"] as const) try eligible(area, login)
     for (const login of ["mia", "cap1", "cap2", "brk1", "brk2"] as const) try answers(login, spam, spam)
     try answers("sam", scam, scam)
+    try answers("rev", scam, scam)
+    const revNode = (try itemOf("rev")).nodeId
+    try area.sql(`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at, reversed_at, reversal)
+      VALUES (?, ?, ?, ?, 'scam', 'slopbot-penalties-v1', 24, '2026-10', 1, ?, '2026-10-20T10:00:00.000Z', '2026-10-21T10:00:00.000Z', 'appeal_upheld')`, revNode, repo.id, repo.projectId, String(idOf("rev")), `earlier-review:${revNode}`)
     const outcomes = {
       mia: try closeOf(area, "mia"),
       sam: try closeOf(area, "sam"),
@@ -270,14 +275,16 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const reversedNode = (try itemOf("brk1")).nodeId
     try area.sql("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES (?, ?, ?, 'human_reopen', '100', ?)", `reopen:${reversedNode}:${try headOf("brk1")}`, brakes.id, reversedNode, try isoNow())
     const tripped = try closeOf(area, "brk2")
+    const reviewedOnly = try closeOf(area, "rev")
     const samNode = (try itemOf("sam")).nodeId
     try same({
-      outcomes: { ...outcomes, brk2: tripped },
-      writes: { mia: try written("mia"), sam: try written("sam"), cap1: try written("cap1"), cap2: try written("cap2"), brk2: try written("brk2") },
+      outcomes: { ...outcomes, brk2: tripped, rev: reviewedOnly },
+      writes: { mia: try written("mia"), sam: try written("sam"), cap1: try written("cap1"), cap2: try written("cap2"), brk2: try written("brk2"), rev: try written("rev") },
       attempts: { mia: try attemptsOf(area, "mia"), sam: try attemptsOf(area, "sam"), cap2: try attemptsOf(area, "cap2"), brk2: try attemptsOf(area, "brk2") },
       penalties: { mia: try penaltyOf(area, "mia"), sam: try penaltyOf(area, "sam"), cap2: try penaltyOf(area, "cap2") },
       notices: try area.sql("SELECT recipient_github_id AS recipient, kind, action_path FROM notifications WHERE event_key = ? ORDER BY recipient_github_id", `slopbot-scam-review:${samNode}`),
-      patches: [try closePatches("mia"), try closePatches("sam"), try closePatches("cap2"), try closePatches("brk2")],
+      ineligibleNotices: try area.sql("SELECT recipient_github_id AS recipient FROM notifications WHERE event_key = ?", `slopbot-scam-review:${revNode}`),
+      patches: [try closePatches("mia"), try closePatches("sam"), try closePatches("cap2"), try closePatches("brk2"), try closePatches("rev")],
       unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
     }, {
       outcomes: {
@@ -287,13 +294,15 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         cap2: { kind: "close", result: "labeled (spam)" },
         brk1: { kind: "close", result: "closed (spam)" },
         brk2: { kind: "close", result: "labeled (spam)" },
+        rev: { kind: "close", result: "closed (scam)" },
       },
       writes: {
-        mia: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("mia", 30, false), labels: [], state: "closed" },
-        sam: { header: "**Slopbot closed this item** under the repository's `scam` rule.", blocked: null, penalty: try penaltyLine("sam", 240, true), labels: ["slopbot: moderator"], state: "closed" },
-        cap1: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("cap1", 30, false), labels: [], state: "closed" },
+        mia: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("mia", 30, false), labels: ["slopbot: spam"], state: "closed" },
+        sam: { header: "**Slopbot closed this item** under the repository's `scam` rule.", blocked: null, penalty: try penaltyLine("sam", 240, true), labels: ["slopbot: scam", "slopbot: moderator"], state: "closed" },
+        cap1: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("cap1", 30, false), labels: ["slopbot: spam"], state: "closed" },
         cap2: { header: "**Slopbot review:** `spam`", blocked: blockedByCapacity, penalty: null, labels: ["slopbot: spam"], state: "open" },
         brk2: { header: "**Slopbot review:** `spam`", blocked: blockedByCapacity, penalty: null, labels: ["slopbot: spam"], state: "open" },
+        rev: { header: "**Slopbot closed this item** under the repository's `scam` rule.", blocked: null, penalty: null, labels: ["slopbot: scam"], state: "closed" },
       },
       attempts: { mia: [{ state: "confirmed", comment_confirmed: 1 }], sam: [{ state: "confirmed", comment_confirmed: 1 }], cap2: [], brk2: [] },
       penalties: {
@@ -302,7 +311,8 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         cap2: [],
       },
       notices: moderators.map((recipient) => ({ recipient, kind: "slopbot_scam_review", action_path: `/api/v1/notifications/scam-reviews/${repo.path}/pull/${items.sam}` })),
-      patches: [1, 1, 0, 0],
+      ineligibleNotices: [],
+      patches: [1, 1, 0, 0, 1],
       unexpected: [0, 0, 0],
     })
   })
@@ -339,7 +349,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       slow: {
         attempts: [{ state: "confirmed", comment_confirmed: 1 }],
         penalty: [{ category: "spam", debit_thirds: 3, period: (try closedMonth("slow")).period, moderator_review: 0, recorded_at: (try closedMonth("slow")).recordedAt, reversal: null, reversed: 0 }],
-        written: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("slow", 30, false), labels: [], state: "closed" },
+        written: { header: "**Slopbot closed this item** under the repository's `spam` rule.", blocked: null, penalty: try penaltyLine("slow", 30, false), labels: ["slopbot: spam"], state: "closed" },
         patches: 1,
       },
       refused: { kind: "failed", result: "CloseRefused" },
@@ -384,7 +394,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       reversals: [{ cleaned: true, reversed: true }, { cleaned: true, reversed: false }],
       disputedClose: { kind: "close", result: "maintainer reopened this revision; finding removed" },
       dis: {
-        written: { header: "**Slopbot review:** `spam`", blocked: "_This item was not closed: source, policy, evidence or eligibility changed before closure._", penalty: null, labels: [], state: "open" },
+        written: { header: "**Slopbot review:** `spam`", blocked: null, penalty: null, labels: [], state: "open" },
         attempts: [],
         penalty: [],
         patches: 0,

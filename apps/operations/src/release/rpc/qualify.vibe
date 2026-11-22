@@ -1,10 +1,8 @@
-// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
-import { jsonRpc } from "@repo/platform/chain/rpc"
+// spec/operations/robinhoodRpcRotation.md, "The candidate is an HTTPS endpoint without credentials, independent of the public reference"; spec/operations/robinhoodRpcRotation.md, "The candidate qualifies only on a finalized chain-4663 read that an independent RPC confirms at the same canonical block"
+import { WrongChain, jsonRpc } from "@repo/platform/chain/rpc"
+import { type CandidateUrl, type FinalizedRead, referenceRpc } from "../../../gen/operations__robinhoodRpcRotation.effect.vibe"
 
 export error RotationRefused { message: string }
-
-export const robinhoodReference = "https://rpc.mainnet.chain.robinhood.com"
-export const robinhoodChainId = "0x1237"
 
 schema FinalizedBlock {
   readonly number: string
@@ -23,19 +21,45 @@ export interface ContractProbe {
   readonly answers: (result: string) => boolean
 }
 
+export interface Candidate {
+  readonly facts: CandidateUrl
+  readonly url: string | undefined
+  readonly refusal: string
+}
+
+export interface CandidateRead {
+  readonly finalized: FinalizedRead
+  readonly observed: QualifiedHead
+  readonly refusal: string
+}
+
+const robinhoodChain = "0x1237"
 const blockHash = /^0x[a-f0-9]{64}$/u
 const quantity = /^0x(?:0|[1-9a-f][0-9a-f]*)$/u
 const rpcMillis = 5_000
 const rpcBytes = 1024 * 1024
+const unparsed = "Supply the protected Robinhood RPC environment secret as an HTTPS URL."
+const unsafe = "The candidate must use TLS and be independent of the public reference."
+const contractRead = "The candidate failed the finalized Robinhood contract read."
+const independent = "The independent Robinhood RPC did not verify the candidate block."
+const unconfigured = "The reviewed production buyback configuration is unavailable."
+const unread: FinalizedRead = { liveConfig: true, verified: false, chainId: 0, block: 0, blockHash: 0, referenceChainId: 0, referenceFinalized: 0, referenceFinalizedHash: 0, referenceCanonical: 0, referenceCanonicalHash: 0 }
 
-function refused(message: string) {
-  return new RotationRefused({ message })
-}
-
-export function secureRpcUrl(value: string) {
+export function candidateUrl(value: string) {
   const url = URL.parse(value)
-  if (url === null || value !== value.trim() || url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "" || url.origin === robinhoodReference) return undefined
-  return url.href
+  if (url === null) {
+    const malformed: Candidate = { facts: { https: false, credentials: false, fragment: false, trimmed: value === value.trim(), referenceOrigin: false }, url: undefined, refusal: unparsed }
+    return malformed
+  }
+  const facts: CandidateUrl = {
+    https: url.protocol === "https:",
+    credentials: url.username !== "" || url.password !== "",
+    fragment: url.hash !== "",
+    trimmed: value === value.trim(),
+    referenceOrigin: url.origin === new URL(referenceRpc).origin,
+  }
+  const parsed: Candidate = { facts, url: url.href, refusal: unsafe }
+  return parsed
 }
 
 function chainOf(result: unknown) {
@@ -43,40 +67,74 @@ function chainOf(result: unknown) {
 }
 
 function client(url: string) {
-  return jsonRpc({ urls: Redacted.make([url] as ReadonlyArray<string>), timeoutMs: rpcMillis, maxBytes: rpcBytes, identity: { method: "eth_chainId", expected: robinhoodChainId, read: chainOf } })
+  return jsonRpc({ urls: Redacted.make([url] as ReadonlyArray<string>), timeoutMs: rpcMillis, maxBytes: rpcBytes, identity: { method: "eth_chainId", expected: robinhoodChain, read: chainOf } })
 }
 
-function validBlock(block: FinalizedBlock) {
-  return quantity.test(block.number) && blockHash.test(block.hash)
+function chainNumber(error: unknown) {
+  if (!(error instanceof WrongChain) || !quantity.test(error.actual)) return 0
+  const chain = Number.parseInt(error.actual.slice(2), 16)
+  return Number.isSafeInteger(chain) ? chain : 0
 }
 
-export effect function qualifyRobinhood(candidate: Redacted.Redacted<string>, probe: ContractProbe) {
-  const url = secureRpcUrl(Redacted.value(candidate))
-  if (url === undefined) throw refused("The candidate must use TLS and be independent of the public reference.")
-  const rpc = try client(url)
-  const contractRead = "The candidate failed the finalized Robinhood contract read."
-  const observed = rpc.call("eth_getBlockByNumber", ["finalized", false], FinalizedBlock) catch effect () => {
-    throw refused(contractRead)
-  }
-  if (!validBlock(observed)) throw refused(contractRead)
-  const answer = rpc.call("eth_call", [{ to: probe.to, data: probe.data }, observed.number], Schema.String) catch effect () => {
-    throw refused(contractRead)
-  }
-  const own = rpc.call("eth_getBlockByNumber", [observed.number, false], FinalizedBlock) catch effect () => {
-    throw refused(contractRead)
-  }
-  if (!probe.answers(answer) || own.number !== observed.number || own.hash !== observed.hash) throw refused(contractRead)
-  const reference = try client(robinhoodReference)
-  const independent = "The independent Robinhood RPC did not verify the candidate block."
-  const [finalized, canonical] = all([
+function blockNumber(block: FinalizedBlock) {
+  if (!quantity.test(block.number) || !blockHash.test(block.hash)) return undefined
+  const number = Number.parseInt(block.number.slice(2), 16)
+  return Number.isSafeInteger(number) ? number : undefined
+}
+
+effect function referenceRead(head: FinalizedRead, observed: FinalizedBlock, hashId: (hash: string) => number) {
+  const reference = try client(referenceRpc)
+  const answers = try exit(all([
     reference.call("eth_getBlockByNumber", ["finalized", false], FinalizedBlock),
     reference.call("eth_getBlockByNumber", [observed.number, false], FinalizedBlock),
-  ]) catch effect () => {
-    throw refused(independent)
+  ]))
+  if (Exit.isFailure(answers)) {
+    const wrong: FinalizedRead = { ...head, referenceChainId: chainNumber(Cause.squash(answers.cause)) }
+    return wrong
   }
-  if (!validBlock(finalized) || !validBlock(canonical)) throw refused(independent)
-  const number = try orDie(Effect.try(() => BigInt(observed.number)))
-  const latest = try orDie(Effect.try(() => BigInt(finalized.number)))
-  if (latest < number || (latest === number && finalized.hash !== observed.hash) || canonical.number !== observed.number || canonical.hash !== observed.hash) throw refused(independent)
-  return { chainId: 4663, blockNumber: number.toString(), blockHash: observed.hash } satisfies QualifiedHead
+  const [finalized, canonical] = answers.value
+  const finalizedNumber = blockNumber(finalized)
+  const canonicalNumber = blockNumber(canonical)
+  const read: FinalizedRead = {
+    ...head,
+    referenceChainId: 4663,
+    referenceFinalized: finalizedNumber ?? 0,
+    referenceFinalizedHash: finalizedNumber === undefined ? 0 : hashId(finalized.hash),
+    referenceCanonical: canonicalNumber ?? 0,
+    referenceCanonicalHash: canonicalNumber === undefined ? 0 : hashId(canonical.hash),
+  }
+  return read
+}
+
+export effect function readFinalized(url: string, probe: ContractProbe, liveConfig: boolean, hashId: (hash: string) => number) {
+  const none: QualifiedHead = { chainId: 0, blockNumber: "", blockHash: "" }
+  if (!liveConfig) {
+    const unconfiguredRead: CandidateRead = { finalized: { ...unread, liveConfig: false }, observed: none, refusal: unconfigured }
+    return unconfiguredRead
+  }
+  const rpc = try client(url)
+  const head = try exit(rpc.call("eth_getBlockByNumber", ["finalized", false], FinalizedBlock))
+  if (Exit.isFailure(head)) {
+    const unanswered: CandidateRead = { finalized: { ...unread, chainId: chainNumber(Cause.squash(head.cause)) }, observed: none, refusal: contractRead }
+    return unanswered
+  }
+  const observed = head.value
+  const number = blockNumber(observed)
+  const unverified = (verified: boolean, block: number, hash: number) => {
+    const read: CandidateRead = { finalized: { ...unread, verified, chainId: 4663, block, blockHash: hash }, observed: none, refusal: contractRead }
+    return read
+  }
+  if (number === undefined) return unverified(false, 0, 0)
+  const answer = rpc.call("eth_call", [{ to: probe.to, data: probe.data }, observed.number], Schema.String) catch () => undefined
+  if (answer === undefined) return unverified(false, number, hashId(observed.hash))
+  const own = rpc.call("eth_getBlockByNumber", [observed.number, false], FinalizedBlock) catch () => undefined
+  const verified = probe.answers(answer) && own !== undefined && own.number === observed.number && own.hash === observed.hash
+  const candidate = unverified(verified, number, hashId(observed.hash))
+  if (!verified) return candidate
+  const confirmed: CandidateRead = {
+    finalized: try referenceRead(candidate.finalized, observed, hashId),
+    observed: { chainId: 4663, blockNumber: number.toString(), blockHash: observed.hash },
+    refusal: independent,
+  }
+  return confirmed
 }

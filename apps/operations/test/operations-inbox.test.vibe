@@ -9,6 +9,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { area, pages } from "@repo/platform/worker"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
+import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
 import { inboxApi } from "../src/client/inbox.vibe"
 import { inboxRoutes } from "../src/inbox/routes.vibe"
@@ -35,6 +36,7 @@ const other = "9300000002"
 const moderator = "9300000003"
 const listedModerator = "9300000004"
 const caseId = "sc_inbox_journey_case"
+const unavailableCase = "sc_inbox_journey_unavailable"
 const version = "1".repeat(64)
 const digest = "d".repeat(64)
 const providerReference = "private-provider-reference"
@@ -49,6 +51,12 @@ const site = pages({
   services: (env: Env) => Layer.mergeAll(
     Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${listedModerator}` }))),
     Layer.succeed(AssessmentQueue, { bundled: (actor) => succeed(actor.githubId === member ? { recipientGithubId: member, items: [], next: null } : null) }),
+    Layer.succeed(SecurityNoticeAccess, {
+      forCase: (read) => effect {
+        if (read.caseId === unavailableCase) throw new AuthorityUnavailable({ projectId: "inbox-journey" })
+        return { allowed: read.caseId === caseId && read.githubId === member, acknowledgeHours: 72 }
+      },
+    }),
   ),
   assets: "ASSETS",
 })
@@ -145,7 +153,7 @@ function at(minute: number) {
 }
 
 layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Read the Inbox over HTTP without email details, and mark only the recipient\'s own notices read (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
+  it.effect('Read the Inbox over HTTP without email details, mark only the recipient\'s own notices read, and acknowledge a report receipt once (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
     try signedUp([member, other, moderator, listedModerator])
     try (try D1).batch(securityCases)
     const signedOut = try ask("/api/v1/notifications")
@@ -260,6 +268,29 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       ],
       readIsNotAcknowledgment: [true, null],
       besideLegacy: [200, { marked: 1 }],
+    })
+
+    const acknowledge = (id: string, eventKey: string, as = member) => ask(`/api/v1/security-cases/${id}/acknowledge`, { as, json: { eventKey } })
+    const answers = [
+      try acknowledge(caseId, "security-receipt:inbox-1"),
+      try acknowledge(caseId, "security-receipt:inbox-1"),
+      try acknowledge(caseId, "security-receipt:inbox-absent"),
+      try acknowledge(caseId, "security-receipt:inbox-1", other),
+      try acknowledge(unavailableCase, "security-receipt:inbox-1"),
+    ].map((answer) => answer.status === 200 ? [answer.status, answer.body] : [answer.status, (answer.body as { error?: unknown } | null)?.error])
+    const acknowledgedEvents = try (try D1).all(sql`SELECT e.state FROM security_notification_delivery_events e JOIN security_notification_outbox o ON o.id = e.delivery_id
+      WHERE o.event_key = 'security-receipt:inbox-1' AND o.recipient_github_id = ${member} AND e.state = 'acknowledged'`)
+    const receipt = (try inbox(member)).notifications.find((item) => item.eventKey === "security-receipt:inbox-1")
+    try same({ answers, acknowledgedEvents: acknowledgedEvents.length, asksAcknowledgment: receipt !== undefined && "acknowledgedAt" in receipt }, {
+      answers: [
+        [200, { acknowledged: true }],
+        [200, { acknowledged: true }],
+        [404, "not_found"],
+        [404, "not_found"],
+        [503, "github_unavailable"],
+      ],
+      acknowledgedEvents: 1,
+      asksAcknowledgment: false,
     })
   })
 

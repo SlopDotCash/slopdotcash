@@ -111,7 +111,12 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const vault = useVault(runtime);
   const batch = useBatch(runtime);
   const offers = useWalletOffers(runtime);
-  const { busy, error, notice, setNotice, act } = useAction(runtime);
+  const { busy, error, notice, setNotice, act: ownerAct } = useAction(runtime);
+  const [autoError, setAutoError] = useState("");
+  const act: typeof ownerAct = (work, then) => {
+    setAutoError("");
+    return ownerAct(work, then);
+  };
   const [cleared, setCleared] = useState(0);
   const unreadable = useSettled(runtime, `unreadable:${cleared}`, () => unreadableSaved());
   const [wallet, setWallet] = useState<Connection>();
@@ -129,12 +134,23 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const pendingBatch = batched !== undefined && batchLive.has(batched.phase) && batched.owner === account;
   const label = useSettled(runtime, `label:${transfer?.slot.identity ?? ""}:${cleared}`, () => savedAction());
 
-  const settle = (outcome: Outcome) => {
+  const settle = (outcome: Outcome, connection = wallet) => {
     setNotice(outcome.message);
-    if (outcome.answer === "FinalRead") onFinalized();
+    if (outcome.answer !== "FinalRead") return;
+    if (outcome.message !== fundingMessages.approval) return onFinalized();
+    if (connection === undefined || amount.trim() === "") return;
+    setOperation("deposit");
+    void run(runtime, reviewAction(connection, "deposit", amount, pool, account, pledgeSupport)).then((done) => {
+      if (done.ok) setReview(done.value);
+    });
+  };
+  const watched = (outcome: Outcome, connection: Connection) => {
+    if (outcome.answer === "Refused" || outcome.answer === "ReadFailed") return setAutoError(outcome.message);
+    setAutoError("");
+    settle(outcome, connection);
   };
   const watch = (connection: Connection) => {
-    runtime.runFork(watchSaved(connection, (outcome) => Effect.sync(() => settle(outcome))));
+    runtime.runFork(watchSaved(connection, (outcome) => Effect.sync(() => watched(outcome, connection))));
   };
   const watchBatched = (connection: Connection) => {
     runtime.runFork(watchBatch(connection, (outcome) => Effect.sync(() => settle(outcome))));
@@ -215,7 +231,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
         </div>
       </Disclosure>
       <Status presentation={{ tone: "Caution", icon: "Alert", label: "Direct transfers are not credited" }} />
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error || autoError ? <Alert variant="destructive">{error || autoError}</Alert> : null}
       {notice ? <Alert variant="info">{notice}</Alert> : null}
       {unreadable.status === "done" && unreadable.value ? (
         <Button variant="secondary" disabled={busy} onClick={() => act(clearUnreadableSaved(), () => setCleared((count) => count + 1))}>

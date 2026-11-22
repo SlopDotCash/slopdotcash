@@ -3,9 +3,12 @@ import { first, rows, sql } from "@repo/platform/d1"
 import { Caller, handle, handleRaw, jsonBody, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Access, Route } from "@repo/platform/route"
-import { SecurityNoticeAccess } from "@repo/ports/security"
+import { Conflict } from "@repo/platform/stored"
+import { AuthorityUnavailable, SecurityNoticeAccess } from "@repo/ports/security"
 import { AssessmentQueue } from "@repo/ports/slopbot"
+import { Rejected } from "../../gen/operations__notifications.effect.vibe"
 import { AcknowledgeFields, acknowledgeCaseNotice, appealPrefix, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark, openAppealReview, openScamReview, otherInboxMethods, scamReviewPrefix } from "../client/inbox.vibe"
+import { postSecurityCasesByIdAcknowledge } from "../client/refusals.vibe"
 import type { Release } from "../notifications/rows.vibe"
 import { deliveryScope, noticeIdOf, observe, readMany, send } from "../notifications/store.vibe"
 import { cursorOf, inboxPage, readableKeys, shownTo } from "./projection.vibe"
@@ -92,25 +95,35 @@ effect function marked() {
   return { marked: (try readMany({ recipientGithubId: actor.githubId, eventKeys: readable }, inboxRelease)).marked }
 }
 
+const githubUnavailable = postSecurityCasesByIdAcknowledge.githubUnavailable
+
+effect function caseDelivery(caseId: string, eventKey: string, githubId: string) {
+  return try first(CaseDelivery, sql`SELECT id, acknowledged_at FROM security_notification_outbox
+    WHERE case_id = ${caseId} AND event_key = ${eventKey} AND recipient_github_id = ${githubId}`)
+}
+
 effect function acknowledged(caseId: string, githubId: string) {
-  const access = try (try SecurityNoticeAccess).forCase({ caseId, githubId })
+  const access = (try SecurityNoticeAccess).forCase({ caseId, githubId }) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused({ status: githubUnavailable.status, code: githubUnavailable.error, message: githubUnavailable.message });
+    default: throw error;
+  }
   if (!access.allowed) throw refused(refusals.caseNotFound)
   const fields = try strictBody(AcknowledgeFields, 64 * 1024)
   const eventKey = fields.eventKey
   if (typeof eventKey !== "string") throw refused(refusals.eventKeyRequired)
-  const delivery = try first(CaseDelivery, sql`SELECT id, acknowledged_at FROM security_notification_outbox
-    WHERE case_id = ${caseId} AND event_key = ${eventKey} AND recipient_github_id = ${githubId}
-    ORDER BY template_version = 'security-inbox-v1' DESC LIMIT 1`)
+  const delivery = try caseDelivery(caseId, eventKey, githubId)
   if (delivery === undefined) throw refused(refusals.caseNotFound)
   if (delivery.acknowledged_at !== null) return { acknowledged: true }
   const scope = deliveryScope("security", delivery.id, [githubId])
   const id = noticeIdOf(try observe(scope, inboxRelease), "security", delivery.id)
   const change = { type: "acknowledge", id, access: { tag: "Allowed", acknowledgeHours: access.acknowledgeHours } } as const
-  const settled = send(scope, change, githubId, inboxRelease) catch effect (error) => {
-    if (error._tag !== "Rejected") throw error
-    return { inbox: error.state }
+  const settled = send(scope, change, githubId, inboxRelease) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    default: throw error;
   }
-  if ((settled.inbox.notices[id - 1]?.acknowledgedAt ?? 0) === 0) throw refused(refusals.caseNotFound)
+  if (settled !== undefined) return { acknowledged: true }
+  if (((try caseDelivery(caseId, eventKey, githubId))?.acknowledged_at ?? null) === null) throw refused(refusals.caseNotFound)
   return { acknowledged: true }
 }
 

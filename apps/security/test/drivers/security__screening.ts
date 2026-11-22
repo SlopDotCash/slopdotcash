@@ -153,9 +153,9 @@ async function send(key: string, event: Event, by: unknown): Promise<"accepted" 
   }
 }
 
-type Stored = Omit<Screening, "exclusions" | "matchedLine">;
+type Stored = Omit<Screening, "exclusions">;
 
-function stored({ exclusions: _context, matchedLine: _line, ...kept }: Screening): Stored {
+function stored({ exclusions: _context, ...kept }: Screening): Stored {
   return kept;
 }
 

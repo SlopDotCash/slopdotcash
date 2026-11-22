@@ -283,6 +283,7 @@ effect function submittedFirst(world: World, storage: BrowserStore) {
     const refused = try submitReport(slot)
     const afterRefusal = try storedCompose(storage, reporterId)
     const refusedStage = (try draftState()).stage
+    const reviewedAfterRefusal = try reviewReport(slot)
     try editReport(slot, report)
     const correctedEdit = try storedCompose(storage, reporterId)
     try reviewReport(slot)
@@ -290,7 +291,7 @@ effect function submittedFirst(world: World, storage: BrowserStore) {
     world.loseReplyTo(submissionPath)
     const lost = try submitReport(slot)
     const kept = try storedCompose(storage, reporterId)
-    return { view, firstKey, refused, afterRefusal, refusedStage, correctedEdit, reviewedTwice, lost, lostStage: (try draftState()).stage, kept }
+    return { view, firstKey, refused, afterRefusal, refusedStage, reviewedAfterRefusal, correctedEdit, reviewedTwice, lost, lostStage: (try draftState()).stage, kept }
   }
 }
 
@@ -355,7 +356,7 @@ effect function textsAfterSignedOutLoad(world: World, storage: BrowserStore) {
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Submit a private report, lose the reply mid-send, reload and retry with the same key (spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', () => effect {
+  it.effect('Submit a private report, lose the reply mid-send, reload and retry with the same key (spec/frontend/drafts.md, "Story: Recover a report draft and an uncertain submission"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A definite refusal returns the report to review with a fresh key"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', () => effect {
     const { world } = try Browser
     try seedProject()
     world.useCookie(try member(reporterId))
@@ -366,7 +367,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
     const submitted = reloaded.retried.kind === "received" ? reloaded.retried.submissionId : ""
     try same({
       opened: firstLoad.view,
-      refused: [firstLoad.refused.kind, firstLoad.refusedStage, firstLoad.afterRefusal.attempted, firstLoad.afterRefusal.key !== firstLoad.firstKey],
+      refused: [firstLoad.refused.kind, firstLoad.refusedStage, firstLoad.afterRefusal.attempted, firstLoad.afterRefusal.key !== firstLoad.firstKey, firstLoad.afterRefusal.draft, firstLoad.reviewedAfterRefusal.kind === "ready" && firstLoad.reviewedAfterRefusal.draft.summary],
       correctedEdit: [firstLoad.correctedEdit.draft, firstLoad.correctedEdit.attempted, firstLoad.correctedEdit.key === firstLoad.afterRefusal.key],
       reviewedTwice: firstLoad.reviewedTwice,
       lost: [firstLoad.lost.kind, firstLoad.lostStage, firstLoad.kept.attempted, firstLoad.kept.key === firstLoad.afterRefusal.key, firstLoad.kept.draft],
@@ -379,7 +380,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       posts: world.requests.filter((entry) => entry === `POST ${submissionPath}`).length,
     }, {
       opened: { kind: "ready", draft: emptyReport, storageAvailable: true, attempted: false },
-      refused: ["corrected", "Writing", false, true],
+      refused: ["corrected", "Reviewing", false, true, { ...report, summary: "short" }, "short"],
       correctedEdit: [report, false, true],
       reviewedTwice: "ready",
       lost: ["uncertain", "Uncertain", true, true, report],
@@ -388,7 +389,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTe
       receipt: { kind: "open", href: `/inbox?view=reports&submission=${encodeURIComponent(submitted)}` },
       stage: "Received",
       left: undefined,
-      rows: [{ id: submitted, idempotency_key: firstLoad.kept.key, origin: "slop", state: "draft" }],
+      rows: [{ id: submitted, idempotency_key: firstLoad.afterRefusal.key, origin: "slop", state: "draft" }],
       posts: 3,
     })
   })

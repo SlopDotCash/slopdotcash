@@ -61,7 +61,7 @@ export const driver: Driver & AsyncDisposable = {
       if (verdict === "accepted") facts.revision = event.revision;
       return verdict;
     }
-    return outcome(setAutomatic(project, { automatic: event.automatic, expectedSequence: event.expectedSequence, authority: event.authority }), runtime);
+    return outcome(setAutomatic(project, { automatic: event.automatic, expectedSequence: event.expectedSequence, authority: event.authority, lateCutNotice: event.lateCutNotice }), runtime);
   },
   observe: () => observed(),
   [Symbol.asyncDispose]: async () => {

@@ -1,4 +1,4 @@
-// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A recorded send without a reservation is imported at its own worst case"; spec/fees/conversion.md, "An operator Solana RPC rotation holds the network lease only while the journal is quiet, and no run acquires, signs or commits meanwhile"
 import { type NonEmpty, type Statement, chunked, list, sql } from "@repo/platform/d1"
 
 export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
@@ -77,6 +77,28 @@ export interface Reservation {
 
 export function reserve(entry: Reservation): Statement {
   return sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, created_at, solana_blockhash_slot, solana_account_proof, purpose) SELECT ${entry.id}, ${entry.network}, ${entry.wallet}, ${entry.nonce}, ${entry.intentHash}, ${entry.runId}, ${entry.maximumWei}, ${entry.perTransactionWei}, ${entry.perDayWei}, 'reserved', ${entry.createdAt}, ${entry.blockhashSlot}, ${entry.accountProof}, ${entry.purpose} WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${entry.network} AND run_id = ${entry.runId} AND expires_at >= ${entry.createdAt})`
+}
+
+export interface Imported {
+  readonly id: string
+  readonly network: NetworkName
+  readonly wallet: string
+  readonly nonce: number
+  readonly intentHash: string
+  readonly runId: string
+  readonly maximumWei: string
+  readonly perTransactionWei: string
+  readonly perDayWei: string
+  readonly txId: string
+  readonly conversionId: string
+  readonly createdAt: string
+}
+
+export function importReservation(entry: Imported): ReadonlyArray<Statement> {
+  return [
+    sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, tx_id, conversion_id, created_at, purpose) SELECT ${entry.id}, ${entry.network}, ${entry.wallet}, ${entry.nonce}, ${entry.intentHash}, ${entry.runId}, ${entry.maximumWei}, ${entry.perTransactionWei}, ${entry.perDayWei}, 'signed', ${entry.txId}, ${entry.conversionId}, ${entry.createdAt}, 'fees' WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${entry.network} AND run_id = ${entry.runId} AND expires_at >= ${entry.createdAt})`,
+    confirmed(sql`EXISTS (SELECT 1 FROM fee_native_gas WHERE id = ${entry.id})`, "Historical native fee import lost its lease"),
+  ]
 }
 
 export interface Evaluation {

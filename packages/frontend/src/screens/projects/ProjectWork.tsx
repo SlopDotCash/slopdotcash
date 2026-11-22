@@ -81,7 +81,7 @@ export function ProjectWork({ work, onRetry }: ProjectWorkProps) {
               ))}
             </ul>
           ) : (
-            <p className="text-muted-foreground">No suggested work right now.</p>
+            <p className="text-muted-foreground">Nothing open</p>
           )}
           {!expanded && work.items.length > workShown ? (
             <Button variant="outline" className="self-start" onClick={() => setExpanded(true)}>

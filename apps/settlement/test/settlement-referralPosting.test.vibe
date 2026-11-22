@@ -83,7 +83,12 @@ function ports(bench: Benched, wallet: string) {
 }
 
 function programLayer(mode: string) {
-  return Layer.effect(ReferralProgram, effect { return { program: try decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: mode }) } })
+  return Layer.effect(ReferralProgram, effect {
+    const decoded = try decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: mode === "Posting" ? "DryRun" : mode })
+    if (mode !== "Posting" || decoded.mode === "Off") return { program: decoded }
+    const control = try controlled([{ event: { type: "dryRun" }, by: "owner" }, { event: funding(2_000_000), by: "owner" }, { event: watcher, by: "owner" }, { event: { type: "activate" }, by: "owner" }])
+    return { program: { mode: "Posting" as const, control, ledger: decoded.ledger } }
+  })
 }
 
 interface Setting {
@@ -97,7 +102,7 @@ effect function environment(setting: Setting = {}) {
   const bench = try Bench
   const base = setting.deployment ?? bench.deployment
   const deployment = setting.url === undefined ? base : { ...base, urls: Redacted.make([setting.url]) }
-  return Layer.mergeAll(d1(bench.db), webCrypto, outbound, bench.clock.layer, rolesFrom(ownerRoles), ports(bench, bench.chain.referrer.address.toLowerCase()), programLayer(setting.mode ?? "DryRun"), Layer.succeed(ReferralDeployment, { deployment }), rootPosterKey(setting.mode === "Off" ? undefined : setting.key ?? bench.chain.poster.privateKey))
+  return Layer.mergeAll(d1(bench.db), webCrypto, outbound, bench.clock.layer, rolesFrom(ownerRoles), ports(bench, bench.chain.referrer.address.toLowerCase()), programLayer(setting.mode ?? "Posting"), Layer.succeed(ReferralDeployment, { deployment }), rootPosterKey(setting.mode === "Off" ? undefined : setting.key ?? bench.chain.poster.privateKey))
 }
 
 effect function post(setting: Setting = {}) {
@@ -227,7 +232,7 @@ effect function activated(amount: number) {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('Posting is refused without each recorded activation fact and funding other than 2,000,000 tokens, Off posts nothing and DryRun never signs a mainnet root (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+  it.effect('Posting is refused without each recorded activation fact and funding other than 2,000,000 tokens, Off posts nothing and DryRun signs no root on either network (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const { deployment } = try Bench
     const posting = decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: "Posting" }) catch effect (error) => error._tag
     const dryRun = try decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: "DryRun" })
@@ -267,7 +272,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       },
       complete: "no poster key is loaded",
       dryRunMainnet: "posting is not activated for this network",
-      dryRunTestnet: "no poster key is loaded",
+      dryRunTestnet: "posting is not activated for this network",
       off: { status: "off" },
     })
   })
@@ -305,10 +310,13 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   })
 
-  it.effect('A root whose broadcast is lost is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount")', () => effect {
+  it.effect('A filed root is never sent in DryRun, and a root whose broadcast is lost in Posting is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount")', () => effect {
     const { chain, clock } = try Bench
     for (let index = 0; index < 31; index++) try pay(index)
     const filed = try file()
+    const quiet = try served([])
+    const dryRun = try post({ mode: "DryRun", url: quiet.url })
+    const dryRunPosts = try rows("SELECT count(*) AS posts FROM referral_root_posts")
     const lossy = try served([{ method: "eth_sendRawTransaction", fault: "http500" }])
     const lost = try post({ url: lossy.url })
     const [journaled] = try rows("SELECT p.state, p.reason IS NOT NULL AS reasoned, p.raw_tx, p.tx_id, p.evm_nonce, g.maximum_wei > 0 AS reserved, g.actual_wei FROM referral_root_posts p JOIN referral_post_gas g ON g.post_id = p.id")
@@ -327,6 +335,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const known = try ledger()
     try same({
       filed: filed.status === "ran" ? filed.filed.length : 0,
+      dryRun: { status: dryRun.status, sent: quiet.methods.filter((method) => method === "eth_sendRawTransaction" || method === "eth_estimateGas").length, posts: dryRunPosts },
       lost,
       journaled: { state: journaled?.state, reasoned: journaled?.reasoned, nonce: journaled?.evm_nonce, reserved: journaled?.reserved, actual: journaled?.actual_wei },
       fired: [...new Set(lossy.fired.map((entry) => `${entry.method}:${entry.fault}`))],
@@ -341,6 +350,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       known: { claims: known.claims.map((entry) => entry.actor), sealed: known.roots.map((root) => root.sealed), fresh: known.cacheFresh, phase: known.phase },
     }, {
       filed: 31,
+      dryRun: { status: "precheck_failed", sent: 0, posts: [{ posts: 0 }] },
       lost: { status: "in_flight" },
       journaled: { state: "unknown", reasoned: 1, nonce: 0, reserved: 1, actual: null },
       fired: ["eth_sendRawTransaction:http500"],

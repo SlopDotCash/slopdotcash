@@ -1,4 +1,4 @@
-// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type ReleaseSettings, validBudget } from "../../../gen/slopbot__valueInference.effect.vibe"
 
@@ -39,6 +39,10 @@ export effect function valueSettings(vars: ValueSettingsVars) {
   if ((!alertsOnly && (monthly === null || maximum === null)) || (reserve !== "" && amount(reserve) === null) || (monthly !== null && maximum !== null && maximum > monthly)) return undefined
   if (!Number.isFinite(start) || (try isoAt(start)) !== startText || start < millisOf(valueApiStartAt)) return undefined
   return { monthly, maximum, start } satisfies ValueSettings
+}
+
+export function subscriptionCutoff(settings: ValueSettings | undefined) {
+  return Math.ceil((settings?.start ?? millisOf(valueApiStartAt)) / 1000)
 }
 
 export function releaseSettings(settings: ValueSettings | undefined): ReleaseSettings {

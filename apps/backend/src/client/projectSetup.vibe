@@ -86,8 +86,8 @@ export schema OwnedProject { readonly id: string; readonly slug: string; readonl
 
 export schema RevisionChanges { readonly presentation: ReadonlyArray<string>; readonly executable: ReadonlyArray<string>; readonly financial: ReadonlyArray<string> }
 
-export schema CreateRequest { readonly manifest: Schema.Unknown; readonly referrer?: string | null; readonly monthlyAmount?: string }
-export schema ReviseRequest { readonly manifest: Schema.Unknown; readonly expectedRevision: Schema.Unknown; readonly reason?: Schema.Unknown; readonly monthlyAmount?: string }
+export schema CreateRequest { readonly manifest: Schema.Unknown; readonly referrer?: string | null; readonly monthlyAmount?: string; readonly bountyAmount?: string }
+export schema ReviseRequest { readonly manifest: Schema.Unknown; readonly expectedRevision: Schema.Unknown; readonly reason?: Schema.Unknown; readonly monthlyAmount?: string; readonly bountyAmount?: string }
 export schema RemoveRequest { readonly expectedRevision: Schema.Unknown }
 export schema CheckRequest { readonly requestScan?: Schema.Unknown }
 export schema EmptyRequest {}

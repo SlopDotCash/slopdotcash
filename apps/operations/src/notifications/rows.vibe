@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
@@ -48,6 +48,7 @@ export schema EventRow {
   readonly delivery_id: string
   readonly state: string
   readonly evidence_reference: string | null
+  readonly attempt: number | null
 }
 
 export schema ConsentRow {
@@ -99,7 +100,7 @@ export interface Projection {
   readonly references: ReadonlyArray<string>
 }
 
-export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "NotQueued" | "Cancelled">>> = {
+export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "NotQueued">>> = {
   queued: "Queued",
   retrying: "Retrying",
   sending: "Sending",
@@ -111,8 +112,6 @@ export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "Not
   ambiguous: "Ambiguous",
 }
 
-export const cancelledEvent = "cancelled"
-
 export const storedStates = {
   Queued: "queued",
   Retrying: "retrying",
@@ -123,7 +122,6 @@ export const storedStates = {
   Suppressed: "suppressed",
   Exhausted: "exhausted",
   Ambiguous: "ambiguous",
-  Cancelled: "suppressed",
 } as const satisfies Record<Exclude<DeliveryState, "NotQueued">, string>
 
 const templates: Readonly<Record<string, Template>> = {
@@ -190,12 +188,15 @@ effect function kindOf(row: NoticeRow) {
 
 const notQueued: DeliveryState = "NotQueued"
 
-effect function stateOf(row: NoticeRow, events: ReadonlyArray<EventRow>) {
+effect function stateOf(row: NoticeRow) {
   if (row.state === null) return notQueued
   const state = deliveryStates[row.state]
   if (state === undefined) throw new RowMismatch({ text: "notification outbox", issue: `unknown delivery state ${row.state}` })
-  const cancelled: DeliveryState = "Cancelled"
-  return state === "Suppressed" && events.some((event) => event.state === cancelledEvent) ? cancelled : state
+  return state
+}
+
+function preparedNow(state: DeliveryState, attempts: number, events: ReadonlyArray<EventRow>): boolean {
+  return state === "Sending" && events.some((event) => event.state === "prepared" && event.attempt === attempts)
 }
 
 function deliveryOf(row: NoticeRow): Delivery | undefined {
@@ -235,7 +236,7 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
     const events = eventsOf(delivery)
     const escalationOf = positionOf(row.escalation_of)
     const createdAt = millisOf(row.created_at)
-    const state = try stateOf(row, events)
+    const state = try stateOf(row)
     const kind = try kindOf(row)
     notices.push({
       id: index + 1,
@@ -253,7 +254,7 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
       attempts: row.attempts ?? 0,
       nextAt: row.next_attempt_at === null ? createdAt : millisOf(row.next_attempt_at),
       claimedAt: moment(row.claimed_at),
-      prepared: state === "Sending" && row.destination_digest !== null,
+      prepared: preparedNow(state, row.attempts ?? 0, events),
       boundVersion: row.destination_version === null ? 0 : interned(versions, row.destination_version),
       digest: digestNumber(row.destination_digest, versions, pilots),
       providerSuppressed: state === "Suppressed" && events.some((event) => event.state === "suppressed" && event.evidence_reference !== null),

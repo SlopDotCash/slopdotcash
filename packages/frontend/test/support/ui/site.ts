@@ -18,7 +18,7 @@ const site = "https://slop.cash";
 const identityOrigin = "https://identity.slop.cash";
 const appRoot = join(repoRoot, "apps/app");
 const backendRoot = join(repoRoot, "apps/backend");
-const roles = { ADMIN_GITHUB_IDS: "9001", PROJECT_MODERATOR_GITHUB_IDS: "9001", OPERATOR_GITHUB_IDS: "9001" };
+const roles = { ADMIN_GITHUB_IDS: "9001,18633264", PROJECT_MODERATOR_GITHUB_IDS: "9001,18633264", OPERATOR_GITHUB_IDS: "9001" };
 const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#777"/></svg>')}`;
 
 interface Fetching {
@@ -184,11 +184,11 @@ async function routed(route: Route) {
   return route.abort("blockedbyclient");
 }
 
-function watch(opened: Page, into: Session) {
+function watch(opened: BrowserContext, into: Session) {
   opened.on("console", (message) => {
     if (message.type() === "error") into.console.push(`console ${message.text()}`);
   });
-  opened.on("pageerror", (error) => into.console.push(`pageerror ${error.message}`));
+  opened.on("weberror", (error) => into.console.push(`pageerror ${error.error().message}`));
   opened.on("requestfailed", (request) => {
     if (request.url().startsWith(site)) into.failed.push(`failed ${request.method()} ${new URL(request.url()).pathname} ${request.failure()?.errorText ?? ""}`);
   });
@@ -211,6 +211,7 @@ async function reset(context: BrowserCommandContext) {
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", restore: undefined, wallets: undefined };
   session = made;
+  watch(opened, made);
   await opened.route("**/*", routed);
 }
 
@@ -224,7 +225,6 @@ async function tab(name: string): Promise<Page> {
   }
   const opened = await into.context.newPage();
   into.tabs.set(name, opened);
-  watch(opened, into);
   return opened;
 }
 

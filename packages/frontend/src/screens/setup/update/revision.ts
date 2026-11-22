@@ -1,9 +1,10 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
 import { classified, type RevisionChanges } from "@repo/backend/revisionChanges";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isChain } from "@repo/settlement/kernels/networks";
 import { Result, Schema } from "effect";
 import { checkedOnLoad, consents, type SavedConsent, savedEdit } from "../../../../gen/backend__closureConsent.ts";
+import { honorSystemKept } from "../../../../gen/frontend__presentation.ts";
 import type { RepositoryLookup } from "@repo/backend/client";
 import { boundedText, type FundingChoice, type MonthlyPoolValue, monthlyCapDisplay, monthlyPoolValue, type RewardAssetKind, rewardFields, validRepositoryPath } from "../../../flows/projects/proposal.ts";
 import { type AssetKind, assetSymbol, formatRewardCapDisplay } from "../../../kernels/assetText.ts";
@@ -15,11 +16,11 @@ import { initialReadyDraft, nextReadyLabel, type ReadyField, readyErrors, readyF
 
 export type Json = Readonly<Record<string, unknown>>;
 
-export type UpdateField = "image" | "automaticClosure" | ReadyField | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "repositories";
+export type UpdateField = "image" | "automaticClosure" | ReadyField | "headline" | "goal" | "website" | "x" | "criteria" | SkillRuleField | "fundingMode" | "network" | "assetKind" | "tokenAddress" | "tokenSymbol" | "monthlyAmount" | "honorSystem" | "repositories";
 
 export type UpdateDraft = Readonly<Record<UpdateField, string>>;
 
-export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "repositories"];
+export const updateFields: ReadonlyArray<UpdateField> = ["image", "automaticClosure", ...readyFields, "headline", "goal", "website", "x", "criteria", ...skillRuleFields, "fundingMode", "network", "assetKind", "tokenAddress", "tokenSymbol", "monthlyAmount", "honorSystem", "repositories"];
 
 export interface Edit {
   readonly fields: Partial<UpdateDraft> | null;
@@ -32,7 +33,7 @@ export interface Managed {
   readonly manifest: ManagedManifest;
 }
 
-export type ChangeField = "vault" | "slopbot" | "readyLabel" | "image" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly";
+export type ChangeField = "vault" | "slopbot" | "readyLabel" | "image" | "repositories" | "headline" | "description" | "website" | "x" | "approvedScope" | SkillRuleField | "monthly" | "honorSystem";
 
 export type ChangeEffect = "live" | "rescan" | "next-month";
 
@@ -128,7 +129,8 @@ export function editPayload(edit: Edit): string | null {
 
 /** @throws {never} */
 export function withField(edit: Edit, field: UpdateField, value: string, revision: number): Edit {
-  return { fields: { ...(edit.fields ?? {}), [field]: value }, baseRevision: edit.fields === null ? revision : edit.baseRevision };
+  const promise = field === "fundingMode" && value !== "monthly" ? { honorSystem: "false" } : {};
+  return { fields: { ...(edit.fields ?? {}), [field]: value, ...promise }, baseRevision: edit.fields === null ? revision : edit.baseRevision };
 }
 
 /** @throws {never} */
@@ -238,6 +240,7 @@ export function initialDraft(manifest: ManagedManifest): UpdateDraft {
     tokenAddress: asset?.kind === "token" ? asset.address : "",
     tokenSymbol: asset?.kind === "token" ? asset.symbol : "",
     monthlyAmount: capMinor === "0" ? "" : (baseUnits(capMinor, asset?.decimals ?? 6, false) ?? ""),
+    honorSystem: String(manifest.reward.honorSystem === true),
     repositories: "",
   };
 }
@@ -317,14 +320,15 @@ interface Proposed {
   readonly now: string;
 }
 
-function fundingFields({ managed: { raw, manifest }, funding: { choice, amount, fixed, touched }, bountyOnly, now }: Proposed): Json {
+function fundingFields({ managed: { raw, manifest }, value, funding: { choice, amount, fixed, touched }, bountyOnly, now }: Proposed): Json {
   if (bountyOnly || manifest.reward.kind !== "monthly-pool") return {};
   const monthlyCapMinor = choice.mode === "monthly" && amount.valid ? amount.minor : "0";
   const cap = { monthlyCapMinor, monthlyCapDisplay: capDisplay(monthlyCapMinor, manifest.rewardAsset) };
-  const reward = recordOf(raw.reward);
-  if (fixed || choice.mode === "none" || !touched) return { reward: { ...reward, ...cap } };
+  const { honorSystem: _honorSystem, ...reward } = recordOf(raw.reward);
+  const promise = honorSystemKept(choice.mode === "monthly", value.honorSystem === "true") ? { honorSystem: true } : {};
+  if (fixed || choice.mode === "none" || !touched) return { reward: { ...reward, ...cap, ...promise } };
   const fields = rewardFields(choice, now);
-  return { ...fields, reward: { ...reward, ...fields.reward, rewardStartAt: reward.rewardStartAt } };
+  return { ...fields, reward: { ...reward, ...fields.reward, rewardStartAt: reward.rewardStartAt, ...promise } };
 }
 
 function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft): Json {
@@ -368,6 +372,7 @@ function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bount
   const proposedContribution = recordOf(next.contribution);
   const proposedLinks = recordOf(next.links);
   const enabled = (vault: unknown) => (vault ? "Enabled" : "Not enabled");
+  const promised = (reward: unknown) => (recordOf(reward).honorSystem === true ? "On" : "Off");
   const allowed = (slopbot: unknown) => (recordOf(slopbot).automaticClosure === true ? "Allowed" : "Not allowed");
   const names = (list: unknown) => listOf(list).map((entry) => text(recordOf(entry).id)).join(", ");
   const currency = text(recordOf(next.reward).currency);
@@ -386,6 +391,7 @@ function rowsOf({ managed: { raw, manifest }, funding: { choice, amount }, bount
                   : formatRewardCapDisplay(amount.display, { kind: choice.assetKind, symbol: currency })
                 : "None",
           },
+          { field: "honorSystem", label: "Honor-system promise", current: promised(raw.reward), proposed: promised(next.reward) },
         ]
       : [];
   const rows: ReadonlyArray<ChangeRow> = [

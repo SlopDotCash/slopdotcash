@@ -26,7 +26,7 @@ function identityOf(target: Target, facts: Readonly<Record<string, unknown>>): F
 }
 
 effect function installationOf(target: Target) {
-  return (try GitHubApp).installationFor(target.owner, target.name) catch (error) => error._tag === "NotFound" ? null : undefined
+  return (try GitHubApp).installationFor(target.owner, target.name, { followRenamed: false }) catch (error) => error._tag === "NotFound" ? null : undefined
 }
 
 effect function appRead(target: Target) {
@@ -36,9 +36,9 @@ effect function appRead(target: Target) {
   const scoped = (try GitHubApp).asInstallation(installation, { repositories: [target.name], permissions: { repository_advisories: "read" } })
   provide scoped {
     const github = try GitHub
-    const identity = identityOf(target, try github.json(`/repos/${target.owner}/${target.name}`, Fields, { limitBytes }))
+    const identity = identityOf(target, try github.json(`/repos/${target.owner}/${target.name}`, Fields, { limitBytes, followRenamed: false }))
     if (!matchesRegistered(target, identity)) return identity
-    const reporting = try github.json(`/repos/${target.owner}/${target.name}/private-vulnerability-reporting`, Fields, { limitBytes })
+    const reporting = try github.json(`/repos/${target.owner}/${target.name}/private-vulnerability-reporting`, Fields, { limitBytes, followRenamed: false })
     const enabled = reporting["enabled"]
     if (typeof enabled !== "boolean") return unread("ReadUnavailable")
     return { ...identity, enabled } satisfies Fetched

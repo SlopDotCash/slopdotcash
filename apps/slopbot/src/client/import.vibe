@@ -1,6 +1,7 @@
 // spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
 import { postSlopbotValueImport } from "./refusals.vibe"
+import { importBodyLimit } from "../../gen/slopbot__historicalImport.effect.vibe"
 
 export schema ImportReceipt {
   readonly recordDigest: string
@@ -26,7 +27,7 @@ export const ImportTerminalFrame = Schema.Union([
 
 export const ImportFrame = Schema.Union([ImportPendingFrame, ImportTerminalFrame])
 
-export const importLimitBytes = 33 * 1024 * 1024
+export const importLimitBytes = importBodyLimit
 
 export const importMediaTypes = ["application/json", "multipart/form-data"] as const
 

@@ -1,5 +1,5 @@
-// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
-import { type CommitAttribution, type CommitLines, canAttribute, canCreditCommit, completeLines, eligibleKind, initial as attributionInitial, recipientLines } from "../../gen/points__authorship.effect.vibe"
+// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
+import { type CommitAttribution, type CopyBinding, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, contributes, eligibleKind, initial as attributionInitial, recipientFor, recipientLines } from "../../gen/points__authorship.effect.vibe"
 import { type PointShare, type Recipient, allocatePoints, canWriteAllocation, eligibleAllocation, lineTotal } from "../../gen/points__allocation.effect.vibe"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import { type Units, accept as acceptUnit, canAccept as canAcceptUnit, canForm, form, initial as unitsInitial } from "../../gen/points__workUnits.effect.vibe"
@@ -7,7 +7,7 @@ import { valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
 import { commitActorKind } from "../kernels/scoring/lines.ts"
 import { valueTierBand } from "../kernels/scoring/tiers.ts"
 import { Commits } from "./book.vibe"
-import { type Actor, type ActorIndex, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointDecision, type JointMember, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import { type Actor, type ActorIndex, type ClosedPull, type Commit, FactsRefused, type HeldSource, type HoldReason, type JointClaim, type JointDecision, type JointMember, type JointUnit, type MergedPull, type ScoreEvent, compareCodeUnits, instantAtIso, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
 import { scoredSource, valueAssessed } from "./policy.vibe"
 
 export interface JointReview {
@@ -42,7 +42,17 @@ type Allocation =
   | { readonly kind: "held"; readonly reason: HoldReason }
   | { readonly kind: "none" }
 
-type Found = { readonly recipients: ReadonlyArray<Recipient>; readonly complete: boolean } | HoldReason
+interface Weights {
+  readonly recipients: ReadonlyArray<Recipient>
+  readonly complete: boolean
+}
+
+interface UnitLines {
+  readonly actors: ReadonlySet<string> | null
+  readonly weights: Weights | null
+}
+
+type Found = Weights | HoldReason
 
 export interface Timed {
   readonly pull: MergedPull
@@ -85,8 +95,11 @@ effect function attributed(key: string, pull: Source, commit: Commit, owner: Mer
   const book = try Commits
   if (commit.author !== null) try book.send(key, { type: "observePrimary", actor: actors.of(commit.author), kind: commitActorKind(commit.author), linked: true })
   if (pull.author !== null) try book.send(key, { type: "observeSource", actor: actors.of(pull.author), kind: commitActorKind(pull.author) })
-  if (commit.retained !== null) try book.send(key, { type: "observeCopy", copy: { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) } })
-  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge: commit.parentCount > 1, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
+  if (commit.retained !== null) {
+    const copy: CopyBinding = { tag: "VerifiedCopy", actor: actors.of(commit.retained.actor), kind: commitActorKind(commit.retained.actor) }
+    if (canObserveCopy(try book.get(key), copy, commit.retained.discussion)) try book.send(key, { type: "observeCopy", copy, discussion: commit.retained.discussion })
+  }
+  if (commit.parentCount >= 0) try book.send(key, { type: "observeAcceptance", merge: commit.parentCount > 1, resolutions: commit.resolutions.length, units: owner !== undefined && owner.id !== pull.id ? try elsewhere(owner) : unitsInitial })
   if (commit.additions >= 0 && commit.deletions >= 0) try book.send(key, { type: "recordLines", additions: commit.additions, deletions: commit.deletions })
   if (canAttribute(try book.get(key))) try book.send(key, { type: "attribute" })
   if (canCreditCommit(try book.get(key))) try book.send(key, { type: "creditCommit" })
@@ -99,29 +112,97 @@ interface Observation {
   readonly state: CommitAttribution
 }
 
-effect function observed(scope: string, pulls: ReadonlyArray<Source>, only: ReadonlySet<string> | null, owners: ReadonlyMap<string, MergedPull>, actors: ActorIndex) {
+effect function observed(scope: string, pulls: ReadonlyArray<Source>, owners: ReadonlyMap<string, MergedPull>, actors: ActorIndex) {
   const observations: Observation[] = []
   const seen = new Set<string>()
   for (const pull of pulls) for (const commit of pull.commits ?? []) {
     const key = commitKey(pull, commit.oid)
-    if (seen.has(key) || (only !== null && !only.has(commit.oid))) continue
+    if (seen.has(key)) continue
     seen.add(key)
     observations.push({ key, commit, state: try attributed(`${scope}\u0000${pull.id}\u0000${commit.oid}`, pull, commit, owners.get(key), actors) })
   }
   return observations
 }
 
-function linesOf(state: CommitAttribution): CommitLines {
+function unknownClaim(claim: number): PathClaim {
+  return { claim, actor: 0, creditedActors: 0, actorsKnown: false, file: 0, merge: false, resolutions: 0, attributed: false, limited: false, fileFound: false, additions: 0, deletions: 0 }
+}
+
+function countOf(count: number) {
+  return Number.isSafeInteger(count) ? count : -1
+}
+
+function commitClaims(claim: number, state: CommitAttribution): ReadonlyArray<PathClaim> {
+  const acceptance = state.acceptance
+  if (acceptance.tag !== "AcceptedCommit") return [unknownClaim(claim)]
+  if (acceptance.merge || !contributes(state)) return []
   const lines = state.lines.tag === "CompleteLines" ? state.lines : undefined
-  const acceptance = state.acceptance.tag === "AcceptedCommit" ? state.acceptance : undefined
-  return {
-    recipient: state.recipient,
-    additions: lines?.additions ?? 0,
-    deletions: lines?.deletions ?? 0,
-    merge: acceptance?.merge ?? false,
-    earlierSource: acceptance?.earlierSource ?? false,
-    complete: lines !== undefined && acceptance !== undefined,
+  return [{ claim, actor: state.recipient, creditedActors: state.recipient > 0 ? 1 : 0, actorsKnown: true, file: claim, merge: false, resolutions: 0, attributed: lines !== undefined, limited: false, fileFound: true, additions: lines?.additions ?? 0, deletions: lines?.deletions ?? 0 }]
+}
+
+function numbered(numbers: Map<string, number>, key: string) {
+  const known = numbers.get(key)
+  if (known !== undefined) return known
+  numbers.set(key, numbers.size + 1)
+  return numbers.size
+}
+
+function claimedFile(commit: Commit, path: string) {
+  const attribution = commit.attributions.length === 1 ? commit.attributions[0] : undefined
+  const named = attribution?.files.filter((file) => file.filename === path) ?? []
+  const matched = named.length > 0 ? named : attribution?.files.filter((file) => file.previousFilename === path) ?? []
+  return { attribution, file: matched.length === 1 ? matched[0] : undefined }
+}
+
+interface ClaimBook {
+  readonly scope: string
+  readonly byId: ReadonlyMap<string, Source>
+  readonly states: Map<string, CommitAttribution>
+  readonly files: Map<string, number>
+  readonly actors: ActorIndex
+}
+
+effect function pathClaim(claim: JointClaim, number: number, book: ClaimBook) {
+  const sourceId = claim.copy?.sourceId ?? claim.sourceId
+  const oid = claim.copy?.commitOid ?? claim.commitOid
+  const pull = book.byId.get(sourceId)
+  const commits = (pull?.commits ?? []).filter((commit) => commit.oid === oid)
+  const credited = (book.byId.get(claim.sourceId)?.commits ?? []).filter((commit) => commit.oid === claim.commitOid)
+  const commit = commits[0]
+  if (pull === undefined || commit === undefined || commits.length !== 1 || credited.length !== 1 || claim.copy?.verified === false) return unknownClaim(number)
+  const key = `${book.scope}\u0000${sourceId}\u0000${oid}`
+  const state = book.states.get(key) ?? (try attributed(key, pull, commit, undefined, book.actors))
+  book.states.set(key, state)
+  if (state.phase === "ConflictHeld" || state.acceptance.tag !== "AcceptedCommit") return unknownClaim(number)
+  const actor = recipientFor(state)
+  const known = { claim: number, actor, creditedActors: actor > 0 ? 1 : 0, actorsKnown: true, resolutions: commit.resolutions.length }
+  if (commit.parentCount > 1) {
+    const resolution = commit.resolutions.length === 1 ? commit.resolutions[0] : undefined
+    const file = resolution?.find((changed) => changed.filename === claim.path)
+    if (file === undefined && claim.copy === null) return unknownClaim(number)
+    return { ...known, file: 0, merge: true, attributed: false, limited: false, fileFound: file !== undefined, additions: countOf(file?.additions ?? 0), deletions: countOf(file?.deletions ?? 0) } satisfies PathClaim
   }
+  const { attribution, file } = claimedFile(commit, claim.path)
+  return {
+    ...known,
+    file: file === undefined ? 0 : numbered(book.files, JSON.stringify([sourceId, oid, file.filename])),
+    merge: false,
+    attributed: attribution !== undefined,
+    limited: attribution?.limited ?? false,
+    fileFound: file !== undefined,
+    additions: countOf(file?.additions ?? 0),
+    deletions: countOf(file?.deletions ?? 0),
+  } satisfies PathClaim
+}
+
+effect function claimWeights(scope: string, unit: JointUnit, byId: ReadonlyMap<string, Source>, actors: ActorIndex) {
+  const book: ClaimBook = { scope: `${scope}\u0000${unit.workUnitId}`, byId, states: new Map(), files: new Map(), actors }
+  const numbers = new Map<string, number>()
+  const claims: PathClaim[] = []
+  for (const claim of unit.claims) claims.push(try pathClaim(claim, numbered(numbers, claim.id), book))
+  if (claims.some((claim) => !claim.actorsKnown)) return { actors: null, weights: null } satisfies UnitLines
+  const weights: Weights = { recipients: recipientLines(claims), complete: completeLines(claims) }
+  return { actors: actorIds(weights, actors), weights: !weights.complete && weights.recipients.length > 1 ? null : weights } satisfies UnitLines
 }
 
 function eligibleAuthor(author: Actor | null, actors: ActorIndex) {
@@ -132,13 +213,8 @@ function recipientsOf(observations: ReadonlyArray<Observation>, fallback: number
   if (observations.length === 0) return { recipients: fallback > 0 ? [{ actor: fallback, lines: 0 }] : [], complete: true }
   if (observations.every(({ commit }) => commit.parentCount > 1)) return "synchronization-only"
   if (observations.some(({ state }) => state.phase === "ConflictHeld")) return "attribution-conflict"
-  const lines = observations.map(({ state }) => linesOf(state))
-  return { recipients: recipientLines(lines), complete: completeLines(lines) }
-}
-
-function unresolved(found: Found): HoldReason | null {
-  if (typeof found === "string") return found
-  return found.complete ? null : "incomplete-lines"
+  const claims = observations.flatMap(({ state }, index) => commitClaims(index + 1, state))
+  return { recipients: recipientLines(claims), complete: completeLines(claims) }
 }
 
 function allocated(total: number, found: Found): Allocation {
@@ -197,7 +273,7 @@ interface Plan {
   readonly decision: JointDecision
   readonly unit: number
   readonly accepted: ReadonlyMap<string, Accepted>
-  readonly unitActors: ReadonlyMap<string, ReadonlySet<string> | null>
+  readonly lines: ReadonlyMap<string, UnitLines>
 }
 
 effect function acceptanceOf(member: JointMember, pull: Source | undefined) {
@@ -218,7 +294,7 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
   const merged = new Set(input.pulls.map((pull) => pull.id))
   const closed = new Set(input.closed.map((pull) => pull.id))
   for (const unit of decision.units) {
-    if (unit.commits.length === 0 || unit.carriers.some(ratified)) continue
+    if (unit.claims.length === 0 || unit.carriers.some(ratified)) continue
     const sources: Accepted[] = []
     for (const id of new Set(unit.sources)) {
       const source = plan.accepted.get(id)
@@ -246,8 +322,10 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
     assessed.push(unit.workUnitId)
     const original = unit.retainedOriginal === null ? undefined : plan.accepted.get(unit.retainedOriginal)?.pull
     const primary = (original ?? first.pull).author
-    const observations = try observed(unit.workUnitId, sources.map((source) => source.pull), new Set(unit.commits), new Map(), actors)
-    const allocation = allocated(outcome.scored.points, recipientsOf(observations, eligibleAuthor(primary, actors)))
+    const weights = plan.lines.get(unit.workUnitId)?.weights
+    if (weights === undefined || weights === null) return { kind: "held" as const, reason: "incomplete-lines" as const }
+    if (weights.recipients.length === 0) continue
+    const allocation = allocated(outcome.scored.points, weights)
     if (allocation.kind === "held") return allocation
     if (allocation.kind === "none") continue
     const credited = creditOrder(allocation.shares, actors.of(primary))
@@ -274,23 +352,10 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
   return { kind: "events" as const, events, assessed }
 }
 
-effect function unitActorsOf(decision: JointDecision, accepted: ReadonlyMap<string, Accepted>, byId: ReadonlyMap<string, Source>, actors: ActorIndex) {
-  const result = new Map<string, ReadonlySet<string> | null>()
-  for (const unit of decision.units) {
-    if (unit.commits.length === 0) {
-      result.set(unit.workUnitId, new Set())
-      continue
-    }
-    const pulls = unit.sources.flatMap((id) => {
-      const pull = accepted.get(id)?.pull ?? byId.get(id)
-      return pull === undefined ? [] : [pull]
-    })
-    const original = unit.retainedOriginal === null ? undefined : byId.get(unit.retainedOriginal)
-    const primary = (original ?? pulls[0])?.author ?? null
-    const found = recipientsOf(try observed(`${unit.workUnitId}\u0000review`, pulls, new Set(unit.commits), new Map(), actors), eligibleAuthor(primary, actors))
-    result.set(unit.workUnitId, unresolved(found) === null ? actorIds(found, actors) : null)
-  }
-  return result
+effect function unitLinesOf(decision: JointDecision, byId: ReadonlyMap<string, Source>, actors: ActorIndex) {
+  const lines = new Map<string, UnitLines>()
+  for (const unit of decision.units) lines.set(unit.workUnitId, try claimWeights(decision.digest, unit, byId, actors))
+  return lines
 }
 
 function humanAuthor(pull: MergedPull): Actor | null {
@@ -305,7 +370,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
   const observedCommits = new Map<string, ReadonlyArray<Observation>>()
   const outcomeActors = new Map<string, ReadonlySet<string>>()
   for (const { pull } of ordered) {
-    const observations = try observed("pull", [pull], null, owners, actors)
+    const observations = try observed("pull", [pull], owners, actors)
     observedCommits.set(pull.id, observations)
     outcomeActors.set(pull.id, actorIds(recipientsOf(observations, eligibleAuthor(pull.author, actors)), actors) ?? new Set())
   }
@@ -352,9 +417,10 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       const source = try acceptanceOf(member, byId.get(member.pullId))
       if (source !== undefined) accepted.set(member.pullId, source)
     }
-    const unitActors = try unitActorsOf(decision, accepted, byId, actors)
+    const lines = try unitLinesOf(decision, byId, actors)
+    const unitActors = new Map([...lines].map(([workUnitId, unitLines]) => [workUnitId, unitLines.actors]))
     for (const member of decision.members) joint.set(member.pullId, { decision, member, spans, unitActors })
-    const claimed = new Set(decision.units.flatMap((unit) => unit.commits))
+    const claimed = new Set(decision.units.flatMap((unit) => unit.claims.flatMap((claim) => [claim.commitOid, ...(claim.copy === null ? [] : [claim.copy.commitOid])])))
     const members = decision.members.flatMap((member) => {
       const pull = byId.get(member.pullId)
       return pull === undefined ? [] : [pull]
@@ -382,7 +448,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       const at = try instantAtIso(latest.at, latest.pull.id)
       if (canAcceptUnit(units, unit, at)) units = acceptUnit(units, unit, at)
     }
-    plans.push({ decision, unit, accepted, unitActors })
+    plans.push({ decision, unit, accepted, lines })
   }
   const live = plans.filter((plan) => units.units.some((unit) => unit.id === plan.unit && !unit.superseded))
   for (const plan of plans) if (!live.includes(plan)) hold(plan.decision.members.map((member) => member.pullId), "unverified-group")
@@ -453,8 +519,8 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
 
   for (const plan of live) {
     if (plan.decision.members.some((member) => attributionHeld.has(member.pullId))) continue
-    const prepared = plan.decision.units.filter((unit) => unit.commits.length > 0 && !unit.carriers.some(ratified))
-    if (prepared.some((unit) => plan.unitActors.get(unit.workUnitId) === null)) {
+    const prepared = plan.decision.units.filter((unit) => unit.claims.length > 0 && !unit.carriers.some(ratified))
+    if (prepared.some((unit) => plan.lines.get(unit.workUnitId)?.weights === null)) {
       hold(plan.decision.members.map((member) => member.pullId), "incomplete-lines")
       continue
     }

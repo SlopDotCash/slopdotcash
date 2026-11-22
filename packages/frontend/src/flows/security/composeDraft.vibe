@@ -1,4 +1,4 @@
-// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+// spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"; spec/frontend/drafts.md, "The first send fixes a key and retries keep that key and content"; spec/frontend/drafts.md, "A definite refusal returns the report to review with a fresh key"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
 import { randomId } from "@repo/platform/crypto"
 import { route } from "@repo/platform/route"
 import { submitReport as submitted } from "@repo/security/client"
@@ -199,6 +199,13 @@ export effect function reviewReport(slot: ComposeSlot) {
   return ready(try Ref.get(slot.held))
 }
 
+effect function realigned(slot: ComposeSlot, draft: ReportDraft, storageAvailable: boolean) {
+  const session = try BrowserSession
+  try session.compose({ type: "beginReport", projectId: try modelNumber(slot.projectId) })
+  try session.compose({ type: "editReport", contentDigest: try contentNumber(draft), storageAvailable })
+  try session.compose({ type: "reviewReport" })
+}
+
 effect function corrected(slot: ComposeSlot, attempt: SavedReport, captured: string | null, message: string) {
   const next = { ...attempt, attempted: false, key: try randomId() }
   const values = (try SessionStore).values
@@ -206,18 +213,18 @@ effect function corrected(slot: ComposeSlot, attempt: SavedReport, captured: str
   let stored = false
   if (captured !== null && found === captured) stored = Effect.as(values.set(slot.storageKey, JSON.stringify(next)), true) catch () => false
   try Ref.set(slot.held, { saved: next, available: stored, captured: null })
-  if ((try stepped(slot, { type: "open", actorId: actorNumber(slot.owner), projectId: try modelNumber(slot.projectId) })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
-  if ((try stepped(slot, { type: "edit", contentDigest: try contentNumber(next.draft), storageAvailable: stored })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  if ((try stepped(slot, { type: "refuse" })) === "accountChanged") return try hidden(slot, null, composeMessages.signInAgain)
+  try realigned(slot, next.draft, stored)
   return { kind: "corrected", message } satisfies ComposeOutcome
 }
 
 effect function failed(slot: ComposeSlot, attempt: SavedReport, captured: string | null, failure: CallFailure) {
-  try stepped(slot, { type: "loseResponse" })
   const identity = try identityOf(slot.owner)
-  if (identity === "unknown") return { kind: "needsSession", message: composeMessages.unverified } satisfies ComposeOutcome
   if (identity === "changed") return try hidden(slot, captured, composeMessages.signInAgain)
-  if (failure._tag === "ActorChanged" || (failure._tag === "Refused" && accountRefusals.includes(failure.error))) return try hidden(slot, captured, failure.message)
-  if (failure._tag === "Refused" && failure.status === 400) return try corrected(slot, attempt, captured, failure.message)
+  if (identity === "same" && (failure._tag === "ActorChanged" || (failure._tag === "Refused" && accountRefusals.includes(failure.error)))) return try hidden(slot, captured, failure.message)
+  if (identity === "same" && failure._tag === "Refused" && failure.status === 400) return try corrected(slot, attempt, captured, failure.message)
+  try stepped(slot, { type: "loseResponse" })
+  if (identity === "unknown") return { kind: "needsSession", message: composeMessages.unverified } satisfies ComposeOutcome
   return { kind: "uncertain", message: failure.message } satisfies ComposeOutcome
 }
 

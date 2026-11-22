@@ -1,11 +1,13 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
 import type { WorkItem } from "@repo/points/client";
 import type { CycleIndexEntry, DirectTransfer, PublicVaultPayment } from "@repo/settlement/client";
 import { periodContaining } from "@repo/settlement/kernels/calendar";
+import type { PromiseFacts } from "../../../gen/frontend__projections.ts";
 import type { PoolFunding } from "../../kernels/poolFunding.ts";
 import type { Shown } from "../home/listing.ts";
+import { noPromise } from "../home/promise.ts";
 import type { ShownProject } from "./project.schema.ts";
-import { projectFunding, projectListing } from "./summary.ts";
+import { type FundingVaults, projectFunding, projectListing, projectPromiseOf } from "./summary.ts";
 
 export const origin = "https://slop.cash";
 
@@ -87,12 +89,21 @@ export const withdrawn: PoolFunding = projectFunding({
   nowMs: Date.parse("2026-12-10T12:00:00.000Z"),
 });
 
-export const unfunded: PoolFunding = projectFunding({
-  project,
-  read: { status: "Current", vaults: [{ ...vault, freeBalance: 100_000_000n, totalGrossWithdrawn: 0n, monthStarts: [] }] },
-  networkPays: payingEverywhere,
-  nowMs: Date.parse("2026-11-17T12:00:00.000Z"),
-});
+const unfundedRead: FundingVaults = { status: "Current", vaults: [{ ...vault, freeBalance: 100_000_000n, totalGrossWithdrawn: 0n, monthStarts: [] }] };
+
+export const unfunded: PoolFunding = projectFunding({ project, read: unfundedRead, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
+
+export const honorProject: ShownProject = { ...project, reward: { ...project.reward, honorSystem: true } };
+
+export const promised: PromiseFacts = projectPromiseOf({ project: honorProject, funding: unfunded, read: unfundedRead, networkPays: payingEverywhere });
+
+const unreadVaults: FundingVaults = { status: "Current", vaults: [] };
+
+export const unreadFunding: PoolFunding = projectFunding({ project: honorProject, read: unreadVaults, networkPays: payingEverywhere, nowMs: Date.parse("2026-11-17T12:00:00.000Z") });
+
+export const unverified: PromiseFacts = projectPromiseOf({ project: honorProject, funding: unreadFunding, read: unreadVaults, networkPays: payingEverywhere });
+
+export const unpromised = (funding: PoolFunding): PromiseFacts => noPromise(funding.facts);
 
 export const listing = projectListing({ project, funding: funded });
 

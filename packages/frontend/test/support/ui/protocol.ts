@@ -6,6 +6,7 @@ export type Role =
   | "button"
   | "checkbox"
   | "dialog"
+  | "form"
   | "group"
   | "heading"
   | "img"

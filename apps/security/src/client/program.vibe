@@ -1,7 +1,7 @@
 // spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { formatBaseUnits } from "../program/amounts.ts"
 import { SECURITY_DEFAULT_EXCLUSIONS, SECURITY_EXCLUSION_LIMITS, programExclusions, securityExclusions } from "../program/exclusions.ts"
-import { SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit } from "../program/manifest.ts"
+import { type ManifestContext, SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit, securityBountyProblem } from "../program/manifest.ts"
 import { type SplitOutcome, awardSplit } from "../terms/asset.ts"
 
 export interface SplitPolicy {
@@ -24,7 +24,8 @@ export interface SharePreview {
 const canonicalUnits = /^(?:0|[1-9][0-9]*)$/u
 const mainSymbols = new Set(["USD", "USDC", "USDG", "ETH", "SOL"])
 
-export { SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit }
+export { SECURITY_FULL_AWARD_SPLIT, SECURITY_SPLIT, isFullAwardSplit, securityBountyProblem }
+export type { ManifestContext }
 export { SECURITY_DEFAULT_EXCLUSIONS, SECURITY_EXCLUSION_LIMITS, programExclusions, securityExclusions }
 
 export function initialSecuritySplit(existing?: { readonly split?: SplitPolicy }): SplitPolicy {

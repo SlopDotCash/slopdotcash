@@ -8,7 +8,7 @@ import { digest58, u64At, wideOf } from "../solana/bytes.ts"
 import { FeeSolana, addressed, admittedMint, blockhashAnchor, lamportDeltas, networkFee, signatureOfText } from "../solana/client.vibe"
 import { wrappedSol } from "../solana/wire.vibe"
 import { DeploymentRefused, type SolanaVaultDeployment, VaultDeployments } from "./deployments.vibe"
-import { type ClaimEvidence, ClaimRefused, failedClaim } from "./evm.vibe"
+import { type ClaimEvidence, ClaimRefused, failedClaim, roleRefusal } from "./evm.vibe"
 
 const projectSizes = [332, 340]
 const configSizes = [105]
@@ -26,6 +26,7 @@ const token2022AccountSize = 170
 export interface SolanaVaultState {
   readonly deployment: SolanaVaultDeployment
   readonly accrued: bigint
+  readonly roleFree: boolean
 }
 
 export type ClaimTarget = Pick<SolanaVaultDeployment, "program" | "project" | "vault" | "mint">
@@ -91,16 +92,18 @@ export effect function solanaVault(fact: VaultFact, commitment: Commitment) {
   if (deployment.feeRecipient !== wallet) return undefined
   if (deployment.upgradeAuthority === wallet) return try refuse("Fee wallet must not be the program upgrade authority")
   if ((try vaultAddress(deployment)) !== deployment.vault) return try refuse("vault is not the reviewed project's vault address")
-  if (try rolesHeld(deployment, wallet, commitment)) return try refuse("The fee wallet holds or is proposed for a vault role")
+  const roleFree = !(try rolesHeld(deployment, wallet, commitment))
   const accrued = u64At(try programAccount(deployment.program, deployment.project, projectSizes, projectDiscriminator, commitment, "project"), accruedOffset)
   if (accrued === undefined) return try refuse("project account missing")
-  return { deployment, accrued } satisfies SolanaVaultState
+  return { deployment, accrued, roleFree } satisfies SolanaVaultState
 }
 
 export effect function verifySolanaClaim(vaults: ReadonlyArray<VaultFact>, vault: string) {
   const fact = vaults.find((entry) => entry.vault === vault)
   if (fact === undefined) return try refuse("Recorded claim names no reviewed vault")
-  if ((try solanaVault(fact, "finalized")) === undefined) return try refuse("Recorded claim pays another fee wallet")
+  const current = try solanaVault(fact, "finalized")
+  if (current === undefined) return try refuse("Recorded claim pays another fee wallet")
+  if (!current.roleFree) return try refuse(roleRefusal)
 }
 
 export effect function claimSettled(target: ClaimTarget) {

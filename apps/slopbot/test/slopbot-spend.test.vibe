@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"
+// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"
 import { assert, layer } from "@effect/vitest"
 import { Response } from "miniflare"
 import { isoAt } from "@repo/platform/clock"
@@ -59,8 +59,13 @@ effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
   return try probe
 }
 
-effect function reviewOf(area: AreaShape, reviewKey: string, number: number, allowedSteps = 3) {
-  const answer = try area.post("/test/spend/review", { reviewKey, claimToken: `claim-${reviewKey}`, kind: "triage", allowedSteps, job: jobOf(number) })
+effect function reviewOf(area: AreaShape, reviewKey: string, number: number, allowedSteps = 3, at: number | null = null) {
+  const answer = try area.post("/test/spend/review", { reviewKey, claimToken: `claim-${reviewKey}`, kind: "triage", allowedSteps, at, job: jobOf(number) })
+  return [answer.status, answer.body] as const
+}
+
+effect function failuresAt(area: AreaShape, at: number) {
+  const answer = try area.post("/test/spend/failures", { at })
   return [answer.status, answer.body] as const
 }
 
@@ -77,27 +82,111 @@ function requestedSince(start: number) {
 }
 
 layer(Spend, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('A crossed $500 milestone is mailed once, an ambiguous send is never resent, and a failed Orbio call sends one private notice (spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"; spec/slopbot/spendAlerts.md, "Story: Keep one free cost ledger for every provider call"; spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge")', () => effect {
+  it.effect('A failure served by a later step, a repeat within six hours and an unsettled call send no mail, a Surplus spending denial is mailed even when Orbio served the job, and one run sends at most one email (spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent")', () => effect {
     const area = try Area
+    const start = Date.parse("2101-06-01T00:00:00.000Z")
+    const second = (offset: number) => start + offset * 1000
+    const sent = notices.length
+    const done = [200, { outcome: "done" }]
+    try area.sql("INSERT OR IGNORE INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (9100, 55, 'ada', 'User', ?, 1)", try isoAt(start))
+    try area.sql("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at) VALUES ('notice-denied', 9100, 7001, 'pull_request', 25, 'PR_25', 77, 'head', 'content', 'policy', 'running', ?, 'claim-notice-denied', ?)", try isoAt(start), try isoAt(second(1200)))
+
+    providers.reply(orbio, { failure: "unavailable" })
+    providers.reply(sonnet, { text: JSON.stringify({ verdict: "spam" }) })
+    providers.reply(terra, { text: verdict })
+    const fallback = (try reviewOf(area, "notice-fallback", 21, 3, second(0)))[0]
+    const unsettled = [try failuresAt(area, second(60)), sentSince(sent)]
+    const served = [try failuresAt(area, second(121)), sentSince(sent)]
+
+    providers.reply(orbio, { failure: "unavailable" })
+    const first = (try reviewOf(area, "notice-repeat-1", 22, 1, second(200)))[0]
+    providers.reply(orbio, { failure: "unavailable" })
+    const repeat = (try reviewOf(area, "notice-repeat-2", 23, 1, second(210)))[0]
+    providers.reply(orbio, { failure: "rateLimited", retryAfterSeconds: 30 })
+    const other = (try reviewOf(area, "notice-other", 24, 1, second(220)))[0]
+    const oneEmail = [try failuresAt(area, second(400)), sentSince(sent).length]
+    const repeatRun = [try failuresAt(area, second(401)), sentSince(sent).length]
+
+    providers.reply(orbio, { failure: "unavailable" })
+    providers.reply(sonnet, { failure: "spendDenied", resetsAt: try isoAt(second(3600)) })
+    const denied = (try reviewOf(area, "notice-denied", 25, 3, second(500)))[0]
+    providers.reply(orbio, { text: verdict })
+    const resumed = (try reviewOf(area, "notice-denied", 25, 3, second(510)))[0]
+    const deniedRun = [try failuresAt(area, second(700)), sentSince(sent).length]
+    const laterRun = [try failuresAt(area, second(30000)), sentSince(sent).length]
+
+    const failed = try area.sql("SELECT id, review_key, route_step FROM slopbot_costs WHERE review_key LIKE 'notice-%' AND outcome = 'failed' ORDER BY id")
+    const idOf = (reviewKey: string, routeStep: number) => failed.find((row) => row.review_key === reviewKey && row.route_step === routeStep)?.id
+    const suppressions = try area.sql("SELECT s.call_id, s.reason FROM slopbot_provider_failure_suppressions s JOIN slopbot_costs c ON c.id = s.call_id WHERE c.review_key LIKE 'notice-%' ORDER BY s.call_id")
+    const receipts = try area.sql("SELECT r.call_id, r.outcome, r.recorded_at FROM slopbot_provider_failure_receipts r JOIN slopbot_costs c ON c.id = r.call_id WHERE c.review_key LIKE 'notice-%' ORDER BY r.call_id")
+    const unclaimed = try area.sql("SELECT count(*) AS n FROM slopbot_provider_failure_notices n JOIN slopbot_costs c ON c.id = n.call_id WHERE c.review_key LIKE 'notice-%' AND n.claimed_at IS NULL")
+    const mailed = JSON.stringify(notices.slice(sent))
+    try same({
+      reviews: [fallback, first, repeat, other, denied, resumed],
+      unsettled,
+      served,
+      oneEmail,
+      repeatRun,
+      deniedRun,
+      laterRun,
+      emails: sentSince(sent),
+      suppressions,
+      receipts,
+      unclaimed,
+      private: [testPrompt.item, testPrompt.policy, "orbio-test-credential", "surplus-test-credential", "req_fake_"].some((secret) => mailed.includes(secret)),
+    }, {
+      reviews: [200, 200, 200, 200, 200, 200],
+      unsettled: [done, []],
+      served: [done, []],
+      oneEmail: [done, 1],
+      repeatRun: [done, 2],
+      deniedRun: [done, 3],
+      laterRun: [done, 3],
+      emails: [
+        ["/v1/slopbot-failure", { callId: idOf("notice-repeat-1", 1), model: orbioModel, kind: "request-failed", occurredAt: try isoAt(second(200)), failure: "provider returned HTTP 503" }],
+        ["/v1/slopbot-failure", { callId: idOf("notice-other", 1), model: orbioModel, kind: "request-failed", occurredAt: try isoAt(second(220)), failure: "provider returned HTTP 429" }],
+        ["/v1/slopbot-failure", { callId: idOf("notice-denied", 2), model: "claude-sonnet-5.5", kind: "budget-exhausted", occurredAt: try isoAt(second(500)), failure: "provider budget exhausted" }],
+      ],
+      suppressions: [
+        { call_id: idOf("notice-fallback", 1), reason: "served-by-fallback" },
+        { call_id: idOf("notice-fallback", 2), reason: "served-by-fallback" },
+        { call_id: idOf("notice-repeat-2", 1), reason: "repeat-within-6h" },
+        { call_id: idOf("notice-denied", 1), reason: "served-by-fallback" },
+      ],
+      receipts: [
+        { call_id: idOf("notice-repeat-1", 1), outcome: "accepted", recorded_at: try isoAt(second(400)) },
+        { call_id: idOf("notice-other", 1), outcome: "accepted", recorded_at: try isoAt(second(401)) },
+        { call_id: idOf("notice-denied", 2), outcome: "accepted", recorded_at: try isoAt(second(700)) },
+      ],
+      unclaimed: [{ n: 0 }],
+      private: false,
+    })
+  })
+
+  it.effect('A crossed $500 milestone is mailed once, an ambiguous send is never resent, and a failed Orbio call that has not settled sends nothing (spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"; spec/slopbot/spendAlerts.md, "Story: Keep one free cost ledger for every provider call"; spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge")', () => effect {
+    const area = try Area
+    const sent = notices.length
+    const before = providers.calls.length
     providers.reply(orbio, { text: verdict }, { costMicro: 300_000_000 })
     providers.reply(orbio, { text: verdict }, { costMicro: 300_000_000 })
     const paid = [try reviewOf(area, "spend-1", 1), try reviewOf(area, "spend-2", 2)]
     const crossed = [try cron(area), try cron(area)]
-    const afterCrossing = sentSince(0)
+    const afterCrossing = sentSince(sent)
     providers.reply(orbio, { text: verdict }, { costMicro: 500_000_000 })
     const third = try reviewOf(area, "spend-3", 3)
     notifyStatuses.push(500)
     const ambiguous = [try cron(area), try cron(area)]
-    const afterAmbiguity = sentSince(afterCrossing.length)
+    const afterAmbiguity = sentSince(sent + afterCrossing.length)
     providers.reply(orbio, { failure: "unavailable" })
     providers.reply(sonnet, { text: verdict })
     const fallback = try reviewOf(area, "spend-4", 4)
     const noticed = [try cron(area), try cron(area)]
-    const failureNotices = sentSince(afterCrossing.length + afterAmbiguity.length)
+    const failureNotices = sentSince(sent + afterCrossing.length + afterAmbiguity.length)
     const [failedCall] = try area.sql("SELECT id, created_at FROM slopbot_costs WHERE review_key = 'spend-4' AND outcome = 'failed'")
     const month = String(failedCall?.created_at ?? "").slice(0, 7)
+    const unclaimed = try area.sql("SELECT call_id FROM slopbot_provider_failure_notices WHERE call_id = ? AND claimed_at IS NULL", failedCall?.id)
     const alerts = try area.sql("SELECT a.month, a.threshold_micro_usd AS threshold, a.recorded_micro_usd AS recorded, a.estimated_calls AS estimated, r.outcome FROM slopbot_spend_alerts a LEFT JOIN slopbot_spend_alert_receipts r ON r.month = a.month AND r.threshold_micro_usd = a.threshold_micro_usd ORDER BY a.threshold_micro_usd")
-    const receipts = try area.sql("SELECT call_id, outcome FROM slopbot_provider_failure_receipts ORDER BY call_id")
+    const receipts = try area.sql("SELECT r.call_id, r.outcome FROM slopbot_provider_failure_receipts r JOIN slopbot_costs c ON c.id = r.call_id WHERE c.review_key = 'spend-4'")
     const charges = try area.sql("SELECT DISTINCT billed_micro_usdc AS billed, billable_cost_micro_usd AS billable, billing_rule AS rule FROM slopbot_costs")
     try same({
       paid,
@@ -111,16 +200,17 @@ layer(Spend, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       failureNotices,
       alerts,
       receipts,
+      unclaimed,
       charges,
       private: JSON.stringify(notices).includes(testPrompt.item) || JSON.stringify(notices).includes(testPrompt.policy),
     }, {
       paid: [
-        [200, { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 300_000_000, served(1))], blockedUntil: null }],
-        [200, { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 300_000_000, served(2))], blockedUntil: null }],
+        [200, { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 300_000_000, served(before + 1))], blockedUntil: null }],
+        [200, { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 300_000_000, served(before + 2))], blockedUntil: null }],
       ],
       crossed: [true, true],
       afterCrossing: [["/v1/slopbot-spend", { month, thresholdMicroUsd: 500_000_000, recordedMicroUsd: 600_000_000, estimatedCalls: 0 }]],
-      third: { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 500_000_000, served(3))], blockedUntil: null },
+      third: { outcome: "answered", verdict: "spam", calls: [call(1, "orbio", orbioModel, "ok", null, orbioModel, 500_000_000, served(before + 3))], blockedUntil: null },
       ambiguous: [false, true],
       afterAmbiguity: [["/v1/slopbot-spend", { month, thresholdMicroUsd: 1_000_000_000, recordedMicroUsd: 1_100_000_000, estimatedCalls: 0 }]],
       fallback: [200, {
@@ -128,17 +218,18 @@ layer(Spend, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
         verdict: "spam",
         calls: [
           call(1, "orbio", orbioModel, "failed", "provider returned HTTP 503", null, null, null),
-          call(2, "surplus", "claude-sonnet-5.5", "ok", null, "claude-sonnet-5.5", null, served(5)),
+          call(2, "surplus", "claude-sonnet-5.5", "ok", null, "claude-sonnet-5.5", null, served(before + 5)),
         ],
         blockedUntil: null,
       }],
       noticed: [true, true],
-      failureNotices: [["/v1/slopbot-failure", { callId: failedCall?.id, model: orbioModel, kind: "request-failed", occurredAt: failedCall?.created_at, failure: "provider returned HTTP 503" }]],
+      failureNotices: [],
       alerts: [
         { month, threshold: 500_000_000, recorded: 600_000_000, estimated: 0, outcome: "accepted" },
         { month, threshold: 1_000_000_000, recorded: 1_100_000_000, estimated: 0, outcome: "ambiguous" },
       ],
-      receipts: [{ call_id: failedCall?.id, outcome: "accepted" }],
+      receipts: [],
+      unclaimed: [{ call_id: failedCall?.id }],
       charges: [{ billed: 0, billable: 0, rule: "review-v2" }],
       private: false,
     })
@@ -148,7 +239,7 @@ layer(Spend, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const area = try Area
     const started = try Clock.currentTimeMillis
     try area.sql("CREATE TABLE IF NOT EXISTS spend_resumed (delivery_id TEXT NOT NULL, number INTEGER NOT NULL)")
-    try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (9100, 55, 'ada', 'User', ?, 1)", try isoAt(started))
+    try area.sql("INSERT OR IGNORE INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (9100, 55, 'ada', 'User', ?, 1)", try isoAt(started))
     try area.sql("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at) VALUES ('route-e', 9100, 7001, 'pull_request', 15, 'PR_15', 77, 'head', 'content', 'policy', 'running', ?, 'claim-route-e', ?)", try isoAt(started), try isoAt(started + 20 * 60 * 1000))
     const before = providers.calls.length
 

@@ -1,0 +1,8 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"
+export { collectedTargets, fetchRegistry } from "../../census/projects.vibe"
+export { Graphql, graphqlClient, tryReferenceDiscussion } from "../../ingestion/graphql.vibe"
+export { validateHistoricalDiscussion } from "../../ingestion/historicalDiscussion.vibe"
+export { actionsToken } from "../../ingestion/token.vibe"
+export { ValueFeedUnavailable } from "../feeds/authoritative.vibe"
+export { type HistoryPage, type HistorySource, valueHistoryPage, workUnitHistory } from "../feeds/value.vibe"
+export { AssemblyRefused, type Collection, type CollectionSource, type CollectOptions, type CollectRequest, CollectDeferred, CollectUsage, type OpenCollection, SnapshotAssembly, collectArguments, collectSnapshot, collectUsage } from "./pipeline.vibe"

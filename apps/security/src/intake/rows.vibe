@@ -136,7 +136,6 @@ export function screeningOf(stored: StoredIntake, reporter: number, digests: Rea
     noticeVersions: [],
     reportDigests: [...digests],
     exclusions: noExclusions,
-    matchedLine: 0,
   }
 }
 

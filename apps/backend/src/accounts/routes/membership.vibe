@@ -5,7 +5,7 @@ import { bytesBody, handleRaw, json } from "@repo/platform/http"
 import { first, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import { Rejected } from "../../../gen/backend__accounts.effect.vibe"
-import { LookedUpMember, People, pointsClose, pointsJoin, pointsMe, pointsMember, pointsPeople, pointsRevokeSession, pointsSignOut, pointsVisibility, projectSession } from "../../client/accounts.vibe"
+import { LookedUpMember, People, SessionList, pointsClose, pointsJoin, pointsMe, pointsMember, pointsPeople, pointsRevokeSession, pointsSessions, pointsSignOut, pointsVisibility, projectSession } from "../../client/accounts.vibe"
 import { getPointsMember, getPointsPeople, postPointsAccountClose, postPointsJoin, postPointsSessionsRevoke, postPointsSignout, postPointsVisibility } from "../../client/refusals.vibe"
 import { presentedToken, sessionCookieHeader, sessionMember } from "../../session.vibe"
 import { noFacts } from "../store/codec.vibe"
@@ -29,6 +29,7 @@ export schema MemberView {
 schema ItemsRow { items: string }
 schema LookupRow { member: string | null }
 schema ClosedRow { closed_at: string | null }
+schema SessionsRow { sessions: string }
 
 export error IdentityUnavailable
 export error MembershipUnconfirmed { step: string }
@@ -158,6 +159,14 @@ effect function signOut() {
   return pointsJson({ signedOut: true }, clearedSession)
 }
 
+effect function listSessions() {
+  const presented = try presentedSession()
+  if (presented.kind !== "live") return sessionRefusal(presented)
+  const row = try first(SessionsRow, sql`SELECT json_group_array(json_object('id', id, 'expiresAt', expiresAt, 'current', json(CASE WHEN is_current THEN 'true' ELSE 'false' END))) AS sessions FROM (SELECT substr(token_hash, 1, 24) AS id, expires_at AS expiresAt, token_hash = ${presented.hash} AS is_current FROM points_sessions WHERE actor_id = ${presented.member.actor_id} AND expires_at > ${try isoNow()} ORDER BY expires_at DESC)`)
+  const parsed: unknown = try orDie(Effect.try(() => JSON.parse(row?.sessions ?? "[]") as unknown))
+  return pointsJson(try orDie(Schema.decodeUnknownEffect(SessionList)({ sessions: parsed })))
+}
+
 effect function revokeSession() {
   const presented = try presentedSession()
   if (presented.kind !== "live") return sessionRefusal(presented)
@@ -240,6 +249,7 @@ export const MembershipRoutes = Layer.mergeAll(
   handleRaw(pointsJoin, () => pointsAnswer(join())),
   handleRaw(pointsMe, () => pointsAnswer(me())),
   handleRaw(pointsSignOut, () => pointsAnswer(signOut())),
+  handleRaw(pointsSessions, () => pointsAnswer(listSessions())),
   handleRaw(pointsRevokeSession, () => pointsAnswer(revokeSession())),
   handleRaw(pointsVisibility, () => pointsAnswer(publishMembership())),
   handleRaw(pointsClose, () => pointsAnswer(closeAccount())),

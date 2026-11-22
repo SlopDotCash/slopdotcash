@@ -5,7 +5,6 @@ import { mergeRecipe } from "@repo/platform/git/evidence"
 import { MergeVerifier } from "@repo/ports/security"
 import { collectEvidence } from "../value/evidence/collect.vibe"
 import { collectContext } from "../value/evidence/context.vibe"
-import type { Evidence } from "../value/evidence/types.vibe"
 import { ValueRefused, isSubscriptionProvenance, loadValuePolicy, publishValueAssessment, registeredProject, targetOf } from "../value/inference/publish.vibe"
 import type { Recovered } from "../value/proofs/blob.vibe"
 import { fileRecoveryCapture, recoveredFiles } from "../value/proofs/recovery.vibe"
@@ -15,11 +14,10 @@ import { publishWorkUnitAssessment } from "../value/workUnits/publish.vibe"
 import type { AssessedUnit } from "../value/workUnits/record.vibe"
 import { WorkUnitRefused, type WorkUnitSource } from "../value/workUnits/types.vibe"
 import type { GroupRepository } from "../value/workUnits/group.vibe"
-import { apiStart } from "../../gen/slopbot__valueRequests.effect.vibe"
 import { publicationCommitPages } from "./commitPages.vibe"
 import { reached } from "./diagnostics.vibe"
 import { bundleStream } from "./parts.ts"
-import { type AdmittedImport, type AdmittedSource, HistoricalPublication } from "./publisher.vibe"
+import { type AdmittedImport, type AdmittedSource, HistoricalPublication, confirmHistoricalWorkUnit, sourceEvidenceAdmitted } from "./publisher.vibe"
 
 type Fields = Readonly<Record<string, unknown>>
 
@@ -44,11 +42,6 @@ function isAssessedUnit(value: unknown): value is AssessedUnit {
   const reviews = fieldsOf(unit?.["assessment"])?.["reviews"]
   return Array.isArray(claimIds) && claimIds.every((id: unknown) => typeof id === "string")
     && Array.isArray(reviews) && reviews.every((review: unknown) => typeof fieldsOf(review)?.["sourceId"] === "string")
-}
-
-function acceptedBeforeStart(evidence: Evidence) {
-  const occurred = Date.parse(evidence.pull.merged_at ?? evidence.pull.closed_at ?? "")
-  return evidence.pull.state === "closed" && Number.isFinite(occurred) && occurred < apiStart * 1000
 }
 
 function singleResultOf(result: Fields) {
@@ -85,14 +78,14 @@ effect function through<A, E, R>(client: GitHub.Shape, program: A!E!R) {
   }
 }
 
-effect function collectSource(source: AdmittedSource, index: number, count: number, capture: ReturnType<typeof fileRecoveryCapture>) {
+effect function collectSource(admitted: AdmittedImport, source: AdmittedSource, index: number, count: number, capture: ReturnType<typeof fileRecoveryCapture>) {
   try reached("source-evidence", index, count)
   const [owner = "", repo = ""] = source.repository.split("/")
   const registered = try registeredProject(owner, repo, source.repositoryDatabaseId)
   const target = registered === undefined ? undefined : targetOf(registered.repositories, source.repository)
   if (target === undefined) throw new ValueRefused({ reason: "Historical source is not registered" })
   const collected = try captured(capture.layer, collectEvidence({ repository: source.repository, number: source.number, policy: target }))
-  if (!acceptedBeforeStart(collected)) throw new ValueRefused({ reason: "Subscription intake covers only work accepted before the API start" })
+  if (!sourceEvidenceAdmitted(admitted, index, collected.pull)) throw new ValueRefused({ reason: "Subscription intake covers only work accepted before the API start" })
   try reached("source-context", index, count)
   let evidence = try collectContext(collected, source.contextPaths)
   if (source.emptyMergeResolutions) {
@@ -154,7 +147,7 @@ effect function collectAll(admitted: AdmittedImport) {
   const sources: WorkUnitSource[] = []
   const targets: GroupRepository[] = []
   for (const [index, source] of admitted.sources.entries()) {
-    const { source: collected, target } = try collectSource(source, index, count, capture)
+    const { source: collected, target } = try collectSource(admitted, source, index, count, capture)
     sources.push(collected)
     targets.push(target)
   }
@@ -175,6 +168,7 @@ effect function publishInstalled(admitted: AdmittedImport) {
   if (admitted.mode === "work-unit") {
     try reached("prepare-work-unit", null, count)
     const prepared = try prepareWorkUnitEvidence(collected.sources, collected.targets)
+    try confirmHistoricalWorkUnit(admitted, prepared)
     const joint = jointResultOf(admitted.result)
     if (joint === undefined) throw new WorkUnitRefused({ reason: "Joint value assessment does not validate" })
     try reached("publish-work-unit", null, count)

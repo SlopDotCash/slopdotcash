@@ -85,10 +85,10 @@ export effect function observe(submissionId: string, facts: Facts, claim: { read
   if (answer.kind === "failed") return { input, observation: { tag: "Incomplete" } } satisfies Observed
   const proposal = screeningProposal(answer.text, new Set(prior.map((entry) => entry.id)))
   const supplied = prior.length > 0
-  if (proposal === undefined) return { input, observation: { tag: "Proposal", phase: "Unavailable", validResponse: false, matchesPriorCase: false, suppliedPriorCases: supplied, matchedLine: 0 } } satisfies Observed
+  if (proposal === undefined) return { input, observation: { tag: "Proposal", phase: "Unavailable", validResponse: false, matchesPriorCase: false, suppliedPriorCases: supplied } } satisfies Observed
   return {
     input,
-    observation: { tag: "Proposal", phase: decisions[proposal.decision], validResponse: true, matchesPriorCase: proposal.duplicateCaseIds.length > 0, suppliedPriorCases: supplied, matchedLine: 0 },
+    observation: { tag: "Proposal", phase: decisions[proposal.decision], validResponse: true, matchesPriorCase: proposal.duplicateCaseIds.length > 0, suppliedPriorCases: supplied },
     proposedReason: proposal.reason,
   } satisfies Observed
 }

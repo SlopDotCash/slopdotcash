@@ -1,0 +1,916 @@
+// spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/backend/projects.md, "A finalized owner vault registration appends one revision for the current maintainer"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+import { type BlockRef, EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { REVIEWED_FACTORIES, REVIEWED_SOLANA_PROGRAMS, type ReviewedFactory, type ReviewedSolanaProgram } from "@repo/platform/chain/reviewed"
+import { type Signature, SYSTEM_PROGRAM, SolanaRpc, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, address, solanaRpc } from "@repo/platform/chain/solana"
+import { nowSeconds } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { Refused, handle } from "@repo/platform/http"
+import { Authority, type Json, type Network, type ProjectView, Registry, RegistryManifests, Restrictions, VaultRegistrationRefused, Wallets } from "@repo/ports/backend"
+import { type ProgramFundsView, type ProgramTerms, SecurityProgramFunds } from "@repo/ports/security"
+import { type Creation, type Purpose, type RequestRow, canCloseRegisteredCreation, noIdentity, requestRow, savedFor } from "../../gen/settlement__vaultSnapshots.effect.vibe"
+import { type EvmAddress, decodeAddress, decodeUint, escrowGetter, evmAddress, factoryGetter, isZero } from "../chain/evm/abi.ts"
+import { CREATION_REFUSALS, type CreationIssue, creationOf, creationPlan, evmCreationId, minedCreationIssue, monthlyPolicyIssue, roleConflict } from "../chain/evm/creation.ts"
+import { type UnsignedCall, type VaultCreation, decodeVault, vaultKey, vaultsCall } from "../chain/evm/factories.ts"
+import { type U64, digest, u64 } from "../chain/solana/bytes.ts"
+import { SOLANA_CREATION_REFUSALS, type SolanaCreation, type SolanaCreationAsset, type SolanaCreationPlan, initializeVault } from "../chain/solana/creation.ts"
+import { keyBytes } from "../chain/solana/pda.ts"
+import { getProjectVaultsById, postProjectVaultsById } from "../client/refusals.vibe"
+import { type VaultSetupBody, projectVaultRead, projectVaultSetup } from "../client/vaultSetup.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { type Chain, type NetworkKey, EVM_NATIVE_ASSET, NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
+import { readMint } from "../kernels/token2022.ts"
+import { type RegisteredDeployment, projectDeployments, registryDeployments } from "../vault/deployments.vibe"
+import { DeploymentMismatch, verifyEvmDeployment, verifyEvmFactory } from "../vault/evmTotals.vibe"
+import { type EvmDeployment, PolicyInvalid, type PolicyScope, type ReviewedDeployment, type SolanaDeployment } from "../vault/policy.vibe"
+import { refreshDeployment } from "../vault/refresh.vibe"
+import { type RegistryPart, type SaveDetails, type VaultSession, identityOf, modelNetwork, openSession, registrationOf } from "../vault/store.vibe"
+import { PaymentNetworks } from "./networks.vibe"
+import { registryProjectDigest } from "./ownerInstructions.ts"
+import { DeploymentUnverified, reviewedDeployment, verifiedDeployment } from "./solanaDeployment.vibe"
+import { WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+
+export service CreationSources {
+  readonly factories: ReadonlyArray<ReviewedFactory>
+  readonly programs: ReadonlyArray<ReviewedSolanaProgram>
+}
+
+export const reviewedCreationSources = Layer.succeed(CreationSources, { factories: REVIEWED_FACTORIES, programs: REVIEWED_SOLANA_PROGRAMS })
+
+export interface VaultActor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export type VaultPath = "owner" | "saved"
+
+interface Entry {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+const rows = postProjectVaultsById
+
+function refused(entry: Entry, message?: string) {
+  return new Refused({ status: entry.status, code: entry.error, message: message ?? entry.message ?? "", headers: entry.headers })
+}
+
+function creationRefused(code: "vault_creation_failed" | "vault_creation_invalid", message: string) {
+  return new Refused({ status: rows.status422.status, code, message, headers: rows.status422.headers })
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function textOf(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
+  const fields = fieldsOf(value)
+  if (fields === undefined) return JSON.stringify(value) ?? "undefined"
+  return `{${Object.keys(fields).sort().map((key) => `${JSON.stringify(key)}:${canonical(fields[key])}`).join(",")}}`
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return canonical(left) === canonical(right)
+}
+
+interface Terms {
+  readonly manifest: Fields
+  readonly reward: Fields
+  readonly bounty: Fields | undefined
+  readonly bountyAmount: Fields
+}
+
+function termsOf(manifest: Fields): Terms {
+  const bounty = fieldsOf(manifest.securityBounty)
+  return { manifest, reward: fieldsOf(manifest.reward) ?? {}, bounty, bountyAmount: fieldsOf(bounty?.amount) ?? {} }
+}
+
+function deploymentsOf(terms: Terms, scope: PolicyScope): ReadonlyArray<unknown> {
+  const holder = scope === "security-bounty" ? fieldsOf(terms.bounty?.settlement) : fieldsOf(terms.manifest.escrow)
+  return Array.isArray(holder?.deployments) ? holder.deployments : []
+}
+
+function chainOf(terms: Terms, scope: PolicyScope): string | undefined {
+  return textOf(scope === "security-bounty" ? terms.bountyAmount.network : terms.reward.chain)
+}
+
+function sameRewardAsset(left: unknown, right: unknown): boolean {
+  const reviewed = fieldsOf(left)
+  const current = fieldsOf(right)
+  return reviewed !== undefined && current !== undefined && reviewed.network === current.network && reviewed.kind === current.kind && reviewed.address === current.address
+}
+
+function samePolicy(reviewed: Terms, current: Terms, scope: PolicyScope): boolean {
+  if (reviewed.manifest.id !== current.manifest.id) return false
+  if (scope === "security-bounty")
+    return reviewed.bounty !== undefined && current.bounty !== undefined && reviewed.bountyAmount.currency === current.bountyAmount.currency
+      && reviewed.bountyAmount.network === current.bountyAmount.network && reviewed.bountyAmount.decimals === current.bountyAmount.decimals
+      && sameValue(reviewed.bountyAmount.asset, current.bountyAmount.asset) && sameValue(reviewed.bounty.settlement, current.bounty.settlement)
+  return reviewed.reward.kind === current.reward.kind && reviewed.reward.chain === current.reward.chain
+    && sameValue(reviewed.manifest.escrow, current.manifest.escrow)
+    && (sameValue(reviewed.manifest.rewardAsset, current.manifest.rewardAsset) || sameRewardAsset(reviewed.manifest.rewardAsset, current.manifest.rewardAsset))
+}
+
+effect function parsedFields(text: string) {
+  return fieldsOf(Effect.try(() => JSON.parse(text) as unknown) catch () => undefined)
+}
+
+const WALLET_NETWORK: Readonly<Record<Chain, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
+
+export interface VaultProject {
+  readonly view: ProjectView
+  readonly terms: Terms
+  readonly manifestText: string
+}
+
+export effect function loadProject(projectId: string) {
+  const view = try (try Registry).project(projectId)
+  const listed = try (try RegistryManifests).project(projectId)
+  const manifest = listed === undefined ? undefined : try parsedFields(listed.manifest)
+  if (view === undefined || listed === undefined || manifest === undefined) throw refused(rows.notFound)
+  return { view, terms: termsOf(manifest), manifestText: listed.manifest } satisfies VaultProject
+}
+
+const deniedMessage = "Write, maintain or admin access is required. Ask a maintainer with that access to finish setup."
+const slopbotMessage = "Slopbot must be available to check current repository permission."
+
+function adminMessage(project: VaultProject): string {
+  const repositories = project.terms.manifest.repositories
+  const repository = Array.isArray(repositories) ? fieldsOf(repositories[0]) : undefined
+  return `Only the project steward or an admin of ${textOf(repository?.id) ?? ""} can set up the project vault.`
+}
+
+effect function currentAuthority(project: VaultProject, actor: VaultActor) {
+  const repository = project.view.repositories[0]
+  const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId: repository?.id ?? "" })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused(rows.githubUnavailable, slopbotMessage)
+  if (read.installation !== "Installed") throw refused(rows.slopbotRequired, slopbotMessage)
+  if (read.permission !== "PermissionVerified") throw refused(rows.authorityRequired, deniedMessage)
+  return read
+}
+
+effect function participationOpen(project: VaultProject, actor: VaultActor) {
+  const restrictions = try Restrictions
+  if ((try restrictions.account(actor.githubId)).banned || (try restrictions.account(project.view.stewardGithubId)).banned) throw refused(rows.maintainerBanned)
+  if ((try restrictions.project(project.view.projectId)).restricted) throw refused(rows.projectRestrictedRequestReinstatementBeforeSetting)
+}
+
+export effect function authorizeOwner(project: VaultProject, actor: VaultActor) {
+  try participationOpen(project, actor)
+  const read = try currentAuthority(project, actor)
+  if (project.view.stewardGithubId !== actor.githubId && read.repositoryAdmin !== true) throw refused(rows.vaultAuthorityRequired, adminMessage(project))
+  if ((try PaymentNetworks).served.length === 0) throw refused(rows.vaultSetupUnavailable)
+}
+
+export effect function admitted(projectId: string, actor: VaultActor) {
+  const project = try loadProject(projectId)
+  try authorizeOwner(project, actor)
+  return project
+}
+
+interface Candidate {
+  readonly record: Fields
+  readonly network: NetworkKey
+}
+
+effect function templates(scope: PolicyScope, chain: string | undefined) {
+  const served = (try PaymentNetworks).served
+  const inventory = registryDeployments(served, scope) catch () => undefined
+  return (inventory?.deployments ?? []).filter((deployment) => deployment.chain === chain)
+}
+
+function factoryRecord(factory: ReviewedFactory): Fields {
+  return {
+    network: factory.network, sourceCommit: factory.sourceCommit, codeSha256: factory.codeSha256, bindingDelaySeconds: factory.bindingDelaySeconds.toString(),
+    identityAuthority: factory.identityAuthority, feeRecipient: factory.feeRecipient, factory: factory.factory, factoryCodeSha256: factory.factoryCodeSha256,
+    registrar: factory.registrar, evmUpgrade: { ...factory.upgrade },
+  }
+}
+
+function templateFactory(deployment: EvmDeployment): Fields | undefined {
+  if (deployment.evmUpgrade === undefined) return undefined
+  const { history: _history, ...review } = deployment.evmUpgrade
+  return {
+    network: deployment.network, sourceCommit: deployment.sourceCommit, codeSha256: deployment.codeSha256, bindingDelaySeconds: deployment.bindingDelaySeconds,
+    identityAuthority: deployment.identityAuthority, feeRecipient: deployment.feeRecipient, factory: deployment.factory, factoryCodeSha256: deployment.factoryCodeSha256,
+    registrar: deployment.registrar, evmUpgrade: review,
+  }
+}
+
+function programRecord(program: ReviewedSolanaProgram): Fields {
+  return {
+    network: program.network, sourceCommit: program.sourceCommit, programId: program.programId, networkDomain: program.networkDomain, codeSha256: program.codeSha256,
+    upgradeAuthority: program.upgradeAuthority, identityAuthority: program.identityAuthority, feeRecipient: program.feeRecipient, rotationAuthority: program.rotationAuthority,
+    bindingDelaySeconds: program.bindingDelaySeconds.toString(), rotationDelaySeconds: program.rotationDelaySeconds.toString(),
+  }
+}
+
+function templateProgram(deployment: SolanaDeployment): Fields {
+  return {
+    network: deployment.network, sourceCommit: deployment.sourceCommit, programId: deployment.programId, networkDomain: deployment.networkDomain, codeSha256: deployment.codeSha256,
+    upgradeAuthority: deployment.upgradeAuthority, identityAuthority: deployment.identityAuthority, feeRecipient: deployment.feeRecipient, rotationAuthority: deployment.rotationAuthority,
+    bindingDelaySeconds: deployment.bindingDelaySeconds, rotationDelaySeconds: deployment.rotationDelaySeconds,
+  }
+}
+
+effect function factoryCandidates(terms: Terms, scope: PolicyScope) {
+  const served = (try PaymentNetworks).served
+  const chain = chainOf(terms, scope)
+  const reviewed: Candidate[] = (try CreationSources).factories
+    .filter((factory) => served.includes(factory.network) && NETWORKS[factory.network].chain === chain)
+    .map((factory) => ({ record: factoryRecord(factory), network: factory.network }))
+  for (const deployment of try templates(scope, chain)) {
+    const record = deployment.family === "evm" ? templateFactory(deployment) : undefined
+    if (record !== undefined) reviewed.push({ record, network: deployment.network })
+  }
+  return reviewed
+}
+
+effect function programCandidates(terms: Terms, scope: PolicyScope) {
+  const served = (try PaymentNetworks).served
+  const chain = chainOf(terms, scope)
+  const reviewed: Candidate[] = (try CreationSources).programs
+    .filter((program) => served.includes(program.network) && NETWORKS[program.network].chain === chain)
+    .map((program) => ({ record: programRecord(program), network: program.network }))
+  for (const deployment of try templates(scope, chain)) if (deployment.family === "solana") reviewed.push({ record: templateProgram(deployment), network: deployment.network })
+  return reviewed
+}
+
+export effect function setupNetworks(project: VaultProject, scope: PolicyScope) {
+  const chain = chainOf(project.terms, scope)
+  const networks = [
+    ...(try templates(scope, chain)).map((deployment) => deployment.network),
+    ...(try factoryCandidates(project.terms, scope)).map((candidate) => candidate.network),
+    ...(try programCandidates(project.terms, scope)).map((candidate) => candidate.network),
+  ]
+  return [...new Set(networks)]
+}
+
+export interface VaultSetupInput {
+  readonly step: "review" | "register"
+  readonly expectedRevision: number
+  readonly network: string
+  readonly claimId: string
+  readonly automatic: boolean
+  readonly transactionId: string | undefined
+  readonly scope: PolicyScope
+}
+
+export effect function inputOf(body: VaultSetupBody) {
+  if ((body.step !== "review" && body.step !== "register") || body.claimId.length > 150
+    || (body.payoutPolicy !== undefined && body.payoutPolicy !== "ordinary" && body.payoutPolicy !== "security-bounty")
+    || (body.payoutPolicy === "security-bounty" && body.automatic !== false))
+    throw refused(rows.invalidRequestInvalidVaultSetupRequest)
+  const evm = isNetworkKey(body.network) && NETWORKS[body.network].family === "evm"
+  return {
+    step: body.step, expectedRevision: body.expectedRevision, network: body.network, claimId: body.claimId, automatic: body.automatic,
+    transactionId: body.transactionId === undefined ? undefined : evm ? body.transactionId.toLowerCase() : body.transactionId,
+    scope: body.payoutPolicy === "security-bounty" ? "security-bounty" : "ordinary",
+  } satisfies VaultSetupInput
+}
+
+interface Creator {
+  readonly network: NetworkKey
+  readonly owner: string
+  readonly asset: string
+  readonly cap: bigint
+  readonly capDisplay: string
+  readonly bounty: boolean
+  readonly automatic: boolean
+}
+
+effect function creatorOf(actor: VaultActor, input: VaultSetupInput, terms: Terms) {
+  const bounty = input.scope === "security-bounty"
+  const key = isNetworkKey(input.network) ? input.network : undefined
+  const cap = parseBaseUnits(textOf(terms.reward.monthlyCapMinor) ?? "")
+  const unavailable = refused(rows.vaultSetupUnavailableNoStore, bounty ? "Save the USDC bounty terms and network before creating a bounty vault." : "Choose a monthly reward amount and network before creating a vault.")
+  if (key === undefined) throw unavailable
+  const network = NETWORKS[key]
+  if (bounty ? terms.bountyAmount.currency !== "USDC" || network.chain !== terms.bountyAmount.network || input.automatic
+    : terms.manifest.escrow === undefined || terms.reward.kind !== "monthly-pool" || network.chain !== terms.reward.chain || cap === undefined || cap <= 0n)
+    throw unavailable
+  const wallets = try (try Wallets).authorized({ githubId: actor.githubId, network: WALLET_NETWORK[network.chain] })
+  const claim = wallets.find((wallet) => wallet.claimId === input.claimId)
+  if (claim === undefined) throw refused(rows.walletSignatureRequired)
+  const reviewedAsset = defaultAsset(network)?.address
+  const asset = bounty ? reviewedAsset : textOf(fieldsOf(terms.manifest.rewardAsset)?.address) ?? reviewedAsset
+  if (asset === undefined) throw refused(rows.vaultSetupUnavailableThisNetworkHasNo)
+  if (network.family === "solana" && !bounty && (cap ?? 0n) > (1n << 64n) - 1n) throw refused(rows.vaultSetupUnavailableTheMonthlyAmountExceeds)
+  return {
+    network: key, owner: claim.address, asset, cap: bounty ? 0n : cap ?? 0n, capDisplay: bounty ? "" : textOf(terms.reward.monthlyCapDisplay) ?? "", bounty, automatic: input.automatic,
+  } satisfies Creator
+}
+
+type Verified =
+  | { readonly kind: "pending"; readonly provisional: Json | undefined }
+  | { readonly kind: "verified"; readonly record: Json; readonly deployment: ReviewedDeployment; readonly decimals: number }
+
+type Attempt<A> = { readonly kind: "skip" } | { readonly kind: "mismatch"; readonly message: string } | { readonly kind: "done"; readonly value: A }
+
+function skipped(error: { readonly _tag: string }): boolean {
+  return ["DeploymentMismatch", "DeploymentUnverified", "PolicyInvalid", "RpcMalformed", "RpcRefused", "WrongChain", "GenesisPinMissing"].includes(error._tag)
+}
+
+const WORD = /^0x[0-9a-fA-F]{64}$/u
+const CODE = /^0x(?:[0-9a-fA-F]{2})+$/u
+
+effect function word(to: EvmAddress, data: `0x${string}`, block: BlockRef) {
+  const value = try (try EvmRpc).call({ to, data, block })
+  if (!WORD.test(value)) throw new DeploymentMismatch({ message: "Malformed escrow state" })
+  return value.toLowerCase()
+}
+
+effect function codeDigest(at: EvmAddress, block: BlockRef) {
+  const code = try (try EvmRpc).code(at, block)
+  if (!CODE.test(code)) throw new DeploymentMismatch({ message: "Escrow runtime code unavailable" })
+  const bytes = new Uint8Array((code.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(code.slice(2 + index * 2, 4 + index * 2), 16)
+  return try sha256Hex(bytes)
+}
+
+effect function ownAddress(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) throw new DeploymentMismatch({ message: "Reviewed deployment identity is incomplete" })
+  return parsed
+}
+
+const PLACEHOLDER_VAULT = "0x00000000000000000000000000000000000000a1"
+const PLACEHOLDER_TRANSACTION = `0x${"0".repeat(63)}1`
+
+effect function forCreation(candidate: EvmDeployment) {
+  try verifyEvmFactory(candidate, "finalized")
+  const upgrade = candidate.evmUpgrade
+  const factory = try ownAddress(candidate.factory)
+  const implementation = upgrade === undefined ? undefined : evmAddress(upgrade.vaultImplementation)
+  if (upgrade === undefined || implementation === undefined) throw new DeploymentMismatch({ message: CREATION_REFUSALS.creationImplementationUnreviewed })
+  if (decodeAddress(try word(factory, factoryGetter("vaultImplementation"), "finalized")) !== implementation || (try codeDigest(implementation, "finalized")) !== upgrade.vaultImplementationCodeSha256)
+    throw new DeploymentMismatch({ message: CREATION_REFUSALS.creationImplementationUnreviewed })
+  if (decodeAddress(try word(factory, factoryGetter("identityAuthority"), "finalized")) !== (try ownAddress(candidate.identityAuthority)))
+    throw new DeploymentMismatch({ message: CREATION_REFUSALS.identityAuthorityDiffers })
+  return factory
+}
+
+interface EvmResolved {
+  readonly candidate: EvmDeployment
+  readonly record: Fields
+  readonly creation: VaultCreation
+  readonly plan: UnsignedCall
+}
+
+effect function evmPrepared(projectId: string, scope: PolicyScope, creator: Creator, record: Fields) {
+  const owner = evmAddress(creator.owner)
+  const identityAuthority = evmAddress(textOf(record.identityAuthority) ?? "")
+  const feeRecipient = evmAddress(textOf(record.feeRecipient) ?? "")
+  if (owner !== undefined && identityAuthority !== undefined && feeRecipient !== undefined && roleConflict(owner, identityAuthority, feeRecipient)) throw refused(rows.vaultRoleConflict)
+  const parsed = try reviewedDeployment(projectId, scope, NETWORKS[creator.network].chain, {
+    ...record, vault: PLACEHOLDER_VAULT, owner: creator.owner, asset: creator.asset, deploymentTransaction: PLACEHOLDER_TRANSACTION,
+    programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, rotationDelaySeconds: null,
+  })
+  if (parsed.family !== "evm") throw new PolicyInvalid({ message: "Escrow program does not match the network" })
+  const factory = try forCreation(parsed)
+  const creation = creationOf({ owner: creator.owner, projectDigest: registryProjectDigest(projectId), asset: creator.asset, bounty: creator.bounty, monthlyCap: creator.cap, automatic: creator.automatic })
+  const plan = creation === undefined ? undefined : creationPlan(factory, creation)
+  if (creation === undefined || plan === undefined) throw new DeploymentMismatch({ message: CREATION_REFUSALS.unsupportedCreation })
+  return { candidate: parsed, record, creation, plan } satisfies EvmResolved
+}
+
+effect function evmUrls(network: NetworkKey) {
+  const urls = try (try PaymentNetworks).urls(network)
+  if (urls === undefined) throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailableOnThisNetwork)
+  return urls
+}
+
+function chainIdOf(network: NetworkKey): bigint {
+  const facts = NETWORKS[network]
+  return BigInt(facts.family === "evm" ? facts.chainId : 0)
+}
+
+effect function evmReviewed(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
+  const resolved = try evmPrepared(projectId, input.scope, creator, record)
+  const existing = decodeVault(try word(resolved.plan.to, vaultsCall(vaultKey(resolved.creation)), "latest"))
+  if (existing === undefined) throw new DeploymentMismatch({ message: "Malformed escrow state" })
+  if (existing === null) {
+    const created = decodeAddress(try (try EvmRpc).call({ to: resolved.plan.to, data: resolved.plan.data, block: "latest", from: resolved.plan.from }))
+    if (created === undefined || isZero(created)) throw new DeploymentMismatch({ message: CREATION_REFUSALS.unsupportedCreation })
+  }
+  return {
+    payoutPolicy: input.scope, family: "evm", network: input.network, owner: resolved.plan.from, asset: resolved.creation.asset,
+    cap: creator.cap.toString(), capDisplay: creator.capDisplay, automatic: input.automatic, chainId: chainIdOf(creator.network).toString(),
+    existingVault: existing, transaction: { from: resolved.plan.from, to: resolved.plan.to, data: resolved.plan.data, value: "0x0" },
+  } as const
+}
+
+effect function evmReviewAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
+  provide evmRpc({ urls: try evmUrls(creator.network), chainId: chainIdOf(creator.network) }) {
+    return try evmReviewed(projectId, input, creator, record)
+  }
+}
+
+effect function evmReview(projectId: string, input: VaultSetupInput, creator: Creator, terms: Terms) {
+  for (const candidate of try factoryCandidates(terms, input.scope)) {
+    if (candidate.network !== creator.network) continue
+    const found = evmReviewAttempt(projectId, input, creator, candidate.record) catch effect (error) => {
+      if (error._tag === "RpcUnavailable") throw refused(rows.vaultNetworkUnavailable)
+      if (skipped(error)) return undefined
+      throw error
+    }
+    if (found !== undefined) return found
+  }
+  throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailableOnThisNetwork)
+}
+
+interface MinedReceiptRead {
+  readonly transactionHash: string
+  readonly blockHash: string
+  readonly blockNumber: bigint
+  readonly status: "success" | "reverted"
+}
+
+type CreationRead =
+  | { readonly kind: "unmined" }
+  | { readonly kind: "unsettled" }
+  | { readonly kind: "verified"; readonly vault: EvmAddress; readonly final: boolean; readonly decimals: number }
+
+effect function verifiedCreationAt(resolved: EvmResolved, transactionId: `0x${string}`, receipt: MinedReceiptRead, final: boolean) {
+  const rpc = try EvmRpc
+  const transaction = try rpc.transaction(transactionId)
+  const block = try rpc.blockByNumber(receipt.blockNumber)
+  const id = evmCreationId(transactionId)
+  const issue: CreationIssue | undefined = transaction === undefined || block === undefined || id === undefined ? "receiptMismatch"
+    : minedCreationIssue({ transactionId: id, receipt, transaction, block, plan: resolved.plan })
+  if (issue === "creationFailed" && final) throw creationRefused("vault_creation_failed", CREATION_REFUSALS.creationFailed)
+  if (issue !== undefined) throw new DeploymentMismatch({ message: CREATION_REFUSALS[issue] })
+  const vault = decodeVault(try word(resolved.plan.to, vaultsCall(vaultKey(resolved.creation)), receipt.blockNumber))
+  if (vault === undefined || vault === null) throw new DeploymentMismatch({ message: "Escrow vault was not created by the reviewed factory" })
+  const created = { ...resolved.candidate, vault }
+  try verifyEvmDeployment(created, receipt.blockNumber)
+  if (final) try verifyEvmDeployment(created, "finalized")
+  const policyIssue = resolved.creation.purpose === "BountyPurpose" ? undefined
+    : monthlyPolicyIssue(resolved.creation, try word(vault, escrowGetter("monthlyCap"), receipt.blockNumber), try word(vault, escrowGetter("monthlyEnabled"), receipt.blockNumber))
+  if (policyIssue !== undefined) throw new DeploymentMismatch({ message: CREATION_REFUSALS[policyIssue] })
+  const decimals = decodeUint(try word(vault, escrowGetter("decimals"), receipt.blockNumber), 36n)
+  if (decimals === undefined) throw new DeploymentMismatch({ message: "Malformed escrow state" })
+  return { kind: "verified", vault, final, decimals: Number(decimals) } satisfies CreationRead
+}
+
+effect function creationAt(resolved: EvmResolved, transactionId: `0x${string}`, acceptIncluded: boolean) {
+  const rpc = try EvmRpc
+  const receipt = try rpc.receipt(transactionId)
+  if (receipt === undefined) return { kind: "unmined" } satisfies CreationRead
+  const finalized = try rpc.head("finalized")
+  const final = receipt.blockNumber <= finalized.number
+  if (!final && !acceptIncluded) return { kind: "unmined" } satisfies CreationRead
+  const checked = verifiedCreationAt(resolved, transactionId, receipt, final) catch effect (error) => {
+    if (error._tag === "DeploymentMismatch" && !final) return undefined
+    throw error
+  }
+  return checked ?? ({ kind: "unsettled" } satisfies CreationRead)
+}
+
+effect function evmRegistered(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields, transactionId: `0x${string}`) {
+  const resolved = try evmPrepared(projectId, input.scope, creator, record)
+  const acceptIncluded = !creator.bounty && creator.asset.toLowerCase() !== EVM_NATIVE_ASSET
+  const read = creationAt(resolved, transactionId, acceptIncluded) catch effect (error) => {
+    if (error._tag === "DeploymentMismatch") return { kind: "mismatch", message: error.message } as const
+    throw error
+  }
+  return { resolved, read }
+}
+
+effect function evmRegisterAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields, transactionId: `0x${string}`) {
+  provide evmRpc({ urls: try evmUrls(creator.network), chainId: chainIdOf(creator.network) }) {
+    return try evmRegistered(projectId, input, creator, record, transactionId)
+  }
+}
+
+effect function evmRegister(projectId: string, input: VaultSetupInput, creator: Creator, terms: Terms, transactionId: `0x${string}`) {
+  let mismatch: string | undefined = undefined
+  let unsettled = false
+  for (const candidate of try factoryCandidates(terms, input.scope)) {
+    if (candidate.network !== creator.network) continue
+    const outcome = evmRegisterAttempt(projectId, input, creator, candidate.record, transactionId) catch effect (error) => {
+      if (error._tag === "RpcUnavailable") throw refused(rows.vaultNetworkUnavailable)
+      if (skipped(error)) return undefined
+      throw error
+    }
+    if (outcome === undefined) continue
+    const { resolved, read } = outcome
+    if (read.kind === "mismatch") {
+      mismatch = mismatch ?? read.message
+      continue
+    }
+    if (read.kind === "unsettled") {
+      unsettled = true
+      continue
+    }
+    if (read.kind === "unmined") return { kind: "pending", provisional: undefined } satisfies Verified
+    const record: Json = {
+      ...(resolved.record as Readonly<Record<string, Json>>), programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, rotationDelaySeconds: null,
+      vault: read.vault, owner: resolved.plan.from, asset: resolved.creation.asset, deploymentTransaction: transactionId,
+    }
+    if (!read.final) return { kind: "pending", provisional: record } satisfies Verified
+    return { kind: "verified", record, deployment: { ...resolved.candidate, vault: read.vault, deploymentTransaction: transactionId }, decimals: read.decimals } satisfies Verified
+  }
+  if (unsettled) return { kind: "pending", provisional: undefined } satisfies Verified
+  if (mismatch !== undefined) throw creationRefused("vault_creation_invalid", mismatch)
+  throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailableOnThisNetwork)
+}
+
+interface SolanaResolved {
+  readonly candidate: SolanaDeployment
+  readonly record: Fields
+  readonly creation: SolanaCreation
+  readonly plan: SolanaCreationPlan
+  readonly decimals: number
+}
+
+effect function solanaAsset(mintText: string) {
+  if (mintText === SYSTEM_PROGRAM) return { asset: { kind: "Native" } as SolanaCreationAsset, decimals: 9 }
+  const mint = address(mintText)
+  if (mint === undefined) throw new WalletActionRefused({ message: "The vault mint is not an admitted token" })
+  const account = try (try SolanaRpc).account(mint, "finalized")
+  const read = account === undefined ? undefined : readMint({ program: account.owner, bytes: account.data, mint: keyBytes(mint) })
+  if (read === undefined || read.kind === "Refused") throw new WalletActionRefused({ message: "The vault mint is not an admitted token" })
+  return { asset: { kind: "Token", mint, tokenProgram: read.kind === "Classic" ? TOKEN_PROGRAM : TOKEN_2022_PROGRAM } as SolanaCreationAsset, decimals: read.decimals }
+}
+
+effect function solanaPrepared(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
+  const program = address(textOf(record.programId) ?? "")
+  const owner = address(creator.owner)
+  const identityAuthority = address(textOf(record.identityAuthority) ?? "")
+  const feeRecipient = address(textOf(record.feeRecipient) ?? "")
+  const networkDomain = digest(textOf(record.networkDomain) ?? "")
+  const bindingDelay = u64(parseBaseUnits(textOf(record.bindingDelaySeconds) ?? "") ?? -1n)
+  const rotationDelay = u64(parseBaseUnits(textOf(record.rotationDelaySeconds) ?? "") ?? -1n)
+  const cap = u64(creator.cap)
+  if (program === undefined || owner === undefined || identityAuthority === undefined || feeRecipient === undefined || networkDomain === undefined || bindingDelay === undefined || rotationDelay === undefined || cap === undefined)
+    throw new WalletActionRefused({ message: SOLANA_CREATION_REFUSALS.policyDiffers })
+  const { asset, decimals } = try solanaAsset(creator.asset)
+  const creation: SolanaCreation = {
+    program, owner, asset, projectDigest: registryProjectDigest(projectId), networkDomain, identityAuthority, feeRecipient, bindingDelay, rotationDelay,
+    purpose: creator.bounty ? "Bounty" : "Ordinary", monthly: creator.bounty ? undefined : { cap: cap as U64, enabled: creator.automatic },
+  }
+  const planned = initializeVault(creation)
+  if (planned.kind === "refused") throw new WalletActionRefused({ message: SOLANA_CREATION_REFUSALS[planned.issue] })
+  const parsed = try reviewedDeployment(projectId, input.scope, "solana", {
+    ...record, factory: null, factoryCodeSha256: null, registrar: null, projectPda: planned.plan.project, vault: planned.plan.vault, owner: creator.owner, asset: creator.asset,
+    deploymentTransaction: input.transactionId ?? "1".repeat(88),
+  })
+  if (parsed.family !== "solana") throw new PolicyInvalid({ message: "Escrow program does not match the network" })
+  return { candidate: parsed, record, creation, plan: planned.plan, decimals } satisfies SolanaResolved
+}
+
+effect function solanaUrls(network: NetworkKey) {
+  const urls = try (try PaymentNetworks).urls(network)
+  if (urls === undefined) throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailable)
+  return urls
+}
+
+function solanaGenesis(network: NetworkKey): string {
+  const facts = NETWORKS[network]
+  return facts.family === "solana" ? facts.genesisHash : ""
+}
+
+effect function solanaReviewed(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
+  const resolved = try solanaPrepared(projectId, input, creator, record)
+  const existing = try (try SolanaRpc).account(resolved.plan.project, "finalized")
+  const verifiedExisting = existing === undefined ? undefined : verifiedDeployment(resolved.candidate) catch effect (error) => {
+    if (error._tag === "DeploymentUnverified") throw new WalletActionRefused({ message: "An account already exists at this project address and does not match this creation request." })
+    throw error
+  }
+  const prepared = verifiedExisting === undefined ? try prepareWalletTransaction(resolved.creation.owner, resolved.plan.instructions) : undefined
+  const { creation } = resolved
+  return {
+    payoutPolicy: input.scope, family: "solana", network: input.network, owner: creator.owner, asset: creator.asset,
+    cap: creator.cap.toString(), capDisplay: creator.capDisplay, automatic: input.automatic,
+    creation: {
+      programId: creation.program, owner: creator.owner, mint: creator.asset, projectDigest: creation.projectDigest, networkDomain: creation.networkDomain,
+      identityAuthority: creation.identityAuthority, feeRecipient: creation.feeRecipient, bindingDelaySeconds: creation.bindingDelay.toString(),
+      rotationDelaySeconds: creation.rotationDelay.toString(), payoutPolicy: input.scope, tokenProgram: creation.asset.kind === "Token" ? creation.asset.tokenProgram : SYSTEM_PROGRAM,
+      ...(creator.bounty ? {} : { monthlyCap: creator.cap.toString(), automaticMonthly: input.automatic }),
+    },
+    projectPda: resolved.plan.project, vault: resolved.plan.vault, decimals: resolved.decimals,
+    existingVault: verifiedExisting === undefined ? null : resolved.plan.vault as string,
+    transaction: prepared === undefined ? null : { blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, transaction: prepared.transaction, networkFeeLamports: prepared.networkFeeLamports },
+  } as const
+}
+
+effect function solanaReviewAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
+  provide solanaRpc({ urls: try solanaUrls(creator.network), genesis: solanaGenesis(creator.network) }) {
+    return solanaReviewed(projectId, input, creator, record) catch effect (error) => {
+      if (error._tag === "WalletActionRefused") return { kind: "mismatch", message: error.message } as const
+      throw error
+    }
+  }
+}
+
+effect function solanaReview(projectId: string, input: VaultSetupInput, creator: Creator, terms: Terms) {
+  let mismatch: string | undefined = undefined
+  for (const candidate of try programCandidates(terms, input.scope)) {
+    if (candidate.network !== creator.network) continue
+    const found = solanaReviewAttempt(projectId, input, creator, candidate.record) catch effect (error) => {
+      if (error._tag === "RpcUnavailable") throw refused(rows.vaultNetworkUnavailable)
+      if (skipped(error)) return undefined
+      throw error
+    }
+    if (found === undefined) continue
+    if ("kind" in found) {
+      mismatch = mismatch ?? found.message
+      continue
+    }
+    return found
+  }
+  if (mismatch !== undefined) throw creationRefused("vault_creation_invalid", mismatch)
+  throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailable)
+}
+
+type SolanaRead = { readonly kind: "pending" } | { readonly kind: "final"; readonly resolved: SolanaResolved } | { readonly kind: "mismatch"; readonly message: string }
+
+effect function solanaRegistered(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields, transactionId: string) {
+  const resolved = try solanaPrepared(projectId, input, creator, record)
+  const fetched = try (try SolanaRpc).transaction(transactionId as Signature, "finalized")
+  if (fetched === undefined) return { kind: "pending" } satisfies SolanaRead
+  const message = try walletMessage(resolved.creation.owner, fetched.transaction.message.recentBlockhash, resolved.plan.instructions)
+  const checked = try checkWalletTransaction(resolved.creation.owner, message, transactionId, false)
+  if (checked.status === "pending") return { kind: "pending" } satisfies SolanaRead
+  if (checked.status === "failed") throw creationRefused("vault_creation_failed", "The exact vault creation transaction failed. Review a new request.")
+  try verifiedDeployment(resolved.candidate)
+  return { kind: "final", resolved } satisfies SolanaRead
+}
+
+effect function solanaRegisterAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields, transactionId: string) {
+  provide solanaRpc({ urls: try solanaUrls(creator.network), genesis: solanaGenesis(creator.network) }) {
+    return solanaRegistered(projectId, input, creator, record, transactionId) catch effect (error) => {
+      if (error._tag === "WalletActionRefused" || error._tag === "DeploymentUnverified") return { kind: "mismatch", message: error.message } satisfies SolanaRead
+      throw error
+    }
+  }
+}
+
+effect function solanaRegister(projectId: string, input: VaultSetupInput, creator: Creator, terms: Terms, transactionId: string) {
+  let mismatch: string | undefined = undefined
+  for (const candidate of try programCandidates(terms, input.scope)) {
+    if (candidate.network !== creator.network) continue
+    const read = solanaRegisterAttempt(projectId, input, creator, candidate.record, transactionId) catch effect (error) => {
+      if (error._tag === "RpcUnavailable") throw refused(rows.vaultNetworkUnavailable)
+      if (skipped(error)) return undefined
+      throw error
+    }
+    if (read === undefined) continue
+    if (read.kind === "mismatch") {
+      mismatch = mismatch ?? read.message
+      continue
+    }
+    if (read.kind === "pending") return { kind: "pending", provisional: undefined } satisfies Verified
+    const { resolved } = read
+    const record: Json = {
+      ...(resolved.record as Readonly<Record<string, Json>>), factory: null, factoryCodeSha256: null, registrar: null,
+      projectPda: resolved.plan.project, vault: resolved.plan.vault, owner: creator.owner, asset: creator.asset, deploymentTransaction: transactionId,
+    }
+    return { kind: "verified", record, deployment: { ...resolved.candidate, deploymentTransaction: transactionId }, decimals: resolved.decimals } satisfies Verified
+  }
+  if (mismatch !== undefined) throw creationRefused("vault_creation_invalid", mismatch)
+  throw refused(rows.vaultSetupUnavailableVaultCreationIsUnavailable)
+}
+
+schema RevisionRow { readonly manifest: string }
+
+effect function reviewedTerms(project: VaultProject, expected: number) {
+  if (expected === project.view.revision) return project.terms
+  const stored = try first(RevisionRow, sql`SELECT manifest FROM project_revisions WHERE project_id = ${project.view.projectId} AND revision = ${expected}`)
+  const manifest = stored === undefined ? undefined : try parsedFields(stored.manifest)
+  return manifest === undefined ? undefined : termsOf(manifest)
+}
+
+schema DecimalsRow { readonly asset_decimals: number }
+
+effect function registeredOf(project: VaultProject, scope: PolicyScope) {
+  const listed = { projectId: project.view.projectId, active: true, revision: project.view.revision, manifest: project.manifestText, manifestSha256: project.view.manifestSha256, updatedAt: "" }
+  const found = projectDeployments(listed, scope) catch () => []
+  const [deployment] = found
+  if (deployment === undefined) return undefined
+  const row = try first(DecimalsRow, sql`SELECT asset_decimals FROM vault_snapshots WHERE project_id = ${deployment.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`)
+  const asset = scope === "security-bounty" ? project.terms.bountyAmount : fieldsOf(project.terms.manifest.rewardAsset) ?? {}
+  const decimals = row?.asset_decimals ?? (typeof asset.decimals === "number" ? asset.decimals : 0)
+  return { deployment, registration: registrationOf({ ...deployment, revision: project.view.revision }, decimals) }
+}
+
+function purposeOf(scope: PolicyScope): Purpose {
+  return scope === "security-bounty" ? "PrivateBounty" : "Ordinary"
+}
+
+export effect function registrySession(project: VaultProject, expected: number) {
+  const ordinary = try registeredOf(project, "ordinary")
+  const bounty = try registeredOf(project, "security-bounty")
+  const current = { number: project.view.revision, ordinaryPolicy: 1, privatePolicy: 2 }
+  const reviewed = expected > 0 && expected < project.view.revision ? try reviewedTerms(project, expected) : undefined
+  const history = reviewed === undefined ? [current]
+    : [{ number: expected, ordinaryPolicy: samePolicy(reviewed, project.terms, "ordinary") ? 1 : 3, privatePolicy: samePolicy(reviewed, project.terms, "security-bounty") ? 2 : 4 }, current]
+  const none = { tx: "", revision: 0, identity: noIdentity }
+  const registry: RegistryPart = { revision: current, history, ordinary: ordinary?.registration ?? none, privateBounty: bounty?.registration ?? none }
+  return try openSession({ projectId: project.view.projectId }, registry)
+}
+
+export type VaultAnswer =
+  | { readonly status: "pending"; readonly provisional?: Json }
+  | { readonly status: "registered"; readonly deployment: Json; readonly project: Json; readonly revision: number; readonly notice?: string }
+
+export const REQUEST_ID = 1
+
+function unverifiedCreation(request: RequestRow): Creation {
+  return { identity: noIdentity, transaction: request.tx, reviewed: request.expected, purpose: request.purpose, status: "UnverifiedCreation" }
+}
+
+effect function closeSaved(session: VaultSession, network: string, tx: string) {
+  const state = try session.current()
+  const saved = savedFor(state, network, tx)
+  if (canCloseRegisteredCreation(state, saved.id)) try session.send({ type: "closeRegisteredCreation", savedId: saved.id })
+}
+
+effect function observe(deployment: RegisteredDeployment) {
+  const refreshed = refreshDeployment(deployment) catch () => undefined
+  if (refreshed === undefined || (refreshed.result !== "ObservationStored" && refreshed.result !== "ObservationOlder")) throw refused(rows.vaultSnapshotUnavailable)
+}
+
+function registrationRefusal(error: VaultRegistrationRefused, project: VaultProject, scope: PolicyScope): Refused {
+  switch (error.code) {
+    case "github_unavailable": return refused(rows.githubUnavailable, slopbotMessage)
+    case "slopbot_required": return refused(rows.slopbotRequired, slopbotMessage)
+    case "authority_required": return refused(rows.authorityRequired, deniedMessage)
+    case "vault_authority_required": return refused(rows.vaultAuthorityRequired, adminMessage(project))
+    case "maintainer_banned": return refused(rows.maintainerBanned)
+    case "project_restricted": return refused(rows.projectRestrictedRequestReinstatementBeforeSetting)
+    case "vault_already_registered": return refused(scope === "security-bounty" ? rows.vaultAlreadyRegisteredThisProjectAlreadyHas : rows.vaultAlreadyRegistered)
+    case "vault_policy_changed": return refused(rows.vaultPolicyChanged)
+    case "vault_setup_unavailable": return refused(scope === "security-bounty" ? rows.vaultSetupUnavailableSaveTheUSDCBounty : rows.vaultSetupUnavailableSaveTheMonthlyReward)
+    case "stale_revision": return refused(rows.staleRevision)
+    default: {
+      const _exhaustive: never = error.code
+      return refused(rows.staleRevision)
+    }
+  }
+}
+
+export interface RegisterContext {
+  readonly project: VaultProject
+  readonly actor: VaultActor
+  readonly input: VaultSetupInput
+  readonly session: VaultSession
+  readonly requestId: number
+  readonly path: VaultPath
+  readonly requestJson: string
+}
+
+effect function existingAnswer(context: RegisterContext, request: RequestRow) {
+  const { project, session, input } = context
+  const existing = try registeredOf(project, input.scope)
+  if (existing === undefined) throw refused(rows.staleRevision)
+  try observe({ ...existing.deployment, revision: project.view.revision })
+  try closeSaved(session, request.network, request.tx)
+  const deployment = deploymentsOf(project.terms, input.scope).find((entry) => textOf(fieldsOf(entry)?.deploymentTransaction) === request.tx)
+  return { status: "registered", deployment: (deployment ?? {}) as Json, project: project.terms.manifest as Json, revision: project.view.revision } satisfies VaultAnswer
+}
+
+effect function chainEvidence(context: RegisterContext, terms: Terms, transactionId: string) {
+  const creator = try creatorOf(context.actor, context.input, terms)
+  if (NETWORKS[creator.network].family === "solana") return try solanaRegister(context.project.view.projectId, context.input, creator, terms, transactionId)
+  const id = evmCreationId(transactionId)
+  if (id === undefined) throw refused(rows.invalidRequestEnterTheVaultCreation)
+  return try evmRegister(context.project.view.projectId, context.input, creator, terms, id)
+}
+
+effect function savePending(context: RegisterContext) {
+  if (context.path !== "owner") return
+  const state = try context.session.current()
+  const details: SaveDetails = { id: `svc_${(try randomId()).replaceAll("-", "")}`, requestJson: context.requestJson, login: context.actor.login }
+  const event = { type: "saveCreation", requestId: context.requestId, savedId: state.savedCreations.length + 1, now: try nowSeconds() } as const
+  context.session.send(event, { details }) catch effect (error) => {
+    try Effect.logError("vault creation save failed", error._tag)
+  }
+}
+
+function creationId(network: string, transactionId: string | undefined): string | undefined {
+  if (transactionId === undefined) return undefined
+  const evm = isNetworkKey(network) && NETWORKS[network].family === "evm"
+  if (evm) return evmCreationId(transactionId)
+  return transactionId.length >= 64 && transactionId.length <= 88 ? transactionId : undefined
+}
+
+export effect function registerBegun(context: RegisterContext) {
+  const { project, input, session, requestId } = context
+  const begun = requestRow(try session.current(), requestId)
+  if (begun.phase !== "ReadyRegistration" && begun.phase !== "RequestDone") return try existingAnswer(context, begun)
+  if (begun.result === "RegistrationConflict") throw refused(rows.vaultAlreadyRegistered)
+  const transactionId = creationId(input.network, input.transactionId)
+  if (transactionId === undefined) throw refused(rows.invalidRequestEnterTheVaultCreation)
+  const terms = try reviewedTerms(project, input.expectedRevision)
+  if (terms === undefined || !samePolicy(terms, project.terms, input.scope)) {
+    try session.send({ type: "checkCreation", requestId, creation: unverifiedCreation(begun) })
+    throw refused(terms === undefined ? rows.staleRevisionTheReviewedProjectRevision : rows.vaultPolicyChanged)
+  }
+  const evidence = chainEvidence(context, terms, transactionId) catch effect (error) => {
+    if (error._tag === "Refused" && (error.code === "vault_creation_failed" || error.code === "vault_creation_invalid"))
+      try session.send({ type: "checkCreation", requestId, creation: unverifiedCreation(begun) })
+    throw error
+  }
+  if (evidence.kind === "pending") {
+    const checked = try session.send({ type: "checkCreation", requestId, creation: { ...unverifiedCreation(begun), status: "PendingCreation" } })
+    if (requestRow(checked, requestId).result === "CreationPending") try savePending(context)
+    return (evidence.provisional === undefined ? { status: "pending" } : { status: "pending", provisional: evidence.provisional }) satisfies VaultAnswer
+  }
+  const identity = identityOf(evidence.deployment, evidence.decimals)
+  const checked = try session.send({ type: "checkCreation", requestId, creation: { identity, transaction: begun.tx, reviewed: begun.expected, purpose: begun.purpose, status: "FinalizedCreation" } })
+  if (requestRow(checked, requestId).phase !== "ReadyAppend") throw creationRefused("vault_creation_invalid", "The creation transaction could not be verified.")
+  const appended = (try Registry).appendVaultRegistration({
+    projectId: project.view.projectId, expectedRevision: input.expectedRevision, actor: { githubId: context.actor.githubId, login: context.actor.login },
+    purpose: input.scope, deployment: evidence.record, evidence: "finalized", path: context.path,
+  }) catch effect (error) => {
+    if (error._tag !== "VaultRegistrationRefused") throw error
+    try session.send({ type: "commitRegistration", requestId, saved: false })
+    throw registrationRefusal(error, project, input.scope)
+  }
+  try session.send({ type: "commitRegistration", requestId, saved: true })
+  try closeSaved(session, begun.network, begun.tx)
+  try observe({ ...evidence.deployment, revision: appended.project.revision })
+  const now = termsOf(fieldsOf(appended.manifest) ?? {}).reward
+  const notice = input.scope === "ordinary" && textOf(now.monthlyCapMinor) !== textOf(terms.reward.monthlyCapMinor)
+    ? `Creation used a monthly cap of ${textOf(terms.reward.monthlyCapDisplay) ?? ""}. The project now uses ${textOf(now.monthlyCapDisplay) ?? ""}. Use the automatic payment controls below to apply the new cap.`
+    : undefined
+  return { status: "registered", deployment: evidence.record, project: appended.manifest, revision: appended.project.revision, ...(notice === undefined ? {} : { notice }) } satisfies VaultAnswer
+}
+
+effect function reviewStep(project: VaultProject, actor: VaultActor, input: VaultSetupInput) {
+  if (input.expectedRevision !== project.view.revision) throw refused(rows.staleRevision)
+  if (deploymentsOf(project.terms, input.scope).length > 0) throw refused(rows.vaultAlreadyRegistered)
+  const creator = try creatorOf(actor, input, project.terms)
+  if (NETWORKS[creator.network].family === "solana") return { review: try solanaReview(project.view.projectId, input, creator, project.terms) }
+  return { review: try evmReview(project.view.projectId, input, creator, project.terms) }
+}
+
+export effect function ownerVaultPost(projectId: string, actor: VaultActor, body: VaultSetupBody) {
+  const project = try admitted(projectId, actor)
+  const input = try inputOf(body)
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision <= 0) throw refused(rows.invalidRequestInvalidExpectedRevision)
+  if (input.step === "review") return try reviewStep(project, actor, input)
+  const session = try registrySession(project, input.expectedRevision)
+  const network = isNetworkKey(input.network) ? modelNetwork(input.network) : input.network
+  const tx = creationId(input.network, input.transactionId) ?? ""
+  session.send({ type: "beginRegistration", requestId: REQUEST_ID, purpose: purposeOf(input.scope), tx, network, expected: input.expectedRevision, actor: Number(actor.githubId), authorized: true })
+    catch effect (error) => {
+      if (error._tag === "Rejected") throw refused(rows.invalidRequestEnterTheVaultCreation)
+      throw error
+    }
+  return try registerBegun({ project, actor, input, session, requestId: REQUEST_ID, path: "owner", requestJson: JSON.stringify(body) })
+}
+
+function programTermsOf(terms: Terms): ProgramTerms | undefined {
+  if (terms.bounty === undefined) return undefined
+  const amount = terms.bountyAmount
+  const assetFields = fieldsOf(amount.asset)
+  const asset = assetFields === undefined ? undefined
+    : { network: textOf(assetFields.network) ?? "", symbol: textOf(assetFields.symbol) ?? "", decimals: typeof assetFields.decimals === "number" ? assetFields.decimals : 0, address: textOf(assetFields.address) ?? "" }
+  const deployments = deploymentsOf(terms, "security-bounty").map((entry) => fieldsOf(entry) ?? {})
+    .map((entry) => ({ network: textOf(entry.network) ?? "", vault: textOf(entry.vault) ?? "", asset: textOf(entry.asset) ?? "" }))
+  return {
+    amount: { currency: textOf(amount.currency) ?? "", decimals: typeof amount.decimals === "number" ? amount.decimals : 0, network: textOf(amount.network) ?? null, ...(asset === undefined ? {} : { asset }) },
+    deployments,
+  }
+}
+
+effect function bountyRead(projectId: string, actor: VaultActor) {
+  const project = try loadProject(projectId)
+  try currentAuthority(project, actor)
+  const restrictions = try Restrictions
+  const canSetup = !(try restrictions.project(projectId)).restricted && !(try restrictions.account(actor.githubId)).banned && !(try restrictions.account(project.view.stewardGithubId)).banned
+  const program = programTermsOf(project.terms)
+  const open = canSetup && deploymentsOf(project.terms, "security-bounty").length === 0 && (try PaymentNetworks).served.length > 0
+  const networks = open ? try setupNetworks(project, "security-bounty") : []
+  const funds: ProgramFundsView | null = program === undefined ? null : (try (try SecurityProgramFunds).read({ projectId, terms: program })).funds ?? null
+  return { revision: project.view.revision, canSetup, networks, funds }
+}
+
+export effect function ownerVaultGet(projectId: string, actor: VaultActor, purpose: string | null) {
+  const chosen = purpose ?? "ordinary"
+  if (chosen !== "ordinary" && chosen !== "security-bounty") throw refused(getProjectVaultsById.invalidRequest)
+  if (chosen === "security-bounty") return try bountyRead(projectId, actor)
+  const project = try admitted(projectId, actor)
+  return { revision: project.view.revision, networks: try setupNetworks(project, "ordinary") }
+}
+
+export function vaultActorOf(actor: { readonly githubId: string; readonly login: string }): VaultActor {
+  return { githubId: actor.githubId, login: actor.login }
+}
+
+export const vaultSetupRoutes = Layer.mergeAll(
+  handle(projectVaultRead, (request) => ownerVaultGet(request.params.id ?? "", vaultActorOf(request.actor), request.query.get("purpose"))),
+  handle(projectVaultSetup, (request) => ownerVaultPost(request.params.id ?? "", vaultActorOf(request.actor), request.body)),
+)

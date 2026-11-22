@@ -1,9 +1,9 @@
-// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import type { PrivateCase } from "../../gen/security__cases.ts"
-import { awardOpen, canAppeal, canRejectLink, receiptOpen } from "../../gen/security__cases.effect.vibe"
+import { awardOpen, canAppeal, canRejectLink, mayRequestReceiptCheck, receiptOpen } from "../../gen/security__cases.effect.vibe"
 import { assessmentRead } from "../assessment/routes.vibe"
 import { reporterView, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -45,8 +45,12 @@ function has(roles: ReadonlySet<CaseRole>, role: CaseRole) {
 
 export function caseActions(observed: Observed, viewer: number): ReadonlyArray<string> {
   const { model, roles, epoch } = observed
+  if (!observed.record.valid) return []
   const maintainer = has(roles, "security-maintainer")
-  if (model.submission !== "Verified") return model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
+  if (model.submission !== "Verified") {
+    const links = model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
+    return mayRequestReceiptCheck(model, viewer, epoch) ? [...links, "check-receipt"] : links
+  }
   const actions: string[] = []
   const open = receiptOpen(model)
   if (has(roles, "reporter") && canAppeal(model, viewer)) actions.push("appeal")
@@ -163,9 +167,9 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
   const events = includeHistory ? record.events : []
   if (!full) return { ...shared, view: "reporter", events: events.filter((event) => reporterKinds.has(event.kind)).map((event) => ({ revision: event.case_revision, kind: event.kind, at: event.at, reason: event.reason })) }
   const nowMs = try Clock.currentTimeMillis
-  const assessed = includeHistory && row.submission_state === "verified" ? try assessmentRead({ record: row, roles: observed.snapshot, viewerGithubId }) : undefined
+  const assessed = includeHistory && record.valid && row.submission_state === "verified" ? try assessmentRead({ record: row, roles: observed.snapshot, viewerGithubId }) : undefined
   const triage = includeHistory ? triageView(record, nowMs) : null
-  const retriable = includeHistory && has(roles, "dispute") && triageMayStart(observed.model, viewer, observed.epoch, nowMs)
+  const retriable = includeHistory && record.valid && has(roles, "dispute") && triageMayStart(observed.model, viewer, observed.epoch, nowMs)
   return {
     ...shared,
     allowedActions: [...shared.allowedActions, ...assessed?.analyze === true ? ["analyze"] : [], ...retriable ? ["triage-appeal"] : []],

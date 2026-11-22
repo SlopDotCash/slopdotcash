@@ -1,14 +1,16 @@
-// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"
 import { ConfigInvalid, idList, secret } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
 import { verifyWebhook } from "@repo/platform/github/webhook"
 import { bytesBody } from "@repo/platform/http"
 import { type Bytes, type Event, type Outcome, type Webhook, apply, initial, noBody, qualifiedJob, request } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { queuesReadyCheck } from "../../gen/slopbot__readyLabel.effect.vibe"
 import { type RegistryObservation, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import { slopbotPostGithubWebhook as refusals } from "../client/refusals.vibe"
 import { servedProjects } from "../installation/notices.vibe"
 import type { Change } from "../installation/store.vibe"
 import { send } from "../jobs/job.vibe"
+import { readyLabelWanted } from "../ready/store.vibe"
 import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
 import { type Parsed, parse } from "./payload.vibe"
 import { type Context, advance } from "./store.vibe"
@@ -129,9 +131,16 @@ effect function completed(context: Context, state: Webhook) {
   return done ?? try durable(context, state, { type: "complete", requestId, committed: false })
 }
 
+effect function queuedReady(parsed: Parsed) {
+  const { trigger, job } = parsed.ready
+  if (job === undefined || !queuesReadyCheck(trigger, true)) return
+  if (queuesReadyCheck(trigger, try readyLabelWanted(job))) try send(job)
+}
+
 effect function routed(context: Context, claimed: Webhook, parsed: Parsed) {
   const lookups = try valueLookups(claimed)
   const valued = try durable(context, claimed, { type: "inspectValue", requestId, ...lookups })
+  try queuedReady(parsed)
   if (settled(valued)) return valued
   const job = qualifiedJob(parsed.body) === "NoJob" ? undefined : parsed.job
   const queueLookup = job === undefined ? { registration: unregistered, lookupOk: true } : try looked({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })

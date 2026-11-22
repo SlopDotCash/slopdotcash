@@ -1,10 +1,10 @@
-// spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+// spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"
 import { first, sql } from "@repo/platform/d1"
 import type { Job } from "@repo/platform/worker"
-import { interval } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { interval, maxSuppressionsPerRun } from "../../gen/slopbot__spendAlerts.effect.vibe"
 import { budgetExhausted } from "../route/route.vibe"
 import { SpendNotify, failureNoticePath, safeFailure, spendNoticePath } from "./notify.vibe"
-import { claimFailureNotice, claimMilestone, recordFailureReceipt, recordMilestoneReceipt } from "./store.vibe"
+import { claimFailureNotice, claimMilestone, recordFailureReceipt, recordMilestoneReceipt, windowAt } from "./store.vibe"
 
 export error NeedsReconciliation { notice: "spend" | "failure" }
 
@@ -20,7 +20,10 @@ const pendingMonth = sql`WITH monthly AS (
     FROM monthly
   ) SELECT month FROM pending WHERE recorded >= threshold ORDER BY month LIMIT 1`
 
-const pendingNotice = sql`SELECT call_id FROM slopbot_provider_failure_notices WHERE claimed_at IS NULL ORDER BY call_id LIMIT 1`
+function pendingNotice(settled: string) {
+  return sql`SELECT n.call_id FROM slopbot_provider_failure_notices n JOIN slopbot_costs c ON c.id = n.call_id
+    WHERE n.claimed_at IS NULL AND c.created_at <= ${settled} ORDER BY n.call_id LIMIT 1`
+}
 
 effect function claimedOrNothing<A, E extends { readonly _tag: string }, R>(claim: A!E!R) {
   return claim catch effect (error) => {
@@ -40,20 +43,26 @@ export effect function dispatchSpendAlert() {
 }
 
 export effect function dispatchFailureAlert() {
-  const pending = try first(PendingNotice, pendingNotice)
-  if (pending === undefined) return
-  const claimed = try claimedOrNothing(claimFailureNotice(pending.call_id))
-  if (claimed === undefined) return
-  const body = {
-    callId: claimed.id,
-    model: claimed.model,
-    kind: claimed.failure === budgetExhausted ? "budget-exhausted" : "request-failed",
-    occurredAt: claimed.occurredAt,
-    failure: safeFailure(claimed.failure),
-  } as const
-  const accepted = try (try SpendNotify).deliver({ path: failureNoticePath, body })
-  try recordFailureReceipt(claimed.id, accepted)
-  if (!accepted) throw new NeedsReconciliation({ notice: "failure" })
+  for (let pass = 0; pass <= maxSuppressionsPerRun; pass++) {
+    const millis = try Clock.currentTimeMillis
+    const { settled } = try windowAt(Math.floor(millis / 1000))
+    const pending = try first(PendingNotice, pendingNotice(settled))
+    if (pending === undefined) return
+    const claimed = try claimedOrNothing(claimFailureNotice(pending.call_id, millis))
+    if (claimed === undefined || claimed.suppression !== "NoSuppression") continue
+    const { call } = claimed
+    const body = {
+      callId: call.id,
+      model: call.model,
+      kind: call.failure === budgetExhausted ? "budget-exhausted" : "request-failed",
+      occurredAt: call.occurredAt,
+      failure: safeFailure(call.failure),
+    } as const
+    const accepted = try (try SpendNotify).deliver({ path: failureNoticePath, body })
+    try recordFailureReceipt(call.id, accepted)
+    if (!accepted) throw new NeedsReconciliation({ notice: "failure" })
+    return
+  }
 }
 
 export const spendJobs = [

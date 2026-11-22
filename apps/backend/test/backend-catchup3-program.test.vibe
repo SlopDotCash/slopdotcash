@@ -1,0 +1,211 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { Request, Response } from "miniflare"
+
+const stewardId = 41
+const writerId = 42
+const primaryId = 9101
+const repository = `member-${stewardId}/vault`
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+  readonly slopbot: (request: Request) => Response
+}
+
+function owner() {
+  return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+}
+
+const permissions: Readonly<Record<string, string>> = { [`member-${stewardId}`]: "admin", [`member-${writerId}`]: "write" }
+
+function repositoryAnswer(url: URL) {
+  const id = Number(url.searchParams.get("repositoryId"))
+  const path = url.searchParams.get("repository") ?? ""
+  return { installation: "installed", installationId: 78, permission: permissions[url.searchParams.get("login") ?? ""] ?? "read", roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    github.world.addUser({ id: writerId, login: `member-${writerId}`, nodeId: `U_${writerId}` })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
+    github.world.addRepo({ id: primaryId, nodeId: `R_${primaryId}`, owner: `member-${stewardId}`, name: "vault", defaultBranch: "main", license: { spdx: "MIT" } })
+  }))
+  const slopbot = (request: Request) => new Response(JSON.stringify(repositoryAnswer(new URL(request.url))), { headers: { "content-type": "application/json" } })
+  const net = internet({ github: github.handler })
+  return { github, net, slopbot }
+})
+
+const notFound = () => new Response("not found", { status: 404 })
+
+const Composed = Layer.provideMerge(Layer.unwrap(effect {
+  const world = try World
+  const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+  return areaLayer({
+    root: new URL("../../app", import.meta.url).pathname,
+    entry: "pages",
+    d1: { SLOP_DB: "slop-private" },
+    r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"],
+    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader },
+    services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: notFound, SLOP_IDENTITY: notFound },
+    internet: world.net,
+  })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, name: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer.body, "error") ?? null]
+}
+
+effect function member(githubId: number) {
+  const area = try Area
+  const session = `program-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
+}
+
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the vault.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" }
+
+effect function manifest(id: string) {
+  const world = try World
+  const commitSha = (try orDie(Effect.try(() => world.github.world.repo(repository).branches.get("main")))) ?? ""
+  return {
+    schemaVersion: "1",
+    id,
+    slug: id,
+    name: `Project ${id}`,
+    eyebrow: "Open-source project",
+    headline: "A vault with a private bounty program.",
+    description: "Build and maintain an audited vault.",
+    listingTier: "community",
+    status: "paused",
+    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(primaryId), repositoryNodeId: `R_${primaryId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${commitSha}/LICENSE`, commitSha, fileSha256: try sha256Hex("MIT license\n") },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Vault repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: usdc,
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+  }
+}
+
+function contact(githubId: number) {
+  return { githubId: String(githubId), githubLogin: `member-${githubId}` }
+}
+
+function bounty(status: string, person: { readonly githubId: string; readonly githubLogin: string }) {
+  return {
+    version: "1", status, rewardMode: "bounty-only", eligibility: "in-scope-security",
+    amount: { currency: "USDC", decimals: 6, grossMinor: "0", network: "base" },
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    sponsor: { name: "Slop", githubId: null },
+    funding: { state: "verified-available", evidence: "Claimed by the owner", verifiedAt: "2026-11-01T00:00:00.000Z" },
+    capacity: { awards: 3, closesAt: null, exhaustionRule: "Each qualifying finding is decided on its own." },
+    scope: {
+      sourceRevisions: [{ repository, commit: "0".repeat(40) }], deployments: [], includedAssets: [repository], excludedDependencies: [],
+      testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.",
+    },
+    intake: { kind: "github-private-vulnerability-reporting", repository },
+    responseTargets: { acknowledgeHours: 24, triageBusinessDays: 3, updateIntervalDays: 7 },
+    approvers: { technical: [person], financial: [person], dispute: [person] },
+    dispute: { authority: "advisory", process: "Request a review through the private case appeal." },
+    disclosure: "Keep reports private until the owner approves disclosure.",
+    safeHarbor: "Report in good faith and follow the published testing rules.",
+  }
+}
+
+effect function revise(as: Session, id: string, json: unknown) {
+  return try (try Area).request(`/api/v1/projects/${id}`, { method: "PUT", json, as })
+}
+
+effect function stored(id: string) {
+  const rows = try (try Area).sql("SELECT revision, manifest FROM projects WHERE id = ?", id)
+  const row = rows[0] ?? {}
+  return { revision: Number(row.revision ?? 0), manifest: (try orDie(Effect.try(() => JSON.parse(String(row.manifest ?? "{}"))))) as Record<string, unknown> }
+}
+
+function programOf(manifest: Record<string, unknown>): Record<string, unknown> {
+  return (field(manifest, "securityBounty") ?? {}) as Record<string, unknown>
+}
+
+layer(Layer.merge(Composed, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An owner opens a bounty program in an owner revision and cannot change its split, open it without verified funds, change its contacts without rights, or delete it (spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const writer = try member(writerId)
+    const id = "bounty-vault"
+    const created = try area.request("/api/v1/projects", { json: { manifest: try manifest(id) }, as: steward })
+    const fresh = try stored(id)
+    const opened = try revise(steward, id, { manifest: { ...fresh.manifest, securityBounty: bounty("paused", contact(stewardId)) }, expectedRevision: 1, bountyAmount: "250" })
+    const program = try stored(id)
+    const terms = programOf(program.manifest)
+    const split = try revise(steward, id, { manifest: { ...program.manifest, securityBounty: { ...terms, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 } } }, expectedRevision: 2 })
+    const opening = try revise(steward, id, { manifest: { ...program.manifest, securityBounty: { ...terms, status: "open" } }, expectedRevision: 2 })
+    const contacts = try revise(writer, id, { manifest: { ...program.manifest, securityBounty: { ...terms, approvers: { technical: [contact(writerId)], financial: [contact(writerId)], dispute: [contact(writerId)] } } }, expectedRevision: 2 })
+    const { securityBounty: _program, ...withoutProgram } = program.manifest
+    const deleted = try revise(steward, id, { manifest: withoutProgram, expectedRevision: 2 })
+    const after = try stored(id)
+    try same({
+      created: [created.status, fresh.revision, Object.hasOwn(fresh.manifest, "securityBounty")],
+      opened: [opened.status, program.revision, terms.status, terms.funding, field(terms.amount, "grossMinor")],
+      split: outcome(split),
+      opening: outcome(opening),
+      contacts: outcome(contacts),
+      deleted: outcome(deleted),
+      after: [after.revision, programOf(after.manifest).split],
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: [201, 1, false],
+      opened: [200, 2, "paused", { state: "pledged" }, "250000000"],
+      split: [422, "security_split_restricted"],
+      opening: [422, "security_funding_unavailable"],
+      contacts: [422, "security_contacts_restricted"],
+      deleted: [422, "security_program_required"],
+      after: [2, { researcherBasisPoints: 7500, slopBasisPoints: 2500 }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})

@@ -36,8 +36,6 @@ export const varNames = [
   "BUYBACK_RUN_CAP_MICRO",
   "BUYBACK_DAILY_CAP_MICRO",
   "BUYBACK_UNFILLED_ALERT_SECONDS",
-  "FEE_READY",
-  "FEE_REPLACEMENT_ACTIVE",
 ] as const
 
 export type VarName = typeof varNames[number]

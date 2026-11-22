@@ -40,5 +40,7 @@ export effect function receiptScope(projectId: string, policyRevision: number | 
 }
 
 export function withOwnerLines(terms: ReceiptTerms, scope: ReceiptScope): ReceiptTerms {
-  return terms.paidTerms && scope.kind === "scope" ? { ...terms, excludedFindings: [...scope.ownerLines] } : terms
+  if (scope.kind === "unreadable") return terms
+  const scoped = terms.paidTerms || (terms.revision > 0 && scope.scope !== null)
+  return { ...terms, scoped, excludedFindings: scoped ? [...scope.ownerLines] : [] }
 }

@@ -16,6 +16,7 @@ export const ManagedReward = Schema.Struct({
   fundingState: Schema.optional(Schema.String),
   paymentMode: Schema.optional(Schema.String),
   rewardStartAt: Schema.optional(Schema.String),
+  honorSystem: Schema.optional(Schema.Boolean),
 });
 
 export const ManagedAsset = Schema.Struct({

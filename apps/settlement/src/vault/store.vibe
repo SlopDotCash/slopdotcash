@@ -1,5 +1,5 @@
-// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"
-import { isoAt, millisOf } from "@repo/platform/clock"
+// spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"; spec/settlement/vaultSnapshots.md, "An ordinary vault read stores its month pledges, keeping the newest read of each month"; spec/settlement/monthPledges.md, "Each month keeps the read of the newest block, and a read not taken changes nothing"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
 import { D1, type D1Error, RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
 import {
   type Balance,
@@ -12,6 +12,8 @@ import {
   type Registration,
   type RequestRow,
   type Revision,
+  type SavedCreation,
+  type SavedState,
   type Snapshots,
   NotAState,
   NotAnEvent,
@@ -25,6 +27,8 @@ import {
   registered,
   requestRow,
   sameMonthStart,
+  savedCreation,
+  savedFor,
   writable,
 } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import type { Amount } from "../../gen/settlement__money.ts"
@@ -260,7 +264,96 @@ effect function ordinaryPledges(scope: SnapshotScope, found: ReadonlyArray<Snaps
   return { pledges: try storedPledges(scope, network, registration.identity.vault), openPledged: try storedTotalOf(row?.open_pledged_gross ?? null) }
 }
 
-export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>) {
+schema SavedRow {
+  readonly id: string
+  readonly network: string
+  readonly transaction_id: string
+  readonly request_json: string
+  readonly actor_github_id: string
+  readonly state: string
+  readonly attempts: number
+  readonly next_attempt_at: string
+  readonly created_at: string
+}
+
+schema SavedRequest {
+  readonly expectedRevision: number
+  readonly payoutPolicy?: string
+}
+
+export schema DueSaved {
+  readonly id: string
+  readonly project_id: string
+  readonly network: string
+  readonly transaction_id: string
+  readonly request_json: string
+  readonly actor_github_id: string
+  readonly actor_github_login: string
+  readonly attempts: number
+  readonly created_at: string
+}
+
+export interface SaveDetails {
+  readonly id: string
+  readonly requestJson: string
+  readonly login: string
+}
+
+export error SavedClaimLost { id: string }
+
+const SAVED_STATES: Readonly<Record<string, SavedState>> = { waiting: "SavedWaiting", registered: "SavedRegistered", refused: "SavedRefused", expired: "SavedExpired" }
+
+export interface SavedPart {
+  readonly creations: ReadonlyArray<SavedCreation>
+  readonly ids: ReadonlyMap<number, string>
+}
+
+const NUMBERED = /^svc_([1-9][0-9]{0,8})$/u
+
+function modelIdOf(id: string, index: number): number {
+  const numbered = NUMBERED.exec(id)
+  return numbered === null ? index + 1 : Number(numbered[1])
+}
+
+effect function savedOfRow(row: SavedRow, index: number, repeats: ReadonlyMap<string, number>) {
+  const state = SAVED_STATES[row.state]
+  const actor = Number(row.actor_github_id)
+  const request = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedRequest))(row.request_json) catch effect () => {
+    throw new RowMismatch({ text: "saved_vault_creations.request_json", issue: "not a saved register request" })
+  }
+  if (state === undefined || !isNetworkKey(row.network) || !Number.isSafeInteger(actor) || actor <= 0)
+    throw new RowMismatch({ text: "saved_vault_creations", issue: "not a reviewed network, state and GitHub account" })
+  return {
+    id: modelIdOf(row.id, index),
+    purpose: request.payoutPolicy === "security-bounty" ? "PrivateBounty" : "Ordinary",
+    network: modelNetwork(row.network),
+    tx: row.transaction_id,
+    expected: request.expectedRevision,
+    actor,
+    state,
+    attempts: row.attempts,
+    nextAt: try secondsOf(row.next_attempt_at, "saved_vault_creations.next_attempt_at"),
+    createdAt: try secondsOf(row.created_at, "saved_vault_creations.created_at"),
+    lastRepeat: repeats.get(row.id) ?? 0,
+  } satisfies SavedCreation
+}
+
+export effect function savedPart(scope: SnapshotScope, repeats: ReadonlyMap<string, number> = new Map()) {
+  const found = try rows(SavedRow, sql`SELECT id, network, transaction_id, request_json, actor_github_id, state, attempts, next_attempt_at, created_at FROM saved_vault_creations WHERE project_id = ${scope.projectId} ORDER BY rowid`)
+  const creations: SavedCreation[] = []
+  for (const [index, row] of found.entries()) creations.push(try savedOfRow(row, index, repeats))
+  return { creations, ids: new Map(found.map((row, index) => [modelIdOf(row.id, index), row.id])) } satisfies SavedPart
+}
+
+export effect function dueSavedCreations(nowIso: string, limit: number) {
+  return try rows(DueSaved, sql`SELECT id, project_id, network, transaction_id, request_json, actor_github_id, actor_github_login, attempts, created_at FROM saved_vault_creations WHERE state = 'waiting' AND next_attempt_at <= ${nowIso} ORDER BY next_attempt_at, id LIMIT ${limit}`)
+}
+
+export effect function noteSavedCreation(id: string, code: string) {
+  try (try D1).run(sql`UPDATE saved_vault_creations SET last_code = ${code} WHERE id = ${id} AND state = 'waiting'`)
+}
+
+export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>, repeats: ReadonlyMap<string, number> = new Map()) {
   const found = try rows(SnapshotRow, sql`SELECT network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at, open_pledged_gross FROM vault_snapshots WHERE project_id = ${scope.projectId}`)
   const starts = try rows(MonthStartRow, sql`SELECT network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE project_id = ${scope.projectId} ORDER BY rowid`)
   const monthStarts: MonthStart[] = []
@@ -275,6 +368,7 @@ export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, req
     monthStarts,
     pledges,
     openPledged,
+    savedCreations: (try savedPart(scope, repeats)).creations,
   })
 }
 
@@ -364,6 +458,56 @@ type WriteEvent = Extract<Event, { type: "write" }>
 
 type SessionFailure = D1Error | RowMismatch | NotAState
 
+type SavedEvent = Extract<Event, { type: "saveCreation" | "repeatSaved" | "expireSaved" | "closeRegisteredCreation" | "endSavedRefused" }>
+
+function isSavedEvent(event: Event): event is SavedEvent {
+  return event.type === "saveCreation" || event.type === "repeatSaved" || event.type === "expireSaved" || event.type === "closeRegisteredCreation" || event.type === "endSavedRefused"
+}
+
+effect function persistSaved(scope: SnapshotScope, ids: ReadonlyMap<number, string>, before: Snapshots, after: Snapshots, event: SavedEvent, details: SaveDetails | undefined, code: string | undefined) {
+  const db = try D1
+  const finishedAt = try isoNow()
+  if (event.type === "saveCreation") {
+    if (JSON.stringify(before.savedCreations) === JSON.stringify(after.savedCreations)) return
+    const request = requestRow(before, event.requestId)
+    const next = savedFor(after, request.network, request.tx)
+    const network = try networkOf(next.network)
+    const nextAt = try isoAt(next.nextAt * 1000)
+    const createdAt = try isoAt(next.createdAt * 1000)
+    const requestJson = details?.requestJson ?? JSON.stringify({ step: "register", expectedRevision: request.expected, network, transactionId: request.tx, payoutPolicy: request.purpose === "PrivateBounty" ? "security-bounty" : "ordinary" })
+    try db.run(sql`INSERT INTO saved_vault_creations (id, project_id, network, transaction_id, request_json, actor_github_id, actor_github_login, state, attempts, next_attempt_at, created_at)
+      SELECT ${details?.id ?? `svc_${event.savedId}`}, ${scope.projectId}, ${network}, ${request.tx}, ${requestJson}, ${String(request.actor)}, ${details?.login ?? ""}, 'waiting', 0, ${nextAt}, ${createdAt}
+      WHERE (SELECT COUNT(*) FROM saved_vault_creations WHERE project_id = ${scope.projectId} AND state = 'waiting') < 3
+      ON CONFLICT (project_id, network, transaction_id) DO UPDATE SET
+        state = 'waiting', attempts = 0, last_code = NULL, finished_at = NULL, request_json = excluded.request_json,
+        actor_github_id = excluded.actor_github_id, actor_github_login = excluded.actor_github_login,
+        next_attempt_at = excluded.next_attempt_at, created_at = excluded.created_at
+      WHERE saved_vault_creations.state = 'expired'`)
+    return
+  }
+  const prior = savedCreation(before, event.savedId)
+  const next = savedCreation(after, event.savedId)
+  if (JSON.stringify(prior) === JSON.stringify(next)) return
+  const network = try networkOf(next.network)
+  const id = ids.get(event.savedId)
+  if (id === undefined) throw new RowMismatch({ text: "saved_vault_creations.id", issue: "no stored row for the saved creation" })
+  if (event.type === "repeatSaved") {
+    const nextAt = try isoAt(next.nextAt * 1000)
+    const claimed = try db.run(sql`UPDATE saved_vault_creations SET attempts = attempts + 1, next_attempt_at = ${nextAt} WHERE id = ${id} AND state = 'waiting' AND attempts = ${prior.attempts}`)
+    if (claimed !== 1) throw new SavedClaimLost({ id })
+    return
+  }
+  if (event.type === "expireSaved") {
+    try db.run(sql`UPDATE saved_vault_creations SET state = 'expired', last_code = 'expired', finished_at = ${finishedAt} WHERE id = ${id} AND state = 'waiting'`)
+    return
+  }
+  if (event.type === "endSavedRefused") {
+    try db.run(sql`UPDATE saved_vault_creations SET state = 'refused', last_code = ${code ?? "refused"}, finished_at = ${finishedAt} WHERE id = ${id} AND state = 'waiting'`)
+    return
+  }
+  try db.run(sql`UPDATE saved_vault_creations SET state = 'registered', finished_at = ${finishedAt} WHERE project_id = ${scope.projectId} AND network = ${network} AND transaction_id = ${next.tx} AND state = 'waiting'`)
+}
+
 effect function written(scope: SnapshotScope, before: Snapshots, event: WriteEvent, attempts = 3): Snapshots!(Rejected | SessionFailure)!D1 {
   const accepted = try apply(before, event)
   const request = requestRow(before, event.requestId)
@@ -385,25 +529,40 @@ function registryPartOf(state: Snapshots): RegistryPart {
   return { revision: state.revision, history: state.history, ordinary: state.ordinary.registration, privateBounty: state.privateBounty.registration }
 }
 
+export interface SavedOptions {
+  readonly details?: SaveDetails
+  readonly code?: string
+}
+
 export interface VaultSession {
   current(): Snapshots!SessionFailure!D1
-  send(event: Event): Snapshots!(Rejected | SessionFailure)!D1
-  receive(input: unknown): Snapshots!(Rejected | SessionFailure | NotAnEvent)!D1
+  savedIdOf(id: string): number!SessionFailure!D1
+  send(event: Event, options?: SavedOptions): Snapshots!(Rejected | SessionFailure | SavedClaimLost)!D1
+  receive(input: unknown): Snapshots!(Rejected | SessionFailure | SavedClaimLost | NotAnEvent)!D1
 }
 
 export effect function openSession(scope: SnapshotScope, registry: RegistryPart) {
-  let held: { readonly registry: RegistryPart; readonly requests: ReadonlyArray<RequestRow> } = { registry, requests: [] }
+  let held: { readonly registry: RegistryPart; readonly requests: ReadonlyArray<RequestRow>; readonly repeats: ReadonlyMap<string, number> } = { registry, requests: [], repeats: new Map() }
   effect function current() {
-    return try stateOf(scope, held.registry, held.requests)
+    return try stateOf(scope, held.registry, held.requests, held.repeats)
   }
-  effect function send(event: Event) {
+  effect function savedIdOf(id: string) {
+    const found = [...(try savedPart(scope)).ids.entries()].find((entry) => entry[1] === id)
+    return found === undefined ? 0 : found[0]
+  }
+  effect function send(event: Event, options: SavedOptions = {}) {
     const before = try current()
+    const ids: ReadonlyMap<number, string> = isSavedEvent(event) ? (try savedPart(scope)).ids : new Map()
     const next = event.type === "write" ? try written(scope, before, event) : try apply(before, event)
-    held = { registry: registryPartOf(next), requests: next.requests }
+    if (isSavedEvent(event)) try persistSaved(scope, ids, before, next, event, options.details, options.code)
+    const repeats = new Map(held.repeats)
+    const repeated = event.type === "repeatSaved" ? ids.get(event.savedId) : undefined
+    if (event.type === "repeatSaved" && repeated !== undefined) repeats.set(repeated, savedCreation(next, event.savedId).lastRepeat)
+    held = { registry: registryPartOf(next), requests: next.requests, repeats }
     return next
   }
   effect function receive(input: unknown) {
     return try send(try decodeEvent(input))
   }
-  return { current, send, receive } satisfies VaultSession
+  return { current, savedIdOf, send, receive } satisfies VaultSession
 }

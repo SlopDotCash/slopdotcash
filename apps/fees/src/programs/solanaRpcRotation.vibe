@@ -242,7 +242,10 @@ effect function leased(run: RotationRun, inputs: Inputs, root: string, pin: Pin,
   const beforeDeploy = { ...(try boundary(inputs, root, pin, candidate, try renew())), passed: same }
   if ((try run.send({ type: "deploy", check: beforeDeploy })).phase !== "Deploying") return
   const activation = activateCandidate(pin, candidate) catch () => ({ activation: "Unknown" as const, command: unreported })
-  if (activation.activation === "Unknown") try run.note({ deploymentCommand: activation.command })
+  if (activation.activation === "Unknown") {
+    try run.send({ type: "recordCommandFailure" })
+    try run.note({ deploymentCommand: activation.command })
+  }
   const confirmation = try confirmActivation(pin, candidate, readbackAttempts)
   const confirmed = confirmation.outcome === "Confirmed" && (try renew())
   try run.send({ type: "confirmActivation", result: confirmed ? "Confirmed" : "Ambiguous" }, { verifiedAt: try isoNow() })

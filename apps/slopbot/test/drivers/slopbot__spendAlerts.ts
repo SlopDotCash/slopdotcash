@@ -1,4 +1,4 @@
-// spec/slopbot/spendAlerts.md, "Story: Keep one free cost ledger for every provider call"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"
+// spec/slopbot/spendAlerts.md, "Story: Keep one free cost ledger for every provider call"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"; spec/slopbot/spendAlerts.md, "A failed call notice is sent only after its route settled, and a served or repeated failure is suppressed"
 import { Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
@@ -9,7 +9,7 @@ import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/slopbot__spendAlerts.conformance.ts";
 import type { CallInput, Event, Spend } from "../../gen/slopbot__spendAlerts.ts";
 import { recordCalls } from "../../src/route/calls.vibe";
-import { type CallRecord, budgetExhausted, stepOf } from "../../src/route/route.vibe";
+import { type CallFailure, type CallRecord, budgetExhausted, stepOf } from "../../src/route/route.vibe";
 import { claimFailureNotice, claimMilestone, monthNumber, recordFailureReceipt, recordMilestoneReceipt, spendIn } from "../../src/spend/store.vibe";
 
 const clock = settableClock(Date.parse("2101-01-15T00:00:00.000Z"));
@@ -29,6 +29,18 @@ function modelMonth(month: number) {
   return month - monthNumber(monthText(1)) + 1;
 }
 
+function monthStart(month: number) {
+  return Date.parse(`${monthText(month)}-01T00:00:00.000Z`);
+}
+
+function jobKey(job: number) {
+  return `spend-${generation}-job${job}`;
+}
+
+function jobOf(reviewKey: string) {
+  return Number(reviewKey.slice(reviewKey.lastIndexOf("job") + 3));
+}
+
 function months(): [string, string] {
   return [monthText(1), monthText(2)];
 }
@@ -46,16 +58,22 @@ function usageFor(estimate: number) {
   return { input: Math.floor(remainder / 2), output: Math.floor(estimate / 10), cacheRead: (remainder % 2) * 10, cacheWrite: 0 };
 }
 
+function failureOf(c: CallInput): CallFailure | null {
+  if (c.failure === "NotFailed") return null;
+  if (c.failure === "BudgetExhausted") return budgetExhausted;
+  return `provider returned HTTP ${Number(c.cause.slice(c.cause.lastIndexOf(" ") + 1))}`;
+}
+
 function callOf(c: CallInput): CallRecord {
   const step = stepOf(c.provider === "Orbio" ? "OrbioSonnet" : "SurplusSonnet");
   return {
     routeStep: 1,
     gateway: step.gateway,
-    requestedModel: step.model,
+    requestedModel: c.model,
     servedModel: null,
     priceKey: step.priceKey,
     outcome: c.failure === "NotFailed" ? "ok" : "failed",
-    failure: c.failure === "NotFailed" ? null : c.failure === "BudgetExhausted" ? budgetExhausted : "provider returned HTTP 503",
+    failure: failureOf(c),
     usage: usageFor(c.estimate),
     providerCostMicroUsd: c.providerReported ? c.reported : null,
     providerRequestId: null,
@@ -71,38 +89,46 @@ async function dispatched(event: Event) {
   switch (event.type) {
     case "recordCall":
       if (event.c.month < 1 || event.c.month > 12) return "refused" as const;
-      clock.set(Date.parse(`${monthText(event.c.month)}-15T00:00:00.000Z`));
-      return outcome(recordCalls(`spend-${generation}`, 1, "triage", [callOf(event.c)]), runtime);
+      clock.set(monthStart(event.c.month) + event.c.at * 1000);
+      return outcome(recordCalls(jobKey(event.c.job), 1, "triage", [callOf(event.c)]), runtime);
     case "claimMilestone":
       return outcome(claimMilestone(monthText(event.month)), runtime);
     case "deliverMilestone":
       return outcome(recordMilestoneReceipt(monthText(event.month), event.threshold, event.accepted), runtime);
     case "claimFailure":
-      return outcome(claimFailureNotice(await callIdOf(event.call)), runtime);
+      clock.set(monthStart(1) + event.now * 1000);
+      return outcome(claimFailureNotice(await callIdOf(event.call), clock.now()), runtime);
     case "deliverFailure":
+      clock.set(monthStart(1) + event.now * 1000);
       return outcome(recordFailureReceipt(await callIdOf(event.call), event.accepted), runtime);
-    case "recordLowBalanceThreshold":
-    case "noticeLowBalance":
-      return "refused" as const;
   }
 }
 
 function view(state: Spend): Spend {
-  return { ...state, costs: state.costs.map((cost) => (cost.historical ? { ...cost, failure: "NotFailed" } : cost)) };
+  return {
+    ...state,
+    costs: state.costs.map((cost) => (cost.historical ? { ...cost, failure: "NotFailed", job: 0, model: "", cause: "", at: 0 } : cost)),
+  };
 }
 
 export const driver: Driver<Spend> & AsyncDisposable = {
   reset: async () => {
     generation++;
+    await db.prepare("UPDATE slopbot_provider_failure_notices SET claimed_at = ? WHERE claimed_at IS NULL").bind(new Date(monthStart(1)).toISOString()).run();
     await seedHistory();
   },
   dispatch: (_key, event: Event) => dispatched(event),
   observe: async () => {
-    const { spend } = await runtime.runPromise(spendIn(months()));
+    const { spend, calls } = await runtime.runPromise(spendIn(months()));
+    const base = Math.floor(monthStart(1) / 1000);
     return view({
       ...spend,
-      costs: spend.costs.map((cost) => ({ ...cost, month: modelMonth(cost.month) })),
+      costs: spend.costs.map((cost, index) => {
+        const month = modelMonth(cost.month);
+        return { ...cost, month, job: jobOf(calls[index]?.reviewKey ?? ""), at: cost.at - Math.floor(monthStart(month) / 1000) };
+      }),
       alerts: spend.alerts.map((alert) => ({ ...alert, month: modelMonth(alert.month) })),
+      failures: spend.failures.map((notice) => ({ ...notice, recordedAt: notice.recordedAt === 0 ? 0 : notice.recordedAt - base })),
     });
   },
   [Symbol.asyncDispose]: async () => {

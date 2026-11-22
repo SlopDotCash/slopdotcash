@@ -1,16 +1,12 @@
-// spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
+// spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { GitHubApp, type Scope } from "@repo/platform/github/app"
 import type { Association, MergedPull, OpenPull } from "../../../gen/backend__mergeActivity.ts"
-import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { medianWindowHours, mergedPageSize, mergedPages, openPageSize, openPages, openReadCapped, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
 
 export const hourMillis = 3_600_000
 
-const openPage = 50
-const openPages = 6
-const mergedPage = 100
-const mergedPages = 3
 const answerLimitBytes = 4 * 1024 * 1024
 const maintainers: ReadonlySet<string> = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
 const associations: Readonly<Record<string, Association>> = {
@@ -24,7 +20,7 @@ const associations: Readonly<Record<string, Association>> = {
 
 const openQuery = `query($owner:String!,$name:String!,$after:String){
   repository(owner:$owner,name:$name){
-    pullRequests(states:OPEN,first:${openPage},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
+    pullRequests(states:OPEN,first:${openPageSize},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
       pageInfo{hasNextPage endCursor}
       nodes{createdAt isDraft authorAssociation author{__typename}
         reviews(first:40){nodes{authorAssociation author{__typename}}}
@@ -35,7 +31,7 @@ const openQuery = `query($owner:String!,$name:String!,$after:String){
 }`
 
 const mergedQuery = `query($q:String!,$after:String){
-  search(query:$q,type:ISSUE,first:${mergedPage},after:$after){
+  search(query:$q,type:ISSUE,first:${mergedPageSize},after:$after){
     pageInfo{hasNextPage endCursor}
     nodes{... on PullRequest{createdAt mergedAt authorAssociation author{__typename}}}
   }
@@ -111,11 +107,11 @@ effect function openPulls(owner: string, name: string, nowMillis: number) {
   const latest: MergedNode[] = []
   let after: string | null = null
   let capped = false
-  for (let page = 0; page < openPages; page++) {
+  for (let page = 1; page <= openPages; page++) {
     const data: OpenData = try asked(openQuery, { owner, name, after }, OpenData)
     const repository = data.repository
     if (repository === null) throw new ReadFailed({ failure: "github-repository-missing" })
-    if (page === 0) latest.push(...repository.latest.nodes)
+    if (page === 1) latest.push(...repository.latest.nodes)
     let reachedRecent = false
     for (const node of repository.pullRequests.nodes) {
       if (millisOf(node.createdAt) > waitingBefore) reachedRecent = true
@@ -128,8 +124,8 @@ effect function openPulls(owner: string, name: string, nowMillis: number) {
       })
     }
     const info: PageInfo = repository.pullRequests.pageInfo
+    if (openReadCapped(page, info.hasNextPage, reachedRecent)) capped = true
     if (!info.hasNextPage || reachedRecent) break
-    if (page === openPages - 1) capped = true
     after = info.endCursor
   }
   return { open, capped, latest }

@@ -310,6 +310,22 @@ export const surfaces: ReadonlyArray<Surface> = (Object.keys(successors) as OldE
   })).filter((surface) => surface.cases.length > 0 || surface.rows.length > 0);
 });
 
+export interface Declared {
+  readonly method: string;
+  readonly path: string;
+}
+
+function routeKey(method: string, path: string): string {
+  return `${method} /${path.split("/").filter((segment) => segment !== "").map((segment) => segment.startsWith(":") || segment === "*" ? ":" : segment).join("/")}`;
+}
+
+export function undeclared(declared: ReadonlyArray<Declared>): ReadonlyArray<string> {
+  const keys = new Set(declared.map((route) => routeKey(route.method, route.path)));
+  return rows
+    .filter((row) => row.entry === "pages" && row.method !== "*" && row.path.startsWith("/api/v1/") && excuseOf(row) === undefined && !keys.has(routeKey(row.method, row.path)))
+    .map((row) => row.id);
+}
+
 export const elsewhere: ReadonlyArray<{ readonly row: string; readonly journey: string }> = rows.flatMap((row) => {
   const successor = successors[row.entry];
   return successor.kind === "elsewhere" ? [{ row: row.id, journey: successor.journey }] : [];

@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"
 import { Refused } from "@repo/platform/http"
 import { postProjects, putProjectsById } from "../../client/refusals.vibe"
 import { fieldsCompleteOf } from "../store/codec.vibe"
@@ -158,12 +158,12 @@ function chainEscrow(escrow: unknown): unknown {
   return { ...object, deployments: list(object.deployments).map((deployment) => Object.fromEntries(Object.entries(objectOf(deployment) ?? {}).filter(([key]) => key !== "maxNativeCostWei" && key !== "bindingConsentNonceLimit"))) }
 }
 
-function positiveMinor(value: unknown): boolean {
+export function positiveMinor(value: unknown): boolean {
   return typeof value === "string" && /^[0-9]*[1-9][0-9]*$/u.test(value)
 }
 
 function fixedReward(reward: Json): Json {
-  return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "payoutExclusions"].includes(key)))
+  return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "honorSystem", "payoutExclusions"].includes(key)))
 }
 
 export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: string): Json | Refused {
