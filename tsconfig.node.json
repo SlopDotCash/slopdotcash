@@ -73,6 +73,7 @@
     "src/lib/network-names.ts",
     "src/lib/referral-claims.ts",
     "src/lib/referral-code.ts",
+    "src/lib/trace-licensing.ts",
     "src/lib/contributor-allocation.ts",
     "src/lib/use-payout-wallets.ts",
     "src/lib/use-time-boundary.ts",

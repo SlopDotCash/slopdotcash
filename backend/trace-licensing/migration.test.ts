@@ -6,7 +6,7 @@ import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 const NEW = "0147_trace_licensing.sql";
 
 describe("trace licensing migration", () => {
-  test("migration backfills v1 and guards history", () => {
+  test("migration backfills v1 on uploaded runs and guards history", () => {
     const { sqlite } = sqliteD1(MIGRATIONS.filter((m) => m !== NEW));
     sqlite
       .query(
@@ -14,13 +14,25 @@ describe("trace licensing migration", () => {
          VALUES ('r1','c1','1','a','p','o/r','rev','prov','m','cl','1','awaiting_trace','2026-11-22T00:00:00Z','k1')`,
       )
       .run();
+    sqlite
+      .query(
+        `INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, trace_sha256, created_at, create_idempotency_key)
+         VALUES ('r0','c0','1','a','p','o/r','rev','prov','m','cl','1','trace_uploaded','${"a".repeat(64)}','2026-11-22T00:00:00Z','k0')`,
+      )
+      .run();
     sqlite.exec(
       readFileSync(join(import.meta.dir, "../../migrations", NEW), "utf8"),
     );
-    const old = sqlite
-      .query("SELECT terms_version FROM trace_runs WHERE id='r1'")
-      .get() as { terms_version: string };
-    expect(old.terms_version).toBe("private-trace-v1");
+    const version = (id: string) =>
+      (
+        sqlite
+          .query("SELECT terms_version FROM trace_runs WHERE id = ?")
+          .get(id) as { terms_version: string | null }
+      ).terms_version;
+    // A run holding a trace was uploaded under v1; a run still awaiting its
+    // trace stays unstamped so its first intent sets the version.
+    expect(version("r0")).toBe("private-trace-v1");
+    expect(version("r1")).toBeNull();
     sqlite
       .query(
         `INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, created_at, create_idempotency_key)

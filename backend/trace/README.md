@@ -315,7 +315,10 @@ The write flow is:
 1. `POST /api/v1/runs` with `Idempotency-Key` and `{ clientRunId, projectId,
 repository, projectPolicyRevision, provider, model, client, clientVersion }`.
 2. `POST /api/v1/runs/{serverRunId}/trace-intents` with `Idempotency-Key` and
-   `{ sha256, sizeBytes, contentType }`.
+   `{ sha256, sizeBytes, contentType, termsVersion? }`. `termsVersion` is
+   `private-trace-v1` or `private-trace-v2`; absent means v1 and any other
+   value is 400. The first intent sets the run's version; a later intent with
+   another version is 409 `trace_terms_conflict`.
 3. `PUT` the exact returned `uploadUrl` within five minutes, with the exact
    declared body, `Content-Type`, and `Digest: sha-256=<lowercase hex>`.
 4. `POST /api/v1/runs/{serverRunId}/finalize` with `Idempotency-Key`.
@@ -327,7 +330,11 @@ different bytes. A consumed capability cannot be used again. An authenticated
 client may renew an expired, unconsumed intent only by repeating the exact
 idempotent request for the same run, digest, size, and
 content type; mismatched retries fail closed. Finalization fails closed unless
-the trace is attached.
+the trace is attached. In the same transaction it gives a run with no version
+v1 and, when the run is v2, its owner's licensing setting is on and the owner
+has no participation ban, records a licence with basis `upload` and one
+`granted` event. Only the request that finalizes the run can do this, and only
+once; a repeated finalize adds nothing.
 
 Intent creation and renewal check the current run owner, non-finalized state
 and compatible attached digest in the database write. Existing-intent reads

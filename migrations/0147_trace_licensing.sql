@@ -3,7 +3,9 @@
 -- and every licence and every setting change leaves append-only history.
 ALTER TABLE trace_runs ADD COLUMN terms_version TEXT
   CHECK (terms_version IS NULL OR terms_version IN ('private-trace-v1', 'private-trace-v2'));
-UPDATE trace_runs SET terms_version = 'private-trace-v1';
+-- Runs that already hold a trace were uploaded under version 1. A run still
+-- awaiting its trace stays unstamped, so its first intent sets the version.
+UPDATE trace_runs SET terms_version = 'private-trace-v1' WHERE trace_sha256 IS NOT NULL;
 CREATE INDEX trace_runs_account_finalized ON trace_runs(github_user_id, finalized_at);
 
 CREATE TABLE trace_licensing_settings (

@@ -1355,7 +1355,7 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "81847901bc853cacf2e35094bdc96affbccda31433d71fbc27e526b01a044b85",
+      "sha256": "c1eac7869e29dc310ce88958b8aa215bcefa7187c3b716ac93741a635f48b0b9",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
@@ -1371,18 +1371,18 @@
         "formal/models/vetting/vetting_upload_completion.qnt"
       ],
       "candidateLines": [
-        65, 160, 283, 284, 287, 305, 316, 321, 344, 382, 395, 398, 420, 421,
-        426, 429, 459, 460, 463, 464, 480, 483, 505, 532, 539, 542, 546, 565,
-        593, 627, 628, 629, 663, 690, 701, 707, 709, 719, 727, 741, 742, 747,
-        752, 772, 776, 778, 817, 822, 838, 846, 847, 853, 854, 860, 885, 891,
-        893, 987, 1015, 1043, 1058, 1059, 1061, 1079, 1093, 1098, 1101, 1162,
-        1163, 1170, 1173, 1175
+        66, 161, 284, 285, 288, 306, 317, 322, 345, 383, 396, 399, 421, 422,
+        427, 430, 460, 461, 464, 465, 481, 484, 506, 533, 540, 543, 547, 566,
+        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 741, 744, 746, 757,
+        765, 775, 783, 797, 798, 803, 808, 828, 832, 834, 873, 878, 894, 902,
+        903, 909, 910, 916, 941, 947, 949, 1043, 1071, 1099, 1114, 1115, 1117,
+        1135, 1149, 1154, 1157, 1218, 1219, 1226, 1229, 1231
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/contracts.ts",
-      "sha256": "b14e2d0bb714baccceda657eeb0dd61dce7e5c344f338547a23d1e8283c0d6fd",
+      "sha256": "6be22e3b4c232be93126d6bc31b5057ba13967f4a650ecf477c5199d804e416c",
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
@@ -1390,12 +1390,12 @@
         "formal/models/api/trace_event_finalization.qnt",
         "formal/models/api/trace_run_creation.qnt"
       ],
-      "candidateLines": [16, 17, 26, 40, 84, 140, 171, 172, 173],
+      "candidateLines": [17, 18, 27, 41, 85, 141, 172, 173, 174],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/handler.ts",
-      "sha256": "57a676794e28a9a7c5d476386de2c956f78a6aae6a9c71a355612dc263798cbf",
+      "sha256": "403d637d445a0b515d98dda51dc6ac30753d3f384fa9858da53a4debfb877d62",
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
@@ -1410,10 +1410,10 @@
         "formal/models/contributor/contributor_session_exchange.qnt"
       ],
       "candidateLines": [
-        87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 424, 432, 462, 521,
-        626, 634, 771, 774, 845, 849, 852, 892, 893, 939, 942, 943, 948, 984,
-        1042, 1043, 1066, 1070, 1076, 1097, 1102, 1104, 1108, 1109, 1110, 1111,
-        1124, 1160, 1164, 1231, 1239, 1247, 1413, 1544
+        88, 89, 104, 112, 126, 127, 129, 130, 131, 274, 284, 425, 433, 463, 522,
+        627, 635, 772, 775, 846, 850, 853, 893, 894, 936, 937, 965, 968, 969,
+        974, 1010, 1068, 1069, 1092, 1096, 1102, 1123, 1128, 1130, 1134, 1135,
+        1136, 1137, 1150, 1186, 1190, 1257, 1265, 1273, 1439, 1570
       ],
       "review": "mapped-abstraction"
     },
@@ -3824,11 +3824,11 @@
     },
     {
       "path": "migrations/0147_trace_licensing.sql",
-      "sha256": "bc52b3d6b7efdd1b01bcfb6f5d7d5378624ebd769b49c90f45a33246a5e0014d",
+      "sha256": "c771b401fc1c9afeefeaf1a2312571d8ed4a27460d1451d25bb31aa5638406d3",
       "models": [],
       "candidateLines": [
-        6, 29, 33, 46, 48, 50, 52, 60, 103, 116, 117, 118, 129, 130, 139, 142,
-        150, 155
+        8, 31, 35, 48, 50, 52, 54, 62, 105, 118, 119, 120, 131, 132, 141, 144,
+        152, 157
       ],
       "review": "pending"
     },

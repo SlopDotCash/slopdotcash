@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "4266c55a0a55537bcf58c8ff6d4b6770faa9e3730d03ebc94caa473fc9cda352",
+  "inventorySha256": "d0357aa80784a95917104df580f93f557d2c3df8dff2f55c1038f5ad3ce42fa0",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -726,7 +726,7 @@
     },
     {
       "path": "backend/trace/contracts.ts",
-      "line": 26,
+      "line": 27,
       "name": "RunState",
       "kind": "string-union",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
@@ -2322,7 +2322,7 @@
     },
     {
       "path": "migrations/0147_trace_licensing.sql",
-      "line": 29,
+      "line": 31,
       "name": "state",
       "kind": "sql-check",
       "values": ["licensed", "withdrawn"],
@@ -2332,7 +2332,7 @@
     },
     {
       "path": "migrations/0147_trace_licensing.sql",
-      "line": 40,
+      "line": 42,
       "name": "reason",
       "kind": "sql-check",
       "values": ["account_closed", "opt_in", "setting_off", "upload"],

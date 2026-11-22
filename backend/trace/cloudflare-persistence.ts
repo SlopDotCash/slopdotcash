@@ -1,5 +1,6 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedBytes } from "../../src/lib/browser-json";
+import type { TraceTermsVersion } from "../../src/lib/trace-licensing";
 import {
   type D1TransactionalDatabase as D1Database,
   type D1Result,
@@ -709,20 +710,75 @@ export class CloudflareTracePersistence implements TracePersistence {
     return { status: "created", value: updated };
   }
 
+  async stampTermsVersion(
+    runId: string,
+    githubId: string,
+    version: TraceTermsVersion,
+  ): Promise<"set" | "same" | "conflict"> {
+    const stamped = await this.db
+      .prepare(
+        `UPDATE trace_runs SET terms_version = ?
+         WHERE id = ? AND github_user_id = ? AND terms_version IS NULL
+           AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+      )
+      .bind(version, runId, githubId, githubId)
+      .run();
+    if ((stamped.meta?.changes ?? 0) === 1) return "set";
+    const row = await this.db
+      .prepare(
+        "SELECT terms_version FROM trace_runs WHERE id = ? AND github_user_id = ?",
+      )
+      .bind(runId, githubId)
+      .first<{ terms_version: string | null }>();
+    return row?.terms_version === version ? "same" : "conflict";
+  }
+
   async finalizeRun(
     runId: string,
     githubId: string,
     finalizedAt: string,
   ): Promise<TraceRun | null> {
-    const updated = await this.db
-      .prepare(
-        `UPDATE trace_runs SET state = 'finalized', finalized_at = COALESCE(finalized_at, ?)
-         WHERE id = ? AND github_user_id = ? AND trace_sha256 IS NOT NULL
-           AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+    // A licence is granted only by the call that finalized the run (its
+    // finalized_at), only for v2 with the owner's setting on and no ban, and
+    // at most once. The event is written first, while no licence exists, so
+    // both inserts see the same state and a repeat writes neither.
+    const uploadLicenceEligible = `run.id = ? AND run.github_user_id = ?
+      AND run.state = 'finalized' AND run.finalized_at = ?
+      AND run.terms_version = 'private-trace-v2'
+      AND EXISTS (
+        SELECT 1 FROM trace_licensing_settings setting
+        WHERE setting.github_id = run.github_user_id AND setting.enabled = 1
       )
-      .bind(finalizedAt, runId, githubId, githubId)
-      .run();
-    if ((updated.meta?.changes ?? 0) !== 1) return null;
+      AND NOT EXISTS (SELECT 1 FROM trace_licences licence WHERE licence.run_id = run.id)
+      AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`;
+    const [updated] = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE trace_runs SET state = 'finalized', finalized_at = COALESCE(finalized_at, ?),
+             terms_version = COALESCE(terms_version, 'private-trace-v1')
+           WHERE id = ? AND github_user_id = ? AND trace_sha256 IS NOT NULL
+             AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+        )
+        .bind(finalizedAt, runId, githubId, githubId),
+      this.db
+        .prepare(
+          `INSERT INTO trace_licence_events (run_id, github_id, kind, reason, account_event_id, at)
+           SELECT run.id, run.github_user_id, 'granted', 'upload',
+             (SELECT MAX(event.id) FROM trace_licensing_events event
+              WHERE event.github_id = run.github_user_id AND event.kind = 'enabled'),
+             run.finalized_at
+           FROM trace_runs run WHERE ${uploadLicenceEligible}`,
+        )
+        .bind(runId, githubId, finalizedAt, githubId),
+      this.db
+        .prepare(
+          `INSERT INTO trace_licences (run_id, github_id, state, basis, updated_at)
+           SELECT run.id, run.github_user_id, 'licensed', 'upload', run.finalized_at
+           FROM trace_runs run WHERE ${uploadLicenceEligible}`,
+        )
+        .bind(runId, githubId, finalizedAt, githubId),
+    ]);
+    if ((updated?.meta?.changes ?? 0) !== 1) return null;
     const run = await this.getRun(runId);
     return run?.githubId === githubId && run.state === "finalized" ? run : null;
   }
