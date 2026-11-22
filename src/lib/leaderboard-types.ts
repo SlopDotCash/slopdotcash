@@ -685,6 +685,8 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
+    /** Standalone review assessment when implementation credit is held. */
+    reviewAssessmentDigest?: string;
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
     /** Source-verified allocation; this never changes the PR's value tier. */

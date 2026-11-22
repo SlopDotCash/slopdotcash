@@ -13,6 +13,7 @@ import {
   appendPointAwards,
   applyPointsSnapshot,
   awardForScore,
+  emptyPointsJournal,
   latestPoints,
   type PointsJournal,
   pointKey,
@@ -98,6 +99,57 @@ test("a second accepted PR containing only previously credited implementation co
   expect(snapshot.source.counts.mergedPullRequests).toBe(
     input.mergedPullRequestOutcomes.length,
   );
+});
+
+test("a promotion cannot earn implementation credit for its empty marker", () => {
+  setSystemTime(new Date(AFTER_NOVEMBER));
+  const input = penaltyScoreInput([]);
+  input.valueDecisions = new Map();
+  const [original, promotion] = input.mergedPullRequestOutcomes;
+  const carried = {
+    oid: "f".repeat(40),
+    author: PENALIZED_AUTHOR,
+    parentCount: 1,
+    additions: 40,
+    deletions: 2,
+  };
+  const marker = {
+    oid: "a".repeat(40),
+    author: PROJECT_OWNER,
+    parentCount: 1,
+    additions: 0,
+    deletions: 0,
+  };
+  original.commits = [carried];
+  promotion.commits = [
+    carried,
+    { oid: "e".repeat(40), author: PROJECT_OWNER, parentCount: 2 },
+  ];
+  const before = createLeaderboardSnapshot(input);
+  const journal = applyPointsSnapshot(
+    emptyPointsJournal(GENERATED_AT),
+    before,
+    "a".repeat(64),
+    before.generatedAt,
+  );
+  promotion.commits.push(marker);
+
+  const held = createLeaderboardSnapshot(input);
+  expect(held.ledger).toEqual(before.ledger);
+  expect(
+    applyPointsSnapshot(journal, held, "b".repeat(64), held.generatedAt)
+      .revisions,
+  ).toEqual(journal.revisions);
+
+  marker.additions = 1;
+  const independent = createLeaderboardSnapshot(input);
+  expect(
+    independent.ledger.find(
+      (event) =>
+        event.source.id === promotion.id &&
+        event.category === "merged-pull-request",
+    )?.actor.id,
+  ).toBe(PROJECT_OWNER.id);
 });
 
 test("incomplete historical parent evidence does not establish duplicate implementation", () => {

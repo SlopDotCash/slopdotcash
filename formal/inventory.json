@@ -3995,7 +3995,7 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "35f61c74e0a813870c2846652a6f37c2e803a877264b83746947325a72c21d6c",
+      "sha256": "738d36354f7e31f9ad768951a6b6111ff8e8d96dd4bb781a95469d0f73be0c96",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
@@ -4005,8 +4005,8 @@
         349, 447, 493, 514, 539, 572, 595, 602, 726, 785, 952, 1360, 1361, 1364,
         1435, 1458, 1467, 1631, 1687, 1746, 1752, 1753, 1756, 1917, 1919, 1923,
         1956, 2295, 2341, 2346, 2763, 3020, 3022, 3029, 3040, 3243, 3245, 3249,
-        3408, 3812, 3823, 4113, 4335, 4340, 4343, 4358, 4371, 4373, 4418, 4452,
-        4847, 4848, 5077, 5147, 5356, 5497, 5518, 5548, 5550
+        3408, 3812, 3823, 4113, 4353, 4358, 4361, 4376, 4389, 4391, 4436, 4470,
+        4865, 4866, 5095, 5165, 5374, 5515, 5536, 5566, 5568
       ],
       "review": "mapped-abstraction"
     },
@@ -6704,10 +6704,11 @@
     },
     {
       "path": "src/lib/commit-credit.ts",
-      "sha256": "bb2223a458535443f9b3b216ae57d5b0bfd3d3b8c6a1f6bbf367d3f767fa9e25",
+      "sha256": "9c82c30548fb6e319d1fcc9cdb01a628dd2a4391ebbb936028bf3047a40ba54b",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
-        "formal/models/points/implementation_credit.qnt"
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -7021,17 +7022,17 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "95e2e5dfda875c64e3412acf9326986cbe015f0fe32b516006bd8b407a0bebd6",
+      "sha256": "cf0671970a59ed048c4eb453382a4956a547c655f3fdc0c474982fa2854b9f2f",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 779, 806
+        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 781, 808
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "084e21b40da4a4c52f07e98e9e10343b364ac252ac474dbf3191f6104b40da01",
+      "sha256": "105b0a24efb1863841ca21c9df19de1d20da1344a02fde220bb9d600630507dd",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -7044,16 +7045,16 @@
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        262, 263, 287, 293, 958, 1021, 1047, 1258, 1320, 1330, 1336, 1338, 1340,
-        1342, 1349, 1434, 1468, 1473, 1491, 1588, 2143, 2161, 2233, 2242, 2260,
-        2269, 2277, 2299, 2314, 2323, 2331, 2377, 2427, 2477, 2532, 2549, 2550,
-        2553, 2554, 2658, 2660, 2661, 2665, 2668, 2676, 2678, 2696, 3000, 3019,
-        3074, 3250, 3445, 3470, 3519, 3592, 3612, 3738, 3817, 4214, 4225, 4259,
-        4322, 4336, 4659, 4872, 5073, 5186, 5211, 5342, 5350, 5355, 5422, 5436,
-        6184, 6186, 6209, 6213, 6217, 6222, 6368, 6377, 6387, 6388, 6446, 6481,
-        6487, 6507, 6512, 6519, 6527, 6529, 6555, 6558, 6572, 6574, 6595, 6597,
-        6601, 6604, 6609, 6801, 6803, 7062, 7106, 7169, 7170, 7991, 7992, 7993,
-        7994, 8011, 8021, 8032, 8048, 8137, 8203, 8204, 8231, 8438
+        263, 264, 288, 294, 959, 1022, 1048, 1259, 1321, 1331, 1337, 1339, 1341,
+        1343, 1350, 1435, 1469, 1474, 1492, 1589, 2144, 2162, 2234, 2243, 2261,
+        2270, 2278, 2300, 2315, 2324, 2332, 2378, 2428, 2478, 2533, 2550, 2551,
+        2554, 2555, 2659, 2661, 2662, 2666, 2669, 2677, 2679, 2697, 3001, 3020,
+        3075, 3251, 3446, 3471, 3520, 3593, 3613, 3755, 3834, 4231, 4242, 4276,
+        4339, 4353, 4676, 4889, 5090, 5203, 5228, 5359, 5367, 5372, 5439, 5453,
+        6201, 6203, 6226, 6230, 6234, 6239, 6385, 6394, 6404, 6405, 6463, 6498,
+        6504, 6524, 6529, 6536, 6544, 6546, 6572, 6575, 6589, 6591, 6612, 6614,
+        6618, 6621, 6626, 6818, 6820, 7079, 7123, 7186, 7187, 8008, 8009, 8010,
+        8011, 8012, 8029, 8039, 8050, 8054, 8077, 8166, 8240, 8241, 8272, 8479
       ],
       "review": "mapped-abstraction"
     },
@@ -7283,14 +7284,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "1e3d63012cb8071fa5fd87a945c533c388eeaf02747f4c6a5d1c0115cb9501d6",
+      "sha256": "42a06dca50709f704258a01b062f6b5b970cd5fcb6b47fc03c358dffcfd39972",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        234, 299, 313, 324, 338, 345, 480, 537, 538, 539, 543, 763, 765, 769,
-        864, 916, 922, 949, 950, 1037, 1042, 1247, 1440, 1515, 1614, 1630, 1829,
-        1836, 1841, 1949, 2030, 2065, 2093, 2195, 2196, 2197
+        235, 300, 314, 325, 339, 346, 481, 538, 539, 540, 544, 764, 766, 770,
+        865, 917, 923, 950, 951, 1038, 1043, 1248, 1449, 1524, 1623, 1639, 1838,
+        1845, 1850, 1958, 2039, 2074, 2102, 2204, 2205, 2206
       ],
       "review": "mapped-abstraction"
     },
@@ -7304,7 +7305,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "47e3007f89c0055efb0b939eb5f547056e45a655378ad243c50f2f1098620934",
+      "sha256": "66bb7be84000c2f296f2f9f0269d928f642fcb85a575b6272a9656266ad7ec7c",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -9741,7 +9742,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "95c1c37b45e9bc728e4f5346d1f33487bf742ea6062d28cd6ce3681ec68a4e9b",
+      "sha256": "4ea5a761830193b9b5a05ecfccd22ab090db2845ec2d123dd665c7fbd123af3f",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/historical_discussion_evidence.qnt",
@@ -9749,7 +9750,7 @@
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        73, 86, 95, 111, 499, 500, 691, 711, 754, 763, 782, 1138, 1157
+        73, 86, 95, 111, 499, 500, 702, 722, 765, 774, 793, 1111, 1169, 1188
       ],
       "review": "mapped-abstraction"
     },
@@ -15662,7 +15663,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "f21ab7c9bd61f66e2a749a445747bd28184683f2c3da5c329caf03a0455d4214",
+      "sha256": "3fca57faf4d02bbc1882e2a8c4922b59b9664ee5b70758feeda8519a5425bde2",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
@@ -15676,6 +15677,7 @@
       "scenarios": [
         "changedPredecessorRefusesImportTest",
         "earlierAcceptanceRemovesLaterOwnershipTest",
+        "emptyPromotionCannotReallocateCarriedWorkTest",
         "incompleteConnectedProofHeldTest",
         "invalidSupplementCannotPrepareTest",
         "privateProtectedPoolHeldTest",
@@ -15733,17 +15735,20 @@
     },
     {
       "path": "formal/models/points/implementation_credit_gate.qnt",
-      "sha256": "fa20592ae9e0de0da96fad37bfa98d953dea91a4f3c6cd08ac4bd65b35ccbc92",
+      "sha256": "edbcf77e2e5db12b91bead74505fc4c0d22c76cbcee3774abcee31fa5d56958b",
       "sources": [
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
+        "src/lib/commit-credit.ts",
         "src/lib/leaderboard.ts"
       ],
       "scenarios": [
         "completeDuplicateGetsNoNewCreditTest",
+        "emptyPromotionKeepsPriorPointsTest",
         "heldSourceKeepsPriorPointsTest",
         "missingOwnershipIsNotDuplicateProofTest",
-        "transportFailureDoesNotBecomeCreditTest"
+        "transportFailureDoesNotBecomeCreditTest",
+        "zeroLineWorkWithIndependentPathsCanScoreTest"
       ]
     },
     {

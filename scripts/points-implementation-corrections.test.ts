@@ -568,6 +568,28 @@ test("complete zero-line evidence uses actor-ID ties, while zero recipients cann
   expect(total(result.journal)).toBe(1);
 });
 
+test("an empty promotion marker cannot reallocate previously credited implementation", () => {
+  const journal = initial([award(A, 18), award(B, 12)]);
+  const input = manifest(journal);
+  const evidence = complete(input).sources[0];
+  const [marker, carried] = evidence.commits;
+  marker.additions = 0;
+  marker.deletions = 0;
+  delete marker.files;
+  carried.firstAcceptedSourceId = "PR_earlier";
+  evidence.headSha = marker.sha;
+  evidence.commits = [carried, marker];
+
+  const result = apply(journal, input);
+  expect(result.dispositions[0].status).toBe("held");
+  expect(result.journal).toBe(journal);
+
+  marker.files = [{ path: "diagram.png", additions: 0, deletions: 0 }];
+  const binary = apply(journal, input);
+  expect(binary.dispositions[0].status).toBe("applied");
+  expect(amounts(binary.journal)).toEqual({ [A.id]: 30, [B.id]: 0 });
+});
+
 test("a sole verified recipient keeps the pool when line counts are unavailable", () => {
   const journal = initial();
   const input = manifest(journal);

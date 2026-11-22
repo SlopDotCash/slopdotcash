@@ -1,4 +1,5 @@
 // @source src/lib/leaderboard.ts
+// @source src/lib/commit-credit.ts
 // @source scripts/value-ingestion.ts
 // @source scripts/retained-commit-credit.ts
 // @evidence scripts/retained-attribution-hold.test.ts
@@ -15,6 +16,8 @@ module implementation_credit_gate {
     not(s.selected), s' = s.with("selected", true).with("complete", complete)
       .with("duplicate", duplicate).with("held", held).with("fatal", fatal)
   }
+  action selectZeroLineWork(carriesEarlierWork: bool, hasIndependentPaths: bool): bool =
+    selectSource(true, false, carriesEarlierWork and not(hasIndependentPaths), false)
   action credit = all { s.selected, not(s.fatal), not(s.held),
     not(s.complete and s.duplicate), s' = s.with("credited", true) }
   action retry = s' = s
@@ -31,6 +34,10 @@ module implementation_credit_gate {
     .expect(s.retained == 10 and invariant).then(credit.fail())
   run completeDuplicateGetsNoNewCreditTest = init.then(selectSource(true, true, false, false))
     .expect(invariant).then(credit.fail())
+  run emptyPromotionKeepsPriorPointsTest = init.then(selectZeroLineWork(true, false))
+    .expect(s.retained == 10 and invariant).then(credit.fail())
+  run zeroLineWorkWithIndependentPathsCanScoreTest = init.then(selectZeroLineWork(true, true))
+    .then(credit).expect(s.credited and invariant)
   run missingOwnershipIsNotDuplicateProofTest = init.then(selectSource(false, true, false, false))
     .then(credit).expect(s.credited and invariant)
   run transportFailureDoesNotBecomeCreditTest = init.then(selectSource(false, false, false, true))
