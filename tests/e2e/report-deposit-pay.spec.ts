@@ -1,10 +1,8 @@
 /**
  * The pay page of the refundable SLOP deposit on a private security report,
  * `/fee/report/<caseId>` (operator decision, 21 November 2026; PRD section 8).
- * The deposit is switched off in every deployed bundle until Slop asks for
- * it. The tests set the switch through the browser-test build's seam, serve
- * the read route's record in the shape of the shared interface, and pay with
- * a wallet whose every request the test reads.
+ * The tests exercise both switch settings through the browser-test build,
+ * serve the report deposit record, and check each request made to the wallet.
  */
 import { reportDepositPayPath } from "../../src/lib/report-deposit-page";
 import {
@@ -87,12 +85,15 @@ test("Pages rewrites the report pay address to the app", {
     await expect(
       page.getByRole("heading", { level: 1, name: "Report deposit" }),
     ).toBeVisible();
-    // As deployed: switched off, and nothing was asked for this report.
-    await expect(
-      page.getByText("The report deposit is not switched on.", {
-        exact: false,
-      }),
-    ).toBeVisible();
+    const disabledNotice = page.getByText(
+      "The report deposit is not switched on.",
+      { exact: false },
+    );
+    if (REPORT_DEPOSIT_SWITCHED_ON) {
+      await expect(disabledNotice).toHaveCount(0);
+    } else {
+      await expect(disabledNotice).toBeVisible();
+    }
     await expect(
       page.getByText(
         "Slop has not asked a deposit for this report. No deposit is due.",
