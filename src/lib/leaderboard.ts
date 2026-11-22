@@ -8243,7 +8243,10 @@ export function assertLeaderboardSnapshot(
           : reviewEvent
             ? row?.reviewAssessmentDigest
             : undefined;
-      if (`value:${assessedDigest}` !== event.scoreDecisionSourceId)
+      if (
+        typeof assessedDigest !== "string" ||
+        `value:${assessedDigest}` !== event.scoreDecisionSourceId
+      )
         throw new Error(
           "Value score event is not bound to its assessment coverage",
         );
