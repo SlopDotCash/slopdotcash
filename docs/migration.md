@@ -27,7 +27,7 @@ Earlier snapshots remain in the original project history.
 
 `vibestack/`, `SPEC.md`, the agent skills and the root engineering
 configuration are vendored from the published `lalalune/vibestack` `main`
-commit `4eec2cea679e14e14158defafbc372009c8202d4`. The vendor update takes
+commit `0969b0ac5e393aebc752421ce2b7a7f52f7885df`. The vendor update takes
 the delta from `e4e2ab38f761897657c918f073e19114874b37ff` and retains Slop's
 product, verification and release configuration. The readiness audit compared Slop `development` at
 `87a26cc9844d04709e851686609c86f853e11678`, whose PRD has SHA-256
@@ -40,10 +40,11 @@ These local patches differ from that commit:
 | Patch | Files | Reason |
 | --- | --- | --- |
 | Guide and license | `vibestack/README.md`, `vibestack/LICENSE` | The upstream README with links rebased to `../`; the root README describes Slop |
-| Exported contrast and positive design fixture | `vibestack/design/tokens.ts`, `vibestack/design/test/fixtures/good.tsx`, root `package.json` export `./design/tokens` | `@repo/ui` tests its colors with the exported contrast function; the positive lint fixture uses Slop's `shadow-panel` token. Upstream already supports the `info` color and focus-ring contrast |
+| Exported contrast and positive design fixture | `vibestack/design/tokens.ts`, `vibestack/design/test/fixtures/good.tsx`, `vibestack/design/test/design.test.ts`, root `package.json` export `./design/tokens` | `@repo/ui` tests its colors with the exported contrast function; the positive lint fixture uses Slop's `shadow-panel` and `z-modal` tokens. The journey retains every row/value assertion in Slop's authored order and uses the token builder after real CLI idempotence checks. Upstream already supports the `info` color and focus-ring contrast |
 | Workspace packages | `pnpm-workspace.yaml`, `eslint.config.js`, `knip.config.js` | The catalog adds the component, icon and font dependencies of `packages/ui` and `packages/design-system`. `packages/contracts` is a workspace package with native Foundry and Rust tasks |
 | Lint policy | `eslint.config.js`, `AGENTS.md`, `CONTRIBUTING.md` | Slop keeps signer custody, frozen-source exclusions, package exports and UI-driver rules. Upstream's comment and effect rules allow only the inventoried existing counts; new violations fail |
 | Task graph | `turbo.json` | `@repo/ui#gen` waits for the root `gen` that writes the request states its stories read, which a fresh install otherwise races; `@repo/contracts` tasks; `//#formal:check` |
+| Native setup | `.github/actions/setup/action.yml`, `.github/workflows/ci.yml` | Keep the reviewed validator image; install libcurl headers and the SHA-pinned Agave program builder without shadowing that validator |
 | Branches and package links | `.github/workflows/ci.yml`, `.github/workflows/fuzz.yml`, `package.json` | CI runs on `vibestack`, `development` and `main`, and the nightly fuzz run targets `vibestack`; the root package keeps the name `vibestack`, which the tools and workspace packages import, and drops upstream's repository, homepage and bug links |
 
 `AGENTS.md` includes the Slop specification migration section, which names

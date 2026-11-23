@@ -18568,7 +18568,7 @@
     },
     {
       "path": "spec/points/localGitObjects.md",
-      "sha256": "f583c46ce08ee781909d6da6ba11a75e145b61dbc0c450b2edb0a413aa0ec70e",
+      "sha256": "ffa134b188c00bff566054445528a26fedac064780176015032b612495dfe573",
       "module": "points__localGitObjects",
       "stories": [
         {
@@ -18594,8 +18594,8 @@
             "certain",
             "canOffer",
             "offer",
-            "canSettle",
-            "settle",
+            "canAnswer",
+            "answer",
             "canCrash",
             "crash",
             "alwaysAccounted",
@@ -19830,7 +19830,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "6c7ac00ff50571cc11775ae5a8b0530d3dc98084fd86a2772f49f4e6e038cee6",
+      "sha256": "9a0d2bad4146284886c55f01d7e4acb42a9e80b1a6a4e71c10f73e5b13f140e5",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -33044,7 +33044,7 @@
     },
     {
       "path": "spec/slopbot/historyReadAhead.md",
-      "sha256": "d71d326c9a7b7ece79087e81be489698277b64598859d10fe1a646981b351890",
+      "sha256": "97610afc8d3820c7f1403f8bd5ec101ba58a84dbfe6a4c9734a71fb918c8d4ad",
       "module": "slopbot__historyReadAhead",
       "stories": [
         {
@@ -33116,7 +33116,7 @@
         },
         {
           "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a full read-ahead and a dropped one",
-          "line": 146,
+          "line": 147,
           "definitions": [
             "concurrencyValues",
             "outcomeCountValues",
@@ -34856,7 +34856,7 @@
     },
     {
       "path": "spec/slopbot/submissionFeeGate.md",
-      "sha256": "95fab34e17c0d0babfbbcca0937cf908d412d30929a52acf29e2a7b700c44f9c",
+      "sha256": "8528277be3db140897c232947d01e0521128076a120b4f8e3934c75179c989a5",
       "module": "slopbot__submissionFeeGate",
       "stories": [
         {
@@ -34968,6 +34968,7 @@
             "lawOpenRefundOnlyAfterTheWait",
             "LabelEvent",
             "ClosingIssue",
+            "LabelScan",
             "labelOnAt",
             "invitedOf",
             "keepMarkedOf",
@@ -34986,7 +34987,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / A withdrawn payment asks again",
-          "line": 348,
+          "line": 349,
           "definitions": [
             "canObserveWithdrawn",
             "observeWithdrawn",
@@ -34999,7 +35000,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Due checks are claimed before they are sent, 20 every five minutes",
-          "line": 373,
+          "line": 374,
           "definitions": [
             "feeDispatchBatch",
             "feeDispatchSeconds",
@@ -35012,7 +35013,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Simulation samples cover every mode, exemption, setting and pull request state",
-          "line": 403,
+          "line": 404,
           "definitions": [
             "liveFacts",
             "factsValues",
