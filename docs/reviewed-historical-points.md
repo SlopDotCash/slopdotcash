@@ -34,6 +34,16 @@ per-source and joint digests must match the original record after this change.
 Replay refuses stale or partial standalone evidence. The ordinary scorer still
 checks pre-close review eligibility, duplicate findings and caps.
 
+An active legacy record for a closed PR can be accounted for without a value
+replay award only when the original record has no implementation or review
+credit, its bound Points checkpoint has no positive award for the source, and
+both GitHub interfaces verify the exact unmerged closure. GraphQL must also
+confirm the PR has no formal reviews. An archived REST test-merge SHA is
+compared as recorded. It does not establish acceptance. The result stays bound
+to the audit receipt, outside the merged census and the approved closed-review
+sources. If the complete replay would change Points by omitting that source,
+the projection refuses.
+
 Under PRD section 7, an accepted PR removed by GitHub retains its prior Points
 and reward eligibility. A missing member of a current joint assessment needs
 the same prior canonical award and native merge ancestry on the registered

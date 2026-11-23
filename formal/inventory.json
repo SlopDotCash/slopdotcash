@@ -4416,7 +4416,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "ac27ac1532ffa12b5ec07010a400592abeadcf8afc419c6c6167874be56822c2",
+      "sha256": "9d61ed051eae82fd796c8c1f06849a163c744e5ba323177c185c1f7168202cb2",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4431,16 +4431,16 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 227, 238, 247, 338, 350, 352, 355, 584, 672, 693, 729, 760, 825,
-        872, 900, 991, 1024, 1033, 1045, 1081, 1178, 1374, 1609, 1671, 1679,
-        1737, 1790, 1793, 1986, 1995, 2000, 2007, 2090, 2091, 2257, 2258, 2341,
-        2374, 2402, 2404, 2408, 2418, 2420, 2432, 2442, 2452, 2477, 2480, 2481,
-        2484, 2486, 2511, 2563, 2868, 2871, 3171, 3291, 3412, 3425, 3436, 3437,
-        3624, 3625, 3816, 3832, 3844, 3851, 3877, 3887, 3891, 3895, 3899, 3954,
-        3973, 4000, 4017, 4051, 4052, 4054, 4070, 4087, 4088, 4089, 4098, 4103,
-        4283, 4641, 4663, 4672, 4722, 4757, 4763, 4770, 4839, 4927, 5113, 5242,
-        5440, 5599, 5988, 5998, 6000, 6013, 6046, 6048, 6049, 6053, 6057, 6113,
-        6178, 6231, 6234, 6323, 6371, 6451, 6461, 6468
+        43, 228, 239, 248, 339, 351, 353, 356, 585, 673, 694, 730, 761, 826,
+        873, 901, 992, 1025, 1034, 1046, 1082, 1179, 1375, 1610, 1672, 1680,
+        1738, 1791, 1794, 1987, 1996, 2001, 2008, 2091, 2092, 2258, 2259, 2342,
+        2375, 2403, 2405, 2409, 2419, 2421, 2433, 2443, 2453, 2478, 2481, 2482,
+        2485, 2487, 2512, 2564, 2869, 2872, 3172, 3292, 3413, 3426, 3437, 3438,
+        3625, 3626, 3817, 3833, 3845, 3852, 3878, 3888, 3892, 3896, 3900, 3955,
+        3974, 4001, 4018, 4052, 4053, 4055, 4071, 4088, 4089, 4090, 4099, 4104,
+        4284, 4642, 4664, 4673, 4723, 4758, 4764, 4771, 4840, 4928, 5114, 5245,
+        5444, 5603, 5992, 6002, 6004, 6017, 6050, 6052, 6053, 6057, 6061, 6117,
+        6183, 6236, 6239, 6328, 6376, 6456, 6466, 6473
       ],
       "review": "mapped-abstraction"
     },
@@ -4537,10 +4537,10 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "sha256": "12cbdaef91ed34fb2920374514fad3963e5e243cbf44509eecb0063d138c158c",
+      "sha256": "3ecf7a0f2b33e50e4711c241f685daec376b0823c3abc79327570f80bcddeb40",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
       "candidateLines": [
-        74, 197, 385, 447, 493, 499, 513, 531, 541, 566, 591, 784, 792
+        78, 201, 389, 451, 497, 503, 517, 536, 549, 572, 598, 787, 796
       ],
       "review": "mapped-abstraction"
     },
@@ -4570,9 +4570,9 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "1ff730046cf774bf4b07b10bd3f04d90a89d661c5c8015663c32968ccee784fd",
+      "sha256": "3b576c87c5a33e57a04e8fa55a177649f4d141cba15d120660b83c35df0026e5",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [59, 86, 122, 123, 126, 127, 206],
+      "candidateLines": [64, 92, 110, 151, 157, 158, 160, 161, 248],
       "review": "mapped-abstraction"
     },
     {
@@ -5425,14 +5425,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "1d52bdbec1977693f94897e1cdd540843894c6c807b7ea5e8ba5280284b02b64",
+      "sha256": "8ee35553d7f4b5929f3e80c954c198721f4e7d113ff5f031ad39e21515fb51e7",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 246, 247, 248, 249, 251, 256, 299, 314, 315, 321, 322, 457, 1181,
-        1410, 1430, 1641, 1659, 1666, 1793, 1888, 2050
+        3, 247, 248, 249, 250, 252, 257, 300, 315, 316, 322, 323, 458, 1182,
+        1411, 1431, 1642, 1660, 1667, 1795, 1890, 2052
       ],
       "review": "mapped-abstraction"
     },
@@ -15813,7 +15813,7 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "66e62ec40a56e9f6a483f6d91896b14e2620cc29a8840f9c5a5d025cfc40573b",
+      "sha256": "8ee5ee63fd78e27d3f67f5d657bec353ce2ad7effc837de37b38b5772bbeb9c4",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
@@ -15833,6 +15833,9 @@
         "changedReviewIdentityRefusesClosureReviewTest",
         "changedScopeCannotEnterAuditTest",
         "closureImplementationCannotBeStagedTest",
+        "emptyLegacyClosureWithFormalReviewRefusesReceiptTest",
+        "emptyLegacyClosureWithPriorAwardRefusesReceiptTest",
+        "exactEmptyLegacyClosureDoesNotRequireValueReplayTest",
         "exactStandaloneClosureReviewCanBeStagedTest",
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
