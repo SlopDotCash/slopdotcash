@@ -260,6 +260,16 @@ pure def recheckAuthority(v: OwnerMonthly, lifetime: int, manages: bool, by: int
 
 ### Rules
 
+Discovered by simulation: no sampled month read carried a cut, so a month
+finalized after a cut needed the page itself to sign in as a manager, read
+the month, draft, save and confirm a cut, let a day pass and finalize, and
+200,000 runs of 20 events could not find it within an hour on a loaded
+machine. A month read whose latest cut, saved earlier or in another tab, is
+at 100000 with the default off is sampled too; it can be read only from that
+time, and finalizing it is refused until 24 hours later. With it a search
+found a month finalized after a cut within a few traces for each of two
+seeds.
+
 ```quint
 pure def flowSaved(flow: Flow): bool =
   (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
@@ -305,7 +315,8 @@ pure val nowValues = Set(100000, 180000, 200000)
 pure val monthValues = Set({ sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
   { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
   { sequence: 0, automatic: false, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: false },
-  { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: true })
+  { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false, fixed: true },
+  { sequence: 1, automatic: false, cutoffAt: 190000, latestCutAt: 100000, frozen: false, fixed: false })
 pure val reasonLengthValues = Set(0, 40, 600)
 pure val identityValues = Set("p1", "p2", "p3")
 pure val hashValues = Set("", "h1")
