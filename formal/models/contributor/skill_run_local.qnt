@@ -2,6 +2,9 @@
 // @source src/lib/run-receipts.ts
 // One local run, two finish candidates, two trace digests and two PR event
 // times. The opened command owns a different server run from optional trace.
+// The session command uploads under private-trace-v3 on the measured run and
+// records pull_request_opened on that same run after the upload and before
+// finalization; a skip or the machine setting off contacts no server.
 // contributor_session_exchange refines the authentication and create-run
 // shorthand, including lost replies, reauthentication and actor/key identity.
 // Byte/signature/identity validation are predicates; this is not crypto proof.
@@ -10,12 +13,12 @@ module skill_run_local {
     finish: str, candidateValid: bool, clock: int, completed: int,
     completedValid: bool, completedClock: int, result: str, temporary: bool, completion: int,
     tracePhase: str, selectedHash: int, server: str, serverHash: int,
-    openedServer: bool, openedEvents: Set[int] }
+    openedServer: bool, openedEvents: Set[int], sessionEvents: Set[int] }
   action init = s' = { active: false, started: false, consent: false, usage: "unavailable",
     finish: "idle", candidateValid: false, clock: 0, completed: 0,
     completedValid: false, completedClock: 0, result: "none", temporary: false, completion: 0,
     tracePhase: "idle", selectedHash: 0, server: "absent", serverHash: 0,
-    openedServer: false, openedEvents: Set() }
+    openedServer: false, openedEvents: Set(), sessionEvents: Set() }
   action start(consent, available) = all { not(s.started),
     s' = s.with("started", true).with("active", true).with("consent", consent)
       .with("usage", if (consent and available) "capturing" else "unavailable") }
@@ -76,6 +79,14 @@ module skill_run_local {
   action registerOpened = all { not(s.openedServer), s' = s.with("openedServer", true) }
   action recordPullRequest(time) = all { s.openedServer, Set(1, 2).contains(time),
     s' = s.with("openedEvents", s.openedEvents.union(Set(time))) }
+  // session --skip, or trace-off on this machine: no request of any kind, so
+  // no server run, upload or event changes.
+  action declineSession = all { s.started, s' = s }
+  // session after the upload: the event rides the measured run's credentials
+  // (one sign-in) and must land before finalizeTrace closes the run.
+  action recordSessionPullRequest(time) = all { s.tracePhase == "uploaded",
+    s.server == "trace-uploaded", Set(1, 2).contains(time),
+    s' = s.with("sessionEvents", s.sessionEvents.union(Set(time))) }
   action step = {
     nondet flag = Set(false, true).oneOf()
     nondet available = Set(false, true).oneOf()
@@ -86,7 +97,8 @@ module skill_run_local {
       stage, publish, competingFinishWins, removeTemporary(flag), removeActive(flag),
       precommitFailure, replayCompleted(flag, cleanupWorks), observeInvalidHistoricalRecord,
       selectTrace(n), register, upload, reuseUploaded, finalizeTrace, lostTraceResponse,
-      refuseChangedTrace, registerOpened, recordPullRequest(n) }
+      refuseChangedTrace, registerOpened, recordPullRequest(n), declineSession,
+      recordSessionPullRequest(n) }
   }
   val invariant = all {
     not(s.consent) implies s.usage == "unavailable",
@@ -96,6 +108,8 @@ module skill_run_local {
     not(s.active) and s.started implies s.completedValid,
     s.openedEvents.size() <= 2,
     s.openedEvents.size() > 0 implies s.openedServer,
+    s.sessionEvents.size() > 0 implies s.server != "absent",
+    s.sessionEvents.size() <= 2,
   }
   run optionalEvidenceDoesNotBlockReceiptTest = init.then(start(false, false))
     .then(prepareFinish(1, true)).then(validateCandidate).then(stage).then(publish)
@@ -132,6 +146,13 @@ module skill_run_local {
   run changedTraceCannotReplaceUploadTest = init.then(start(false, false)).then(selectTrace(1)).then(register)
     .then(upload).then(lostTraceResponse).then(selectTrace(2)).then(register).then(refuseChangedTrace)
     .expect(s.serverHash == 1 and s.server == "finalized")
+  run sessionRecordsBeforeFinalizeTest = init.then(start(false, false)).then(selectTrace(1))
+    .then(register).then(upload).then(recordSessionPullRequest(1)).then(finalizeTrace)
+    .expect(s.server == "finalized" and s.sessionEvents == Set(1) and not(s.openedServer))
+  run sessionEventRefusedAfterFinalizeTest = init.then(start(false, false)).then(selectTrace(1))
+    .then(register).then(upload).then(finalizeTrace).then(recordSessionPullRequest(1).fail())
+  run declinedSessionMakesNoRequestTest = init.then(start(false, false)).then(declineSession)
+    .expect(s.server == "absent" and s.tracePhase == "idle" and s.sessionEvents == Set())
   run openedRetryIdentityIsSeparateTest = init.then(registerOpened).then(recordPullRequest(1))
     .then(recordPullRequest(1)).then(recordPullRequest(2))
     .expect(s.openedEvents == Set(1, 2) and s.server == "absent")

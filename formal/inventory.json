@@ -5805,31 +5805,32 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/run-receipt.mjs",
-      "sha256": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
+      "sha256": "f2a301f15df189ac3fe4843da5c0ae7337611164222d8e5a771b38cef0693da9",
       "models": [
         "formal/models/contributor/contributor_session_exchange.qnt",
         "formal/models/contributor/skill_run_local.qnt"
       ],
       "candidateLines": [
-        139, 163, 188, 238, 327, 520, 592, 607, 614, 621, 647, 697, 755, 758,
-        759, 766, 771, 777, 781, 784, 790, 812, 835, 892, 908, 914, 915, 922,
-        937, 961, 1080, 1123, 1258, 1332, 1337, 1358, 1362, 1368, 1372, 1382,
-        1388, 1392, 1395, 1403, 1490, 1493, 1502, 1512, 1515, 1516, 1519, 1524,
-        1529, 1530, 1534, 1538, 1587, 1625, 1626, 1627, 1628, 1629, 1630, 1631,
-        1645, 1649, 1650, 1651, 1661, 1692, 1697, 1759, 1767, 1770, 1777, 1789,
-        1793, 1794, 1795, 1796, 1797, 1802, 1803, 1804, 1866, 1867, 1877, 1881,
-        1882, 2012, 2035, 2048, 2204, 2214, 2228, 2271, 2358, 2363, 2421, 2640,
-        2655, 2658, 2661, 2677, 2728, 2754, 2763, 2775, 2776, 2778, 2779, 2780,
-        2781, 2783, 2786, 2794, 2847, 2849, 2851, 2857, 2858, 2859, 2860, 2861,
-        2862, 2863, 2864, 2865, 2866, 2867, 2869, 2872, 2879, 2888, 2889, 2890,
-        2891, 2892, 2894, 2895, 2896, 2897, 2898, 2899, 2900, 2916, 2928, 2937,
-        2979, 2986
+        149, 184, 209, 259, 348, 541, 613, 628, 635, 642, 668, 718, 776, 779,
+        780, 787, 792, 798, 802, 805, 811, 833, 856, 913, 929, 935, 936, 943,
+        958, 982, 1101, 1144, 1279, 1353, 1358, 1379, 1383, 1389, 1393, 1403,
+        1409, 1413, 1416, 1424, 1511, 1514, 1523, 1533, 1536, 1537, 1540, 1545,
+        1550, 1551, 1555, 1559, 1632, 1670, 1671, 1672, 1673, 1674, 1675, 1676,
+        1690, 1694, 1695, 1696, 1706, 1748, 1753, 1816, 1824, 1827, 1834, 1836,
+        1838, 1850, 1854, 1855, 1856, 1857, 1858, 1863, 1864, 1865, 1923, 1924,
+        1934, 1938, 1939, 1961, 2111, 2134, 2147, 2303, 2313, 2327, 2370, 2463,
+        2470, 2541, 2773, 2788, 2791, 2794, 2810, 2861, 2887, 2897, 2914, 2915,
+        2917, 2918, 2919, 2920, 2922, 2924, 2929, 2931, 2939, 2992, 2994, 2996,
+        3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3012, 3014,
+        3017, 3024, 3033, 3034, 3035, 3036, 3037, 3039, 3040, 3041, 3042, 3043,
+        3044, 3045, 3061, 3073, 3082, 3168, 3176, 3186, 3188, 3189, 3190, 3197,
+        3198, 3204, 3206, 3207, 3223, 3233, 3257, 3259, 3269, 3287, 3324, 3331
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "skills/project-contributor-template/scripts/session-export.mjs",
-      "sha256": "8e94d6a587677dd177c7d42d8172ca7aeaecce6213b9d27096a2e941268a3051",
+      "sha256": "4fb615f8b6d58c46d3e05aab0eec2f0eee1d171e9f9c0c2dca84c23d0df59d01",
       "models": ["formal/models/contributor/contributor_session_cleaner.qnt"],
       "candidateLines": [676, 706, 726, 858, 861],
       "review": "mapped-abstraction"
@@ -14205,7 +14206,7 @@
     },
     {
       "path": "formal/models/contributor/skill_run_local.qnt",
-      "sha256": "277df1836250e1bdf4e1ad2e278e31921383d37f7bdf07721c65ea72be789b64",
+      "sha256": "b59c02c7d808d5ba468093918f32a2c653c3c74b74cf4439b90db1e18d15147d",
       "sources": [
         "skills/project-contributor-template/scripts/run-receipt.mjs",
         "src/lib/run-receipts.ts"
@@ -14216,12 +14217,15 @@
         "changedTraceCannotReplaceUploadTest",
         "cleanupFailureLeavesValidReplayTest",
         "concurrentFinishPreservesFirstWinnerTest",
+        "declinedSessionMakesNoRequestTest",
         "invalidCandidateCannotPublishTest",
         "invalidExistingRecordRemainsExplicitErrorTest",
         "openedDoesNotNeedMeasuredRunTest",
         "openedRetryIdentityIsSeparateTest",
         "optionalEvidenceDoesNotBlockReceiptTest",
         "recordBeforeFinalizationTest",
+        "sessionEventRefusedAfterFinalizeTest",
+        "sessionRecordsBeforeFinalizeTest",
         "traceRetryUsesStoredDigestTest"
       ]
     },

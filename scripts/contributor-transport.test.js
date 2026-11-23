@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync, realpathSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -26,7 +28,11 @@ let root, receipt, wallet;
 before(async () => {
   root = await mkdtemp(join(tmpdir(), "slop-transport-"));
   await mkdir(join(root, "scripts"));
-  for (const name of ["run-receipt.mjs", "wallet-claim.mjs"])
+  for (const name of [
+    "run-receipt.mjs",
+    "session-export.mjs",
+    "wallet-claim.mjs",
+  ])
     await copyFile(
       new URL(
         `../skills/project-contributor-template/scripts/${name}`,
@@ -124,14 +130,16 @@ async function withTransport(redirectPath, run, sameOrigin = false) {
         serverRunId: "server_test",
         state: "awaiting_trace",
       };
-    else if (path === "/api/v1/runs/server_test/trace-intents")
+    else if (path === "/api/v1/runs/server_test/trace-intents") {
+      // The real server reads termsVersion but does not echo it.
+      const { termsVersion: _terms, ...intent } = JSON.parse(body);
       value = {
-        ...JSON.parse(body),
+        ...intent,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         serverRunId: "server_test",
         uploadUrl: "https://api.slop.cash/trace-upload",
       };
-    else if (path === "/trace-upload")
+    } else if (path === "/trace-upload")
       value = {
         clientRunId: state.runId,
         serverRunId: "server_test",
@@ -247,4 +255,642 @@ test("direct trace upload and wallet registration retain their exact payloads", 
       assert.deepEqual(redirected, []);
     },
   );
+});
+
+// ---- Session command: an installed skill copy, a Git repository whose origin
+// is the project, and a loopback server standing in for Slop and GitHub.
+const SKILL_FILES = [
+  "SKILL.md",
+  "project.json",
+  "scripts/run-receipt.mjs",
+  "scripts/session-export.mjs",
+  "scripts/wallet-claim.mjs",
+];
+const REVISION = "a".repeat(40);
+const sessionArgs = (runId, extra = []) => [
+  "session",
+  "--run",
+  runId,
+  "--repo-root",
+  installed.repo,
+  "--pull-request",
+  "https://github.com/test/repo/pull/7",
+  "--pull-request-node-id",
+  "PR_kwDOtest0000007",
+  "--client-version",
+  "1.0.0",
+  "--provider",
+  "anthropic",
+  "--model",
+  "claude-opus-5-5",
+  "--client",
+  "claude-code",
+  ...extra,
+];
+let installed;
+const savedConfigHome = process.env.XDG_CONFIG_HOME;
+
+before(async () => {
+  const base = realpathSync(await mkdtemp(join(tmpdir(), "slop-session-")));
+  const skill = join(base, "skill");
+  await mkdir(join(skill, "scripts"), { recursive: true });
+  for (const name of [
+    "run-receipt.mjs",
+    "session-export.mjs",
+    "wallet-claim.mjs",
+  ])
+    await copyFile(
+      new URL(
+        `../skills/project-contributor-template/scripts/${name}`,
+        import.meta.url,
+      ),
+      join(skill, "scripts", name),
+    );
+  await writeFile(join(skill, "SKILL.md"), "# Test skill\n");
+  await writeFile(
+    join(skill, "project.json"),
+    JSON.stringify({
+      projectId: "test",
+      repositoryId: "test/repo",
+      skillName: "contribute-to-test",
+      skillSourcePath: "skills/contribute-to-test",
+      usageAdapters: {},
+    }),
+  );
+  const digest = (path) =>
+    createHash("sha256")
+      .update(readFileSync(join(skill, path)))
+      .digest("hex");
+  await writeFile(
+    join(skill, "PROVENANCE.json"),
+    JSON.stringify({
+      schemaVersion: "1",
+      name: "contribute-to-test",
+      repository: "SlopDotCash/slopdotcash",
+      revisionStatus: "committed",
+      revision: REVISION,
+      source: {
+        path: "skills/contribute-to-test/SKILL.md",
+        sha256: digest("SKILL.md"),
+      },
+      files: SKILL_FILES.map((path) => ({ path, sha256: digest(path) })),
+    }),
+  );
+  await writeFile(
+    join(skill, ".slop-authorization.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: "1",
+        repository: "SlopDotCash/slopdotcash",
+        revision: REVISION,
+        authorization: { kind: "source", revision: REVISION },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const repo = join(base, "repo");
+  await mkdir(repo);
+  const git = (...args) =>
+    execFileSync("git", ["-C", repo, ...args], { stdio: "pipe" });
+  git("init", "-q");
+  git("remote", "add", "origin", "https://github.com/test/repo.git");
+  await writeFile(join(repo, "README.md"), "Test repository\n");
+  git("add", "README.md");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "-qm",
+    "init",
+  );
+  const home = join(base, "home");
+  await mkdir(home);
+  installed = {
+    base,
+    skill,
+    repo,
+    home,
+    receipt: await import(
+      pathToFileURL(join(skill, "scripts/run-receipt.mjs")).href
+    ),
+    exporter: await import(
+      pathToFileURL(join(skill, "scripts/session-export.mjs")).href
+    ),
+  };
+});
+after(async () => {
+  if (savedConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedConfigHome;
+  if (installed) await rm(installed.base, { recursive: true, force: true });
+});
+
+// Each test gets its own machine settings and run state.
+async function freshConfig() {
+  process.env.XDG_CONFIG_HOME = await mkdtemp(join(installed.base, "config-"));
+}
+
+async function capture(fn) {
+  const out = [];
+  const err = [];
+  const writeOut = process.stdout.write;
+  const writeErr = process.stderr.write;
+  process.stdout.write = (chunk) => {
+    out.push(String(chunk));
+    return true;
+  };
+  process.stderr.write = (chunk) => {
+    err.push(String(chunk));
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = writeOut;
+    process.stderr.write = writeErr;
+  }
+  return { stdout: out.join(""), stderr: err.join("") };
+}
+
+async function startRun() {
+  const { stdout } = await capture(() =>
+    installed.receipt.main([
+      "start",
+      "--repo-root",
+      installed.repo,
+      "--client",
+      "claude-code",
+      "--provider",
+      "anthropic",
+      "--model",
+      "claude-opus-5-5",
+      "--lane",
+      "contributor",
+    ]),
+  );
+  const runId = /Keep this id: (run_[0-9A-Z]{26})/.exec(stdout)?.[1];
+  assert.ok(runId, stdout);
+  return { runId, stdout };
+}
+
+// A Claude Code session file in which the agent ran start and saw its output.
+async function writeClaudeSession(runId, startOutput) {
+  const dir = join(installed.home, ".claude", "projects", "-test-repo");
+  await mkdir(dir, { recursive: true });
+  const receiptPath = join(installed.skill, "scripts", "run-receipt.mjs");
+  const t = (n) => `2026-11-23T10:00:0${n}Z`;
+  const row = (type, n, content) => ({
+    type,
+    timestamp: t(n),
+    cwd: installed.repo,
+    sessionId: "test-session",
+    message: { role: type, content },
+  });
+  const rows = [
+    row("user", 0, "Fix the README typo."),
+    row("assistant", 1, [
+      {
+        type: "tool_use",
+        id: "toolu_start",
+        name: "Bash",
+        input: { command: `node ${receiptPath} start --repo-root .` },
+      },
+    ]),
+    row("user", 2, [
+      { type: "tool_result", tool_use_id: "toolu_start", content: startOutput },
+    ]),
+    row("assistant", 3, [{ type: "text", text: "Run started; fixing it." }]),
+    row("assistant", 4, [
+      {
+        type: "tool_use",
+        id: "toolu_end",
+        name: "Bash",
+        input: { command: `node ${receiptPath} session --run ${runId}` },
+      },
+    ]),
+  ];
+  const path = join(dir, `${runId}.jsonl`);
+  await writeFile(path, `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  return path;
+}
+
+// Loopback Slop and GitHub. Records every request in order.
+async function sessionServer({ failIntent = false } = {}) {
+  const log = [];
+  let trace = null;
+  let clientRunId = null;
+  const app = await server((request, response, body) => {
+    const path = request.url;
+    log.push({ path, body, headers: request.headers });
+    const sha = trace ? createHash("sha256").update(trace).digest("hex") : "";
+    let value;
+    if (path === "/repos/test/repo/license")
+      value = { license: { spdx_id: "MIT" } };
+    else if (path === "/api/v1/auth/session")
+      value = {
+        token,
+        tokenType: "Bearer",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      };
+    else if (path === "/api/v1/runs") {
+      clientRunId = JSON.parse(body).clientRunId;
+      value = { clientRunId, serverRunId: "server_s", state: "awaiting_trace" };
+    } else if (path === "/api/v1/runs/server_s/trace-intents") {
+      if (failIntent) {
+        response.writeHead(500).end("{}");
+        return;
+      }
+      const intent = JSON.parse(body);
+      value = {
+        contentType: intent.contentType,
+        sha256: intent.sha256,
+        sizeBytes: intent.sizeBytes,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        serverRunId: "server_s",
+        uploadUrl: "https://api.slop.cash/trace-upload-s",
+      };
+    } else if (path === "/trace-upload-s") {
+      trace = body;
+      const digest = createHash("sha256").update(body).digest("hex");
+      value = {
+        clientRunId,
+        serverRunId: "server_s",
+        sizeBytes: Buffer.byteLength(body),
+        state: "trace_uploaded",
+        traceObjectId: `sha256:${digest}`,
+        traceSha256: digest,
+      };
+    } else if (path === "/api/v1/runs/server_s/events")
+      value = {
+        eventId: "event_1",
+        kind: "pull_request_opened",
+        runId: "server_s",
+      };
+    else if (path === "/api/v1/runs/server_s/finalize")
+      value = {
+        clientRunId,
+        serverRunId: "server_s",
+        state: "finalized",
+        traceObjectId: `sha256:${sha}`,
+        traceSha256: sha,
+      };
+    else
+      value = {
+        enabled: true,
+        source: "github-public-status",
+        verifiedAt: new Date().toISOString(),
+      };
+    response
+      .writeHead(200, { "Content-Type": "application/json" })
+      .end(JSON.stringify(value));
+  });
+  const fetchImpl = (url, options) =>
+    fetch(`${app.origin}${new URL(url).pathname}`, options);
+  return {
+    log,
+    fetchImpl,
+    close: async () => {
+      app.app.closeAllConnections();
+      await new Promise((resolve) => app.app.close(resolve));
+    },
+  };
+}
+
+function sessionDeps(fetchImpl, order = [], extra = {}) {
+  return {
+    fetchImpl,
+    homeDir: installed.home,
+    env: { USER: "tester" },
+    assertionProvider: async () => {
+      order.push("assertion");
+      return assertion;
+    },
+    disclosure: (shown) => {
+      order.push("disclosure");
+      order.disclosed = shown;
+    },
+    ...extra,
+  };
+}
+
+test("start prints the run marker the exporter finds", async () => {
+  await freshConfig();
+  const { runId, stdout } = await startRun();
+  assert.ok(stdout.split("\n").includes(`slop-run:${runId}`), stdout);
+  await writeClaudeSession(runId, stdout);
+  const marker = `slop-run:${runId}`;
+  const found = installed.exporter.findSessionFile(marker, {
+    homeDir: installed.home,
+  });
+  assert.equal(found?.client, "claude-code");
+  const lines = readFileSync(found.path, "utf8").trim().split("\n");
+  const events = installed.exporter.readClaudeCode(lines, marker);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ["tool_result", "assistant"],
+  );
+  const json = await capture(() =>
+    installed.receipt.main([
+      "start",
+      "--repo-root",
+      installed.repo,
+      "--client",
+      "claude-code",
+      "--provider",
+      "anthropic",
+      "--model",
+      "claude-opus-5-5",
+      "--lane",
+      "contributor",
+      "--json",
+    ]),
+  );
+  const parsed = JSON.parse(json.stdout);
+  assert.equal(parsed.marker, `slop-run:${parsed.runId}`);
+});
+
+test("session with --skip makes no request", async () => {
+  await freshConfig();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    throw new Error("no request expected");
+  };
+  const { stdout } = await capture(() =>
+    installed.receipt.main(
+      sessionArgs("run_00000000000000000000000000", ["--skip"]),
+      sessionDeps(fetchImpl),
+    ),
+  );
+  assert.equal(stdout, "Session upload skipped.\n");
+  assert.equal(calls, 0);
+});
+
+test("trace-off stops session uploads and trace-on restores them", async () => {
+  await freshConfig();
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    throw new Error("no request expected");
+  };
+  await capture(() => installed.receipt.main(["trace-off"]));
+  const settings = join(
+    process.env.XDG_CONFIG_HOME,
+    "slop/session-upload.json",
+  );
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).upload, false);
+  const { stdout } = await capture(() =>
+    installed.receipt.main(
+      sessionArgs("run_00000000000000000000000000"),
+      sessionDeps(fetchImpl),
+    ),
+  );
+  assert.equal(stdout, "Session upload skipped.\n");
+  assert.equal(calls, 0);
+  await capture(() => installed.receipt.main(["trace-on"]));
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).upload, true);
+});
+
+test("session uploads v3 and records the pull request before finalize", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer();
+  const order = [];
+  try {
+    const { stdout } = await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, order),
+      ),
+    );
+    assert.match(stdout, /Session uploaded under private-trace-v3/);
+    const paths = slop.log.map((row) => row.path);
+    const intent = slop.log.find((row) => row.path.endsWith("/trace-intents"));
+    assert.equal(JSON.parse(intent.body).termsVersion, "private-trace-v3");
+    const event = slop.log.find((row) => row.path.endsWith("/events"));
+    assert.deepEqual(
+      {
+        kind: JSON.parse(event.body).kind,
+        auth: event.headers.authorization,
+      },
+      { kind: "pull_request_opened", auth: `Bearer ${token}` },
+    );
+    const at = (suffix) => paths.findIndex((p) => p.endsWith(suffix));
+    assert.ok(at("/trace-upload-s") < at("/events"), paths.join(" "));
+    assert.ok(at("/events") < at("/finalize"), paths.join(" "));
+    assert.equal(
+      paths.filter((p) => p === "/api/v1/runs").length,
+      1,
+      "one server run",
+    );
+    assert.equal(order.filter((x) => x === "assertion").length, 1);
+    const uploaded = slop.log.find((row) => row.path === "/trace-upload-s");
+    const header = JSON.parse(uploaded.body.split("\n")[0]);
+    assert.equal(header.source, "client-file");
+    assert.equal(header.format, "slop-session-v1");
+  } finally {
+    await slop.close();
+  }
+});
+
+test("disclosure precedes sign-in and names v3 and the cleaner", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer();
+  const order = [];
+  try {
+    await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, order),
+      ),
+    );
+    assert.deepEqual(order.slice(0, 2), ["disclosure", "assertion"]);
+    assert.equal(order.disclosed.termsVersion, "private-trace-v3");
+    assert.equal(order.disclosed.cleaner, installed.exporter.CLEANER_VERSION);
+  } finally {
+    await slop.close();
+  }
+});
+
+test("v3 disclosure copy", async () => {
+  const { stderr } = await capture(() =>
+    installed.receipt.disclosePrivateTrace({
+      absolutePath: "/tmp/s.ndjson",
+      sha256: "b".repeat(64),
+      sizeBytes: 10,
+      contentType: "application/x-ndjson",
+      termsVersion: "private-trace-v3",
+      cleaner: "slop-session-cleaner-1",
+      counts: { CREDENTIAL: 2, SOURCE: 1 },
+    }),
+  );
+  const lines = stderr.split("\n");
+  assert.ok(
+    lines.includes(
+      "This session will be uploaded under private-trace-v3: https://slop.cash/protocol/private-trace-v3.md",
+    ),
+    stderr,
+  );
+  assert.ok(
+    lines.includes(
+      "Cleaned on this machine by slop-session-cleaner-1: 2 credential, 1 source. Cleaning is pattern-based and may miss a secret; read the file.",
+    ),
+    stderr,
+  );
+  assert.ok(
+    lines.includes(
+      `To skip this run: rerun with --skip. To stop on this machine: node ${installed.skill}/scripts/run-receipt.mjs trace-off`,
+    ),
+    stderr,
+  );
+  for (const line of [
+    "Inspect exact final bytes: /tmp/s.ndjson",
+    "Size: 10 bytes",
+    "Content-Type: application/x-ndjson",
+    `SHA-256: ${"b".repeat(64)}`,
+  ])
+    assert.ok(lines.includes(line), line);
+  assert.ok(!stderr.includes("Automatic redaction: none"));
+});
+
+test("licensing line shows once per machine", async () => {
+  await freshConfig();
+  const line =
+    "Sessions you upload can be licensed for pay, half of each sale to you. It is off until you turn it on: https://slop.cash/account#trace-licensing";
+  const outputs = [];
+  for (let n = 0; n < 2; n += 1) {
+    const { runId, stdout: startOutput } = await startRun();
+    await writeClaudeSession(runId, startOutput);
+    const slop = await sessionServer();
+    try {
+      outputs.push(
+        (
+          await capture(() =>
+            installed.receipt.main(
+              sessionArgs(runId),
+              sessionDeps(slop.fetchImpl),
+            ),
+          )
+        ).stdout,
+      );
+    } finally {
+      await slop.close();
+    }
+  }
+  assert.ok(outputs[0].includes(line), outputs[0]);
+  assert.ok(!outputs[1].includes(line), outputs[1]);
+});
+
+test("upload failure is one line and the pull request stands", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer({ failIntent: true });
+  try {
+    const { stdout } = await capture(() =>
+      installed.receipt.main(sessionArgs(runId), sessionDeps(slop.fetchImpl)),
+    );
+    const lines = stdout.trim().split("\n");
+    assert.equal(lines.length, 1, stdout);
+    assert.match(lines[0], /the pull request stands/);
+    assert.doesNotMatch(stdout, /\n\s+at /);
+  } finally {
+    await slop.close();
+  }
+});
+
+test("no session record and no log leaves the pull request alone", async () => {
+  await freshConfig();
+  const { runId } = await startRun();
+  const slop = await sessionServer();
+  try {
+    const { stdout } = await capture(() =>
+      installed.receipt.main(sessionArgs(runId), sessionDeps(slop.fetchImpl)),
+    );
+    assert.equal(stdout, "No session record; the pull request stands.\n");
+    assert.ok(!slop.log.some((row) => row.path.startsWith("/api/")));
+  } finally {
+    await slop.close();
+  }
+});
+
+test("fallback log is cleaned and headed", async () => {
+  await freshConfig();
+  const { runId } = await startRun();
+  const secret = "zq8Vt3Lw9Kp2Rr7";
+  const logPath = join(installed.base, `agent-log-${runId}.ndjson`);
+  await writeFile(
+    logPath,
+    `${[
+      { t: "2026-11-23T10:00:00Z", kind: "user", text: "Fix the typo." },
+      {
+        t: "2026-11-23T10:00:01Z",
+        kind: "tool_call",
+        tool: "Bash",
+        args: { command: `echo ${secret}` },
+      },
+      {
+        t: "2026-11-23T10:00:02Z",
+        kind: "assistant",
+        text: `The token ${secret} was printed.`,
+      },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n")}\n`,
+  );
+  const slop = await sessionServer();
+  try {
+    await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId, ["--log", logPath]),
+        sessionDeps(slop.fetchImpl, [], {
+          env: { USER: "tester", SLOP_TEST_SECRET: secret },
+        }),
+      ),
+    );
+    const uploaded = slop.log.find((row) => row.path === "/trace-upload-s");
+    assert.ok(uploaded, slop.log.map((row) => row.path).join(" "));
+    assert.ok(uploaded.body.includes("[REDACTED:CREDENTIAL]"));
+    assert.ok(!uploaded.body.includes(secret));
+    const header = JSON.parse(uploaded.body.split("\n")[0]);
+    assert.equal(header.source, "agent-written");
+    assert.equal(header.format, "slop-session-v1");
+  } finally {
+    await slop.close();
+  }
+});
+
+test("opened still records on its own pull request run", async () => {
+  const slop = await sessionServer();
+  try {
+    const result = await installed.receipt.recordPullRequestOpened(
+      {
+        pullRequest: "https://github.com/test/repo/pull/7",
+        pullRequestNodeId: "PR_kwDOtest0000007",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        client: "claude-code",
+        clientVersion: "1.0.0",
+      },
+      {
+        fetchImpl: slop.fetchImpl,
+        assertionProvider: async () => assertion,
+        provenance: { revision: REVISION },
+      },
+    );
+    assert.equal(result.eventId, "event_1");
+    const created = slop.log.find((row) => row.path === "/api/v1/runs");
+    assert.equal(
+      JSON.parse(created.body).clientRunId,
+      "pr_opened_PR_kwDOtest0000007",
+    );
+    assert.ok(!slop.log.some((row) => row.path.endsWith("/finalize")));
+  } finally {
+    await slop.close();
+  }
 });
