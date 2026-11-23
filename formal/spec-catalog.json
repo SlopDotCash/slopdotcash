@@ -3,7 +3,7 @@
   "specs": [
     {
       "path": "spec/app/index.md",
-      "sha256": "1951ae00e809893e4271db88f7299c5fcc14973492aeb2e39a3ce27bb5b7c66d",
+      "sha256": "1224d8f07a99102c317345bb70b770aed672b942c06f1d88c0271b8a5e1e48fd",
       "module": "app",
       "stories": [
         {
@@ -48,7 +48,7 @@
         },
         {
           "heading": "Story: Open a page by its address / A route carries exactly the identifiers its page needs",
-          "line": 134,
+          "line": 139,
           "definitions": [
             "needsProject",
             "alwaysRouteCarriesItsIdentifiers",
@@ -57,14 +57,14 @@
         },
         {
           "heading": "Story: Open a page by its address / Every opening shows a page",
-          "line": 151,
+          "line": 156,
           "definitions": [
             "stepOpensOnePage"
           ]
         },
         {
           "heading": "Story: Open a page by its address / Every kind of page can be reached",
-          "line": 157,
+          "line": 162,
           "definitions": [
             "sometimesCycle",
             "sometimesProjectSecurity",
@@ -73,6 +73,7 @@
             "sometimesProfile",
             "sometimesFee",
             "sometimesFeeReport",
+            "sometimesRequested",
             "segmentsValues"
           ]
         }
@@ -1319,7 +1320,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "34f466de34f19fa1782efd308611b6789bda3398a9cb58f12f808bd7cef35e6b",
+      "sha256": "edc264bcf4cbf5346b0ab66071c24308019a1a1a7ba0efc97024e198953f11e0",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -1346,76 +1347,80 @@
           "line": 11
         },
         {
-          "target": "./closureConsent.md",
+          "target": "./repoRequests.md",
           "line": 12
         },
         {
-          "target": "./projects.md",
+          "target": "./closureConsent.md",
           "line": 13
         },
         {
-          "target": "./rewardAsset.md",
+          "target": "./projects.md",
           "line": 14
         },
         {
-          "target": "./revisionReceipts.md",
+          "target": "./rewardAsset.md",
           "line": 15
         },
         {
-          "target": "./listing.md",
+          "target": "./revisionReceipts.md",
           "line": 16
         },
         {
-          "target": "./access.md",
+          "target": "./listing.md",
           "line": 17
         },
         {
-          "target": "./accessComposition.md",
+          "target": "./access.md",
           "line": 18
         },
         {
-          "target": "./projectComposition.md",
+          "target": "./accessComposition.md",
           "line": 19
         },
         {
-          "target": "./local.md",
+          "target": "./projectComposition.md",
           "line": 20
         },
         {
-          "target": "./bindingConsent.md",
+          "target": "./local.md",
           "line": 21
         },
         {
-          "target": "./identity.md",
+          "target": "./bindingConsent.md",
           "line": 22
         },
         {
-          "target": "./projectRegistry.md",
+          "target": "./identity.md",
           "line": 23
         },
         {
-          "target": "./xConnection.md",
+          "target": "./projectRegistry.md",
           "line": 24
         },
         {
-          "target": "./mergeActivity.md",
+          "target": "./xConnection.md",
           "line": 25
         },
         {
-          "target": "./intakeCap.md",
+          "target": "./mergeActivity.md",
           "line": 26
         },
         {
-          "target": "./readyLabelSettings.md",
+          "target": "./intakeCap.md",
           "line": 27
         },
         {
-          "target": "./submissionFeeTerms.md",
+          "target": "./readyLabelSettings.md",
           "line": 28
         },
         {
-          "target": "./submissionFeeSettings.md",
+          "target": "./submissionFeeTerms.md",
           "line": 29
+        },
+        {
+          "target": "./submissionFeeSettings.md",
+          "line": 30
         }
       ]
     },
@@ -2862,6 +2867,118 @@
       ],
       "imports": [],
       "references": []
+    },
+    {
+      "path": "spec/backend/repoRequests.md",
+      "sha256": "5e3871cf06ada4f4c4145e7733e186033827d1c2fce9f8bd7ca638a90909a396",
+      "module": "backend__repoRequests",
+      "stories": [
+        {
+          "heading": "Story: Flag a repository a member would work on",
+          "line": 24
+        },
+        {
+          "heading": "Story: See which repositories members would work on",
+          "line": 261
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Flag a repository a member would work on / Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop",
+          "line": 30,
+          "definitions": [
+            "flagLimit",
+            "flagDays",
+            "dayMs",
+            "flagLife",
+            "boardLimit",
+            "RepoRead",
+            "FlagFacts",
+            "RepoFlag",
+            "RepoRequests",
+            "initial",
+            "FlagChoice",
+            "noFlag",
+            "live",
+            "hasRow",
+            "flagOf",
+            "active",
+            "held",
+            "flagChoice",
+            "lawTeamNeverFlags",
+            "lawNoMergedWorkNeverFlags",
+            "lawAtLimitRefusesANewRepository",
+            "lawAtLimitRefusesAnUnheldNameBeforeTheRead",
+            "lawOnlyAReadableUnlistedOtherRepositoryFlags",
+            "activeRow",
+            "sValues",
+            "accountValues",
+            "readableFacts",
+            "factsValues"
+          ]
+        },
+        {
+          "heading": "Story: Flag a repository a member would work on / A flag counts for 90 days, renews in place and is withdrawn without being deleted",
+          "line": 127,
+          "definitions": [
+            "canFlag",
+            "flag",
+            "canWithdraw",
+            "withdraw",
+            "canObserveClock",
+            "observeClock",
+            "alwaysWithinFlagLimit",
+            "alwaysOneRowPerRepoAndAccount",
+            "alwaysExpiryWithinLife",
+            "stepRowsAreNeverDeleted",
+            "lawRefusedFlagChangesNothing",
+            "sometimesRenewedFlag",
+            "sometimesWithdrawnFlag",
+            "sometimesExpiredFlag",
+            "repoIdValues",
+            "fullNameValues",
+            "byValues",
+            "nowValues",
+            "eval_witness_sometimesRenewedFlag",
+            "eval_witness_sometimesWithdrawnFlag",
+            "eval_witness_sometimesExpiredFlag"
+          ]
+        },
+        {
+          "heading": "Story: Flag a repository a member would work on / A flag write is a same-origin JSON request naming exactly a repository and an action",
+          "line": 186,
+          "definitions": [
+            "WriteRequest",
+            "Admission",
+            "FlagRefusal",
+            "admission",
+            "flagRefusal",
+            "lawAdmittedWriteIsASignedInSameOriginPost",
+            "lawOnlyAFlagSucceeds",
+            "requestValues"
+          ]
+        },
+        {
+          "heading": "Story: See which repositories members would work on / The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop",
+          "line": 267,
+          "definitions": [
+            "BoardRow",
+            "boardCount",
+            "newestFlaggedAt",
+            "boardRow",
+            "alwaysBoardCountsEveryActiveFlag",
+            "sometimesTwoAccountsFlagOneRepository",
+            "eval_witness_sometimesTwoAccountsFlagOneRepository"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./referralProjects.md",
+          "line": 17
+        }
+      ]
     },
     {
       "path": "spec/backend/revisionReceipts.md",
@@ -5696,7 +5813,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "47fcfd11d9bf3e6658e8f54fd8aa002a34f990fd3a96a43fcd50203b4e05f604",
+      "sha256": "dc1acaf9e5506d83c67013aa6ee97ae593bc1e65ec8a1bd64eb5482c3f996622",
       "module": "contributor__publication",
       "stories": [
         {
@@ -5710,6 +5827,10 @@
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source",
           "line": 356
+        },
+        {
+          "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index",
+          "line": 590
         }
       ],
       "rules": [
@@ -5718,7 +5839,7 @@
           "line": 19,
           "definitions": [
             "HttpMethod",
-            "RouteKind",
+            "ArtifactRouteKind",
             "ClearanceRead",
             "Answer",
             "ArtifactFacts",
@@ -5935,13 +6056,34 @@
             "sourcesValues",
             "filesValues"
           ]
+        },
+        {
+          "heading": "Story: Publish the sitemap from the route list, the registry and the cycle index / The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route",
+          "line": 599,
+          "definitions": [
+            "SitemapProject",
+            "PublishedCycle",
+            "sitemapFixedKinds",
+            "sitemapFixedPaths",
+            "sitemapRoutes",
+            "sitemapIndexable",
+            "lawSitemapFixedPagesAreTheStaticPages",
+            "lawSitemapStartsWithTheFixedPages",
+            "lawSitemapListsListedProjectsAndPublishedCycles",
+            "lawSitemapHasNoPrivateRoute",
+            "routeValues",
+            "sitemapProjectsValues",
+            "publishedCyclesValues"
+          ]
         }
       ],
       "imports": [
         "backend__listing",
         "frontend__projections",
         "frontend__poolListing",
-        "backend__intakeCap"
+        "backend__intakeCap",
+        "app",
+        "frontend__routes"
       ],
       "references": [
         {
@@ -5975,6 +6117,14 @@
         {
           "target": "./skillAuthority.md",
           "line": 315
+        },
+        {
+          "target": "../app/index.md",
+          "line": 607
+        },
+        {
+          "target": "../frontend/routes.md",
+          "line": 608
         }
       ]
     },
@@ -8082,7 +8232,7 @@
     },
     {
       "path": "spec/fees/conversion.md",
-      "sha256": "e770f00e289752a415a921c4f6b796858791a46419bbdc4b780acbc389f2c0e9",
+      "sha256": "9cd6a0aa38f635e813228d9a48220e517dcf5a9a28414f5ff5af543469300753",
       "module": "fees__conversion",
       "stories": [
         {
@@ -8099,19 +8249,19 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send",
-          "line": 332
+          "line": 337
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts",
-          "line": 545
+          "line": 550
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults",
-          "line": 765
+          "line": 770
         },
         {
           "heading": "Story: Keep every journal record and its evidence",
-          "line": 817
+          "line": 825
         }
       ],
       "rules": [
@@ -8260,7 +8410,7 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send / Native gas is reserved before signing and committed atomically with the signed row",
-          "line": 334,
+          "line": 339,
           "definitions": [
             "EvmFees",
             "RouteInspection",
@@ -8303,7 +8453,7 @@
         },
         {
           "heading": "Story: Sign only a reserved, inspected, same-wallet send / A recorded send without a reservation is imported at its own worst case",
-          "line": 475,
+          "line": 480,
           "definitions": [
             "RecordedSend",
             "recordedMaximum",
@@ -8318,7 +8468,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / Only a finalized receipt of one of the row's own attempts settles it",
-          "line": 547,
+          "line": 552,
           "definitions": [
             "SendReceipt",
             "landedIn",
@@ -8337,7 +8487,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / An unknown send is rebroadcast unchanged; only proven expiry retires it",
-          "line": 612,
+          "line": 617,
           "definitions": [
             "DeadlineEvidence",
             "Coverage",
@@ -8369,7 +8519,7 @@
         },
         {
           "heading": "Story: Reconcile every send from finalized evidence before another starts / A same-nonce EVM replacement changes only its fees, in bounded steps",
-          "line": 709,
+          "line": 714,
           "definitions": [
             "NetworkFeeObservation",
             "replacementDeadlineMarginMs",
@@ -8387,7 +8537,7 @@
         },
         {
           "heading": "Story: Claim only accrued fees from reviewed vaults / A claim delivers the accrued amount to the configured fee wallet and shares the native budget",
-          "line": 767,
+          "line": 772,
           "definitions": [
             "VaultClaim",
             "claimAdmitted",
@@ -8398,7 +8548,7 @@
         },
         {
           "heading": "Story: Keep every journal record and its evidence / Rows and reservations are append-only and settled records never change",
-          "line": 819,
+          "line": 827,
           "definitions": [
             "settledState",
             "rowFrozen",
@@ -8480,24 +8630,24 @@
         },
         {
           "target": "../settlement/feeReplacement.md",
-          "line": 722
+          "line": 727
         }
       ]
     },
     {
       "path": "spec/fees/diagnostics.md",
-      "sha256": "169295a6084fccfcec2aac3b8d3a2b05d70f39228a8fa3ec550acf6af9fc967c",
+      "sha256": "0606ed0d1faab517de3c19b3902c453074a450377f1a2c31bc37415448f6feba",
       "module": "fees__diagnostics",
       "stories": [
         {
           "heading": "Story: Inspect the exact active fee Worker without changing anything",
-          "line": 19
+          "line": 24
         }
       ],
       "rules": [
         {
           "heading": "Story: Inspect the exact active fee Worker without changing anything / A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing",
-          "line": 21,
+          "line": 26,
           "definitions": [
             "DiagnosticKind",
             "DiagnosticPhase",
@@ -8544,7 +8694,7 @@
         },
         {
           "heading": "Story: Inspect the exact active fee Worker without changing anything / Simulation samples cover matching, changed and refused pins and reads",
-          "line": 102,
+          "line": 107,
           "definitions": [
             "pinSample",
             "requestValues",
@@ -9613,22 +9763,22 @@
     },
     {
       "path": "spec/frontend/batchedDeposit.md",
-      "sha256": "6dd95e9c12729f94d79994e0de522afc7984123d5a6046e70d958e31c94ff7f0",
+      "sha256": "e2156e4faf3c8bd5ebdc34b4d51ead705296303c8a06b9e005b49c85896e21a1",
       "module": "frontend__batchedDeposit",
       "stories": [
         {
           "heading": "Story: Offer one atomic request only on a wallet that already supports it",
-          "line": 18
+          "line": 19
         },
         {
           "heading": "Story: Verify money moved from matching finalized evidence",
-          "line": 107
+          "line": 126
         }
       ],
       "rules": [
         {
           "heading": "Story: Offer one atomic request only on a wallet that already supports it / Capabilities that require a wallet upgrade use the separate-signature path",
-          "line": 20,
+          "line": 21,
           "definitions": [
             "BatchCapability",
             "BatchPhase",
@@ -9638,6 +9788,7 @@
             "walletAdapter",
             "canReview",
             "review",
+            "sometimesVisitorBatch",
             "intentAttempt",
             "canSaveIntent",
             "saveIntent"
@@ -9645,7 +9796,7 @@
         },
         {
           "heading": "Story: Offer one atomic request only on a wallet that already supports it / Wallet references identify later lookups and uncertainty preserves the intent",
-          "line": 53,
+          "line": 72,
           "definitions": [
             "canKeepWalletReference",
             "keepWalletReference",
@@ -9665,7 +9816,7 @@
         },
         {
           "heading": "Story: Offer one atomic request only on a wallet that already supports it / A separate approval proceeds at canonical inclusion and never counts as funding",
-          "line": 84,
+          "line": 103,
           "definitions": [
             "ApprovalEvidence",
             "chainReader",
@@ -9679,7 +9830,7 @@
         },
         {
           "heading": "Story: Verify money moved from matching finalized evidence / Included or missing-event evidence leaves verification pending",
-          "line": 109,
+          "line": 128,
           "definitions": [
             "canObserveChain",
             "observeChain",
@@ -9706,12 +9857,17 @@
         }
       ],
       "imports": [
-        "frontend__walletAttempt"
+        "frontend__walletAttempt",
+        "frontend__ownerVault"
       ],
       "references": [
         {
+          "target": "./ownerVault.md",
+          "line": 14
+        },
+        {
           "target": "./walletAttempt.md",
-          "line": 25
+          "line": 26
         }
       ]
     },
@@ -10119,7 +10275,7 @@
     },
     {
       "path": "spec/frontend/feePages.md",
-      "sha256": "ab26e71db0f957191cf9196f967fab81e800177617194bd7c2725d5f6745be03",
+      "sha256": "675f5be3c200f4c0a892f929d6f7c31c8e83fd61a9c162aab575216035387609",
       "module": "frontend__feePages",
       "stories": [
         {
@@ -10210,6 +10366,10 @@
             "walletReply",
             "canEnterHash",
             "enterHash",
+            "canConfirmUnsent",
+            "confirmUnsent",
+            "canDisconnectWallet",
+            "disconnectWallet",
             "canObserveClock",
             "observeClock",
             "stepWalletAskedOnlyAfterSameDue",
@@ -10218,7 +10378,7 @@
         },
         {
           "heading": "Story: Pay a refundable deposit for a pull request or a private report from any wallet / A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour",
-          "line": 258,
+          "line": 274,
           "definitions": [
             "autoAskLimit",
             "autoFastAsks",
@@ -10237,7 +10397,7 @@
         },
         {
           "heading": "Story: Pay a refundable deposit for a pull request or a private report from any wallet / Rules",
-          "line": 314,
+          "line": 330,
           "definitions": [
             "alwaysAttemptSaved",
             "alwaysOnlyDueOffersWays",
@@ -10260,6 +10420,8 @@
             "sometimesUnclearKept",
             "sometimesWrongWalletRefused",
             "sometimesAutoChecked",
+            "sometimesUnsentCleared",
+            "sometimesAnotherWalletAfterDecline",
             "byValues",
             "identityValues",
             "hashValues",
@@ -10298,17 +10460,17 @@
         },
         {
           "target": "./batchedDeposit.md",
-          "line": 264
+          "line": 280
         },
         {
           "target": "./ownerVault.md",
-          "line": 279
+          "line": 295
         }
       ]
     },
     {
       "path": "spec/frontend/index.md",
-      "sha256": "967976107f03b520068b25408649041d40217aa75a087e40a5f0c1ce6510c638",
+      "sha256": "7e69dba045fe429f2a3f5609a6036e736f2bc85e5af74c611ee2e809d0c184c5",
       "module": "frontend",
       "stories": [],
       "rules": [],
@@ -10437,6 +10599,10 @@
         {
           "target": "./feePages.md",
           "line": 42
+        },
+        {
+          "target": "./requestedRepos.md",
+          "line": 43
         }
       ]
     },
@@ -10568,7 +10734,7 @@
     },
     {
       "path": "spec/frontend/navigation.md",
-      "sha256": "564fa17a508e4b2dce32eb8053cde52cdd6fdc2a63ce9459c889f5530a3b84ff",
+      "sha256": "a0f6fc886803102e537e2f089c6713c8926b7273f0c3cc9cfb468a2d9aa77eee",
       "module": "frontend__navigation",
       "stories": [
         {
@@ -10649,7 +10815,7 @@
         },
         {
           "heading": "Story: Open every product route at its existing address / Administration sections and project selection are parameters of the one Administration page",
-          "line": 132,
+          "line": 134,
           "definitions": [
             "AdminSectionParam",
             "AdminView",
@@ -10664,7 +10830,7 @@
         },
         {
           "heading": "Story: Open every product route at its existing address / A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled",
-          "line": 170,
+          "line": 172,
           "definitions": [
             "signInShownInPlace",
             "alwaysSignInInPlaceHoldsNoPrivateData",
@@ -10689,14 +10855,18 @@
           "line": 118
         },
         {
+          "target": "./requestedRepos.md",
+          "line": 120
+        },
+        {
           "target": "./emailAction.md",
-          "line": 179
+          "line": 181
         }
       ]
     },
     {
       "path": "spec/frontend/ownerMonthly.md",
-      "sha256": "68056f5818a172c356d2e83801352d2bf3092a9e8cd58e0dd46afd5faad25205",
+      "sha256": "da68d04adb864c22c8d6087255b85e2e239b9d2ff7b48a3464f254eb98e416f9",
       "module": "frontend__ownerMonthly",
       "stories": [
         {
@@ -10902,22 +11072,22 @@
     },
     {
       "path": "spec/frontend/ownerVault.md",
-      "sha256": "0f477fe37727627273d27c53046ea39569540fcb07a6363533bd5c2822fd8667",
+      "sha256": "22faa76c5c53667ba6c025e5cb0ea4e1703cef8d1b4686791803c37d91980ff2",
       "module": "frontend__ownerVault",
       "stories": [
         {
           "heading": "Story: Create and register the vault without asking the wallet twice",
-          "line": 25
+          "line": 29
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner",
-          "line": 154
+          "line": 190
         }
       ],
       "rules": [
         {
           "heading": "Story: Create and register the vault without asking the wallet twice / A flow sends only after storage saves its attempt",
-          "line": 27,
+          "line": 31,
           "definitions": [
             "Target",
             "Phase",
@@ -10930,6 +11100,7 @@
             "adapter",
             "timer",
             "tab",
+            "visitor",
             "autoAskLimit",
             "hiddenAskLimit",
             "refusalLimit",
@@ -10937,17 +11108,24 @@
             "initial",
             "flowOf",
             "withFlow",
+            "visibleTo",
+            "tabSlot",
+            "actor",
+            "mayAct",
             "resumed",
             "canSignIn",
             "signIn",
             "canSignOut",
             "signOut",
-            "canReview"
+            "canReview",
+            "reviewed",
+            "canReviewDeposit",
+            "reviewDeposit"
           ]
         },
         {
           "heading": "Story: Create and register the vault without asking the wallet twice / A withdrawal that would break the month's promise is refused on Slop's pages",
-          "line": 81,
+          "line": 115,
           "definitions": [
             "review",
             "canSend",
@@ -10956,7 +11134,7 @@
         },
         {
           "heading": "Story: Create and register the vault without asking the wallet twice / A wallet reply settles only its own attempt; an unclear one waits for the owner",
-          "line": 114,
+          "line": 148,
           "definitions": [
             "canWalletReply",
             "walletReply",
@@ -10968,7 +11146,7 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / A timer asks only for a wallet-returned hash the owner is not editing",
-          "line": 156,
+          "line": 192,
           "definitions": [
             "canEdit",
             "edit",
@@ -10980,7 +11158,7 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / Only a finalized matching result registers or counts, and failures keep the saved request",
-          "line": 198,
+          "line": 234,
           "definitions": [
             "canAnswer",
             "answer"
@@ -10988,7 +11166,7 @@
         },
         {
           "heading": "Story: Check registration and transfers automatically without retiring the owner / Rules",
-          "line": 228,
+          "line": 264,
           "definitions": [
             "flowSaved",
             "alwaysLiveRequestsAreSaved",
@@ -11014,6 +11192,7 @@
             "sometimesTimerStopped",
             "sometimesStorageBlocked",
             "sometimesLateReply",
+            "sometimesDepositedWithoutSession",
             "accountValues",
             "byValues",
             "lifetimeValues",
@@ -11025,7 +11204,8 @@
             "weight_send",
             "weight_walletReply",
             "weight_ask",
-            "weight_answer"
+            "weight_answer",
+            "eval_witness_sometimesDepositedWithoutSession"
           ]
         }
       ],
@@ -11054,15 +11234,19 @@
         },
         {
           "target": "./walletAttempt.md",
-          "line": 23
+          "line": 25
         },
         {
           "target": "./projections.md",
-          "line": 89
+          "line": 39
+        },
+        {
+          "target": "./projections.md",
+          "line": 123
         },
         {
           "target": "./vaultLocks.md",
-          "line": 94
+          "line": 128
         }
       ]
     },
@@ -12116,7 +12300,7 @@
     },
     {
       "path": "spec/frontend/provisionalVault.md",
-      "sha256": "ee7f31856865a27e67e862de92f42cf92c349b53a5b0f7c851083c3af98ef0a1",
+      "sha256": "f773a6825f1d87dadc11886e6c3ee6dd7632f0b3214f45f0823b5a8e4146aca2",
       "module": "frontend__provisionalVault",
       "stories": [
         {
@@ -12125,7 +12309,7 @@
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality",
-          "line": 97
+          "line": 103
         }
       ],
       "rules": [
@@ -12140,6 +12324,8 @@
             "DepositPhase",
             "IncludedDepositEvidence",
             "DepositView",
+            "Allowance",
+            "ApprovalStep",
             "Setup",
             "initial",
             "byValues",
@@ -12163,8 +12349,9 @@
         },
         {
           "heading": "Story: Open a provisional funding form without registering a vault / Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads",
-          "line": 67,
+          "line": 72,
           "definitions": [
+            "promptOpen",
             "canCheckCreation",
             "checkCreation",
             "canReplaceCreation",
@@ -12175,20 +12362,45 @@
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Only the owner opens the provisional token deposit prompt, after storage saves its attempt",
-          "line": 99,
+          "line": 105,
           "definitions": [
             "depositAttempt",
+            "approvalAttempt",
+            "savedApproval",
+            "approvalIdle",
+            "allowanceShort",
+            "mayPrompt",
+            "canReadAllowance",
+            "readAllowance",
+            "canOpenApproval",
+            "openApproval",
+            "canDeclineApproval",
+            "declineApproval",
+            "canSignApproval",
+            "signApproval",
+            "canReadApproval",
+            "readApproval",
             "canOpenPrompt",
             "openPrompt",
             "canDecline",
             "decline",
             "canSign",
-            "sign"
+            "sign",
+            "alwaysApprovalPromptOwnsForm",
+            "sometimesApprovalSaved",
+            "sometimesDepositAfterApproval",
+            "sometimesBatchedDeposit",
+            "allowanceReadValues",
+            "atomicValues",
+            "approvalReadValues",
+            "weight_readAllowance",
+            "eval_witness_sometimesDepositAfterApproval",
+            "eval_witness_sometimesBatchedDeposit"
           ]
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Included deposits are received pending finality only when there is an exact deposit event",
-          "line": 128,
+          "line": 199,
           "definitions": [
             "canIncludeDeposit",
             "includeDeposit",
@@ -12204,7 +12416,7 @@
         },
         {
           "heading": "Story: Retain an uncertain deposit through replacement and finality / Only a finalized deposit in a registered vault is eligible for accounting",
-          "line": 164,
+          "line": 235,
           "definitions": [
             "canCountDeposit",
             "countDeposit",
@@ -12227,7 +12439,8 @@
         }
       ],
       "imports": [
-        "frontend__walletAttempt"
+        "frontend__walletAttempt",
+        "frontend__batchedDeposit"
       ],
       "references": [
         {
@@ -12236,7 +12449,11 @@
         },
         {
           "target": "./walletAttempt.md",
-          "line": 107
+          "line": 113
+        },
+        {
+          "target": "./batchedDeposit.md",
+          "line": 123
         }
       ]
     },
@@ -12489,7 +12706,7 @@
     },
     {
       "path": "spec/frontend/registry.md",
-      "sha256": "e4d8c97edf7cb24610af0571bce3148252e6b0d15188c41b7f2ebc4909d87689",
+      "sha256": "a02b11e5deb84abd813f8d7bb962328c1d5a361ba9443f5a042a5b95e5c83191",
       "module": "frontend__registry",
       "stories": [
         {
@@ -12575,6 +12792,65 @@
       "references": []
     },
     {
+      "path": "spec/frontend/requestedRepos.md",
+      "sha256": "873e319a9ca0252d7a122c7e97ba768cb8e0e8ab7165e998984188c32a5da3e1",
+      "module": "frontend__requestedRepos",
+      "stories": [
+        {
+          "heading": "Story: See requested repos, flag one, renew or withdraw it",
+          "line": 48
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: See requested repos, flag one, renew or withdraw it / A board read keeps a ready board on screen and a failed one offers Try again",
+          "line": 55,
+          "definitions": [
+            "BoardStatus",
+            "RequestNotice",
+            "RequestedPage",
+            "initial",
+            "canMount",
+            "mount",
+            "canBoardAnswered",
+            "boardAnswered",
+            "canRetry",
+            "retry",
+            "alwaysLifetimeIsPositive",
+            "alwaysReadingIsPositive",
+            "alwaysFailedBoardIsNotLoading",
+            "alwaysLoadingBoardIsBeingRead",
+            "sometimesFailedBoardOffersTryAgain",
+            "sometimesReadyBoardReloading",
+            "actorValues",
+            "okValues",
+            "lifeValues",
+            "readValues"
+          ]
+        },
+        {
+          "heading": "Story: See requested repos, flag one, renew or withdraw it / One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else",
+          "line": 96,
+          "definitions": [
+            "canSubmit",
+            "submit",
+            "canActAnswered",
+            "actAnswered",
+            "alwaysRequestBelongsToThisLifetime",
+            "alwaysNoticeNeverBesideARequest",
+            "alwaysOnlyASignedInViewerAsks",
+            "stepAccountChangeDropsTheRequest",
+            "sometimesFlagReloadsTheBoard",
+            "sometimesRefusalKeepsTheBoard",
+            "eval_witness_sometimesFlagReloadsTheBoard",
+            "eval_witness_sometimesRefusalKeepsTheBoard"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/frontend/requests.md",
       "sha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
       "module": "frontend__requests",
@@ -12646,7 +12922,7 @@
     },
     {
       "path": "spec/frontend/routes.md",
-      "sha256": "e8bb04d7310e44355a3cad14908ffa2211323a989f5031a37b8c1801c96b0471",
+      "sha256": "d02a43b7fdd7479ef998938a8dd12c8084ee4c65c5d77a239504689dc90d284c",
       "module": "frontend__routes",
       "stories": [
         {
@@ -12713,15 +12989,15 @@
         },
         {
           "target": "./feePages.md",
-          "line": 83
+          "line": 84
         },
         {
           "target": "../app/index.md",
-          "line": 94
+          "line": 95
         },
         {
           "target": "./navigation.md",
-          "line": 95
+          "line": 96
         }
       ]
     },
@@ -16550,7 +16826,7 @@
     },
     {
       "path": "spec/points/assessmentAudit.md",
-      "sha256": "afe8d2fb8b1d12c934e32c72a3b4d3801f969a4fae306cfacde482bf3d34b042",
+      "sha256": "7f259e70a758d102457c764eb106d031a67c67f7afe086c64f039f5b47bcc8b4",
       "module": "points__assessmentAudit",
       "stories": [
         {
@@ -16595,8 +16871,22 @@
           ]
         },
         {
-          "heading": "Story: Audit the assessments of a historical scope before owner review / A closed review and a removed accepted merge bind only from exact public evidence",
+          "heading": "Story: Audit the assessments of a historical scope before owner review / An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence",
           "line": 99,
+          "definitions": [
+            "emptyLegacyClosureAccounted",
+            "canObserveEmptyLegacyClosure",
+            "observeEmptyLegacyClosure",
+            "lawFormalReviewOrPriorAwardKeepsLegacyClosureOpen",
+            "exactClosureValues",
+            "emptyAssessmentValues",
+            "noFormalReviewsValues",
+            "noPriorAwardValues"
+          ]
+        },
+        {
+          "heading": "Story: Audit the assessments of a historical scope before owner review / A closed review and a removed accepted merge bind only from exact public evidence",
+          "line": 134,
           "definitions": [
             "ClosureEvidence",
             "RemovedMergeEvidence",
@@ -16622,7 +16912,7 @@
         },
         {
           "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
-          "line": 159,
+          "line": 194,
           "definitions": [
             "canStageReview",
             "stageReview",
@@ -16872,7 +17162,7 @@
     },
     {
       "path": "spec/points/census.md",
-      "sha256": "444cfa371d1ef778ca9fa60fe63b021c8296501186cdfa8ba8b539f281383b96",
+      "sha256": "79f16b124923dc70c9d5ed74e9ce628ea580e114da2fad30434c00a267727bdf",
       "module": "points__census",
       "stories": [
         {
@@ -16881,7 +17171,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only",
-          "line": 392
+          "line": 399
         }
       ],
       "rules": [
@@ -16906,7 +17196,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Pages follow the cursor chain and a changed count stops the pass",
-          "line": 54,
+          "line": 61,
           "definitions": [
             "canRecordPage",
             "addItem",
@@ -16921,7 +17211,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Every retained item has a deterministic, fail-closed selection decision with all its reasons",
-          "line": 82,
+          "line": 89,
           "definitions": [
             "Reason",
             "Status",
@@ -16946,7 +17236,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Only a complete census is ready for publication",
-          "line": 136,
+          "line": 143,
           "definitions": [
             "alwaysItemsDistinct",
             "alwaysCursorsDistinct",
@@ -16959,7 +17249,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days",
-          "line": 150,
+          "line": 157,
           "definitions": [
             "claimMaxAgeMs",
             "ClaimSource",
@@ -16982,7 +17272,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget",
-          "line": 212,
+          "line": 219,
           "definitions": [
             "maxGenerationCost",
             "rateLimitReserve",
@@ -17013,7 +17303,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A split Search range whose children disagree with the parent count is repeated once",
-          "line": 290,
+          "line": 297,
           "definitions": [
             "searchSafeResultLimit",
             "minimumSearchSliceMs",
@@ -17034,7 +17324,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / An optional discussion probe starts only with two available points and never waits for quota to probe",
-          "line": 331,
+          "line": 338,
           "definitions": [
             "probeCost",
             "ProbeAnswer",
@@ -17053,7 +17343,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Simulation samples include repeated cursors, count changes and blocked items",
-          "line": 371,
+          "line": 378,
           "definitions": [
             "human",
             "pageValues",
@@ -17064,7 +17354,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only / The band reapplication touches only eligible unpaid work from 1 September through 31 October 2026",
-          "line": 398,
+          "line": 405,
           "definitions": [
             "AwardStage",
             "BandedWork",
@@ -17102,7 +17392,7 @@
         },
         {
           "target": "./ingestion.md",
-          "line": 240
+          "line": 247
         }
       ]
     },
@@ -18099,7 +18389,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "998d5587d98e112a7ee89a4e802504c971bc0b61b541ae0044bd00bdd0b450f5",
+      "sha256": "c71f9e9c843df7ae15d29b2509e32777806fe120e28d7e80862622666a114ef0",
       "module": "points__journal",
       "stories": [
         {
@@ -18177,6 +18467,7 @@
           "line": 208,
           "definitions": [
             "UnitCredit",
+            "firstDecisionAllowed",
             "appendRevision",
             "canCreditUnit",
             "creditUnit"
@@ -18184,20 +18475,21 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / One verified accepted source creates one first revision per key",
-          "line": 238,
+          "line": 251,
           "definitions": [
             "SourceActor",
             "SourceEvidence",
             "AwardInput",
             "ordinaryCategory",
             "evidenceBinds",
+            "scoreDecisionAllowed",
             "canCredit",
             "credit"
           ]
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award comes only from an admitted reviewed manifest",
-          "line": 271,
+          "line": 292,
           "definitions": [
             "canAdmitManifest",
             "admitManifest",
@@ -18209,7 +18501,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A recorded award follows the latest complete snapshot's score",
-          "line": 295,
+          "line": 316,
           "definitions": [
             "rescoreBasis",
             "canRescoreUnit",
@@ -18218,7 +18510,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A reallocation keeps the unit's whole value and changes only its recipients",
-          "line": 325,
+          "line": 346,
           "definitions": [
             "latestValueDecision",
             "canReallocateUnit",
@@ -18228,7 +18520,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A source re-scored by the ingestion producer appends a reassessment",
-          "line": 359,
+          "line": 380,
           "definitions": [
             "canRescoreSource",
             "rescoreSource"
@@ -18236,7 +18528,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An evaluated award changes only by a reviewed manifest decision, an omission zero or the incident recovery",
-          "line": 397,
+          "line": 416,
           "definitions": [
             "canDecideEvaluation",
             "decideEvaluation",
@@ -18249,7 +18541,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A penalty revision records the debit applied against the month's credit",
-          "line": 449,
+          "line": 468,
           "definitions": [
             "PenaltyEvidence",
             "requestOf",
@@ -18263,7 +18555,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A retained-batch award the batch no longer supplies is zeroed once",
-          "line": 498,
+          "line": 517,
           "definitions": [
             "RetainedBatch",
             "batchOwned",
@@ -18274,7 +18566,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A complete newer snapshot zeroes superseded credit inside its window",
-          "line": 528,
+          "line": 547,
           "definitions": [
             "SourceCoverage",
             "ReviewOmission",
@@ -18303,7 +18595,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
-          "line": 627,
+          "line": 646,
           "definitions": [
             "octoberOriginalContributorReason",
             "octoberDuplicateRetirementReason",
@@ -18334,7 +18626,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 706,
+          "line": 725,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -18343,7 +18635,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 735,
+          "line": 755,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -18352,7 +18644,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 765,
+          "line": 786,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -18366,7 +18658,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 802,
+          "line": 823,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -18382,7 +18674,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 830,
+          "line": 851,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -18395,7 +18687,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 864,
+          "line": 885,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -18423,12 +18715,13 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 930,
+          "line": 951,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
             "sometimesRatified",
             "sometimesReallocated",
+            "sometimesFirstCreditDecided",
             "sometimesSourceRescored",
             "sometimesPenalized",
             "sometimesPenaltyExceedsCredit",
@@ -18446,7 +18739,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 954,
+          "line": 977,
           "definitions": [
             "gValues",
             "unitValues",
@@ -18542,27 +18835,27 @@
         },
         {
           "target": "./evaluations.md",
-          "line": 273
+          "line": 294
         },
         {
           "target": "./scoringPolicy.md",
-          "line": 298
+          "line": 319
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 708
+          "line": 727
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 737
+          "line": 757
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 767
+          "line": 788
         },
         {
           "target": "./allocation.md",
-          "line": 773
+          "line": 794
         }
       ]
     },
@@ -19460,7 +19753,7 @@
     },
     {
       "path": "spec/points/quotaRecovery.md",
-      "sha256": "e7c1e1c421a3e0973519c3b4def7937343313eb069fb2272db20eff8882d0a33",
+      "sha256": "fe84debf19dbe1ab59bae70e7b82a6c3e2b83e144fc612d6f5faa8b689481f04",
       "module": "points__quotaRecovery",
       "stories": [
         {
@@ -19542,7 +19835,7 @@
         },
         {
           "heading": "Story: Preserve the same campaign while live quota recovers / Resume requires progress or a bounded number of refusals before the deadline",
-          "line": 175,
+          "line": 181,
           "definitions": [
             "canDrain",
             "drain",
@@ -19557,7 +19850,7 @@
         },
         {
           "heading": "Story: Preserve the same campaign while live quota recovers / Only exact manifest and receipt from an uninterrupted pass allow reconciliation",
-          "line": 207,
+          "line": 213,
           "definitions": [
             "Output",
             "Choice",
@@ -19582,7 +19875,7 @@
         },
         {
           "heading": "Story: Preserve the same campaign while live quota recovers / Simulation samples include successful reads, quota windows and budget refusal",
-          "line": 256,
+          "line": 262,
           "definitions": [
             "authorityValues",
             "artifactValues",
@@ -19830,7 +20123,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "9a0d2bad4146284886c55f01d7e4acb42a9e80b1a6a4e71c10f73e5b13f140e5",
+      "sha256": "2c92a37a88884eb3959b9bcd7b7048e85f1bf6cef1874b3c34cb907e90dcd3bb",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -19867,6 +20160,8 @@
             "PacketRun",
             "packetPreviews",
             "packetApplies",
+            "packetAdmits",
+            "packetImports",
             "canValidate",
             "validate",
             "lawChangedBaselineRefused",
@@ -19875,6 +20170,10 @@
             "lawChangedCheckpointRefused",
             "lawUnqualifiedApplyRefused",
             "lawPreviewNeedsNoQualification",
+            "lawPreviewNeverImported",
+            "lawPreviewAdmitsWithoutQualification",
+            "lawApplyAdmitsOnlyWhatApplies",
+            "lawImportedPacketApplies",
             "readyRun",
             "rValues",
             "packetRunValues"
@@ -19882,7 +20181,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / An owner recipient correction redistributes an unchanged October pool by the reviewed weights",
-          "line": 123,
+          "line": 137,
           "definitions": [
             "RecipientCorrection",
             "positiveWeights",
@@ -19897,7 +20196,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers",
-          "line": 162,
+          "line": 176,
           "definitions": [
             "AcceptedPromotion",
             "promotionKeepsContent",
@@ -19924,11 +20223,21 @@
             "IdenticalKind",
             "IdenticalChange",
             "identicalChangeApplies",
+            "NetOutcome",
+            "netOutcomeApplies",
+            "noNetOutcome",
             "Retirement",
             "coveringSource",
             "claimCoverageApplies",
             "identicalRetirementApplies",
+            "netRetirementApplies",
             "retirementApplies",
+            "lawNetOutcomeIsExclusive",
+            "lawNetOutcomeNeedsEveryPath",
+            "lawNetOutcomeNeedsTheSubmittedRange",
+            "lawNetOutcomeNeedsRetainedEarlierAwards",
+            "lawNetOutcomeNeedsTrustedVerification",
+            "lawNetOutcomeNeedsEarlierAcceptance",
             "lawPromotionMustKeepContent",
             "lawChangedPromotionIsNotUnchanged",
             "lawLaterSquashNeverCovers",
@@ -19957,6 +20266,8 @@
             "readyRetirement",
             "sharedChange",
             "identicalRetirement",
+            "netChange",
+            "netRetirement",
             "carriedEdge",
             "lawEarlierCarrierOfTheMergeRefused",
             "lawUnknownAncestryRefused",
@@ -19972,7 +20283,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
-          "line": 418,
+          "line": 504,
           "definitions": [
             "HistoricalScope",
             "HistoricalInput",
@@ -20005,11 +20316,11 @@
         },
         {
           "target": "./allocation.md",
-          "line": 131
+          "line": 145
         },
         {
           "target": "./authorship.md",
-          "line": 430
+          "line": 516
         }
       ]
     },
@@ -22826,7 +23137,7 @@
     },
     {
       "path": "spec/security/program.md",
-      "sha256": "86842f2060d8d254c9b8b696dae26585d3b31d6397ae579e409287ebcb9e502d",
+      "sha256": "106d050e026878a2894404782152d61944e02780239cc306cbbfba9236499f3e",
       "module": "security__program",
       "stories": [
         {
@@ -22858,7 +23169,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Administrators approve a split exception for one exact future revision",
-          "line": 62,
+          "line": 68,
           "definitions": [
             "canApproveFullSplit",
             "approveFullSplit"
@@ -22866,7 +23177,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Funding state comes only from a fresh finalized bounty-vault snapshot",
-          "line": 78,
+          "line": 84,
           "definitions": [
             "FundingSnapshot",
             "fundingObserver",
@@ -22879,7 +23190,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Receipt terms come only from the open published revision",
-          "line": 108,
+          "line": 114,
           "definitions": [
             "receiptTerms",
             "alwaysFullAwardPlatformOnly",
@@ -22898,7 +23209,7 @@
         },
         {
           "heading": "Story: Publish, pause and close an offer without changing received reports / Simulation samples cover both projects, both splits and stale funds",
-          "line": 148,
+          "line": 154,
           "definitions": [
             "ownerValues",
             "byValues",
@@ -23027,7 +23338,7 @@
     },
     {
       "path": "spec/security/reportDeposit.md",
-      "sha256": "e53f615f3977459548871c448597191797077d84d0aa58cbd946f38aa26d8e99",
+      "sha256": "63c7661999583c881ccdce53d1d891f41f8991fc5f0a31f328573ec3544c2ab7",
       "module": "security__reportDeposit",
       "stories": [
         {
@@ -23070,7 +23381,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / A report that waits for its deposit belongs to its reporter alone",
-          "line": 107,
+          "line": 109,
           "definitions": [
             "canPay",
             "pay",
@@ -23104,7 +23415,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / Unpaid asks are released when the switch or the project turns the deposit off",
-          "line": 176,
+          "line": 185,
           "definitions": [
             "turnedOff",
             "canRelease",
@@ -23116,7 +23427,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / A paid deposit is sent back on a first response and kept only after a keeping close stood seven days",
-          "line": 202,
+          "line": 211,
           "definitions": [
             "DepositFacts",
             "Due",
@@ -23152,7 +23463,7 @@
         },
         {
           "heading": "Story: Hold a private report until its refundable deposit is recorded / Simulation samples",
-          "line": 303,
+          "line": 312,
           "definitions": [
             "byValues",
             "exemptValues",
@@ -23163,6 +23474,7 @@
             "reviewValues",
             "upholdValues",
             "burnedValues",
+            "modeValues",
             "decisionValues",
             "baseFacts",
             "factsValues",
@@ -23180,7 +23492,8 @@
         "settlement__money",
         "security__terms",
         "security__screening",
-        "security__cases"
+        "security__cases",
+        "security__routineDecisions"
       ],
       "references": [
         {
@@ -23198,6 +23511,10 @@
         {
           "target": "./cases.md",
           "line": 57
+        },
+        {
+          "target": "./routineDecisions.md",
+          "line": 124
         }
       ]
     },
@@ -23557,7 +23874,7 @@
     },
     {
       "path": "spec/security/routineDecisions.md",
-      "sha256": "b26eac8bc732f0558249d92d9d7b9844589bc96552c553d4944e7c436fb205a8",
+      "sha256": "9edca8c990cf19498cca9e368e395a33da322ff9d539ee43ea4bdf0f1055ed2f",
       "module": "security__routineDecisions",
       "stories": [
         {
@@ -23582,6 +23899,7 @@
             "maxUnavailableAttempts",
             "receivedCase",
             "initial",
+            "screeningSettledFor",
             "screeningSettled",
             "ownsRevision",
             "failuresNow",
@@ -23597,7 +23915,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Two independent calls must agree before a close, and a plausible loss of funds closes nothing",
-          "line": 81,
+          "line": 84,
           "definitions": [
             "Reading",
             "routineSeparateRuleCount",
@@ -23616,7 +23934,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner",
-          "line": 142,
+          "line": 145,
           "definitions": [
             "Observation",
             "withoutCalls",
@@ -23649,7 +23967,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / The reporter appeals a routine close once, to the owner, and the pass never reads the report again",
-          "line": 225,
+          "line": 229,
           "definitions": [
             "epoch",
             "canRequestInformation",
@@ -23680,7 +23998,7 @@
         },
         {
           "heading": "Story: Decide routine reports with an audit record and leave the rest to the owner / Simulation samples",
-          "line": 281,
+          "line": 287,
           "definitions": [
             "clean",
             "readingValues",
@@ -23734,23 +24052,23 @@
         },
         {
           "target": "./intake.md",
-          "line": 96
+          "line": 99
         },
         {
           "target": "./cases.md",
-          "line": 153
+          "line": 156
         },
         {
           "target": "./cases.md",
-          "line": 231
+          "line": 235
         },
         {
           "target": "./screening.md",
-          "line": 232
+          "line": 236
         },
         {
           "target": "./forwarding.md",
-          "line": 234
+          "line": 238
         }
       ]
     },
@@ -26986,7 +27304,7 @@
     },
     {
       "path": "spec/settlement/monthly.md",
-      "sha256": "bf938b0319dd9fd58235abc6c69d1f5c20b016616935a9b90387fcb8ce432f16",
+      "sha256": "1a00a53336cd454e3b50c87f23235bd37cc777877a86e672ef43807847af04fc",
       "module": "settlement__monthly",
       "stories": [
         {
@@ -27003,11 +27321,11 @@
         },
         {
           "heading": "Story: Create obligations only when the whole month is covered",
-          "line": 405
+          "line": 411
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact",
-          "line": 491
+          "line": 497
         }
       ],
       "rules": [
@@ -27134,6 +27452,7 @@
           "definitions": [
             "financialTermsSame",
             "cutNoticeElapsed",
+            "ownerMayFinalize",
             "canFinalize",
             "finalize",
             "automaticMayFreeze",
@@ -27145,7 +27464,7 @@
         },
         {
           "heading": "Story: Freeze exactly one execution snapshot / A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project",
-          "line": 372,
+          "line": 378,
           "definitions": [
             "canObservePledge",
             "observePledge",
@@ -27157,7 +27476,7 @@
         },
         {
           "heading": "Story: Create obligations only when the whole month is covered / Fresh finalized free funds must cover this month and every earlier unreserved obligation",
-          "line": 407,
+          "line": 413,
           "definitions": [
             "VaultObservation",
             "banFor",
@@ -27175,7 +27494,7 @@
         },
         {
           "heading": "Story: Create obligations only when the whole month is covered / A finalized award reserves an obligation and a ledger payment pays it",
-          "line": 448,
+          "line": 454,
           "definitions": [
             "AwardFact",
             "obligationFor",
@@ -27195,7 +27514,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The allocation is conserved within the month's pool",
-          "line": 493,
+          "line": 499,
           "definitions": [
             "alwaysAllocationConserved",
             "proposedPhase",
@@ -27205,21 +27524,21 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Every cut keeps its reason bounds, its change and exactly one Inbox notice",
-          "line": 509,
+          "line": 515,
           "definitions": [
             "alwaysCutsRecorded"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / The public cut list is exactly each contributor's latest change when that change is a cut",
-          "line": 521,
+          "line": 527,
           "definitions": [
             "alwaysPublicCutsCurrent"
           ]
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / A month with a cut freezes no earlier than 24 hours after the latest cut, unless its pledge freezes it at the cutoff",
-          "line": 531,
+          "line": 537,
           "definitions": [
             "alwaysAutomaticHonoursCutNotice",
             "alwaysFreezeAfterCutNotice",
@@ -27228,7 +27547,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Obligations follow the frozen shares exactly, excluding only banned accounts",
-          "line": 550,
+          "line": 556,
           "definitions": [
             "alwaysObligationsMatchShares",
             "alwaysEveryPayableShareAccounted",
@@ -27241,7 +27560,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Frozen amounts, recorded triggers and obligation progress never move backwards",
-          "line": 573,
+          "line": 579,
           "definitions": [
             "frozenPhase",
             "stepFrozenStable",
@@ -27256,7 +27575,7 @@
         },
         {
           "heading": "Story: Amounts, recipients and history stay exact / Proposals, changes, cuts, freezes, exclusions and payments are reachable",
-          "line": 599,
+          "line": 605,
           "definitions": [
             "sometimesWalletlessReserve",
             "sometimesCompleted",
@@ -27349,17 +27668,17 @@
         },
         {
           "target": "./monthPledges.md",
-          "line": 376
+          "line": 382
         },
         {
           "target": "./monthPledges.md",
-          "line": 415
+          "line": 421
         }
       ]
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "fcd4b067e191549e2c8b45155d0c32b68ac82cfa4d0c38acac58929e0389c196",
+      "sha256": "82a7e079a5de21ebe3aa65c69528d5dbabad03bbe689eb97b1f5c7deb7f29eb0",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -27372,7 +27691,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 363
+          "line": 367
         }
       ],
       "rules": [
@@ -27469,7 +27788,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 298,
+          "line": 302,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -27479,7 +27798,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 323,
+          "line": 327,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -27490,7 +27809,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 342,
+          "line": 346,
           "definitions": [
             "canComplete",
             "complete"
@@ -27498,7 +27817,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 353,
+          "line": 357,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -27506,7 +27825,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 365,
+          "line": 369,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -27519,7 +27838,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 386,
+          "line": 390,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -27557,7 +27876,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 453,
+          "line": 457,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -27610,7 +27929,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "db1bf580dcbc79e26c12b3996d06765b53f97c2a1e23a39ad018d617743380ba",
+      "sha256": "ac804ec4af73de31bfe2bb9f565d64b727f93e365e7eb05c1a1c6f70f763b1ad",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -27766,7 +28085,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A wrong admitted total is held and never completes; only a finalized whole release ends it",
-          "line": 535,
+          "line": 543,
           "definitions": [
             "canObserveWrongTotal",
             "observeWrongTotal",
@@ -27783,7 +28102,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / An EVM month whose window closed unadmitted is refused and leaves the batch",
-          "line": 609,
+          "line": 617,
           "definitions": [
             "canRefuseUnadmitted",
             "refuseUnadmitted",
@@ -27794,7 +28113,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / Simulation samples are finalized journals of each sampled month",
-          "line": 637,
+          "line": 645,
           "definitions": [
             "entryOf",
             "snapshot",
@@ -27838,20 +28157,24 @@
           "line": 471
         },
         {
-          "target": "./reserveRelease.md",
-          "line": 543
+          "target": "./executorJournal.md",
+          "line": 506
         },
         {
-          "target": "./executorJournal.md",
+          "target": "./reserveRelease.md",
           "line": 551
         },
         {
+          "target": "./executorJournal.md",
+          "line": 559
+        },
+        {
           "target": "./monthlySettlement.md",
-          "line": 568
+          "line": 576
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 615
+          "line": 623
         }
       ]
     },
@@ -27917,7 +28240,7 @@
     },
     {
       "path": "spec/settlement/monthlySettlement.md",
-      "sha256": "22032b8e1bad3f00a0818d2387c7c4bfec8dc3e3d5dab6f82f2fe9ed07286b71",
+      "sha256": "70a2acb8b017bab7ff9af1b6b343327c8853d6d73557a87cff08023f43005c9a",
       "module": "settlement__monthlySettlement",
       "stories": [
         {
@@ -27926,7 +28249,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree",
-          "line": 375
+          "line": 433
         }
       ],
       "rules": [
@@ -27962,12 +28285,14 @@
             "canDeposit",
             "deposit",
             "canSetMonthly",
-            "setMonthly"
+            "setMonthly",
+            "canPledgeMonths",
+            "pledgeMonths"
           ]
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Obligations are created only when the vault's finalized free balance covers the month",
-          "line": 80,
+          "line": 89,
           "definitions": [
             "canObserveHead",
             "observeHead",
@@ -27984,7 +28309,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may prepare one funded obligation by hand, and only while no pool gross is pending",
-          "line": 123,
+          "line": 138,
           "definitions": [
             "obligationOf",
             "awardFact",
@@ -27994,7 +28319,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The owner may also commit any source by hand on chain; the month observes it",
-          "line": 146,
+          "line": 161,
           "definitions": [
             "canCommitManualAward",
             "commitManualAward",
@@ -28016,9 +28341,10 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / Anyone admits the attester-signed root of exactly the month's unreserved obligations",
-          "line": 188,
+          "line": 203,
           "definitions": [
             "canAdmitRoot",
+            "createdActors",
             "admitRoot",
             "canMaterialize",
             "materialize"
@@ -28026,7 +28352,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized",
-          "line": 215,
+          "line": 234,
           "definitions": [
             "leavesPerCall",
             "leafInCall",
@@ -28037,11 +28363,12 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The executor's cursor passes a leaf only on a matching finalized award, or once the reserve is exhausted",
-          "line": 254,
+          "line": 273,
           "definitions": [
             "admittedMonth",
             "leafMatches",
             "leafConflicts",
+            "treeLeaf",
             "cursorAt",
             "passedCursor",
             "canAdvanceCursor",
@@ -28049,12 +28376,20 @@
             "canAdvanceZeroRemaining",
             "advanceZeroRemaining",
             "lawConflictHaltsCursor",
-            "lawCursorWaitsForNonce"
+            "lawCursorWaitsForNonce",
+            "LeafAward",
+            "LeafStep",
+            "pooledLeafStep",
+            "exhaustedLeafStep",
+            "leafAwardOf",
+            "leafStepAt",
+            "lawLeafStepIsTheCursorGuard",
+            "lawConflictingLeafHalts"
           ]
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / The vault keeps its other operations while the month is reserved",
-          "line": 316,
+          "line": 374,
           "definitions": [
             "canWithdraw",
             "withdraw",
@@ -28066,7 +28401,7 @@
         },
         {
           "heading": "Story: Fund, reserve and pay one month through its own vault / An approved service release is exactly the release the vault accepts",
-          "line": 340,
+          "line": 398,
           "definitions": [
             "releaseFor",
             "lawApprovedReleaseAccepted",
@@ -28076,7 +28411,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / An obligation is reserved, paid or conflicted only as the vault's finalized award shows",
-          "line": 377,
+          "line": 435,
           "definitions": [
             "obligationMatches",
             "alwaysObligationsMatchVault",
@@ -28099,6 +28434,8 @@
             "leafAwardReserves",
             "alwaysLeafAwardsReserveTheirObligation",
             "alwaysPendingPoolIsExactlyUnreserved",
+            "alwaysAdmittedLeavesUnconflicted",
+            "alwaysAdmittedLeavesNeverConflict",
             "sometimesCursorPassedLeaf",
             "sometimesReleasedMonthPassed",
             "sometimesManualObligation",
@@ -28106,6 +28443,7 @@
             "sometimesMonthReserved",
             "sometimesPoolBlocksManual",
             "sometimesUnderfundedThenDeposit",
+            "sometimesFundedWithPledgeHeldBack",
             "sometimesConflicted",
             "sometimesObligationPaid",
             "sometimesManualAwardOutsideMonth"
@@ -28113,7 +28451,7 @@
         },
         {
           "heading": "Story: The month and the vault always agree / Simulation samples",
-          "line": 503,
+          "line": 570,
           "definitions": [
             "assetValues",
             "mintValues",
@@ -28150,6 +28488,9 @@
             "versionValues",
             "releaseValues",
             "nonceSettledValues",
+            "fromPeriodValues",
+            "countValues",
+            "pledgeValues",
             "sampleFrozen",
             "sampleFunded",
             "sampleAdmitted",
@@ -28186,7 +28527,8 @@
             "weight_finalize",
             "weight_observeSettings",
             "weight_setMonthly",
-            "weight_noteUnderfunded"
+            "weight_noteUnderfunded",
+            "weight_pledgeMonths"
           ]
         }
       ],
@@ -28217,35 +28559,47 @@
         },
         {
           "target": "./escrow.md",
-          "line": 90
+          "line": 30
+        },
+        {
+          "target": "./escrow.md",
+          "line": 99
+        },
+        {
+          "target": "./monthPledges.md",
+          "line": 107
+        },
+        {
+          "target": "./monthlyExecution.md",
+          "line": 297
         },
         {
           "target": "./paymentInvestigation.md",
-          "line": 320
+          "line": 378
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 321
+          "line": 379
         },
         {
           "target": "./escrow.md",
-          "line": 325
+          "line": 383
         },
         {
           "target": "./reserveRelease.md",
-          "line": 342
+          "line": 400
         },
         {
           "target": "./signer.md",
-          "line": 344
+          "line": 402
         },
         {
           "target": "./monthly.md",
-          "line": 412
+          "line": 472
         },
         {
           "target": "./escrow.md",
-          "line": 413
+          "line": 473
         }
       ]
     },
@@ -28353,7 +28707,7 @@
     },
     {
       "path": "spec/settlement/ownerTransactions.md",
-      "sha256": "f5850a81010c2580748223dddc33d1e59a1cc78d0a71fcd5cb7492044283870c",
+      "sha256": "cc85d2fb424854de75773c291291fef7df18d4d42db7e0abd6a2f48857fc9dd2",
       "module": "settlement__ownerTransactions",
       "stories": [
         {
@@ -28381,7 +28735,7 @@
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / The pending request is saved before the wallet call and recovered without resubmission",
-          "line": 72,
+          "line": 81,
           "definitions": [
             "allowedPrefix",
             "canSavePending",
@@ -28393,7 +28747,7 @@
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / Only the exact finalized submitted transaction completes the request",
-          "line": 95,
+          "line": 104,
           "definitions": [
             "canCheckResult",
             "checkResult",
@@ -28403,12 +28757,13 @@
             "sometimesFinalized",
             "sometimesFailedAfterExpiry",
             "sometimesMonthsLocked",
-            "sometimesLapsedLockReleased"
+            "sometimesLapsedLockReleased",
+            "sometimesMonthlySettingChanged"
           ]
         },
         {
           "heading": "Story: Review, sign elsewhere, and check exactly once / Simulation samples",
-          "line": 119,
+          "line": 129,
           "definitions": [
             "kindValues",
             "factsSample",
@@ -28427,13 +28782,13 @@
         },
         {
           "target": "../frontend/monthLock.md",
-          "line": 81
+          "line": 90
         }
       ]
     },
     {
       "path": "spec/settlement/payment.md",
-      "sha256": "fa333789164163475dd1f262c43fd438250fa241472856efdee5b8af61a658f0",
+      "sha256": "92c18ea84137521d35894f64e2864582bae78f85ce33a2bbad6c64c17771921e",
       "module": "settlement__payment",
       "stories": [
         {
@@ -28993,7 +29348,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "cf4f221bf240ed21776ae1eeb9fe02c8226b6217329260412fefe0aaab86b191",
+      "sha256": "8624b6e769dab6526e77da97c0c1ffffc76f8e7269c74b4275233dd7237a42f7",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -29002,11 +29357,11 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority",
-          "line": 183
+          "line": 203
         },
         {
           "heading": "Story: Show exact amounts and notify every party",
-          "line": 270
+          "line": 294
         }
       ],
       "rules": [
@@ -29064,6 +29419,8 @@
             "reviewRelated",
             "alwaysVaultAwardReserved",
             "alwaysHoldsKeepCaseRules",
+            "alwaysFundsSnapshotObserved",
+            "alwaysCaseRevisionsCounted",
             "alwaysVaultTargetMatchesAward",
             "alwaysBountyReserveIsVaultReserve",
             "alwaysBountyCoverIsVaultFree",
@@ -29075,7 +29432,7 @@
         },
         {
           "heading": "Story: Commit a private award with its funds / A finalized vault payout records the obligation paid, settles its hold and notifies the case",
-          "line": 163,
+          "line": 183,
           "definitions": [
             "canUpdateDelivery",
             "updateDelivery",
@@ -29086,7 +29443,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Direct payment actions require a current financial approver",
-          "line": 185,
+          "line": 205,
           "definitions": [
             "financialNow",
             "directCaseOf",
@@ -29102,13 +29459,14 @@
             "canRecoverDirect",
             "recoverDirect",
             "alwaysDirectJournalBound",
+            "alwaysNothingAuthorizedBeforeAdmission",
             "stepDirectPaymentNeedsFinancialApprover",
             "sometimesPaidAfterPayerRevoked"
           ]
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Each recorded direct leg and the paid award notify the case",
-          "line": 245,
+          "line": 269,
           "definitions": [
             "withDirectLegs",
             "legKeysValid",
@@ -29120,13 +29478,15 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Exact amounts are shown before authorization",
-          "line": 272,
+          "line": 296,
           "definitions": [
             "amountsFor",
             "amountsShownFor",
             "canShowAmounts",
             "showAmounts",
             "alwaysShownAmountsExact",
+            "alwaysCommittedWithinTerms",
+            "alwaysShownCaseReceived",
             "lastDecider",
             "stepAuthorizationFollowsDisplay",
             "sometimesShownToPayer"
@@ -29134,7 +29494,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Award and payment progress notify the reporter, current maintainers and financial approvers",
-          "line": 311,
+          "line": 344,
           "definitions": [
             "AwardNotice",
             "noticeCode",
@@ -29143,6 +29503,7 @@
             "alwaysAwardNoticesArePrivateCaseNotices",
             "alwaysCommitmentNotified",
             "alwaysPaidNotified",
+            "alwaysPaidNoticeOnlyWhenPaid",
             "stepNoticesPermanent",
             "sometimesPaidNoticeToReporterAndPayer",
             "sometimesDirectAwardPaid"
@@ -29150,7 +29511,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Simulation samples",
-          "line": 342,
+          "line": 392,
           "definitions": [
             "awardTerms",
             "idValues",
@@ -30178,7 +30539,7 @@
     },
     {
       "path": "spec/settlement/reserveRelease.md",
-      "sha256": "f568f248055527413bde0edf70cce4d5737d70b222708bf0d1cc5c5f9b07fa17",
+      "sha256": "d0a4a35caf0bd97ab44508bca4e9bd71d3ea6ede6897dc0382f75e0a41f4cb1d",
       "module": "settlement__reserveRelease",
       "stories": [
         {
@@ -30281,7 +30642,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / The original balances and allocation survive every recovery step",
-          "line": 252,
+          "line": 258,
           "definitions": [
             "alwaysUntouchedBalances",
             "alwaysSettlementHistory",
@@ -30296,7 +30657,7 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 287,
+          "line": 293,
           "definitions": [
             "heightValues",
             "attemptValues",
@@ -30324,6 +30685,10 @@
         {
           "target": "./escrow.md",
           "line": 88
+        },
+        {
+          "target": "monthly.md",
+          "line": 223
         }
       ]
     },
@@ -35931,7 +36296,7 @@
     },
     {
       "path": "spec/slopbot/webhookDelivery.md",
-      "sha256": "acf3aefa9469d89f460ad66ba686c1c86d4fbeca84dfe18b0e232df45d5ad1bb",
+      "sha256": "f9e80226ae9ad6951731e2a1791d33fc279f3f60d66512b9801e5038f7dfe335",
       "module": "slopbot__webhookDelivery",
       "stories": [
         {
@@ -35944,7 +36309,7 @@
         },
         {
           "heading": "Story: Recover an uncertain queue submission without changing source authority",
-          "line": 205
+          "line": 232
         }
       ],
       "rules": [
@@ -36012,8 +36377,18 @@
           ]
         },
         {
+          "heading": "Story: Record the delivery and make independent routing decisions / An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on",
+          "line": 205,
+          "definitions": [
+            "receiptDelaySeconds",
+            "queueDelaySeconds",
+            "lawOnlyAnOpenedFooterReviewWaits",
+            "lawDelayIsZeroOrOneMinute"
+          ]
+        },
+        {
           "heading": "Story: Recover an uncertain queue submission without changing source authority / An accepted reopen pins exact source before sending",
-          "line": 207,
+          "line": 234,
           "definitions": [
             "validReopen",
             "canBindReopen",
@@ -36021,12 +36396,15 @@
             "canSend",
             "send",
             "canComplete",
-            "complete"
+            "complete",
+            "routingPhase",
+            "canFailRouting",
+            "failRouting"
           ]
         },
         {
           "heading": "Story: Recover an uncertain queue submission without changing source authority / A downstream reopen decision rechecks the exact retained source",
-          "line": 248,
+          "line": 284,
           "definitions": [
             "reopenDecision",
             "canConfirmReopen",
@@ -36081,7 +36459,7 @@
         },
         {
           "target": "./jobQueue.md",
-          "line": 318
+          "line": 354
         }
       ]
     },
@@ -36564,7 +36942,7 @@
     },
     {
       "path": "spec/ui/status.md",
-      "sha256": "4a94c5743c77e66110b37c17e11fe8a967dc86d6b215cebfbcd0ae05b2920f13",
+      "sha256": "24d85b7d8b44daccb91ddc8232d853bcdfe010b182d08a119115c647332819e7",
       "module": "ui__status",
       "stories": [
         {
