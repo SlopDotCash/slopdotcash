@@ -604,6 +604,46 @@ lemma MsConflictUnpooled(s: MonthlySettlement, actor: int)
   }
 }
 
+// An escrow event that keeps the awards, months and pool gives every view the composition reads the same value.
+lemma MsEscrowViewsSame(e: settlement__escrow_Escrow, f: settlement__escrow_Escrow)
+  requires f.awards == e.awards && f.months == e.months && f.pending == e.pending
+  ensures forall source :: settlement__escrow_awardFor(f, source) == settlement__escrow_awardFor(e, source)
+  ensures forall source :: settlement__escrow_sourceFree(f, source) == settlement__escrow_sourceFree(e, source)
+  ensures forall origin :: settlement__escrow_hasAwardOf(f, origin) == settlement__escrow_hasAwardOf(e, origin)
+  ensures forall origin, period :: settlement__escrow_awardActorsFor(f, origin, period) == settlement__escrow_awardActorsFor(e, origin, period)
+  ensures forall period :: settlement__escrow_monthFor(f, period) == settlement__escrow_monthFor(e, period)
+{
+}
+
+// With the month, the leaves, the cursor and those escrow views unchanged, every rule of the composition holds again.
+lemma MsEscrowOnlyFrame(s: MonthlySettlement, t: MonthlySettlement)
+  requires inv(s)
+  requires settlement__monthly_inv(t.month) && settlement__escrow_inv(t.escrow)
+  requires t.month == s.month && t.leaves == s.leaves && t.cursor == s.cursor
+  requires t.escrow.awards == s.escrow.awards && t.escrow.months == s.escrow.months && t.escrow.pending == s.escrow.pending
+  ensures alwaysOneAwardPerObligation(t) && alwaysPoolWithinUnreserved(t) && alwaysAdmittedOnlyWhenFunded(t)
+  ensures alwaysPoolOnlyWhenAdmitted(t) && alwaysPoolIsTheMonthRemainder(t) && alwaysCursorInRange(t)
+  ensures alwaysReleasedMonthHasNoLeafAward(t) && alwaysPendingPoolIsExactlyUnreserved(t)
+  ensures alwaysAdmittedLeavesUnconflicted(t) && alwaysUnreservedSourcesFreeWhilePooled(t)
+  ensures alwaysLeafAwardsAreObligations(t) && alwaysCursorSourceBacked(t) && alwaysLeafAwardsReserveTheirObligation(t)
+  ensures alwaysAdmittedLeavesNeverConflict(t) && alwaysObligationsMatchVault(t)
+{
+  MsEscrowViewsSame(s.escrow, t.escrow);
+  assert admittedMonth(t) == admittedMonth(s);
+  forall actor ensures sourceOf(t, actor) == sourceOf(s, actor) && obligationOf(t, actor) == obligationOf(s, actor)
+    && chainHolds(t, actor) == chainHolds(s, actor) && chainMatches(t, actor) == chainMatches(s, actor)
+    && chainPaid(t, actor) == chainPaid(s, actor) && obligationMatches(t, actor) == obligationMatches(s, actor)
+    && leafAwardReserves(t, actor) == leafAwardReserves(s, actor) {
+    assert settlement__escrow_awardFor(t.escrow, sourceOf(t, actor)) == settlement__escrow_awardFor(s.escrow, sourceOf(s, actor));
+  }
+  assert alwaysOneAwardPerObligation(s) && alwaysPoolWithinUnreserved(s) && alwaysAdmittedOnlyWhenFunded(s);
+  assert alwaysPoolOnlyWhenAdmitted(s) && alwaysPoolIsTheMonthRemainder(s) && alwaysCursorInRange(s);
+  assert alwaysReleasedMonthHasNoLeafAward(s) && alwaysPendingPoolIsExactlyUnreserved(s);
+  assert alwaysAdmittedLeavesUnconflicted(s) && alwaysUnreservedSourcesFreeWhilePooled(s);
+  assert alwaysLeafAwardsAreObligations(s) && alwaysCursorSourceBacked(s) && alwaysLeafAwardsReserveTheirObligation(s);
+  assert alwaysAdmittedLeavesNeverConflict(s) && alwaysObligationsMatchVault(s);
+}
+
 lemma deploy_ensures(s: MonthlySettlement, asset: settlement__escrow_AssetIdentity, mint: settlement__escrow_MintFacts, purpose: settlement__escrow_VaultPurpose, delay: int, cap: seq<int>, turnOn: bool)
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysOneAwardPerObligation(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
   ensures (inv(s) ==> canDeploy(s, asset, mint, purpose, delay, cap, turnOn) ==> alwaysPoolWithinUnreserved(deploy(s, asset, mint, purpose, delay, cap, turnOn)))
@@ -993,11 +1033,8 @@ lemma deposit_ensures(s: MonthlySettlement, funds: settlement__escrow_Deposit, e
     var after := deposit(s, funds, ev);
     MsChildInv(s);
     settlement__escrow_deposit_ensures(s.escrow, funds, ev);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
-    MsLeavesFrame(s, after);
-    MsLeavesNeverConflict(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1029,11 +1066,8 @@ lemma setMonthly_ensures(s: MonthlySettlement, cap: seq<int>, turnOn: bool, ev: 
     var after := setMonthly(s, cap, turnOn, ev, by_);
     MsChildInv(s);
     settlement__escrow_setMonthly_ensures(s.escrow, cap, turnOn, ev, by_);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
-    MsLeavesFrame(s, after);
-    MsLeavesNeverConflict(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1065,11 +1099,8 @@ lemma pledgeMonths_ensures(s: MonthlySettlement, fromPeriod: int, count: int, pl
     var after := pledgeMonths(s, fromPeriod, count, pledge, ev, by_);
     MsChildInv(s);
     settlement__escrow_pledgeMonths_ensures(s.escrow, fromPeriod, count, pledge, ev, by_);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
-    MsLeavesFrame(s, after);
-    MsLeavesNeverConflict(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1577,11 +1608,8 @@ lemma withdraw_ensures(s: MonthlySettlement, gross: seq<int>, ev: settlement__es
     var after := withdraw(s, gross, ev, by_);
     MsChildInv(s);
     settlement__escrow_withdraw_ensures(s.escrow, gross, ev, by_);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
-    MsLeavesFrame(s, after);
-    MsLeavesNeverConflict(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
@@ -1613,11 +1641,8 @@ lemma upgradeToRelease_ensures(s: MonthlySettlement, ev: settlement__escrow_Chai
     var after := upgradeToRelease(s, ev);
     MsChildInv(s);
     settlement__escrow_upgradeToRelease_ensures(s.escrow, ev);
-    MsFrame(s, after);
     MsChildInvBack(s, after);
-    MsOneAward(after);
-    MsLeavesFrame(s, after);
-    MsLeavesNeverConflict(after);
+    MsEscrowOnlyFrame(s, after);
   }
 }
 
