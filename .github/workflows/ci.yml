@@ -30,7 +30,7 @@ jobs:
         with:
           solana: "true"
       - id: verify-tasks
-        run: pnpm verify --continue=dependencies-successful --summarize
+        run: pnpm verify --continue=dependencies-successful --summarize --log-order=stream
       - name: Report Turbo task timings
         if: ${{ !cancelled() }}
         run: |
