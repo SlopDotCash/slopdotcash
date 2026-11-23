@@ -1,4 +1,4 @@
-// spec/app/index.md, "Story: Open a page by its address"; spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"
+// spec/app/index.md, "Story: Open a page by its address"; spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"; spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"
 import { useNotFoundMounted } from "@repo/frontend/app";
 import { CONTACT_EMAIL, CONTACT_MAILTO, SOURCE_REPOSITORY } from "@repo/frontend/platform/site";
 import type { RegistryBoot } from "@repo/frontend/reads/registry";
@@ -41,6 +41,7 @@ const headings: Record<Exclude<RouteKind, "Unknown" | "Home">, (route: Route) =>
   Profile: (route) => route.login,
   Fee: () => "Submission fee",
   FeeReport: () => "Report deposit",
+  Requested: () => "Requested repos",
 };
 
 const page = cn(shell, "flex-1 py-8");
@@ -97,6 +98,7 @@ export function App({ runtime, hostname, content, account, registry }: AppProps)
         <ExternalLink href="https://x.com/SlopCash">X</ExternalLink>
         <ExternalLink href="https://www.linkedin.com/company/slop-cash">LinkedIn</ExternalLink>
         <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
+        <a href="/requested">Requested repos</a>
       </SiteFooter>
     </div>
   );

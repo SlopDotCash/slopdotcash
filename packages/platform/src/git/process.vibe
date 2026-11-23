@@ -25,6 +25,7 @@ export interface Command {
   readonly input?: string | Uint8Array
   readonly limit: number
   readonly seconds: number
+  readonly stderrLimit?: number
 }
 
 export interface GitCall {
@@ -33,11 +34,13 @@ export interface GitCall {
   readonly input?: string | Uint8Array
   readonly limit: number
   readonly seconds: number
+  readonly stderrLimit?: number
 }
 
 export interface Output {
   readonly status: number
   readonly stdout: Uint8Array
+  readonly stderr: Uint8Array
 }
 
 error OutputLimit
@@ -53,13 +56,25 @@ effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number
   return concatBytes(chunks)
 }
 
+effect function bounded<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of stream) {
+    if (size < limit) chunks.push(chunk.subarray(0, limit - size))
+    size += chunk.length
+  }
+  return concatBytes(chunks)
+}
+
 export effect function runCommand(call: Command, refusal: string) {
   const stdin = call.input === undefined ? "ignore" : Stream.make(typeof call.input === "string" ? textBytes(call.input) : call.input)
   const ran = scoped(effect {
     const spawner = try ChildProcessSpawner.ChildProcessSpawner
-    const handle = try spawner.spawn(ChildProcess.make(call.command, call.args, { env: { ...call.env }, extendEnv: false, stdin, stderr: "ignore" }))
-    const [stdout, code] = try.all [collected(handle.stdout, call.limit), handle.exitCode]
-    return { status: Number(code), stdout } satisfies Output
+    const stderrLimit = call.stderrLimit
+    const handle = try spawner.spawn(ChildProcess.make(call.command, call.args, { env: { ...call.env }, extendEnv: false, stdin, stderr: stderrLimit === undefined ? "ignore" : "pipe" }))
+    const diagnostics = stderrLimit === undefined ? Effect.succeed(new Uint8Array()) : bounded(handle.stderr, stderrLimit)
+    const [stdout, stderr, code] = try.all [collected(handle.stdout, call.limit), diagnostics, handle.exitCode]
+    return { status: Number(code), stdout, stderr } satisfies Output
   })
   const output = timeout(ran, Duration.seconds(call.seconds)) catch effect () => {
     throw refused(refusal)
@@ -95,7 +110,7 @@ export function isolated(searchPath: string, extra: Environment = {}): Environme
 
 export effect function runGit(call: GitCall, refusal: string) {
   const git = try Git
-  return try runCommand({ command: git.binary, args: call.args, env: isolated(git.searchPath, call.env), input: call.input, limit: call.limit, seconds: call.seconds }, refusal)
+  return try runCommand({ command: git.binary, args: call.args, env: isolated(git.searchPath, call.env), input: call.input, limit: call.limit, seconds: call.seconds, stderrLimit: call.stderrLimit }, refusal)
 }
 
 export effect function gitBytes(call: GitCall, refusal: string) {

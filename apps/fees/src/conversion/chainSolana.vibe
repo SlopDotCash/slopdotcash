@@ -13,6 +13,7 @@ import type { VaultFact } from "../runtime/reviewed.vibe"
 import { FeeWallet, type Prepared, SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
 import type { JupiterSwap } from "../signer/intents.ts"
 import { jsonValue } from "../solana/bytes.ts"
+import { carryProviderFailure } from "../kernels/providerFailure.ts"
 import { FeeSolana, broadcastSolana, signatureStatus, walletBalance } from "../solana/client.vibe"
 import { type SolanaSend, nativeReceipt, routeStatus } from "../solana/receipt.vibe"
 import { refuse } from "../solana/wire.vibe"
@@ -58,7 +59,7 @@ function textOf(error: unknown): string {
 }
 
 function unavailable(operation: string) {
-  return (error: unknown) => new ChainUnavailable({ operation, detail: textOf(error) })
+  return (error: unknown) => carryProviderFailure(error, new ChainUnavailable({ operation, detail: textOf(error) }), "solana-rpc")
 }
 
 function refusalOf(error: SignRefused): ChainUnavailable | SendRefused {

@@ -241,8 +241,13 @@ The ingestion producer supplies `SourceEvidence` for the exact source of a
 resolved issue, material test, evidence or review award. Only human GitHub
 users of a collected project receive Points, and work before a repository's
 start month counts for none. Slopbot and other bots never enter the ledger.
-A source with an evaluated award receives no ordinary credit. A first
-revision has no decision.
+A source with an evaluated award receives no ordinary credit. The
+producer's scoring decision is optional on the first revision too, as in
+development's `appendPointAward`: supplied with no decision, the first
+revision carries none; supplied with one (`scoreDecisionSourceId`), it
+carries a reassessment under the v2 score with that decision's source,
+effective time and reason, and its delta is the whole amount (the prior
+amount is zero).
 
 ```quint
 type SourceActor = HumanActor | BotActor | SlopbotActor
@@ -254,18 +259,23 @@ pure def ordinaryCategory(cat: Category): bool =
 pure def evidenceBinds(a: AwardInput, e: SourceEvidence): bool =
   e.source == a.key.source and e.project == a.key.project and e.actor == a.key.actor and
   e.workUnit == a.key.workUnit and e.occurredAt == a.occurredAt and e.digest == a.digest and e.digest != ""
-pure def canCredit(l: Ledger, a: AwardInput, e: SourceEvidence): bool =
+pure def scoreDecisionAllowed(l: Ledger, a: AwardInput, decision: Decision): bool =
+  (decision.basis == NoBasis implies decision == noDecision) and
+  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
+    decision.effectiveAt >= 0 and decision.effectiveAt <= l.now and decisionRule(a.key.category, a.rule)))
+pure def canCredit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): bool =
   validKey(a.key) and ordinaryCategory(a.key.category) and
-  latest(l, a.key) == noRevision and evidenceBinds(a, e) and
+  latest(l, a.key) == noRevision and evidenceBinds(a, e) and scoreDecisionAllowed(l, a, decision) and
   e.actorKind == HumanActor and e.accepted and e.projectCollected and
   a.occurredAt >= e.repositoryCountsFrom and a.occurredAt >= 0 and a.occurredAt <= l.now and
   amountAllowed(a.key.category, a.amount) and ruleAllowed(a.key.category, a.rule) and
   (a.provisional implies a.key.category == Review) and
   not(sourceHasEvaluation(l, a.key.source))
-pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence): Ledger =
+pure def credit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): Ledger =
   appendRevision({ ...noRevision, id: l.nextId, key: a.key, amount: a.amount,
     occurredAt: a.occurredAt, recordedAt: l.now, rule: a.rule, sourceDigest: a.digest,
-    provisional: a.provisional }, l)
+    provisional: a.provisional,
+    decision: if (decision.basis == NoBasis) noDecision else { ...decision, delta: a.amount } }, l)
 ```
 
 ### An evaluated award comes only from an admitted reviewed manifest
@@ -378,9 +388,7 @@ pure def canRescoreSource(l: Ledger, a: AwardInput, e: SourceEvidence, decision:
   ordinaryCategory(a.key.category) and evidenceBinds(a, e) and e.actorKind == HumanActor and e.accepted and
   a.occurredAt == prior.occurredAt and
   amountAllowed(a.key.category, a.amount) and ruleAllowed(a.key.category, a.rule) and
-  (decision.basis == NoBasis implies decision == noDecision) and
-  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
-    decision.effectiveAt >= 0 and decision.effectiveAt <= l.now and decisionRule(a.key.category, a.rule))) and
+  scoreDecisionAllowed(l, a, decision) and
   (a.provisional implies a.key.category == Review) and
   (a.amount != prior.amount or a.digest != prior.sourceDigest or a.provisional != prior.provisional or
     (decision.basis != NoBasis and (decision.source != prior.decision.source or
@@ -708,43 +716,28 @@ pure val priorOrdinaryPoolValues = Set(true, false)
 The [reviewed historical runner](./reviewedHistory.md) zeroes a source's
 October implementation pool when every claim is already covered by an
 earlier accepted source, with the decision `owner_duplicate_<dossier digest>`
-and the v2 score, only inside a reviewed packet that qualifies for apply.
-A preview can project the same zero award without
-changing the ledger or qualifying the packet for apply. The retired source
-is one of the unit's sources. The pool must be positive and in October 2026.
-A frozen reward period refuses both.
+and the v2 score, only inside a reviewed packet the run admits: one that
+previews for a preview run, one that applies for an apply run
+(`reconstructHistoricalPoints` refuses the whole packet otherwise). The
+retired source is one of the unit's sources. The pool must be positive and in October
+2026. A frozen reward period refuses it.
 
 ```quint
-pure def duplicatePreviewAllowed(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
     reason: str, digest: str): bool =
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount > 0 and P::periodOf(prior.occurredAt) == P::october2026 and
-  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetPreviews(packetRun) and
+  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetAdmits(packetRun) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
-pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
-    reason: str, digest: str): bool =
-  RH::packetApplies(packetRun) and duplicatePreviewAllowed(l, project, unit, retirement, packetRun, reason, digest)
-pure def duplicateRetirementRevision(l: Ledger, project: str, unit: int, reason: str, digest: str): Revision =
+pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+    reason: str, digest: str): Ledger =
   val prior = latest(l, unitKey(project, unit))
-  { ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: 0,
+  appendRevision({ ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: 0,
     priorAmount: prior.amount, occurredAt: prior.occurredAt, recordedAt: l.now, rule: ScoreV2, sourceDigest: digest,
     decision: { basis: DuplicateRetirement, effectiveAt: l.now, reason: reason, delta: 0 - prior.amount, source: digest,
       valued: false },
-    recipients: prior.recipients, completeLines: prior.completeLines, shares: A::allocatePoints(0, prior.recipients) }
-pure def previewDuplicateRetirement(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
-    reason: str, digest: str): Revision =
-  if (duplicatePreviewAllowed(l, project, unit, retirement, packetRun, reason, digest))
-    duplicateRetirementRevision(l, project, unit, reason, digest)
-  else noRevision
-pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
-    reason: str, digest: str): Ledger =
-  appendRevision(duplicateRetirementRevision(l, project, unit, reason, digest), l)
-pure def lawQualifiedDuplicatePreviewMatches(l: Ledger, project: str, unit: int, retirement: RH::Retirement,
-    packetRun: RH::PacketRun, reason: str, digest: str): bool =
-  canRetireDuplicate(l, project, unit, retirement, packetRun, reason, digest) implies
-    previewDuplicateRetirement(l, project, unit, retirement, packetRun, reason, digest) ==
-      lastRevision(retireDuplicate(l, project, unit, retirement, packetRun, reason, digest))
+    recipients: prior.recipients, completeLines: prior.completeLines, shares: A::allocatePoints(0, prior.recipients) }, l)
 pure def sometimesDuplicateRetired(l: Ledger): bool = l.revisions.some(r => r.decision.basis == DuplicateRetirement)
 ```
 
@@ -755,43 +748,26 @@ October implementation pool, unchanged since the owner's review, between the
 reviewed recipients by their reviewed weights. The pool keeps its total; the
 revision is recorded under the v2 score with the decision
 `owner_october_<dossier digest>`, with the reviewed shares, only inside a
-reviewed packet that applies. A preview can project the same revision without
-changing the ledger or qualifying the packet for apply. A frozen reward period
-refuses both.
+reviewed packet the run admits: one that previews for a preview run, one
+that applies for an apply run. A frozen reward period refuses it.
 
 ```quint
-pure def recipientPreviewAllowed(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
     packetRun: RH::PacketRun, reason: str, digest: str): bool =
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount >= 10 and prior.amount <= P::maxSafe and correction.pool == prior.amount and
   P::periodOf(prior.occurredAt) == P::october2026 and RH::recipientCorrectionApplies(correction) and
-  RH::packetPreviews(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
+  RH::packetAdmits(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
-pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    packetRun: RH::PacketRun, reason: str, digest: str): bool =
-  RH::packetApplies(packetRun) and recipientPreviewAllowed(l, project, unit, correction, packetRun, reason, digest)
-pure def recipientCorrectionRevision(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    reason: str, digest: str): Revision =
+pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
   val prior = latest(l, unitKey(project, unit))
-  { ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: prior.amount,
+  appendRevision({ ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: prior.amount,
     priorAmount: prior.amount, occurredAt: prior.occurredAt, recordedAt: l.now, rule: ScoreV2, sourceDigest: digest,
     decision: { basis: Reallocation, effectiveAt: l.now, reason: reason, delta: 0, source: digest, valued: false },
     recipients: correction.recipients, completeLines: true,
-    shares: RH::correctedShares(correction) }
-pure def previewRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    packetRun: RH::PacketRun, reason: str, digest: str): Revision =
-  if (recipientPreviewAllowed(l, project, unit, correction, packetRun, reason, digest))
-    recipientCorrectionRevision(l, project, unit, correction, reason, digest)
-  else noRevision
-pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
-  appendRevision(recipientCorrectionRevision(l, project, unit, correction, reason, digest), l)
-pure def lawQualifiedRecipientPreviewMatches(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    packetRun: RH::PacketRun, reason: str, digest: str): bool =
-  canCorrectRecipients(l, project, unit, correction, packetRun, reason, digest) implies
-    previewRecipients(l, project, unit, correction, packetRun, reason, digest) ==
-      lastRevision(correctRecipients(l, project, unit, correction, packetRun, reason, digest))
+    shares: RH::correctedShares(correction) }, l)
 pure def sometimesOwnerCorrected(l: Ledger): bool =
   l.revisions.some(r => r.key.category == MergedWork and r.rule == ScoreV2 and r.decision.basis == Reallocation)
 ```
@@ -968,6 +944,8 @@ pure def sometimesUnitCredited(l: Ledger): bool = l.revisions.some(r => r.key.ca
 pure def sometimesRescored(l: Ledger): bool = l.revisions.some(r => r.key.category == MergedWork and r.decision.basis == Reassessment)
 pure def sometimesRatified(l: Ledger): bool = l.revisions.some(r => r.decision.basis == Ratification)
 pure def sometimesReallocated(l: Ledger): bool = l.revisions.some(r => r.decision.basis == Reallocation)
+pure def sometimesFirstCreditDecided(l: Ledger): bool =
+  l.revisions.some(r => r.previous == 0 and ordinaryCategory(r.key.category) and r.decision.basis == Reassessment)
 pure def sometimesSourceRescored(l: Ledger): bool = l.revisions.some(r => r.key.category == Review and r.previous > 0)
 pure def sometimesPenalized(l: Ledger): bool = l.revisions.some(r => r.key.category == Penalty and r.amount < 0)
 pure def sometimesPenaltyExceedsCredit(l: Ledger): bool = l.revisions.some(r => r.key.category == Penalty and isLatest(l, r) and
@@ -1051,7 +1029,9 @@ pure val snapshotValues = Set(supersedingSample, { ...supersedingSample, decisio
   { ...supersedingSample, coverage: CoverageAbsent }, { ...supersedingSample, review: OmittedOutsideWindow },
   { ...supersedingSample, windowFrom: 2432100, review: AdverseExclusion })
 pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 })
-pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false })
+pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false },
+  { ...RH::readyRun, preview: true, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false },
+  { ...RH::readyRun, qualifiedReplay: false })
 pure val ownerCorrection: RH::RecipientCorrection = { ...RH::readyCorrection, pool: 10,
   recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }),
   reviewedShares: List({ actor: 1, points: 3 }, { actor: 2, points: 7 }) }

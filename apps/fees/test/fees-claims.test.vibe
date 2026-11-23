@@ -22,14 +22,14 @@ import { claimSettled, solanaVault } from "../src/claims/solana.vibe"
 import { ChainUnavailable, ConversionChain, type OpenSend } from "../src/conversion/chain.vibe"
 import { runNetwork } from "../src/conversion/run.vibe"
 import { ExpiryOperators } from "../src/expiry/operators.vibe"
-import { word } from "../src/evm/abi.ts"
+import { accruedFeesCalldata, word } from "../src/evm/abi.ts"
 import { FeeChain, attemptStatus, broadcast, feeChain, nativeCost } from "../src/evm/client.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
 import { reviewedVaults } from "../src/receipts/discover.vibe"
 import type { EnabledNetwork } from "../src/runtime/config.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
-import { circleUsdc, kyberswap, solanaGenesis } from "../src/runtime/pins.ts"
-import type { TokenFact, VaultFact } from "../src/runtime/reviewed.vibe"
+import { circleUsdc, kyberswap, robinhoodUsdg, solanaGenesis } from "../src/runtime/pins.ts"
+import { type TokenFact, type VaultFact, holdingKind } from "../src/runtime/reviewed.vibe"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
 import { FeeSolana, feeSolana } from "../src/solana/client.vibe"
 import { generationInstance, journalDatabase } from "./support/journal.ts"
@@ -299,6 +299,166 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
+type FloorNetwork = "Base" | "Ethereum" | "Robinhood"
+
+interface FloorVault {
+  readonly name: string
+  readonly address: Address
+  readonly accrued: bigint
+  readonly estimate: bigint | undefined
+  readonly verified: boolean
+}
+
+const floorCases: ReadonlyArray<Omit<FloorVault, "address">> = [
+  { name: "one below floor", accrued: 4_999_999n, estimate: undefined, verified: true },
+  { name: "unrepresentable valuation", accrued: 9_007_199_254_740_992n, estimate: undefined, verified: true },
+  { name: "exact limit and gas multiple", accrued: 5_000_000n, estimate: 1_000n, verified: true },
+  { name: "one above gas limit", accrued: 5_000_000n, estimate: 2_000n, verified: true },
+  { name: "unpriced eligible fee", accrued: 5_000_001n, estimate: 3_000n, verified: true },
+  { name: "eligible fee estimate failure", accrued: 5_000_001n, estimate: undefined, verified: true },
+  { name: "vault verification failure", accrued: 4_999_999n, estimate: undefined, verified: false },
+]
+const floorVaults: ReadonlyArray<FloorVault> = floorCases.map((vault, index) => ({ ...vault, address: `0x${(0xa1 + index).toString(16).padStart(40, "0")}` as Address }))
+const floorNames = new Map<string, string>(floorVaults.map((vault) => [vault.address, vault.name]))
+const floorPricing: ReadonlyArray<readonly [bigint, bigint]> = [[1_300n, 500_000n], [2_600n, 500_001n]]
+const floorReference: Readonly<Record<FloorNetwork, Address>> = { Base: circleUsdc.base, Ethereum: circleUsdc.ethereum, Robinhood: robinhoodUsdg }
+const floorCode: Hex = "0x6080"
+const floorRoles = { owner: "0x00000000000000000000000000000000000000f1", registrar: "0x00000000000000000000000000000000000000f2", factory: "0x00000000000000000000000000000000000000f0", upgradeAuthority: "0x00000000000000000000000000000000000000f3" }
+const providerBody = "fixture-provider-body-must-not-appear"
+
+interface FloorRpc {
+  readonly estimated: Array<string>
+  readonly unexpected: Array<string>
+}
+
+function floorRpc(chainId: number, wallet: string, seen: FloorRpc): Handler {
+  const vaultAt = (address: unknown) => floorVaults.find((vault) => vault.address === String(address).toLowerCase())
+  return async (request) => {
+    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<unknown> }
+    const answered = (result: unknown) => Response.json({ jsonrpc: "2.0", id: 1, result })
+    const call = (params[0] ?? {}) as { readonly to?: string; readonly data?: string }
+    switch (method) {
+      case "eth_chainId": return answered(toHex(chainId))
+      case "eth_getBlockByNumber": return answered({ number: "0x64", hash: `0x${"11".repeat(32)}`, parentHash: `0x${"22".repeat(32)}`, timestamp: "0x6553f100", transactions: [], baseFeePerGas: "0x0" })
+      case "eth_getCode": return vaultAt(params[0])?.verified === false ? new Response(providerBody, { status: 403 }) : answered(floorCode)
+      case "eth_call": {
+        const data = (call.data ?? "").toLowerCase()
+        if (data === feeRecipientCall.toLowerCase()) return answered(toHex(BigInt(wallet), { size: 32 }))
+        if (data === accruedFeesCalldata.toLowerCase()) return answered(toHex(vaultAt(call.to)?.accrued ?? 0n, { size: 32 }))
+        return answered(toHex(0n, { size: 32 }))
+      }
+      case "eth_estimateGas": {
+        const vault = vaultAt(call.to)
+        seen.estimated.push(vault?.name ?? String(call.to))
+        return vault?.estimate === undefined
+          ? Response.json({ jsonrpc: "2.0", id: 1, error: { code: 3, message: "execution reverted" } })
+          : answered(toHex(vault.estimate))
+      }
+      case "eth_maxPriorityFeePerGas": return answered("0x1")
+      default: {
+        seen.unexpected.push(method)
+        return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+      }
+    }
+  }
+}
+
+const idleConversions = Layer.succeed(ConversionChain, {
+  balance: () => effect { return 0n },
+  quote: () => effect { throw new ChainUnavailable({ operation: "quote", detail: "this journey converts nothing" }) },
+  reserve: () => effect { throw new ChainUnavailable({ operation: "reserve", detail: "this journey converts nothing" }) },
+  sign: () => effect { throw new ChainUnavailable({ operation: "sign", detail: "this journey converts nothing" }) },
+  broadcast: () => effect { throw new ChainUnavailable({ operation: "broadcast", detail: "this journey converts nothing" }) },
+  status: () => effect { throw new ChainUnavailable({ operation: "status", detail: "this journey converts nothing" }) },
+  replacement: () => effect { return { kind: "wait", reason: "this journey replaces nothing" } },
+})
+
+effect function runtimeDryRun() {
+  const config: WorkerConfig = { source: 1, converterMode: "DryRun", buybackMode: "DryRun", networks: ["Base", "Ethereum", "Robinhood"], keys: [], nativeLimits: ["Base", "Ethereum", "Robinhood"], evmWallet: 1, solanaWallet: 2 }
+  const variable: Runtime = try apply(initial, { type: "setReleaseVariable", variable: true }, "Owner")
+  return try apply(variable, { type: "publish", config }, "ReleaseWorkflow")
+}
+
+effect function logged<A, E, R>(program: A!E!R) {
+  const events: Array<Readonly<Record<string, unknown>>> = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const [event, fields] = Array.isArray(message) ? message : [message, undefined]
+    if (typeof event === "string") events.push({ event, ...(typeof fields === "object" && fields !== null ? fields : {}) })
+  })], { mergeWithExisting: true })
+  const value = try Effect.provide(program, capture)
+  return { value, events }
+}
+
+effect function floorRun(network: FloorNetwork, generation: number) {
+  const { db } = try Fixture
+  const made = generationInstance(generation, network)
+  const wallet = made.held.wallets[0] ?? ""
+  const runtime = try runtimeDryRun()
+  const reference = floorReference[network]
+  const enabled = { network, definition: definitions[network], feeWallet: wallet, allowlist: [], nativeLimits } satisfies EnabledNetwork
+  const facts: ReadonlyArray<VaultFact> = floorVaults.map((vault) => ({
+    vault: vault.address,
+    projectId: vault.name,
+    payoutPolicy: "ordinary" as const,
+    token: reference,
+    deployment: { vault: vault.address, asset: reference, ...floorRoles, feeRecipient: wallet, codeSha256: bytesToHex(sha256(hexToBytes(floorCode))) },
+  }))
+  const world = { base: { ...made, held: { runtime, wallets: made.held.wallets }, vaults: reviewedVaults(facts) }, runtime, network: enabled } satisfies World
+  const seen: FloorRpc = { estimated: [], unexpected: [] }
+  const rpcUrl = `https://${definitions[network].name}-rpc.invalid/`
+  const quotes = quotesFake()
+  for (const [wei, micro] of floorPricing)
+    quotes.kyberswap.route({ chain: definitions[network].kyberChain ?? network, tokenIn: kyberNative, tokenOut: reference, amountIn: wei, amountOut: micro, routerAddress: kyberswap.router })
+  const net = internet({ quotes: quotes.handler, rpc: { [rpcUrl]: floorRpc(definitions[network].chainId ?? 0, wallet, seen) } })
+  const settings = { clientId: kyberswap.clientId, buyback: { receiver: wallet as Address, maxBridgeCostBps: 100n } }
+  const chain = feeChain({ network, wallet, urls: Redacted.make([rpcUrl]), timeoutMs: 10_000 })
+  const signing = Layer.provideMerge(evmFeeWallet({ network, wallet, key: undefined, runtime, limits: nativeLimits, gasMultiple: 10n, kyber: settings }), chain)
+  const deployments = Layer.provideMerge(reviewedDeployments, Layer.merge(chain, webCrypto))
+  const services = Layer.mergeAll(d1(db), webCrypto, idleConversions, Layer.succeed(ExpiryOperators, { genesis: solanaGenesis, providers: [] }), Layer.merge(signing, deployments))
+  const program = effect {
+    const claims = try claimsIn(evmVaultClaims({ vaults: facts, kyber: settings }))
+    return try runNetwork({ network: enabled, base: world.base, trigger: "Recovery", tokens: [{ address: reference, asset: holdingKind(enabled, reference) }], income: { transfers: [], topUps: [], counters: [] } }, claims)
+  }
+  const ran = try logged(Effect.provideService(Effect.provide(Effect.provide(program, services), FetchHttpClient.layer), FetchHttpClient.Fetch, asFetch(net.handler)))
+  const claimEvents = ran.events.filter((event) => String(event.event).startsWith("fee_claim_"))
+  const named = (event: Readonly<Record<string, unknown>>) => floorNames.get(String(event.vault).toLowerCase()) ?? String(event.vault)
+  return {
+    run: [ran.value.status, ran.value.claimed],
+    events: claimEvents.map((event) => [named(event), event.reason ?? event.error ?? null]),
+    quoted: claimEvents.filter((event) => event.event === "fee_claim_quoted").map((event) => ({ vault: named(event), valueMicro: event.valueMicro })),
+    errors: claimEvents.filter((event) => event.event === "fee_claim_error").map((event) => ({ vault: named(event), error: event.error, ...(event.providerFailure === undefined ? {} : { providerFailure: event.providerFailure }) })),
+    estimated: seen.estimated,
+    unexpected: [...seen.unexpected, ...quotes.unexpected.map((call) => call.url)],
+    rows: try recorded(world),
+    retained: JSON.stringify(ran.events).includes(providerBody),
+  }
+}
+
+function floorExpected(network: FloorNetwork) {
+  return {
+    run: [network === "Robinhood" ? "notConverted" : "ran", 0],
+    events: [
+      ["one below floor", "below the minimum conversion value"],
+      ["unrepresentable valuation", "claim value exceeds safe integer accounting"],
+      ["exact limit and gas multiple", null],
+      ["one above gas limit", "below the gas-cost multiple"],
+      ["unpriced eligible fee", "claim network fee could not be priced"],
+      ["eligible fee estimate failure", "RpcRefused"],
+      ["vault verification failure", "HTTP 403"],
+    ],
+    quoted: [{ vault: "exact limit and gas multiple", valueMicro: "5000000" }],
+    errors: [
+      { vault: "eligible fee estimate failure", error: "RpcRefused" },
+      { vault: "vault verification failure", error: "HTTP 403", providerFailure: { provider: "evm-rpc", stage: "deployment-check", httpStatus: 403 } },
+    ],
+    estimated: ["exact limit and gas multiple", "one above gas limit", "unpriced eligible fee", "eligible fee estimate failure"],
+    unexpected: [],
+    rows: [],
+    retained: false,
+  }
+}
+
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('J7: a recovery run observes the reviewed EVM vault\'s current accrued fee and claims it into the fee wallet, refuses a changed pin and observes a fee wallet proposed as attester as not role-free, settles a claim that a third party front-ran as a failed reverted claim, claims the lower fee left after a third party\'s claim, credits the FeesClaimed amount of a claim that paid less than it recorded, keeps open a claim whose receipt block made the wallet a pending identity authority, and leaves principal and reserved awards unchanged (spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const { escrow } = try Fixture
@@ -384,6 +544,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       held: ["claim failed 20000000 - claim transaction reverted", "claim finalized 10000000 10000000 -", "claim finalized 10000000 5000000 -", "claim submitted 10000000 - -"],
       wallet: 55_000_000n,
     })
+  })
+
+  it.effect('A vault claim below the 5 USDC floor or beyond safe integer accounting is skipped before its network fee is priced, on Base, Ethereum and Robinhood Chain (spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget")', () => effect {
+    const networks: ReadonlyArray<FloorNetwork> = ["Base", "Ethereum", "Robinhood"]
+    const observed: Record<string, unknown> = {}
+    for (const [index, network] of networks.entries()) observed[network] = try floorRun(network, 20 + index)
+    try same(observed, Object.fromEntries(networks.map((network) => [network, floorExpected(network)])))
   })
 })
 

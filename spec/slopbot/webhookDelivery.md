@@ -214,8 +214,13 @@ the same delivery ID refuses. An unavailable source completes with no
 decision. A queue attempt may fail before storage or succeed while its
 acknowledgment is lost. An error releases an ordinary receipt unless a
 reopen source was retained. The separate valuation request survives either
-failure. A successful send enters final receipt completion. A completion
-failure is recoverable through the same ordinary release path. Completion
+failure. An unexpected error thrown while a claimed ordinary request is
+valued, looked up, bound, sent or completed releases through the same path
+before the error propagates (the `catch` around ordinary routing in
+`workers/slopbot/index.ts`). An installation request, and a request not yet
+claimed, never releases: the release sits only around ordinary routing. A
+successful send enters final receipt completion. A completion failure is
+recoverable through the same ordinary release path. Completion
 does not establish exactly-once queue delivery. An overlapping ordinary
 request can release the row before another completes, and the latter
 source's completion update can affect zero rows. The adapter still returns
@@ -243,6 +248,10 @@ pure def complete(w: Webhook, requestId: int, committed: bool): Webhook =
   if (committed) answer(r, 202, r.completion,
     if (w.exists) { ...w, receipt: ProcessedReceipt } else w)
   else releaseOrdinary(r, w)
+pure def routingPhase(p: Ingress): bool =
+  p == InspectValue or p == InspectQueue or p == PersistReopen or p == SendQueue or p == AwaitCompletion
+pure def canFailRouting(w: Webhook, requestId: int): bool = routingPhase(request(w, requestId).phase)
+pure def failRouting(w: Webhook, requestId: int): Webhook = releaseOrdinary(request(w, requestId), w)
 ```
 
 ### A downstream reopen decision rechecks the exact retained source

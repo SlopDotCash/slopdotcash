@@ -4,6 +4,7 @@ import { type RowState, type Trigger } from "../../gen/fees__conversion.effect.v
 import { type Mode, runs } from "../../gen/fees__runtime.effect.vibe"
 import { type Instance, ledger } from "../journal/codec.vibe"
 import { journal } from "../journal/store.vibe"
+import { providerErrorLog, rpcProviderOf } from "../kernels/providerFailure.ts"
 import type { EnabledNetwork } from "../runtime/config.vibe"
 import type { TokenFact } from "../runtime/reviewed.vibe"
 import { type Income, observed } from "../receipts/discover.vibe"
@@ -57,7 +58,7 @@ effect function claimed(session: Session, claims: Claims | undefined, input: Net
 
 effect function signed(session: Session, address: string, quote: QuoteFound) {
   const outcome: RowState = signIntent(session, address, quote) catch effect (error) => {
-    try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: address, error: error._tag })
+    try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: address, ...providerErrorLog(error, rpcProviderOf(session.state.network), error._tag) })
     const failed: RowState = "Failed"
     return failed
   }
@@ -72,7 +73,7 @@ effect function tokens(session: Session, input: NetworkRun, records: Record<RowS
     if (blocked.has(number)) continue
     if (!(try renewed(session, false))) return
     const evaluated = evaluateToken(session, number, token.address, target.address) catch effect (error) => {
-      try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: token.address, error: error._tag })
+      try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: token.address, ...providerErrorLog(error, rpcProviderOf(session.state.network), error._tag) })
       return undefined
     }
     if (evaluated === undefined) continue

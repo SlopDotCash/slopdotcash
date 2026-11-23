@@ -26,7 +26,7 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function rebuilt(packet: unknown, baseline: Journal, order?: VerifiedRetirements["order"], qualified = false) {
+effect function rebuilt(packet: unknown, baseline: Journal, order?: VerifiedRetirements["order"], qualified = false, apply = false) {
   const protection = try Effect.try(() => protectionFor(october))
   return try reconstructHistoricalPoints({
     packet: packet as HistoricalPacket,
@@ -38,8 +38,9 @@ effect function rebuilt(packet: unknown, baseline: Journal, order?: VerifiedReti
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
     qualified,
+    apply,
     verifiedRetirements: {
-      identical: new Set(),
+      duplicates: new Set(),
       order: order ?? new Map((packet as HistoricalPacket).duplicateRetirements?.map((item) => [
         digestText(item),
         [...item.earlierSources, ...(item.acceptedSquashes ?? [])].map(() => ({ sameMerge: false, ancestryKnown: true, carriesRetiringMerge: false })),
@@ -86,7 +87,9 @@ describe('Apply a reviewed historical packet only as reviewed (spec/points/revie
         const order = try verifyHistoricalDuplicateAcceptanceOrder(f.packet)
         try same(order.get(digestText(f.retirement))?.length, 2)
         try same(try rebuilt(f.packet, f.baseline, order), expected)
-        try same(try rebuilt(f.packet, f.baseline, order, true), expected)
+        try same(try rebuilt(f.packet, f.baseline, order, true, true), expected)
+        const unqualified = rebuilt(f.packet, f.baseline, order, false, true) catch (error) => error._tag
+        try same(unqualified, "ReviewedRefused")
       }
       const missing = rebuilt(f.packet, f.baseline, new Map()) catch (error) => error._tag
       try same(missing, "ReviewedRefused")

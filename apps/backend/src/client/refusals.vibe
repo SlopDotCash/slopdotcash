@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"
+// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"
 
 const jsonNoStoreSlopProjectApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-project-api-contract": "project-registry-v1" } as const
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
@@ -720,6 +720,33 @@ export const getReferralsProjects = {
   otherMethods: {
     methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
   },
+} as const
+
+export const postRepoRequests = {
+  originForbidden: { status: 403, error: "origin_forbidden", headers: jsonPrivateNoStore },
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStore },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStore },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStore },
+  invalidRequestNotAnObject: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonPrivateNoStore },
+  invalidRequestUnexpectedFields: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonPrivateNoStore },
+  invalidRequestAction: { status: 400, error: "invalid_request", message: "Action must be flag or withdraw.", headers: jsonPrivateNoStore },
+  invalidRepo: { status: 422, error: "invalid_repo", message: "Enter the repository as owner/name.", headers: jsonPrivateNoStore },
+  teamAccount: { status: 403, error: "team_account", message: "Slop team accounts cannot flag repos.", headers: jsonPrivateNoStore },
+  noMergedWork: { status: 403, error: "no_merged_work", message: "Flag a repo after your first pull request is merged on a Slop project.", headers: jsonPrivateNoStore },
+  requestLimit: { status: 409, error: "request_limit", message: "You already flag 10 repos. Withdraw one first.", headers: jsonPrivateNoStore },
+  githubUnavailable: { status: 503, error: "github_unavailable", message: "GitHub did not answer. Try again.", headers: jsonPrivateNoStore },
+  githubIncomplete: { status: 503, error: "github_unavailable", message: "GitHub returned incomplete repository facts. Try again.", headers: jsonPrivateNoStore },
+  notFound: { status: 422, error: "not_found", message: "GitHub has no public repository with that name.", headers: jsonPrivateNoStore },
+  fork: { status: 422, error: "fork", message: "That repository is a fork. Flag the original repository.", headers: jsonPrivateNoStore },
+  archived: { status: 422, error: "archived", message: "That repository is archived.", headers: jsonPrivateNoStore },
+  alreadyListed: { status: 409, error: "already_listed", messageFrom: "`${repo.fullName} is already on Slop. See ${origin}/projects/${listedAs}.`", headers: jsonPrivateNoStore },
+  ownRepo: { status: 409, error: "own_repo", message: "You cannot flag your own repository.", headers: jsonPrivateNoStore },
+  notFlagged: { status: 404, error: "not_flagged", message: "You do not flag that repository.", headers: jsonPrivateNoStore },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+} as const
+
+export const getRepoRequests = {
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
 } as const
 
 export const getMergeActivity = {

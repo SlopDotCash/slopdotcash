@@ -1,9 +1,9 @@
 # Owner-signed vault transactions
 
 PRD sections 6 and 9: Slop never holds keys, signs or broadcasts payments.
-The owner's own wallet signs deposits, withdrawals, award commitments and
-Solana monthly commitments that Slop prepares as unsigned plans. Source
-anchors are development `backend/payments/solana-funding.ts`
+The owner's own wallet signs deposits, withdrawals, award commitments,
+Solana monthly commitments and the monthly payment setting that Slop
+prepares as unsigned plans. Source anchors are development `backend/payments/solana-funding.ts`
 (`handleSolanaFunding`: `review` then `check`), `contracts/solana/funding.ts`,
 `backend/payments/monthly.ts` (`POST .../monthly/:YYYY-MM/commitment` and
 `.../solana-commitment`) and the routes `POST /api/v1/projects/:id/vault`,
@@ -45,9 +45,18 @@ exactly the rebuilt pledge or release message, as for every plan. A
 withdrawal review is refused while `lockedFunds` holds: the free balance
 less the gross is below the vault's open pledged total
 (`withdrawTakesPledgedFunds`; development `backend/payments/solana-funding.ts`).
+The owner's automatic monthly payment setting on a Solana vault
+(`set_monthly_commitment`; development `backend/payments/handler.ts`,
+`POST /projects/:id/solana-monthly-commitment`, and
+`contracts/solana/monthly-commitment.ts`) is a `MonthlySettingPlan`. Like a
+deposit it needs only a served network, because the program itself checks
+the owner signer and the planner refuses a wallet other than the vault's
+owner, a cap outside u64, turning it on at a zero cap, a vault that does not
+belong to the project and a vault that is not ordinary. A requested setting equal to the finalized one has nothing to sign
+and is never reviewed.
 
 ```quint
-type PlanKind = DepositPlan | WithdrawPlan | AwardPlan | SolanaMonthlyPlan | LockMonthsPlan | ReleaseLapsedPledgePlan
+type PlanKind = DepositPlan | WithdrawPlan | AwardPlan | SolanaMonthlyPlan | LockMonthsPlan | ReleaseLapsedPledgePlan | MonthlySettingPlan
 type RequestPhase = Draft | Reviewed | Pending | Finalized | Failed | Expired
 type ReviewFacts = { steward: bool, repositoryAuthority: bool, revision: int, restricted: bool, networkServed: bool,
   snapshotDigest: str, obligationFunded: bool, monthLockPlanned: bool, lockedFunds: bool }
@@ -59,7 +68,7 @@ pure val noSubmission: Submission = { message: "", prefix: "", signature: "", tr
 pure val initial: OwnerRequest = { kind: DepositPlan, phase: Draft, revision: 1, snapshotDigest: "d", message: "",
   submitted: noSubmission, submissions: 0 }
 pure def reviewAllowed(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts): bool =
-  if (kind == DepositPlan) facts.networkServed
+  if (kind == DepositPlan or kind == MonthlySettingPlan) facts.networkServed
   else if (kind == LockMonthsPlan or kind == ReleaseLapsedPledgePlan) facts.networkServed and facts.monthLockPlanned
   else facts.steward and facts.repositoryAuthority and facts.revision == r.revision and not(facts.restricted) and facts.networkServed
     and (if (kind == WithdrawPlan) not(facts.lockedFunds) else (facts.snapshotDigest == r.snapshotDigest and facts.obligationFunded))
@@ -74,7 +83,7 @@ pure def review(r: OwnerRequest, kind: PlanKind, facts: ReviewFacts, message: st
 Only the reviewed message with at most an allowed wallet prefix is accepted.
 A reload recovers the pending request; it never creates a second submission.
 The saved request and its recovery after a reload apply to deposit,
-withdrawal, award and Solana monthly plans. A month lock or a lapsed-lock
+withdrawal, award, Solana monthly and monthly setting plans. A month lock or a lapsed-lock
 release is held only in page memory, so a reload loses its automatic check
 and the owner reviews and sends again (development `src/VaultMonthLock.tsx`
 keeps the sent lock or release in component state;
@@ -114,12 +123,13 @@ pure def sometimesFinalized(r: OwnerRequest): bool = r.phase == Finalized and r.
 pure def sometimesFailedAfterExpiry(r: OwnerRequest): bool = r.phase == Failed
 pure def sometimesMonthsLocked(r: OwnerRequest): bool = r.phase == Finalized and r.kind == LockMonthsPlan
 pure def sometimesLapsedLockReleased(r: OwnerRequest): bool = r.phase == Finalized and r.kind == ReleaseLapsedPledgePlan
+pure def sometimesMonthlySettingChanged(r: OwnerRequest): bool = r.phase == Finalized and r.kind == MonthlySettingPlan
 ```
 
 ### Simulation samples
 
 ```quint
-pure val kindValues = Set(DepositPlan, WithdrawPlan, AwardPlan, SolanaMonthlyPlan, LockMonthsPlan, ReleaseLapsedPledgePlan)
+pure val kindValues = Set(DepositPlan, WithdrawPlan, AwardPlan, SolanaMonthlyPlan, LockMonthsPlan, ReleaseLapsedPledgePlan, MonthlySettingPlan)
 pure val factsSample: ReviewFacts = { steward: true, repositoryAuthority: true, revision: 1, restricted: false, networkServed: true,
   snapshotDigest: "d", obligationFunded: true, monthLockPlanned: true, lockedFunds: false }
 pure val factsValues = Set(factsSample, { ...factsSample, steward: false }, { ...factsSample, restricted: true },

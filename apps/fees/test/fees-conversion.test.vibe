@@ -1,21 +1,33 @@
 import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, rows, sql } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
 import { type RowState, type SignedSend, lockMs } from "../gen/fees__conversion.ts"
 import type { Mode, Network, Runtime, WorkerConfig } from "../gen/fees__runtime.ts"
 import { apply, initial } from "../gen/fees__runtime.effect.vibe"
+import { solanaVaultDeployments } from "../src/claims/deployments.vibe"
 import { ChainUnavailable, ConversionChain, FeeCapTooLow, type OpenSend, type QuoteRead, type SendStatus } from "../src/conversion/chain.vibe"
+import { solanaConversionChain } from "../src/conversion/chainSolana.vibe"
 import { type Claims, runNetwork } from "../src/conversion/run.vibe"
 import { triggerAt } from "../src/conversion/trigger.vibe"
 import { ExpiryOperators } from "../src/expiry/operators.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
+import { type JupiterSettings, quoteRead } from "../src/jupiter/quote.vibe"
+import { providerFailureOf } from "../src/kernels/providerFailure.ts"
+import { type KyberSettings, quote as kyberQuote } from "../src/kyber/route.vibe"
 import type { Income } from "../src/receipts/discover.vibe"
 import type { EnabledNetwork } from "../src/runtime/config.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
-import { solanaGenesis } from "../src/runtime/pins.ts"
+import { circleUsdc, jupiter as jupiterApi, robinhoodUsdg, solanaGenesis } from "../src/runtime/pins.ts"
 import type { TokenFact } from "../src/runtime/reviewed.vibe"
+import { solanaFeeWallet } from "../src/signer/solana.vibe"
+import { feeSolana } from "../src/solana/client.vibe"
+import { wrappedSol } from "../src/solana/wire.vibe"
 import { factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
 
 service Fixture { readonly db: D1Database }
@@ -161,6 +173,61 @@ effect function settledGas(world: World) {
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const sensitive = "fixture-provider-body-must-not-appear"
+const solanaRpcUrl = "https://solana-rpc.invalid/"
+const jupiterSettings: JupiterSettings = { apiUrl: jupiterApi.api, apiKey: undefined, usdc: circleUsdc.solana, feeMicro: 1000n }
+const kyberSettings: KyberSettings = { clientId: "fixture", buyback: undefined }
+
+interface Provider {
+  status: number
+  body: string
+  readonly methods: Array<string>
+}
+
+function providerFetch(provider: Provider) {
+  const answer: Handler = () => new Response(provider.body, { status: provider.status })
+  const rpc: Handler = async (request) => {
+    const { method } = JSON.parse(await request.text()) as { readonly method: string }
+    provider.methods.push(method)
+    if (method === "getGenesisHash") return Response.json({ jsonrpc: "2.0", id: 1, result: solanaGenesis })
+    if (method === "getAccountInfo") return new Response(provider.body, { status: provider.status })
+    return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+  }
+  return asFetch(internet({ quotes: answer, rpc: { [solanaRpcUrl]: rpc } }).handler)
+}
+
+effect function fetched<A, E>(fetch: typeof globalThis.fetch, program: A!E!HttpClient.HttpClient) {
+  return try Effect.provideService(Effect.provide(program, FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+}
+
+effect function kyberAnswer(fetch: typeof globalThis.fetch) {
+  return fetched(fetch, kyberQuote("Robinhood", tokenA, 1n, robinhoodUsdg, 0, kyberSettings)) catch (error) => ({
+    tag: error._tag,
+    detail: error._tag === "KyberUnavailable" ? error.detail : undefined,
+    failure: providerFailureOf(error, "evm-rpc"),
+  })
+}
+
+effect function logged<A, E, R>(program: A!E!R) {
+  const events: Array<Readonly<Record<string, unknown>>> = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const [event, fields] = Array.isArray(message) ? message : [message, undefined]
+    if (typeof event === "string") events.push({ event, ...(typeof fields === "object" && fields !== null ? fields : {}) })
+  })], { mergeWithExisting: true })
+  const value = try Effect.provide(program, capture)
+  return { value, events }
+}
+
+effect function solanaRun(world: World, fetch: typeof globalThis.fetch) {
+  const journaled = Layer.mergeAll(d1(world.db), webCrypto)
+  const solana = Layer.provideMerge(feeSolana({ wallet: world.network.feeWallet, urls: Redacted.make([solanaRpcUrl]), genesis: solanaGenesis, timeoutMs: 10_000 }), journaled)
+  const signer = Layer.provideMerge(solanaFeeWallet({ key: undefined, runtime: world.base.held.runtime, limits: nativeLimits, gasMultiple: 10n, maxSlippageBps: 100, jupiter: jupiterSettings }), solana)
+  const chain = Layer.provideMerge(solanaConversionChain({ jupiter: jupiterSettings, maxSlippageBps: 100, limits: nativeLimits }), Layer.provideMerge(solanaVaultDeployments, signer))
+  const services = Layer.mergeAll(chain, world.clock.layer, Layer.succeed(ExpiryOperators, { genesis: solanaGenesis, providers: [] }))
+  return try fetched(fetch, Effect.provide(runNetwork({ network: world.network, base: world.base, trigger: "Recovery", tokens: world.tokens, income: world.income }), services))
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
@@ -317,6 +384,44 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       records: [{ ...none, Quoted: 1 }, none, { ...none, Quoted: 1 }],
       calls: ["quote A 4000000000", "quote A 5000000000"],
       rows: ["A quoted dry_run 4000000000 -", "A quoted dry_run 5000000000 -"],
+    })
+  })
+
+  it.effect('Provider diagnostics distinguish response parsing from authentication and never retain provider bodies (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing")', () => effect {
+    const provider: Provider = { status: 403, body: sensitive, methods: [] }
+    const fetch = providerFetch(provider)
+    const jupiterRefused = try fetched(fetch, quoteRead(jupiterSettings, wrappedSol, 1n, 50))
+    provider.status = 200
+    const jupiterUnparsed = fetched(fetch, quoteRead(jupiterSettings, wrappedSol, 1n, 50)) catch (error) => providerFailureOf(error, "solana-rpc")
+    provider.status = 403
+    const kyberAnswers: Array<unknown> = [try kyberAnswer(fetch)]
+    for (const [status, body] of [[401, JSON.stringify({ code: 6, message: sensitive })], [403, JSON.stringify({ code: 8, message: sensitive })], [403, "null"], [404, JSON.stringify({ code: 9, message: "fixture no pool" })]] as const) {
+      provider.status = status
+      provider.body = body
+      kyberAnswers.push(try kyberAnswer(fetch))
+    }
+    provider.status = 403
+    provider.body = sensitive
+    const dry = try opened(112, "DryRun", "Solana")
+    const world: World = { ...dry, tokens: [{ address: wrappedSol, asset: "ProjectToken" }], network: { ...dry.network, feeWallet: dry.base.held.wallets[1] ?? "" } }
+    const ran = try logged(solanaRun(world, fetch))
+    const fault = (httpStatus: number) => ({ tag: "KyberUnavailable", detail: `KyberSwap returned HTTP ${httpStatus}`, failure: { provider: "kyberswap", stage: "response-json", method: "routes", httpStatus } })
+    try same({
+      jupiter: [jupiterRefused, jupiterUnparsed],
+      kyber: kyberAnswers,
+      run: [ran.value.status, ran.value.records],
+      conversionErrors: ran.events.filter((event) => event.event === "fee_conversion_error"),
+      rows: try recorded(world),
+      sent: provider.methods.filter((method) => method !== "getGenesisHash" && method !== "getAccountInfo"),
+      retained: JSON.stringify({ events: ran.events, kyberAnswers, jupiterUnparsed }).includes(sensitive),
+    }, {
+      jupiter: [{ kind: "noRoute", detail: "Jupiter quote: 403" }, { provider: "jupiter", stage: "response-json", method: "quote", httpStatus: 200 }],
+      kyber: [fault(403), fault(401), fault(403), fault(403), { kind: "NoRoute", detail: "KyberSwap routes: fixture no pool" }],
+      run: ["ran", none],
+      conversionErrors: [{ event: "fee_conversion_error", network: "Solana", token: wrappedSol, error: "HTTP 403", providerFailure: { provider: "solana-rpc", stage: "rpc-response", method: "getAccountInfo", httpStatus: 403 } }],
+      rows: [],
+      sent: [],
+      retained: false,
     })
   })
 })

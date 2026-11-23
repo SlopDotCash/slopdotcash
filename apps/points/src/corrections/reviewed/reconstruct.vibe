@@ -13,11 +13,11 @@ import type { Collection } from "../apply/manifest.vibe"
 import { type ProjectOfRepository, sameSet } from "../apply/derive.vibe"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { periodOf } from "../../../gen/points__periods.effect.vibe"
-import { type Event, previewDuplicateRetirement, previewRecipients } from "../../../gen/points__journal.effect.vibe"
+import type { Event } from "../../../gen/points__journal.effect.vibe"
 import type { MixedProof, PacketRun, RecipientCorrection } from "../../../gen/points__reviewedHistory.ts"
 import { initial as unbound, machineOver as bindingOver } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetirement, digestPattern, digestText, githubIdPattern, refusal, require } from "./packet.vibe"
-import { type VerifiedRetirements, checkedRetirement } from "./retirement.vibe"
+import { type VerifiedRetirements, checkedRetirement, ownRecordPool } from "./retirement.vibe"
 import { type VerifiedClosedReviews, projectHistoricalValueChanges } from "./replay/value.vibe"
 import { latestOf } from "./replay/latest.vibe"
 
@@ -38,6 +38,7 @@ export interface ReconstructInput {
   readonly repositories: Repositories
   readonly projectOf: ProjectOfRepository
   readonly qualified?: boolean
+  readonly apply?: boolean
   readonly closedReviews?: VerifiedClosedReviews
   readonly verifiedRetirements?: VerifiedRetirements
 }
@@ -167,6 +168,7 @@ function runOf(input: ReconstructInput): PacketRun {
     qualifiedReplay: input.qualified === true,
     assessmentCurrent: input.qualified === true,
     baselineCurrent: input.qualified === true,
+    preview: input.apply !== true,
   }
 }
 
@@ -183,28 +185,13 @@ effect function openedPool(journal: Journal, input: ReconstructInput, rows: Read
   return { store, opened, unit }
 }
 
-type ReviewedPoolEvent = Extract<Event, { readonly type: "correctRecipients" | "retireDuplicate" }>
-
-effect function replayPool(pool: Opened, event: ReviewedPoolEvent, message: string) {
-  if (event.packetRun.qualifiedReplay) {
-    const refused = try sendAll(pool, [event])
-    try require(refused === "", message)
-    return try appended(pool)
-  }
-  const ledger = try pool.machine.get()
-  const revision = event.type === "correctRecipients"
-    ? previewRecipients(ledger, event.project, event.unit, event.correction, event.packetRun, event.reason, event.digest)
-    : previewDuplicateRetirement(ledger, event.project, event.unit, event.retirement, event.packetRun, event.reason, event.digest)
-  try require(revision.id === pool.start, message)
-  return [revision]
-}
-
-effect function appendedPool(pool: { readonly store: Store; readonly opened: Opened }, event: ReviewedPoolEvent, templates: ReadonlyArray<Award>, sourceDigest: string, decisionSourceId: string, recordedAt: string, message: string) {
-  const revisions = try replayPool(pool.opened, event, message)
+effect function appendedPool(pool: { readonly store: Store; readonly opened: Opened }, event: Event, templates: ReadonlyArray<Award>, sourceDigest: string, decisionSourceId: string, recordedAt: string, message: string) {
+  const refused = try sendAll(pool.opened, [event])
+  try require(refused === "", message)
   const byActor = new Map(templates.map((award) => [award.actor.id, award] as const))
   const provenance = { recordedAt, sourceDigest, decisionSourceId, effectiveAt: recordedAt }
   const written: Row[] = []
-  for (const revision of revisions) written.push(...(try rowsOf(pool.store, pool.opened, revision, byActor, provenance)))
+  for (const revision of try appended(pool.opened)) written.push(...(try rowsOf(pool.store, pool.opened, revision, byActor, provenance)))
   const buffer: Row[] = []
   try commit(pool.store, buffer, written)
   flush(pool.store, buffer)
@@ -286,7 +273,7 @@ effect function recipientsCorrected(input: ReconstructInput, correction: PacketR
     reviewedShares: ordered.map((award) => ({ actor: actors.get(award.actor.id) ?? 0, points: correction.expectedAfter.find((expected) => expected.key === award.key)?.amount ?? -1 })),
   }
   const digest = digestText(correction)
-  const event: ReviewedPoolEvent = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberOriginalContributorDecision, digest }
+  const event: Event = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberOriginalContributorDecision, digest }
   const appendedRows = try appendedPool(pool, event, checked.replacements, digest, `owner_october_${correction.evidenceSha256}`, input.packet.reviewedAt, changed)
   try require(appendedRows.written.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.amount === row.award.amount)), changed)
   return appendedRows.journal
@@ -297,8 +284,14 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
   const source = retirement.source
   const candidate = packet.corrections.candidates.find((item) => item.sourceId === source.sourceId && item.workUnitId === retirement.workUnitId)
   const rows = poolRows(journal, packet.projectId, retirement.sourceId, retirement.workUnitId)
+  const latestBaseline = latestOf(input.baseline.revisions)
+  const ownPool = try ownRecordPool(rows)
   try require(candidate !== undefined && rows.length > 0 && rows.every(({ award }) => award.occurredAt === source.occurredAt && award.occurredAt.startsWith("2026-10-") &&
-    award.sourceUrl === source.sourceUrl) && matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
+    award.sourceUrl === source.sourceUrl) &&
+    (retirement.netOutcome === undefined || (candidate?.kind === "pull-request" && candidate.sourceIds.length === 1 && candidate.sourceIds[0] === source.sourceId &&
+      rows.every((row) => latestBaseline.get(row.award.key)?.id === row.id))) &&
+    ((retirement.identicalAcceptedChange === undefined && retirement.netOutcome === undefined) || ownPool) &&
+    matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
   const templates = rows.map((row) => row.award)
   const pool = try openedPool(journal, input, rows, templates, retirement.sourceId, "Duplicate pool changed after owner review")
   const sources = new Map(pool.opened.names.sources)
@@ -321,18 +314,18 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
     packet,
     retirement,
     baseline: input.baseline,
-    latestBaseline: latestOf(input.baseline.revisions),
+    latestBaseline,
     rewarded: context.rewarded,
     current: latestOf(journal.revisions),
     pool: rows,
-    verified: input.verifiedRetirements ?? { identical: new Set(), order: new Map() },
+    verified: input.verifiedRetirements ?? { duplicates: new Set(), order: new Map() },
     retiringSources: context.retiring,
     validated: context.validated,
     sourceOf,
     objectOf,
   })
   const digest = digestText(retirement)
-  const event: ReviewedPoolEvent = { type: "retireDuplicate", project: packet.projectId, unit: pool.unit, retirement: checked.record, packetRun: runOf(input), reason: octoberDuplicateRetirementDecision, digest }
+  const event: Event = { type: "retireDuplicate", project: packet.projectId, unit: pool.unit, retirement: checked.record, packetRun: runOf(input), reason: octoberDuplicateRetirementDecision, digest }
   const result = try appendedPool(pool, event, templates, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt, "Duplicate retirement does not meet the reviewed rules")
   return { journal: result.journal, mixed: checked.mixed }
 }
@@ -352,6 +345,7 @@ effect function boundMixed(proofs: ReadonlyArray<MixedProof>) {
 
 export effect function reconstructHistoricalPoints(input: ReconstructInput) {
   const { packet, baseline, now } = input
+  try require(input.apply !== true || input.qualified === true, "Applying historical Points requires a reviewed replay qualification")
   try require((try batchDigest(baseline)) === packet.baselineDigest && baseline.revisions.length === packet.baselineRevisionCount, "Published baseline changed")
   try require(now >= packet.reviewedAt && now >= baseline.generatedAt, "Historical review is stale or in the future")
   let result = try corrected(input, try valued(input))

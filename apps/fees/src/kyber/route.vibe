@@ -6,6 +6,7 @@ import type { EvmNetwork } from "../signer/intents.ts"
 import { definitions } from "../runtime/networks.vibe"
 import { kyberswap } from "../runtime/pins.ts"
 import { decimal, wholeBig } from "../evm/abi.ts"
+import { noteProviderFailure } from "../kernels/providerFailure.ts"
 import { type SwapDescription, buildSlippage, decodedSwap, hopsOf, impactBps, usdMicro } from "./swap.ts"
 
 module verified {
@@ -35,7 +36,7 @@ export interface KyberSettings {
 export const responseLimitBytes = 2_000_000
 export const deadlineSeconds = 20 * 60
 
-const Envelope = Schema.Struct({ code: Schema.optionalKey(Schema.Number), message: Schema.optionalKey(Schema.String), data: Schema.optionalKey(Schema.Unknown) })
+const Envelope = Schema.Struct({ code: Schema.optionalKey(Schema.Unknown), message: Schema.optionalKey(Schema.Unknown), data: Schema.optionalKey(Schema.Unknown) })
 const Routed = Schema.Struct({ routeSummary: Schema.Unknown, routerAddress: Schema.String })
 const Summary = Schema.Struct({
   tokenIn: Schema.String,
@@ -61,10 +62,13 @@ effect function kyber(network: EvmNetwork, path: string, settings: KyberSettings
   const request = body === undefined ? HttpClientRequest.get(url, { headers }) : HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(url, { headers }), body)
   const response = HttpClient.execute(request) catch effect (error) => { throw new KyberUnavailable({ path: label, detail: errorText(String(error)) }) }
   const bytes = boundedBytes(response, responseLimitBytes, "KyberSwap") catch effect () => { throw new KyberUnavailable({ path: label, detail: "KyberSwap response too large or unreadable" }) }
-  const envelope = Schema.decodeUnknownEffect(Schema.fromJsonString(Envelope))(new TextDecoder().decode(bytes)) catch effect () => {
-    throw new KyberUnavailable({ path: label, detail: `KyberSwap returned HTTP ${response.status}` })
-  }
+  const failure = { provider: "kyberswap", stage: "response-json", method: label, httpStatus: response.status } as const
+  const provider = () => noteProviderFailure(new KyberUnavailable({ path: label, detail: `KyberSwap returned HTTP ${response.status}` }), failure)
+  const parsed = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(new TextDecoder().decode(bytes)) catch effect () => { throw provider() }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw provider()
+  const envelope = Schema.decodeUnknownEffect(Envelope)(parsed) catch effect () => { throw provider() }
   if (response.status < 200 || response.status > 299 || envelope.code !== 0 || envelope.data === undefined) {
+    if (response.status === 401 || response.status === 403) throw provider()
     const message = errorText(`KyberSwap ${label}: ${String(envelope.message ?? response.status).slice(0, 200)}`)
     if (response.status >= 400 && response.status < 500) throw new KyberRefused({ path: label, status: response.status, message })
     throw new KyberUnavailable({ path: label, detail: message })

@@ -91,8 +91,8 @@ function api(server: Remote) {
     const reads = (server.reads.get(path) ?? 0) + 1
     server.reads.set(path, reads)
     const body = server.routes.get(path)?.(reads)
-    const response = new globalThis.Response(JSON.stringify(body ?? { message: "Not Found" }), { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
-    return succeed(HttpClientResponse.fromWeb(request, response))
+    const response = HttpServerResponse.jsonUnsafe(body ?? { message: "Not Found" }, { status: body === undefined ? 404 : 200 })
+    return succeed(HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(response)))
   })
 }
 

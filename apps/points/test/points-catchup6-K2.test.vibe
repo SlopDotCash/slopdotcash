@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type SourceDecision, type ValueCensus, ValueInputs } from "@repo/ports/points"
@@ -63,7 +64,9 @@ effect function collected(world: Seeded) {
   const snapshot = try Effect.provide(collectSnapshot({ registryPath: `${directory}/registry.json`, cutoffMs: start, dataRoot: directory, output }), layers(world, collections))
   const collection = collections.at(-1)
   if (collection === undefined) throw new Error("the assembly was never asked")
-  return { snapshot, collection, written: JSON.parse(try fs.readFileString(output)) as LeaderboardSnapshot }
+  const text = try fs.readFileString(output)
+  const written = try Effect.try(() => JSON.parse(text) as LeaderboardSnapshot)
+  return { snapshot, collection, written }
 }
 
 effect function workUnit(claimIds: ReadonlyArray<string>, assessment: unknown) {
@@ -99,7 +102,7 @@ function withJoint(collection: Collection, rows: ReadonlyArray<SourceDecision>):
 
 it.live('Publish a collected window through the real snapshot assembly (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
   try scoped(effect {
     const { snapshot, collection, written } = try collected(world)
     const registry = repositoryRegistry(world)
@@ -133,7 +136,7 @@ it.live('Publish a collected window through the real snapshot assembly (spec/poi
 
 it.live('The snapshot publishes exact unit memberships from hash-pinned stale history (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
   try scoped(effect {
     const { collection } = try collected(world)
     const history = try staleHistory(world, collection)
@@ -166,7 +169,8 @@ it.live('The snapshot publishes exact unit memberships from hash-pinned stale hi
     })
     const repeated = { ...snapshot, reviewedImplementationUnits: (snapshot.reviewedImplementationUnits ?? []).map((source) => source.pullRequestId === world.ids.paired ? { ...source, units: [...source.units, source.units[0]] } : source) }
     const inconsistent = validateSnapshot(repeated, registry) catch (error) => message(error)
-    const forged = { ...history.decision, history: [{ ...history.row, record_json: JSON.stringify({ ...JSON.parse(history.row.record_json), projectId: "other" }) }, ...history.decision.history.slice(1)] }
+    const record = try Effect.try(() => JSON.parse(history.row.record_json))
+    const forged = { ...history.decision, history: [{ ...history.row, record_json: JSON.stringify({ ...record, projectId: "other" }) }, ...history.decision.history.slice(1)] }
     const mismatched = assembleSnapshot(withJoint(collection, history.rows.map((row) => ({ ...row, decision: forged }))), scope) catch (error) => message(error)
     try same({ inconsistent, mismatched }, { inconsistent: "Reviewed implementation units must be unique and consistent", mismatched: "Reviewed implementation record digest does not match" })
   })
@@ -175,7 +179,7 @@ it.live('The snapshot publishes exact unit memberships from hash-pinned stale hi
 
 it.live('A pinned repository uses the real historical scoring and snapshot validator (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
   try scoped(effect {
     const { collection } = try collected(world)
     const project = registryAnswer(world).projects[0]

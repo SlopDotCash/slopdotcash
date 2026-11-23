@@ -75,7 +75,12 @@ payout recognition and keeps its key's occurrence time, and the digest of
 the resulting journal must equal the reviewed candidate's. Any difference
 refuses the whole packet: a reviewed source is validated only with a packet
 that previews, and the journal appends a recipient correction or a duplicate
-retirement only with a packet that applies.
+retirement only with a packet it admits. A preview run (no
+`HISTORICAL_POINTS_APPLY`) builds the whole candidate, its recipient
+corrections and duplicate retirements included, and is admitted when the
+packet previews; an apply run is admitted only when the packet applies. A
+preview writes the import statements but never imports them: only an apply
+run whose packet applies reaches the protected import.
 
 Applying, unlike a preview, also needs the packet's replay qualification:
 the trusted receipt of the canonical main `replay-assessments` run at the
@@ -96,12 +101,14 @@ captured heads (development `pointsSql` recording conditions,
 ```quint
 type PacketRun = { baselineMatches: bool, reviewedAt: int, baselineAt: int, now: int, valueKeysExact: bool,
   deltaInScope: bool, occurrencesKept: bool, candidateMatches: bool, qualifiedReplay: bool, assessmentCurrent: bool,
-  baselineCurrent: bool }
+  baselineCurrent: bool, preview: bool }
 pure def packetPreviews(r: PacketRun): bool =
   r.baselineMatches and r.now >= r.reviewedAt and r.now >= r.baselineAt and r.valueKeysExact and r.deltaInScope and
   r.occurrencesKept and r.candidateMatches
 pure def packetApplies(r: PacketRun): bool =
   packetPreviews(r) and r.qualifiedReplay and r.assessmentCurrent and r.baselineCurrent
+pure def packetAdmits(r: PacketRun): bool = if (r.preview) packetPreviews(r) else packetApplies(r)
+pure def packetImports(r: PacketRun): bool = not(r.preview) and packetApplies(r)
 pure def canValidate(b: Binding, packetRun: PacketRun): bool = not(b.validated) and packetPreviews(packetRun)
 pure def validate(b: Binding, packetRun: PacketRun): Binding = { ...b, validated: true }
 pure def lawChangedBaselineRefused(r: PacketRun): bool = not(r.baselineMatches) implies not(packetApplies(r))
@@ -111,12 +118,19 @@ pure def lawChangedCheckpointRefused(r: PacketRun): bool = not(r.baselineCurrent
 pure def lawUnqualifiedApplyRefused(r: PacketRun): bool = not(r.qualifiedReplay) implies not(packetApplies(r))
 pure def lawPreviewNeedsNoQualification(r: PacketRun): bool =
   packetPreviews({ ...r, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false }) == packetPreviews(r)
+pure def lawPreviewNeverImported(r: PacketRun): bool = r.preview implies not(packetImports(r))
+pure def lawPreviewAdmitsWithoutQualification(r: PacketRun): bool =
+  r.preview implies (packetAdmits({ ...r, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false }) == packetAdmits(r))
+pure def lawApplyAdmitsOnlyWhatApplies(r: PacketRun): bool = not(r.preview) implies (packetAdmits(r) == packetApplies(r))
+pure def lawImportedPacketApplies(r: PacketRun): bool = packetImports(r) implies (packetApplies(r) and packetAdmits(r))
 pure val readyRun: PacketRun = { baselineMatches: true, reviewedAt: 2432150, baselineAt: 2432140, now: 2432160,
   valueKeysExact: true, deltaInScope: true, occurrencesKept: true, candidateMatches: true, qualifiedReplay: true,
-  assessmentCurrent: true, baselineCurrent: true }
+  assessmentCurrent: true, baselineCurrent: true, preview: false }
 pure val rValues = Set(readyRun, { ...readyRun, baselineMatches: false }, { ...readyRun, now: 2432100 },
   { ...readyRun, candidateMatches: false }, { ...readyRun, qualifiedReplay: false }, { ...readyRun, assessmentCurrent: false },
-  { ...readyRun, baselineCurrent: false })
+  { ...readyRun, baselineCurrent: false }, { ...readyRun, preview: true },
+  { ...readyRun, preview: true, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false },
+  { ...readyRun, preview: true, candidateMatches: false })
 pure val packetRunValues = rValues
 ```
 
