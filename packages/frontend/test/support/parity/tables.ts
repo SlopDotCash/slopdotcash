@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Schema } from "effect";
 import { repoRoot } from "@repo/platform/testing/paths";
-import { retired } from "../../../../../apps/operations/src/release/retired.ts";
+import { retired } from "@repo/operations/retired";
 import { type AmendedRefusal, type Amendment, amendments } from "./amendments.ts";
 import { type OldEntry, type WorkerSuccessor, successors } from "./entries.ts";
 

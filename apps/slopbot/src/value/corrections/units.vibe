@@ -38,6 +38,12 @@ interface Ancestry {
   readonly cache: Map<string, boolean>
 }
 
+function originalPrimary(source: CorrectionSource) {
+  const primary = soleOriginalPrimary(source)
+  if (primary === undefined) return undefined
+  return [source.author, ...source.commits.map((commit) => commit.author)].find((actor) => actor?.id === primary.id) ?? undefined
+}
+
 effect function copiedOriginalContributorUnitProof(
   accepted: CorrectionSource,
   original: WorkUnitSource,
@@ -47,7 +53,7 @@ effect function copiedOriginalContributorUnitProof(
 ) {
   if (original.evidence.pull.merged_at !== null) return undefined
   const rawSource = try richSource(original.evidence, owners)
-  const primary = soleOriginalPrimary(rawSource)
+  const primary = originalPrimary(rawSource)
   const originatingActor = primary?.id !== rawSource.author?.id ? primary : undefined
   const source = try originalContributorSource(rawSource, originatingActor)
   if (claims.some((claim) =>
@@ -153,7 +159,7 @@ effect function singleOriginalContributorUnitProof(
   const converted = verified.find((source) => source.sourceId === original.evidence.pull.node_id)
   const integrationSource = verified.find((source) => source.sourceId === integration.evidence.pull.node_id)
   if (converted === undefined || integrationSource === undefined) throw refused("Native unit source is missing")
-  const primary = soleOriginalPrimary(converted)
+  const primary = originalPrimary(converted)
   const originatingActor = primary?.id !== converted.author?.id ? primary : undefined
   const currentRead = try originalContributorSource(converted, originatingActor)
   const canonical = try matchedAccepted(accepted, integrationSource)

@@ -1,7 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, layer } from "@effect/vitest"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
+import { systemGit } from "@repo/platform/git"
 import { parsedJson } from "@repo/platform/git/bytes"
 import type { CorrectionSource, RetainedRequest } from "@repo/points/corrections"
 import { database, migrate, startWorker } from "@repo/platform/testing"
@@ -51,7 +53,7 @@ const Started = Layer.unwrap(effect {
     try (try D1).run(sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at)
       VALUES (${installationId}, 201, 'ada', 'User', '2026-11-01T00:00:00.000Z', 1)`)
   }
-  return Layer.mergeAll(d1(db), webCrypto, githubOverKept(kept), retention, Layer.succeed(Journey, { kept }))
+  return Layer.mergeAll(d1(db), webCrypto, NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), githubOverKept(kept), retention, Layer.succeed(Journey, { kept }))
 })
 
 effect function same(actual: unknown, expected: unknown) {

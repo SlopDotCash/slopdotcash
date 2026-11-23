@@ -8,7 +8,7 @@ import { PaymentIndexerLive } from "../scan/index.vibe"
 import { PrivateLedger } from "../securityScope/engine.vibe"
 import { bindDestinations } from "../signer/binding.vibe"
 import { AttesterConfig, type AttesterVars, signerStack } from "../signer/evm.vibe"
-import { attestEvmMonth, publishMonthlyAuthorizations } from "../signer/monthlyRoot.vibe"
+import { type MonthAttesters, attestEvmMonth, publishMonthlyAuthorizations } from "../signer/monthlyRoot.vibe"
 import { ORDINARY_SCOPE, SECURITY_SCOPE, type ScopedPins, type SignerScope, scopedAttesterConfig } from "../signer/privateScope.vibe"
 import { SolanaAttesterConfig, type SolanaAttesterVars, solanaAttesterConfig } from "../signer/solana.vibe"
 import { attestSolanaMonth } from "../signer/solanaMonthly.vibe"
@@ -98,7 +98,7 @@ effect function offFamily(network: string) {
   throw new FamilyRefused({ network })
 }
 
-effect function monthly(scope: SignerScope, network: NetworkKey) {
+effect function monthly<EE extends { readonly _tag: string }, ER, SE extends { readonly _tag: string }, SR>(scope: SignerScope, network: NetworkKey, attesters: MonthAttesters<EE, ER, SE, SR>) {
   if (scope.kind === "security-bounty") {
     provide Layer.provideMerge(PaymentIndexerLive, PrivateLedger) {
       const synced = try syncRegistryVaults([network], "security-bounty")
@@ -115,9 +115,7 @@ effect function monthly(scope: SignerScope, network: NetworkKey) {
   }, failures)
   const now = Math.floor((try Clock.currentTimeMillis) / 1000)
   const served: ReadonlySet<string> = new Set([network])
-  const report = familyOf(network) === "evm"
-    ? try publishMonthlyAuthorizations(served, now, { EvmV2: attestEvmMonth, SolanaV3: (request) => offFamily(request.network) })
-    : try publishMonthlyAuthorizations(served, now, { EvmV2: (request) => offFamily(request.network), SolanaV3: attestSolanaMonth })
+  const report = try publishMonthlyAuthorizations(served, now, attesters)
   failures.push(...report.failures)
   try recordRegistryDeposits(synced.deployments, "ordinary")
   if (failures.length > 0) throw new AttesterRunFailed({ failures })
@@ -133,14 +131,14 @@ effect function scopeRun(env: AttesterEnv, scope: SignerScope, network: NetworkK
   if (familyOf(network) === "evm") {
     const config = try evmConfig(env, scope)
     provide AttesterConfig = config {
-      try isolated(`${scope.kind} monthly`, monthly(scope, network), failures)
+      try isolated(`${scope.kind} monthly`, monthly(scope, network, { EvmV2: attestEvmMonth, SolanaV3: (request) => offFamily(request.network) }), failures)
       try isolated(`${scope.kind} bindings`, bindings(scope), failures)
     }
     return
   }
   const config = try solanaConfig(env, scope)
   provide SolanaAttesterConfig = config {
-    try isolated(`${scope.kind} monthly`, monthly(scope, network), failures)
+    try isolated(`${scope.kind} monthly`, monthly(scope, network, { EvmV2: (request) => offFamily(request.network), SolanaV3: attestSolanaMonth }), failures)
   }
 }
 

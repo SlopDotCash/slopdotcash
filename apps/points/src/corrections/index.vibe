@@ -26,9 +26,10 @@ export {
   isMergedOriginalContributor,
   matchedAccepted,
   mirroredOctoberSources,
+  soleOriginalPrimary,
   verifiedHuman,
 } from "./apply/october.vibe"
-export { isOriginalContributorRepair, referencesOriginalContributorSource } from "./apply/original.vibe"
+export { isOriginalContributorFollowup, isOriginalContributorRepair, originalContributorSource, referencesOriginalContributorSource } from "./apply/original.vibe"
 export {
   type CompleteProof,
   type CorrectionCommit,
@@ -67,7 +68,7 @@ export {
   ReviewedOriginal,
   SourceDigests,
 } from "./apply/manifest.vibe"
-export { type ReplacementLine } from "./apply/derive.vibe"
+export { type ClaimScope, type ReplacementLine, correctionClaimCommit, originalContributorClaimScope, originalContributorPrecedesFollowups } from "./apply/derive.vibe"
 export { applyCorrections } from "./apply/command.vibe"
 export { type CollectedEvidence, type SourceRead } from "./collect/collect.vibe"
 export { type CorrectionCandidate } from "./collect/inventory.vibe"

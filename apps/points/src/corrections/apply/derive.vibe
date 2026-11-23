@@ -231,7 +231,7 @@ type Graph = ReadonlyMap<string, GraphCommit>
 
 interface BoundFollowup { readonly source: CorrectionSource; readonly binding: OriginalContributorFollowup }
 
-interface ClaimScope {
+export interface ClaimScope {
   readonly original: CorrectionSource
   readonly accepted: CorrectionSource
   readonly claims: ReadonlyArray<CorrectionClaim>
@@ -305,7 +305,7 @@ effect function repairAcknowledged(repair: OriginalContributorRepair, scope: Cla
     descends(graph, commit.sha, anchorSha) && descends(graph, repair.reference.headSha, commit.sha)
 }
 
-effect function originalContributorClaimScope(scope: ClaimScope) {
+export effect function originalContributorClaimScope(scope: ClaimScope) {
   const { original, accepted, claims, followups, anchorSha, acceptedAnchorSha, repairs, copiedClaims, resolutionAcceptance } = scope
   const origin = original.author
   const carrier = accepted.author
@@ -377,7 +377,7 @@ effect function originalContributorClaimScope(scope: ClaimScope) {
   return hasOriginal
 }
 
-function originalContributorPrecedesFollowups(original: CorrectionSource, carrier: CorrectionActor | null) {
+export function originalContributorPrecedesFollowups(original: CorrectionSource, carrier: CorrectionActor | null) {
   const origin = original.author
   if (!eligible(origin) || !eligible(carrier) || origin.id === carrier.id) return false
   const ordinary = original.commits.filter((commit) => commit.parentCount <= 1)

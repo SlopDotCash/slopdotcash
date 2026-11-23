@@ -11,6 +11,7 @@
     "./notify": "./src/workers/notify.vibe",
     "./recoveryFixture": "./src/qualification/recovery/fixture.vibe",
     "./recoveryPlan": "./src/qualification/recovery/plan.vibe",
+    "./retired": "./src/release/retired.ts",
     "./rpc": "./src/release/rpc/command.vibe",
     "./wrangler": "./src/release/wrangler/cloudflare.vibe"
   },
