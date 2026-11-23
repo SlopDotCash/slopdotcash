@@ -37,7 +37,12 @@ jobs:
           publication: "true"
       - name: Reject known production dependency vulnerabilities
         run: pnpm audit --prod
-      - run: pnpm all build --filter=@repo/points
+      - run: pnpm all build --filter=@repo/operations --filter=@repo/points
+      - name: Snapshot the production registry for historical Points verification
+        run: |
+          set -euo pipefail
+          node apps/operations/dist/programs/main.js release registry production "$RUNNER_TEMP/reviewed-points"
+          node apps/points/dist/programs/main.js registry "$RUNNER_TEMP/reviewed-points/registry/snapshot.json" "$RUNNER_TEMP/repository-registry.json"
       - name: Install canonical merge Git
         run: |
           set -euo pipefail
@@ -63,8 +68,8 @@ jobs:
           APPLY: ${{ inputs.apply }}
         run: |
           set -euo pipefail
+          args=("$RUNNER_TEMP/repository-registry.json" --reviewed-sha256 "$REVIEWED_PACKET_SHA256")
           if [ "$APPLY" = true ]; then
-            node apps/points/dist/programs/main.js reviewed --reviewed-sha256 "$REVIEWED_PACKET_SHA256" --apply
-          else
-            node apps/points/dist/programs/main.js reviewed --reviewed-sha256 "$REVIEWED_PACKET_SHA256"
+            args+=(--apply)
           fi
+          node apps/points/dist/programs/main.js reviewed "${args[@]}"
