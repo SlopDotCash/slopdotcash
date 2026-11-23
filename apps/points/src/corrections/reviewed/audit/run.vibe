@@ -1,7 +1,7 @@
 // spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"
 import { GitHub } from "@repo/platform/github"
 import { textBytes } from "@repo/platform/git/bytes"
-import type { Journal } from "../../../kernels/records/canonical.ts"
+import type { PointsJournal } from "../../../kernels/records/records.schema.ts"
 import { batchDigest } from "../../../kernels/records/ids.vibe"
 import { publishedJournal, publishedRegistry } from "../../collect/published.vibe"
 import { type SourceAudit, digestPattern, digestText, refusal, require } from "../packet.vibe"
@@ -60,7 +60,7 @@ export interface AuditedScope {
   readonly scope: HistoricalAssessmentScope
   readonly sourceAudit: SourceAudit
   readonly catalog: HistoricalAssessmentCatalog
-  readonly baseline: Journal
+  readonly baseline: PointsJournal
   readonly classified: ClassifiedScope
   readonly state: AssessmentAudit
   readonly report: AuditReport
