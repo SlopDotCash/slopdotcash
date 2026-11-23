@@ -86,12 +86,12 @@ is stale and refused. Earlier periods' unreserved obligations of the same
 vault are a typed input from the coordinator. Every other month's open
 pledge in the same vault is held back from the free balance, because the
 contract never lets one month take another month's pledge. The held-back
-amount is the vault's own open pledges of every other period at that head,
-for the obligations and the underfunded notice alike; the coordinator reads
-it from the stored copy of those finalized pledges with
-[month pledges](./monthPledges.md) `otherOpenPledges` (zero for a vault
-without pledge support; development `backend/payments/monthly.ts`,
-`heldBack`).
+amount is derived here from the escrow projection itself: its open pledges of
+every other period at that head ([escrow](./escrow.md) `otherOpenPledged`),
+for the obligations and the underfunded notice alike. The coordinator loads
+the vault's finalized pledges into that projection from their stored copy
+(none for a vault without pledge support, so nothing is held back;
+development `backend/payments/monthly.ts`, `heldBack`).
 
 Whatever the coordinator passes for earlier unreserved obligations, it and
 the other months' open pledges are never negative, so the vault's finalized free
