@@ -1030,3 +1030,89 @@ test("directories, recursive flags, inline interpreters and symlinks are unresol
   const { events } = await runOut(w);
   assert.ok(results(events).some((e) => e.text === "export const a = 1;"));
 });
+
+// ---- fix round 4 ----
+const runTracked = (w, rel, body) => {
+  mkdirSync(dirname(join(w.repoRoot, rel)), { recursive: true });
+  writeFileSync(join(w.repoRoot, rel), body);
+  execFileSync("git", ["-C", w.repoRoot, "add", rel]);
+  return execFileSync("node", [rel], {
+    cwd: w.repoRoot,
+    env: { ...process.env, HOME: w.homeDir },
+  }).toString();
+};
+
+test("a gitignored file the agent edited is still read into the content guard", async () => {
+  const w = world();
+  writeFileSync(join(w.repoRoot, ".env"), "API_KEY=Sx9QwErTy7781abc\n");
+  const printed = runTracked(
+    w,
+    "scripts/show.js",
+    'const fs=require("fs");for(const l of fs.readFileSync(".env","utf8").split("\\n")){const i=l.indexOf("=");if(i>0)console.log(l.slice(0,i)+" is "+l.slice(i+1).trim());}\n',
+  );
+  assert.ok(printed.includes("Sx9QwErTy7781abc"));
+  build(w, ({ call }) => {
+    call(
+      "Edit",
+      { file_path: `${w.repoRoot}/.env`, old_string: "x", new_string: "x" },
+      "The file .env has been updated successfully.",
+    );
+    call("Bash", { command: "node scripts/show.js" }, printed);
+  });
+  const { header, events } = await runOut(w);
+  assert.ok(!JSON.stringify(events).includes("Sx9QwErTy7781abc"));
+  assert.equal(header.contentGuard, "on");
+});
+
+test("secret values in common file formats are split out and redacted", async () => {
+  const w = world();
+  const vals = {
+    env: "Va1ueInlineAB",
+    json: "JsonTok3nValue",
+    yaml: "YamlTok3nValue",
+    netrc: "NetrcPassw0rd9",
+    gitUser: "gitusername42",
+    gitPass: "GitCredTok3n99",
+  };
+  writeFileSync(join(w.repoRoot, ".env"), `INLINE_KEY=${vals.env} # prod\n`);
+  writeFileSync(
+    join(w.repoRoot, "secrets", "c.json"),
+    `{"token":"${vals.json}","x":1}\n`,
+  );
+  writeFileSync(
+    join(w.repoRoot, "secrets", "c.yml"),
+    `token: "${vals.yaml}" # main\n`,
+  );
+  writeFileSync(
+    join(w.homeDir, ".netrc"),
+    `machine example.com login me password ${vals.netrc}\n`,
+  );
+  writeFileSync(
+    join(w.homeDir, ".git-credentials"),
+    `https://${vals.gitUser}:${vals.gitPass}@github.com\n`,
+  );
+  const printed = runTracked(
+    w,
+    "scripts/show.js",
+    [
+      'const fs=require("fs"),os=require("os");',
+      'console.log(fs.readFileSync(".env","utf8").split("=")[1].split("#")[0].trim());',
+      'console.log(JSON.parse(fs.readFileSync("secrets/c.json","utf8")).token);',
+      'console.log(fs.readFileSync("secrets/c.yml","utf8").split(":")[1].split("#")[0].trim().replace(/"/g,""));',
+      'const n=fs.readFileSync(os.homedir()+"/.netrc","utf8").trim().split(/\\s+/);console.log(n[n.length-1]);',
+      'const u=new URL(fs.readFileSync(os.homedir()+"/.git-credentials","utf8").trim());console.log(u.username);console.log(u.password);',
+    ].join("\n"),
+  );
+  for (const v of Object.values(vals)) assert.ok(printed.includes(v), v);
+  build(w, ({ call }) => {
+    call("Bash", { command: "node scripts/show.js" }, printed);
+  });
+  const { header, events } = await runOut(w);
+  const text = JSON.stringify(events);
+  const leaked = Object.entries(vals).filter(([, v]) => text.includes(v));
+  assert.deepEqual(
+    leaked.map(([k]) => k),
+    [],
+  );
+  assert.equal(header.contentGuard, "on");
+});

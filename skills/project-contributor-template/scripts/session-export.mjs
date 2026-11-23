@@ -768,6 +768,10 @@ const MAX_GUARD_FILES = 2000;
 const MAX_GUARD_STRINGS = 5000;
 const MAX_GUARD_FILE_BYTES = 64 * 1024;
 
+const SECRET_SPLIT = /[\s"'`,;{}()[\]=:#@/]+/;
+const URL_USERINFO =
+  /[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\s/@:]+)(?::([^\s/@]*))?@/g;
+
 function addSecretStrings(text, into) {
   for (const line of text.split(/\r?\n/)) {
     const clean = (v) =>
@@ -785,6 +789,13 @@ function addSecretStrings(text, into) {
       const v = clean(line.slice(i + 1));
       if (v.length >= 8) into.add(v);
     }
+    // Pieces, so inline comments, one-line JSON, YAML, .netrc and bare tokens
+    // are caught. Ordinary words over-redact; that is accepted.
+    for (const m of line.matchAll(URL_USERINFO))
+      for (const part of [m[1], m[2]])
+        if (part && part.length >= 8) into.add(part);
+    for (const piece of line.split(SECRET_SPLIT))
+      if (piece.length >= 8 && /[\p{L}\p{N}]/u.test(piece)) into.add(piece);
   }
 }
 
@@ -803,12 +814,25 @@ export function collectKnownSecrets(index, homeDir) {
   const strings = new Set();
   let capped = false;
   const listed = git(index.root, ["ls-files", "-z", "-o"]);
+  // A file the run wrote is skipped only when it is not gitignored: an edited
+  // .env still holds secrets a tracked script may print.
+  const ignored = new Set();
+  const ign = git(index.root, [
+    "ls-files",
+    "-z",
+    "-o",
+    "-i",
+    "--exclude-standard",
+  ]);
+  if (ign && ign.status === 0)
+    for (const rel of ign.stdout.toString("utf8").split("\0"))
+      if (rel) ignored.add(`${index.root}/${rel}`);
   if (listed && listed.status === 0) {
     let files = 0;
     for (const rel of listed.stdout.toString("utf8").split("\0")) {
       if (!rel || rel.split("/").some((seg) => SKIP_DIRS.has(seg))) continue;
       const abs = `${index.root}/${rel}`;
-      if (index.written.has(abs)) continue;
+      if (index.written.has(abs) && !ignored.has(abs)) continue;
       if (++files > MAX_GUARD_FILES) {
         capped = true;
         break;
