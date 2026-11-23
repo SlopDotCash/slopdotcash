@@ -5,8 +5,10 @@
 // @source backend/trace/cloudflare-persistence.ts
 // @source backend/trace/handler.ts
 // @source backend/points/handler.ts
+// @source scripts/announce-trace-licensing.ts
 // @evidence backend/trace-licensing/handler.test.ts
 // @evidence backend/trace-licensing/upload-licence.test.ts
+// @evidence backend/trace-licensing/announce.test.ts
 // @evidence backend/trace-licensing/closure.test.ts
 // @evidence backend/trace-licensing/migration.test.ts
 // @evidence tests/e2e/trace-licensing.spec.ts

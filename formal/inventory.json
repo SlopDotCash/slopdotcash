@@ -336,7 +336,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "5635f11fae48df4159d89eb16104b3036eaed72785a5b46e3415c2c94539b416",
+      "sha256": "3c887ba58990b4ecae949c3ac708260f927338704c738b297a8aae85e496ef0d",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -347,9 +347,9 @@
         "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "candidateLines": [
-        15, 29, 130, 138, 139, 165, 168, 177, 183, 196, 251, 280, 288, 297, 306,
-        313, 327, 333, 347, 369, 376, 397, 429, 445, 453, 487, 512, 570, 586,
-        601, 633, 659, 688, 752, 769
+        15, 30, 131, 139, 140, 166, 169, 178, 184, 197, 252, 281, 289, 298, 307,
+        314, 328, 334, 348, 370, 377, 398, 430, 446, 454, 488, 513, 571, 587,
+        602, 634, 660, 689, 753, 770, 802, 805, 814, 825
       ],
       "review": "mapped-abstraction"
     },
@@ -3909,6 +3909,13 @@
       "sha256": "75ea928e60fe6faf6c4936bf4b32ef913a2fffc6d076160c46a5d0bc7d939c81",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [57, 91],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/announce-trace-licensing.ts",
+      "sha256": "979433fd29a78efe3871b6e76d97c656218d711ff1a9e48149df6edd113b6835",
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
+      "candidateLines": [5, 43, 44],
       "review": "mapped-abstraction"
     },
     {
@@ -11930,13 +11937,14 @@
     },
     {
       "path": "formal/models/api/api_trace_licensing.qnt",
-      "sha256": "85fdd5afd405770e1b1586a4d75e4038e7fb2ae51771c72f1f253f7921e90662",
+      "sha256": "46e036575ebb8a8e5cd1d9fa9dd9fa9966528c5106d3bce0e8fb737c7f304b2c",
       "sources": [
         "backend/points/handler.ts",
         "backend/trace-licensing/handler.ts",
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/handler.ts",
         "migrations/0148_trace_licensing.sql",
+        "scripts/announce-trace-licensing.ts",
         "src/TraceLicensing.tsx",
         "src/lib/trace-licensing.ts"
       ],
