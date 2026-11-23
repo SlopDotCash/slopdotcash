@@ -6605,9 +6605,9 @@
     },
     {
       "path": "src/RecordPage.tsx",
-      "sha256": "0c71f5cf01459e21ae4f9fbad88f6dba3e5acc633d48b620c60464937f187be8",
+      "sha256": "1406ed24566ebd41b0564461ce9950cc20fde785bcd51d01624eaf0cb249377a",
       "models": ["formal/models/ui/ui_record_pages.qnt"],
-      "candidateLines": [182, 276, 391, 447, 480, 498, 534, 548, 556],
+      "candidateLines": [182, 276, 391, 447, 480, 498, 534, 556, 564],
       "review": "mapped-abstraction"
     },
     {

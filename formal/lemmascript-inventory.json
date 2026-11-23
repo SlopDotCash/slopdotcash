@@ -9543,7 +9543,7 @@
 {"name":"usePublicRecord","kind":"FunctionDeclaration","line":12,"sha256":"3d90c418693030d0b942d7ff0f484c9da0e8ffafcc6aa6aeb408c26d33d6818c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"RecordLoadState","kind":"FunctionDeclaration","line":20,"sha256":"06610a75925bb4dceafd61e258e50358ff6e0cb4c8fd6728346e256cd9378ade","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
 ]},
-{"path":"src/RecordPage.tsx","sha256":"0c71f5cf01459e21ae4f9fbad88f6dba3e5acc633d48b620c60464937f187be8","language":"tsx","disposition":"callables-inventoried","functions":[
+{"path":"src/RecordPage.tsx","sha256":"1406ed24566ebd41b0564461ce9950cc20fde785bcd51d01624eaf0cb249377a","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"n","kind":"ArrowFunction","line":22,"sha256":"d53fe0130113be2bd4c134fb6e6b509698d6cc6ac00dc0df9ad97b53f284615b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"usd","kind":"ArrowFunction","line":27,"sha256":"78f42b05f8e58f7933c19a4d901072bfac96f0927a9498687196f04631d5598a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"day","kind":"ArrowFunction","line":28,"sha256":"518cd8205fd5d599b1b18bf8d43b19037ecf3e0cffc6ec5e3ff831258874e4de","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -9581,11 +9581,11 @@
 {"name":"<ArrowFunction@263>","kind":"ArrowFunction","line":263,"sha256":"d9cb71a6c63a73cd7aa4db5d0d0189e81f12e816519abb0610329b65243697ab","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@311>","kind":"ArrowFunction","line":311,"sha256":"13ffac558c805d55e4f2b7130a07b2d0a1f73fa12928d9d4d110d8a71e909c16","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"<ArrowFunction@348>","kind":"ArrowFunction","line":348,"sha256":"fc2b0a90c2d6f4650747e798a73e40c1ca9eeaa9c0cb098416ca39b4f77c07b3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"Pools","kind":"FunctionDeclaration","line":431,"sha256":"5e44bd5ddb267b4fa04bd08e75f64bd566907e127fd3f4fcd608ba93c54b9820","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"<ArrowFunction@451>","kind":"ArrowFunction","line":451,"sha256":"7aa9398fafe492f37c4e046fe36cd4d1ff8081991f72cf1c9c999a1bd35d37de","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"Pools","kind":"FunctionDeclaration","line":431,"sha256":"d0d08dda7bf3fdc4840ed514f9b93d5a50b261ac36786b8c940b40d5ed0386cb","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"<ArrowFunction@451>","kind":"ArrowFunction","line":451,"sha256":"71df5cd4881660253e2fc969242d27409660883a13d2650d1e6e658457d3f7b0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"Sources","kind":"FunctionDeclaration","line":506,"sha256":"656c325f1bb9d5bce379974f48d959e904b0dbbb958106a59cebe10c51421145","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"RecordPage","kind":"FunctionDeclaration","line":547,"sha256":"e40195adf9bce4161da55a3620ca1f520057376197827955d87ad27918ab2f88","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"<ArrowFunction@557>","kind":"ArrowFunction","line":557,"sha256":"41fa30a8d216a6ea84320b8216a74dbeab2f69a0c90181de52c1aa0396d7310e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
+{"name":"RecordPage","kind":"FunctionDeclaration","line":555,"sha256":"e40195adf9bce4161da55a3620ca1f520057376197827955d87ad27918ab2f88","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"<ArrowFunction@565>","kind":"ArrowFunction","line":565,"sha256":"41fa30a8d216a6ea84320b8216a74dbeab2f69a0c90181de52c1aa0396d7310e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
 ]},
 {"path":"src/RecordTermsPage.tsx","sha256":"88210924bce03e8cf72dafe4636c561df028a2df0e8c554448ae43e9a2444dd2","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"RecordTermsPage","kind":"FunctionDeclaration","line":24,"sha256":"4019107e9050219902fa65465be81c1491cb044b9eacdb69edd7658820e918ea","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}

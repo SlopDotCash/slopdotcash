@@ -607,7 +607,7 @@ Preserve the campaign typing/deletion animation with a stable accessible heading
 
 Support mobile screens, keyboards, screen readers, reduced motion, and 200% zoom. Meet Web Content Accessibility Guidelines (WCAG) AA. Use field-linked errors, status announcements, exact readable values, and useful recovery actions.
 
-The public `/models` and `/receipts` pages remain removed. Do not show individual receipt details or evidence-bonus labels. Keep attribution, optional collection, APIs, and stored records. Cycle pages omit the Evidence section and original-record download links; retain existing data URLs. The intentionally removed `/data/cycles/eliza/2026-09/proposal.json` and `/downloads/contribute-to-eliza.skill` remain HTTP 404.
+The public `/models` page remains removed; `/receipts` now shows payout receipts (Public record pages), never run receipts. Do not show individual receipt details or evidence-bonus labels. Keep attribution, optional collection, APIs, and stored records. Cycle pages omit the Evidence section and original-record download links; retain existing data URLs. The intentionally removed `/data/cycles/eliza/2026-09/proposal.json` and `/downloads/contribute-to-eliza.skill` remain HTTP 404.
 
 ## 8. Security and private bounties
 
