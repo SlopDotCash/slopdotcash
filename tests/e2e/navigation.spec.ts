@@ -2,7 +2,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -204,6 +209,9 @@ test("a walletless award leads to wallet setup without changing the award", asyn
   });
   await page.route("**/api/v1/referrals/me", (route) =>
     route.fulfill({ json: { enabled: false } }),
+  );
+  await page.route("**/api/v1/traces/me*", (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
   );
   await page.route(`${site}/**`, (route) => {
     if (new URL(route.request().url()).pathname.startsWith("/api/"))

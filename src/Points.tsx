@@ -83,6 +83,7 @@ import "./account-design.css";
 import { ContributionPointTiers } from "./PointsRules";
 import { ProfileActivity, useProfiles } from "./Profiles";
 import { ReferralCode } from "./ReferralCode";
+import { TraceLicensing } from "./TraceLicensing";
 
 const EarningsPage = lazy(() =>
   import("./Earnings").then((module) => ({ default: module.EarningsPage })),
@@ -1103,6 +1104,16 @@ export function AccountPage() {
             <Link href="/requested">Requested repos</Link> lists repos Slop
             contributors want to work on, with a pitch that carries your link.
           </p>
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="trace-licensing"
+          className="points-panel"
+          aria-labelledby="trace-licensing-heading"
+        >
+          <h2 id="trace-licensing-heading">Trace licensing</h2>
+          <TraceLicensing key={me.actor.id} githubId={pointsActor} />
         </section>
       ) : null}
     </main>
