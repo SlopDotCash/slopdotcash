@@ -35,6 +35,7 @@ public/data/
 public/projects/
 public/protocol/
 public/skill-templates/
+public/scanner-inputs.json
 
 .points-build/
 
