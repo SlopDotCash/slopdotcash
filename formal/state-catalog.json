@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "9647645426465aad9afa98072df00c9efa03d872df898e06cf8af33dfd2b8908",
+  "inventorySha256": "52192cf6020690d1e04b585b04beece890d44a6da4ac7b05af332d7899aab8f1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2456,16 +2456,18 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 253,
+      "line": 282,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2476,7 +2478,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 503,
+      "line": 532,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2489,11 +2491,13 @@
         "review-census"
       ],
       "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2512,16 +2516,18 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3889,
+      "line": 4068,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2532,22 +2538,66 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4493,
+      "line": 4672,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/historical-assessment-reconciliation.ts",
+      "line": 75,
+      "name": "Status",
+      "kind": "string-union",
+      "values": [
+        "incomplete",
+        "no-scoped-active-assessments",
+        "requires-value-replay"
+      ],
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/historical-merged-replay.ts",
+      "line": 26,
+      "name": "reason",
+      "kind": "string-union",
+      "values": ["assessment", "lifecycle", "projection", "scored-work"],
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "lexicallyUnmentionedValues": [
+        "assessment",
+        "lifecycle",
+        "projection",
+        "scored-work"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/historical-replay-qualification.ts",
+      "line": 24,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["no-scoped-active-assessments", "requires-value-replay"],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "no-scoped-active-assessments",
+        "requires-value-replay"
+      ],
       "review": "candidate-only"
     },
     {
@@ -2743,20 +2793,29 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 572,
+      "line": 1481,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [
         "accepted squash verification",
         "apply authority recheck",
+        "assessment journal checkpoint read",
+        "assessment qualification match",
+        "assessment qualification recheck",
+        "assessment receipt",
+        "assessment source reconciliation",
+        "complete assessment catalog read",
+        "duplicate acceptance order verification",
         "enforcement checkpoint read",
         "financial protection verification",
         "historical Points reconstruction",
+        "historical assessment replay",
         "historical census verification",
         "import preparation",
         "main source verification",
         "owner authority verification",
         "private packet read",
+        "private replay review staging",
         "project and repository verification",
         "protected import and readback",
         "public Points read",
@@ -2764,10 +2823,21 @@
         "recipient and account restriction verification",
         "reviewed packet validation",
         "trusted invocation",
+        "trusted replay receipt read",
         "value record verification"
       ],
-      "models": ["formal/models/points/source_import.qnt"],
-      "lexicallyUnmentionedValues": [],
+      "models": [
+        "formal/models/points/historical_assessment_audit.qnt",
+        "formal/models/points/historical_net_outcome_retirement.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "assessment qualification recheck",
+        "assessment receipt",
+        "assessment source reconciliation",
+        "complete assessment catalog read",
+        "historical assessment replay"
+      ],
       "review": "candidate-only"
     },
     {
@@ -2782,7 +2852,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 542,
+      "line": 544,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2806,7 +2876,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 551,
+      "line": 553,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
@@ -3718,7 +3788,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 199,
+      "line": 203,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
@@ -3728,7 +3798,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 347,
+      "line": 351,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3738,7 +3808,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 498,
+      "line": 502,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
@@ -3748,7 +3818,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 506,
+      "line": 510,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
@@ -3758,7 +3828,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 553,
+      "line": 557,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
@@ -3768,7 +3838,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 655,
+      "line": 666,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3778,7 +3848,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 779,
+      "line": 805,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -3792,15 +3862,39 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4889,
-      "name": "state",
+      "line": 3024,
+      "name": "LeaderboardScoringMode",
       "kind": "string-union",
-      "values": ["APPROVED", "CHANGES_REQUESTED"],
+      "values": ["historical", "rolling"],
       "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
+        "formal/models/ui/ui_review_pool.qnt",
+        "formal/models/ui/ui_score_ledger.qnt",
+        "formal/models/ui/ui_score_selection.qnt",
+        "formal/models/ui/ui_snapshot_contract.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["historical", "rolling"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/leaderboard.ts",
+      "line": 5213,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["APPROVED", "CHANGES_REQUESTED"],
+      "models": [
+        "formal/models/points/accepted_implementation_duplicates.qnt",
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
@@ -3882,7 +3976,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 346,
+      "line": 347,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],

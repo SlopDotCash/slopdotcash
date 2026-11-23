@@ -36,6 +36,110 @@ test("retained and fresh preparation have separate lanes, fresh main collections
 });
 const step = (name: string) =>
   workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
+const liveCollection = step("Generate live contribution data").split(
+  "        run: |\n",
+)[1];
+
+// Production and staging retain their existing operator-configured lanes.
+// Preserve the main timeout and GitHub retry behavior while adding the
+// optional accepted implementation memo.
+for (const scenario of [
+  {
+    name: "hosted collector retains its deadline and one feed retry",
+    ref: "main",
+    deadlineSeconds: "19200",
+    lines: [
+      "timeout 19300",
+      "collect 119700000",
+      "sleep 60",
+      "timeout 19300",
+      "collect 119700000",
+    ],
+  },
+  {
+    name: "dedicated collector retains its twenty-hour window and retry allowance",
+    ref: "main",
+    deadlineSeconds: "72000",
+    lines: [
+      "timeout 72100",
+      "collect 172500000",
+      "sleep 60",
+      "timeout 72100",
+      "collect 172500000",
+    ],
+  },
+  {
+    name: "staging retains the existing unwrapped retry",
+    ref: "development",
+    deadlineSeconds: "19200",
+    lines: ["collect", "sleep 60", "collect"],
+  },
+] as const) {
+  test(scenario.name, async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "slop-collection-deadline-"),
+    );
+    try {
+      const script = `
+        clock=100000
+        calls=0
+        date() { echo "$clock"; }
+        sleep() { echo "sleep $1"; clock=$((clock + $1)); }
+        timeout() { echo "timeout $3"; shift 3; "$@"; }
+        bun() {
+          case "$1" in
+            run)
+              [ "$2" = leaderboard:generate ] || return 1
+              echo "collect $SLOP_DISCUSSION_DEADLINE_MS"
+              calls=$((calls + 1))
+              if [ "$calls" -eq 1 ]; then
+                clock=$((clock + 700))
+                return 75
+              fi
+              ;;
+            scripts/download-leaderboard.ts)
+              echo "fallback $2"
+              echo '{}' > "$3"
+              ;;
+            *) return 1 ;;
+          esac
+        }
+        clock=$((clock + 500))
+        ${liveCollection}
+      `;
+      const child = Bun.spawn([bashCommand(), "-euc", script], {
+        cwd: directory,
+        env: {
+          ...Bun.env,
+          GITHUB_REF: `refs/heads/${scenario.ref}`,
+          RUNNER_TEMP: directory,
+          VITE_SLOP_ENVIRONMENT:
+            scenario.ref === "main" ? "production" : "staging",
+          SLOP_DISCUSSION_DEADLINE_MS: "",
+          SLOP_COLLECTION_DEADLINE_S: scenario.deadlineSeconds,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [code, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      expect(
+        stdout
+          .split("\n")
+          .filter((line) => line && !line.startsWith("::"))
+          .map((line) => line.trimEnd()),
+      ).toEqual([...scenario.lines]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
 const publishedDataGuard = step(
   "Require manual main or development release for published data",
 ).split("        run: |\n")[1];

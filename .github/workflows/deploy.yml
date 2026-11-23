@@ -500,6 +500,8 @@ jobs:
           GH_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           GITHUB_TOKEN: ${{ steps.collector-token.outputs.token || github.token }}
           SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
+          # A prior Points lookup can bootstrap only when both origin endpoints prove absence.
+          SLOP_POINTS_BOOTSTRAP: "1"
           # Retry one value-feed read after a temporary outage instead of
           # restarting the whole collection (19 November 2026).
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
@@ -567,6 +569,17 @@ jobs:
         with:
           name: collection-memo-${{ github.run_attempt }}
           path: ${{ runner.temp }}/collection-memo/collection-memo.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Save accepted implementation evidence for the next trusted collection
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          steps.live_ledger.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: accepted-implementation-memo-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/collection-memo/accepted-implementation-memo.json
           if-no-files-found: ignore
           retention-days: 14
 

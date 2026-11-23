@@ -7,6 +7,7 @@ import {
   type PointsJournal,
   pointKey,
   pointMembers,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
@@ -680,6 +681,43 @@ test("current zero pools remain zero and exactly unchanged recipients cause no r
   expect(apply(unchanged, input).journal).toBe(unchanged);
 });
 
+test("an already-correct pool records its complete earlier-acceptance proof once", () => {
+  const journal = initial([award(B)]);
+  const input = manifest(journal);
+  complete(input).sources[0].commits[0].firstAcceptedSourceId = "PR_earlier";
+  expect(apply(journal, input, false).journal).toBe(journal);
+  expect(
+    apply(journal, input, true, RECORDED, new Map([[B.id, OCCURRED]])).journal,
+  ).toBe(journal);
+  const superseded = appendPointAwards(
+    journal,
+    [award(B, 8)],
+    "e".repeat(64),
+    "slop-score-v2",
+    COLLECTED,
+  );
+  expect(() => apply(superseded, input)).toThrow(
+    "selected predecessors changed",
+  );
+
+  const confirmed = apply(journal, input);
+  expect(confirmed.dispositions[0].status).toBe("applied");
+  expect(confirmed.journal.revisions.slice(0, 1)).toEqual(journal.revisions);
+  const marker = confirmed.journal.revisions.at(-1);
+  expect(confirmed.journal.revisions).toHaveLength(2);
+  expect(marker?.award).toEqual(journal.revisions[0].award);
+  expect(marker?.decision?.reason).toBe(
+    VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+  );
+  const retry = apply(confirmed.journal, input, true, LATER);
+  expect(retry.dispositions[0].status).toBe("already-applied");
+  expect(retry.journal).toBe(confirmed.journal);
+
+  const fresh = manifest(confirmed.journal);
+  complete(fresh).sources[0].commits[0].firstAcceptedSourceId = "PR_earlier";
+  expect(apply(confirmed.journal, fresh).journal).toBe(confirmed.journal);
+});
+
 test("the complete manifest replays once and never revives later corrections or revocations", () => {
   const journal = initial();
   const input = manifest(journal);
@@ -912,6 +950,25 @@ test("verified complete retained copies use the original source creator and acce
     [C.id]: 0,
     [A.id]: 13,
   });
+  const alreadyCorrect = initial([award(A)]);
+  const confirmation = {
+    ...input,
+    baseline: createPointsCorrectionBaseline(alreadyCorrect),
+    candidates: [
+      {
+        ...input.candidates[0],
+        expectedPredecessors: candidate(alreadyCorrect).expectedPredecessors,
+      },
+    ],
+  };
+  const confirmed = apply(alreadyCorrect, confirmation).journal;
+  expect(confirmed.revisions).toHaveLength(2);
+  expect(confirmed.revisions[1].award).toEqual(
+    alreadyCorrect.revisions[0].award,
+  );
+  expect(confirmed.revisions[1].decision?.reason).toBe(
+    VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
+  );
   accepted.commits[0].retainedCopy.boundPaths = [];
   expect(() => apply(journal, input)).toThrow(
     "complete accepted-path bindings",
