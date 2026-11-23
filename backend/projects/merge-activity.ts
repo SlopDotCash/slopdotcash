@@ -644,23 +644,41 @@ export async function refreshMergeActivity(
 }
 
 /**
- * The stored open counts by project for the intake cap (`intakePaused` in
- * src/lib/intake-cap.mjs). Throws when D1 cannot be read; callers fail open.
+ * The stored counts by project for the intake cap (`intakePaused` in
+ * src/lib/intake-cap.mjs) and the backlog rule (`backlogOutOfRotation` in
+ * src/lib/backlog-rule.mjs): open and waiting outside pull requests and the
+ * last merge of every repository read at least once. Throws when D1 cannot be
+ * read; callers fail open.
  */
 export async function readIntakeCounts(
   db: Database,
 ): Promise<Map<string, IntakeCount[]>> {
   const { results } = await db
     .prepare(
-      `SELECT project_id, observed_at, open_outside
+      `SELECT project_id, observed_at, open_outside, waiting_outside,
+              last_merged_at
          FROM repository_merge_activity
-        WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`,
+        WHERE observed_at IS NOT NULL`,
     )
-    .all<Pick<StoredRow, "project_id" | "observed_at" | "open_outside">>();
+    .all<
+      Pick<
+        StoredRow,
+        | "project_id"
+        | "observed_at"
+        | "open_outside"
+        | "waiting_outside"
+        | "last_merged_at"
+      >
+    >();
   const index = new Map<string, IntakeCount[]>();
   for (const row of results ?? []) {
     const list = index.get(row.project_id) ?? [];
-    list.push({ openOutside: row.open_outside, observedAt: row.observed_at });
+    list.push({
+      openOutside: row.open_outside,
+      waitingOutside: row.waiting_outside,
+      lastMergedAt: row.last_merged_at,
+      observedAt: row.observed_at,
+    });
     index.set(row.project_id, list);
   }
   return index;
