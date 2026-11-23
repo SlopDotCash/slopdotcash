@@ -157,6 +157,9 @@ const SecurityProgramPage = lazy(() =>
 const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
 const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
 const RequestedReposPage = lazy(() => import("./RequestedRepos"));
+const RecordPage = lazy(() => import("./RecordPage"));
+const ReceiptsPage = lazy(() => import("./ReceiptsPage"));
+const RecordTermsPage = lazy(() => import("./RecordTermsPage"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -215,7 +218,27 @@ type PageRouteKind =
   | "new-project"
   | "vetting-evidence"
   | "security-cases"
-  | "requested";
+  | "requested"
+  | "record"
+  | "receipts"
+  | TermsRouteKind;
+/** Program terms pages and the privacy policy, each one fixed segment. */
+type TermsRouteKind =
+  | "referrals"
+  | "buyback"
+  | "october-allocation"
+  | "sponsored-pools"
+  | "privacy";
+const TERMS_ROUTES = new Set<string>([
+  "referrals",
+  "buyback",
+  "october-allocation",
+  "sponsored-pools",
+  "privacy",
+]);
+function isTermsRoute(kind: string): kind is TermsRouteKind {
+  return TERMS_ROUTES.has(kind);
+}
 type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
@@ -279,6 +302,14 @@ const ROUTES: Record<
   "report-deposit": { snapshot: false, registry: "independent" },
   // Repositories not on Slop: the page reads no project registry.
   requested: { snapshot: false, registry: "independent" },
+  // The public record pages read only /data/record.json.
+  record: { snapshot: false, registry: "independent" },
+  receipts: { snapshot: false, registry: "independent" },
+  referrals: { snapshot: false, registry: "independent" },
+  buyback: { snapshot: false, registry: "independent" },
+  "october-allocation": { snapshot: false, registry: "independent" },
+  "sponsored-pools": { snapshot: false, registry: "independent" },
+  privacy: { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -294,6 +325,13 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
   ["requested", "requested"],
+  ["record", "record"],
+  ["receipts", "receipts"],
+  ["referrals", "referrals"],
+  ["buyback", "buyback"],
+  ["october-allocation", "october-allocation"],
+  ["sponsored-pools", "sponsored-pools"],
+  ["privacy", "privacy"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
@@ -516,6 +554,9 @@ function Footer({ marketing }: { marketing: boolean }) {
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
           <Link href="/requested">Requested repos</Link>
+          <Link href="/record">Record</Link>
+          <Link href="/receipts">Receipts</Link>
+          <Link href="/privacy">Privacy</Link>
         </nav>
       </div>
     </footer>
@@ -1984,6 +2025,10 @@ function AppContent({ route }: { route: Route }) {
       />
     );
   else if (route.kind === "requested") content = <RequestedReposPage />;
+  else if (route.kind === "record") content = <RecordPage />;
+  else if (route.kind === "receipts") content = <ReceiptsPage />;
+  else if (isTermsRoute(route.kind))
+    content = <RecordTermsPage name={route.kind} />;
   else if (route.kind === "report-deposit")
     content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
   else content = <NotFound />;

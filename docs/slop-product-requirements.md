@@ -593,6 +593,8 @@ Profiles and cycle pages show finalized ordinary vault payments with project, re
 
 Do not publish private case amounts, counts, queues, or revealing totals through ordinary profiles, balances, rankings, cycles, or notices.
 
+Public record pages. slop.cash publishes /record (money that has reached contributors, the monthly cycles, the pools and the sources), /receipts, the program terms pages /referrals, /buyback, /october-allocation and /sponsored-pools, and /privacy; they replace the retired record.slop.cash site. Every release build, fresh or published-data, rebuilds `/data/record.json` (`scripts/record/`) from slop.cash's own public data and the pinned archive commit, in the shape of the retired site's snapshot; any failure publishes the previous record unchanged and never fails the release. /receipts shows one receipt for each project month in which a project's vault sent money to at least one contributor who is neither a team account nor the project's owner, every recipient named and each transaction final on chain; a published receipt never disappears. These are payout receipts, not the removed run-receipt page. The pages read only that file. Operator decision, 23 November 2026.
+
 ### Interface requirements
 
 Use existing routes and shared controls. Show the result, next action, and restriction together. Keep required consent, amounts, and evidence visible. Avoid decorative controls or explanatory clutter. Interface changes require an approved requirement or a reproduced broken flow.

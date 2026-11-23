@@ -1659,12 +1659,23 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
   }
+  // The public record pages are Pages rewrites to the application.
+  for (const path of [
+    "/record",
+    "/receipts",
+    "/receipts/",
+    "/referrals",
+    "/buyback",
+    "/october-allocation",
+    "/sponsored-pools",
+    "/privacy",
+  ]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(200);
+  }
   for (const path of [
     "/models",
     "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
     "/operator/traces",
     "/operator/traces/",
   ]) {
@@ -1674,7 +1685,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(200);
-  expect(await sitemap.text()).not.toContain("/receipts");
+  expect(await sitemap.text()).toContain("https://slop.cash/receipts");
 
   const [
     bootstrapResponse,
@@ -2005,7 +2016,8 @@ for (const route of [
       path = `/cycles/${cycle.projectId}/${cycle.cycleId}`;
     }
     await page.goto(path, { waitUntil: "networkidle" });
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
+    // Only the footer links the payout receipts page (/record and /receipts).
+    await expect(page.locator('main a[href^="/receipts"]')).toHaveCount(0);
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
@@ -2294,7 +2306,7 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(referral).toContainText("paid its contributors");
   await expect(
     referral.getByRole("link", { name: "Referral terms" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  ).toHaveAttribute("href", "/referrals");
   const buyback = faq.locator("article", {
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
@@ -2307,21 +2319,13 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(buyback).not.toContainText("starts with the first fee");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
+  ).toHaveAttribute("href", "/buyback");
 });
 
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
-  for (const path of [
-    "/models",
-    "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
-    "/constructor",
-    "/__proto__",
-  ]) {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
@@ -2332,7 +2336,6 @@ test("refuses retired and unknown paths and recovers to projects", async ({
       "noindex",
     );
     await expect(page.locator(".receipt-record")).toHaveCount(0);
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
       .getByRole("link", { name: "See open projects", exact: true })
       .click();

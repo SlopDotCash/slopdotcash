@@ -738,6 +738,11 @@ vault holds it; otherwise the pool reads as points only (PRD section 6,
 operator decision of 15 November 2026). From December 2026 a month is
 promised only if the vault covered it on the 1st, and Slop's pages refuse a
 withdrawal below the promised amount.
+/record, /receipts, the program terms pages and /privacy read only
+`/data/record.json`, which every release build rebuilds (`scripts/record/`)
+and which keeps the previous record on any failure; a published payout
+receipt never disappears (PRD section 7, operator decision of 23 November
+2026).
 
 ## Project authority and IP
 
