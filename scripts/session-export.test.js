@@ -210,15 +210,31 @@ test("secret assignments with prefixed names are replaced", () => {
 });
 
 test("long unbroken input cleans quickly", () => {
-  for (const text of [
+  const inputs = [
     "A".repeat(1_000_000),
     "a1_".repeat(300_000),
     "-".repeat(500_000),
-  ]) {
+    "token".repeat(200_000),
+    "secret-".repeat(100_000),
+    "password".repeat(50_000),
+    `--${"token".repeat(200_000)}`,
+    `-${"-token".repeat(150_000)}`,
+    "abandon ".repeat(100_000),
+    `https://${"a".repeat(500_000)}@`,
+    `https://a:${"b".repeat(500_000)}`,
+  ];
+  for (const text of inputs) {
     const start = performance.now();
     const out = clean([ev("tool_result", text)]);
     const ms = performance.now() - start;
-    assert.ok(ms < 1000, `${ms} ms`);
+    assert.ok(ms < 1000, `${text.slice(0, 20)} ${ms} ms`);
     assert.equal(out.events[0].text, text);
   }
+});
+
+test("secret words in prose are left alone", () => {
+  const text = "the tokenizer handles words and a secretary";
+  assert.equal(clean([ev("assistant", text)]).events[0].text, text);
+  const flag = clean([ev("tool_result", "run --token abcdefghijklmnop1234")]);
+  assert.ok(!flag.events[0].text.includes("abcdefghijklmnop1234"));
 });
