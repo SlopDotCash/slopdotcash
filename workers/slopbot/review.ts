@@ -410,7 +410,7 @@ async function loadContext(
     `/repos/${job.owner}/${job.repo}/branches/${encodeURIComponent(repo.default_branch)}`,
   );
   if (branch === null) return null;
-  const baseSha = branch.commit.sha;
+  const defaultBranchSha = branch.commit.sha;
   const pull =
     job.itemKind === "pull_request"
       ? await github.get<Pull>(
@@ -422,7 +422,7 @@ async function loadContext(
     job.owner,
     job.repo,
     CONFIG_PATH,
-    baseSha,
+    defaultBranchSha,
     16 * 1024,
   );
   const config = projectRepositoryConfig(
@@ -430,9 +430,6 @@ async function loadContext(
     // A truncated existing file is invalid, never permission to use defaults.
     configFile === null ? null : configFile.truncated ? "" : configFile.text,
   );
-  // Policy is always read from the default branch at a recorded SHA; a pull
-  // request's own policy edits are content under review (BOT-04).
-  const policy = await loadPolicy(github, job.owner, job.repo, baseSha);
   const comparison =
     pull === null
       ? {
@@ -440,17 +437,27 @@ async function loadContext(
           truncated: false,
           limitations: [] as string[],
           changedFiles: 0,
-          baseSha,
-          mergeBaseSha: baseSha,
+          baseSha: defaultBranchSha,
+          mergeBaseSha: defaultBranchSha,
           targetRef: repo.default_branch,
         }
       : await pullDiff(github, job.owner, job.repo, repo.id, pull);
+  const policy = await loadPolicy(
+    github,
+    job.owner,
+    job.repo,
+    comparison.baseSha,
+  );
   const itemText = reviewedItemText(issue, pull, comparison);
   const revision =
     pull?.head.sha ?? (await sha256Hex(`${issue.title}\n${issue.body ?? ""}`));
   const policyDigest = await sha256Hex(
     JSON.stringify({
-      baseSha,
+      baseSha: defaultBranchSha,
+      // Keep the existing digest for reviews whose two sources share a commit.
+      ...(comparison.baseSha === defaultBranchSha
+        ? {}
+        : { targetSha: comparison.baseSha }),
       config: config.config,
       files: policy.map((f) => [f.path, f.text]),
     }),
@@ -459,8 +466,8 @@ async function loadContext(
     pull === null ||
     comparison.truncated ||
     pull.base.sha !== comparison.baseSha ||
-    comparison.baseSha !== baseSha ||
-    comparison.mergeBaseSha !== baseSha
+    comparison.baseSha !== defaultBranchSha ||
+    comparison.mergeBaseSha !== defaultBranchSha
       ? []
       : await loadQualityEvidence(
           github,

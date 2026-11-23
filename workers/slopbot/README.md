@@ -52,10 +52,11 @@ only after their line counts match the accepted file metadata.
    IDs skip; database errors retry. Registry checks repeat before inference and
    GitHub writes.
 3. **Context.** The consumer takes an installation token and re-reads the
-   repository, the item, optional `.github/slopbot.json`, and `AGENTS.md`,
-   `CONTRIBUTING.md` and `README.md` from the default branch tip. PR content
-   comes from an immutable comparison of the current GitHub-selected target
-   branch and PR head, with the target repository ID verified. Missing
+   repository and the item. It reads optional `.github/slopbot.json` from the
+   default branch tip. For a PR, it reads `AGENTS.md`, `CONTRIBUTING.md` and
+   `README.md` at the current GitHub-selected target branch commit used in the
+   immutable comparison with the PR head. It verifies the target repository ID.
+   For an issue, it reads the guides from the default branch tip. Missing
    comparisons and invalid target identities retry. Missing binary or large
    patches, the text budget, and the 300-file comparison limit produce a
    limited advisory review (comment only; no label, hold, close or penalty).
