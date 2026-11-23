@@ -134,7 +134,8 @@ pure def alwaysAllReadDecidesEvery(r: ReadAhead): bool =
   r.phase == AllRead implies decidedOutcomes(r).size() == r.outcomeCount
 pure def stepReadAheadDecidesNothing(before: ReadAhead, via: str, after: ReadAhead): bool =
   (via == "startRead" or via == "skipRead" or via == "finishRead" or via == "dropRead" or via == "endReadAhead") implies
-    (after.taken == before.taken and after.live == before.live and after.cursor == before.cursor and after.failedAt == before.failedAt)
+    (after.taken.subseteq(before.taken) and before.taken.subseteq(after.taken) and after.live.subseteq(before.live) and
+      before.live.subseteq(after.live) and after.cursor == before.cursor and after.failedAt == before.failedAt)
 pure def sometimesSequentialOnly(r: ReadAhead): bool = r.phase == AllRead and r.outcomeCount > 0 and r.warmed.size() == 0
 pure def sometimesEveryPageTaken(r: ReadAhead): bool = r.phase == AllRead and r.outcomeCount > 0 and r.taken.size() == r.outcomeCount
 pure def sometimesDroppedPageReadAgain(r: ReadAhead): bool =

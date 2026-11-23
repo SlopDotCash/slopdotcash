@@ -279,9 +279,9 @@ pure def claimRetained(c: ClaimCover): bool =
   (c.botUnit or c.botSquash or c.ownerRewarded)
 type CarriedMergeEdge = { origin: int, originAt: int, originRetiring: bool, namedAcceptedMerge: bool, twoParents: bool,
   originHeadSecond: bool, memberIsMerge: bool, rangeFromFirstParent: bool, ordinaryRewarded: bool, repeated: bool }
-pure def mergeEdgeCovers(e: CarriedMergeEdge, retiredAt: int): bool =
-  not(e.repeated) and e.origin > 0 and e.originAt < retiredAt and not(e.originRetiring) and e.namedAcceptedMerge and
-  e.twoParents and e.originHeadSecond and e.memberIsMerge and e.rangeFromFirstParent and e.ordinaryRewarded
+pure def mergeEdgeCovers(edge: CarriedMergeEdge, retiredAt: int): bool =
+  not(edge.repeated) and edge.origin > 0 and edge.originAt < retiredAt and not(edge.originRetiring) and edge.namedAcceptedMerge and
+  edge.twoParents and edge.originHeadSecond and edge.memberIsMerge and edge.rangeFromFirstParent and edge.ordinaryRewarded
 type AcceptanceOrder = { sameMerge: bool, ancestryKnown: bool, carriesRetiringMerge: bool }
 pure def orderAllows(o: AcceptanceOrder): bool = o.sameMerge or (o.ancestryKnown and not(o.carriesRetiringMerge))
 type IdenticalKind = NoIdenticalChange | SharedMerge | CarriedAcceptance | EmptySquash | SurvivingCarrier | DistinctSquash

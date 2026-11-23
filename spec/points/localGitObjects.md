@@ -69,8 +69,8 @@ pure def certain(found: LocalObject): bool =
 pure def canOffer(s: LocalReads, gitRead: GitRead): bool = offeredLocally(gitRead)
 pure def offer(s: LocalReads, gitRead: GitRead): LocalReads =
   { ...s, reader: ReaderRunning, pending: s.pending + 1, asked: s.asked + 1 }
-pure def canSettle(s: LocalReads, found: LocalObject): bool = s.reader == ReaderRunning and s.pending > 0
-pure def settle(s: LocalReads, found: LocalObject): LocalReads =
+pure def canAnswer(s: LocalReads, found: LocalObject): bool = s.reader == ReaderRunning and s.pending > 0
+pure def answer(s: LocalReads, found: LocalObject): LocalReads =
   if (certain(found)) { ...s, pending: s.pending - 1, localServed: s.localServed + 1 }
   else { ...s, pending: s.pending - 1, declined: s.declined + 1 }
 pure def canCrash(s: LocalReads): bool = s.reader == ReaderRunning
