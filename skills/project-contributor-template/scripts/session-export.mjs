@@ -6,10 +6,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const CLEANER_VERSION = "slop-session-cleaner-1";
 
@@ -146,7 +148,41 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Scans text once, whatever the number of known strings: candidates are looked
+// up by their first eight characters.
+function makeKnownMatcher(list) {
+  const byPrefix = new Map();
+  const first = new Uint8Array(65536);
+  for (const k of list ?? []) {
+    if (typeof k !== "string" || k.length < 8) continue;
+    const p = k.slice(0, 8);
+    if (!byPrefix.has(p)) byPrefix.set(p, []);
+    byPrefix.get(p).push(k);
+    first[k.charCodeAt(0)] = 1;
+  }
+  for (const arr of byPrefix.values()) arr.sort((a, b) => b.length - a.length);
+  if (byPrefix.size === 0) return null;
+  return (s, onHit) => {
+    let parts = null;
+    let last = 0;
+    for (let i = 0; i <= s.length - 8; i++) {
+      if (first[s.charCodeAt(i)] === 0) continue;
+      const cands = byPrefix.get(s.slice(i, i + 8));
+      if (!cands) continue;
+      const hit = cands.find((k) => s.startsWith(k, i));
+      if (hit === undefined) continue;
+      if (parts === null) parts = [];
+      parts.push(s.slice(last, i), CREDENTIAL);
+      last = i + hit.length;
+      i = last - 1;
+      onHit();
+    }
+    return parts === null ? s : parts.join("") + s.slice(last);
+  };
+}
+
 function makeStringCleaner(ctx, counts) {
+  const known = makeKnownMatcher(ctx.knownSecrets);
   const values = [
     ...new Set(
       Object.values(ctx.env ?? {}).filter(
@@ -175,6 +211,7 @@ function makeStringCleaner(ctx, counts) {
         s = parts.join(CREDENTIAL);
       }
     }
+    if (known) s = known(s, () => bump(counts, "CREDENTIAL"));
     for (const re of SECRET_SHAPES) {
       s = s.replace(re, () => {
         bump(counts, "CREDENTIAL");
@@ -658,8 +695,12 @@ function writtenPaths(events) {
 
 // Built once per export: tracked files plus files this run wrote, minus
 // anything .gitignore covers. Lookups afterwards are set membership.
-export function makeIsRepoFile(events, repoRoot, homeDir) {
+export function makeRepoIndex(events, repoRoot, homeDir) {
   const root = repoRoot.replace(/\/+$/, "");
+  let realRoot = root;
+  try {
+    realRoot = realpathSync(root);
+  } catch {}
   const tracked = new Set();
   const listed = git(root, ["ls-files", "-z"]);
   if (listed && listed.status === 0)
@@ -686,7 +727,107 @@ export function makeIsRepoFile(events, repoRoot, homeDir) {
       for (const rel of r.stdout.toString("utf8").split("\0"))
         if (rel) ignored.add(`${root}/${rel}`);
   }
-  return (abs) => (tracked.has(abs) || written.has(abs)) && !ignored.has(abs);
+  const gx = { repoRoot: root, realRoot };
+  return {
+    root,
+    realRoot,
+    written,
+    isRepoFile: (abs) => {
+      const a = realTarget(abs, gx);
+      return (
+        insideRepo(a, root) &&
+        (tracked.has(a) || written.has(a)) &&
+        !ignored.has(a)
+      );
+    },
+  };
+}
+
+// ---- Content guard: strings from files that must not leave the machine.
+const SKIP_DIRS = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "target",
+  ".venv",
+  "venv",
+  "vendor",
+  "__pycache__",
+]);
+const HOME_SECRET_FILES = [
+  ".npmrc",
+  ".netrc",
+  ".git-credentials",
+  ".aws/credentials",
+  ".config/gh/hosts.yml",
+  ".docker/config.json",
+  ".pypirc",
+];
+const MAX_GUARD_FILES = 2000;
+const MAX_GUARD_STRINGS = 5000;
+const MAX_GUARD_FILE_BYTES = 64 * 1024;
+
+function addSecretStrings(text, into) {
+  for (const line of text.split(/\r?\n/)) {
+    const clean = (v) =>
+      v
+        .trim()
+        .replace(/^["']+/, "")
+        .replace(/["',;]+$/, "");
+    const t = line.trim();
+    if (t.length >= 8) into.add(t);
+    const whole = clean(line);
+    if (whole.length >= 8) into.add(whole);
+    for (const sep of ["=", ":"]) {
+      const i = line.indexOf(sep);
+      if (i < 0) continue;
+      const v = clean(line.slice(i + 1));
+      if (v.length >= 8) into.add(v);
+    }
+  }
+}
+
+function readSmallText(path) {
+  try {
+    const st = statSync(path);
+    if (!st.isFile() || st.size > MAX_GUARD_FILE_BYTES) return null;
+    const buf = readFileSync(path);
+    return buf.includes(0) ? null : buf.toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function collectKnownSecrets(index, homeDir) {
+  const strings = new Set();
+  let capped = false;
+  const listed = git(index.root, ["ls-files", "-z", "-o"]);
+  if (listed && listed.status === 0) {
+    let files = 0;
+    for (const rel of listed.stdout.toString("utf8").split("\0")) {
+      if (!rel || rel.split("/").some((seg) => SKIP_DIRS.has(seg))) continue;
+      const abs = `${index.root}/${rel}`;
+      if (index.written.has(abs)) continue;
+      if (++files > MAX_GUARD_FILES) {
+        capped = true;
+        break;
+      }
+      const text = readSmallText(abs);
+      if (text !== null) addSecretStrings(text, strings);
+    }
+  }
+  for (const f of HOME_SECRET_FILES) {
+    if (!homeDir) break;
+    const text = readSmallText(join(homeDir, f));
+    if (text !== null) addSecretStrings(text, strings);
+  }
+  let list = [...strings];
+  if (list.length > MAX_GUARD_STRINGS) {
+    capped = true;
+    list = list.slice(0, MAX_GUARD_STRINGS);
+  }
+  return { strings: list, capped };
 }
 
 const WRITE_TOOL = /^(?:write|edit|multiedit|notebookedit|apply_patch)$/i;
@@ -694,8 +835,26 @@ const SEARCH_TOOL = /^(?:grep|glob|search|find)$/i;
 const SINGLE_RECEIPT =
   /^\s*(?:node(?:js)?\s+)?(?:\S*\/)?run-receipt\.mjs(?:\s+[^;&|\n\r<>`$()\\]*)?\s*$/;
 
-function isReceiptOnly(cmd) {
-  return SINGLE_RECEIPT.test(cmd) && !/\$\(|`/.test(cmd);
+let TRUSTED_RECEIPT = null;
+try {
+  TRUSTED_RECEIPT = realpathSync(
+    join(dirname(fileURLToPath(import.meta.url)), "run-receipt.mjs"),
+  );
+} catch {}
+
+// Trusted only when the one command runs this skill's own run-receipt.mjs.
+function isReceiptOnly(cmd, base, g) {
+  if (!SINGLE_RECEIPT.test(cmd) || /\$\(|`/.test(cmd)) return false;
+  const m = /(\S*run-receipt\.mjs)/.exec(cmd);
+  if (!m || TRUSTED_RECEIPT === null) return false;
+  try {
+    return (
+      realpathSync(normalise(unquote(m[1]), base, g.homeDir)) ===
+      TRUSTED_RECEIPT
+    );
+  } catch {
+    return false;
+  }
 }
 
 // A confirmation is accepted only when it is one of these exact lines for the
@@ -713,6 +872,9 @@ function exactConfirmation(text, call) {
     `Successfully wrote to ${p}`,
   ].includes(t);
 }
+
+const INTERPRETER =
+  /^(?:python[\d.]*|pypy[\d.]*|node|nodejs|deno|bun|perl|ruby|php|lua|luajit|Rscript|R)$/;
 
 function unquote(t) {
   return t.replace(/^["'`]+|["'`]+$/g, "");
@@ -766,7 +928,26 @@ function unresolvable(call, cwd, g) {
   if (/\bfind\b/.test(cmd) && /\s-(?:exec|execdir|ok|okdir)\b/.test(cmd))
     return true;
   if (/(?:^|[\s;&|(])(?:ba|z|da|k)?sh\s+-[a-z]*c\b/.test(cmd)) return true;
-  for (const word of cmd.split(/\s+/)) {
+  if (/(?:^|[\s;&|(])(?:rg|ag|ack|tar)\b/.test(cmd)) return true;
+  const words = cmd.split(/\s+/).filter(Boolean);
+  if (
+    /(?:^|[\s;&|(])(?:e?grep|fgrep|cp|zip|unzip|rsync|scp|7z)\b/.test(cmd) &&
+    words.some(
+      (w) => /^-[A-Za-z]*[rR][A-Za-z]*$/.test(w) || w === "--recursive",
+    )
+  )
+    return true;
+  for (let i = 0; i < words.length; i++) {
+    const tool = words[i].split("/").pop();
+    if (!INTERPRETER.test(tool)) continue;
+    for (let j = i + 1; j < words.length && words[j].startsWith("-"); j++) {
+      const f = words[j];
+      if (/^--(?:eval|print|exec|command)$/.test(f)) return true;
+      if (/^-[A-Za-z]*[cepEn][A-Za-z]*$/.test(f)) return true;
+      if (tool === "php" && /^-[A-Za-z]*r[A-Za-z]*$/.test(f)) return true;
+    }
+  }
+  for (const word of words) {
     if (!word) continue;
     if (word.length > 1 && /["']/.test(word.slice(1, -1))) return true;
     if (word.includes(":") && !word.includes("://") && !/:$/.test(word))
@@ -775,14 +956,33 @@ function unresolvable(call, cwd, g) {
   return false;
 }
 
-function fileStatus(abs, g) {
+function realTarget(abs, g) {
+  let real;
   try {
-    if (!statSync(abs).isFile()) return "ok";
+    real = realpathSync(abs);
+  } catch {
+    return abs;
+  }
+  if (real === abs) return abs;
+  const rr = g.realRoot ?? g.repoRoot;
+  if (real === rr || real.startsWith(`${rr}/`))
+    return g.repoRoot + real.slice(rr.length);
+  return real;
+}
+
+// "dir" and "source" both make the result unresolvable.
+function fileStatus(abs, g) {
+  let st;
+  try {
+    st = statSync(abs);
   } catch {
     return "ok";
   }
-  if (!insideRepo(abs, g.repoRoot)) return "outside";
-  return g.isRepoFile(abs) === true ? "ok" : "source";
+  if (st.isDirectory()) return "dir";
+  if (!st.isFile()) return "ok";
+  const real = realTarget(abs, g);
+  if (!insideRepo(real, g.repoRoot)) return "outside";
+  return g.isRepoFile(real) === true ? "ok" : "source";
 }
 
 function commandTouches(cmd, g, base) {
@@ -798,7 +998,7 @@ function commandTouches(cmd, g, base) {
       return "outside";
     const st = fileStatus(abs, g);
     if (st === "outside") return "outside";
-    if (st === "source") verdict = "source";
+    if (st === "source" || st === "dir") verdict = "source";
   }
   return verdict;
 }
@@ -835,7 +1035,7 @@ function guardEvents(events, g) {
       const cmd = commandText(call?.input);
       const base = e.cwd ?? g.repoRoot;
       const tool = typeof e.tool === "string" ? e.tool : "";
-      if (isReceiptOnly(cmd)) {
+      if (isReceiptOnly(cmd, base, g)) {
         // the receipt tool's own output
       } else if (!g.keepRepoFiles) {
         const t = (e.text ?? "").trim();
@@ -853,7 +1053,7 @@ function guardEvents(events, g) {
         else e.redactSource = true;
       } else if (READ_TOOL.test(tool)) {
         e.redactSource = true;
-      } else if (unresolvable(call, e.cwd, g)) {
+      } else if (g.capped || unresolvable(call, e.cwd, g)) {
         e.redactSource = true;
       } else {
         let verdict = commandTouches(cmd, g, base);
@@ -861,7 +1061,7 @@ function guardEvents(events, g) {
           const p = readPathFor(call.input);
           if (p !== undefined) {
             const st = fileStatus(normalise(p, base, g.homeDir), g);
-            if (st !== "ok") verdict = st;
+            if (st !== "ok") verdict = st === "dir" ? "source" : st;
           }
         }
         if (verdict !== "outside")
@@ -906,15 +1106,17 @@ export async function exportSession(opts) {
   const keepRepoFiles = licence !== null && OSI_LICENCES.has(licence);
   const userName =
     opts.env?.USER || opts.env?.LOGNAME || basename(opts.homeDir || "");
-  const isRepoFile = keepRepoFiles
-    ? makeIsRepoFile(raw, opts.repoRoot, opts.homeDir)
-    : () => false;
-  const repoRoot = opts.repoRoot.replace(/\/+$/, "");
+  const index = makeRepoIndex(raw, opts.repoRoot, opts.homeDir);
+  const known = collectKnownSecrets(index, opts.homeDir);
+  const isRepoFile = keepRepoFiles ? index.isRepoFile : () => false;
+  const repoRoot = index.root;
   const guarded = guardEvents(raw, {
     repoRoot,
+    realRoot: index.realRoot,
     homeDir: opts.homeDir,
     keepRepoFiles,
     isRepoFile,
+    capped: known.capped,
   });
   const { events, counts } = cleanEvents(guarded, {
     repoRoot: opts.repoRoot,
@@ -923,6 +1125,7 @@ export async function exportSession(opts) {
     env: opts.env,
     keepRepoFiles,
     isRepoFile,
+    knownSecrets: known.strings,
   });
   const header = {
     format: "slop-session-v1",
@@ -939,6 +1142,7 @@ export async function exportSession(opts) {
     cleaner: CLEANER_VERSION,
     licence,
     repoFilesKept: keepRepoFiles,
+    contentGuard: known.capped ? "capped" : "on",
     counts,
     rules: RULES_URL,
   };
