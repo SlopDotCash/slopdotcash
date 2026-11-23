@@ -471,7 +471,7 @@ function Pools({ record }: { record: PublicRecord }) {
                 </td>
                 <td>
                   {p.chain
-                    ? `${p.chain} USDC`
+                    ? (CHAIN_NAMES[p.chain] ?? p.chain)
                     : p.kind === "external-prize-share"
                       ? "prize share"
                       : ""}
@@ -543,6 +543,14 @@ function Sources() {
     </section>
   );
 }
+
+/** The pool's network. The record does not say which asset a pool pays in. */
+const CHAIN_NAMES: Record<string, string> = {
+  base: "Base",
+  ethereum: "Ethereum",
+  robinhood: "Robinhood Chain",
+  solana: "Solana",
+};
 
 export default function RecordPage() {
   const [state, retry] = usePublicRecord();
