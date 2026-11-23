@@ -109,6 +109,7 @@ import { createHistoricalAssessmentTransport } from "./historical-assessment-tra
 import {
   createMergedHistoricalReplaySnapshot,
   type HistoricalClosedContextBindings,
+  HistoricalClosedOutcomeError,
   type HistoricalEmptyLegacyClosureBindings,
 } from "./historical-merged-replay";
 import {
@@ -5308,6 +5309,53 @@ export function assertHistoricalMergedCensus(
     );
 }
 
+/** Recover authenticated historical sources that GitHub search omitted. */
+export async function hydrateHistoricalClosedPullRequests(
+  references: NodeReference[],
+  {
+    audit,
+    closedContexts,
+    emptyLegacyClosures,
+  }: {
+    audit: Pick<
+      HistoricalLeaderboardCollection["audit"],
+      "repository" | "from" | "through"
+    >;
+    closedContexts?: HistoricalClosedContextBindings;
+    emptyLegacyClosures?: HistoricalEmptyLegacyClosureBindings;
+  },
+  hydrate: (references: NodeReference[]) => Promise<PullRequestRecord[]>,
+): Promise<PullRequestRecord[]> {
+  const bindings = [...(closedContexts ?? []), ...(emptyLegacyClosures ?? [])];
+  if (!bindings.length) return hydrate(references);
+  const searched = new Set(references.map(({ id }) => id));
+  const omitted: NodeReference[] = [];
+  for (const [id] of bindings) {
+    if (searched.has(id)) continue;
+    searched.add(id);
+    omitted.push({ id, kind: "PullRequest", outcome: null, openVersion: null });
+  }
+  const closed = await hydrate([...references, ...omitted]);
+  const byId = new Map(closed.map((pull) => [pull.id, pull]));
+  for (const [id, binding] of bindings) {
+    const pull = byId.get(id);
+    const occurredAt = Date.parse(binding.occurredAt);
+    const url = `https://github.com/${audit.repository.toLowerCase()}/pull/${binding.number}`;
+    if (
+      !pull ||
+      pull.mergedAt !== null ||
+      pull.number !== binding.number ||
+      pull.url.toLowerCase() !== url ||
+      pull.headRefOid !== binding.headSha ||
+      Date.parse(pull.closedAt ?? "") !== occurredAt ||
+      occurredAt < Date.parse(audit.from) ||
+      occurredAt >= Date.parse(audit.through)
+    )
+      throw new HistoricalClosedOutcomeError("lifecycle");
+  }
+  return closed;
+}
+
 async function collectLeaderboardFromGitHub(
   client: GraphqlExecutor,
   options: GenerateOptions,
@@ -5481,16 +5529,25 @@ async function collectLeaderboardFromGitHub(
         commitLines,
         preflight.id,
       );
-      await ensureEstimatedBudget(client, closedReferences.length, 0, 0);
-      const closed = await hydratePullRequests(
-        client,
-        closedReferences,
-        "closed",
-        onProgress,
-        "merged-pull-requests",
-        repository,
-        preflight.id,
-      );
+      const hydrateClosed = async (references: NodeReference[]) => {
+        await ensureEstimatedBudget(client, references.length, 0, 0);
+        return hydratePullRequests(
+          client,
+          references,
+          "closed",
+          onProgress,
+          "merged-pull-requests",
+          repository,
+          preflight.id,
+        );
+      };
+      const closed = historical
+        ? await hydrateHistoricalClosedPullRequests(
+            closedReferences,
+            historical,
+            hydrateClosed,
+          )
+        : await hydrateClosed(closedReferences);
       if (closed.some((pull) => pull.mergedAt !== null || !pull.closedAt))
         throw new Error("Closed unmerged census changed during hydration");
       closedUnmergedPullRequests.push(...closed);
