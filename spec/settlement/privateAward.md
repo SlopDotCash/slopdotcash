@@ -24,13 +24,20 @@ for that case's gross amount and reserves the vault in the same step. Its
 target names the case's reporter as the award actor, the case as the
 obligation, this bounty vault and the case's receipt-time asset. Only a
 committed standard 75/25 case holds that obligation, and every hold keeps
-matching its case. The bounty's reserved total is exactly what the vault
-holds in reserve. The vault's free amount, the latest funds snapshot and the
-bounty's reserved total are always valid amounts in integer base units. A
-confirmed award stays pending without a reservation while vault funds are
-short. A case received through a reporter's claim, a technical approver's
-attestation or link verification, or the GitHub receipt service settling a
-claim enters the award the same way as one Slop received.
+matching its case. A case's revision count never goes below zero, so a
+received case always has a positive revision. The bounty's reserved total is
+exactly what the vault holds in reserve. The vault's free and reserved
+amounts, the latest funds snapshot and the bounty's reserved total are
+always valid amounts in integer base units. A confirmed award stays pending
+without a reservation while vault funds are short. This composition holds
+one vault-backed obligation: once a case holds it, both commitment guards
+refuse a second case that the bounty routes to a vault reservation
+(`vaultCommitmentReady` needs `vaultCase` to be 0), even after the first is
+paid, so that award cannot commit while it is routed there. The bound is a
+limit of this model, not of the product, and no sometimes goal claims a
+second vault award. A case received through a reporter's claim, a technical
+approver's attestation or link verification, or the GitHub receipt service
+settling a claim enters the award the same way as one Slop received.
 
 ```quint
 import money as M from "./money"
@@ -141,6 +148,7 @@ pure def alwaysVaultAwardReserved(s: PrivateAward): bool =
     and M::equalAmounts(p.gross, caseOf(s, s.vaultCase).grossChosen) and (SC::hasReserve(s.settlement) or p.phase == P::Paid))
 pure def alwaysHoldsKeepCaseRules(s: PrivateAward): bool = B::alwaysHoldsMatchCases(s.bounty) and B::alwaysCasesKeepAwardRules(s.bounty)
   and B::alwaysReservedIsOpenVaultHolds(s.bounty)
+pure def alwaysCaseRevisionsCounted(s: PrivateAward): bool = B::caseIds.every(id => caseOf(s, id).revision >= 0)
 pure def alwaysVaultTargetMatchesAward(s: PrivateAward): bool = s.vaultCase > 0 implies
   s.settlement.payment.target == { ...awardTarget(s, s.vaultCase), scope: D::PrivateBounty } and s.settlement.payment.obligation == s.vaultCase
 pure def alwaysBountyReserveIsVaultReserve(s: PrivateAward): bool = M::equalAmounts(s.settlement.vault.reserved, s.bounty.reserved)
@@ -148,7 +156,7 @@ pure def alwaysBountyCoverIsVaultFree(s: PrivateAward): bool = s.bounty.funds.as
   and (M::compareAmounts(s.bounty.reserved, s.bounty.funds.free) > 0
     or M::compareAmounts(M::subtractAmounts(s.bounty.funds.free, s.bounty.reserved), s.settlement.vault.free) <= 0))
 pure def alwaysCoverAmountsValid(s: PrivateAward): bool = M::validAmount(s.settlement.vault.free)
-  and M::validAmount(s.bounty.funds.free) and M::validAmount(s.bounty.reserved)
+  and M::validAmount(s.settlement.vault.reserved) and M::validAmount(s.bounty.funds.free) and M::validAmount(s.bounty.reserved)
 pure def stepVaultReservationNeedsCommitment(before: PrivateAward, via: str, after: PrivateAward): bool =
   (after.settlement.payment.phase == P::VaultReserved and before.settlement.payment.phase != P::VaultReserved) implies
     (via == "decideAward" or via == "reviewRelated") and caseOf(after, after.vaultCase).commitment == C::VaultReservation
@@ -188,7 +196,9 @@ The direct journal admits only a committed direct award of this project's
 case, to the case's reporter, with a payer who holds the financial role at
 that moment. Preparing or recovering a payment request needs the payer's
 financial role in the current authority snapshot, never the reporter's own
-and never a banned actor's, and records the epoch it was authorized under.
+and never a banned actor's, and the exact amounts shown to that payer, and
+records the epoch it was authorized under. Nothing is authorized before a
+direct award is admitted.
 Recording a finalized leg authorizes nothing: an exact finalized transfer
 of the active request is credited even after its payer lost the role, so
 the obligation still reaches paid.
@@ -225,7 +235,7 @@ pure def canPrepareDirect(s: PrivateAward, by: int, checkedEpoch: int, intent: D
 pure def prepareDirect(s: PrivateAward, by: int, checkedEpoch: int, intent: DB::Intent, observedRevision: int, proofAvailable: bool, nonceReserved: bool): PrivateAward =
   { ...withDirect(DB::prepare(s.direct, intent, observedRevision, proofAvailable, nonceReserved, by), s), authorizedEpoch: checkedEpoch }
 pure def canRecoverDirect(s: PrivateAward, by: int, checkedEpoch: int, successor: DB::Intent, retirement: DB::Retirement, observedRevision: int, nonceReserved: bool): bool =
-  s.directCase > 0 and financialNow(directCaseOf(s), by, checkedEpoch)
+  s.directCase > 0 and financialNow(directCaseOf(s), by, checkedEpoch) and amountsShownFor(s, by, s.directCase, s.direct.terms.gross)
     and DB::canRecover(s.direct, successor, retirement, observedRevision, nonceReserved, by)
 pure def recoverDirect(s: PrivateAward, by: int, checkedEpoch: int, successor: DB::Intent, retirement: DB::Retirement, observedRevision: int, nonceReserved: bool): PrivateAward =
   { ...withDirect(DB::recover(s.direct, successor, retirement, observedRevision, nonceReserved, by), s), authorizedEpoch: checkedEpoch }
@@ -234,6 +244,7 @@ pure def alwaysDirectJournalBound(s: PrivateAward): bool = (s.direct.admitted if
     and C::committed(directCaseOf(s)) and directCaseOf(s).commitment == C::DirectAward
     and s.direct.terms.reporterActor == directCaseOf(s).reporter and M::equalAmounts(s.direct.terms.gross, directCaseOf(s).grossChosen))
   and (s.direct.intent.active iff s.authorizedEpoch > 0) and s.authorizedEpoch <= directCaseOf(s).authority.epoch
+pure def alwaysNothingAuthorizedBeforeAdmission(s: PrivateAward): bool = s.directCase == 0 implies s.authorizedEpoch == 0
 pure def stepDirectPaymentNeedsFinancialApprover(before: PrivateAward, via: str, after: PrivateAward): bool =
   (via == "prepareDirect" or via == "recoverDirect") implies
     financialNow(directCaseOf(before), before.direct.terms.payerActor, directCaseOf(before).authority.epoch)
@@ -274,8 +285,15 @@ pure def recordPair(s: PrivateAward, pair: DB::ReceiptPair, observedRevision: in
 The deciding maintainer, the reviewing moderator or the paying financial
 approver first sees the exact gross amount, the researcher's amount and
 Slop's amount for the current case revision. A standard award splits 75/25
-exactly; a full award goes wholly to the researcher. An award decision and a
-direct payment request each need the matching display by the same person.
+exactly; a full award goes wholly to the researcher. An award decision, a
+direct payment request and its successor request each need the matching
+display by the same person: a recovery presents a new send for the payer to
+authorize, so it needs the display as the first request does (PRD section 8,
+"Show exact gross and net amounts before authorization"). Amounts are shown
+only for a received case: an unreceived case has unpaid terms and no award,
+so it allows no amount. A committed award's gross amount is always one its
+case's terms allow, so showing it again shows a valid positive amount and,
+for a standard award, an exact 75/25 split.
 
 ```quint
 pure def amountsFor(by: int, id: int, c: C::PrivateCase, gross: M::Amount): AmountsShown =
@@ -296,13 +314,15 @@ pure def alwaysShownAmountsExact(s: PrivateAward): bool =
     and (caseOf(s, s.shown.caseId).terms.split == T::StandardSplit implies
       M::equalAmounts(s.shown.researcher, M::privateResearcherAmount(s.shown.gross))
       and M::equalAmounts(s.shown.slop, M::privateFeeAmount(s.shown.gross))))
+pure def alwaysCommittedWithinTerms(s: PrivateAward): bool = B::caseIds.every(id => C::alwaysApprovedWithinTerms(caseOf(s, id)))
+pure def alwaysShownCaseReceived(s: PrivateAward): bool = s.shown.caseId > 0 implies caseOf(s, s.shown.caseId).submission == C::Verified
 pure def lastDecider(c: C::PrivateCase): int = c.deciders.nthOr(c.deciders.length() - 1, 0)
 pure def stepAuthorizationFollowsDisplay(before: PrivateAward, via: str, after: PrivateAward): bool =
   B::caseIds.every(id => ((via == "decideAward" or via == "reviewRelated")
     and C::committed(caseOf(after, id)) and not(C::committed(caseOf(before, id)))) implies
       before.shown.caseId == id and before.shown.caseRevision == caseOf(before, id).revision
       and M::equalAmounts(before.shown.gross, caseOf(after, id).grossChosen) and before.shown.by == lastDecider(caseOf(after, id)))
-  and (via == "prepareDirect" implies before.shown.caseId == before.directCase and before.shown.by == before.direct.terms.payerActor
+  and ((via == "prepareDirect" or via == "recoverDirect") implies before.shown.caseId == before.directCase and before.shown.by == before.direct.terms.payerActor
     and M::equalAmounts(before.shown.gross, before.direct.terms.gross))
 pure def sometimesShownToPayer(s: PrivateAward): bool = s.shown.caseId > 0 and s.shown.caseId == s.directCase
   and s.shown.by == s.direct.terms.payerActor
@@ -347,15 +367,32 @@ or ban the financial approver.
 
 Discovered by simulation: with no related reporter and no moderator among
 the deciding actors, the guard probe for a related-party review found no
-reachable state in which a moderator could review a proposal. The snapshot
-that revokes the financial approver therefore also names the reporter a
-related party and makes actor 5 a moderator. A separate related-party
-snapshot and moderator 4 among the actors diluted every other observation
-and actor choice until the search for a direct award paid after its payer
-lost the role found no witness. An award decided after the revoke snapshot
-can never be admitted as a direct award, since no later snapshot restores a
-financial approver, so correlating these observations costs that search
-nothing.
+reachable state in which a moderator could review a proposal. That guard was
+dead from the first samples, which named no related party and no moderator
+actor; neither the vault binding of the award target nor the Inbox
+enrollment change caused it, and `vaultCommitmentReady` constrains only an
+approval the bounty routes to the vault. The snapshot that revokes the
+financial approver therefore also names the reporter a related party and
+makes actor 5 a moderator. A separate related-party snapshot and moderator 4
+among the actors diluted every other observation and actor choice until the
+search for a direct award paid after its payer lost the role found no
+witness. An award decided after the revoke snapshot can never be admitted as
+a direct award, since no later snapshot restores a financial approver, so
+correlating these observations costs that search nothing. The review event
+lost its own weight of 15 for the same reason: at 15 it took the steps that
+search needs, and with the default weight the guard probe still found it
+allowed.
+
+Discovered by simulation: the review guard refuses a moderator who decided
+the case, but no sampled moderator ever decided one, so that refusal and a
+refused review (which makes the award ineligible) were never simulated. The
+revoke snapshot therefore also makes technical member 2 a moderator, so 2
+can decide the award and is then refused its review while 5, who never
+decides a case, may review it; and the review is sampled refused as well as
+approved. Actor 5 having been the financial approver in the first epoch
+does not weaken that check: the review refuses an actor for having decided
+the case, whatever other role it holds, and 5 is never technical, so it
+never decides one.
 
 Discovered by simulation: the guard probes for a single direct-award
 transfer and for a direct-award recovery found no state that allowed them in
@@ -368,15 +405,15 @@ first-epoch snapshots therefore name a technical member, 6 or 8, whom no
 sampled actor plays, so three of the five snapshots are first-epoch. That
 member takes no action, but caseRecipients includes every technical member,
 so a case observed under one of these snapshots also saves its case notices
-for actor 6 or 8, and recipientsValid checks that recipient as well. A case could also record a root cause that no
-sampled journal finding matched, so the journal samples pair each case with
-each finding. An observed vault that covers the award sends it to a vault
-reservation instead of the direct rail, so deposits and fund observations
-are rarer, authority snapshots are observed less often, and the direct
-admission, wallet, consent, preparation, recording and recovery events are
-weighted above the events that are open in most states. A recovery is
-weighted with admission and preparation, the heaviest, because few of its
-sampled arguments match the prepared request.
+for actor 6 or 8, and recipientsValid checks that recipient as well. A case
+could also record a root cause that no sampled journal finding matched, so
+the journal samples pair each case with each finding. An observed vault that
+covers the award sends it to a vault reservation instead of the direct rail,
+so deposits and fund observations are rarer, authority snapshots are
+observed less often, and the direct admission, wallet, consent, preparation,
+recording and recovery events are weighted above the events that are open
+in most states. A recovery is weighted with admission and preparation, the
+heaviest, because few of its sampled arguments match the prepared request.
 
 ```quint
 pure val awardTerms: T::ReceiptTerms = { ...T::standardTerms, offeredGross: List(4), asset: "asset" }
@@ -387,7 +424,7 @@ pure val termsValues = Set(awardTerms, { ...awardTerms, receivedAt: 5 })
 pure val reportVersionValues = Set(1)
 pure val versionValues = Set(1)
 pure val snapshotValues = Set(C::staff, { ...C::staff, technical: List(2, 3, 6) }, { ...C::staff, technical: List(2, 3, 8) },
-  { ...C::staff, epoch: 2, financial: List(), moderators: List(4, 5, 7), relatedParties: List(1) },
+  { ...C::staff, epoch: 2, financial: List(), moderators: List(2, 4, 5, 7), relatedParties: List(1) },
   { ...C::staff, epoch: 2, banned: List(5) })
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::Critical, loss: T::VerifiedPotential, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false },
@@ -402,7 +439,7 @@ pure val finalizedValues = Set(true)
 pure val observedAtValues = Set(2, 3)
 pure val nowMsValues = Set(4)
 pure val routeValues = Set({ asset: "asset", qualified: true, observedAt: 2 })
-pure val approveValues = Set(true)
+pure val approveValues = Set(true, false)
 pure def awardReceipt(id: int): SC::FinalizedPayment = { ...SC::bountyReceipt,
   scanner: { ...SC::bountyReceipt.scanner, target: { ...SC::bountyReceipt.scanner.target, actor: 1, obligation: id } },
   amounts: { ...SC::bountyReceipt.amounts, obligation: id } }
