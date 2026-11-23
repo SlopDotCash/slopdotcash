@@ -1933,26 +1933,29 @@ test("owner creates, registers and funds a vault through the real API", async ({
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toHaveCount(0);
     expectedRecoveryRejection = false;
-    const registeredRevision = recoveryPage.waitForResponse((response) => {
-      return (
-        response.request().method() === "GET" &&
-        response.url() === `${origin}/api/v1/projects/${project.id}?reload=1`
-      );
-    });
-    const registeredSetup = recoveryPage.waitForResponse((response) => {
-      return (
-        response.request().method() === "POST" &&
-        response.url() === `${origin}/api/v1/project-setup/${project.id}/check`
-      );
-    });
     await setup.getByLabel("Creation transaction hash").fill(sends[0]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
       .click();
     await expect(setup.getByRole("status")).toContainText("not finalized");
-    await rpc("anvil_mine", ["0x40"]);
     // The saved creation is checked without a click once its block is final.
-    await expect(setup).toHaveCount(0, { timeout: 30_000 });
+    const [revisionResponse, setupResponse] = await Promise.all([
+      recoveryPage.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          response.url() === `${origin}/api/v1/projects/${project.id}?reload=1`,
+        { timeout: 30_000 },
+      ),
+      recoveryPage.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url() ===
+            `${origin}/api/v1/project-setup/${project.id}/check`,
+        { timeout: 30_000 },
+      ),
+      rpc("anvil_mine", ["0x40"]),
+    ]);
+    await expect(setup).toHaveCount(0);
     await expect(
       recoveryPage
         .getByRole("status")
@@ -1967,10 +1970,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       recoveryPage.getByRole("textbox", { name: /^Amount \/ month/u }),
     ).toHaveValue("2000");
-    const [revisionResponse, setupResponse] = await Promise.all([
-      registeredRevision,
-      registeredSetup,
-    ]);
     expect(revisionResponse.status()).toBe(200);
     expect(await revisionResponse.json()).toMatchObject({
       revision: 3,
@@ -2741,10 +2740,15 @@ test("owner registers a separate bounty vault through the API and funds it priva
       data: { scanSecurity: true },
     });
     expect(scan.ok(), await scan.text()).toBe(true);
+    const bountyFunds = page.getByRole("region", {
+      name: "Bounty funds",
+      exact: true,
+    });
+    const available = bountyFunds
+      .getByRole("definition")
+      .filter({ hasText: /^10 USDC$/u });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
-    await expect(
-      page.getByRole("region", { name: "Bounty funds", exact: true }),
-    ).toContainText("Available for new awards: 10 USDC");
+    await expect(available).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
     await page.request.post(`${origin}/__fixture`, {
       data: { privateReadUnavailable: true },
@@ -2754,20 +2758,16 @@ test("owner registers a separate bounty vault through the API and funds it priva
     );
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await unavailable;
-    const bountyFunds = page.getByRole("region", {
-      name: "Bounty funds",
-      exact: true,
-    });
     await expect(bountyFunds.getByRole("alert")).toContainText(
       "Private balance read is unavailable.",
     );
     // A failed refresh must retain funded withdrawal and transaction recovery.
     await expect(funding).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
-    await expect(bountyFunds).toContainText("Last verified balance");
-    await expect(bountyFunds).toContainText(
-      "Available for new awards: 10 USDC",
-    );
+    await expect(
+      bountyFunds.getByRole("alert").getByText("Stale", { exact: true }),
+    ).toBeVisible();
+    await expect(available).toBeVisible();
     await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
     await funding.getByLabel("Withdraw free funds").check();
     await expect(
@@ -2906,19 +2906,13 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(
       page.getByRole("heading", { name: "Manage project", exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("region", { name: "Bounty funds", exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByText("Available for new awards:", { exact: false }),
-    ).toHaveCount(0);
+    await expect(bountyFunds).toHaveCount(0);
+    await expect(page.getByText("10 USDC", { exact: true })).toHaveCount(0);
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
     });
     await openProjectSecuritySettings(page);
-    await expect(
-      page.getByRole("region", { name: "Bounty funds", exact: true }),
-    ).toContainText("Available for new awards: 10 USDC");
+    await expect(available).toBeVisible();
     await expect(funding.getByRole("status")).toHaveCount(0);
     // Unlike a transient read failure, lost authority must clear private data.
     await page.request.post(`${origin}/__fixture`, {
@@ -2937,9 +2931,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
-    await expect(bountyFunds).toContainText(
-      "Available for new awards: 10 USDC",
-    );
+    await expect(available).toBeVisible();
     expect(failed).toEqual([
       `503 ${privateUrl}`,
       `503 ${privateUrl}`,
@@ -2982,9 +2974,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(bountyFunds.getByRole("alert")).toContainText(
       "account changed",
     );
-    await expect(bountyFunds).not.toContainText(
-      "Available for new awards: 10 USDC",
-    );
+    await expect(available).toHaveCount(0);
     await expect(funding).toHaveCount(0);
     await page.unroute(privateUrl);
     await page.unroute("**/api/v1/project-session");
