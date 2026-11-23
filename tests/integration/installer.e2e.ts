@@ -2268,6 +2268,41 @@ describe("generated project skill installation", () => {
       },
     );
     expect(start.status, start.stderr).toBe(0);
+    // The exact start forms the skill gives: claude-code with
+    // --usage-unavailable, and a client with no usage reader without it.
+    for (const [client, extra] of [
+      ["claude-code", ["--usage-unavailable"]],
+      ["cursor", []],
+    ] as const) {
+      const form = spawnSync(
+        process.execPath,
+        [
+          join(installedSkill, "scripts", "run-receipt.mjs"),
+          "start",
+          "--provider",
+          "fixture",
+          "--model",
+          "fixture-model",
+          "--client",
+          client,
+          "--lane",
+          "fixture",
+          ...extra,
+          "--repo-root",
+          target,
+          "--json",
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: join(root, "state"),
+          },
+        },
+      );
+      expect(form.status, `${client}: ${form.stderr}`).toBe(0);
+      expect(JSON.parse(form.stdout).message).toContain("slop-run:");
+    }
     const started = JSON.parse(start.stdout);
     expect(started.runId).toBeTruthy();
     expect(started.message).toContain(`slop-run:${started.runId}`);

@@ -14,11 +14,12 @@ UTF-8 NDJSON: one JSON object per line, in the order things happened. Fields:
   `2026-11-23T14:02:11Z`.
 - `text`: the words of the message, or the output of a tool. Required for
   `user` and `assistant`.
-- `tool`: the tool name. Required for `tool_call`. Letters, digits and
-  `_ . : -`, up to 64 characters.
+- `tool`: the tool name. Required for `tool_call`, optional for
+  `tool_result`. Letters, digits and `_ . : -`, up to 64 characters.
 - `args`: the tool's arguments, as JSON, for `tool_call`.
 
-Lines of any other shape are ignored.
+A `t` that is not a valid time is dropped and the line is kept. Lines of any
+other shape are ignored.
 
 ```json
 {"t":"2026-11-23T14:02:11Z","kind":"user","text":"Fix the date parsing bug in the importer."}
