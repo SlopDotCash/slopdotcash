@@ -162,7 +162,7 @@ test("only a labelled close inside the window that stands 48 hours is a strike",
   );
 });
 
-test("a strike keeps the deposit; a withdrawal sends it back after 21 days unless a strike is pending", () => {
+test("a strike keeps the deposit; a withdrawal sends it back after 21 days once every cover is clear", () => {
   const now = at(plus(paidAt, 10 * DAY));
   expect(standingDepositDue(deposit, ["watch", "strike"], now)).toBe(
     "kept_due",
@@ -174,12 +174,16 @@ test("a strike keeps the deposit; a withdrawal sends it back after 21 days unles
     standingDepositDue(withdrawn, [], at(plus(requested, 20 * DAY))),
   ).toBeNull();
   expect(
+    standingDepositDue(withdrawn, ["clear"], at(plus(requested, 21 * DAY))),
+  ).toBe("refund_due");
+  // A cover not yet read as clear holds the refund until Slopbot reads it.
+  expect(
     standingDepositDue(
       withdrawn,
       ["clear", "watch"],
       at(plus(requested, 21 * DAY)),
     ),
-  ).toBe("refund_due");
+  ).toBeNull();
   expect(
     standingDepositDue(withdrawn, ["pending"], at(plus(requested, 21 * DAY))),
   ).toBeNull();

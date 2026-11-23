@@ -208,8 +208,10 @@ export function standingCoverState(facts, now) {
 /**
  * What is due on a paid standing deposit with no outcome yet:
  * `kept_due` when any of its covers is a strike, `refund_due` when the
- * withdrawal wait has passed after coverage ended and no cover is pending
- * or still watched, otherwise null.
+ * withdrawal wait has passed after coverage ended and every cover is clear,
+ * otherwise null. A cover still `watch` or `pending` holds the refund until
+ * Slopbot checks it again, so a stale reading never sends a deposit back
+ * ahead of a strike.
  */
 export function standingDepositDue(deposit, coverStates, now) {
   if (!deposit || deposit.outcome !== null || !deposit.paidAt) return null;
@@ -221,6 +223,6 @@ export function standingDepositDue(deposit, coverStates, now) {
     ends.getTime() + STANDING_DEPOSIT_WITHDRAW_WAIT_DAYS * DAY_MS
   )
     return null;
-  if (coverStates.includes("pending")) return null;
+  if (coverStates.some((state) => state !== "clear")) return null;
   return "refund_due";
 }

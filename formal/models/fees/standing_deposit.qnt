@@ -62,7 +62,10 @@ module standing_deposit {
   action expire = all { row == "paid", not(expired), row' = row, withdrawn' = withdrawn,
     expired' = true, waitOver' = waitOver, accepted' = accepted, mergedBefore' = mergedBefore,
     outcome' = outcome, prs' = prs, keptSent' = keptSent, refundSent' = refundSent }
-  action passWait = all { coverEnded, not(waitOver), row' = row, withdrawn' = withdrawn,
+  // The wait ends 21 days after coverage ended, so every covered pull
+  // request, opened before then, is past its 21-day window by then.
+  action passWait = all { coverEnded, not(waitOver),
+    Set(0, 1).forall(i => prs.get(i).covered implies prs.get(i).windowOver), row' = row, withdrawn' = withdrawn,
     expired' = expired, waitOver' = true, accepted' = accepted, mergedBefore' = mergedBefore,
     outcome' = outcome, prs' = prs, keptSent' = keptSent, refundSent' = refundSent }
   action ownerRefuses = all { accepted, row' = row, withdrawn' = withdrawn, expired' = expired,
@@ -120,7 +123,7 @@ module standing_deposit {
   val states = Set(0, 1).filter(i => prs.get(i).covered).map(i => prs.get(i).cover)
   val due = if (row != "paid" or outcome != "none") "none"
     else if (states.contains("strike")) "kept_due"
-    else if (coverEnded and waitOver and not(states.contains("pending"))) "refund_due"
+    else if (coverEnded and waitOver and states.forall(c => c == "clear")) "refund_due"
     else "none"
   action decide = all { due != "none", row' = row, withdrawn' = withdrawn, expired' = expired,
     waitOver' = waitOver, accepted' = accepted, mergedBefore' = mergedBefore, outcome' = due,
@@ -150,13 +153,14 @@ module standing_deposit {
     Set("refund_due", "refunded").contains(outcome) implies (coverEnded and waitOver),
     // A cancelled or never paid row has no outcome and covers nothing.
     row != "paid" implies (outcome == "none" and Set(0, 1).forall(i => not(prs.get(i).covered))),
-    // A strike needs the grace period after it was first seen.
-    Set(0, 1).forall(i => prs.get(i).cover == "strike" implies prs.get(i).seen)
+    // A strike is final: once recorded, no later reopen or label change
+    // takes it back, and the deposit can only be kept.
+    strikeHappened implies Set("none", "kept_due", "kept").contains(outcome)
   }
 
   // Scenarios.
   run coveredAndMergedSentBackTest = init.then(firstMerge).then(post).then(pay).then(openPr(0)).then(cover(0))
-    .then(merge(0)).then(check(0)).then(withdraw).then(passWait).then(decide).then(send)
+    .then(merge(0)).then(check(0)).then(withdraw).then(endWindow(0)).then(passWait).then(decide).then(send)
     .expect(outcome == "refunded" and refundSent == 1 and keptSent == 0 and invariant)
   run ordinaryCloseCostsNothingTest = init.then(firstMerge).then(post).then(pay).then(openPr(0))
     .then(cover(0)).then(close(0)).then(check(0)).then(endWindow(0)).then(check(0))
