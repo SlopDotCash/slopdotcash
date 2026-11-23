@@ -4466,7 +4466,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "24780b1f9a3f3bf4e904f5fb386a6b411efe06a9d96ccf607739de6bd49cf4b6",
+      "sha256": "c2f3de2f6fc1d5b3bb9def5aafd597dc2fb5a0520a043e9eaad83f7e45e45ed1",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4481,16 +4481,16 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 229, 240, 249, 340, 352, 354, 357, 586, 674, 695, 731, 762, 827,
-        874, 902, 993, 1026, 1035, 1047, 1083, 1180, 1376, 1611, 1673, 1681,
-        1739, 1792, 1795, 1988, 1997, 2002, 2009, 2092, 2093, 2259, 2260, 2343,
-        2376, 2404, 2406, 2410, 2420, 2422, 2434, 2444, 2454, 2479, 2482, 2483,
-        2486, 2488, 2513, 2565, 2870, 2873, 3173, 3293, 3414, 3427, 3438, 3439,
-        3626, 3627, 3818, 3834, 3846, 3853, 3879, 3889, 3893, 3897, 3901, 3956,
-        3975, 4002, 4019, 4053, 4054, 4056, 4072, 4089, 4090, 4091, 4100, 4105,
-        4285, 4643, 4665, 4674, 4724, 4759, 4765, 4772, 4841, 4929, 5115, 5246,
-        5492, 5660, 6049, 6059, 6061, 6074, 6107, 6109, 6110, 6114, 6118, 6174,
-        6240, 6293, 6296, 6385, 6433, 6513, 6523, 6530
+        43, 230, 241, 250, 341, 353, 355, 358, 587, 675, 696, 732, 763, 828,
+        875, 903, 994, 1027, 1036, 1048, 1084, 1181, 1377, 1612, 1674, 1682,
+        1740, 1793, 1796, 1989, 1998, 2003, 2010, 2093, 2094, 2260, 2261, 2344,
+        2377, 2405, 2407, 2411, 2421, 2423, 2435, 2445, 2455, 2480, 2483, 2484,
+        2487, 2489, 2514, 2566, 2871, 2874, 3174, 3294, 3415, 3428, 3439, 3440,
+        3627, 3628, 3819, 3835, 3847, 3854, 3880, 3890, 3894, 3898, 3902, 3957,
+        3976, 4003, 4020, 4054, 4055, 4057, 4073, 4090, 4091, 4092, 4101, 4106,
+        4286, 4644, 4666, 4675, 4725, 4760, 4766, 4773, 4842, 4930, 5116, 5247,
+        5545, 5731, 6083, 6093, 6095, 6108, 6136, 6138, 6139, 6143, 6147, 6203,
+        6269, 6322, 6325, 6414, 6462, 6542, 6552, 6559
       ],
       "review": "mapped-abstraction"
     },
@@ -4603,6 +4603,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/historical-closed-preflight.ts",
+      "sha256": "f8cbdeb24b272cee8391d914676938bee9873991b2ac839491f523671c0d6a62",
+      "models": ["formal/models/points/historical_assessment_audit.qnt"],
+      "candidateLines": [33, 85],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/historical-closed-review-source.ts",
       "sha256": "5ca5a29cc9908ceb54cfcd5f58a6a57e7581b3626c60a59abbacb2624974c5c3",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
@@ -4621,9 +4628,9 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "3b576c87c5a33e57a04e8fa55a177649f4d141cba15d120660b83c35df0026e5",
+      "sha256": "ee46bf9b02b62859147b3223a027ebf7e7e3dfb8e35e9c8cab0b9a286e1e2a6c",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [64, 92, 110, 151, 157, 158, 160, 161, 248],
+      "candidateLines": [74, 87, 119, 147, 209, 215, 216, 218, 219, 309],
       "review": "mapped-abstraction"
     },
     {
@@ -5486,15 +5493,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "fa0be38b82a098d1f1c27233ad84a07c2ffc9071096c54f628d18c80fe1aaa94",
+      "sha256": "7f81d8814297be876094bd7271e28ceff892370be40b2068e7193ffc3e420636",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/historical_net_outcome_retirement.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 248, 249, 250, 251, 253, 258, 301, 316, 317, 323, 324, 459, 1183,
-        1412, 1432, 1643, 1661, 1668, 1796, 1891, 2062
+        3, 249, 250, 251, 252, 254, 259, 302, 317, 318, 324, 325, 460, 1184,
+        1413, 1433, 1647, 1665, 1672, 1804, 1899, 2070
       ],
       "review": "mapped-abstraction"
     },
@@ -15970,12 +15977,13 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "8ee5ee63fd78e27d3f67f5d657bec353ce2ad7effc837de37b38b5772bbeb9c4",
+      "sha256": "8d5812c9950116ec1361b6f41ed3e794ce3d35e5df21dd1d4d9942345d343149",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
         "scripts/historical-assessment-reconciliation.ts",
         "scripts/historical-assessment-transport.ts",
+        "scripts/historical-closed-preflight.ts",
         "scripts/historical-closed-review-source.ts",
         "scripts/historical-merged-replay.ts",
         "scripts/historical-replay-review.ts",
@@ -16393,7 +16401,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "ec87412d80b10e289c0f8d0edec7fec411bd57327b20ca4e0d5911c613585f42",
+      "sha256": "aadaca864fad7f3bb87856ce9d26ac5154ca0718bb09bdc3cf84d02083f92ba7",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
