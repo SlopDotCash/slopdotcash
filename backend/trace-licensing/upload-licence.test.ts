@@ -318,6 +318,41 @@ describe("trace terms version and upload licence", () => {
     expect(t.version(runId)).toBe("private-trace-v2");
   });
 
+  test("a version stamp never changes a finalized run, even one with no stored version", async () => {
+    const t = api();
+    const runId = await t.uploaded("private-trace-v1");
+    expect((await t.finalize(runId)).status).toBe(200);
+    // A run finalized by the code that predates terms versions stores none.
+    // The route refuses an intent for a finalized run before stamping; the
+    // stamp itself must refuse too, for a finalize that lands in between.
+    t.sqlite
+      .query("UPDATE trace_runs SET terms_version = NULL WHERE id = ?")
+      .run(runId);
+    expect(
+      await t.deps.persistence.stampTermsVersion(
+        runId,
+        ACTOR,
+        "private-trace-v2",
+      ),
+    ).toBe("conflict");
+    expect(t.version(runId)).toBeNull();
+    const refused = await t.intent(runId, "private-trace-v2");
+    expect(refused.status).toBe(409);
+    expect(refused.json.error).toBe("run_finalized");
+    expect(t.version(runId)).toBeNull();
+  });
+
+  test("a version stamp still sets an unfinalized run once", async () => {
+    const t = api();
+    const runId = await t.createRun();
+    const stamp = (version: "private-trace-v1" | "private-trace-v2") =>
+      t.deps.persistence.stampTermsVersion(runId, ACTOR, version);
+    expect(await stamp("private-trace-v2")).toBe("set");
+    expect(await stamp("private-trace-v2")).toBe("same");
+    expect(await stamp("private-trace-v1")).toBe("conflict");
+    expect(t.version(runId)).toBe("private-trace-v2");
+  });
+
   test("invalid termsVersion is 400", async () => {
     const t = api();
     const runId = await t.createRun();

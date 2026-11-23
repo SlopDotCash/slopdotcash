@@ -785,7 +785,7 @@ export function notifySlopbotScamReview<S>(
     );
 }
 
-export const TRACE_LICENSING_EVENT_KEY = "trace-licensing-available-2026-11";
+export const TRACE_LICENSING_EVENT_KEY = "trace-licensing:available-2026-11";
 export const TRACE_LICENSING_NOTICE =
   "You can now choose to license your Slop traces for pay. You get 50% of each sale. Nothing is licensed unless you turn it on.";
 

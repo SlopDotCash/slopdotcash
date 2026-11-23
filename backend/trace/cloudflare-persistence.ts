@@ -719,6 +719,7 @@ export class CloudflareTracePersistence implements TracePersistence {
       .prepare(
         `UPDATE trace_runs SET terms_version = ?
          WHERE id = ? AND github_user_id = ? AND terms_version IS NULL
+           AND state <> 'finalized'
            AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
       )
       .bind(version, runId, githubId, githubId)

@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import {
+  isNotificationEventKey,
+  parseNotificationsResponse,
+} from "../../src/lib/notifications";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
@@ -7,6 +11,7 @@ import {
   TRACE_LICENSING_NOTICE,
   TRACE_LICENSING_RECIPIENTS_SQL,
 } from "../notifications/events";
+import { handleNotificationsApi } from "../notifications/handler";
 
 const NOW = "2026-11-23T12:00:00.000Z";
 
@@ -67,7 +72,7 @@ function harness() {
         recipients: number;
       }
     ).recipients;
-  return { sqlite, member, run, notices, send, count };
+  return { db, sqlite, member, run, notices, send, count };
 }
 
 test("notifies each eligible account once; skips banned and closed; second run adds nothing", async () => {
@@ -95,7 +100,8 @@ test("notifies each eligible account once; skips banned and closed; second run a
     expect(n.detail).toBe(TRACE_LICENSING_NOTICE);
     expect(n.action_path).toBe("/account#trace-licensing");
   }
-  expect(TRACE_LICENSING_EVENT_KEY).toBe("trace-licensing-available-2026-11");
+  expect(TRACE_LICENSING_EVENT_KEY).toBe("trace-licensing:available-2026-11");
+  expect(isNotificationEventKey(TRACE_LICENSING_EVENT_KEY)).toBe(true);
   expect(h.count()).toBe(0);
   h.run("116");
   expect(h.count()).toBe(1);
@@ -131,4 +137,51 @@ test("an uploader with no points_members row is notified once", async () => {
   await h.send();
   expect(h.notices().map((n) => n.id)).toEqual(["121"]);
   expect(h.count()).toBe(0);
+});
+
+test("the notice reaches the recipient's Inbox, parses on the page and can be marked read", async () => {
+  const h = harness();
+  h.run("131");
+  await h.send();
+  const origin = "https://slop.cash";
+  const call = (request: Request) =>
+    handleNotificationsApi(request, {
+      db: h.db as never,
+      sessionActor: async () => ({ githubId: "131" }),
+      now: () => new Date("2026-11-23T13:00:00.000Z"),
+    });
+  const listed = (await call(
+    new Request(`${origin}/api/v1/notifications`),
+  )) as Response;
+  expect(listed.status).toBe(200);
+  const inbox = parseNotificationsResponse(await listed.json());
+  expect(inbox.unread).toBe(1);
+  expect(inbox.notifications).toHaveLength(1);
+  const [notice] = inbox.notifications;
+  expect(notice.eventKey).toBe(TRACE_LICENSING_EVENT_KEY);
+  expect(notice.kind).toBe("trace_licensing_available");
+  expect(notice.detail).toBe(TRACE_LICENSING_NOTICE);
+  expect(notice.actionPath).toBe("/account#trace-licensing");
+  const marked = (await call(
+    new Request(`${origin}/api/v1/notifications/read`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ eventKeys: [notice.eventKey] }),
+    }),
+  )) as Response;
+  expect(marked.status).toBe(200);
+  expect(await marked.json()).toEqual({ marked: 1 });
+  const after = parseNotificationsResponse(
+    await (
+      (await call(new Request(`${origin}/api/v1/notifications`))) as Response
+    ).json(),
+  );
+  expect(after.unread).toBe(0);
+  expect(after.notifications[0].readAt).toBe("2026-11-23T13:00:00.000Z");
+});
+
+test("the notice text and event key contain no single quote", () => {
+  // The script interpolates both between single quotes in literal SQL.
+  expect(TRACE_LICENSING_NOTICE).not.toContain("'");
+  expect(TRACE_LICENSING_EVENT_KEY).not.toContain("'");
 });

@@ -65,7 +65,7 @@ describe("trace licensing migration", () => {
     sqlite
       .query(
         `INSERT INTO notifications (event_key, recipient_github_id, kind, subject, action_path, source_at, created_at)
-         VALUES ('trace-licensing-available','1','trace_licensing_available','Trace licensing','/account#trace-licensing','2026-11-22T00:00:00Z','2026-11-22T00:00:00Z')`,
+         VALUES ('trace-licensing:available-2026-11','1','trace_licensing_available','Trace licensing','/account#trace-licensing','2026-11-22T00:00:00Z','2026-11-22T00:00:00Z')`,
       )
       .run();
   });
