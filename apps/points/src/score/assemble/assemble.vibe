@@ -1,0 +1,144 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import { pinnedScope, historicalInputAdmitted } from "../../../gen/points__reviewedHistory.effect.vibe"
+import { registryOf, repositoryIdFromUrl } from "../../client/snapshot/checks.vibe"
+import { leaderboardMethodology } from "../../client/snapshot/methodology.vibe"
+import type { LeaderboardSnapshot, PublishedRepository, RegisteredRepository } from "../../client/snapshot/schema.vibe"
+import { ruleVersion, schemaVersion, scoreWindowDays } from "../../client/snapshot/schema.vibe"
+import { type HistoricalPin, type HistoricalProject, historicalRepository, validateHistoricalSnapshot } from "../../client/snapshot/validate.vibe"
+import { AssemblyRefused, type Collection, SnapshotAssembly } from "../../collect/run/pipeline.vibe"
+import type { ImplementationHistory, ScoringMode } from "../facts.vibe"
+import { scoreSnapshot } from "../snapshot.vibe"
+import { valueCoverage } from "./coverage.vibe"
+import { assemblyInputs } from "./inputs.vibe"
+import { reviewedImplementationUnits, reviewedUnitsBySource } from "./membership.vibe"
+import { workQueue } from "./queue.vibe"
+
+export interface AssemblyScope {
+  readonly mode: ScoringMode
+  readonly repositories: ReadonlyArray<PublishedRepository>
+  readonly history?: Partial<ImplementationHistory>
+}
+
+schema JointSources {
+  readonly status: string
+  readonly record?: { readonly sources: ReadonlyArray<{ readonly repository: string; readonly repositoryNodeId: string }> } | null
+}
+
+const attributionCoverage = { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 }
+const evidenceVerification = { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 0, maxArtifacts: 0 }
+const inputOutside = "Historical leaderboard input is outside the pinned repository"
+const jointOutside = "Historical joint assessment is outside the pinned repository"
+
+function published(target: RegisteredRepository, role: "primary" | "member"): PublishedRepository {
+  return { id: target.id, owner: target.owner, name: target.name, displayName: target.displayName, githubUrl: target.githubUrl, description: target.description, integrationBranch: target.integrationBranch, projectId: target.projectId, role }
+}
+
+export function rollingRepositories(collection: Collection) {
+  return collection.registry.targets.map((target, index) => published(target, index === 0 ? "primary" : "member"))
+}
+
+export effect function assembleSnapshot(collection: Collection, scope: AssemblyScope) {
+  const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {})
+  const scored = try scoreSnapshot(inputs.facts)
+  const coverage = try valueCoverage(inputs, scored)
+  const reviewed = reviewedImplementationUnits(coverage, collection.source.repositories, try reviewedUnitsBySource(inputs.joint, collection.registry))
+  const queue = try workQueue(collection)
+  const basis = scored.paymentReviewBasis
+  const omitted = scored.paymentReviewBasisOmitted
+  return {
+    schemaVersion,
+    repository: scope.repositories[0]?.id ?? null,
+    repositories: scope.repositories,
+    ruleVersion,
+    generatedAt: collection.generatedAt,
+    sourceUpdatedAt: inputs.sourceUpdatedAt,
+    stale: false,
+    window: { days: scoreWindowDays, from: collection.bounds.from, to: collection.bounds.to },
+    methodology: leaderboardMethodology,
+    source: { ...collection.source, counts: { ...collection.source.counts, closedUnmergedPullRequests: inputs.closedCount }, evidenceVerification },
+    leaders: scored.leaders,
+    valuePolicyEffectiveAt: collection.valuePolicyEffectiveAt,
+    valueAssessmentCoverage: coverage,
+    ledger: scored.ledger,
+    reviewExclusions: scored.reviewExclusions,
+    penalties: inputs.penalties,
+    ...(collection.penaltyHistory === undefined ? {} : { penaltyHistory: collection.penaltyHistory }),
+    ...(basis === undefined ? {} : {
+      paymentReviewBasis: {
+        policy: basis.policy,
+        effectiveAt: basis.effectiveAt,
+        leaders: basis.leaders,
+        ledger: basis.ledger,
+        removedEventIds: basis.removedEventIds,
+        removedAttributionIds: [],
+        attributionOrder: [],
+        reviewExclusions: basis.reviewExclusions,
+        attributions: [],
+        invalidAttributionMarkers: [],
+        attributionCoverage,
+        opportunities: [],
+      },
+    }),
+    ...(omitted === undefined ? {} : { paymentReviewBasisOmitted: omitted }),
+    opportunities: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage,
+    workQueue: queue,
+    ...(reviewed.length === 0 ? {} : { reviewedImplementationUnits: reviewed }),
+  } satisfies LeaderboardSnapshot
+}
+
+effect function jointInside(collection: Collection, pin: HistoricalPin, repository: RegisteredRepository) {
+  const registry = registryOf(collection.registry)
+  for (const row of collection.value.jointValueDecisions) {
+    const decision = Schema.decodeUnknownEffect(JointSources)(row.decision) catch effect () => { throw new AssemblyRefused({ message: `Joint value decision for ${row.sourceId} is malformed` }) }
+    if (decision.status !== "assessed") continue
+    const sources = decision.record?.sources ?? []
+    if (sources.some((source) => source.repositoryNodeId !== pin.repositoryNodeId || registry.byId.get(source.repository.toLowerCase())?.id !== repository.id)) return false
+  }
+  return true
+}
+
+export effect function createHistoricalSnapshot(collection: Collection, pin: HistoricalPin, project: HistoricalProject, history: Partial<ImplementationHistory> = {}) {
+  const repository = try historicalRepository(collection.registry, pin, project)
+  const registry = registryOf(collection.registry)
+  const inside = (url: string) => repositoryIdFromUrl(registry, url) === repository.id
+  const { source, work } = collection
+  const [listed] = source.repositories
+  const retained = collection.acceptedReviewHistory.value
+  const input = {
+    censusRepository: source.repositoryId === pin.repositoryNodeId && listed !== undefined && listed.id === repository.id && listed.repositoryId === pin.repositoryNodeId,
+    listedRepositories: source.repositories.length,
+    sourcesInside: [...work.outcomes, ...work.mergedPullRequests, ...work.reviewedMergedPullRequests, ...work.closedUnmergedPullRequests, ...work.closedIssues, ...collection.openIssues, ...collection.openPullRequests].every((record) => inside(record.url)),
+    eventsInside: retained.events.every((event) => event.repository === repository.id) && retained.attributions.every((attribution) => inside(attribution.sourceUrl)),
+    penaltiesInside: (collection.penaltyHistory ?? []).every((penalty) => penalty.projectId === pin.projectId),
+    jointInside: try jointInside(collection, pin, repository),
+  }
+  if (!historicalInputAdmitted(pinnedScope, input)) throw new AssemblyRefused({ message: historicalInputAdmitted(pinnedScope, { ...input, jointInside: true }) ? jointOutside : inputOutside })
+  const raw = try assembleSnapshot(collection, { mode: "historical", repositories: [published(repository, "primary")], history })
+  return try validateHistoricalSnapshot(raw, collection.registry, pin, project, try Clock.currentTimeMillis)
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  const fields: Readonly<Record<string, unknown>> = { ...error }
+  for (const key of ["message", "reason"]) {
+    const value = fields[key]
+    if (typeof value === "string" && value !== "") return value
+  }
+  return error._tag
+}
+
+effect function refusedAs<A, E extends { readonly _tag: string }>(run: A!E) {
+  const value: A = run catch effect (error) => {
+    throw new AssemblyRefused({ message: messageOf(error) })
+  }
+  return value
+}
+
+export const snapshotAssembly = Layer.effect(SnapshotAssembly, effect {
+  const services = try Effect.context<Experimental.Crypto.Crypto>()
+  return {
+    assemble: (collection: Collection) => refusedAs(Effect.provideContext(assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection) }), services)),
+  }
+})

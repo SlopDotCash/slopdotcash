@@ -1,8 +1,11 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"
-import { github } from "@repo/platform/github"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectorRenewal, collectSnapshot, collectedTargets, fetchRegistry, graphqlClient } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, fetchRegistry, graphqlClient, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, openMemoFromEnv, writeMemo } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
+import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
 
@@ -30,6 +33,30 @@ export effect function discussionCheckpoint() {
   return { directory, deadlineMs } satisfies DiscussionCheckpoint
 }
 
+effect function fileDigest(path: string) {
+  const fs = try FileSystem.FileSystem
+  return try sha256Hex(try fs.readFile(path))
+}
+
+export effect function attributionCodeDigest() {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const program = decodeURIComponent(new URL(import.meta.url).pathname)
+  let directory = files.dirname(program)
+  let lock: string | null = null
+  while (true) {
+    const candidate = files.join(directory, "pnpm-lock.yaml")
+    if (try fs.exists(candidate)) {
+      lock = try fileDigest(candidate)
+      break
+    }
+    const parent = files.dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  return try sha256Hex(JSON.stringify([collectionMemoFormat, try fileDigest(program), lock]))
+}
+
 function messageOf(error: { readonly _tag: string }) {
   const fields: Readonly<Record<string, unknown>> = { ...error }
   const message = fields["message"]
@@ -38,17 +65,52 @@ function messageOf(error: { readonly _tag: string }) {
 
 effect function written(args: ReadonlyArray<string>) {
   const options = try collectArguments(args)
+  const opened = try openMemoFromEnv(try attributionCodeDigest())
   const checkpoint = try discussionCheckpoint()
+  const feedConcurrency = try valueFeedConcurrency()
+  const deferRetainedAttribution = (try setting("SLOP_DEFER_RETAINED_ATTRIBUTION")) === "1"
   const token = try actionsToken()
   const repositories = try collectedTargets(try fetchRegistry())
-  const rest = github({ token, userAgent: "slopbot" })
-  const graph = graphqlClient({ token })
-  const reads = Layer.mergeAll(rest, graph, acceptanceWith(collectRetainedMergeReferences))
-  const inputs = Layer.provide(collectValueInputs({ repositories, ...(checkpoint === undefined ? {} : { discussionDeadlineMs: checkpoint.deadlineMs }) }), reads)
-  provide collectorRenewal() {
-    provide Layer.mergeAll(rest, graph, inputs) {
-      try collectSnapshot({ ...options, ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }) })
-    }
+  const cutoffMs = options.cutoffMs ?? (try Clock.currentTimeMillis)
+  const cutoffAt = try isoAt(cutoffMs)
+  provide systemGit {
+    try scoped(effect {
+      const local = try localGitObjectsFromEnv()
+      const discussions = checkpoint === undefined ? undefined : try discussionCache({
+        directory: checkpoint.directory,
+        repositories: repositories.flatMap((repository) => repository.expectedNodeId === null ? [] : [{ name: repository.id, nodeId: repository.expectedNodeId }]),
+      })
+      const rest = ingestionGitHub({
+        token,
+        ...(checkpoint === undefined ? {} : { deadlineMs: checkpoint.deadlineMs }),
+        ...(discussions === undefined ? {} : { discussions }),
+        ...(local === undefined ? {} : { localGitObjects: local }),
+      })
+      const graph = graphqlClient({ token })
+      const reads = Layer.mergeAll(rest, graph, acceptanceWith(collectRetainedMergeReferences))
+      const inputs = Layer.provide(collectValueInputs({
+        repositories,
+        feedConcurrency,
+        deferRetainedAttribution,
+        ...(checkpoint === undefined ? {} : { discussionDeadlineMs: checkpoint.deadlineMs }),
+        ...(opened === undefined ? {} : { memo: { session: opened.session, cutoffAt } }),
+      }), reads)
+      const collected = effect {
+        provide collectorRenewal() {
+          provide Layer.mergeAll(rest, graph, inputs) {
+            return try collectSnapshot({
+              ...options,
+              cutoffMs,
+              ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }),
+              ...(opened === undefined ? {} : { memo: opened.session }),
+            })
+          }
+        }
+      }
+      const snapshot = try Effect.ensuring(collected, local === undefined ? Effect.void : local.close())
+      if (local !== undefined) try Console.error(localGitSummary(try local.stats()))
+      if (opened !== undefined) try writeMemo(opened, snapshot.source.cutoffAt)
+    })
   }
 }
 

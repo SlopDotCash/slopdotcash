@@ -1,9 +1,9 @@
-// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { isoAt } from "@repo/platform/clock"
 import { outcomeFirstPolicyAt, paymentReviewPolicyAt, scoreV2EffectiveAt, v2EventPoints } from "../kernels/scoring/legacyV2.ts"
 import { paymentReviewBasisOmittedReason, paymentReviewPolicy } from "../client/snapshot/schema.vibe"
 import { books } from "./book.vibe"
-import { type AcceptedOutcomes, type Activity, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type LeaderEntry, type MergedPull, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, isBot, millisAt, workUnitSlug } from "./facts.vibe"
+import { type AcceptedOutcomes, type Activity, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type LeaderEntry, type MergedPull, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, implementationHistory, isBot, millisAt, workUnitSlug } from "./facts.vibe"
 import { mergedCredit, outcomeOrder, timedPulls } from "./merges.vibe"
 import { type Credited, deductions, eventPoints } from "./penalties.vibe"
 import { ranked, sortedModels } from "./ranks.vibe"
@@ -178,7 +178,7 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   const actors = actorIndex(actorsOf([...merged, ...closed, ...facts.contexts]))
   const bans = new Map<string, number>()
   for (const [actor, at] of facts.bans) bans.set(actor, try millisAt(at, actor))
-  const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, attributionHolds: facts.attributionHolds, windowFrom, windowTo }, actors)
+  const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, attributionHolds: facts.attributionHolds, windowFrom, windowTo, implementation: implementationHistory(facts) }, actors)
   const ledger = ledgerOf(bans, facts.projects)
   for (const event of merges.events) try ledger.credit(event)
   const held = new Set([...merges.held.map((entry) => entry.sourceId), ...facts.heldUnits.flatMap((unit) => unit.sources)])
@@ -191,6 +191,8 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
     ledger: events,
     reviewExclusions: [...reviewExclusions].sort(compareExclusions),
     held: merges.held,
+    implementationHeld: merges.implementationHeld,
+    standaloneReview: merges.standaloneReview,
     penaltyThirds: deducted.byPenalty,
   } satisfies Scoring
 }

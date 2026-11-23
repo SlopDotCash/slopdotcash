@@ -20,8 +20,14 @@ with an audited administrator split approval recorded for that exact program
 revision. A standard split divides exactly by four. The owner's exclusion
 lines are part of the revision ([terms](./terms.md)), so a change applies
 only to later reports. A full award is an
-after-approval pledge (CLAUDE.md, 28 October 2026): it binds no 75/25 bounty
-vault.
+after-approval pledge: it binds no 75/25 bounty vault. Slop's own program
+follows the operator decision of 20 November 2026 (`SECURITY.md`, PRD
+section 8, "Slop payout code"), which replaces the offer of 28 October 2026:
+it opens only if the Slop Cash decision market of 24 November 2026 passes,
+pays $5,000 in full to the first qualifying reporter of each accepted critical
+finding, at most two awards within 12 months, and the Slop Cash S.P. pays each
+approved award directly, through no Slop vault or payment rail. Until it
+opens, no paid award is offered for Slop's own code.
 
 ```quint
 import money as M from "../settlement/money"
