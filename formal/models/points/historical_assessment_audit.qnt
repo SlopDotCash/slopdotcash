@@ -1,6 +1,7 @@
 // @source scripts/historical-assessment-catalog.ts
 // @source scripts/historical-assessment-reconciliation.ts
 // @source scripts/historical-assessment-transport.ts
+// @source scripts/historical-closed-preflight.ts
 // @source scripts/historical-closed-review-source.ts
 // @source scripts/historical-merged-replay.ts
 // @source scripts/historical-replay-review.ts
@@ -11,6 +12,7 @@
 // @evidence scripts/historical-merged-replay.test.ts
 // @evidence scripts/historical-replay-review.test.ts
 // @evidence scripts/historical-value-replay.test.ts
+// @evidence scripts/leaderboard-source-recovery.test.ts
 // @source scripts/run-reviewed-historical-points.ts
 // @source .github/workflows/reviewed-historical-points.yml
 // The read-only path reports a conclusion at a fixed journal cut. Completeness

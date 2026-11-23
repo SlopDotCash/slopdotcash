@@ -106,6 +106,7 @@ import {
 } from "./accepted-implementation-memo";
 import type { HistoricalAssessmentCatalog } from "./historical-assessment-catalog";
 import { createHistoricalAssessmentTransport } from "./historical-assessment-transport";
+import { preflightHistoricalClosedBindings } from "./historical-closed-preflight";
 import {
   createMergedHistoricalReplaySnapshot,
   type HistoricalClosedContextBindings,
@@ -5488,6 +5489,58 @@ async function collectLeaderboardFromGitHub(
   const closedUnmergedPullRequests: PullRequestRecord[] = [];
   const closedIssues: IssueRecord[] = [];
   let closedIssueCount = 0;
+  let valueRestRequests = 0;
+  const discussionCheckpoint = options.discussionCheckpoint;
+  const createValueReader = (
+    repositories: { name: string; nodeId: string }[],
+  ) => {
+    const valueRead = githubIngestionReadTransport(
+      fetch,
+      undefined,
+      undefined,
+      undefined,
+      {
+        discussionCache: discussionCheckpoint && {
+          directory: discussionCheckpoint.directory,
+          repositories: repositories,
+        },
+        quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
+        localGitObjects: options.localGitObjects,
+      },
+    );
+    const github = GitHubClient.forToken(
+      options.evidenceToken ?? "",
+      valueRead,
+    );
+    const evidence: Parameters<typeof loadValueInputs>[0] = {
+      get: <T>(path: string) => {
+        valueRestRequests += 1;
+        return github.get<T>(path);
+      },
+      fileText: (...args: Parameters<GitHubClient["fileText"]>) => {
+        valueRestRequests += 1;
+        return github.fileText(...args);
+      },
+      graphql: async <T>(query: string, variables: Record<string, unknown>) =>
+        (await client.execute(query, variables as GraphqlVariables)) as T,
+      readReferenceDiscussion: discussionCheckpoint
+        ? async (source, pull) => {
+            valueRead.assertNoCheckpoint();
+            const [owner, name] = source.repository.split("/");
+            const data = await client.tryReferenceDiscussion?.(
+              { owner, name, number: source.number },
+              discussionCheckpoint.deadlineMs,
+            );
+            valueRead.assertNoCheckpoint();
+            return data
+              ? validateHistoricalDiscussion(data, source, pull)
+              : null;
+          }
+        : undefined,
+    };
+    return { evidence, valueRead };
+  };
+  let historicalValueReader: ReturnType<typeof createValueReader> | undefined;
 
   // An empty registry is a complete, valid state with nothing to collect.
   if (repositories.length === 0) await client.execute(RATE_LIMIT_QUERY, {});
@@ -5550,6 +5603,24 @@ async function collectLeaderboardFromGitHub(
         : await hydrateClosed(closedReferences);
       if (closed.some((pull) => pull.mergedAt !== null || !pull.closedAt))
         throw new Error("Closed unmerged census changed during hydration");
+      if (
+        historical &&
+        (historical.closedContexts?.size ||
+          historical.emptyLegacyClosures?.size)
+      ) {
+        historicalValueReader = createValueReader([
+          { name: repository.id, nodeId: preflight.id },
+        ]);
+        await preflightHistoricalClosedBindings({
+          history: historical.history,
+          scope: historical.scope,
+          closed,
+          approved: historical.closedContexts ?? new Map(),
+          emptyLegacy: historical.emptyLegacyClosures ?? new Map(),
+          github: historicalValueReader.evidence,
+        });
+        historicalValueReader.valueRead.assertNoCheckpoint();
+      }
       closedUnmergedPullRequests.push(...closed);
     }
     closedIssueCount += await countSearchResults(
@@ -5972,53 +6043,16 @@ async function collectLeaderboardFromGitHub(
           .reduce((latest, current) =>
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
-  let valueRestRequests = 0;
-  const discussionCheckpoint = options.discussionCheckpoint;
-  const valueRead = githubIngestionReadTransport(
-    fetch,
-    undefined,
-    undefined,
-    undefined,
-    {
-      discussionCache: discussionCheckpoint && {
-        directory: discussionCheckpoint.directory,
-        repositories: collections.map(({ repository, preflight }) => ({
-          name: repository.id,
-          nodeId: preflight.id,
-        })),
-      },
-      quotaDeadlineMs: discussionCheckpoint?.deadlineMs,
-      localGitObjects: options.localGitObjects,
-    },
-  );
-  const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
+  const { evidence, valueRead } =
+    historicalValueReader ??
+    createValueReader(
+      collections.map(({ repository, preflight }) => ({
+        name: repository.id,
+        nodeId: preflight.id,
+      })),
+    );
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
-    {
-      get: <T>(path: string) => {
-        valueRestRequests += 1;
-        return github.get<T>(path);
-      },
-      fileText: (...args: Parameters<GitHubClient["fileText"]>) => {
-        valueRestRequests += 1;
-        return github.fileText(...args);
-      },
-      graphql: async <T>(query: string, variables: Record<string, unknown>) =>
-        (await client.execute(query, variables as GraphqlVariables)) as T,
-      readReferenceDiscussion: discussionCheckpoint
-        ? async (source, pull) => {
-            valueRead.assertNoCheckpoint();
-            const [owner, name] = source.repository.split("/");
-            const data = await client.tryReferenceDiscussion?.(
-              { owner, name, number: source.number },
-              discussionCheckpoint.deadlineMs,
-            );
-            valueRead.assertNoCheckpoint();
-            return data
-              ? validateHistoricalDiscussion(data, source, pull)
-              : null;
-          }
-        : undefined,
-    },
+    evidence,
     [...dedupedOutcomes, ...closedUnmergedPullRequests].filter((source) =>
       underValuePolicy(
         source.mergedAt ?? ("closedAt" in source ? source.closedAt : null),
@@ -6076,12 +6110,7 @@ async function collectLeaderboardFromGitHub(
     );
   }
   onProgress({ phase: "participation-history", completed: 0, total: 1 });
-  const participationBans = await loadParticipationBans({
-    get: <T>(path: string) => {
-      valueRestRequests += 1;
-      return github.get<T>(path);
-    },
-  });
+  const participationBans = await loadParticipationBans(evidence);
   valueRead.assertNoCheckpoint();
   // History is a retained read, not GitHub collection. Keep reversals after
   // a PR leaves the rolling census or its project is paused/retired.
