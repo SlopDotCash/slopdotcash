@@ -1,4 +1,4 @@
-// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"
+// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"
 import type { Effect } from "effect";
 import { minCap } from "../../gen/backend__intakeCap.ts";
 import type { PoolRead } from "../../gen/frontend__projections.ts";
@@ -115,22 +115,21 @@ function liveOf(work: Settled<Effect.Success<ReturnType<typeof loadWork>>>): Sho
   };
 }
 
+const noMergeLine: MergeLine = () => null;
+
 function SponsorsListed({ runtime, section, reads, boot }: ListedProps & { section: ProjectRuntime }) {
   const merge = useShownRead(reads.merge, "all");
   const { projects } = useListing(reads, boot, merge);
   const mergeLine = useMergeLine(merge);
   const whoBuilds = useOnce(section, "who-builds", () => whoBuildsFigures());
   const work = useMounted(section, () => loadWork(boot, repositoryRegistryOf, false));
-  if (whoBuilds.status === "running") return null;
-  if (whoBuilds.status === "failed") throw new Error(whoBuilds.message);
-  return <SponsorsPage runtime={runtime} projects={projects} mergeLine={mergeLine} networkPays={networkPays} whoBuilds={whoBuilds.value} live={liveOf(work)} />;
+  return <SponsorsPage runtime={runtime} projects={projects} mergeLine={mergeLine} networkPays={networkPays} whoBuilds={whoBuilds.status === "done" ? whoBuilds.value : undefined} live={liveOf(work)} />;
 }
 
 /** `/sponsors`: funded and fundable projects, how sponsorship works, and the audience report with the live footprint. */
 export function SponsorsRoute({ runtime }: PageProps) {
   const { section, reads, boot } = useSection(runtime);
-  if (reads.status === "failed") throw new Error(reads.message);
-  if (boot.status === "failed") throw new Error(boot.message);
-  if (reads.status === "running" || boot.status === "running") return null;
-  return <SponsorsListed runtime={runtime} section={section} reads={reads.value} boot={boot.value} />;
+  if (reads.status === "done" && boot.status === "done") return <SponsorsListed runtime={runtime} section={section} reads={reads.value} boot={boot.value} />;
+  const projects = reads.status === "failed" || boot.status === "failed" ? failedRead : unread;
+  return <SponsorsPage runtime={runtime} projects={projects} mergeLine={noMergeLine} networkPays={networkPays} whoBuilds={undefined} live={unread} />;
 }

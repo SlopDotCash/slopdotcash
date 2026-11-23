@@ -6,7 +6,7 @@ import { batchDigest, pointKey, pointRevisionId } from "../../kernels/records/id
 import { instantOf } from "../../kernels/records/instants.ts"
 import { type Store, advanceTo, command, finish, jointUnit, openStore, ownUnit, unitNameOf } from "../../journal/ledger.vibe"
 import { appended, commit as commitRows, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "../../journal/rows.vibe"
-import { octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
+import { octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../../journal/snapshot.vibe"
 import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
 import { importStatements } from "../../publication/import.vibe"
 import { hasBaselinePrefix } from "../collect/inventory.vibe"
@@ -68,7 +68,6 @@ interface Plan {
 
 const trusted: Sender = "TrustedWorkflow"
 const owner: Sender = "Owner"
-const reallocationReason = "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
 const notVerified = "Historical correction import was not verified; retain the run for reconciliation"
 const importAttempts = 3
 const importWaitMs = 30_000
@@ -389,7 +388,7 @@ effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, in
     if (unitId === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key))) return false
     const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
     const recipients = plan.recipients.map((recipient) => ({ actor: actors.get(recipient.id) ?? 0, lines: recipient.lines })).sort((left, right) => left.actor - right.actor)
-    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: reallocationReason, digest: input.collection.manifestDigest, pullRequest: candidate.sourceId }])
+    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: verifiedHistoricalAllocationDecision, digest: input.collection.manifestDigest, pullRequest: candidate.sourceId }])
     if (refused !== "") return false
     const valueSource = [...plan.previous].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt)).find((revision) => revision.decision?.sourceId.startsWith("value:") === true)?.decision?.sourceId
     const decided = new Map(plan.previous.map((revision) => [revision.award.key, revision.decision?.sourceId] as const))

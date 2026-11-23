@@ -159,9 +159,16 @@ effect function focusedReceipt(owner: string, listed: ReadonlyArray<SubmissionVi
   return { submissions: receiptFirst ? withReceipt(listed, focusId, receipt) : listed, error: receipt.message }
 }
 
+effect function listFailed(owner: string, message: string, focusId: string | null, receiptFirst: boolean) {
+  if (focusId === null || !receiptFirst) return { kind: "failed", message } satisfies SubmissionsRead
+  const receipt = try receiptOf(owner, focusId)
+  if (receipt.kind !== "found") return { kind: "failed", message } satisfies SubmissionsRead
+  return { kind: "ready", automatic: false, authorityUnavailable: false, submissions: [receipt.submission], error: message } satisfies SubmissionsRead
+}
+
 export effect function loadSubmissions(owner: string, focusId: string | null, receiptFirst: boolean) {
   const listed = try privateCall(owner, listSubmissions, {}, (list) => list.submissions.length, (list) => list.recipientGithubId)
-  if (listed.kind !== "done") return { kind: "failed", message: listed.message } satisfies SubmissionsRead
+  if (listed.kind !== "done") return try listFailed(owner, listed.message, focusId, receiptFirst)
   const focused = try focusedReceipt(owner, listed.value.submissions, focusId, receiptFirst)
   if (focused.error === null) try pruneReportTexts(focused.submissions)
   return { kind: "ready", automatic: listed.value.automatic, authorityUnavailable: listed.value.authorityUnavailable, submissions: focused.submissions, error: focused.error } satisfies SubmissionsRead

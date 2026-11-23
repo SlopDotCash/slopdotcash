@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
-import type { RepositoryRegistry } from "../../../src/client/snapshot/schema.vibe";
+import type { LeaderboardSnapshot, RepositoryRegistry } from "../../../src/client/snapshot/schema.vibe";
+
+import type { Journal } from "../../../src/kernels/records/canonical.ts";
 
 const root = new URL("../../../../../", import.meta.url);
 
@@ -41,3 +43,16 @@ export const registry: RepositoryRegistry = {
   targets: registered,
   projects: [...new Set(registered.map((entry) => entry.projectId))].map((id) => ({ id, skillSourcePath: "SKILL.md" })),
 };
+
+
+export interface LegacyHeldReview {
+  readonly before: LeaderboardSnapshot;
+  readonly held: LeaderboardSnapshot;
+  readonly revoked: LeaderboardSnapshot;
+  readonly prior: Journal;
+  readonly retired: Journal;
+}
+
+export async function legacyHeldReview(): Promise<LegacyHeldReview> {
+  return JSON.parse(await readFile(new URL("./legacy-held-review.json", import.meta.url), "utf8")) as LegacyHeldReview;
+}

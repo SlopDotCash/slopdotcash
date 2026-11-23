@@ -1,13 +1,14 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import type { ScoreEvent } from "../src/client/snapshot/schema.vibe"
-import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
-import { journalText } from "../src/kernels/records/canonical.ts"
+import { decodeSnapshot, validateSnapshot } from "../src/client/snapshot/validate.vibe"
+import { type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
-import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+import { applySnapshots, batchOwnedKeys, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import { historyText, legacyHeldReview, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
 
 const recordedAt = "2026-11-17T06:00:00.000Z"
 const holdReasons = [
@@ -58,6 +59,127 @@ effect function retainedOmission(history: string, repositories: Repositories, re
 }
 
 layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('A later joint assessment cannot re-award an October correction through a different completion PR (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window")', () => effect {
+    const snapshot = try decodeSnapshot((try promise(() => snapshotFile())).value)
+    const sourceId = "PR_kwDOoriginal"
+    const completion = "PR_kwDOreplacement"
+    const repository = "elizaOS/eliza"
+    const original = { id: "U_kgDOoriginal", login: "original", kind: "User", avatarUrl: "", url: "https://github.com/original" }
+    const carrier = { id: "U_kgDOcarrier", login: "carrier", kind: "User", avatarUrl: "", url: "https://github.com/carrier" }
+    const occurredAt = "2026-10-30T00:00:00.000Z"
+    const correctedAt = "2026-11-01T00:00:00.000Z"
+    const originalKey = try pointKey({ projectId: "eliza", actorId: original.id, category: "merged-pull-request", sourceId })
+    const originalRow: RevisionBody = {
+      previous: null, recordedAt: correctedAt, sourceDigest: "a".repeat(64), sourceRule: "slop-score-v2",
+      award: { key: originalKey, actor: { id: original.id, login: original.login }, projectId: "eliza", category: "merged-pull-request", amount: 30, occurredAt, sourceId, sourceUrl: `https://github.com/${repository}/pull/1`, workUnitId: "wu_eliza_eliza_pr_1", provisional: true },
+      decision: { sourceId, effectiveAt: correctedAt, reason: octoberOriginalContributorDecision, delta: 30 },
+    }
+    const row = { id: try pointRevisionId(originalRow), ...originalRow }
+    const history = `${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: correctedAt, coverage: [], revisions: [row] })}\n`
+    const recordDigest = "b".repeat(64)
+    const overlapping = { recordDigest, workUnitId: `wu_${"c".repeat(64)}`, groupId: "e".repeat(64) }
+    const independent = { recordDigest, workUnitId: `wu_${"d".repeat(64)}`, groupId: "f".repeat(64) }
+    const ledger = [overlapping, independent].map(({ workUnitId }) => ({
+      id: `${completion}:joint:${workUnitId}:merged:${carrier.id}`,
+      actor: carrier, category: "merged-pull-request", points: 1, scoreThirds: 3, workUnitId,
+      scoreDecisionSourceId: `value:${recordDigest}`, scoreDecisionAt: correctedAt, occurredAt, repository,
+      source: { id: completion, kind: "pull-request", number: 2, title: "Reviewed completion", url: `https://github.com/${repository}/pull/2` },
+      reason: "Reviewed implementation",
+    }))
+    const coverage = [sourceId, completion].map((id, index) => ({ pullRequestId: id, pullRequestNumber: index + 1, repository, status: "assessed", recordDigest }))
+    const membership = [
+      { repository, pullRequestId: sourceId, units: [overlapping] },
+      { repository, pullRequestId: completion, units: [overlapping, independent] },
+    ]
+    const repositories = repositoriesOf(registry, {})
+    const disjoint = try openStore(history, null, [])
+    const legacy = try openStore(history, null, [])
+    const base = { ...snapshot, generatedAt: correctedAt, ledger, reviewExclusions: [], valueAssessmentCoverage: coverage }
+    const precise = { ...base, reviewedImplementationUnits: membership }
+    try applySnapshots(disjoint, repositories, [{ snapshot: precise, digest: "1".repeat(64) }], recordedAt)
+    try applySnapshots(legacy, repositories, [{ snapshot: base, digest: "2".repeat(64) }], recordedAt)
+    const allocations = (rows: typeof disjoint.revisions) => rows.map((revision) => [revision.award.sourceId, revision.award.workUnitId, revision.award.actor.login, revision.award.amount])
+    const protectedCredit = [sourceId, originalRow.award.workUnitId, original.login, 30]
+    try Effect.try(() => assert.deepStrictEqual({ precise: allocations(disjoint.revisions), legacy: allocations(legacy.revisions) }, {
+      precise: [protectedCredit, [completion, independent.workUnitId, carrier.login, 30]],
+      legacy: [protectedCredit],
+    }))
+    const prior = [...disjoint.revisions]
+    const relinked = { ...precise, reviewedImplementationUnits: [{ ...membership[0], units: [overlapping, independent] }, membership[1]] }
+    try applySnapshots(disjoint, repositories, [{ snapshot: relinked, digest: "3".repeat(64) }], recordedAt)
+    try Effect.try(() => assert.deepStrictEqual(disjoint.revisions, prior))
+
+    const fallback = {
+      ...base,
+      window: { ...base.window, from: "2026-10-15T00:00:00.000Z", to: correctedAt },
+      ledger: [{
+        id: `${sourceId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1,
+        occurredAt, repository,
+        source: { id: sourceId, kind: "pull-request", number: 1, title: "Previously accepted", url: originalRow.award.sourceUrl },
+        reason: "Legacy merge assessment",
+      }],
+      valueAssessmentCoverage: [{
+        pullRequestId: sourceId, pullRequestNumber: 1, repository, status: "legacy-policy", recordDigest: null,
+        implementationAllocation: { rule: "changed-lines-v1", totalScoreThirds: 3, weights: [{ actorNodeId: carrier.id, actorLogin: carrier.login, changedLines: "15" }] },
+      }],
+    }
+    effect function storeWithReason(reason: string) {
+      const body = { ...originalRow, decision: { sourceId, effectiveAt: correctedAt, reason, delta: 30 } }
+      const row = { id: try pointRevisionId(body), ...body }
+      const store = try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: correctedAt, coverage: [], revisions: [row] })}\n`, null, [])
+      return { row, store }
+    }
+    const { store: accepted, row: historicalRow } = try storeWithReason(verifiedHistoricalAllocationDecision)
+    const { store: ordinary } = try storeWithReason("Previously credited implementation")
+    try applySnapshots(accepted, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    try applySnapshots(ordinary, repositories, [{ snapshot: fallback, digest: "4".repeat(64) }], recordedAt)
+    const current = [...ordinary.latest.values()].filter(({ award }) => award.amount > 0)
+    try Effect.try(() => assert.deepStrictEqual({
+      historical: accepted.revisions,
+      ordinary: current.map(({ award }) => [award.actor.login, award.amount]),
+    }, { historical: [historicalRow], ordinary: [[carrier.login, 30]] }))
+  })
+
+  it.effect('A legacy assessed review can retire while its implementation stays held (spec/points/journal.md, "A complete newer snapshot zeroes superseded credit inside its window"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews")', () => effect {
+    const fixture = try promise(() => legacyHeldReview())
+    const targets = fixture.before.repositories.map((repository) => ({
+      ...repository, nodeId: fixture.before.source.repositories.find((row) => row.id === repository.id)?.repositoryId ?? "",
+      aliases: repository.id === `${repository.owner}/${repository.name}` ? [] : [`${repository.owner}/${repository.name}`],
+    }))
+    const compatible = { registered: targets, targets, projects: targets.map((repository) => ({ id: repository.projectId, skillSourcePath: "SKILL.md" })) }
+    try validateSnapshot(fixture.before, compatible)
+    const held = try validateSnapshot(fixture.held, compatible)
+    const revoked = try validateSnapshot(fixture.revoked, compatible)
+    const forgedMerge = Effect.as(validateSnapshot({ ...fixture.before, valueAssessmentCoverage: held.valueAssessmentCoverage }, compatible), "") catch (error) => error.message
+    const forgedCoverage = Effect.as(validateSnapshot({
+      ...fixture.held,
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : { ...row, status: "legacy-policy" }),
+    }, compatible), "") catch (error) => error.message
+    const unboundReview = (decision: string, status: "incomplete" | "human-ratified") => ({
+      ...fixture.held,
+      ledger: held.ledger.map((event) => event.category !== "substantive-review" ? event : { ...event, scoreDecisionSourceId: decision }),
+      valueAssessmentCoverage: held.valueAssessmentCoverage?.map((row) => row.reviewAssessmentDigest === undefined ? row : {
+        pullRequestId: row.pullRequestId, pullRequestNumber: row.pullRequestNumber, repository: row.repository, recordDigest: null, status,
+      }),
+    })
+    const forgedMissingDigest = Effect.as(validateSnapshot(unboundReview("value:undefined", "incomplete"), compatible), "") catch (error) => error.message
+    const forgedNullDigest = Effect.as(validateSnapshot(unboundReview("value:null", "human-ratified"), compatible), "") catch (error) => error.message
+    const history = `${journalText(fixture.prior)}\n`
+    const store = try openStore(history, null, [])
+    const repositories = repositoriesOf(compatible, {})
+    try applySnapshots(store, repositories, [{ snapshot: held, digest: "9".repeat(64) }], fixture.prior.generatedAt)
+    const retained = store.revisions.length
+    const zeroed = { snapshot: revoked, digest: "a".repeat(64) }
+    try applySnapshots(store, repositories, [zeroed, zeroed], fixture.prior.generatedAt)
+    try Effect.try(() => assert.deepStrictEqual({ retained, revisions: store.revisions, forgedMerge, forgedCoverage, forgedMissingDigest, forgedNullDigest }, {
+      retained: fixture.prior.revisions.length, revisions: fixture.retired.revisions,
+      forgedMerge: "Held implementation source cannot publish merge credit",
+      forgedCoverage: "Review assessment coverage requires a held implementation source",
+      forgedMissingDigest: "Value score event is not bound to its assessment coverage",
+      forgedNullDigest: "Value score event is not bound to its assessment coverage",
+    }))
+  })
+
   it.effect('Journal build from history.json plus snapshots appends only, chains per key, and the checked-in history stays an ancestor (spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month")', () => effect {
     const history = try promise(() => historyText())
     const file = try promise(() => snapshotFile())

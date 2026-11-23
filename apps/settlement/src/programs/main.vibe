@@ -1,14 +1,41 @@
-// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"
+// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
+import { RegistryLive, RestrictionsLive } from "@repo/backend/ports"
+import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
+import { d1Http } from "@repo/platform/d1Http"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
+import { ClosedMonthLive } from "@repo/points/live"
+import { EnforcementRowsLive } from "@repo/security/live"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { monthlyFacts } from "../monthly/store.vibe"
 import { cycleIndex } from "./cycleIndex.vibe"
+import { deploymentsCommand } from "./deployments.vibe"
 import { disclosuresCommand } from "./disclosures.vibe"
 import { keeperCommand } from "./keeper.vibe"
+import { proposeMonth } from "./proposeMonth.vibe"
+import { readinessCommand } from "./readiness.vibe"
+import { reconcileEvents } from "./reconcileEvents.vibe"
 import { referralRoots } from "./referralRoots.vibe"
+import { unsafeDestinations } from "./unsafeDestinations.vibe"
+
+const registryDatabases = { production: "1b453124-2709-45af-8389-151a8105c461", staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a" } as const
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run
+}
+
+effect function proposeMonthCommand(args: ReadonlyArray<string>) {
+  const tier = try tierOf(Option.getOrUndefined(try Config.option(Config.String("SLOP_ENVIRONMENT"))))
+  if (tier === "local") throw new ConfigInvalid({ name: "SLOP_ENVIRONMENT", issue: "propose-month runs against production or staging" })
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  const served = new Set(Object.keys(NETWORKS).filter((network) => isNetworkKey(network) && NETWORKS[network].testnet === (tier === "staging")))
+  const database = Layer.provide(d1Http({ accountId, databaseId: registryDatabases[tier], token }), outbound)
+  const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, ClosedMonthLive)
+  provide Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(registry, database)) {
+    try proposeMonth(args)
+  }
 }
 
 program({
@@ -18,5 +45,10 @@ program({
     "cycle-index": command(cycleIndex),
     disclosures: command(disclosuresCommand),
     keeper: command(keeperCommand),
+    "propose-month": command(proposeMonthCommand),
+    "reconcile-events": command(reconcileEvents),
+    "unsafe-destinations": command(unsafeDestinations),
+    deployments: command(deploymentsCommand),
+    readiness: command(readinessCommand),
   },
 }).runMain()

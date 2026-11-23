@@ -1,0 +1,211 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { SubmissionFeeRatesLive } from "@repo/backend/live"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { millisOf } from "@repo/platform/clock"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { area, pages } from "@repo/platform/worker"
+import { ReportDepositsLive } from "@repo/security/deposit/port"
+import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { burnAddress, feeWallet, networkTerms, noToken } from "../gen/backend__submissionFeeTerms.ts"
+import { submissionFeeApi } from "../src/client/submissionFee.vibe"
+import { SubmissionFeeRoutes } from "../src/submissionFee/routes.vibe"
+import { journalDatabase } from "./support/journal.ts"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+interface World {
+  readonly db: D1Database
+  readonly clock: SettableClock
+}
+
+interface Read {
+  readonly status: number
+  readonly cache: string | null
+  readonly body: unknown
+}
+
+const origin = "https://slop.test"
+const now = millisOf("2026-12-05T12:00:00.000Z")
+const served = "public, max-age=60"
+const context: ExecutionContext = { waitUntil: () => undefined }
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static asset", { status: 404 }) as unknown as globalThis.Response) }
+const pullItem = `0x${"7".repeat(64)}`
+const paidItem = `0x${"8".repeat(64)}`
+const reportItem = `0x${"9".repeat(64)}`
+const paidReportItem = `0x${"a".repeat(64)}`
+const recordedItem = `0x${"b".repeat(64)}`
+const askedCase = "sc_report_case_0001"
+const paidCase = "sc_report_case_0002"
+const recordedCase = "sc_report_case_0003"
+const reportProject = "pr_private_report_project"
+
+effect function opened(name: string) {
+  const database = try acquireRelease(promise(() => journalDatabase(name)), (started) => promise(() => started[Symbol.asyncDispose]()))
+  return { db: database.db, clock: settableClock(now) } satisfies World
+}
+
+effect function seed(world: World, statements: ReadonlyArray<Statement>) {
+  return try Effect.provide(effect {
+    const db = try D1
+    for (const statement of statements) {
+      try db.run(statement)
+    }
+  }, d1(world.db))
+}
+
+function rate(effectiveAt: string, slopPerUsd: string) {
+  return sql`INSERT INTO submission_fee_rates (effective_at, slop_per_usd, source, created_at) VALUES (${effectiveAt}, ${slopPerUsd}, 'test', ${effectiveAt})`
+}
+
+effect function ask(world: World, path: string, method = "GET") {
+  const site = pages({
+    areas: [area({ name: "fees", api: submissionFeeApi, routes: SubmissionFeeRoutes, provides: Layer.empty })],
+    services: (env: Env) => Layer.mergeAll(Layer.provideMerge(Layer.mergeAll(SubmissionFeeRatesLive, SubmissionFeeItemsLive, ReportDepositsLive), d1(env.SLOP_DB)), world.clock.layer),
+    assets: "ASSETS",
+  })
+  const request = try orDie(Effect.try(() => new WebRequest(`${origin}${path}`, { method })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, { SLOP_DB: world.db, ASSETS: assets }, context))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { status: response.status, cache: response.headers.get("cache-control"), body } satisfies Read
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function way(network: string, symbol: string, amount: string) {
+  const terms = networkTerms(network)
+  const token = terms.tokens.find((candidate) => candidate.symbol === symbol) ?? noToken
+  return { network, chainId: terms.chainId, contract: terms.contract, token: token.address, symbol, decimals: token.decimals, amount, minimumAccepted: amount, keptTo: token.kind === "SlopToken" ? burnAddress : feeWallet }
+}
+
+function reportWay(amount: string) {
+  const slop = way("robinhood-mainnet", "SLOP", amount)
+  return { network: slop.network, chainId: slop.chainId, token: slop.token, symbol: slop.symbol, decimals: slop.decimals, amount, contract: slop.contract, keptTo: slop.keptTo }
+}
+
+const rateBody = (current: unknown, previous: unknown) => ({ status: 200, cache: served, body: { schema: "slop-submission-fee-rate-v1", slopShareBps: 5000, rate: current, previous } })
+
+layer(Layer.empty, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('The SLOP rate is null until one is in force, a rate of the next hour waits for it, and the previous rate is shown only during its 48 hours (spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-reads-rate")
+    const none = try ask(world, "/api/v1/submission-fee/rate")
+    try seed(world, [rate("2026-12-05T13:00:00.000Z", "90")])
+    const nextHour = try ask(world, "/api/v1/submission-fee/rate")
+    try seed(world, [rate("2026-11-20T00:00:00.000Z", "75")])
+    const first = try ask(world, "/api/v1/submission-fee/rate/")
+    try seed(world, [rate("2026-12-04T00:00:00.000Z", "100")])
+    const replaced = try ask(world, "/api/v1/submission-fee/rate")
+    try seed(world, [rate("2026-12-03T11:00:00.000Z", "80"), rate("2026-12-03T12:00:00.000Z", "85")])
+    const newestBefore = try ask(world, "/api/v1/submission-fee/rate")
+    world.clock.set(millisOf("2026-12-05T13:00:00.000Z"))
+    const nextInForce = try ask(world, "/api/v1/submission-fee/rate")
+    world.clock.set(millisOf("2026-12-08T00:00:00.000Z"))
+    const graceOver = try ask(world, "/api/v1/submission-fee/rate")
+    try same(
+      { none, nextHour, first, replaced, newestBefore, nextInForce, graceOver },
+      {
+        none: rateBody(null, null),
+        nextHour: rateBody(null, null),
+        first: rateBody({ effectiveAt: "2026-11-20T00:00:00.000Z", slopPerUsd: "75" }, null),
+        replaced: rateBody({ effectiveAt: "2026-12-04T00:00:00.000Z", slopPerUsd: "100" }, { effectiveAt: "2026-11-20T00:00:00.000Z", slopPerUsd: "75", acceptedUntil: "2026-12-06T00:00:00.000Z" }),
+        newestBefore: rateBody({ effectiveAt: "2026-12-04T00:00:00.000Z", slopPerUsd: "100" }, { effectiveAt: "2026-12-03T12:00:00.000Z", slopPerUsd: "85", acceptedUntil: "2026-12-06T00:00:00.000Z" }),
+        nextInForce: rateBody({ effectiveAt: "2026-12-05T13:00:00.000Z", slopPerUsd: "90" }, { effectiveAt: "2026-12-04T00:00:00.000Z", slopPerUsd: "100", acceptedUntil: "2026-12-07T13:00:00.000Z" }),
+        graceOver: rateBody({ effectiveAt: "2026-12-05T13:00:00.000Z", slopPerUsd: "90" }, null),
+      },
+    )
+  }))
+
+  it.effect('An unpaid pull request lists each way to pay what was asked, SLOP only once a rate is in force; a paid one shows its deposit and nothing more is due; no row, a malformed path and a write are refused (spec/fees/submissionFeeDeposits.md, "A deposit pays its pull request only when it meets every term, and only one deposit pays it"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-reads-items")
+    try seed(world, [
+      sql`INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at) VALUES (4242, 7, 'acme', ${pullItem}, '3000000', '2026-12-05T10:00:00.000Z')`,
+      sql`INSERT INTO submission_fee_items (repository_id, pull_number, project_id, item, stable_minor, asked_at, paid_at, paid_network, paid_deposit_id, outcome, outcome_at)
+        VALUES (4242, 8, 'acme', ${paidItem}, '2000000', '2026-12-01T10:00:00.000Z', '2026-12-01T11:00:00.000Z', 'base-mainnet', 3, 'refunded', '2026-12-04T00:00:00.000Z')`,
+      sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at)
+        VALUES ('base-mainnet', 3, ${paidItem}, '0xpayer', '0xusdc', '2000000', '0xfee', '0xdeposit', 10, '2026-12-01T10:59:00.000Z', '2026-12-01T11:20:00.000Z', 1, 'refunded', '0xresolve', '2026-12-04T00:00:00.000Z')`,
+    ])
+    const unpaid = {
+      schema: "slop-submission-fee-item-v1", repositoryId: 4242, pullNumber: 7, projectId: "acme", item: pullItem, stableMinor: "3000000", askedAt: "2026-12-05T10:00:00.000Z",
+      paid: null, outcome: null, outcomeAt: null, resolveTransaction: null,
+    }
+    const beforeRate = try ask(world, "/api/v1/submission-fee/items/4242/7")
+    try seed(world, [rate("2026-11-20T00:00:00.000Z", "75")])
+    const atRate = try ask(world, "/api/v1/submission-fee/items/4242/7")
+    const paid = try ask(world, "/api/v1/submission-fee/items/4242/8")
+    const refusedPaths = ["/api/v1/submission-fee/items/4242/9", "/api/v1/submission-fee/items/4242", "/api/v1/submission-fee/items/0/7", "/api/v1/submission-fee/items/4242/7x", "/api/v1/submission-fee/items/4242/7/extra", "/api/v1/submission-fee/items/4242/-7", "/api/v1/submission-fee/items/04242/7", "/api/v1/submission-fee", "/api/v1/submission-fee/deposits"]
+    const refused: Array<Read> = []
+    for (const path of refusedPaths) refused.push(try ask(world, path))
+    const write = try ask(world, "/api/v1/submission-fee/rate", "POST")
+    const head = try ask(world, "/api/v1/submission-fee/items/4242/7", "HEAD")
+    const stable = [way("base-mainnet", "USDC", "3000000"), way("robinhood-mainnet", "USDG", "3000000")]
+    try same(
+      { beforeRate, atRate, paid, refused, write, head: { status: head.status, cache: head.cache, body: head.body } },
+      {
+        beforeRate: { status: 200, cache: served, body: { ...unpaid, due: stable } },
+        atRate: { status: 200, cache: served, body: { ...unpaid, due: [...stable, way("robinhood-mainnet", "SLOP", "110000000000000000000")] } },
+        paid: {
+          status: 200,
+          cache: served,
+          body: {
+            schema: "slop-submission-fee-item-v1", repositoryId: 4242, pullNumber: 8, projectId: "acme", item: paidItem, stableMinor: "2000000", askedAt: "2026-12-01T10:00:00.000Z", due: [],
+            paid: { at: "2026-12-01T11:00:00.000Z", network: "base-mainnet", depositId: 3, token: "0xusdc", amount: "2000000", transaction: "0xdeposit", finalized: true },
+            outcome: "refunded", outcomeAt: "2026-12-04T00:00:00.000Z", resolveTransaction: "0xresolve",
+          },
+        },
+        refused: refusedPaths.map(() => ({ status: 404, cache: served, body: { error: "not_found" } })),
+        write: { status: 405, cache: served, body: { error: "method_not_allowed" } },
+        head: { status: 200, cache: served, body: null },
+      },
+    )
+  }))
+
+  it.effect('A report deposit read answers only an asked row, never cached, with the one SLOP way to the burn address while unpaid and none of the report (spec/fees/submissionFeeReportDeposits.md, "A deposit pays a report only as SLOP to the burn address on Robinhood Chain for an asked row"; spec/fees/submissionFeeReportDeposits.md, "The security area writes and decides the row; the Worker pays it and follows the chain")', () => Effect.scoped(effect {
+    const world = try opened("fees-submission-fee-reads-reports")
+    try seed(world, [
+      sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at) VALUES (${askedCase}, ${reportProject}, ${reportItem}, 'asked', '395000000000000000000', '75', '2026-12-05T09:00:00.000Z')`,
+      sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at) VALUES (${recordedCase}, ${reportProject}, ${recordedItem}, 'recorded', '395000000000000000000', '75', '2026-12-05T09:00:00.000Z')`,
+      sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at, paid_at, paid_network, paid_deposit_id, outcome, outcome_reason, outcome_at)
+        VALUES (${paidCase}, ${reportProject}, ${paidReportItem}, 'asked', '395000000000000000000', '75', '2026-12-05T09:00:00.000Z', '2026-12-05T09:30:00.000Z', 'robinhood-mainnet', 5, 'refund_due', 'responded', '2026-12-05T11:00:00.000Z')`,
+      sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state)
+        VALUES ('robinhood-mainnet', 5, ${paidReportItem}, '0xreporter', '0xslop', '395000000000000000000', ${burnAddress}, '0xreportdeposit', 20, '2026-12-05T09:29:00.000Z', NULL, 1, 'refund_due')`,
+    ])
+    const asked = try ask(world, `/api/v1/submission-fee/reports/${askedCase}`)
+    const paid = try ask(world, `/api/v1/submission-fee/reports/${paidCase}`)
+    const recorded = try ask(world, `/api/v1/submission-fee/reports/${recordedCase}`)
+    const malformed = try ask(world, "/api/v1/submission-fee/reports/sc_short")
+    const extra = try ask(world, `/api/v1/submission-fee/reports/${askedCase}/project`)
+    try same(
+      { asked, paid, recorded, malformed, extra, mentionsProject: JSON.stringify([asked.body, paid.body]).includes(reportProject) },
+      {
+        asked: {
+          status: 200,
+          cache: "no-store",
+          body: {
+            schema: "slop-report-deposit-v1", caseId: askedCase, item: reportItem, askedAt: "2026-12-05T09:00:00.000Z", due: [reportWay("395000000000000000000")],
+            paid: null, outcome: null, outcomeReason: null, outcomeAt: null, resolveTransaction: null,
+          },
+        },
+        paid: {
+          status: 200,
+          cache: "no-store",
+          body: {
+            schema: "slop-report-deposit-v1", caseId: paidCase, item: paidReportItem, askedAt: "2026-12-05T09:00:00.000Z", due: [],
+            paid: { at: "2026-12-05T09:30:00.000Z", network: "robinhood-mainnet", depositId: 5, token: "0xslop", amount: "395000000000000000000", transaction: "0xreportdeposit", finalized: false },
+            outcome: "refund_due", outcomeReason: "responded", outcomeAt: "2026-12-05T11:00:00.000Z", resolveTransaction: null,
+          },
+        },
+        recorded: { status: 404, cache: "no-store", body: { error: "not_found" } },
+        malformed: { status: 404, cache: "no-store", body: { error: "not_found" } },
+        extra: { status: 404, cache: served, body: { error: "not_found" } },
+        mentionsProject: false,
+      },
+    )
+  }))
+})

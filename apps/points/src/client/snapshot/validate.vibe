@@ -854,6 +854,31 @@ function allocationProblem(snapshot: LeaderboardSnapshot, raw: unknown, index: n
   return wrong ? "Implementation allocation does not match its score events" : undefined
 }
 
+function reviewedUnitProblem(snapshot: LeaderboardSnapshot, raw: unknown): Problem {
+  const membership = snapshot.reviewedImplementationUnits
+  if (membership === undefined) return undefined
+  if (membership.length === 0 || snapshot.valueAssessmentCoverage === undefined) return "Reviewed implementation membership requires assessment coverage"
+  const sources = new Map(snapshot.valueAssessmentCoverage.map((row) => [row.pullRequestId, row.repository]))
+  const members = new Set<string>()
+  const groups = new Map<string, string>()
+  for (const [index, source] of membership.entries()) {
+    const rawSource = at(raw, "reviewedImplementationUnits", index)
+    if (!hasKeys(rawSource, ["repository", "pullRequestId", "units"]) || sources.get(source.pullRequestId) !== source.repository ||
+      members.has(source.pullRequestId) || source.units.length === 0) return "Reviewed implementation source binding is invalid"
+    members.add(source.pullRequestId)
+    let previous = ""
+    for (const [position, unit] of source.units.entries()) {
+      if (!hasKeys(at(rawSource, "units", position), ["recordDigest", "workUnitId", "groupId"]) ||
+        !digest.test(unit.recordDigest) || !/^wu_[a-f0-9]{64}$/u.test(unit.workUnitId) || !digest.test(unit.groupId)) return "Reviewed implementation unit binding is invalid"
+      const id = `${unit.recordDigest}:${unit.workUnitId}`
+      if (compareCodeUnits(previous, id) >= 0 || (groups.get(id) ?? unit.groupId) !== unit.groupId) return "Reviewed implementation units must be unique and consistent"
+      groups.set(id, unit.groupId)
+      previous = id
+    }
+  }
+  return undefined
+}
+
 function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actors: Map<string, GitHubActor>): Problem {
   if (snapshot.valueAssessmentCoverage === undefined && snapshot.ledger.some((event) => (event.scoreDecisionSourceId ?? "").startsWith("value:"))) return "Value score events require assessment coverage"
   if (snapshot.valuePolicyEffectiveAt !== undefined) {
@@ -866,6 +891,7 @@ function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actor
   if (coverage === undefined) return undefined
   const allowedKeys = [
     "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+    "pullRequestId,pullRequestNumber,recordDigest,repository,reviewAssessmentDigest,status",
     "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
     "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
     "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
@@ -882,6 +908,8 @@ function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actor
     seen.add(row.pullRequestId)
     if (row.recordDigest !== null && !digest.test(row.recordDigest)) return "Value coverage digest is invalid"
     if (row.status === "assessed" && row.recordDigest === null) return "Assessed coverage requires a journal digest"
+    if (row.reviewAssessmentDigest !== undefined &&
+      (row.status !== "incomplete" || row.recordDigest !== null || !digest.test(row.reviewAssessmentDigest))) return "Review assessment coverage requires a held implementation source"
     const allocation = allocationProblem(snapshot, raw, index, actors)
     if (allocation !== undefined) return allocation
     const verified = row.verifiedImplementationActorNodeIds
@@ -903,11 +931,16 @@ function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actor
     return match?.row
   }
   for (const event of snapshot.ledger) {
+    if (event.category === "merged-pull-request" && rows.get(event.source.id)?.row.reviewAssessmentDigest !== undefined) return "Held implementation source cannot publish merge credit"
     if (!(event.scoreDecisionSourceId ?? "").startsWith("value:")) continue
-    if (snapshot.valuePolicyEffectiveAt !== undefined && event.category === "substantive-review" && millis(event.occurredAt) < millis(snapshot.valuePolicyEffectiveAt)) return "Value review event predates its selected policy"
+    const review = event.category === "substantive-review"
+    if (snapshot.valuePolicyEffectiveAt !== undefined && review && millis(event.occurredAt) < millis(snapshot.valuePolicyEffectiveAt)) return "Value review event predates its selected policy"
     if (millis(event.occurredAt) < millis(snapshot.window.from) || millis(event.occurredAt) >= millis(snapshot.window.to)) return "Value score event is outside the scoring window"
     const row = coverageFor(event.id)
-    if (!(row?.status === "assessed" || (row?.status === "human-ratified" && event.category === "substantive-review")) || `value:${row.recordDigest}` !== event.scoreDecisionSourceId) return "Value score event is not bound to its assessment coverage"
+    const assessedDigest = row?.status === "assessed" || (row?.status === "human-ratified" && review) ? row.recordDigest : review ? row?.reviewAssessmentDigest : undefined
+    if (typeof assessedDigest !== "string" || !digest.test(assessedDigest) || `value:${assessedDigest}` !== event.scoreDecisionSourceId) {
+      return "Value score event is not bound to its assessment coverage"
+    }
   }
   return undefined
 }
@@ -1001,7 +1034,7 @@ function snapshotProblem(registry: Registry, snapshot: LeaderboardSnapshot, raw:
     ...[...snapshot.workQueue.issues, ...snapshot.workQueue.pullRequests].flatMap((item) => [...(item.author === null ? [] : [item.author]), ...item.claim.actors]),
   ])
   if (identities !== undefined) return identities
-  const tail = sourceProblem(snapshot, raw) ?? valueCoverageProblem(snapshot, raw, actors) ?? coverageCountsProblem(snapshot) ?? methodologyProblem(snapshot)
+  const tail = sourceProblem(snapshot, raw) ?? valueCoverageProblem(snapshot, raw, actors) ?? reviewedUnitProblem(snapshot, raw) ?? coverageCountsProblem(snapshot) ?? methodologyProblem(snapshot)
   if (tail !== undefined) return tail
   if (snapshot.paymentReviewBasis !== undefined && snapshot.paymentReviewBasisOmitted !== undefined) return "snapshot cannot publish both paymentReviewBasis and paymentReviewBasisOmitted"
   const omission = omissionProblem(snapshot, raw)

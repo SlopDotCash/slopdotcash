@@ -1,0 +1,132 @@
+// spec/fees/submissionFeeDeposits.md, "A deposit is recorded once confirmed and final once finalized, and a reorganised one stops paying"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events"
+import { first, rows, sql } from "@repo/platform/d1"
+import type { FeeDeposit as DepositKey, ObservedDeposit } from "@repo/ports/slopbot"
+import { type FeeDeposit, initial, machineOver } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import { type ReportDeposit, initial as reportInitial, machineOver as reportMachineOver } from "../../gen/fees__submissionFeeReportDeposits.effect.vibe"
+import { DepositRecord, type StateText, depositColumns, depositOf } from "./codec.vibe"
+
+export type FinalState = "refunded" | "kept" | "reclaimed"
+
+export interface Resolution {
+  readonly depositId: number
+  readonly state: FinalState
+  readonly txHash: string
+  readonly at: string
+}
+
+export interface Judgement {
+  readonly accepted: 0 | 1
+  readonly reason: string | null
+  readonly repositoryId: number | null
+  readonly pullNumber: number | null
+}
+
+schema CursorRecord { readonly next_block: number }
+
+schema ParkedRecord { readonly deposit_id: number }
+
+const columns = { text: depositColumns, params: [] }
+
+export effect function cursor(network: string) {
+  const found = try first(CursorRecord, sql`SELECT next_block FROM submission_fee_cursors WHERE network = ${network}`)
+  return found === undefined ? null : found.next_block
+}
+
+export effect function storedDeposit(network: string, depositId: number) {
+  const found = try first(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits WHERE network = ${network} AND deposit_id = ${depositId}`)
+  return found === undefined ? null : depositOf(found)
+}
+
+const sameAsStored = sql`submission_fee_deposits.item = excluded.item
+  AND submission_fee_deposits.payer = excluded.payer
+  AND submission_fee_deposits.token = excluded.token
+  AND submission_fee_deposits.amount = excluded.amount
+  AND submission_fee_deposits.kept_to = excluded.kept_to
+  AND submission_fee_deposits.tx_hash = excluded.tx_hash
+  AND submission_fee_deposits.block_number = excluded.block_number
+  AND submission_fee_deposits.block_time = excluded.block_time`
+
+export function upsertDeposit(observed: ObservedDeposit, finalizedAt: string | null) {
+  return sql`INSERT INTO submission_fee_deposits
+      (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, state)
+    VALUES (${observed.network}, ${observed.depositId}, ${observed.item}, ${observed.payer}, ${observed.token}, ${observed.amount},
+            ${observed.keptTo}, ${observed.txHash}, ${observed.blockNumber}, ${observed.blockTime}, ${finalizedAt}, 'open')
+    ON CONFLICT(network, deposit_id) DO UPDATE SET
+      accepted = CASE WHEN ${sameAsStored} THEN submission_fee_deposits.accepted END,
+      reject_reason = CASE WHEN ${sameAsStored} THEN submission_fee_deposits.reject_reason END,
+      repository_id = CASE WHEN ${sameAsStored} THEN submission_fee_deposits.repository_id END,
+      pull_number = CASE WHEN ${sameAsStored} THEN submission_fee_deposits.pull_number END,
+      item = excluded.item, payer = excluded.payer, token = excluded.token,
+      amount = excluded.amount, kept_to = excluded.kept_to,
+      tx_hash = excluded.tx_hash, block_number = excluded.block_number,
+      block_time = excluded.block_time, finalized_at = excluded.finalized_at
+    WHERE submission_fee_deposits.finalized_at IS NULL${finalizedAt === null ? sql` AND NOT (${sameAsStored})` : sql``}`
+}
+
+export function recordResolution(network: string, resolution: Resolution) {
+  return sql`UPDATE submission_fee_deposits SET state = ${resolution.state}, resolve_tx = ${resolution.txHash}, resolved_at = ${resolution.at}
+    WHERE network = ${network} AND deposit_id = ${resolution.depositId} AND finalized_at IS NOT NULL
+      AND state IN ('open', 'refund_due', 'kept_due')`
+}
+
+export function removeReorganised(network: string, throughBlock: number) {
+  return sql`DELETE FROM submission_fee_deposits WHERE network = ${network} AND finalized_at IS NULL AND block_number <= ${throughBlock}`
+}
+
+export function removeMissing(network: string, fromBlock: number, toBlock: number, seen: ReadonlyArray<number>) {
+  return sql`DELETE FROM submission_fee_deposits
+    WHERE network = ${network} AND finalized_at IS NULL AND block_number BETWEEN ${fromBlock} AND ${toBlock}
+      AND deposit_id NOT IN (SELECT value FROM json_each(${JSON.stringify(seen)}))`
+}
+
+export function advanceCursor(network: string, nextBlock: number) {
+  return sql`INSERT INTO submission_fee_cursors (network, next_block) VALUES (${network}, ${nextBlock})
+    ON CONFLICT(network) DO UPDATE SET next_block = excluded.next_block
+    WHERE excluded.next_block > submission_fee_cursors.next_block`
+}
+
+export effect function unjudged(network: string, limit: number) {
+  const found = try rows(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits d
+    WHERE d.network = ${network} AND d.accepted IS NULL
+    ORDER BY (EXISTS (SELECT 1 FROM submission_fee_items i WHERE i.item = d.item)
+              OR EXISTS (SELECT 1 FROM security_report_deposits r WHERE r.item = d.item AND r.mode = 'asked')) DESC,
+             d.deposit_id
+    LIMIT ${limit}`)
+  return found.map(depositOf)
+}
+
+export function setJudgement(deposit: DepositKey & { readonly txHash: string }, judgement: Judgement) {
+  return sql`UPDATE submission_fee_deposits
+      SET accepted = ${judgement.accepted}, reject_reason = ${judgement.reason}, repository_id = ${judgement.repositoryId}, pull_number = ${judgement.pullNumber}
+    WHERE network = ${deposit.network} AND deposit_id = ${deposit.depositId} AND accepted IS NULL AND tx_hash = ${deposit.txHash}`
+}
+
+export effect function resolvable(network: string) {
+  const found = try rows(DepositRecord, sql`SELECT ${columns} FROM submission_fee_deposits
+    WHERE network = ${network} AND finalized_at IS NOT NULL AND accepted IS NOT NULL
+      AND state IN ('open', 'refund_due', 'kept_due')
+      AND (reject_reason IS NULL OR reject_reason <> 'token_not_accepted')
+    ORDER BY deposit_id`)
+  return found.map(depositOf)
+}
+
+export function setDue(network: string, depositId: number, state: StateText) {
+  return sql`UPDATE submission_fee_deposits SET state = ${state}
+    WHERE network = ${network} AND deposit_id = ${depositId} AND finalized_at IS NOT NULL
+      AND state IN ('open', 'refund_due', 'kept_due')`
+}
+
+export effect function parked(network: string) {
+  const found = try rows(ParkedRecord, sql`SELECT deposit_id FROM submission_fee_parked WHERE network = ${network} AND released_at IS NULL`)
+  return new Set(found.map((row) => row.deposit_id))
+}
+
+export effect function depositModel(start: FeeDeposit = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export effect function reportDepositModel(start: ReportDeposit = reportInitial) {
+  const held = try Ref.make(start)
+  return try reportMachineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}

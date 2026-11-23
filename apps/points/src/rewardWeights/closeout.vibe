@@ -1,0 +1,55 @@
+// spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/rewardWeights.md, "A month's net weight is its accepted-work credit less its applied debits"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { first, rows, sql } from "@repo/platform/d1"
+import { RegistryManifests } from "@repo/ports/backend"
+import type { PointWeight, ProjectMonth } from "@repo/ports/points"
+import { instantOf } from "../kernels/records/instants.ts"
+import { periodOf } from "../../gen/points__periods.effect.vibe"
+import { PayloadRow, monthStart, revisionOf } from "./live.vibe"
+import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weights.vibe"
+
+schema CurrentBatchRow { readonly digest: string; readonly generated_at: string }
+schema CoveredRow { readonly covered: number }
+
+export interface CloseoutMonth extends ProjectMonth {
+  readonly before: string
+  readonly snapshotSha256: string
+  readonly repositories: ReadonlyArray<string>
+}
+
+function exactInstant(at: string) {
+  const parsed = Date.parse(at)
+  return !Number.isNaN(parsed) && new Date(parsed).toISOString() === at
+}
+
+export effect function currentPointsBatch() {
+  return try first(CurrentBatchRow, sql`SELECT digest, generated_at FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
+}
+
+export effect function closeoutLedger(month: CloseoutMonth) {
+  const period = periodOfCycle(month.period)
+  const now = try isoNow()
+  const today = instantOf(now)
+  if (period === undefined || today === null || !exactInstant(month.before) || month.repositories.length === 0) return undefined
+  const from = monthStart(period)
+  if (month.before <= from || month.before > monthStart(period + 1) || now < month.before || period > periodOf(today)) return undefined
+  const batch = try currentPointsBatch()
+  if (batch === undefined || !/^[a-f0-9]{64}$/u.test(batch.digest) || batch.generated_at < month.before) return undefined
+  for (const repository of month.repositories) {
+    const covered = try first(CoveredRow, sql`SELECT 1 AS covered FROM points_batches b, json_each(b.coverage) c WHERE b.digest = ${batch.digest} AND lower(json_extract(c.value, '$.repository')) = lower(${repository}) AND json_extract(c.value, '$.from') <= ${from} AND json_extract(c.value, '$.to') >= ${month.before} AND json_extract(c.value, '$.digest') = ${month.snapshotSha256} LIMIT 1`)
+    if (covered === undefined) return undefined
+  }
+  const stored = try rows(PayloadRow, sql`SELECT r.payload FROM points_revisions r WHERE json_extract(r.payload, '$.award.projectId') = ${month.projectId} AND json_extract(r.payload, '$.award.occurredAt') >= ${from} AND json_extract(r.payload, '$.award.occurredAt') < ${month.before} AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id) ORDER BY r.source_key`)
+  const revisions = []
+  for (const row of stored) revisions.push(try revisionOf(row.payload))
+  const registered = try (try RegistryManifests).project(month.projectId)
+  const exclusions = registered === undefined ? [] : try exclusionsOf(month.projectId, registered.manifest)
+  const { ledger, logins } = try projectionOf(month.projectId, revisions, today)
+  const weighted = try monthWeights(month.projectId, period, periodOf(today), exclusions, ledger)
+  return {
+    pointsBatch: batch.digest,
+    sha256: try sha256Hex(stored.map((row) => row.payload).join("\n")),
+    weights: weighted.map((weight) => ({ githubId: String(weight.actor), login: logins.get(weight.actor) ?? "", points: weight.weight }) satisfies PointWeight),
+  }
+}

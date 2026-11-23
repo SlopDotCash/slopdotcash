@@ -1,0 +1,44 @@
+// spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { CallerLive } from "@repo/backend/caller"
+import { type AccountVars, accountSettings } from "@repo/backend/points"
+import { RegistryManifestsLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { handle, outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { area, pages } from "@repo/platform/worker"
+import { ClosedMonth, PointWeight } from "@repo/ports/points"
+import { type ProtectedMonthsVars, disputeTriage, points, protectedMonthsAccess } from "../../../src/live.vibe"
+
+interface Env extends RoleVars, AccountVars, ProtectedMonthsVars {
+  readonly SLOP_DB: D1Database
+  readonly SLOPBOT?: Fetcher
+  readonly ASSETS: Fetcher
+}
+
+schema MonthAsked { projectId: string; period: string }
+schema Ledger { found: boolean; sha256: string; weights: ReadonlyArray<PointWeight> }
+
+const closedMonthRoute = route({ method: "POST", path: "/api/v1/test/points/closed-month", access: "public", limitKib: 1, request: MonthAsked, answer: Ledger, rejected: "rejected", cache: "no-store" })
+
+effect function closedMonth(month: MonthAsked) {
+  const ledger = try (try ClosedMonth).ledger(month)
+  return ledger === undefined ? { found: false, sha256: "", weights: [] } : { found: true, sha256: ledger.sha256, weights: ledger.weights }
+}
+
+const settlementShaped = area({
+  name: "settlementShaped",
+  api: [closedMonthRoute],
+  routes: handle(closedMonthRoute, (input) => closedMonth(input.body)),
+  provides: Layer.empty,
+})
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))
+  return Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env), RegistryManifestsLive, noticePorts, disputeTriage(env.SLOPBOT), protectedMonthsAccess(env.POINTS_PROTECTION_TOKEN)), base)
+}
+
+export default pages({ areas: [points, settlementShaped], services, assets: "ASSETS" })

@@ -1,9 +1,11 @@
 import { webCrypto, sha256Hex } from "@repo/platform/crypto";
 import { pointRevisionId } from "@repo/points/client";
-import { SECURITY_DEFAULT_EXCLUSIONS } from "@repo/security/client";
+import { REPORT_DEPOSIT_SWITCHED_ON, SECURITY_DEFAULT_EXCLUSIONS, SECURITY_ROUTINE_DECISION_NOTICE, reportDepositOn } from "@repo/security/client";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { REPORT_DEPOSIT_NOTICE } from "../src/projections/reportDeposit.ts";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
+import type { Target } from "./support/ui/protocol.ts";
 
 const users = {
   rae: { id: 1101, login: "octo-rae" },
@@ -224,6 +226,68 @@ describe('Recover a report draft and an uncertain submission (spec/frontend/draf
   });
 });
 
+describe('Submit and recover one private report (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
+  const proofField = named("group", "Proof of concept");
+  const proofInput: Target = { label: "Proof of concept" };
+  const patch = "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  vault.withdraw(1);\n+}\n";
+  const textFile = (name: string, text: string, mimeType = "text/plain") => ({ name, mimeType, bytes: [...new TextEncoder().encode(text)] });
+
+  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, and sends the proof with the report (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project")', async () => {
+    const description = "At commit abc, withdraw() rounds shares down. The attached test repeats a synthetic withdrawal.";
+    await signIn(users.rae.login, programPath(vaultKit));
+    await shown(summaryField).toMatchObject({ visible: true, disabled: false });
+    const asked = REPORT_DEPOSIT_SWITCHED_ON && reportDepositOn(manifestOf(vaultKit, bountyTerms(vaultKit, [users.max], ownerLines)));
+    await shown({ text: REPORT_DEPOSIT_NOTICE, exact: true }).toMatchObject({ count: asked ? 1 : 0 });
+
+    await site.fill(summaryField, "Withdrawal rounds shares in the wrong direction");
+    await site.upload({ label: "Load report from file" }, textFile("report.md", `\n${description}\n`, "text/markdown"));
+    await shown(descriptionField).toMatchObject({ value: description });
+
+    await site.upload(proofInput, textFile("WithdrawRounding.t.sol", patch));
+    await shown({ text: "WithdrawRounding.t.sol", within: proofField }).toMatchObject({ visible: true });
+    await site.upload(proofInput, { name: "test.patch", mimeType: "application/octet-stream", bytes: [0x2b, 0x00, 0xff, 0xfe] });
+    await shown({ text: "The file must be text, not a binary file.", exact: true }).toMatchObject({ visible: true });
+    await shown({ text: "WithdrawRounding.t.sol", within: proofField }).toMatchObject({ visible: true });
+    await site.upload(proofInput, textFile("exploit.sh", "echo\n"));
+    await shown({ text: "The proof file must end in", within: proofField }).toMatchObject({ visible: true });
+    await shown({ text: "WithdrawRounding.t.sol", within: proofField }).toMatchObject({ visible: true });
+
+    await site.open(programPath(vaultKit));
+    await shown({ text: "WithdrawRounding.t.sol", within: proofField }).toMatchObject({ visible: true });
+    await site.click(named("button", "Review report"));
+    await shown({ text: "Proof of concept: WithdrawRounding.t.sol", exact: true }).toMatchObject({ visible: true });
+    await site.click(named("button", "Submit private report"));
+    await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+    await expect.poll(() => submissionsOf(users.rae), { timeout: journeyMs }).toEqual([expect.objectContaining({ project_id: vaultKit })]);
+    expect(await sentCount("POST", "/api/v1/security-submissions")).toBe(1);
+  });
+
+  it('three tab returns keep the reporter\'s reports on the Inbox and re-read only the session (spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/requests.md, "Only the current request may publish its validated result")', async () => {
+    const summary = "Share price moves on a donated deposit";
+    await signIn(users.rae.login, programPath(vaultKit));
+    await writeReport(summary, "A direct token transfer to the vault changes the share price, which the attached test turns into a loss.");
+    await site.click(named("button", "Review report"));
+    await site.click(named("button", "Submit private report"));
+    await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+
+    await site.open("/inbox");
+    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    const reads = async () => {
+      const sent = await site.sent();
+      const count = (path: string) => sent.filter((entry) => entry.method === "GET" && entry.path === path).length;
+      return { session: count("/api/v1/project-session"), cases: count("/api/v1/security-cases"), submissions: count("/api/v1/security-submissions") };
+    };
+    const loaded = await reads();
+    for (let round = 1; round <= 3; round += 1) {
+      await site.refocus();
+      await expect.poll(async () => (await reads()).session, { timeout: journeyMs }).toBeGreaterThanOrEqual(loaded.session + round);
+      await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+      await shown({ text: "Checking private session…" }).toMatchObject({ count: 0 });
+    }
+    expect(await reads()).toMatchObject({ cases: loaded.cases, submissions: loaded.submissions });
+  });
+});
+
 describe('Change accounts without disclosing the prior account\'s draft (spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account\'s draft")', () => {
   it('signing out erases the report draft, and neither the next account nor the returning one sees it (spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "The active draft and navigation share one authenticated actor")', async () => {
     await site.allow(...expectedFailures);
@@ -286,10 +350,11 @@ describe('Carry one report from durable receipt to a decision and optional forwa
 });
 
 describe('Decide an award under the terms that accompanied the report (spec/security/terms.md, "Story: Decide an award under the terms that accompanied the report")', () => {
-  it('the published program lists the ten defaults, then the owner lines only when the terms carry them (spec/security/terms.md, "Exclusions are frozen with the terms and stay advice")', async () => {
+  it('the published program lists the ten defaults with the routine-decision notice, then the owner lines only when the terms carry them (spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner")', async () => {
     await site.open(programPath(vaultKit));
     const scope = named("region", "Scope");
     await shown(named("heading", "Does not qualify", { within: scope })).toMatchObject({ visible: true });
+    await shown({ text: SECURITY_ROUTINE_DECISION_NOTICE, exact: true, within: scope }).toMatchObject({ count: 1, visible: true });
     await shown(named("heading", "Also does not qualify for this program", { within: scope })).toMatchObject({ visible: true });
     const text = (await site.read(scope)).text;
     const order = [...SECURITY_DEFAULT_EXCLUSIONS, ...ownerLines].map((line) => text.indexOf(line));

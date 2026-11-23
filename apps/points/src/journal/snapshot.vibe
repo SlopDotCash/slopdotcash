@@ -22,6 +22,8 @@ export interface Credited { readonly award: Award; readonly event: ScoreEvent; r
 export const octoberOriginalContributorDecision =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved."
 export const octoberDuplicateRetirementDecision = "Owner-reviewed duplicate accepted work already rewarded by earlier sources."
+export const verifiedHistoricalAllocationDecision =
+  "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
 
 const octoberDecisions = new Set([octoberOriginalContributorDecision, octoberDuplicateRetirementDecision])
 const unassessedCoverage = new Set(["missing", "legacy-policy"])
@@ -158,6 +160,53 @@ function priorMerges(store: Store) {
   return merges
 }
 
+function historicalJointHolds(snapshot: LeaderboardSnapshot, repositories: Repositories, original: ReadonlySet<string>) {
+  const membership = (snapshot.reviewedImplementationUnits ?? []).flatMap((source) => {
+    const project = projectOf(repositories, source.repository)
+    return project === undefined ? [] : [{ project, source: sourceKey(project, source.pullRequestId), units: source.units }]
+  })
+  const unitKey = (project: string, decision: string, unit: string) => `${project}\u0000${decision}\u0000${unit}`
+  const protectedGroups = new Set<string>()
+  const exactRecords = new Set<string>()
+  const heldRecords = new Set<string>()
+  const allUnits = new Set<string>()
+  const heldUnits = new Set<string>()
+  const heldSources = new Set<string>()
+  const related = new Set<string>()
+  for (const row of membership) if (original.has(row.source)) {
+    for (const unit of row.units) {
+      protectedGroups.add(sourceKey(row.project, unit.groupId))
+      exactRecords.add(sourceKey(row.source, unit.recordDigest))
+    }
+  }
+  for (const row of membership) for (const unit of row.units) {
+    const key = unitKey(row.project, `value:${unit.recordDigest}`, unit.workUnitId)
+    allUnits.add(key)
+    if (protectedGroups.has(sourceKey(row.project, unit.groupId))) {
+      heldSources.add(row.source)
+      heldUnits.add(key)
+    }
+  }
+  const assessed = (snapshot.valueAssessmentCoverage ?? []).flatMap((row) => {
+    const project = projectOf(repositories, row.repository)
+    if (project === undefined || row.status !== "assessed" || row.recordDigest === null) return []
+    return [{ source: sourceKey(project, row.pullRequestId), digest: row.recordDigest, record: sourceKey(project, `value:${row.recordDigest}`) }]
+  })
+  for (const row of assessed) {
+    if (original.has(row.source) && !exactRecords.has(sourceKey(row.source, row.digest))) heldRecords.add(row.record)
+  }
+  for (const row of assessed) if (heldRecords.has(row.record)) related.add(row.source)
+  for (const event of snapshot.ledger) {
+    if (event.category !== "merged-pull-request" || event.scoreDecisionSourceId === undefined) continue
+    const project = projectOf(repositories, event.repository)
+    if (project === undefined) continue
+    const source = sourceKey(project, event.source.id)
+    if (heldRecords.has(sourceKey(project, event.scoreDecisionSourceId))) related.add(source)
+    if (heldUnits.has(unitKey(project, event.scoreDecisionSourceId, event.workUnitId ?? ""))) heldSources.add(source)
+  }
+  return { unitKey, allUnits, heldUnits, heldSources, related }
+}
+
 effect function checkOmissions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot) {
   const omitted = new Map<string, string>()
   for (const exclusion of snapshot.reviewExclusions ?? []) {
@@ -204,7 +253,7 @@ effect function supersededBy(store: Store, chosen: Superseding | undefined) {
   return decision
 }
 
-effect function supersessions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, before: ReadonlyArray<Row>, supplied: ReadonlySet<string>, ownRecordMerges: ReadonlySet<string>, owned: ReadonlySet<string>, held: ReadonlySet<string>) {
+effect function supersessions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, before: ReadonlyArray<Row>, supplied: ReadonlySet<string>, ownRecordMerges: ReadonlySet<string>, owned: ReadonlySet<string>) {
   const coverageByNumber = new Map<string, ValueCoverage>()
   for (const row of snapshot.valueAssessmentCoverage ?? []) {
     const key = `${row.repository}\u0000${row.pullRequestNumber}`
@@ -237,7 +286,7 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
     const award = previous.award
     const merged = award.category === "merged-pull-request"
     const source = sourceKey(award.projectId, award.sourceId)
-    if ((merged && held.has(source)) || (award.category === "substantive-review" && omitted.has(source))) continue
+    if (award.category === "substantive-review" && omitted.has(source)) continue
     const own = merged && (try unitNameOf(award)) === ownUnit(award.projectId, award.sourceId)
     const url = URL.parse(award.sourceUrl)
     const match = url?.origin === "https://github.com" ? pullUrl.exec(url.pathname) : null
@@ -245,23 +294,27 @@ effect function supersessions(store: Store, repositories: Repositories, snapshot
     let invalidated: Superseding | undefined
     let absorbed: Superseding | undefined
     let absorbs = false
+    let reviewDigest: string | undefined
     if (snapshot.valueAssessmentCoverage !== undefined && match !== null) {
       const repository = findRepository(repositories.registry, `${match[1]}/${match[2]}`)?.id ?? ""
       const coverage = coverageByNumber.get(`${repository}\u0000${Number(match[3])}`)
-      coverageState = coverage === undefined ? "CoverageAbsent" : coverageStates[coverage.status] ?? "CoverageMissing"
+      reviewDigest = award.category === "substantive-review" ? coverage?.reviewAssessmentDigest : undefined
+      coverageState = reviewDigest !== undefined ? "CoverageAssessed" : coverage === undefined ? "CoverageAbsent" : coverageStates[coverage.status] ?? "CoverageMissing"
       const record = coverage?.pullRequestId === award.sourceId ? coverage.recordDigest ?? "" : ""
       if (merged && coverage?.status === "assessed" && record !== "") absorbed = try decidedBy(joints.get(`${repository}\u0000value:${record}`))
       if (merged && !own && (coverage?.status === "stale" || coverage?.status === "incomplete") && record !== "" && previous.decision?.sourceId === `value:${record}`) {
         invalidated = { sourceId: previous.decision.sourceId, effectiveAt: snapshot.generatedAt, reason: `The current completion source marks this prior joint assessment ${coverage.status}.` }
       }
       absorbs = merged && !own && ownRecordMerges.has(source)
-      if ((coverage === undefined || !zeroingCoverage.has(coverage.status)) && invalidated === undefined && !absorbs) continue
+      if ((coverage === undefined || !zeroingCoverage.has(coverage.status)) && reviewDigest === undefined && invalidated === undefined && !absorbs) continue
     }
     const adverse = award.category === "substantive-review" && excluded.has(source)
     const inside = award.occurredAt >= snapshot.window.from && award.occurredAt < snapshot.window.to
     if (award.category === "payout-received" || award.category === "slopbot-penalty" || award.amount === 0 || owned.has(award.key) ||
       supplied.has(award.key) || !(inside || adverse) || !projectCollected(repositories, snapshot, award.projectId, award.occurredAt.slice(0, 7))) continue
-    const chosen = invalidated ?? absorbed ?? (try decidedBy(parents.get(award.sourceUrl.split("#")[0] ?? "")))
+    const parent = parents.get(award.sourceUrl.split("#")[0] ?? "")
+    const decision = reviewDigest === undefined || parent?.scoreDecisionSourceId === `value:${reviewDigest}` ? try decidedBy(parent) : undefined
+    const chosen = invalidated ?? absorbed ?? decision
     found.push({
       row: previous,
       effectiveAt: chosen?.effectiveAt ?? store.generatedAt,
@@ -399,7 +452,7 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     const status = coverage.get(first.award.sourceId)
     const scored: Scored = {
       phase: scorePhases[status?.status ?? ""] ?? "LegacyScored", project, unit: recorded, head: "", acceptedAt: 0, policy: "ValueV1",
-      legacyPoints: 0, points: total, frozen: false, frozenPoints: 0, held: false, pendingBand: 0, rubric: "", model: "", billingProven: false,
+      legacyPoints: 0, points: total, frozen: false, frozenPoints: 0, held: false, pendingBand: 0, rubric: "", model: "", billingProven: false, jointWithheld: false,
     }
     const refused = try sendAll(opened, [{ type: "rescoreUnit", s: scored, reason: first.event.reason, digest }])
     if (refused !== "") {
@@ -533,23 +586,36 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
   for (const row of snapshot.valueAssessmentCoverage ?? []) if (!coverage.has(row.pullRequestId)) coverage.set(row.pullRequestId, row)
   const merges = priorMerges(store)
   const held = octoberHeld(store)
+  const joint = historicalJointHolds(snapshot, repositories, held)
+  for (const source of joint.related) held.add(source)
   const buffer: Row[] = []
   for (const row of snapshot.valueAssessmentCoverage ?? []) {
     const projectId = projectOf(repositories, row.repository)
     if (!unassessedCoverage.has(row.status) || row.recordDigest !== null || projectId === undefined) continue
     const key = sourceKey(projectId, row.pullRequestId)
     const prior = merges.get(key) ?? []
-    if (held.has(key) || prior.length === 0) continue
+    if (held.has(key) || joint.heldSources.has(key) || prior.length === 0) continue
     held.add(key)
+    // The rolling window can omit earlier acceptance established by the historical census.
+    if (prior.some((row) => row.decision?.reason === verifiedHistoricalAllocationDecision)) continue
     const current = snapshotAwards.filter(({ award }) => award.category === "merged-pull-request" && sourceKey(award.projectId, award.sourceId) === key)
     try commit(store, buffer, try reallocateFromCoverage(store, snapshot, digest, recordedAt, row, projectId, prior, current, unavailable))
+  }
+  const holdsImplementation = (award: Award, decisionSource: string | undefined) => {
+    if (award.category !== "merged-pull-request") return false
+    const source = sourceKey(award.projectId, award.sourceId)
+    const unit = joint.unitKey(award.projectId, decisionSource ?? "", award.workUnitId)
+    if (held.has(source) || joint.heldUnits.has(unit)) return true
+    if (!joint.heldSources.has(source)) return false
+    const ordinary = (merges.get(source) ?? []).some(({ award: prior }) => prior.amount > 0 && store.unitOfKey.get(prior.key) === ownUnit(prior.projectId, prior.sourceId))
+    return !joint.allUnits.has(unit) || ordinary
   }
   const credited: Credited[] = []
   for (const item of snapshotAwards) {
     const { award } = item
     const merged = award.category === "merged-pull-request"
     const recorded = store.latest.has(award.key) || store.unitsBySource.has(award.sourceId)
-    if (owned.has(award.key) || (merged && held.has(sourceKey(award.projectId, award.sourceId)))) continue
+    if (owned.has(award.key) || holdsImplementation(award, item.event.scoreDecisionSourceId)) continue
     if (merged && award.provisional && unavailable.has(award.sourceId) && recorded) continue
     credited.push(item)
   }
@@ -557,7 +623,8 @@ export effect function applySnapshot(store: Store, repositories: Repositories, s
     .filter((item) => item.award.category === "merged-pull-request" && item.unit === ownUnit(item.award.projectId, item.award.sourceId))
     .map((item) => sourceKey(item.award.projectId, item.award.sourceId)))
   const supplied = new Set(credited.map((item) => item.award.key))
-  try zeroSupersededCredit(store, buffer, try supersessions(store, repositories, snapshot, digest, before, supplied, ownRecordMerges, owned, held), digest, recordedAt)
+  const reconsidered = before.filter((row) => !holdsImplementation(row.award, row.decision?.sourceId))
+  try zeroSupersededCredit(store, buffer, try supersessions(store, repositories, snapshot, digest, reconsidered, supplied, ownRecordMerges, owned), digest, recordedAt)
   for (const [unit, members] of groupsOf(credited)) try commit(store, buffer, try creditUnitGroup(store, repositories, snapshot, coverage, digest, recordedAt, unit, members))
   for (const item of credited) {
     const prior = store.latest.get(item.award.key)

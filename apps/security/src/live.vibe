@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/screening.md, "Routing writes only private references for the current qualified version"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/backend/projectComposition.md, "Scans are queued and recorded against the project's current repositories"
 import type { Fetcher, R2Bucket } from "@repo/platform/bindings"
 import { serviceAuth } from "@repo/platform/http"
 import { area } from "@repo/platform/worker"
@@ -9,8 +9,12 @@ import { privateRoute } from "./analysis/route.vibe"
 import { approvedAwardsLive } from "./bounty/port.vibe"
 import { awardClearancesLive } from "./bounty/store.vibe"
 import { SecurityNoticeAccessLive } from "./caseAuthority/notices.vibe"
+import { caseActionHandlersLive, chainedHandlers } from "./cases/handlers.vibe"
 import { caseRoutes } from "./cases/routes.vibe"
 import { api } from "./client/index.vibe"
+import { ReportDepositsLive } from "./deposit/port.vibe"
+import { reportDepositSettings } from "./deposit/settings.vibe"
+import { depositSweep } from "./deposit/sweep.vibe"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, enforcementPorts } from "./enforcement/port.vibe"
 import { withDecidingEvidence, withRetainedEvidence } from "./enforcement/retained.vibe"
 import { enforcementRoutes } from "./enforcement/routes.vibe"
@@ -20,21 +24,23 @@ import { evidenceRoutes } from "./evidence/routes.vibe"
 import { intakeApp, intakeAppConfigured } from "./forwarding/grant.vibe"
 import { forwardingRoutes } from "./forwarding/routes.vibe"
 import { intakeSettings } from "./intake/availability.vibe"
+import { submissionReadRoutes } from "./intake/list.vibe"
 import { intakeRoutes } from "./intake/routes.vibe"
 import { AuditLive } from "./privacy/port.vibe"
 import { reportBucket } from "./privacy/reads.vibe"
+import { SecurityProgramPublicationLive } from "./program/publication.vibe"
 import { reportingProgramsLive } from "./receipt/program.vibe"
-import { remediationAct, remediationContribution, remediationHandlersLive } from "./remediation/routes.vibe"
-import { screeningJob } from "./screening/jobs.vibe"
+import { remediationAct, remediationContribution } from "./remediation/routes.vibe"
+import { readRoutine, routineRoutes, routineSettings, routineSweep, runRoutine } from "./routine/routes.vibe"
 import { screeningRoutes } from "./screening/routes.vibe"
 
-export { AccessJournalLive, AuditLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ScanRequestsLive, SecurityNoticeAccessLive, VettingBansLive, approvedAwardsLive, enforcementPorts, remediationAct, remediationContribution, withDecidingEvidence, withRetainedEvidence }
+export { AccessJournalLive, AuditLive, ClearanceLive, EnforcementLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ReportDepositsLive, ScanRequestsLive, SecurityNoticeAccessLive, SecurityProgramPublicationLive, VettingBansLive, approvedAwardsLive, caseActionHandlersLive, chainedHandlers, enforcementPorts, remediationAct, remediationContribution, withDecidingEvidence, withRetainedEvidence }
 
 export interface SecurityEnv {
   readonly VETTING_EVIDENCE: R2Bucket
   readonly PRIVATE_TRACES: R2Bucket
   readonly ASSETS: Fetcher
-  readonly SANDBOX?: Fetcher
+  readonly VETTING_SANDBOX?: Fetcher
   readonly VETTING_RESULT_PUBLIC_KEYS?: string
   readonly SURPLUS_API_KEY?: string
   readonly SLOP_ANALYSIS_API_ORIGIN?: string
@@ -42,6 +48,8 @@ export interface SecurityEnv {
   readonly GITHUB_INTAKE_APP_CLIENT_ID?: string
   readonly GITHUB_INTAKE_APP_CLIENT_SECRET?: string
   readonly SLOP_INTAKE_GRANT_KEY?: string
+  readonly SECURITY_ROUTINE_DECISIONS?: string
+  readonly SECURITY_REPORT_DEPOSIT?: string
 }
 
 export function securityBindings(env: SecurityEnv) {
@@ -51,19 +59,39 @@ export function securityBindings(env: SecurityEnv) {
     intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: intakeAppConfigured(env) }),
     intakeApp(env),
     skillTemplateFrom(env.ASSETS),
-    env.SANDBOX === undefined ? Layer.empty : vettingSandbox(env.SANDBOX),
+    env.VETTING_SANDBOX === undefined ? Layer.empty : vettingSandbox(env.VETTING_SANDBOX),
     serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS),
     privateRoute({ apiKey: env.SURPLUS_API_KEY, ...env.SLOP_ANALYSIS_API_ORIGIN === undefined ? {} : { baseUrl: env.SLOP_ANALYSIS_API_ORIGIN } }),
+    routineSettings(env.SECURITY_ROUTINE_DECISIONS),
+    reportDepositSettings(env.SECURITY_REPORT_DEPOSIT),
   )
 }
 
+export const securityNoticeAccess = Layer.provide(SecurityNoticeAccessLive, reportingProgramsLive)
+
+const sweptAreas: ReadonlySet<string> = new Set(["security-cases", "security-programs", "security-submissions", "security-routine"])
+
+function apiAreaOf(url: string) {
+  const path = new URL(url, "http://security.invalid").pathname
+  return path.startsWith("/api/v1/") ? path.slice("/api/v1/".length).split("/")[0] ?? "" : ""
+}
+
+const behindSecurityRequests = HttpRouter.use((router) => router.addGlobalMiddleware((response) => effect {
+  const request = try HttpServerRequest.HttpServerRequest
+  const part = apiAreaOf(request.url)
+  if (sweptAreas.has(part)) {
+    if (part !== "security-routine") try routineSweep()
+    try depositSweep()
+  }
+  return try response
+}))
+
 export const security = area({
   name: "security",
-  api,
-  routes: Layer.mergeAll(evidenceRoutes, intakeRoutes, admissionRoutes, enforcementRoutes, caseRoutes, forwardingRoutes, screeningRoutes),
+  api: [...api, readRoutine, runRoutine],
+  routes: Layer.mergeAll(evidenceRoutes, intakeRoutes, submissionReadRoutes, admissionRoutes, enforcementRoutes, caseRoutes, forwardingRoutes, screeningRoutes, routineRoutes, behindSecurityRequests),
   provides: Layer.provideMerge(
-    Layer.mergeAll(AuditLive, VettingBansLive, Layer.provideMerge(ScanRequestsLive, ProjectEventsLive), approvedAwardsLive, awardClearancesLive, remediationHandlersLive, SecurityNoticeAccessLive),
+    Layer.mergeAll(AuditLive, VettingBansLive, Layer.provideMerge(ScanRequestsLive, ProjectEventsLive), approvedAwardsLive, awardClearancesLive, caseActionHandlersLive, SecurityNoticeAccessLive, SecurityProgramPublicationLive, ReportDepositsLive),
     reportingProgramsLive,
   ),
-  jobs: { "*/15 * * * *": [screeningJob] },
 })

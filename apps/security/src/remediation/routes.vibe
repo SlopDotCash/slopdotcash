@@ -4,7 +4,7 @@ import type { Disclosure, Event, Recognition, Stage } from "../../gen/security__
 import { remediator } from "../../gen/security__remediation.effect.vibe"
 import { technicalNow } from "../../gen/security__cases.effect.vibe"
 import { type Body, exactKeys } from "../cases/actions.vibe"
-import { type CaseActionInput, CaseActionHandlers, opened } from "../cases/routes.vibe"
+import { type CaseActionInput, opened } from "../cases/routes.vibe"
 import { type Observed, type Refusal, notAllowed, refused } from "../cases/store.vibe"
 import type { ExtraActions } from "../cases/view.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
@@ -143,14 +143,3 @@ export effect function remediationContribution(observed: Observed, viewerGithubI
   const journal = try journalOf(observed.record, observed.model)
   return { allowed: remediationAllowed(observed, journal, githubNumber(viewerGithubId)), view: {} } satisfies ExtraActions
 }
-
-type Needs = Effect.Services<ReturnType<typeof remediationAct>>
-
-export const remediationHandlersLive = Layer.effect(CaseActionHandlers, effect {
-  const services = try Effect.context<Needs>()
-  const handlers: CaseActionHandlers.Shape = {
-    contribution: (observed, viewerGithubId) => remediationContribution(observed, viewerGithubId),
-    act: (action, input) => Effect.provide(Effect.provideService(remediationAct(action, input), CaseActionHandlers, handlers), services),
-  }
-  return handlers
-})

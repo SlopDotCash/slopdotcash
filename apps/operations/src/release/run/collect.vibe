@@ -165,10 +165,14 @@ export effect function publishedAt(bundle: string) {
   return snapshot.generatedAt
 }
 
-export effect function collect(environment: EnvironmentName, bundle: string, kind: CollectionKind) {
+schema RegistryHeader {
+  readonly schemaVersion: number
+  readonly syncedAt: string
+}
+
+export effect function snapshotRegistry(environment: EnvironmentName, bundle: string) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
-  const retainedAt = kind === "retained" ? try publishedAt(bundle) : undefined
   const snapshot = try consistentRegistry(try originFor(environment))
   const syncedAt = try isoNow()
   const text = canonicalSnapshot(snapshot, syncedAt)
@@ -180,15 +184,40 @@ export effect function collect(environment: EnvironmentName, bundle: string, kin
   fs.writeFileString(target, text, { mode: 0o644 }) catch effect () => {
     throw new BundleRefused({ message: "the registry snapshot could not be written" })
   }
-  const recordedAt = retainedAt ?? syncedAt
+  return { text, syncedAt, withheld: snapshot.withheld }
+}
+
+effect function boundRegistry(bundle: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.join(bundle, registrySnapshotPath)
+  const present = fs.exists(path) catch effect () => {
+    throw new BundleRefused({ message: "the registry snapshot is unreadable" })
+  }
+  if (!present) return undefined
+  const text = fs.readFileString(path) catch effect () => {
+    throw new BundleRefused({ message: "the registry snapshot is unreadable" })
+  }
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new BundleRefused({ message: "the registry snapshot is not JSON" }) })
+  const header = Schema.decodeUnknownEffect(RegistryHeader)(value) catch effect () => {
+    throw new BundleRefused({ message: "the registry snapshot has no schema version or sync time" })
+  }
+  if (header.schemaVersion !== 1 || !isoInstant.test(header.syncedAt)) throw new BundleRefused({ message: "the registry snapshot has no schema version or sync time" })
+  return { text, syncedAt: header.syncedAt, withheld: [] as ReadonlyArray<string> }
+}
+
+export effect function collect(environment: EnvironmentName, bundle: string, kind: CollectionKind) {
+  const retainedAt = kind === "retained" ? try publishedAt(bundle) : undefined
+  const bound = try boundRegistry(bundle)
+  const registry = bound !== undefined ? bound : try snapshotRegistry(environment, bundle)
   const collection = {
     schemaVersion: 1,
     environment,
     kind,
-    registrySha256: try sha256Hex(text),
+    registrySha256: try sha256Hex(registry.text),
     githubSha256: try githubDigest(bundle),
-    recordedAt,
+    recordedAt: retainedAt ?? registry.syncedAt,
   } satisfies Collection
   try writeCollection(bundle, collection)
-  return { collection, withheld: snapshot.withheld }
+  return { collection, withheld: registry.withheld }
 }

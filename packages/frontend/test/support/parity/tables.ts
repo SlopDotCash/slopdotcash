@@ -133,7 +133,7 @@ function amendedOf(row: Row, refusal: AmendedRefusal): Expected {
     key: refusal.key,
     status: refusal.status,
     body: refusal.message === undefined ? { error: refusal.error } : { error: refusal.error, message: refusal.message },
-    headers: like.headers,
+    headers: refusal.cacheControl === undefined ? like.headers : { ...like.headers, "cache-control": refusal.cacheControl },
     dynamicHeaders: like.dynamicHeaders,
     at: refusal.at,
   };
@@ -149,7 +149,7 @@ function amended(rows: ReadonlyArray<Row>, amendment: Amendment): ReadonlyArray<
   if (from !== undefined) {
     const base = rows.find((row) => row.id === from.route);
     if (base === undefined) throw new Error(`the amendment ${amendment.route} starts from ${from.route}, which reference/parity does not list`);
-    const added: Row = { ...base, ...pathOf(amendment.route), id: amendment.route, name: from.name, answers: base.answers.filter((answer) => from.keep.includes(answer.key)) };
+    const added: Row = { ...base, ...pathOf(amendment.route), id: amendment.route, name: from.name, success: amendment.success ?? base.success, answers: base.answers.filter((answer) => from.keep.includes(answer.key)) };
     return [...rows, { ...added, answers: [...added.answers, ...amendment.refusals.map((refusal) => amendedOf(base, refusal))] }];
   }
   if (!rows.some((row) => row.id === amendment.route)) throw new Error(`the amendment names ${amendment.route}, which reference/parity does not list`);
@@ -216,6 +216,9 @@ const samples: Readonly<Record<string, string>> = {
   capability: "parity",
   artifact: "skill.md",
   code: "parity",
+  repositoryId: "1",
+  pullNumber: "1",
+  caseId: "sc_paritycase",
 };
 
 export function sampledPath(path: string): string {

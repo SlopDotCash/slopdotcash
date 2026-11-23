@@ -10,16 +10,16 @@ import { PointRevision } from "../kernels/records/records.schema.ts"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
 import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weights.vibe"
 
-schema PayloadRow { readonly payload: string }
+export schema PayloadRow { readonly payload: string }
 schema BatchRow { readonly generated_at: string | null }
 
 const decodePayload = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
 
-function monthStart(period: number) {
+export function monthStart(period: number) {
   return `${String(Math.floor(period / 12)).padStart(4, "0")}-${String(period % 12 + 1).padStart(2, "0")}-01T00:00:00.000Z`
 }
 
-effect function revisionOf(payload: string) {
+export effect function revisionOf(payload: string) {
   const revision = decodePayload(payload, { onExcessProperty: "error" }) catch effect () => {
     throw new RowMismatch({ text: "points_revisions", issue: "a payload is not a Points revision" })
   }

@@ -1,0 +1,37 @@
+// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"
+import { slopbotAccess } from "@repo/backend/live"
+import { AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ProjectAudienceLive, RegistryLive, RestrictionsLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { type NotifyEnv, notifyWorker } from "@repo/operations/notify"
+import type { Fetcher } from "@repo/platform/bindings"
+import { outbound } from "@repo/platform/http"
+import { contributorAudience, disputeAudience } from "@repo/points/live"
+import { EnforcementRowsLive, VettingBansLive, securityNoticeAccess } from "@repo/security/live"
+import { SlopbotAudienceLive } from "@repo/slopbot/live"
+import { envelope } from "./envelope.ts"
+
+interface Env extends NotifyEnv {
+  readonly SLOPBOT?: Fetcher
+}
+
+const restrictions = Layer.provide(RestrictionsLive, Layer.provide(EnforcementRowsLive, Layer.mergeAll(noticePorts, contributorAudience)))
+
+function caseReads(env: Env) {
+  return Layer.mergeAll(RegistryLive, restrictions, Layer.provide(AuthorityLive, slopbotAccess(env.SLOPBOT)))
+}
+
+function ports(env: Env) {
+  return Layer.mergeAll(
+    EmailConsentLive,
+    EmailEnrollmentLive,
+    RegistryLive,
+    ProjectAudienceLive,
+    contributorAudience,
+    disputeAudience,
+    Layer.provide(securityNoticeAccess, caseReads(env)),
+    VettingBansLive,
+    SlopbotAudienceLive,
+  )
+}
+
+export default notifyWorker<Env>({ ports, internet: outbound, envelope })

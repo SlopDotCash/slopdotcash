@@ -1,0 +1,27 @@
+// spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/points/protectedMonths.md, "The generator reads the protected months only from this site's own route, once, with a bounded answer"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema ProtectedPointMonth {
+  readonly projectId: string
+  readonly period: string
+}
+
+export schema ProtectedPointMonths {
+  readonly schema: "slop-protected-point-months-v1"
+  readonly generatedAt: string
+  readonly months: ReadonlyArray<ProtectedPointMonth>
+  readonly everyMonthProjects: ReadonlyArray<string>
+}
+
+export const protectedMonthsRoute = route({
+  method: "GET",
+  path: "/api/v1/operator/protected-point-months",
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: ProtectedPointMonths,
+  rejected: "protected_point_months_unavailable",
+  cache: "no-store",
+})
+
+export const api: ReadonlyArray<AnyRoute> = [protectedMonthsRoute]

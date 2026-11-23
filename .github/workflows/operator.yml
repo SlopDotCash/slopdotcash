@@ -6,7 +6,7 @@ on:
       operation:
         description: Operation to run
         type: choice
-        options: [sandbox-qualification, inspect-slopbot-runtime]
+        options: [sandbox-qualification, inspect-slopbot-runtime, asi-november-closeout]
         default: sandbox-qualification
       mode:
         description: "Sandbox qualification: plan only by default; execute runs harmless deployed probes after the exact staging release"
@@ -17,6 +17,17 @@ on:
         description: "Slopbot runtime readback: the exact deployed Slopbot source SHA"
         type: string
         default: ""
+      asi_mode:
+        description: Inspect input digests, preview the reviewed ASI proposal, or apply the approved preview
+        type: choice
+        options: [inspect, preview, apply]
+        default: inspect
+      reviewed_packet_sha256:
+        description: Exact SHA-256 of the private reviewed ASI packet for preview and apply
+        type: string
+      preview_sha256:
+        description: Exact SHA-256 returned by the reviewed ASI preview for apply
+        type: string
 
 permissions:
   contents: read
@@ -107,3 +118,42 @@ jobs:
           path: ${{ runner.temp }}/slopbot-runtime.json
           if-no-files-found: error
           retention-days: 30
+
+  asi-november-closeout:
+    name: Inspect, preview or apply the reviewed ASI November closeout
+    if: >-
+      github.repository == 'SlopDotCash/slopdotcash' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.operation == 'asi-november-closeout'
+    environment: slop-production
+    concurrency:
+      group: slop-production
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: asi-november-closeout
+          verification: "false"
+          publication: "true"
+      - run: pnpm audit --prod
+      - run: pnpm all build --filter=@repo/operations --filter=@repo/settlement
+      - name: Snapshot the production registry for leaderboard validation
+        run: node apps/operations/dist/programs/main.js release registry production "$RUNNER_TEMP/asi-closeout"
+      - name: Validate and optionally import the private closeout proposal
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOPBOT_APP_ID: ${{ secrets.SLOPBOT_APP_ID }}
+          SLOPBOT_APP_PRIVATE_KEY: ${{ secrets.SLOPBOT_APP_PRIVATE_KEY }}
+          ASI_CLOSEOUT_REVIEWED_PACKET: ${{ secrets.ASI_CLOSEOUT_REVIEWED_PACKET }}
+          REVIEWED_PACKET_SHA256: ${{ inputs.reviewed_packet_sha256 }}
+          ASI_CLOSEOUT_PREVIEW_SHA256: ${{ inputs.preview_sha256 }}
+          ASI_CLOSEOUT_MODE: ${{ inputs.asi_mode }}
+        run: node apps/settlement/dist/programs/main.js asi-november-closeout "$RUNNER_TEMP/asi-closeout/registry/snapshot.json"

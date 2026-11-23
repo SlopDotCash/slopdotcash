@@ -1,4 +1,4 @@
-// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"
+// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"
 import { boundedBytes } from "@repo/platform/browser"
 import { millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
@@ -7,6 +7,7 @@ import { journalFile } from "../kernels/records/ids.vibe"
 import { maxIndexBytes, maxPageBytes, maxRevisions, maxShardBytes, pointsRule, shardCount, shardPath } from "../client/journal.vibe"
 import { assembleProjection } from "../publication/projections.vibe"
 import type { PublishedRecord } from "../../gen/points__publication.ts"
+import { type Event as TransportEvent, type ProjectionRead, Machine as TransportMachine, initial as transportInitial, machineOver as transportOver, resetWaitMs } from "../../gen/points__projectionTransport.effect.vibe"
 import { type CopyEvidence, type CopyState, type Environment, type Event, type PublicHistory, type Recovery, type RecoveryEvidence, type SourceCoverage, Machine, decodeState, enabled, initial, machineOver } from "../../gen/points__recovery.effect.vibe"
 
 export error RecoveryRefused { outcome: string; message: string }
@@ -26,6 +27,8 @@ interface Fetched {
   readonly status: number
   readonly bytes: Uint8Array
 }
+
+type Read = Fetched | "reset" | "failed"
 
 type JsonObject = Readonly<Record<string, unknown>>
 
@@ -52,6 +55,27 @@ export effect function recoveryRun(start: Recovery = initial) {
   return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
 }
 
+export effect function transportRun(start: ProjectionRead = transportInitial) {
+  const held = try Ref.make(start)
+  return try transportOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function transportLayer(start: ProjectionRead = transportInitial) {
+  return Layer.effect(TransportMachine, transportRun(start))
+}
+
+export effect function transportSend(event: TransportEvent) {
+  return try (try TransportMachine).send(event)
+}
+
+export effect function transportReceive(input: unknown) {
+  return try (try TransportMachine).receive(input)
+}
+
+export effect function transportState() {
+  return try (try TransportMachine).get()
+}
+
 export function recoveryLayer(start: Recovery = initial) {
   return Layer.effect(Machine, recoveryRun(start))
 }
@@ -72,13 +96,34 @@ function objectOf(value: unknown): JsonObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
 }
 
+function isReset(error: unknown): boolean {
+  let current: unknown = error
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) return false
+    if ("code" in current && current.code === "ECONNRESET") return true
+    current = "cause" in current && current.cause !== undefined ? current.cause : "reason" in current ? current.reason : undefined
+  }
+  return false
+}
+
 effect function fetched(url: string, limitBytes: number, label: string) {
   const client = try HttpClient.HttpClient
   const read = effect {
     const response = try client.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } }))
     return { status: response.status, bytes: try boundedBytes(response, limitBytes, label) } satisfies Fetched
   }
-  return timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" }), Duration.millis(readTimeoutMs)) catch () => undefined
+  const answer: Read = timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" }), Duration.millis(readTimeoutMs)) catch (error) => isReset(error) ? "reset" as const : "failed" as const
+  return answer
+}
+
+effect function resetRead(read: TransportMachine.Shape, reset: TransportEvent, url: string, limitBytes: number, label: string, wait: (millis: number) => void!!) {
+  while (true) {
+    const answer = try fetched(url, limitBytes, label)
+    if (answer !== "reset") return answer
+    const next = read.send(reset) catch () => undefined
+    if (next === undefined || next.phase === "Refused") return "failed" as const
+    try wait(resetWaitMs)
+  }
 }
 
 effect function textOf(bytes: Uint8Array) {
@@ -96,7 +141,7 @@ effect function jsonOf(bytes: Uint8Array) {
 effect function journalPage(url: string, wait: (millis: number) => void!!) {
   for (let attempt = 1; ; attempt++) {
     const answer = try fetched(url, maxPageBytes, "published points")
-    if (answer === undefined) return undefined
+    if (typeof answer === "string") return undefined
     const value = objectOf(try jsonOf(answer.bytes))
     if (answer.status !== 503 || value?.error !== "points_unavailable" || attempt === unavailableAttempts) return { status: answer.status, value }
     try wait(unavailableWaitMs)
@@ -142,14 +187,20 @@ effect function checkpointCopy(origin: string, wait: (millis: number) => void!!)
   return { state: "CopyPresent", journal } satisfies Copy
 }
 
-effect function projectionParts(origin: string, index: unknown) {
+effect function refusedRead(read: TransportMachine.Shape, copy: Copy) {
+  read.send({ type: "refuseRead" }) catch () => undefined
+  return copy
+}
+
+effect function projectionParts(origin: string, index: unknown, read: TransportMachine.Shape, wait: (millis: number) => void!!) {
   const shards = objectOf(index)?.shards
   if (!Array.isArray(shards) || shards.length !== shardCount) return undefined
+  const entries: ReadonlyArray<unknown> = shards
+  if (entries.some((entry, position) => objectOf(entry)?.path !== shardPath(position))) return undefined
+  const answers = try Effect.forEach(entries, (_entry, position) => resetRead(read, { type: "resetShard", shard: position }, `${origin}${shardPath(position)}`, maxShardBytes, "points shard", wait), { concurrency: shardCount })
   const parts: string[] = []
-  for (const [position, entry] of shards.entries()) {
-    if (objectOf(entry)?.path !== shardPath(position)) return undefined
-    const shard = try fetched(`${origin}${shardPath(position)}`, maxShardBytes, "points shard")
-    if (shard === undefined || shard.status < 200 || shard.status > 299) return unavailable
+  for (const shard of answers) {
+    if (typeof shard === "string" || shard.status < 200 || shard.status > 299) return unavailable
     const text = try textOf(shard.bytes)
     if (text === undefined) return undefined
     parts.push(text)
@@ -157,30 +208,37 @@ effect function projectionParts(origin: string, index: unknown) {
   return parts
 }
 
-effect function pagesCopy(origin: string) {
-  let previous: string | undefined = undefined
+effect function pagesCopy(origin: string, wait: (millis: number) => void!!) {
+  const read = try transportRun()
+  const generations = new Map<string, number>()
+  let rollover = false
   while (true) {
-    const suffix = previous === undefined ? "" : `?snapshot=${try randomId()}`
-    const answer = try fetched(`${origin}/data/points.json${suffix}`, maxIndexBytes, "points index")
-    if (answer === undefined) return unavailable
+    const suffix = rollover ? `?snapshot=${try randomId()}` : ""
+    const answer = try resetRead(read, { type: "resetIndex" }, `${origin}/data/points.json${suffix}`, maxIndexBytes, "points index", wait)
+    if (typeof answer === "string") return try refusedRead(read, unavailable)
     if (answer.status === 404) return absent
-    if (answer.status < 200 || answer.status > 299) return unavailable
+    if (answer.status < 200 || answer.status > 299) return try refusedRead(read, unavailable)
     const text = try textOf(answer.bytes)
-    if (text === undefined) return unverified
+    if (text === undefined) return try refusedRead(read, unverified)
     const index = try jsonOf(answer.bytes)
-    if (index === undefined) return unverified
+    if (index === undefined) return try refusedRead(read, unverified)
     const identity = JSON.stringify(index)
-    if (identity === previous) return unverified
-    const parts = try projectionParts(origin, index)
-    if (parts === undefined) return unverified
-    if (!Array.isArray(parts)) return parts
+    const generation = generations.get(identity) ?? generations.size + 1
+    generations.set(identity, generation)
+    const indexed = try read.send({ type: "readIndex", generation })
+    if (indexed.phase === "Refused") return unverified
+    const parts = try projectionParts(origin, index, read, wait)
+    if (parts === undefined) return try refusedRead(read, unverified)
+    if (!Array.isArray(parts)) return try refusedRead(read, parts)
     const assembled = assembleProjection(text, parts) catch effect (error) => {
-      if (previous === undefined && error.message === "Points shard checksum mismatch") return "changed" as const
+      if (error.message === "Points shard checksum mismatch") return "changed" as const
       return undefined
     }
-    if (assembled === undefined) return unverified
-    if (assembled !== "changed") return { state: "CopyPresent", journal: assembled } satisfies Copy
-    previous = identity
+    if (assembled === undefined) return try refusedRead(read, unverified)
+    const shardsRead = try read.send({ type: "readShards", generations: assembled === "changed" ? [generation, generation + 1] : [generation] })
+    if (shardsRead.phase === "Verified" && assembled !== "changed") return { state: "CopyPresent", journal: assembled } satisfies Copy
+    if (shardsRead.phase === "Refused") return unverified
+    rollover = true
   }
 }
 
@@ -249,7 +307,7 @@ export effect function decideRecovery(evidence: RecoveryEvidence) {
 export effect function recoverPublished(options: RecoveryOptions) {
   const origin = origins[options.environment]
   const checkpoint = try checkpointCopy(origin, options.wait)
-  const pages = try pagesCopy(origin)
+  const pages = try pagesCopy(origin, options.wait)
   const names: Names = { records: new Map(), revisions: new Map(), coverage: new Map(), instants: new Map() }
   const evidence = {
     requested: options.environment,

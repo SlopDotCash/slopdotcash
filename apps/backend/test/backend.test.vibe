@@ -1,7 +1,8 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database, Fetcher } from "@repo/platform/bindings"
 import { deploymentOrigins } from "@repo/platform/config"
-import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { base64Encode } from "@repo/platform/chain/solana"
+import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { githubApp } from "@repo/platform/github/app"
 import { outboundVia } from "@repo/platform/http"
@@ -569,6 +570,131 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       changed: [200, { presentation: [], executable: ["repositories", "contribution"], financial: [] }],
       after: [2, "paused", "next", "Run the full test suite on the next branch.", true, true, true],
       reasons: [{ reason: `Owner integration branch change by @member-${stewardId}: main to next at ${declared}. Release work moved.` }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+effect function activated(id: string) {
+  const area = try Area
+  const current = try stored(id)
+  const next = current.revision + 1
+  const text = JSON.stringify({ ...current.manifest, status: "active" })
+  const digest = try sha256Hex(text)
+  const at = new Date(try Clock.currentTimeMillis).toISOString()
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, 'Setup check activated the project.', NULL, NULL, ?)", id, next, text, digest, at)
+  try area.sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, 'Activated')", id, next)
+  try area.sql("UPDATE projects SET status = 'active', revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", next, text, digest, at, id)
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A branch move on an active project without current clearance is refused and writes nothing (spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const other = try listed("vetting-branch", "other", otherId)
+    const id = other.id
+    const declared = try branchAt("next", other.commitSha, { ".github/slop-project.json": JSON.stringify(declaration(id, "next")) })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(other) }, as: steward })
+    try activated(id)
+    const before = try stored(id)
+    const refused = try revise(steward, id, { integrationBranch: { name: "next", commitSha: declared }, expectedRevision: 2 })
+    const after = try stored(id)
+    const revisions = try area.sql("SELECT count(*) AS revisions FROM project_revisions WHERE project_id = ?", id)
+    try same({
+      created: created.status,
+      before: [before.revision, before.status],
+      refused: [...outcome(refused), message(refused).startsWith("Security vetting is "), message(refused).endsWith("A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.")],
+      after: [after.revision, after.status, after.sha256 === before.sha256, (after.manifest.repositories as ReadonlyArray<Record<string, unknown>>)[0]?.integrationBranch],
+      revisions,
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      created: 201,
+      before: [2, "active"],
+      refused: [422, "vetting_required", true, true],
+      after: [2, "active", true, "main"],
+      revisions: [{ revisions: 2 }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('A stored application that submits a maintainer share history is refused and publishes nothing (spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("history-application", "tool", primaryId)
+    const base = manifest(tool)
+    const text = JSON.stringify({ ...base, reward: { ...base.reward, maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: "2026-10", basisPoints: 1000 }] } })
+    const application = "app_sharehistory01"
+    try area.sql("INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, expected_revision, change_reason) VALUES (?, ?, ?, ?, ?, 'Accepted pull requests with tests.', ?, ?, '2026-11-02T00:00:00.000Z', 'pending', 'sent', '2026-11-02T00:00:00.000Z', NULL, NULL)", application, tool.id, `member-${stewardId}/tool`, text, try sha256Hex(text), String(stewardId), `member-${stewardId}`)
+    const published = try area.request(`/api/v1/project-applications/${application}/publish`, { json: {}, as: steward })
+    try same({
+      published: [...outcome(published), message(published)],
+      projects: try area.sql("SELECT id FROM projects WHERE id = ?", tool.id),
+      revisions: try area.sql("SELECT revision FROM project_revisions WHERE project_id = ?", tool.id),
+      application: try area.sql("SELECT status FROM project_applications WHERE id = ?", application),
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      published: [422, "invalid_manifest", "A new project has no maintainer share history; set only the maintainer share"],
+      projects: [],
+      revisions: [],
+      application: [{ status: "pending" }],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+})
+
+const payoutWallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+  address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A signed-in member creates a project, chooses a referral name, registers a payout wallet and closes the account (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Every account outcome is reachable from the launch state"; spec/backend/projects.md, "Reachable registry outcomes"; spec/backend/projectComposition.md, "Reachable composed outcomes")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try member(stewardId)
+    const tool = try listed("journey-tool", "tool", primaryId)
+    const session = try area.request("/api/v1/project-session", { as: steward })
+    const created = try area.request("/api/v1/projects", { json: { manifest: manifest(tool) }, as: steward })
+    const chosen = try area.request("/api/v1/referrals/code", { json: { code: "journey-name" }, as: steward })
+    const registered = try area.request("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+    const claimId = String(field(registered.body, "claimId") ?? "")
+    const challenged = try area.request("/api/v1/payments/wallets/challenge", { json: { claimId }, as: steward })
+    const signature = base64Encode(try ed25519Sign(Redacted.make(payoutWallet.jwk), utf8(String(field(challenged.body, "message") ?? ""))))
+    const authorized = try area.request("/api/v1/payments/wallets/authorize", { json: { claimId, challengeId: field(challenged.body, "challengeId"), signature }, as: steward })
+    const closed = try area.request("/api/v1/points/account/close", { json: { login: `member-${stewardId}` }, as: steward })
+    const closedMe = try area.request("/api/v1/points/me", { as: steward })
+    const afterClose = try area.request("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+    try same({
+      session: [session.status, field(field(session.body, "session"), "githubId")],
+      created: created.status,
+      project: (try stored(tool.id)).revision,
+      chosen: [chosen.status, field(chosen.body, "code")],
+      wallet: [registered.status, challenged.status, authorized.status, field(authorized.body, "authorized")],
+      effective: try area.sql("SELECT id FROM effective_payment_wallet_claims WHERE github_user_id = ?", String(stewardId)),
+      closed: [closed.status, field(closed.body, "closed")],
+      closedMe: [closedMe.status, closedMe.body],
+      afterClose: afterClose.status,
+      claims: try area.sql("SELECT count(*) AS claims FROM wallet_claims WHERE github_user_id = ?", String(stewardId)),
+      unexpected: world.net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      session: [200, String(stewardId)],
+      created: 201,
+      project: 1,
+      chosen: [200, "journey-name"],
+      wallet: [200, 200, 200, true],
+      effective: [{ id: claimId }],
+      closed: [200, true],
+      closedMe: [200, null],
+      afterClose: 401,
+      claims: [{ claims: 1 }],
       unexpected: [],
       outboundErrors: [],
     })

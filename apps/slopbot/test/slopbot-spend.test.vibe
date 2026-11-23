@@ -7,6 +7,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
 import { testPrompt } from "./support/spendPrompt.vibe"
+import { journeyBuild } from "./support/journey.vibe"
 
 const providers = providerFake()
 const net = internet({ providers: providers.handler })
@@ -19,7 +20,7 @@ const notify: Handler = async (request) => {
 }
 
 const Spend = areaLayer({
-  root: new URL("..", import.meta.url).pathname,
+  ...journeyBuild,
   entry: "spend",
   d1: { SLOPBOT_DB: "slop-private" },
   vars: { ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" },

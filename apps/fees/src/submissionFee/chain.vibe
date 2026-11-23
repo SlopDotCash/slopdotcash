@@ -181,9 +181,9 @@ function chainOver(evm: EvmRpc.Shape, network: NetworkConfig, signer: ResolverSi
       if (decoded.kind === "other") continue
       if (decoded.kind === "malformed") throw refused("Malformed submission fee event")
       const place = { txHash: log.transactionHash.toLowerCase(), blockNumber: Number(log.blockNumber), blockHash: log.blockHash.toLowerCase(), logIndex: log.logIndex } satisfies EventPlace
+      if (decoded.kind === "deposited" && decoded.amount <= 0n) throw refused("Unexpected deposit amount")
       const id = try safeId(decoded.id)
       if (decoded.kind === "deposited") {
-        if (decoded.amount <= 0n) throw refused("Unexpected deposit amount")
         found.push({ kind: "deposited", depositId: id, item: decoded.item, payer: decoded.payer, token: decoded.token, amount: decoded.amount.toString(), keptTo: decoded.keptTo, ...place })
       } else if (decoded.kind === "resolved") found.push({ kind: "resolved", depositId: id, refunded: decoded.refunded, ...place })
       else found.push({ kind: "reclaimed", depositId: id, ...place })
@@ -231,7 +231,10 @@ function chainOver(evm: EvmRpc.Shape, network: NetworkConfig, signer: ResolverSi
   effect function feesPerGas() {
     const base = (try evm.head("latest")).baseFeePerGas
     if (base === undefined) throw refused("Submission fee base fee unavailable")
-    const priority = try evm.maxPriorityFee()
+    const priority = evm.maxPriorityFee() catch effect () => {
+      const price = try evm.gasPrice()
+      return price > base ? price - base : 0n
+    }
     return { maxFeePerGas: (base * 12n) / 10n + priority, maxPriorityFeePerGas: priority }
   }
 

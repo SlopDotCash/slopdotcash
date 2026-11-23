@@ -5,6 +5,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake, signature256 } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { lostQueueNumber } from "./support/ready.vibe"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -75,7 +76,7 @@ const ReadyArea = Layer.unwrap(effect {
   const seeded = try Effect.try(() => seed())
   return Layer.merge(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "ready",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: {

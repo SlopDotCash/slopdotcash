@@ -17,7 +17,6 @@ import { privateModel, privateProvider, privateRoute } from "../src/analysis/rou
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { recoverRouting } from "../src/screening/jobs.vibe"
 import { screeningRoutes } from "../src/screening/routes.vibe"
 import { screeningAt } from "../src/screening/store.vibe"
 import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
@@ -422,10 +421,8 @@ effect function routing(screened: Screened.Shape) {
   try screen(screened, "43003", o.id, 1, screened.retired)
   const pendingO = try intakeOf(world, o.id)
   const callsBeforeJob = fake.calls.length
-  provide shellOf(world, fake, screened.clock, screened.beforeReply, surplusKey) {
-    try recoverRouting()
-    try recoverRouting()
-  }
+  try screen(screened, "43003", o.id, 3)
+  try screen(screened, "43003", o.id, 3)
   const jobCalls = fake.calls.length - callsBeforeJob
 
   const reportN = reportOf("Liquidation bonus exceeds the seized collateral", "A rounding error pays the liquidator a bonus larger than the collateral it seizes.")
@@ -543,7 +540,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try lateResults(try Screened)
   })
 
-  it.effect('Routing notifies the current owners and triagers once per qualified version, never the reporter or the acting maintainer, and a scheduled repeat retries routing a pending intake (spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
+  it.effect('Routing notifies the current owners and triagers once per qualified version, never the reporter or the acting maintainer, and a repeated screen request retries routing a pending intake (spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
     try routing(try Screened)
   })
 

@@ -4,6 +4,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { signature256 } from "@repo/platform/testing/github"
 import { maxRetries } from "../src/jobs/retry.vibe"
 import { busyNumber, lostQueueNumber } from "./support/ingressNumbers.vibe"
+import { journeyBuild } from "./support/journey.vibe"
 
 const secret = "ingress-webhook-secret"
 const appUserId = "424242"
@@ -17,7 +18,7 @@ function registry(unavailable: ReadonlyArray<string> = []) {
 }
 
 const Ingress = areaLayer({
-  root: new URL("..", import.meta.url).pathname,
+  ...journeyBuild,
   entry: "ingress",
   d1: { SLOPBOT_DB: "slop-private" },
   vars: { SLOPBOT_WEBHOOK_SECRET: secret, SLOPBOT_APP_USER_ID: appUserId, TEST_REGISTRY: registry(["ada/flaky"]) },

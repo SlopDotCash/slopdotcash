@@ -13,7 +13,7 @@ import { type AssertionStore, type Deployable, type LocalWorkers, forward, start
 
 export const deployables: readonly [Deployable, ...Deployable[]] = [
   { name: "site", config: "apps/app/wrangler/site.staging.jsonc", script: "packages/frontend/dist/_worker.js", assets: "packages/frontend/dist/site" },
-  { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/operations/dist/notify.js" },
+  { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/app/dist/notify.js" },
   { name: "identity", config: "apps/backend/wrangler/identity.staging.jsonc", script: "apps/backend/dist/identity.js" },
 ]
 

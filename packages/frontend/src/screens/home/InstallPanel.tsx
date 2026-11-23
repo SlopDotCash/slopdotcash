@@ -12,8 +12,8 @@ export type InstallPanelProps = Pick<AgentPromptProps, "origin" | "onCopy"> & {
 export function InstallPanel({ origin, onCopy, journey }: InstallPanelProps) {
   const path = skillPath(journey);
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <p className="text-lg text-muted-foreground">Paste into your agent.</p>
+    <div className="w-full min-w-0">
+      <p className="mt-10 mb-5 max-w-172 text-lg leading-body font-medium text-muted-foreground max-md:mt-6 lg:text-xl">Paste into your agent.</p>
       <AgentPrompt openIn prompt={bootstrapPrompt(origin, path)} origin={origin} onCopy={onCopy} skillPath={path} />
     </div>
   );

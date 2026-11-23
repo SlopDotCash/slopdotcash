@@ -1,6 +1,6 @@
-// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/program.md, "Receipt terms come only from the open published revision"
+// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/program.md, "Receipt terms come only from the open published revision"
 import { CopyButton, cn, ExternalLink, focusRing, Status, target } from "@repo/ui";
-import { isFullAwardSplit } from "@repo/security/client";
+import { SECURITY_ROUTINE_DECISION_NOTICE, isFullAwardSplit } from "@repo/security/client";
 import { ChevronDown } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { NetworkName } from "../../funding/vault/index.ts";
@@ -137,7 +137,10 @@ export function ScopeTerms({ terms, onCopy }: { terms: ProgramTerms; onCopy?: (t
         <Fact term="Severity">{scope.severityRubric}</Fact>
         <Fact term={critical(terms) ? "Loss" : "Impact"}>{scope.lossDefinition}</Fact>
       </dl>
-      <p className="text-sm">No live exploitation, third-party funds or secrets.</p>
+      <p className="text-sm">{SECURITY_ROUTINE_DECISION_NOTICE}</p>
+      <p className="text-sm">
+        Do not exploit a production system, move another person's funds, reveal keys or cause damage. A local fork or isolated test can show potential {critical(terms) ? "loss" : "impact"}.
+      </p>
     </section>
   );
 }

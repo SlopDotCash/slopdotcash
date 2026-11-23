@@ -1,4 +1,4 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/frontend/reportDetails.md, "An individual mount or close changes only its own submission"; spec/frontend/drafts.md, "Submitted report text is kept only while its submission can still be sent and is erased on sign-out"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
 import { Alert, Button, Checkbox, Disclosure, Field, Input, Label, Select } from "@repo/ui";
 import { GitBranch } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
@@ -8,6 +8,7 @@ import { type RecordRequest, importAdvisories, recordAdvisory } from "../../../f
 import type { DetailHeadings } from "../../../flows/security/details.vibe";
 import { type ReportRead, type SubmissionsRead, closeSubmissionReport, loadSubmissions, openSubmissionReport, refusalMessage, verifyDirect } from "../../../flows/security/intake.vibe";
 import { ClaimForm, type ProgramChoice } from "../program/ClaimForm.tsx";
+import { DepositNotice } from "../program/DepositNotice.tsx";
 import { type Settled, run, useMounted } from "../program/hooks.ts";
 import { type DetailRead, ReportDetail } from "../program/ReportDetail.tsx";
 import { type ProgramRuntime, type SubmissionRequest, actOnSubmission, programRuntime } from "../program/runtime.vibe";
@@ -52,6 +53,7 @@ function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: Rea
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (projects.length === 0) return <p className="text-muted-foreground">No programs yet</p>;
+  const chosen = projects.find((project) => project.id === projectId);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -67,6 +69,7 @@ function DirectVerifyForm({ projects, onVerify, onUnavailable }: { projects: Rea
   return (
     <form className="flex flex-col gap-4" onSubmit={submit}>
       <ProjectField projects={projects} value={projectId} onChange={setProjectId} />
+      {chosen === undefined ? null : <DepositNotice project={chosen} />}
       <Field label="GitHub advisory ID">
         <Input autoComplete="off" pattern={ghsa} placeholder="GHSA-xxxx-xxxx-xxxx" required spellCheck={false} value={advisory} onChange={(event) => setAdvisory(event.target.value)} />
       </Field>
@@ -420,6 +423,7 @@ export function SecurityReports({ runtime, section, owner, list, filter, selecte
       login={list.viewer.githubLogin}
       submission={submission}
       caseRecord={caseRecord}
+      caseDeposit={caseRecord === undefined ? undefined : list.cases.find((record) => record.id === caseRecord.id)?.deposit}
       focused={focused}
       report={embedded || submission.intake === null ? undefined : (headings) => <ReportReader section={program} owner={owner} submission={submission} headings={headings} focused={focused} onUpdated={update} />}
       onUpdated={update}

@@ -1,12 +1,12 @@
 {
   "name": "slop-notify",
-  "main": "../dist/notify.js",
+  "main": "../../app/dist/notify.js",
   "no_bundle": true,
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
   "preview_urls": false,
   "triggers": {
-    "crons": []
+    "crons": ["*/5 * * * *"]
   },
   "d1_databases": [
     {

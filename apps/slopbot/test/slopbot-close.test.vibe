@@ -6,6 +6,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -93,7 +94,7 @@ const Closing = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.mergeAll(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "close",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: {
@@ -358,7 +359,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('A maintainer reopen reverses the debit once and is never closed again at that revision, a reopen confirmed between the decision and the recheck stops the close with no label, and a late reopen of an older revision keeps a later head\'s debit (spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
+  it.effect('A maintainer reopen reverses the debit once and is never closed again at that revision, a reopen confirmed between the decision and the recheck stops the close with no label, and a late reopen of an older revision keeps a later head\'s debit, while a reopen before the review leaves the revision without its finding label or any further review action (spec/slopbot/closure.md, "Story: Reopen and appeal decisions stop further automatic action on the revision"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision\'s finding label"; spec/slopbot/closeAttempt.md, "A reopen or appeal of the revision stops any further reservation or request"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision")', () => effect {
     const area = try Area
     const { net } = try World
     try installed(area)
@@ -384,7 +385,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       closes,
       reversals,
       disputedClose,
-      dis: { written: try written("dis"), attempts: try attemptsOf(area, "dis"), penalty: try penaltyOf(area, "dis"), patches: try closePatches("dis"), labelPosts: try labelPosts("dis") },
+      dis: { written: try written("dis"), attempts: try attemptsOf(area, "dis"), penalty: try penaltyOf(area, "dis"), patches: try closePatches("dis"), labelPosts: try labelPosts("dis"), actions: try area.sql("SELECT action FROM slopbot_actions WHERE item_node_id = ? AND action IN ('label', 'close')", (try itemOf("dis")).nodeId) },
       reo: { penalty: (try penaltyOf(area, "reo")).map((row) => [row.reversal, row.reversed]), state: (try written("reo")).state, patches: try closePatches("reo"), again: (reviewedAgain as { readonly kind?: string }).kind === "close" },
       lateReversal,
       late: { penalty: (try penaltyOf(area, "late")).map((row) => [row.reversal, row.reversed]), state: (try written("late")).state, patches: try closePatches("late") },
@@ -399,6 +400,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         penalty: [],
         patches: 0,
         labelPosts: 0,
+        actions: [],
       },
       reo: { penalty: [["maintainer_reopen", 1]], state: "open", patches: 1, again: false },
       lateReversal: { cleaned: false, reversed: false },

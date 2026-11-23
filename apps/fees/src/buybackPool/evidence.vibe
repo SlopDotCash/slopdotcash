@@ -1,7 +1,8 @@
-// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee"
+// spec/fees/buybackPool.md, "The pool combines proven arrivals and the Robinhood fee share"; spec/fees/buybackBinding.md, "A pool arrival credit is exactly a retained OrderArrived outcome of the named source leg"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee"
 import { RowMismatch, rows, sql } from "@repo/platform/d1"
 import { type BookedDirectFee, incomeEvidence } from "../buyback/income.vibe"
 import type { IncomeEntry } from "../buyback/codec.vibe"
+import type { KeptSubmissionFee } from "../submissionFee/income.vibe"
 import { exactNumber } from "../evm/abi.ts"
 import type { Instance, Names } from "../journal/codec.vibe"
 import type { Held } from "../runtime/config.vibe"
@@ -33,6 +34,7 @@ export interface PoolQuery {
   readonly journal: Instance
   readonly assets: ReadonlyArray<PoolAsset>
   readonly bookedSlop: ReadonlyArray<BookedDirectFee>
+  readonly kept: ReadonlyArray<KeptSubmissionFee>
 }
 
 export effect function arrivalEvidence(scope: string, wallet: string) {
@@ -60,7 +62,7 @@ export effect function poolInstance(query: PoolQuery) {
   const fees: Array<AssetFee> = []
   const reserved: Array<AssetShare> = []
   for (const candidate of poolAssets(query.assets)) {
-    const income = try incomeEvidence({ network: "Robinhood", wallet, usdc: candidate.token, scope, offset }, candidate.booked)
+    const income = try incomeEvidence({ network: "Robinhood", wallet, usdc: candidate.token, scope, offset }, candidate.booked, query.kept)
     const share = exactNumber(halfOfIncome(income))
     if (!exactIncome(income) || share === undefined) {
       if (tokens.length === 0) throw new RowMismatch({ text: "Robinhood fee share", issue: "the USDG income exceeds the pool model's exact range" })
@@ -72,7 +74,7 @@ export effect function poolInstance(query: PoolQuery) {
     for (const entry of income) fees.push({ ...entry, asset })
     if (share > 0) reserved.push({ asset, amount: share })
   }
-  const slop: ReadonlyArray<IncomeEntry> = try incomeEvidence({ network: "Robinhood", wallet, usdc: slopToken, scope, offset }, query.bookedSlop)
+  const slop: ReadonlyArray<IncomeEntry> = try incomeEvidence({ network: "Robinhood", wallet, usdc: slopToken, scope, offset }, query.bookedSlop, query.kept)
   const arrivals = try arrivalEvidence(scope, wallet)
   return {
     scope,

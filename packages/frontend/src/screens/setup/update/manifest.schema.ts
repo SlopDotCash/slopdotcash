@@ -1,9 +1,11 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import { Schema } from "effect";
 
 export const ListedRepository = Schema.Struct({
   id: Schema.String,
   aliases: Schema.optional(Schema.Array(Schema.String)),
+  githubUrl: Schema.optional(Schema.String),
+  integrationBranch: Schema.optional(Schema.String),
   countsFrom: Schema.optional(Schema.String),
 });
 
@@ -17,6 +19,7 @@ export const ManagedReward = Schema.Struct({
   paymentMode: Schema.optional(Schema.String),
   rewardStartAt: Schema.optional(Schema.String),
   honorSystem: Schema.optional(Schema.Boolean),
+  maintainerShare: Schema.optional(Schema.Number),
 });
 
 export const ManagedAsset = Schema.Struct({
@@ -35,7 +38,17 @@ export const ManagedManifest = Schema.Struct({
   headline: Schema.String,
   description: Schema.String,
   image: Schema.optional(Schema.String),
-  slopbot: Schema.optional(Schema.Struct({ automaticClosure: Schema.optional(Schema.Boolean), readyLabel: Schema.optional(Schema.Unknown) })),
+  slopbot: Schema.optional(
+    Schema.Struct({
+      automaticClosure: Schema.optional(Schema.Boolean),
+      readyLabel: Schema.optional(Schema.Unknown),
+      intakeCap: Schema.optional(Schema.Number),
+      submissionFee: Schema.optional(Schema.Unknown),
+      wantedIssues: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  security: Schema.optional(Schema.Struct({ reportDeposit: Schema.optional(Schema.Boolean) })),
+  authority: Schema.optional(Schema.Struct({ repositoryId: Schema.String, repositoryNodeId: Schema.String })),
   links: Schema.Record(Schema.String, Schema.String),
   contribution: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   repositories: Schema.Array(ListedRepository),

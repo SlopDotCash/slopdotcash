@@ -97,7 +97,7 @@ jobs:
         run: pnpm all build --filter=@repo/settlement
       - name: Preserve accepted cycle and unsafe destination evidence
         env:
-          GH_TOKEN: ${{ steps.base-verifier.outputs.kind == 'legacy' && github.token || '' }}
+          GH_TOKEN: ${{ github.token }}
           CYCLE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CYCLE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CYCLE_PR_NUMBER: ${{ github.event.pull_request.number }}

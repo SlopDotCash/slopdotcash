@@ -1,0 +1,69 @@
+// spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row's due outcome or a refund"; spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract's finalized events"; spec/fees/submissionFeeReportDeposits.md, "A report's deposit is kept only as burned SLOP for the row that names it"
+import { D1 } from "@repo/platform/d1"
+import { ReportDeposits } from "@repo/ports/security"
+import { type FeeOutcome, SubmissionFeeItems } from "@repo/ports/slopbot"
+import { burnAddress, keptToFor, tokenKind } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { type Party, canMarkDue, dueStateOf, resolveAction, resolveFactsOf } from "../../gen/fees__submissionFeeDeposits.effect.vibe"
+import { type ReportDeposit as ReportModel, canMarkDue as canMarkReportDue, reportResolveAction } from "../../gen/fees__submissionFeeReportDeposits.effect.vibe"
+import type { SendEntry } from "./chain.vibe"
+import { type DepositRow, depositView, dueOutcome, paidByOf, refusalOf, stateText } from "./codec.vibe"
+import { reportNetwork } from "./judge.vibe"
+import { parked, resolvable, setDue } from "./store.vibe"
+
+interface PaidRow {
+  readonly paidNetwork: string | null
+  readonly paidDepositId: number | null
+  readonly outcome: FeeOutcome | null
+}
+
+const worker: Party = "Worker"
+
+function lower(value: string) {
+  return value.toLowerCase()
+}
+
+function viewOf(deposit: DepositRow, paid: PaidRow | null) {
+  const kind = tokenKind(deposit.network, lower(deposit.token))
+  const accepted = deposit.accepted === 1
+  return depositView({
+    made: { kind, keptToMatches: kind !== "NoToken" && lower(deposit.keptTo) === lower(keptToFor(deposit.network, kind)), amountCovers: accepted },
+    finalized: true,
+    judgement: accepted ? "Accepted" : "Refused",
+    reason: accepted ? "NoRefusal" : refusalOf(deposit.rejectReason),
+    state: deposit.state,
+    asked: paid !== null,
+    paidBy: paidByOf(deposit, paid),
+    outcome: paid?.outcome ?? null,
+    graceOver: true,
+  })
+}
+
+function dueOf(deposit: DepositRow, item: PaidRow | null, report: PaidRow | null) {
+  if (report === null) {
+    const view = viewOf(deposit, item)
+    return { action: resolveAction(resolveFactsOf(view)), markable: canMarkDue(view, worker) }
+  }
+  const view = viewOf(deposit, report)
+  const robinhood = deposit.network === reportNetwork
+  const keptToBurn = lower(deposit.keptTo) === lower(burnAddress)
+  const model = { deposit: view, mode: "AskedReport", amountValid: true, robinhood, keptToBurn } satisfies ReportModel
+  return { action: reportResolveAction({ resolveFacts: resolveFactsOf(view), robinhood, keptToBurn }), markable: canMarkReportDue(model, worker) }
+}
+
+export effect function planResolutions(network: string) {
+  const items = try SubmissionFeeItems
+  const reports = try ReportDeposits
+  const held = try parked(network)
+  const entries: SendEntry[] = []
+  for (const deposit of try resolvable(network)) {
+    const accepted = deposit.accepted === 1
+    const item = accepted && deposit.repositoryId !== null && deposit.pullNumber !== null ? try items.byPull({ repositoryId: deposit.repositoryId, pullNumber: deposit.pullNumber }) : null
+    const asked = accepted && deposit.repositoryId === null ? try reports.askedByItem(deposit.item) : null
+    const report = asked !== null && paidByOf(deposit, asked) === "ThisDeposit" ? asked : null
+    if (accepted && deposit.state === "Open" && !dueOutcome(item?.outcome ?? null) && !dueOutcome(report?.outcome ?? null)) continue
+    const due = dueOf(deposit, item, report)
+    if (due.markable) try (try D1).run(setDue(network, deposit.depositId, stateText(dueStateOf(due.action))))
+    if (due.action !== "NoAction" && !held.has(deposit.depositId)) entries.push({ id: deposit.depositId, refund: due.action === "Refund" })
+  }
+  return entries.sort((left, right) => left.id - right.id)
+}

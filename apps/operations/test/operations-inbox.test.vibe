@@ -354,7 +354,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     })
   })
 
-  it.effect('A decided reinstatement request retires its review notice from the list, the unread count and mark-read (spec/operations/moderation.md, "Story: A moderator reads only what current authority allows and records each decision with a reason"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check")', () => effect {
+  it.effect('A decided reinstatement request retires its review notice from the list, the unread count and mark-read, a ban that keeps the appeal leaves it, and an account request retires only when its own account is decided (spec/operations/moderation.md, "Story: A moderator reads only what current authority allows and records each decision with a reason"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check")', () => effect {
     const db = try D1
     const projectId = "inbox-reinstatement"
     const manifestSha = "e".repeat(64)
@@ -383,6 +383,41 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       appealKept: [["reinstatement_review"], 1],
       decided: [[], 0],
       readAt: null,
+    })
+
+    const bannedProject = "inbox-account-requests"
+    const released = "9300000011"
+    const kept = "9300000012"
+    const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "f".repeat(64), assessmentId: "assessment-inbox-ban", policyVersion: "journey-policy", rule: "confirmed-malicious" })
+    const entry = (id: string, sequence: number, action: string, appealAfter: string, actor: string | null, role: string, source: string, minute: number) =>
+      sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys,
+          actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+        VALUES (${id}, ${bannedProject}, ${sequence}, ${action}, 'banned', ${appealAfter}, 'journey record', 'journey evidence', '9302', '["github:9302"]',
+          ${actor}, ${actor === null ? null : `login-${actor}`}, ${actor === null ? issuer : null}, ${role}, ${source}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${at(minute)})`
+    const accountKey = (account: string) => `reinstatement-review:enf_inbox_account_${account}`
+    const accountBaseline = (try inbox(moderator)).unread
+    try save([released, kept].map((account) => notice(accountKey(account), "ReinstatementReview", at(52), moderator, bannedProject, "/admin")), [
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${bannedProject}, 'paused', 1, '{"id":"inbox-account-requests"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
+      entry("enf_inbox_signed_ban", 1, "ban", "none", null, "vetting-service", "standing-rule", 48),
+      entry("enf_inbox_account_ban", 2, "ban", "none", listedModerator, "project-moderator", "admin-panel", 49),
+      sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES ('enf_inbox_account_ban', ${released}, ${`login-${released}`}), ('enf_inbox_account_ban', ${kept}, ${`login-${kept}`})`,
+      entry(`enf_inbox_account_${released}`, 3, "request_reinstatement", "requested", released, "banned-account", "account-request", 50),
+      entry(`enf_inbox_account_${kept}`, 4, "request_reinstatement", "requested", kept, "banned-account", "account-request", 51),
+    ])
+    const accounts = (answer: { unread: number; notifications: ReadonlyArray<Record<string, unknown>> }) =>
+      [answer.notifications.filter((item) => item.eventKey === accountKey(released) || item.eventKey === accountKey(kept)).map((item) => item.eventKey).sort(), answer.unread - accountBaseline]
+    const bothOpen = accounts(try inbox(moderator))
+    try db.batch([
+      entry("enf_inbox_account_release", 5, "reinstate_accounts", "requested", moderator, "project-moderator", "admin-panel", 53),
+      sql`INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES ('enf_inbox_account_release', 'enf_inbox_account_ban', ${released})`,
+    ])
+    const oneReleased = accounts(try inbox(moderator))
+    try ask("/api/v1/notifications/read", { as: moderator, json: { eventKeys: [accountKey(released), accountKey(kept)] } })
+    try same({ bothOpen, oneReleased, releasedRead: try readAt(accountKey(released), moderator), keptRead: (try readAt(accountKey(kept), moderator)) !== null }, {
+      bothOpen: [[accountKey(released), accountKey(kept)].sort(), 2],
+      oneReleased: [[accountKey(kept)], 1],
+      releasedRead: null,
+      keptRead: true,
     })
   })
 })

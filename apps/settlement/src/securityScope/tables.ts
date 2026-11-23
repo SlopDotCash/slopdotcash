@@ -9,4 +9,5 @@ export const writes = [
   "security_payment_solana_scans",
   "security_payment_solana_scan_pages",
   "security_vault_snapshots",
+  "security_settlements",
 ] as const;

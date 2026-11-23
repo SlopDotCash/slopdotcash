@@ -1,4 +1,5 @@
 // spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { Address, Alert, Button, Card, CardTitle, Disclosure, ExternalLink, Label, Spinner, Status, Switch, WalletChooser } from "@repo/ui";
 import { ArrowRight, ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { useId, useState } from "react";
@@ -96,7 +97,8 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
   const authorizeId = useId();
   const state = monthly.state;
   if (account === 0 || month.status !== "done" || month.value === undefined || state === undefined || flow === undefined || !state.manages) return null;
-  const evm = familyOf(deployment) === "evm";
+  const family = familyOf(deployment);
+  const solana = family === "solana";
   const slotUnreadable = unreadable.status === "done" && unreadable.value;
   const savedDefault = chosenDefault ?? month.value.automatic;
   const wanted = automatic ?? savedDefault;
@@ -131,7 +133,7 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
       {error ? <Alert variant="destructive">{error}</Alert> : null}
       {notice ? <Alert variant="info">{notice}</Alert> : null}
       {checked ? <SettingResult network={deployment.network} checked={checked} /> : null}
-      {evm ? (
+      {family !== undefined ? (
         <section aria-label="Vault monthly authorization" className="flex flex-col gap-3">
           <Disclosure summary={`Owner ${short(deployment.owner)}`} open={ownerOpen ?? (pending || review !== undefined)} onOpenChange={setOwnerOpen}>
             <Address value={deployment.owner} label="owner address" copyLabel="Copy owner address" />
@@ -146,9 +148,10 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
           ) : null}
           <WalletChooser
             legend={pending ? "Reconnect wallet" : "Owner wallet"}
+            family={family}
             address={wallet?.address}
             disabled={busy || slotUnreadable}
-            wallets={offers.filter((offer) => offer.family === "evm").map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
+            wallets={offers.filter((offer) => offer.family === family).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
             onConnect={(offer) =>
               settingAct(connectWallet(Number(offer.id), false), (connection) => {
                 setWallet(connection);
@@ -161,6 +164,7 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
               action="Monthly payment setting"
               status={pendingTarget ? `Pending: ${describe(pendingTarget)} · don't resend` : "Pending · don't resend"}
               hash={hash}
+              solana={solana}
               explorerUrl={transactionUrl(deployment.network, hash || undefined)}
               canCheck={wallet !== undefined}
               busy={busy}
@@ -198,11 +202,16 @@ export function AutomaticMonthlyPayment({ project, deployment, period, account, 
                     {describe(review.current)} <ArrowRight aria-hidden="true" className="size-4" />
                     <span className="sr-only">to</span> {describe(review.target)}
                   </p>
+                  {review.solana?.plan.transaction ? (
+                    <p className="text-sm text-muted-foreground">
+                      Estimated network fee: {formatBaseUnits({ value: BigInt(review.solana.plan.transaction.networkFeeLamports), decimals: 9 })} SOL
+                    </p>
+                  ) : null}
                   {review.changes ? (
                     <Button
                       loading={busy}
                       onClick={() =>
-                        settingAct(sendSetting(wallet, review.target), () => {
+                        settingAct(sendSetting(wallet, review), () => {
                           setReview(undefined);
                         })
                       }

@@ -1,0 +1,124 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { type StartedWorker, bundle, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type Request, Response } from "miniflare"
+import { keeperMarker } from "../src/keeper/signer.vibe"
+import { signerMarker } from "../src/signer/evm.vibe"
+import { posterMarker } from "../src/signer/rootPoster.vibe"
+import { solanaSignerMarker } from "../src/signer/solana.vibe"
+import { paymentsCron } from "../src/workers/payments.vibe"
+
+const root = new URL("..", import.meta.url).pathname
+
+interface Answer {
+  readonly status: number
+  readonly text: string
+}
+
+interface Running {
+  readonly mf: StartedWorker
+  readonly seen: ReadonlyArray<string>
+}
+
+function same<T>(actual: T, expected: T) {
+  return sync(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function running(script: string, vars: Readonly<Record<string, string>>, options: { readonly objects?: true; readonly executor?: true }) {
+  const seen: string[] = []
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    vars,
+    d1: { PAYMENTS_DB: "workers-journey" },
+    ...options.objects === undefined ? {} : { durableObjects: { JOURNAL: "PaymentSignerJournal" } },
+    ...options.executor === undefined ? {} : { services: { EVM_PAYMENT_EXECUTOR: (request: Request) => {
+      seen.push(`executor ${new URL(request.url).pathname}`)
+      return new Response(JSON.stringify({ error: "execution_pending_or_rejected" }), { status: 409 })
+    } } },
+    outbound: (request: Request) => {
+      seen.push(new URL(request.url).host)
+      return new Response("unreachable", { status: 503 })
+    },
+  })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  return { mf, seen } satisfies Running
+}
+
+effect function posted(worker: Running, path: string, body: string, method = "POST") {
+  return try promise(() => worker.mf.dispatchFetch(`https://attester.internal${path}`, { method, headers: { "content-type": "application/json", "idempotency-key": "k" }, ...method === "GET" ? {} : { body } })
+    .then((response) => response.text().then((text) => ({ status: response.status, text }) satisfies Answer)))
+}
+
+effect function wranglerFile(name: string) {
+  const fs = try FileSystem.FileSystem
+  const text = try fs.readFileString(`${root}wrangler/${name}`)
+  return try Effect.try(() => JSON.parse(text) as { readonly triggers?: { readonly crons?: ReadonlyArray<string> }; readonly vars?: Readonly<Record<string, string>> })
+}
+
+const zeroPins = { SIGNER_STACK: "production", PAYMENT_DEPLOYMENTS: "[]", PAYMENT_RPC_URLS: "{}", SLOP_ENVIRONMENT: "production" }
+
+layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A zero-pin attester runs no scheduled work, refuses every signing route and carries only its own signer markers (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const script = try promise(() => bundle(root, { entry: "attester" }))
+    const solana = try running(script, { ...zeroPins, PAYMENT_NETWORK: "solana-mainnet" }, { objects: true })
+    const evm = try running(script, { ...zeroPins, PAYMENT_NETWORK: "base-mainnet" }, { objects: true })
+    const solanaCron = try promise(() => scheduled(solana.mf, "*/5 * * * *"))
+    const evmCron = try promise(() => scheduled(evm.mf, "*/5 * * * *"))
+    const routes = {
+      pay: try posted(solana, "/v1/pay", "{}"),
+      securityPay: try posted(solana, "/v1/security/pay", "{}"),
+      completeBind: try posted(solana, "/v1/complete-bind", "{}"),
+      solanaReconcile: try posted(solana, "/v1/reconcile-binding", "{}"),
+      monthly: try posted(solana, "/v1/monthly-authorization", "{}"),
+      bind: try posted(evm, "/v1/bind-destinations", "{}"),
+      commit: try posted(evm, "/v1/commit-monthly", "{}"),
+      read: try posted(evm, "/v1/pay", "", "GET"),
+      reconcile: try posted(evm, "/v1/reconcile-binding", "not json"),
+    }
+    const files = ["attester.base-mainnet.production.jsonc", "attester.ethereum.production.jsonc", "attester.robinhood-mainnet.production.jsonc", "attester.solana-mainnet.production.jsonc", "attester.base-sepolia.staging.jsonc", "attester.ethereum-sepolia.staging.jsonc", "attester.robinhood-testnet.staging.jsonc", "attester.solana-devnet.staging.jsonc"]
+    const triggers: Array<readonly [string, ReadonlyArray<string>, string | undefined]> = []
+    for (const name of files) {
+      const file = try wranglerFile(name)
+      triggers.push([name, file.triggers?.crons ?? [], file.vars?.PAYMENT_DEPLOYMENTS])
+    }
+    try same({
+      crons: [solanaCron.outcome, evmCron.outcome],
+      outbound: [...solana.seen, ...evm.seen],
+      statuses: Object.fromEntries(Object.entries(routes).map(([name, answer]) => [name, answer.status])),
+      reconcileBody: routes.reconcile.text,
+      markers: { attester: script.includes(signerMarker), solana: script.includes(solanaSignerMarker), keeper: script.includes(keeperMarker), poster: script.includes(posterMarker) },
+      zeroPinStacksScheduleNothing: triggers.every(([, crons, pins]) => pins !== "[]" || crons.length === 0),
+    }, {
+      crons: ["ok", "ok"],
+      outbound: [],
+      statuses: { pay: 404, securityPay: 404, completeBind: 404, solanaReconcile: 404, monthly: 404, bind: 404, commit: 404, read: 404, reconcile: 409 },
+      reconcileBody: JSON.stringify({ error: "binding_recovery_pending_or_rejected" }),
+      markers: { attester: true, solana: true, keeper: false, poster: false },
+      zeroPinStacksScheduleNothing: true,
+    })
+  })
+
+  it.effect('A payments run whose dispatch step fails still runs every other step and reports the failure; with an executor it succeeds without contacting it (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work")', () => effect {
+    const script = try promise(() => bundle(root, { entry: "payments" }))
+    const vars = { PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]), PAYMENT_RPC_URLS: "{}", SLOP_ENVIRONMENT: "staging" }
+    const unexecuted = try running(script, vars, {})
+    const executed = try running(script, vars, { executor: true })
+    const misconfigured = try running(script, { ...vars, PAYMENT_NETWORKS: "[]" }, { executor: true })
+    const failed = try promise(() => scheduled(unexecuted.mf, paymentsCron))
+    const passed = try promise(() => scheduled(executed.mf, paymentsCron))
+    const refused = try promise(() => scheduled(misconfigured.mf, paymentsCron))
+    const unknownCron = try promise(() => scheduled(executed.mf, "0 0 * * *"))
+    const staging = try wranglerFile("payments.staging.jsonc")
+    try same({
+      outcomes: [failed.outcome, passed.outcome, refused.outcome, unknownCron.outcome],
+      contacted: [...unexecuted.seen, ...executed.seen, ...misconfigured.seen],
+      stagingCrons: (staging.triggers?.crons ?? []).every((cron) => cron === paymentsCron),
+    }, {
+      outcomes: ["exception", "ok", "exception", "exception"],
+      contacted: [],
+      stagingCrons: true,
+    })
+  })
+})

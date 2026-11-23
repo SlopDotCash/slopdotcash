@@ -1,12 +1,16 @@
+// spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/reviewCap.md, "A review admits its item before any call, and a full month refuses only a new item"
 import { appealWrites } from "./appeals/tables.ts";
 import { budgetWrites } from "./budget/tables.ts";
 import { closeAttemptWrites } from "./closeAttempt/tables.ts";
+import { feeWrites } from "./fee/tables.ts";
 import { holdWrites } from "./holds/tables.ts";
 import { ingressWrites } from "./ingress/tables.ts";
 import { installationWrites } from "./installation/tables.ts";
 import { leaseWrites } from "./lease/tables.ts";
 import { publishWrites } from "./publish/tables.ts";
 import { readinessWrites } from "./readiness/tables.ts";
+import { readyWrites } from "./ready/tables.ts";
+import { reviewCapWrites } from "./review/tables.ts";
 import { routeWrites } from "./route/tables.ts";
 import { spendWrites } from "./spend/tables.ts";
 import { historyWrites } from "./value/history/tables.ts";
@@ -30,4 +34,7 @@ export const writes = [
   ...inferenceWrites,
   ...historyWrites,
   ...workUnitWrites,
+  ...reviewCapWrites,
+  ...readyWrites,
+  ...feeWrites,
 ] as const;

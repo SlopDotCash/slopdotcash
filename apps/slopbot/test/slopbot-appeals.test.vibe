@@ -6,6 +6,7 @@ import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake } from "@repo/platform/testing/github"
 import { internet } from "@repo/platform/testing/internet"
 import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { journeyBuild } from "./support/journey.vibe"
 
 type Fake = ReturnType<typeof githubFake>
 
@@ -65,7 +66,7 @@ const Appealing = Layer.unwrap(effect {
   const seeded = try promise(() => seed())
   return Layer.mergeAll(
     areaLayer({
-      root: new URL("..", import.meta.url).pathname,
+      ...journeyBuild,
       entry: "appeals",
       d1: { SLOPBOT_DB: "slop-private" },
       vars: {

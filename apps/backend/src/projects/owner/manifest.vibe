@@ -199,8 +199,8 @@ export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: s
   const funded = before.fundingState === "committed" || positiveMinor(before.committedMinor) || before.paymentMode === "enabled" || list(objectOf(previous.escrow)?.deployments).length > 0 || list(objectOf(previous.funding)?.addresses).length > 0 || fundingCommitments(previous).length > 0
   if (funded && (!sameValue(previous.rewardAsset, next.rewardAsset) || !sameValue(previousEscrow, nextEscrow))) return financialRestricted(putProjectsById.financialChangeRestrictedAFundedProjectKeeps)
   const assetChanged = !sameValue(previous.rewardAsset, next.rewardAsset) || before.chain !== after.chain || before.currency !== after.currency
-  if (!sameValue(before.maintainerShareHistory, after.maintainerShareHistory)) return refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount, "The maintainer share history cannot change")
-  if (!sameValue(fixedReward(before), fixedReward(after)) || (assetChanged ? after.cycleCaps !== undefined : !sameValue(before.cycleCaps, after.cycleCaps))) return refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount, "Only the monthly amount, network, asset, honor-system promise and maintainer share change through owner self-service")
+  if (!sameValue(before.maintainerShareHistory, after.maintainerShareHistory)) return refusal(putProjectsById.financialChangeRestrictedTheMaintainerShareHistory)
+  if (!sameValue(fixedReward(before), fixedReward(after)) || (assetChanged ? after.cycleCaps !== undefined : !sameValue(before.cycleCaps, after.cycleCaps))) return refusal(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
   const cycle = utcPeriod(nowIso)
   const shared = (reward: Json) => withProspectiveShare(project, before, reward, nowIso)
   const rewardStartAt = typeof before.rewardStartAt === "string" ? before.rewardStartAt : nowIso

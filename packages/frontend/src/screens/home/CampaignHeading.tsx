@@ -5,7 +5,7 @@ import { animatedHeading } from "./campaign.ts";
 import { useCampaignFrame, useMotion } from "./useCampaign.ts";
 
 function Caret() {
-  return <span className="ml-1 inline-block h-[0.8em] w-[0.08em] translate-y-[0.08em] bg-primary motion-safe:animate-pulse" />;
+  return <span className="ml-[0.04em] inline-block h-[0.78em] w-[0.055em] translate-y-[0.04em] animate-caret bg-current motion-reduce:hidden" />;
 }
 
 export type CampaignHeadingProps = {
@@ -21,17 +21,17 @@ export function CampaignHeading({ journey, className }: CampaignHeadingProps) {
   const frame = useCampaignFrame(journey, campaignAnimationEnabled(motion));
   const visible = campaignVisibleText(motion, campaign.accessibleHeading, animatedHeading(campaign, frame));
   return (
-    <h1 aria-label={campaignAccessibleHeading(campaign.accessibleHeading, visible)} className={cn("text-5xl leading-none font-bold tracking-tight text-foreground sm:text-6xl lg:text-7xl", className)}>
+    <h1 aria-label={campaignAccessibleHeading(campaign.accessibleHeading, visible)} className={cn("m-0 w-full max-w-280 text-6xl leading-display font-extrabold tracking-tighter text-foreground uppercase sm:text-7xl md:text-8xl lg:text-9xl", className)}>
       <span aria-hidden className="flex flex-col">
         <span>{campaign.lead}</span>
-        <span className="grid">
+        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)] text-5xl leading-display text-balance text-primary max-md:mt-[0.08em] max-md:min-h-[1.8em] md:text-6xl lg:text-8xl">
           {campaign.actions.map((action) => (
             <span key={action} className="invisible col-start-1 row-start-1">
               {action}
               <Caret />
             </span>
           ))}
-          <span className="col-start-1 row-start-1 text-primary">
+          <span className="col-start-1 row-start-1 self-start">
             {visible.slice(campaign.lead.length + 1)}
             <Caret />
           </span>

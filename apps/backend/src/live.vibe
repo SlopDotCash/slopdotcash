@@ -22,6 +22,7 @@ import { WalletRoutes } from "./wallets/routes.vibe"
 
 export { slopbotAccess } from "./authority/live.vibe"
 export { refreshMergeActivity } from "./projects/mergeActivity/job.vibe"
+export { SubmissionFeeRatesLive } from "./submissionFee/rates.vibe"
 export { type BackendVars, backendServices } from "./services.vibe"
 
 export const backend = area({

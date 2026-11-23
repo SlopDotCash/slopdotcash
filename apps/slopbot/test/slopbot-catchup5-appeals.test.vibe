@@ -1,0 +1,207 @@
+// spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"
+import { assert, layer } from "@effect/vitest"
+import { isoNow } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { journeyBuild } from "./support/journey.vibe"
+
+type Fake = ReturnType<typeof githubFake>
+
+const installationId = 9710
+const repositoryId = 8311
+const path = "ada/repeat-appeals"
+const projectId = "repeat-appeals-project"
+const guide = [
+  "# Contributing",
+  "",
+  "## Evidence",
+  "",
+  "- Change types: docs, non-ui, ui, performance or hardware",
+  "- Test results: the command you ran and its output",
+  "- Proof of change: what the change does, before and after",
+  "- Runtime logs: logs for a non-ui change",
+  "",
+].join("\n")
+const testResults = "- Test results: pnpm test passed all forty retry cases"
+const proofOfChange = "- Proof of change: a failed fetch is now retried and logged with its attempt number"
+const runtimeLogs = "- Runtime logs: https://logs.slop.test/runs/42"
+const complete = ["- Change types: non-ui", testResults, proofOfChange, runtimeLogs]
+const withoutProof = ["- Change types: non-ui", testResults, runtimeLogs]
+const pulls = { rep: complete, mid: complete, val: complete, fix: complete, gap: withoutProof } as const
+const before = { opened: "2026-01-01T00:00:00.000Z", due: "2026-01-08T00:00:00.000Z", resolved: "2026-01-02T00:00:00.000Z" }
+
+type Author = keyof typeof pulls
+const authors = Object.keys(pulls) as ReadonlyArray<Author>
+
+function bodyOf(login: Author) {
+  return ["Retries failed fetches.", "", "## Evidence", "", ...pulls[login], "", "Made via @slopdotcash"].join("\n")
+}
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada" })
+  authors.forEach((login, index) => world.addUser({ id: 801 + index, login }))
+  world.addRepo({ id: repositoryId, owner: "ada", name: "repeat-appeals", files: { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": guide } })
+  const items: Record<string, number> = {}
+  for (const login of authors) {
+    const base = world.addCommit(path, { message: `Target tip for ${login}` })
+    const head = world.addCommit(path, { branch: `contribution-${login}`, parents: [base], files: { [`notes/${login}.txt`]: `${login}\n` } })
+    items[login] = world.addPull({ repo: path, author: login, title: `${login.toUpperCase()}-TOKEN change`, body: bodyOf(login), headRef: `contribution-${login}`, headSha: head })
+  }
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
+  const providers = providerFake()
+  const net = internet({ github: fake.handler, providers: providers.handler })
+  return { fake, providers, items, net, token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly providers: Seeded["providers"]
+  readonly items: Seeded["items"]
+  readonly net: Seeded["net"]
+}
+
+const Repeating = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.mergeAll(
+    areaLayer({
+      ...journeyBuild,
+      entry: "appeals",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        ORBIO_API_KEY: "orbio-test-credential",
+        SURPLUS_API_KEY: "surplus-test-credential",
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        TEST_PROJECTS: JSON.stringify([{ projectId, path, repositoryId: String(repositoryId) }]),
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+    webCrypto,
+  )
+})
+
+const idOf = (login: Author) => 801 + authors.indexOf(login)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function installed(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+  try area.sql("CREATE TABLE IF NOT EXISTS appeal_jobs (kind TEXT NOT NULL, body TEXT NOT NULL)")
+  try area.sql("CREATE TABLE IF NOT EXISTS appeal_bans (github_id TEXT PRIMARY KEY)")
+}
+
+effect function itemOf(login: Author) {
+  const { fake, items } = try World
+  return try Effect.try(() => fake.world.item(path, items[login] ?? 0))
+}
+
+effect function headOf(login: Author) {
+  const { fake, items } = try World
+  return (try Effect.try(() => fake.world.pull(path, items[login] ?? 0))).headSha
+}
+
+effect function found(area: AreaShape, login: Author, category: string) {
+  const item = try itemOf(login)
+  const at = try isoNow()
+  const verdict = JSON.stringify({ category, confidence: 0.97, rule_refs: [{ source: "CONTRIBUTING.md", quote: "## Evidence" }], evidence: [], summary: `Review: ${category}.`, limitations: [], objective_defect: null })
+  try area.sql(`INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, verdict, action, created_at, completed_at)
+    VALUES (?, ?, ?, 'pull_request', ?, ?, ?, ?, ?, 'policy', 'completed', ?, 'label', ?, ?)`, `review-${login}`, installationId, repositoryId, item.number, item.nodeId, idOf(login), try headOf(login), `content-${login}`, verdict, at, at)
+  if (category === "missing_evidence")
+    try area.sql(`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
+      VALUES (?, ?, ?, ?, 'missing_evidence', 'slopbot-penalties-v2', 1, ?, 0, ?, ?)`, item.nodeId, repositoryId, projectId, String(idOf(login)), at.slice(0, 7), `review-${login}`, at)
+}
+
+effect function deniedSibling(area: AreaShape, login: Author, prefix: "appeal" | "value-appeal") {
+  const item = try itemOf(login)
+  try area.sql(`INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at, draft, draft_confidence, drafted_at, resolved_at, resolution, resolved_by)
+    VALUES (?, ?, ?, ?, '{}', ?, ?, 'deny', 1, ?, ?, 'denied', 'moderator')`, `${prefix}:${item.nodeId}:earlier-head`, repositoryId, item.nodeId, String(idOf(login)), before.opened, before.due, before.opened, before.resolved)
+}
+
+effect function answers(login: Author) {
+  const { providers } = try World
+  const text = JSON.stringify({ category: "none", confidence: 0.95, rule_refs: [], evidence: [], summary: "Appeal review: none.", limitations: [], objective_defect: null })
+  providers.reply((call: ProviderCall) => call.route === "orbio" && call.messages.some((message) => message.content.includes(`${login.toUpperCase()}-TOKEN`)), { text })
+}
+
+function jobBase(login: Author, items: Seeded["items"]) {
+  return { installationId, repositoryId, owner: "ada", repo: "repeat-appeals", itemKind: "pull_request", number: items[login] ?? 0 }
+}
+
+effect function appealed(area: AreaShape, login: Author) {
+  const { items } = try World
+  return (try area.post("/test/appeals/signal", { kind: "appeal", deliveryId: `appeal-${login}`, ...jobBase(login, items), senderId: idOf(login) })).body
+}
+
+effect function accepted(area: AreaShape, login: Author) {
+  const { items } = try World
+  return (try area.post("/test/appeals/command", { kind: "appeal_command", command: "accept", deliveryId: `command-${login}-accept`, ...jobBase(login, items), senderId: idOf(login) })).body
+}
+
+effect function appealRow(area: AreaShape, login: Author) {
+  const node = (try itemOf(login)).nodeId
+  const [row] = try area.sql("SELECT draft, draft_confidence, escalation, resolution, resolved_by FROM slopbot_appeals WHERE appeal_key = ?", `appeal:${node}:${try headOf(login)}`)
+  return row
+}
+
+effect function noticeCount(area: AreaShape, login: Author) {
+  const node = (try itemOf(login)).nodeId
+  const [row] = try area.sql("SELECT count(*) AS n FROM notifications WHERE event_key = ?", `slopbot-appeal:${node}:${try headOf(login)}`)
+  return row?.n ?? 0
+}
+
+layer(Repeating, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A repeat appeal after a denied one goes to a moderator at triage, a sibling denied before the appellant accepts an uphold draft sends it to a moderator, a value dispute holds nothing, and a missing-evidence appeal drafts from the current body at full confidence (spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates")', () => effect {
+    const area = try Area
+    const { net } = try World
+    try installed(area)
+    for (const login of ["rep", "mid", "val"] as const) {
+      try found(area, login, "spam")
+      try answers(login)
+    }
+    for (const login of ["fix", "gap"] as const) try found(area, login, "missing_evidence")
+    try deniedSibling(area, "rep", "appeal")
+    try deniedSibling(area, "val", "value-appeal")
+    const triaged = { rep: try appealed(area, "rep"), mid: try appealed(area, "mid"), val: try appealed(area, "val"), fix: try appealed(area, "fix"), gap: try appealed(area, "gap") }
+    try deniedSibling(area, "mid", "appeal")
+    const answered = { mid: try accepted(area, "mid"), val: try accepted(area, "val") }
+    try same({
+      triaged,
+      answered,
+      rows: { rep: try appealRow(area, "rep"), mid: try appealRow(area, "mid"), val: try appealRow(area, "val"), fix: try appealRow(area, "fix"), gap: try appealRow(area, "gap") },
+      notices: { rep: try noticeCount(area, "rep"), mid: try noticeCount(area, "mid"), val: try noticeCount(area, "val") },
+      unexpected: [net.unexpected.length, area.outboundErrors.length],
+    }, {
+      triaged: {
+        rep: { result: "appeal escalated: an earlier appeal of this item was denied" },
+        mid: { result: "appeal drafted (uphold)" },
+        val: { result: "appeal drafted (uphold)" },
+        fix: { result: "appeal drafted (uphold)" },
+        gap: { result: "appeal drafted (deny)" },
+      },
+      answered: {
+        mid: { result: "a Slop moderator decides this appeal" },
+        val: { result: "appeal upheld by the appellant" },
+      },
+      rows: {
+        rep: { draft: "uphold", draft_confidence: 0.95, escalation: "an earlier appeal of this item was denied", resolution: null, resolved_by: null },
+        mid: { draft: "uphold", draft_confidence: 0.95, escalation: "an earlier appeal of this item was denied", resolution: null, resolved_by: null },
+        val: { draft: "uphold", draft_confidence: 0.95, escalation: null, resolution: "upheld", resolved_by: "appellant" },
+        fix: { draft: "uphold", draft_confidence: 1, escalation: null, resolution: null, resolved_by: null },
+        gap: { draft: "deny", draft_confidence: 1, escalation: null, resolution: null, resolved_by: null },
+      },
+      notices: { rep: 2, mid: 2, val: 0 },
+      unexpected: [0, 0],
+    })
+  })
+})

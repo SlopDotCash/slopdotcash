@@ -1,0 +1,30 @@
+// spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
+import { reportDepositPath } from "@repo/fees/client"
+import { transactionUrl } from "../../kernels/explorers.ts"
+import { fetchBounded } from "../../platform/bounded.vibe"
+import { Unreadable } from "../../reads/resource.vibe"
+import { checkedRecord, reportSubject } from "../../screens/fee/record.ts"
+import { publishedTerms } from "../../wallets/fee/feeCalls.ts"
+import { recordValid } from "../../../gen/frontend__feePages.effect.vibe"
+
+const recordLimitBytes = 16_384
+const uncached: globalThis.RequestInit = { cache: "no-store" }
+const unavailable = "The deposit record is unavailable."
+
+export interface DepositEnd {
+  readonly href: string | null
+}
+
+export effect function depositEnd(caseId: string) {
+  const subject = reportSubject(caseId)
+  if (subject === undefined) throw new Unreadable({ message: unavailable })
+  provide FetchHttpClient.RequestInit = uncached {
+    const body: unknown = fetchBounded(reportDepositPath(caseId), recordLimitBytes, "report deposit record") catch effect () => {
+      throw new Unreadable({ message: unavailable })
+    }
+    const checked = checkedRecord(body, subject, publishedTerms, undefined)
+    if (!recordValid(checked.record, checked.ratesRead)) throw new Unreadable({ message: unavailable })
+    const { paid, resolveTransaction } = checked.shown
+    return { href: paid === null ? null : (transactionUrl(paid.network, resolveTransaction) ?? null) } satisfies DepositEnd
+  }
+}

@@ -7,6 +7,7 @@ export interface AmendedRefusal {
   readonly status: number;
   readonly error: string;
   readonly message?: AmendedMessage;
+  readonly cacheControl?: string;
   readonly like: string;
   readonly at: string;
 }
@@ -15,6 +16,7 @@ export interface Amendment {
   readonly route: string;
   readonly from?: { readonly route: string; readonly name: string; readonly keep: ReadonlyArray<string> };
   readonly replaces?: ReadonlyArray<string>;
+  readonly success?: ReadonlyArray<number>;
   readonly refusals: ReadonlyArray<AmendedRefusal>;
 }
 
@@ -77,6 +79,22 @@ const monthLockRefusals: ReadonlyArray<AmendedRefusal> = [
 
 const monthlyPeriod = "/api/v1/payments/projects/:id/monthly/:period";
 
+const submissionFee = "backend/submission-fee/handler.ts";
+const submissionFeeCache = "public, max-age=60";
+const plainJson = { route: "GET /api/v1/merge-activity", keep: ["internalError"] } as const;
+
+const methodNotAllowedSubmissionFee: AmendedRefusal = { key: "methodNotAllowedSubmissionFee", status: 405, error: "method_not_allowed", cacheControl: submissionFeeCache, like: "internalError", at: `${submissionFee}:155` };
+
+const submissionFeeRefusals = (notFoundAt: number, cacheControl: string): ReadonlyArray<AmendedRefusal> => [
+  { key: "notFoundSubmissionFee", status: 404, error: "not_found", cacheControl, like: "internalError", at: `${submissionFee}:${notFoundAt}` },
+  methodNotAllowedSubmissionFee,
+];
+
+const operatorRefusals = (at: string): ReadonlyArray<AmendedRefusal> => [
+  { key: "notFoundWithoutOperatorSecret", status: 404, error: "not_found", cacheControl: "no-store", like: "internalError", at: "backend/trace/handler.ts:1516" },
+  { key: "methodNotAllowedOperator", status: 405, error: "method_not_allowed", cacheControl: "no-store", like: "internalError", at },
+];
+
 export const amendments: ReadonlyArray<Amendment> = [
   { route: "PUT /api/v1/projects/:id", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
   { route: "POST /api/v1/project-applications/:id/publish", replaces: [honorSystemMessage.key], refusals: [honorSystemMessage] },
@@ -100,4 +118,11 @@ export const amendments: ReadonlyArray<Amendment> = [
     },
     refusals: monthLockRefusals,
   },
+  { route: "GET /api/v1/submission-fee/rate", from: { ...plainJson, name: "getSubmissionFeeRate" }, refusals: [methodNotAllowedSubmissionFee] },
+  { route: "GET /api/v1/submission-fee/items/:repositoryId/:pullNumber", from: { ...plainJson, name: "getSubmissionFeeItemsByRepositoryIdByPullNumber" }, refusals: submissionFeeRefusals(215, submissionFeeCache) },
+  { route: "GET /api/v1/submission-fee/reports/:caseId", from: { ...plainJson, name: "getSubmissionFeeReportsByCaseId" }, refusals: submissionFeeRefusals(251, "no-store") },
+  { route: "GET /api/v1/operator/reserved-awards", from: { ...plainJson, name: "getOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
+  { route: "POST /api/v1/operator/reserved-awards", from: { ...plainJson, name: "postOperatorReservedAwards" }, success: [], refusals: operatorRefusals("backend/payments/reserved-awards-feed.ts:196") },
+  { route: "GET /api/v1/operator/protected-point-months", from: { ...plainJson, name: "getOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
+  { route: "POST /api/v1/operator/protected-point-months", from: { ...plainJson, name: "postOperatorProtectedPointMonths" }, success: [], refusals: operatorRefusals("backend/payments/protected-point-months.ts:102") },
 ];

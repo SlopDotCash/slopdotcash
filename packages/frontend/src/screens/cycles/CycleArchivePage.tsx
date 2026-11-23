@@ -1,4 +1,4 @@
-// spec/frontend/views.md, "Cycle archive filters keep only selections that a published cycle supports"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/frontend/views.md, "Cycle archive filters keep only selections that a published cycle supports"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
 import type { CycleIndex, CycleIndexEntry } from "@repo/settlement/client";
 import { Alert, Button, DataState, Label, PageHeader, Select, Spinner, Status } from "@repo/ui";
 import { CalendarDays } from "lucide-react";
@@ -27,6 +27,10 @@ const linkClass = "text-primary underline underline-offset-4 hover:decoration-2"
 /** @throws {never} */
 export function indexStale(index: Pick<CycleIndex, "generatedAt">, nowMs: number): boolean {
   return snapshotStale(nowMs, Date.parse(index.generatedAt));
+}
+
+export function StaleSince({ generatedAt, shown = formatDate(generatedAt), onRetry }: { generatedAt: string; shown?: string; onRetry?: () => void }) {
+  return <DataState status="Stale" onRetry={onRetry} updatedAt={<time dateTime={generatedAt}>{shown}</time>} />;
 }
 
 function CycleRecord({ cycle, name, nowMs }: { cycle: CycleIndexEntry; name: string; nowMs: number }) {
@@ -127,7 +131,7 @@ function IndexState({ cycles, nowMs }: { cycles: Shown<CycleIndex>; nowMs: numbe
   return (
     <>
       {cycles.value.cycles.length === 0 ? <p>No cycles yet</p> : null}
-      {cycles.status === "Stale" || indexStale(cycles.value, nowMs) ? <p role="status">Cycles stale · {formatDate(cycles.value.generatedAt)}</p> : null}
+      {cycles.status === "Stale" || indexStale(cycles.value, nowMs) ? <StaleSince generatedAt={cycles.value.generatedAt} onRetry={cycles.status === "Stale" ? cycles.onRetry : undefined} /> : null}
     </>
   );
 }

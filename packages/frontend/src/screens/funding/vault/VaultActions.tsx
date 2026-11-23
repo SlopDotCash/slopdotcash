@@ -1,11 +1,11 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"; spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/settlement/vault.md, "Only the fixed refund destination receives free funds"; spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { Address, Alert, Button, Card, CardTitle, Disclosure, Field, Input, NetworkMark, type NetworkMarkProps, RadioGroup, Status, WalletChooser } from "@repo/ui";
 import { Effect, type ManagedRuntime } from "effect";
 import { useState, useSyncExternalStore } from "react";
 import type { Batch } from "../../../../gen/frontend__batchedDeposit.ts";
 import { useMachine as useBatch } from "../../../../gen/frontend__batchedDeposit.react.ts";
-import type { PoolFacts } from "../../../../gen/frontend__projections.ts";
+import { type PoolFacts, publicFunding } from "../../../../gen/frontend__projections.ts";
 import { useMachine as useVault } from "../../../../gen/frontend__ownerVault.react.ts";
 import { formatAssetAmount, networkLabel } from "../../../kernels/assetText.ts";
 import { transactionUrl } from "../../../kernels/explorers.ts";
@@ -24,6 +24,7 @@ import {
   recoverBatch,
   reviewAction,
   savedAction,
+  savedFundingOf,
   sendAction,
   vaultRuntime,
   watchBatch,
@@ -51,6 +52,8 @@ export type VaultActionsProps = {
   pool?: PoolFacts;
   /** Whether the cached pool-funding read shows month locks on this vault, so its contract guards locked funds. */
   pledgeSupport?: boolean;
+  /** The public project page: any connected wallet deposits here, and nothing is withdrawn. */
+  depositOnly?: boolean;
   /** Called with the wallet connected here, which the vault's month lock card shares. */
   onWallet?: (connection: Connection | undefined) => void;
   /** Called once a deposit or withdrawal is verified on the finalized chain. */
@@ -104,7 +107,7 @@ export function NetworkName({ network }: { network: string }) {
 }
 
 /** Deposits and withdrawals on one registered vault, each sent by the person's own wallet after the request is saved. */
-export function VaultActions({ project, deployment, period, account, loginHref, pool, pledgeSupport = false, onWallet, onFinalized }: VaultActionsProps) {
+export function VaultActions({ project, deployment, period, account, loginHref, pool, pledgeSupport = false, depositOnly = false, onWallet, onFinalized }: VaultActionsProps) {
   const runtime = vaultRuntime(project, deployment, period);
   useFollowed(runtime, `follow:${account}`, () => followVault(account));
   useTabHidden(runtime);
@@ -120,7 +123,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const [cleared, setCleared] = useState(0);
   const unreadable = useSettled(runtime, `unreadable:${cleared}`, () => unreadableSaved());
   const [wallet, setWallet] = useState<Connection>();
-  const [operation, setOperation] = useState<Operation>("deposit");
+  const [chosen, setOperation] = useState<Operation>("deposit");
   const [amount, setAmount] = useState("");
   const [review, setReview] = useState<ActionReview>();
   const family = familyOf(deployment);
@@ -133,6 +136,10 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const pendingTransfer = transfer !== undefined && live.has(transfer.phase) && transfer.slotOwner === account;
   const pendingBatch = batched !== undefined && batchLive.has(batched.phase) && batched.owner === account;
   const label = useSettled(runtime, `label:${transfer?.slot.identity ?? ""}:${cleared}`, () => savedAction());
+  const savedLabel = label.status === "done" ? label.value : "Transaction";
+  const funding = depositOnly ? publicFunding(true, true, savedFundingOf(pendingBatch, pendingTransfer, savedLabel)) : undefined;
+  const operation: Operation = funding === undefined ? chosen : "deposit";
+  const title = funding === undefined ? "Fund or withdraw" : "Fund this project";
 
   const settle = (outcome: Outcome, connection = wallet) => {
     setNotice(outcome.message);
@@ -140,7 +147,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     if (outcome.message !== fundingMessages.approval) return onFinalized();
     if (connection === undefined || amount.trim() === "") return;
     setOperation("deposit");
-    void run(runtime, reviewAction(connection, "deposit", amount, pool, account, pledgeSupport)).then((done) => {
+    void run(runtime, reviewAction(connection, "deposit", amount, pool, account, pledgeSupport, depositOnly ? publicFunding(true, true, "NoSavedRequest") : undefined)).then((done) => {
       if (done.ok) setReview(done.value);
     });
   };
@@ -160,7 +167,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
       setWallet(connection);
       onWallet?.(connection);
       setReview(undefined);
-      if (connection.address.toLowerCase() !== deployment.owner.toLowerCase()) setOperation("deposit");
+      if (depositOnly || connection.address.toLowerCase() !== deployment.owner.toLowerCase()) setOperation("deposit");
       watch(connection);
       if (pendingBatch) watchBatched(connection);
     });
@@ -170,7 +177,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     return (
       <Card className="flex flex-col gap-3">
         <CardTitle className="flex items-center gap-2">
-          Fund or withdraw <NetworkName network={deployment.network} />
+          {title} <NetworkName network={deployment.network} />
         </CardTitle>
         <Button asChild variant="secondary">
           <a href={loginHref}>Sign in with GitHub</a>
@@ -193,7 +200,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     />
   ) : pendingTransfer && transfer ? (
     <PendingCheckPanel
-      action={label.status === "done" ? label.value : "Transaction"}
+      action={savedLabel}
       hash={hashOf(transfer.slot)}
       network={deployment.network}
       solana={solana}
@@ -206,7 +213,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     />
   ) : null;
 
-  const choices: Operation[] = isOwner && !promiseUnread ? ["deposit", "withdraw"] : ["deposit"];
+  const choices: Operation[] = funding === "OfferNothing" ? [] : funding === undefined && isOwner && !promiseUnread ? ["deposit", "withdraw"] : ["deposit"];
   const step = review?.kind === "evm" ? (review.batch ? "batch" : review.review.resetAllowance ? "reset" : review.review.approvalNeeded ? "approve" : "send") : "send";
   const signLabel =
     step === "batch"
@@ -220,9 +227,9 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
             : "Confirm withdrawal in wallet";
 
   return (
-    <Card className="flex flex-col gap-4" aria-label={`Fund or withdraw · ${network}`}>
+    <Card className="flex flex-col gap-4" aria-label={`${title} · ${network}`}>
       <CardTitle className="flex items-center gap-2">
-        Fund or withdraw <NetworkName network={deployment.network} />
+        {title} <NetworkName network={deployment.network} />
       </CardTitle>
       <Disclosure summary="Contract details" defaultOpen={pending !== null || review !== undefined}>
         <div className="flex flex-col gap-2">
@@ -253,14 +260,14 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
               className="flex flex-col gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                void act(reviewAction(wallet, operation, amount, pool, account, pledgeSupport), setReview);
+                void act(reviewAction(wallet, operation, amount, pool, account, pledgeSupport, funding), setReview);
               }}
             >
               <RadioGroup
                 legend="Action"
                 value={operation}
                 disabled={busy}
-                hint={!isOwner ? "Only the vault owner's wallet can withdraw free funds." : promiseUnread ? fundingMessages.promiseUnread : undefined}
+                hint={funding !== undefined ? undefined : !isOwner ? "Only the vault owner's wallet can withdraw free funds." : promiseUnread ? fundingMessages.promiseUnread : undefined}
                 options={choices.map((choice) => ({ value: choice, label: choice === "deposit" ? "Deposit tokens" : "Withdraw free funds" }))}
                 onValueChange={(value) => {
                   setOperation(value === "withdraw" ? "withdraw" : "deposit");
@@ -295,7 +302,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                 <Button
                   loading={busy}
                   onClick={() =>
-                    act(sendAction(wallet, review, amount), (sent) => {
+                    act(sendAction(wallet, review, amount, funding), (sent) => {
                       setReview(undefined);
                       setNotice(step === "batch" ? fundingMessages.waitingWallet : `Submitted ${sent}. ${fundingMessages.waitingWallet}`);
                       if (step === "batch") watchBatched(wallet);

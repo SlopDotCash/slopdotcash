@@ -1,16 +1,18 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+// spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/cases.md, "A report that waits for its deposit is its reporter's alone"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "A claimed link settles against GitHub when its reporter or a maintainer checks the receipt"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
 import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
-import { apply, canRecordAttested, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
+import { apply, canRecordAttested, heldFor, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
 import { analyze, scheduleReceiptAnalysis } from "../assessment/routes.vibe"
 import { AuthorityUnavailable, caseAuthority, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
 import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { depositAsk } from "../deposit/ask.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { projectId as projectPattern } from "../intake/availability.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { type ReportingProgram, ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
@@ -49,6 +51,10 @@ function answer(body: unknown, status = 200) {
   return json(body, status, privateHeaders)
 }
 
+function withheld(observed: Observed, viewerGithubId: string) {
+  return observed.roles.size === 0 || heldFor(observed.model, githubNumber(viewerGithubId))
+}
+
 effect function extraActions(observed: Observed, viewerGithubId: string) {
   const handlers = try Effect.serviceOption(CaseActionHandlers)
   return Option.isSome(handlers) ? try handlers.value.contribution(observed, viewerGithubId) : noExtraActions
@@ -59,14 +65,16 @@ effect function shownCase(observed: Observed, actor: Actor, includeHistory: bool
 }
 
 effect function current(id: string, actor: Actor) {
-  return try observedCase(id, actor.githubId, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  const observed = try observedCase(id, actor.githubId, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  if (withheld(observed, actor.githubId)) throw refused(actionRows.notFoundCaseNotFound)
+  return observed
 }
 
 export effect function opened(actor: Actor, id: string) {
   const record = try shownRecord(id)
   if (record === undefined) throw refused(readRows.notFoundCaseNotFound)
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
-  if (observed.roles.size === 0) throw refused(readRows.notFoundCaseNotFound)
+  if (withheld(observed, actor.githubId)) throw refused(readRows.notFoundCaseNotFound)
   try audited(id, actor.githubId, observed.roles)
   return { case: try shownCase(observed, actor, true) }
 }
@@ -125,7 +133,7 @@ effect function visibleCases(actor: Actor) {
   const moderator = try (try Roles).has(actor.githubId, "moderator")
   const scope = scoped.length === 0 ? sql`` : sql` OR c.project_id IN (SELECT value FROM json_each(${JSON.stringify(scoped)}))`
   const disputes = moderator ? sql` OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'` : sql``
-  const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes} ORDER BY c.created_at DESC LIMIT ${listLimit}`)
+  const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE (c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes}) AND (c.reporter_github_id = ${actor.githubId} OR NOT ${depositHeldOn("c.id")}) ORDER BY c.created_at DESC LIMIT ${listLimit}`)
   const visible: Observed[] = []
   for (const candidate of candidates) {
     const record = try listedRecord(candidate.id)
@@ -138,7 +146,7 @@ effect function visibleCases(actor: Actor) {
       authorityUnavailable = true
       continue
     }
-    if (observed.roles.size === 0) continue
+    if (withheld(observed, actor.githubId)) continue
     visible.push(observed)
     if (!observed.roles.has("dispute")) continue
     const held = roles.get(record.row.project_id) ?? new Set<string>()
@@ -195,11 +203,13 @@ export effect function claimed(actor: Actor, body: Body) {
   try orDie(apply(initial, { type: "claim" }, initial.reporter))
   const id = `sc_${(try randomId()).replaceAll("-", "")}`
   const at = try isoNow()
-  const notices = try caseNotices({ caseId: id, revision: 1, kind: "claim", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: actor.githubId, detail: {}, program, relatedReview: false, at })
+  const ask = try depositAsk({ caseId: id, projectId, reporterGithubId: actor.githubId, at })
+  const notices = try caseNotices({ caseId: id, revision: 1, kind: "claim", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: actor.githubId, detail: {}, program: ask.held ? undefined : program, relatedReview: false, at })
   const written = (try D1).batch([
     caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: actor.githubId, login: actor.login }, verified: undefined, ownerGithubId: null, at }),
     caseEvent({ caseId: id, revision: 1, kind: "claim", actorGithubId: actor.githubId, role: "reporter", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory }, at, guard: false }),
     accessLog(id, actor.githubId, new Set(["reporter"]), "write", at),
+    ...ask.statements,
     ...notices,
   ]) catch effect (error) => {
     if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
@@ -381,7 +391,7 @@ export effect function performed(actor: Actor, id: string, body: Body) {
     return { kind: "answered", body: handled } satisfies Performed
   }
   try committed({ observed, actor, change: plan.change, idempotencyKey, at })
-  if (plan.change.kind === "appeal") return { kind: "triage", caseId: row.id, starter: { kind: "automatic" } } satisfies Performed
+  if (plan.change.kind === "appeal" && plan.change.returnedToOwner !== true) return { kind: "triage", caseId: row.id, starter: { kind: "automatic" } } satisfies Performed
   return { kind: "changed", caseId: row.id } satisfies Performed
 }
 
@@ -399,7 +409,7 @@ effect function afterwards(id: string, actor: Actor) {
   const record = try caseRecord(id)
   if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
   const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
-  if (observed.roles.size === 0) return { case: { id: record.row.id, revision: record.row.revision } }
+  if (withheld(observed, actor.githubId)) return { case: { id: record.row.id, revision: record.row.revision } }
   try audited(id, actor.githubId, observed.roles)
   return { case: try shownCase(observed, actor, true) }
 }

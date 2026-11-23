@@ -49,7 +49,7 @@ function pull(number: number, mergedAt: string, author: Actor, commits: Readonly
 }
 
 function claim(id: string, source: MergedPull, commitOid: string, path: string): JointClaim {
-  return { id, sourceId: source.id, commitOid, path, copy: null }
+  return { id, sourceId: source.id, commitOid, path, copy: null, carriers: [source.id] }
 }
 
 function unit(workUnitId: string, sources: ReadonlyArray<MergedPull>, claims: ReadonlyArray<JointClaim>): JointUnit {

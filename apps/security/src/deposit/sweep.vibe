@@ -1,0 +1,159 @@
+// spec/security/reportDeposit.md, "Unpaid asks are released when the switch or the project turns the deposit off"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { later } from "@repo/platform/worker"
+import { Notices } from "@repo/ports/operations"
+import type { DepositFacts, DepositOutcome, DepositReason } from "../../gen/security__reportDeposit.ts"
+import { depositOutcome } from "../../gen/security__reportDeposit.effect.vibe"
+import { jsonValue } from "../analysis/prompts.ts"
+import { scheduleReceiptAnalysis } from "../assessment/routes.vibe"
+import { appeals, receipts } from "../cases/rows.vibe"
+import { routineActorGithubId, routineProofNextAction } from "../routine/reasons.ts"
+import { routingContext } from "../screening/notify.vibe"
+import { scheduleScreening } from "../screening/run.vibe"
+import { depositHeldOn } from "./hold.ts"
+import { type ReportDepositMode, ReportDepositSettings, depositModes } from "./settings.vibe"
+
+export interface DepositSweep {
+  readonly released: number
+  readonly decided: number
+  readonly started: number
+}
+
+schema OutcomeRow {
+  case_id: string
+  paid_at: string
+  receipt_state: "received" | "needs-information" | "triaging" | "confirmed" | "duplicate" | "out-of-scope" | "rejected" | "disputed"
+  appeal_state: "none" | "open" | "upheld" | "returned"
+  next_action: string | null
+  case_revision: number
+  project_off: number | null
+  review_decision: string | null
+  closed_at: string | null
+  decide_actor: string | null
+  decide_detail: string | null
+  request_revision: number | null
+  revised_revision: number | null
+}
+
+schema SavedReport { submission_id: string }
+schema LinkedReport { id: string; project_id: string; reporter_github_id: string }
+schema ReceiptEvent { case_revision: number; at: string }
+
+const releaseLimit = 3
+const outcomeLimit = 500
+const sweepMs = 30_000
+const sweep = { nextAt: 0 }
+
+const outcomeNames: Readonly<Partial<Record<DepositOutcome, string>>> = { RefundDue: "refund_due", KeptDue: "kept_due" }
+const reasonNames: Readonly<Record<DepositReason, string | null>> = { NoReason: null, Responded: "responded", Silent: "silent", TurnedOff: "turned-off", SpamClose: "spam", DuplicateClose: "duplicate", OutOfScopeClose: "out-of-scope" }
+
+function spamMarked(row: OutcomeRow) {
+  if (row.decide_detail === null || row.decide_actor === null || row.decide_actor === routineActorGithubId) return false
+  const detail = jsonValue(row.decide_detail)
+  return typeof detail === "object" && detail !== null && !Array.isArray(detail) && Object.getOwnPropertyDescriptor(detail, "spam")?.value === true
+}
+
+function factsOf(row: OutcomeRow, mode: ReportDepositMode): DepositFacts {
+  return {
+    mode: depositModes[mode],
+    projectOn: row.project_off !== 1,
+    paidAt: millisOf(row.paid_at),
+    receipt: receipts[row.receipt_state],
+    appeal: appeals[row.appeal_state],
+    routineRequest: row.next_action === routineProofNextAction,
+    routed: row.review_decision === "forward",
+    requestAnswered: row.request_revision !== null && row.revised_revision !== null && row.revised_revision > row.request_revision,
+    closedAt: row.closed_at === null ? 0 : millisOf(row.closed_at),
+    spamByPerson: spamMarked(row),
+  }
+}
+
+effect function releaseUnpaid(mode: ReportDepositMode, at: string) {
+  return try (try D1).run(sql`UPDATE security_report_deposits
+      SET mode = 'recorded', outcome_reason = 'turned-off', outcome_at = ${at}
+    WHERE mode = 'asked' AND paid_at IS NULL AND outcome IS NULL
+      AND (${mode} <> 'live' OR project_id IN (SELECT p.id FROM projects p WHERE json_extract(p.manifest, '$.security.reportDeposit') = 0))`)
+}
+
+effect function decideOutcomes(mode: ReportDepositMode, nowMs: number, at: string) {
+  const found = try rows(OutcomeRow, sql`SELECT d.case_id, d.paid_at, c.receipt_state, c.appeal_state, c.next_action, c.revision AS case_revision,
+      (SELECT json_extract(p.manifest, '$.security.reportDeposit') = 0 FROM projects p WHERE p.id = d.project_id) AS project_off,
+      (SELECT i.review_decision FROM security_submission_intake i WHERE i.case_id = d.case_id) AS review_decision,
+      (SELECT e.at FROM security_case_events e WHERE e.case_id = d.case_id AND e.kind IN ('decide', 'decide-appeal') ORDER BY e.case_revision DESC LIMIT 1) AS closed_at,
+      (SELECT e.actor_github_id FROM security_case_events e WHERE e.case_id = d.case_id AND e.kind = 'decide' ORDER BY e.case_revision DESC LIMIT 1) AS decide_actor,
+      (SELECT e.detail FROM security_case_events e WHERE e.case_id = d.case_id AND e.kind = 'decide' ORDER BY e.case_revision DESC LIMIT 1) AS decide_detail,
+      (SELECT MAX(e.case_revision) FROM security_case_events e WHERE e.case_id = d.case_id AND e.kind = 'request-information' AND e.actor_github_id <> ${routineActorGithubId}) AS request_revision,
+      (SELECT MAX(e.case_revision) FROM security_case_events e WHERE e.case_id = d.case_id AND e.kind = 'report-revised') AS revised_revision
+    FROM security_report_deposits d JOIN security_cases c ON c.id = d.case_id
+    WHERE d.mode = 'asked' AND d.paid_at IS NOT NULL AND d.outcome IS NULL
+    ORDER BY d.paid_at ASC, d.case_id ASC LIMIT ${outcomeLimit}`)
+  const db = try D1
+  let decided = 0
+  for (const row of found) {
+    const due = depositOutcome(factsOf(row, mode), nowMs)
+    const outcome = outcomeNames[due.outcome]
+    if (outcome === undefined) continue
+    decided += try db.run(sql`UPDATE security_report_deposits SET outcome = ${outcome}, outcome_reason = ${reasonNames[due.reason]}, outcome_at = ${at}
+      WHERE case_id = ${row.case_id} AND mode = 'asked' AND paid_at IS NOT NULL AND outcome IS NULL
+        AND (${outcome} = 'refund_due' OR EXISTS (SELECT 1 FROM security_cases c WHERE c.id = ${row.case_id} AND c.revision = ${row.case_revision} AND c.receipt_state = ${row.receipt_state} AND c.appeal_state <> 'open'))`)
+  }
+  return decided
+}
+
+effect function ownerNotice(report: LinkedReport) {
+  const event = try first(ReceiptEvent, sql`SELECT case_revision, at FROM security_case_events WHERE case_id = ${report.id} AND kind IN ('submit', 'submit-direct', 'receive', 'verify-link') ORDER BY case_revision DESC LIMIT 1`)
+  if (event === undefined) return
+  const context = try routingContext({ caseId: report.id, projectId: report.project_id, reporterGithubId: report.reporter_github_id })
+  if (!context.checked || context.recipients.length === 0) return
+  const statements = try (try Notices).statements({
+    notices: context.recipients.map((recipientGithubId) => ({ eventKey: `security-case:${report.id}:${event.case_revision}`, recipientGithubId, kind: "SecurityCase", subject: report.id, actionPath: `/security?case=${report.id}`, sourceAt: event.at })),
+  })
+  if (statements.length > 0) try (try D1).batch(statements)
+}
+
+const ready = sql`(d.paid_at IS NOT NULL OR (d.mode = 'recorded' AND d.outcome_reason = 'turned-off'))`
+
+effect function startReleasedWork() {
+  const saved = try rows(SavedReport, sql`SELECT i.submission_id FROM security_report_deposits d JOIN security_submission_intake i ON i.case_id = d.case_id
+    WHERE ${ready} AND NOT ${depositHeldOn("d.case_id")} AND i.screening_state = 'queued' AND i.review_decision IS NULL
+    ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ${releaseLimit}`)
+  const linked = try rows(LinkedReport, sql`SELECT c.id, c.project_id, c.reporter_github_id FROM security_report_deposits d JOIN security_cases c ON c.id = d.case_id
+    WHERE ${ready} AND NOT ${depositHeldOn("d.case_id")}
+      AND c.submission_state = 'verified' AND c.receipt_state = 'received'
+      AND NOT EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.case_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM security_case_analyses a WHERE a.case_id = c.id)
+    ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ${releaseLimit}`)
+  for (const report of saved) try scheduleScreening(report.submission_id, true)
+  for (const report of linked) {
+    ownerNotice(report) catch effect () => {
+      try Effect.logWarning("security report deposit owner notice failed", { caseId: report.id })
+    }
+    try scheduleReceiptAnalysis(report.id)
+  }
+  return saved.length + linked.length
+}
+
+export effect function runDepositSweep() {
+  const { mode } = try ReportDepositSettings
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const released = try releaseUnpaid(mode, at)
+  const decided = try decideOutcomes(mode, nowMs, at)
+  const started = try startReleasedWork()
+  return { released, decided, started } satisfies DepositSweep
+}
+
+effect function backgroundSweep() {
+  const failure = Effect.as(runDepositSweep(), undefined) catch effect (error) => {
+    return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
+  }
+  if (failure !== undefined) try Effect.logError("security report deposit sweep failed", { failure })
+}
+
+export effect function depositSweep() {
+  const nowMs = try Clock.currentTimeMillis
+  if (nowMs < sweep.nextAt) return
+  sweep.nextAt = nowMs + sweepMs
+  try later(backgroundSweep())
+}

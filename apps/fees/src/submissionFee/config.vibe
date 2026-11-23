@@ -85,7 +85,7 @@ export effect function parseMode(env: SubmissionFeeEnv) {
 
 effect function served(terms: FeeNetwork, env: SubmissionFeeEnv, gas: GasLimits) {
   const network = terms.network
-  if (terms.contract === "" || !address.test(terms.contract) || !Number.isSafeInteger(terms.startBlock) || terms.startBlock <= 0)
+  if (terms.contract === "" || !address.test(terms.contract) || !Number.isSafeInteger(terms.startBlock) || terms.startBlock < 0)
     throw new SubmissionFeeConfigInvalid({ issue: `${network} needs both a contract address and a start block` })
   const definition = isNetworkKey(network) ? NETWORKS[network] : undefined
   const endpoint = endpoints[network]

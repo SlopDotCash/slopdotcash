@@ -35,19 +35,17 @@ function ProjectImage({ project }: ProjectHeaderProps) {
 /** The project's name, image and description, with its repository on GitHub. */
 export function ProjectHeader({ project }: ProjectHeaderProps) {
   return (
-    <div className="flex flex-col gap-3">
-      <PageHeader
-        title={project.name}
-        icon={<ProjectImage project={project} />}
-        actions={
-          <Button asChild variant="ghost" size="icon">
-            <a href={project.repositoryUrl} aria-label={`View ${project.name} on GitHub`} title="View on GitHub" target="_blank" rel="noopener noreferrer">
-              <FolderGit2 aria-hidden className="size-5" />
-            </a>
-          </Button>
-        }
-      />
-      <p className="text-lg text-pretty text-muted-foreground">{project.description}</p>
-    </div>
+    <PageHeader
+      title={project.name}
+      icon={<ProjectImage project={project} />}
+      lead={project.description}
+      actions={
+        <Button asChild variant="ghost" size="icon">
+          <a href={project.repositoryUrl} aria-label={`View ${project.name} on GitHub`} title="View on GitHub" target="_blank" rel="noopener noreferrer">
+            <FolderGit2 aria-hidden className="size-5" />
+          </a>
+        </Button>
+      }
+    />
   );
 }

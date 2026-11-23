@@ -1,0 +1,483 @@
+// spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+import { SYSTEM_PROGRAM, address } from "@repo/platform/chain/solana"
+import { creationOf } from "@repo/settlement/chain/evm/creation"
+import { createVaultCalldata } from "@repo/settlement/chain/evm/factories"
+import { digest, u64 } from "@repo/settlement/chain/solana/bytes"
+import { type SolanaCreation, initializeVault } from "@repo/settlement/chain/solana/creation"
+import { isTokenProgram } from "@repo/settlement/chain/solana/pda"
+import type { Route } from "@repo/platform/route"
+import { type AccountWallet, paymentsMe, projectVaultRead, projectVaultSetup } from "@repo/settlement/client"
+import { NETWORKS, chainFamily, defaultAsset, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { registryProjectDigest } from "@repo/settlement/owner/ownerInstructions"
+import type { ProgramFundsView } from "@repo/ports/security"
+import { type Answer, Machine as VaultMachine } from "../../../gen/frontend__ownerVault.effect.vibe"
+import { Machine as MonthlyMachine } from "../../../gen/frontend__ownerMonthly.effect.vibe"
+import type { PoolFacts } from "../../../gen/frontend__projections.ts"
+import { zero } from "../../../gen/settlement__money.ts"
+import { unreadLocks } from "../../kernels/poolFunding.ts"
+import { type CallFailure, InvalidResponse, call } from "../../platform/api.vibe"
+import { browserServices } from "../../platform/layer.vibe"
+import { storageKeys } from "../../platform/storage.vibe"
+import { WalletChoice, type WalletOffer, walletChoiceServices } from "../core/discovery.vibe"
+import { type EvmConnection, connectEvm, evmRequest, sendTransaction } from "../core/evm.vibe"
+import { type SolanaConnection, connectSolana } from "../core/solana.vibe"
+import { sessionSlots } from "../core/slots.ts"
+import { evmChainIdOf } from "./commitmentCalls.ts"
+import { ownerMonthlyPage } from "./ownerMonthly.vibe"
+import type { VaultCreationPlan } from "./ownerPlans.schema.ts"
+import { readText, slotOfText } from "./flowSlots.ts"
+import { type Saved, autoSpacingMs, ownerVaultPage } from "./ownerVault.vibe"
+import { type ReviewedWire, wireMatches } from "./solanaPlans.ts"
+import { signAndVerify } from "./solanaVault.vibe"
+
+export type SetupPurpose = "ordinary" | "security-bounty"
+type SetupAnswer = typeof projectVaultSetup extends Route<infer _Body, infer A, infer _Access> ? A : never
+export type CreationReview = Extract<SetupAnswer, { readonly review: unknown }>["review"]
+export type { AccountWallet, ProgramFundsView, VaultCreationPlan, WalletOffer }
+
+export interface SetupTerms {
+  readonly projectId: string
+  readonly purpose: SetupPurpose
+  readonly rewardAsset: string | undefined
+  readonly rewardDecimals: number | undefined
+  readonly monthlyCapMinor: string
+  readonly monthlyCapDisplay: string
+}
+
+export interface SetupOptions {
+  readonly revision: number
+  readonly networks: ReadonlyArray<string>
+  readonly claims: ReadonlyArray<AccountWallet>
+}
+
+export type SetupRead = { readonly kind: "signIn" } | { readonly kind: "ready"; readonly options: SetupOptions }
+
+export type SetupConnection =
+  | { readonly family: "evm"; readonly address: string; readonly evm: EvmConnection }
+  | { readonly family: "solana"; readonly address: string; readonly solana: SolanaConnection }
+
+export interface SetupInput {
+  readonly network: string
+  readonly claimId: string
+  readonly automatic: boolean
+  readonly expectedRevision: number
+}
+
+export interface ReviewedCreation {
+  readonly input: SetupInput
+  readonly review: CreationReview
+  readonly wire: ReviewedWire | undefined
+}
+
+export type Registration =
+  | { readonly kind: "pending"; readonly provisional: Readonly<Record<string, unknown>> | undefined }
+  | { readonly kind: "registered"; readonly notice: string | undefined; readonly revision: number }
+
+export interface Checked {
+  readonly answer: Answer
+  readonly registration: Registration | undefined
+}
+
+export error SetupStopped { message: string; code: string }
+
+export const setupMessages = {
+  signIn: "Sign in with GitHub to set up the project vault.",
+  unavailable: "Vault setup could not be loaded. Retry.",
+  loadFailed: "Vault setup could not load.",
+  confirmWallet: "Confirm this wallet in your account, then reload the setup options.",
+  noExisting: "No existing vault was found for your confirmed wallet. Connect it to create one.",
+  mismatch: "Vault request mismatch. Reload and review again.",
+  exists: "This vault already exists. Recover its creation transaction instead of sending another.",
+  changed: "The creation request changed. Review again.",
+  recover: "Recover the existing vault transaction.",
+  noHash: "The wallet did not return a transaction hash. Recover it from wallet activity.",
+  sent: "Creation sent. Check registration once it is finalized.",
+  enterHash: "Enter the creation transaction hash from your wallet.",
+  notFinal: "The creation is not finalized yet. Wait, then check again.",
+  dropped: "The block that held the vault creation was replaced. Wait for the creation to be included again before you deposit.",
+  unverified: "Registration could not be verified. Check again.",
+  cleared: "Local request cleared. Review again before sending.",
+  reconnect: "Reconnect the wallet used for this vault request.",
+  walletFailed: "The wallet request failed.",
+  unreadable: "The saved request cannot be read. Check your wallet activity before creating a vault.",
+  bountyFunds: "Bounty funds could not load.",
+} as const
+
+export function reviewedWalletMessage(network: string): string {
+  return `Connect the reviewed wallet on ${network}.`
+}
+
+export function includedMessage(chain: string): string {
+  return `The vault is on ${chain} but its creation is not finalized yet. You can fund it below now. A deposit counts once ${chain} finalizes it.`
+}
+
+const readLimitBytes = 1_048_576
+const setupDeadlineMs = 45_000
+const creationFailures: ReadonlySet<string> = new Set(["vault_creation_failed"])
+const creationRefusals: ReadonlySet<string> = new Set(["vault_creation_failed", "vault_creation_invalid"])
+
+type VaultPage = Effect.Success<ReturnType<typeof ownerVaultPage>>
+type MonthlyPage = Effect.Success<ReturnType<typeof ownerMonthlyPage>>
+
+export service SetupDesk {
+  readonly terms: SetupTerms
+  readonly page: VaultPage
+  readonly key: string
+  readonly actor: Ref.Ref<string>
+}
+
+const shared = Layer.provideMerge(walletChoiceServices, browserServices)
+const memo = Layer.makeMemoMapUnsafe()
+
+export function setupKey(projectId: string, purpose: SetupPurpose): string {
+  return `${storageKeys.vaultSetup.key}${projectId}${purpose === "security-bounty" ? ":security-bounty" : ""}`
+}
+
+export function setupServices(terms: SetupTerms) {
+  const desk = Layer.effect(SetupDesk, effect {
+    const key = setupKey(terms.projectId, terms.purpose)
+    const page = try ownerVaultPage(sessionSlots(), { creation: key, transfer: `${key}:transfer` }, false)
+    const actor = try Ref.make("")
+    return { terms, page, key, actor }
+  })
+  const machine = Layer.effect(VaultMachine, effect { return (try SetupDesk).page.machine })
+  return Layer.provideMerge(machine, Layer.provideMerge(desk, shared))
+}
+
+export type SetupServices = Layer.Success<ReturnType<typeof setupServices>>
+export type SetupRuntime = ManagedRuntime.ManagedRuntime<SetupServices, Layer.Error<ReturnType<typeof setupServices>>>
+
+const setups = new Map<string, SetupRuntime>()
+
+export function setupRuntime(terms: SetupTerms): SetupRuntime {
+  const key = [terms.projectId, terms.purpose, terms.rewardAsset ?? "", String(terms.rewardDecimals ?? ""), terms.monthlyCapMinor, terms.monthlyCapDisplay].join("\n")
+  const known = setups.get(key)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(setupServices(terms), { memoMap: memo })
+  setups.set(key, made)
+  return made
+}
+
+function stopped(message: string, code: string = "") {
+  return new SetupStopped({ message, code })
+}
+
+function failureOf(failure: CallFailure, fallback: string) {
+  return stopped(failure._tag === "Refused" && failure.message !== "" ? failure.message : fallback, failure._tag === "Refused" ? failure.error : "")
+}
+
+export function familyOfNetwork(network: string): "evm" | "solana" | undefined {
+  return isNetworkKey(network) ? chainFamily(NETWORKS[network].chain) : undefined
+}
+
+function sameWallet(network: string, left: string, right: string): boolean {
+  return familyOfNetwork(network) === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+export function creationIdValid(network: string, value: string): boolean {
+  const family = familyOfNetwork(network)
+  return family === "evm" ? /^0x[0-9a-fA-F]{64}$/u.test(value) : family === "solana" && /^[1-9A-HJ-NP-Za-km-z]{86,88}$/u.test(value)
+}
+
+export function ownerClaims(options: SetupOptions, network: string): ReadonlyArray<AccountWallet> {
+  const chain = isNetworkKey(network) ? NETWORKS[network].chain : undefined
+  return options.claims.filter((claim) => claim.authorized && claim.chain === chain)
+}
+
+export function claimFor(options: SetupOptions, network: string, wallet: string): AccountWallet | undefined {
+  return ownerClaims(options, network).find((claim) => sameWallet(network, claim.address, wallet))
+}
+
+export effect function loadSetup(account: number, githubId: string) {
+  const { terms, page, actor } = try SetupDesk
+  try page.follow(account)
+  try Ref.set(actor, githubId)
+  if (account === 0) return { kind: "signIn" } satisfies SetupRead
+  const read = call(projectVaultRead, { params: { id: terms.projectId }, query: { purpose: terms.purpose } }, { limitBytes: readLimitBytes, deadlineMs: setupDeadlineMs, expectedActor: githubId }) catch effect (failure) => {
+    if (failure._tag === "Refused" && failure.status === 401) return undefined
+    throw failureOf(failure, setupMessages.unavailable)
+  }
+  if (read === undefined) return { kind: "signIn" } satisfies SetupRead
+  const wallets = call(paymentsMe, {}, { limitBytes: readLimitBytes, deadlineMs: setupDeadlineMs, expectedActor: githubId }) catch effect (failure) => {
+    throw failureOf(failure, setupMessages.loadFailed)
+  }
+  return { kind: "ready", options: { revision: read.revision, networks: read.networks, claims: wallets.wallets } } satisfies SetupRead
+}
+
+export effect function savedCreation() {
+  const saved = try (try SetupDesk).page.saved("Creation")
+  return saved.plan?.kind === "vaultCreation" ? saved.plan : undefined
+}
+
+export effect function connectSetupWallet(id: number, network: string) {
+  const family = familyOfNetwork(network)
+  let connection: SetupConnection
+  if (family === "evm") {
+    const evm = try connectEvm(id, false)
+    connection = { family: "evm", address: evm.address, evm }
+  } else if (family === "solana") {
+    const solana = try connectSolana(id)
+    connection = { family: "solana", address: solana.address, solana }
+  } else throw stopped(setupMessages.unavailable)
+  const saved = try savedCreation()
+  if (saved !== undefined && !sameWallet(saved.network, saved.owner, connection.address)) throw stopped(setupMessages.reconnect)
+  return connection
+}
+
+function expectedAsset(terms: SetupTerms, network: string): string | undefined {
+  if (!isNetworkKey(network)) return undefined
+  const reference = defaultAsset(NETWORKS[network])?.address
+  return terms.purpose === "security-bounty" ? reference : terms.rewardAsset ?? reference
+}
+
+function evmCreationMatches(terms: SetupTerms, review: CreationReview, owner: string, automatic: boolean): boolean {
+  if (review.family !== "evm" || !isNetworkKey(review.network)) return false
+  const facts = NETWORKS[review.network]
+  if (facts.family !== "evm" || BigInt(review.chainId) !== evmChainIdOf(facts.chainId)) return false
+  const { transaction } = review
+  if (transaction.from.toLowerCase() !== owner.toLowerCase() || !/^0x[0-9a-fA-F]{40}$/u.test(transaction.to) || (review.existingVault !== null && !/^0x[0-9a-fA-F]{40}$/u.test(review.existingVault))) return false
+  const creation = creationOf({ owner: review.owner, projectDigest: registryProjectDigest(terms.projectId), asset: review.asset, bounty: terms.purpose === "security-bounty", monthlyCap: BigInt(review.cap), automatic })
+  return creation !== undefined && createVaultCalldata(creation).toLowerCase() === transaction.data.toLowerCase()
+}
+
+function text(fields: Readonly<Record<string, unknown>>, name: string): string | undefined {
+  const value = fields[name]
+  return typeof value === "string" ? value : undefined
+}
+
+function solanaCreationOf(terms: SetupTerms, fields: Readonly<Record<string, unknown>>, owner: string, asset: string, automatic: boolean, cap: string): SolanaCreation | undefined {
+  const bounty = terms.purpose === "security-bounty"
+  const program = address(text(fields, "programId") ?? "")
+  const signer = address(text(fields, "owner") ?? "")
+  const projectDigest = digest(text(fields, "projectDigest") ?? "")
+  const networkDomain = digest(text(fields, "networkDomain") ?? "")
+  const identityAuthority = address(text(fields, "identityAuthority") ?? "")
+  const feeRecipient = address(text(fields, "feeRecipient") ?? "")
+  const delays = [text(fields, "bindingDelaySeconds"), text(fields, "rotationDelaySeconds")].map((value) => value !== undefined && /^(0|[1-9][0-9]{0,19})$/u.test(value) ? u64(BigInt(value)) : undefined)
+  const [bindingDelay, rotationDelay] = delays
+  const tokenProgram = text(fields, "tokenProgram") ?? ""
+  const mint = address(text(fields, "mint") ?? "")
+  if (program === undefined || signer === undefined || signer !== owner || text(fields, "mint") !== asset || projectDigest === undefined || projectDigest !== registryProjectDigest(terms.projectId)
+    || networkDomain === undefined || identityAuthority === undefined || feeRecipient === undefined || bindingDelay === undefined || rotationDelay === undefined || text(fields, "payoutPolicy") !== terms.purpose) return undefined
+  const monthlyCap = fields.monthlyCap
+  const monthly = bounty ? undefined : typeof monthlyCap === "string" && monthlyCap === cap && fields.automaticMonthly === automatic && /^(0|[1-9][0-9]{0,19})$/u.test(cap) ? u64(BigInt(cap)) : undefined
+  if (bounty ? monthlyCap !== undefined || fields.automaticMonthly !== undefined : monthly === undefined) return undefined
+  const programAddress = address(tokenProgram)
+  const kind = tokenProgram === SYSTEM_PROGRAM ? { kind: "Native" as const } : mint !== undefined && programAddress !== undefined && isTokenProgram(programAddress) ? { kind: "Token" as const, mint, tokenProgram: programAddress } : undefined
+  if (kind === undefined) return undefined
+  return { program, owner: signer, asset: kind, projectDigest, networkDomain, identityAuthority, feeRecipient, bindingDelay, rotationDelay, purpose: bounty ? "Bounty" : "Ordinary", monthly: monthly === undefined ? undefined : { cap: monthly, enabled: automatic } }
+}
+
+function solanaWireOf(terms: SetupTerms, review: CreationReview, owner: string, automatic: boolean): { readonly ok: boolean; readonly wire: ReviewedWire | undefined } {
+  if (review.family !== "solana") return { ok: false, wire: undefined }
+  const reference = isNetworkKey(review.network) ? defaultAsset(NETWORKS[review.network])?.decimals : undefined
+  const expectedDecimals = terms.purpose === "security-bounty" ? reference : terms.rewardDecimals ?? reference
+  if (expectedDecimals === undefined || review.decimals !== expectedDecimals) return { ok: false, wire: undefined }
+  const creation = solanaCreationOf(terms, review.creation, owner, review.asset, automatic, review.cap)
+  const planned = creation === undefined ? undefined : initializeVault(creation)
+  if (planned === undefined || planned.kind !== "planned" || planned.plan.project !== review.projectPda || planned.plan.vault !== review.vault || (review.existingVault !== null && review.existingVault !== planned.plan.vault)) return { ok: false, wire: undefined }
+  if (review.transaction === null) return { ok: review.existingVault !== null, wire: undefined }
+  const wire = wireMatches({ payer: owner, blockhash: review.transaction.blockhash, transaction: review.transaction.transaction }, planned.plan.instructions)
+  return { ok: wire !== undefined, wire }
+}
+
+function checkedCreation(terms: SetupTerms, input: SetupInput, review: CreationReview, owner: string): ReviewedCreation | undefined {
+  const bounty = terms.purpose === "security-bounty"
+  const asset = expectedAsset(terms, input.network)
+  if (review.payoutPolicy !== terms.purpose || review.network !== input.network || !sameWallet(input.network, review.owner, owner) || asset === undefined || !sameWallet(input.network, review.asset, asset)
+    || !/^(0|[1-9][0-9]*)$/u.test(review.cap) || review.cap !== (bounty ? "0" : terms.monthlyCapMinor) || review.capDisplay !== (bounty ? "" : terms.monthlyCapDisplay) || review.automatic !== input.automatic || (bounty && input.automatic)) return undefined
+  if (review.family === "evm") return evmCreationMatches(terms, review, owner, input.automatic) ? { input, review, wire: undefined } : undefined
+  const solana = solanaWireOf(terms, review, owner, input.automatic)
+  return solana.ok ? { input, review, wire: solana.wire } : undefined
+}
+
+effect function asked(input: SetupInput, step: "review" | "register", transactionId?: string) {
+  const { terms, actor } = try SetupDesk
+  const body = { step, expectedRevision: input.expectedRevision, network: input.network, claimId: input.claimId, automatic: input.automatic, payoutPolicy: terms.purpose, ...(transactionId === undefined ? {} : { transactionId }) }
+  const answer = call(projectVaultSetup, { params: { id: terms.projectId }, body }, { limitBytes: readLimitBytes, deadlineMs: setupDeadlineMs, expectedActor: try Ref.get(actor) }) catch effect (failure) => {
+    throw failureOf(failure, setupMessages.unavailable)
+  }
+  return answer
+}
+
+effect function reviewed(input: SetupInput, owner: string) {
+  const { terms } = try SetupDesk
+  const answer = try asked(input, "review")
+  if (!("review" in answer)) throw stopped(setupMessages.mismatch)
+  const checked = checkedCreation(terms, input, answer.review, owner)
+  if (checked === undefined) throw stopped(setupMessages.mismatch)
+  return checked
+}
+
+function creationPool(): PoolFacts {
+  return { read: "PoolLoading", monthlyPool: false, period: 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false, pledgeSupport: false, pledged: zero }
+}
+
+export effect function reviewCreation(options: SetupOptions, network: string, automatic: boolean, wallet: string | undefined) {
+  const { terms, page } = try SetupDesk
+  const claims = ownerClaims(options, network)
+  const claim = wallet === undefined ? (claims.length === 1 ? claims[0] : undefined) : claimFor(options, network, wallet)
+  if (claim === undefined) throw stopped(setupMessages.confirmWallet)
+  const input = { network, claimId: claim.claimId, automatic: terms.purpose === "security-bounty" ? false : automatic, expectedRevision: options.revision }
+  const checked = try reviewed(input, claim.address)
+  if (wallet === undefined && checked.review.existingVault === null) throw stopped(setupMessages.noExisting)
+  const state = try page.machine.get()
+  if (checked.review.existingVault === null && state.creation.phase !== "Reviewed") try page.review("Creation", 0n, creationPool(), unreadLocks, "")
+  return checked
+}
+
+function planOfCreation(terms: SetupTerms, reviewedCreation: ReviewedCreation): VaultCreationPlan {
+  const { input, review } = reviewedCreation
+  return { kind: "vaultCreation", network: input.network, claimId: input.claimId, automatic: input.automatic, payoutPolicy: terms.purpose, expectedRevision: input.expectedRevision, owner: review.owner, asset: review.asset, capDisplay: review.capDisplay }
+}
+
+effect function sameOwnerAccount(connection: EvmConnection, review: CreationReview, network: string) {
+  const accounts = try evmRequest(connection, "eth_accounts", [])
+  if (!Array.isArray(accounts) || String(accounts[0]).toLowerCase() !== review.owner.toLowerCase()) throw stopped(reviewedWalletMessage(network))
+}
+
+export effect function createVault(connection: SetupConnection, shown: ReviewedCreation) {
+  const { terms, page } = try SetupDesk
+  if (!sameWallet(shown.input.network, connection.address, shown.review.owner)) throw stopped(reviewedWalletMessage(shown.input.network))
+  if (connection.family === "evm") try sameOwnerAccount(connection.evm, shown.review, shown.input.network)
+  const fresh = try reviewed(shown.input, connection.address)
+  if (fresh.review.existingVault !== null) throw stopped(setupMessages.exists)
+  const same = fresh.review.family === "evm" && shown.review.family === "evm" ? JSON.stringify(fresh.review.transaction) === JSON.stringify(shown.review.transaction)
+    : fresh.review.family === "solana" && shown.review.family === "solana" && JSON.stringify(fresh.review.creation) === JSON.stringify(shown.review.creation)
+  if (!same) throw stopped(setupMessages.changed)
+  const plan = planOfCreation(terms, fresh)
+  const hash = try page.submit("Creation", (before) => effect {
+    if (connection.family === "evm" && fresh.review.family === "evm") {
+      const { transaction, chainId } = fresh.review
+      return try sendTransaction(connection.evm, BigInt(chainId), { from: transaction.from, to: transaction.to, data: transaction.data, value: transaction.value }, before(plan))
+    }
+    if (connection.family === "solana" && fresh.wire !== undefined) return try signAndVerify(shown.input.network, connection.solana, fresh.wire, plan, before)
+    throw stopped(setupMessages.recover)
+  })
+  if (!creationIdValid(shown.input.network, hash)) throw stopped(setupMessages.noHash)
+  return hash
+}
+
+function inputOf(plan: VaultCreationPlan): SetupInput {
+  return { network: plan.network, claimId: plan.claimId, automatic: plan.automatic, expectedRevision: plan.expectedRevision }
+}
+
+effect function registered(input: SetupInput, transactionId: string) {
+  const answer = asked(input, "register", transactionId) catch effect (error) => {
+    if (creationFailures.has(error.code)) return { answer: "Reverted", registration: undefined } satisfies Checked
+    if (creationRefusals.has(error.code) || error.code !== "") return { answer: "Refused", registration: undefined } satisfies Checked
+    return { answer: "ReadFailed", registration: undefined } satisfies Checked
+  }
+  if ("answer" in answer) return answer
+  if ("review" in answer) throw stopped(setupMessages.unverified)
+  if (answer.status === "pending") return { answer: answer.provisional === undefined ? "StillPending" : "IncludedRead", registration: { kind: "pending", provisional: answer.provisional } } satisfies Checked
+  if (!Number.isSafeInteger(answer.revision) || answer.revision < 1) throw stopped(setupMessages.unverified)
+  return { answer: "FinalRead", registration: { kind: "registered", notice: answer.notice, revision: answer.revision } } satisfies Checked
+}
+
+effect function checkSaved(saved: Saved, report: Ref.Ref<Registration | undefined>) {
+  const plan = saved.plan
+  const hash = saved.attempt.hash !== "" ? saved.attempt.hash : saved.attempt.candidate
+  if (plan?.kind !== "vaultCreation" || hash === "") return "ReadFailed" satisfies Answer
+  const checked = try registered(inputOf(plan), hash)
+  try Ref.set(report, checked.registration)
+  return checked.answer
+}
+
+effect function checkedOrFailed(saved: Saved, report: Ref.Ref<Registration | undefined>) {
+  const answer: Answer = checkSaved(saved, report) catch () => "ReadFailed" satisfies Answer
+  return answer
+}
+
+export effect function checkRegistration() {
+  const { page } = try SetupDesk
+  const report = try Ref.make<Registration | undefined>(undefined)
+  const state = try page.ask("Creation", "OwnerCheck", (saved) => checkedOrFailed(saved, report))
+  return { state, registration: try Ref.get(report) }
+}
+
+export effect function watchRegistration(soon: boolean, report: (registration: Registration | undefined) => void!!) {
+  const { page } = try SetupDesk
+  const seen = try Ref.make<Registration | undefined>(undefined)
+  const state = try page.autoCheck("Creation", (flow) => autoSpacingMs("Creation", flow, soon), (saved) => effect {
+    const answer = try checkedOrFailed(saved, seen)
+    try report(try Ref.get(seen))
+    return answer
+  })
+  return { state, registration: try Ref.get(seen) }
+}
+
+export effect function enterCreationHash(candidate: string) {
+  const { page } = try SetupDesk
+  const saved = try savedCreation()
+  const hash = candidate.trim()
+  if (saved === undefined || !creationIdValid(saved.network, hash)) throw stopped(setupMessages.enterHash)
+  try page.enterCandidate("Creation", hash)
+  return try checkRegistration()
+}
+
+export effect function registerExisting(shown: ReviewedCreation, candidate: string) {
+  const hash = candidate.trim()
+  if (!creationIdValid(shown.input.network, hash)) throw stopped(setupMessages.enterHash)
+  const checked = try registered(shown.input, hash)
+  if (checked.answer === "Reverted" || checked.answer === "Refused" || checked.answer === "ReadFailed") throw stopped(checked.answer === "ReadFailed" ? setupMessages.unavailable : setupMessages.unverified)
+  return checked.registration
+}
+
+export effect function confirmCreationUnsent() {
+  return try (try SetupDesk).page.confirmUnsent("Creation")
+}
+
+export effect function unreadableCreation() {
+  return slotOfText(readText(sessionSlots(), (try SetupDesk).key)).kind === "unreadable"
+}
+
+export effect function clearUnreadableCreation() {
+  return try (try SetupDesk).page.clearUnreadable("Creation")
+}
+
+export effect function watchSetupOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
+  for try (const offers of (try WalletChoice).offers) try show(offers)
+}
+
+export service BountyFundsDesk {
+  readonly projectId: string
+  readonly monthly: MonthlyPage
+}
+
+export function bountyFundsServices(projectId: string) {
+  const desk = Layer.effect(BountyFundsDesk, effect {
+    const period = new Date().toISOString().slice(0, 7)
+    const monthly = try ownerMonthlyPage(undefined, { commitment: "", setting: "", release: "" }, projectId, period)
+    return { projectId, monthly }
+  })
+  const machine = Layer.effect(MonthlyMachine, effect { return (try BountyFundsDesk).monthly.machine })
+  return Layer.provideMerge(machine, Layer.provideMerge(desk, browserServices))
+}
+
+export type FundsServices = Layer.Success<ReturnType<typeof bountyFundsServices>>
+export type FundsRuntime = ManagedRuntime.ManagedRuntime<FundsServices, Layer.Error<ReturnType<typeof bountyFundsServices>>>
+
+const fundsRuntimes = new Map<string, FundsRuntime>()
+
+export function bountyFundsRuntime(projectId: string): FundsRuntime {
+  const known = fundsRuntimes.get(projectId)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(bountyFundsServices(projectId), { memoMap: memo })
+  fundsRuntimes.set(projectId, made)
+  return made
+}
+
+export interface BountyFunds {
+  readonly canSetup: boolean
+  readonly funds: ProgramFundsView | null
+}
+
+export effect function readBountyFunds(account: number, githubId: string) {
+  const { projectId, monthly } = try BountyFundsDesk
+  try monthly.follow(account, githubId, true)
+  const read = Effect.flatMap(call(projectVaultRead, { params: { id: projectId }, query: { purpose: "security-bounty" } }, { limitBytes: readLimitBytes, deadlineMs: setupDeadlineMs, expectedActor: githubId }), (answer) =>
+    "funds" in answer ? Effect.succeed({ canSetup: answer.canSetup, funds: answer.funds } satisfies BountyFunds) : Effect.fail(new InvalidResponse({ status: 200, message: setupMessages.bountyFunds })))
+  const opened = try monthly.funds(read)
+  return opened.funds
+}

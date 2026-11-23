@@ -1,5 +1,6 @@
 // spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"; spec/security/routineDecisions.md, "Duplicates, published lines and the proof clock close; a report on GitHub and every hold go to the owner"; spec/security/cases.md, "A routine decision changes only an unappealed undecided report and its close is appealed to the owner once"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { ConstraintViolation, type Statement, decoded, rows, sql } from "@repo/platform/d1"
 import { Conflict, type Aggregate, type Rows, load, update } from "@repo/platform/stored"
 import type { Json } from "@repo/ports/backend"
@@ -96,7 +97,7 @@ effect function screeningOf(record: CaseRecord, intake: IntakeFacts | undefined)
   return (try screeningAt(intake.submission_id)).screening
 }
 
-function aggregateOf(caseId: string, mode: ActiveMode, nowMs: number) {
+function aggregateOf(caseId: string, mode: ActiveMode, nowMs: number, proofFile = false) {
   const cases = caseAggregate(caseId)
   return {
     name: `security routine decision of ${caseId}`,
@@ -121,7 +122,7 @@ function aggregateOf(caseId: string, mode: ActiveMode, nowMs: number) {
         savedAt: millisOf(record.row.updated_at),
         records: decisions.flatMap(recordOf),
         failures: decisions.flatMap(failureOf),
-        proofFile: false,
+        proofFile,
       })
       return { routine, record, intake } satisfies Loaded
     },
@@ -208,15 +209,15 @@ effect function liveStatements(current: Loaded, next: Routine, facts: DecisionFa
   }
   const notices = try caseNotices({ caseId: stored.id, revision: revision + 1, kind, idempotencyKey: eventKey, actorGithubId: routineActorGithubId, reporterGithubId: stored.reporter_github_id, detail, program: undefined, relatedReview: false, at })
   return [
-    sql`UPDATE security_cases SET ${setList(set, at)} WHERE id = ${stored.id} AND revision = ${revision} AND receipt_state = ${stored.receipt_state} AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved')`,
+    sql`UPDATE security_cases SET ${setList(set, at)} WHERE id = ${stored.id} AND revision = ${revision} AND receipt_state = ${stored.receipt_state} AND appeal_state = 'none' AND award_state NOT IN ('reserved', 'approved') AND NOT ${depositHeldOn("security_cases.id")}`,
     caseEvent({ caseId: stored.id, revision: revision + 1, kind, actorGithubId: routineActorGithubId, role: "triager", idempotencyKey: eventKey, reason: routineReason({ outcome: row.outcome, exclusionLine: row.exclusionLine, proofDueAt: row.proofDueAt, missing: facts.missing }), evidenceReference: null, detail, at, guard: true }),
     decisionInsert(current, "live", facts, row, at, eventKey),
     ...notices,
   ]
 }
 
-export effect function recorded(caseId: string, mode: ActiveMode, seen: { readonly revision: number; readonly nowMs: number }, event: Event, facts: DecisionFacts) {
-  return update(aggregateOf(caseId, mode, seen.nowMs), (current: Loaded) => effect {
+export effect function recorded(caseId: string, mode: ActiveMode, seen: { readonly revision: number; readonly nowMs: number; readonly proofFile: boolean }, event: Event, facts: DecisionFacts) {
+  return update(aggregateOf(caseId, mode, seen.nowMs, seen.proofFile), (current: Loaded) => effect {
     if (current.routine.privateCase.revision !== seen.revision) return { value: false, writes: [] }
     const next = apply(current.routine, event, 0) catch effect (error) => {
       if (error instanceof Rejected) return undefined

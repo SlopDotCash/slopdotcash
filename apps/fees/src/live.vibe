@@ -1,5 +1,7 @@
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
 import { feeReportRoutes } from "./report/routes.vibe"
+import { SubmissionFeeRoutes } from "./submissionFee/routes.vibe"
 
-export const fees = area({ name: "fees", api, routes: feeReportRoutes, provides: Layer.empty })
+export const fees = area({ name: "fees", api, routes: Layer.mergeAll(feeReportRoutes, SubmissionFeeRoutes), provides: Layer.empty })

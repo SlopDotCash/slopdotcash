@@ -48,6 +48,7 @@ interface Session {
   allowed: ReadonlyArray<RegExp>;
   current: string;
   consenting: string;
+  cookiesBlocked: boolean;
   restore: (() => Promise<void>) | undefined;
   wallets: Wallets | undefined;
 }
@@ -163,7 +164,7 @@ async function answer(route: Route, worker: (request: Request) => Promise<Respon
   response.headers.forEach((value, name) => {
     if (name !== "set-cookie") shown[name] = value;
   });
-  const cookies = response.headers.getSetCookie();
+  const cookies = url.origin === identityOrigin && current().cookiesBlocked ? [] : response.headers.getSetCookie();
   if (cookies.length > 0) shown["set-cookie"] = cookies.join("\n");
   await route.fulfill({ status: response.status, headers: shown, body: bytes }).catch(() => undefined);
 }
@@ -209,7 +210,7 @@ async function reset(context: BrowserCommandContext) {
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", restore: undefined, wallets: undefined };
+  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined };
   session = made;
   watch(opened, made);
   await opened.route("**/*", routed);
@@ -346,6 +347,12 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
         document.dispatchEvent(new Event("visibilitychange"));
         window.dispatchEvent(new FocusEvent("focus"));
       });
+      return null;
+    case "blockCookies":
+      current().cookiesBlocked = true;
+      return null;
+    case "upload":
+      await locate(page(), op.target).first().locator("xpath=descendant-or-self::input[@type='file']").first().setInputFiles({ name: op.file.name, mimeType: op.file.mimeType, buffer: Buffer.from(op.file.bytes) });
       return null;
     case "fetch":
       return page().evaluate(async ({ method, path, body }) => {

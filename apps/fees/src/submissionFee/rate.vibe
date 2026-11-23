@@ -1,0 +1,177 @@
+// spec/fees/submissionFeeRate.md, "One reading per UTC hour; a new SLOP rate needs enough readings and takes effect at the next hour"; spec/fees/submissionFeeRate.md, "The rate pass stores readings and rates only as the rule allows"; spec/backend/submissionFeeTerms.md, "A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours"
+import { slopRateScaled, slopRateText } from "@repo/backend/client"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type SlopRate, SubmissionFeeRates } from "@repo/ports/backend"
+import { slopShareBps } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import type { Mode, Sender } from "../../gen/fees__runtime.ts"
+import type { Event, RateChange, RateLedger, RateWindow } from "../../gen/fees__submissionFeeRate.ts"
+import { ageOf, apply, hourMs, initial, newestRate, nextHourStart, nextRate, noRow } from "../../gen/fees__submissionFeeRate.effect.vibe"
+import type { SubmissionFeeConfig } from "./config.vibe"
+import { readPoolRate } from "./price.vibe"
+
+module verified {
+  import { feeShareBps as share, harmonicRate as harmonic, slopPriceOf as price } from "../kernels/slopRate.ts"
+  /** @throws {never} */
+  export function slopPriceOf(scaled: bigint): bigint { return price(scaled) }
+  /** @throws {never} */
+  export function harmonicRate(count: bigint, prices: bigint): bigint { return harmonic(count, prices) }
+  /** @throws {never} */
+  export function feeShareBps(shareBps: bigint, rateInForce: bigint, market: bigint): bigint { return share(shareBps, rateInForce, market) }
+}
+import { feeShareBps, harmonicRate, slopPriceOf } from verified
+
+export error SlopRateUnrepresentable { value: string }
+
+export type RateReason = "first" | "weekly" | "drift"
+
+export type SampleOutcome = "stored" | "already_read" | "source_unavailable"
+
+export interface RateSet {
+  readonly slopPerUsd: string
+  readonly effectiveAt: string
+  readonly reason: RateReason
+}
+
+export interface RateResult {
+  readonly sampled: boolean
+  readonly sample: SampleOutcome
+  readonly rate: RateSet | null
+}
+
+export type RateFact =
+  | { readonly type: "setMode"; readonly mode: Mode }
+  | { readonly type: "advanceClock"; readonly now: number }
+  | { readonly type: "storeReading"; readonly slopPerUsd: string; readonly blockNumber: number }
+  | { readonly type: "setRate"; readonly window: RateWindow; readonly slopPerUsd: string }
+
+export interface Sent {
+  readonly ledger: RateLedger
+  readonly written: boolean
+}
+
+export interface RateBook {
+  readonly ledger: RateLedger
+  readonly newest: SlopRate | undefined
+}
+
+export interface Averages {
+  readonly window: RateWindow
+  readonly day: string | undefined
+  readonly week: string | undefined
+}
+
+export const unstarted: RateLedger = initial
+
+const reasons: Readonly<Record<Exclude<RateChange, "KeepRate">, RateReason>> = { FirstRate: "first", WeeklyRate: "weekly", DriftRate: "drift" }
+
+const modes: Readonly<Record<"dry_run" | "live", Mode>> = { dry_run: "DryRun", live: "Live" }
+
+const dayMs = 24 * hourMs
+
+const weekMs = 7 * dayMs
+
+const maxShare = BigInt(Number.MAX_SAFE_INTEGER)
+
+schema SampledHour { sampled_hour: string }
+
+schema Reading { sampled_at: string; slop_per_usd: string }
+
+function eventOf(fact: RateFact): Event {
+  if (fact.type === "storeReading") return { type: "storeReading" }
+  if (fact.type === "setRate") return { type: "setRate", window: fact.window }
+  return fact
+}
+
+effect function scaledOf(text: string) {
+  const scaled = slopRateScaled(text)
+  if (scaled === undefined) throw new SlopRateUnrepresentable({ value: text })
+  return scaled
+}
+
+effect function averageOf(readings: ReadonlyArray<string>) {
+  if (readings.length === 0) return undefined
+  let prices = 0n
+  for (const reading of readings) prices += slopPriceOf(try scaledOf(reading))
+  const text = prices > 0n ? slopRateText(harmonicRate(BigInt(readings.length), prices)) : undefined
+  if (text === undefined) throw new SlopRateUnrepresentable({ value: readings[0] ?? "" })
+  return text
+}
+
+export effect function ledgerAt(mode: Mode, clock: number) {
+  const hours = try rows(SampledHour, sql`SELECT sampled_hour FROM submission_fee_price_samples ORDER BY sampled_hour`)
+  const stored = try (try SubmissionFeeRates).all()
+  const ledger: RateLedger = {
+    mode,
+    clock,
+    sampledHours: hours.map((row) => Math.floor(millisOf(`${row.sampled_hour}:00:00.000Z`) / hourMs)),
+    rates: stored.map((rate) => ({ ...noRow, effectiveAt: millisOf(rate.effectiveAt) })),
+  }
+  return { ledger, newest: stored.at(-1) } satisfies RateBook
+}
+
+export effect function averagesAt(at: number, label: string, rateInForce: string | undefined) {
+  const week = try rows(Reading, sql`SELECT sampled_at, slop_per_usd FROM submission_fee_price_samples WHERE sampled_at >= ${try isoAt(at - weekMs)} AND source = ${label} ORDER BY sampled_hour`)
+  const daySince = try isoAt(at - dayMs)
+  const day = week.filter((row) => row.sampled_at >= daySince)
+  const weekAverage = try averageOf(week.map((row) => row.slop_per_usd))
+  const dayAverage = try averageOf(day.map((row) => row.slop_per_usd))
+  const share = rateInForce === undefined || dayAverage === undefined ? BigInt(slopShareBps) : feeShareBps(BigInt(slopShareBps), try scaledOf(rateInForce), try scaledOf(dayAverage))
+  const window: RateWindow = {
+    weekReadings: week.length,
+    dayReadings: day.length,
+    shareBps: Number(share > maxShare ? maxShare : share),
+    weekAverageDiffers: weekAverage !== undefined && weekAverage !== rateInForce,
+    dayAverageDiffers: dayAverage !== undefined && dayAverage !== rateInForce,
+  }
+  return { window, day: dayAverage, week: weekAverage } satisfies Averages
+}
+
+export effect function send(ledger: RateLedger, fact: RateFact, by: Sender, label: string) {
+  const next = try apply(ledger, eventOf(fact), by)
+  const db = try D1
+  if (fact.type === "storeReading") {
+    const at = try isoAt(ledger.clock)
+    const changes = try db.run(sql`INSERT OR IGNORE INTO submission_fee_price_samples (sampled_hour, sampled_at, block_number, slop_per_usd, source) VALUES (${at.slice(0, 13)}, ${at}, ${fact.blockNumber}, ${fact.slopPerUsd}, ${label})`)
+    return { ledger: next, written: changes === 1 } satisfies Sent
+  }
+  const change = newestRate(next).change
+  if (fact.type !== "setRate" || change === "KeepRate") return { ledger: next, written: false } satisfies Sent
+  const appended = try (try SubmissionFeeRates).append({ effectiveAt: try isoAt(nextHourStart(ledger.clock)), slopPerUsd: fact.slopPerUsd, source: `${label}:${reasons[change]}`, createdAt: try isoAt(ledger.clock) })
+  return { ledger: next, written: (try db.run(appended)) === 1 } satisfies Sent
+}
+
+effect function sentByWorker(ledger: RateLedger, fact: RateFact, label: string) {
+  return send(ledger, fact, "Worker", label) catch effect (error) => {
+    if (error._tag === "Rejected") return { ledger, written: false } satisfies Sent
+    throw error
+  }
+}
+
+export effect function ratePass(config: SubmissionFeeConfig) {
+  if (config.mode === "off") return null
+  const label = config.price.label
+  const at = try Clock.currentTimeMillis
+  const book = try ledgerAt(modes[config.mode], at)
+  const reading = readPoolRate(config.price) catch () => undefined
+  const slopPerUsd = reading === undefined ? undefined : slopRateText(reading.scaled)
+  let ledger = book.ledger
+  let sample: SampleOutcome = "source_unavailable"
+  if (reading === undefined || slopPerUsd === undefined) {
+    try Effect.logWarning("submission_fee_price_unavailable")
+  } else {
+    const stored = try sentByWorker(ledger, { type: "storeReading", slopPerUsd, blockNumber: reading.blockNumber }, label)
+    ledger = stored.ledger
+    sample = stored.written ? "stored" : "already_read"
+  }
+  const sampled = sample === "stored"
+  const averages = try averagesAt(at, label, book.newest?.slopPerUsd)
+  const change = nextRate(ledger.rates.length > 0, ageOf(ledger), averages.window)
+  const chosen = change === "WeeklyRate" ? averages.week : averages.day
+  if (change === "KeepRate" || chosen === undefined) return { sampled, sample, rate: null } satisfies RateResult
+  const set = try sentByWorker(ledger, { type: "setRate", window: averages.window, slopPerUsd: chosen }, label)
+  if (!set.written) return { sampled, sample, rate: null } satisfies RateResult
+  const rate: RateSet = { slopPerUsd: chosen, effectiveAt: try isoAt(nextHourStart(at)), reason: reasons[change] }
+  try Effect.annotateLogs(Effect.logInfo("submission_fee_rate_set"), rate)
+  return { sampled, sample, rate } satisfies RateResult
+}

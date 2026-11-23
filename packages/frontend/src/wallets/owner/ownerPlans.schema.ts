@@ -33,7 +33,28 @@ export const SolanaCommitmentPlan = Schema.Struct({
   blockhash,
 });
 
-export const OwnerPlan = Schema.Union([EvmCallPlan, EvmDepositPlan, EvmBatchPlan, SolanaFundingPlan, SolanaCommitmentPlan]);
+export const EvmReleasePlan = Schema.Struct({ kind: Schema.Literal("evmRelease"), planId: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)), call: EvmCallPlan });
+
+export const SolanaSettingPlan = Schema.Struct({
+  kind: Schema.Literal("solanaSetting"),
+  cap: Schema.String.check(Schema.isPattern(/^(0|[1-9][0-9]{0,19})$/u)),
+  enabled: Schema.Boolean,
+  blockhash,
+});
+
+export const VaultCreationPlan = Schema.Struct({
+  kind: Schema.Literal("vaultCreation"),
+  network: Schema.String,
+  claimId: Schema.String,
+  automatic: Schema.Boolean,
+  payoutPolicy: Schema.Literals(["ordinary", "security-bounty"]),
+  expectedRevision: Schema.Number,
+  owner: Schema.String,
+  asset: Schema.String,
+  capDisplay: Schema.String,
+});
+
+export const OwnerPlan = Schema.Union([EvmCallPlan, EvmDepositPlan, EvmBatchPlan, SolanaFundingPlan, SolanaCommitmentPlan, EvmReleasePlan, SolanaSettingPlan, VaultCreationPlan]);
 
 export type PlannedCall = typeof PlannedCall.Type;
 export type EvmCallPlan = typeof EvmCallPlan.Type;
@@ -41,6 +62,9 @@ export type EvmDepositPlan = typeof EvmDepositPlan.Type;
 export type EvmBatchPlan = typeof EvmBatchPlan.Type;
 export type SolanaFundingPlan = typeof SolanaFundingPlan.Type;
 export type SolanaCommitmentPlan = typeof SolanaCommitmentPlan.Type;
+export type EvmReleasePlan = typeof EvmReleasePlan.Type;
+export type SolanaSettingPlan = typeof SolanaSettingPlan.Type;
+export type VaultCreationPlan = typeof VaultCreationPlan.Type;
 export type OwnerPlan = typeof OwnerPlan.Type;
 
 const decodePlan = Schema.decodeUnknownResult(OwnerPlan, { onExcessProperty: "error" });

@@ -8,6 +8,7 @@ import { linkReport } from "./runtime.vibe";
 export interface ProgramChoice {
   readonly id: string;
   readonly name: string;
+  readonly security?: unknown;
 }
 
 export type ClaimFormViewProps = {

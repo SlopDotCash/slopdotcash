@@ -1,17 +1,20 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open"
+// spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open"
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { D1, allChunked, list, rows, sql } from "@repo/platform/d1"
 import { type Actor, handleRaw, json, refuse } from "@repo/platform/http"
 import { StorageFailure } from "@repo/platform/r2"
 import { Roles } from "@repo/platform/roles"
 import type { Authority } from "../../gen/security__cases.ts"
-import { moderatorNow, noAuthority, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
+import { heldFor, moderatorNow, noAuthority, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
 import { AuthorityUnavailable, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
 import { caseRecord } from "../cases/rows.vibe"
 import { type Observed, observedAs } from "../cases/store.vibe"
 import { getSecuritySubmissions as listRows, getSecuritySubmissionsById as readRows } from "../client/refusals.vibe"
+import type { ReportDepositView } from "../client/reportDeposit.ts"
 import { listSubmissions, readSubmission } from "../client/submissions.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
+import { type HeldReport, depositView, depositViews, heldIntake } from "../deposit/view.vibe"
 import { idleMs, loaded, noVolatile, settled } from "../forwarding/store.vibe"
 import { ReadAborted, ReportUnreadable, githubNumber, readReport } from "../privacy/reads.vibe"
 import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
@@ -56,9 +59,13 @@ function holds(roles: ReadonlySet<CaseRole>, wanted: ReadonlyArray<CaseRole>) {
   return wanted.some((role) => roles.has(role))
 }
 
-function roleView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding, roles: ReadonlySet<CaseRole>, nowMs: number) {
+export function withDeposit(view: ReturnType<typeof reporterView>, held: HeldReport, deposit: ReportDepositView | null) {
+  return { ...view, intake: heldIntake(view.intake, deposit, held), deposit }
+}
+
+function roleView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding, roles: ReadonlySet<CaseRole>, nowMs: number, deposit: ReportDepositView | null) {
   const view = reporterView(row, stored, record, nowMs)
-  if (roles.has("reporter")) return view
+  if (roles.has("reporter")) return withDeposit(view, { row, stored, record }, deposit)
   return { ...view, intake: { ...view.intake, canReview: roles.has("security-maintainer"), canAuthorize: false, canRevise: false } }
 }
 
@@ -83,11 +90,11 @@ effect function settledRow(row: SubmissionRow, saved: boolean, nowMs: number) {
   return again === undefined ? row : again
 }
 
-effect function ownView(row: SubmissionRow, stored: StoredIntake | undefined, standing: CaseStanding | undefined, nowMs: number) {
+effect function ownView(row: SubmissionRow, stored: StoredIntake | undefined, standing: CaseStanding | undefined, nowMs: number, deposit: ReportDepositView | null) {
   const current = settledRow(row, stored !== undefined, nowMs) catch () => row
   if (stored === undefined) return { ...submissionView(current), intake: null }
   if (standing === undefined) throw refused(listRows.notFoundReportNotFound)
-  return reporterView(current, stored, standing, nowMs)
+  return withDeposit(reporterView(current, stored, standing, nowMs), { row: current, stored, record: standing }, deposit)
 }
 
 effect function scopedProjects(actor: Actor) {
@@ -124,7 +131,7 @@ function listedRoles(actor: Actor, standing: CaseStanding, stored: StoredIntake,
 effect function candidatesOf(actor: Actor, scoped: ReadonlyArray<string>, moderator: boolean) {
   const scope = scoped.length === 0 ? sql`` : sql` OR c.project_id IN (SELECT value FROM json_each(${JSON.stringify(scoped)}))`
   const disputes = moderator ? sql` OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'` : sql``
-  return try rows(SubmissionRow, sql`SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>${actor.githubId} AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=${actor.githubId} AND revoked_at IS NULL)${scope}${disputes}) ORDER BY s.created_at DESC LIMIT ${listLimit}`)
+  return try rows(SubmissionRow, sql`SELECT s.* FROM security_submissions s JOIN security_submission_intake i ON i.submission_id=s.id JOIN security_cases c ON c.id=i.case_id WHERE s.reporter_github_id<>${actor.githubId} AND NOT ${depositHeldOn("c.id")} AND (c.id IN (SELECT case_id FROM security_case_members WHERE github_id=${actor.githubId} AND revoked_at IS NULL)${scope}${disputes}) ORDER BY s.created_at DESC LIMIT ${listLimit}`)
 }
 
 effect function visible(actor: Actor) {
@@ -141,12 +148,13 @@ effect function visible(actor: Actor) {
   const stored = new Map((try allChunked(StoredIntake, [...own, ...candidates].map((row) => row.id), (chunk) => sql`SELECT * FROM security_submission_intake WHERE submission_id IN ${list(chunk)}`)).map((row) => [row.submission_id, row]))
   const caseIds = [...new Set([...stored.values()].map((row) => row.case_id))]
   const standings = new Map((try allChunked(CaseStanding, caseIds, (chunk) => sql`SELECT ${standingColumns} FROM security_cases WHERE id IN ${list(chunk)}`)).map((row) => [row.id, row]))
+  const deposits = try depositViews(own.flatMap((row) => stored.get(row.id)?.case_id ?? []))
   const triaging = new Set((try rows(MemberCase, sql`SELECT case_id FROM security_case_members WHERE github_id=${actor.githubId} AND role='triager' AND revoked_at IS NULL`)).map((row) => row.case_id))
   const nowMs = try Clock.currentTimeMillis
   const shown: Array<{ readonly createdAt: string; readonly rank?: number; readonly submission: unknown }> = []
   for (const row of own) {
     const intake = stored.get(row.id)
-    shown.push({ createdAt: row.created_at, submission: try ownView(row, intake, intake === undefined ? undefined : standings.get(intake.case_id), nowMs) })
+    shown.push({ createdAt: row.created_at, submission: try ownView(row, intake, intake === undefined ? undefined : standings.get(intake.case_id), nowMs, intake === undefined ? null : deposits.get(intake.case_id) ?? null) })
   }
   for (const candidate of candidates) {
     const intake = stored.get(candidate.id)
@@ -160,7 +168,7 @@ effect function visible(actor: Actor) {
     if (!holds(roles, reviewers)) continue
     const current = settledRow(candidate, true, nowMs) catch () => candidate
     const rank = roles.has("security-maintainer") ? rankOf.get(standing.id) : undefined
-    shown.push({ createdAt: candidate.created_at, ...rank === undefined ? {} : { rank }, submission: roleView(current, intake, standing, roles, nowMs) })
+    shown.push({ createdAt: candidate.created_at, ...rank === undefined ? {} : { rank }, submission: roleView(current, intake, standing, roles, nowMs, null) })
   }
   shown.sort((left, right) => (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER) || right.createdAt.localeCompare(left.createdAt))
   return { submissions: shown.map((entry) => entry.submission), authorityUnavailable }
@@ -180,14 +188,15 @@ effect function readable(actor: Actor, id: string) {
   const record = try caseRecord(stored.case_id)
   if (record === undefined) throw refused(notFound)
   const observed = try observedAs(record, actor.githubId, readRows.githubUnavailable)
-  if (!holds(observed.roles, readers)) throw refused(notFound)
+  if (!holds(observed.roles, readers) || heldFor(observed.model, githubNumber(actor.githubId))) throw refused(notFound)
   return { stored, row, observed }
 }
 
 effect function shownRead(row: SubmissionRow, stored: StoredIntake, observed: Observed) {
   const nowMs = try Clock.currentTimeMillis
   const current = try settledRow(row, true, nowMs)
-  return roleView(current, stored, observed.record.row, observed.roles, nowMs)
+  const deposit = observed.roles.has("reporter") ? try depositView(stored.case_id) : null
+  return roleView(current, stored, observed.record.row, observed.roles, nowMs, deposit)
 }
 
 effect function reportBody(actor: Actor, stored: StoredIntake, observed: Observed) {

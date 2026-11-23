@@ -403,10 +403,11 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
   const withheldMembers = new Set<string>()
   const scoredMembers = new Set<string>()
   for (const decision of input.decisions) for (const unit of decision.units) {
-    const withheld = unit.carriers.some(ratified)
-    for (const claim of unit.claims) {
+    const covered = unit.claims.map((claim) => claim.carriers.some(ratified))
+    const withheld = covered.includes(true)
+    for (const [index, claim] of unit.claims.entries()) {
       if (!withheld) scoredMembers.add(claim.sourceId)
-      else if (!ratified(claim.sourceId)) withheldMembers.add(claim.sourceId)
+      else if (!covered[index]) withheldMembers.add(claim.sourceId)
     }
   }
   const membership = (id: string): JointMembership => ({ inWithheldUnit: withheldMembers.has(id), ownRatification: ratified(id), inScoredUnit: scoredMembers.has(id) })

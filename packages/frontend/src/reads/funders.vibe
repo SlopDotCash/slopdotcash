@@ -1,0 +1,25 @@
+// spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"; spec/frontend/projections.md, "Story: Let anyone fund a project from its public page and see who funded"
+import { type ProjectDeposits, projectDeposits } from "@repo/settlement/client"
+import { transactionUrl } from "../kernels/explorers.ts"
+import { call } from "../platform/api.vibe"
+import { Unreadable, resource } from "./resource.vibe"
+
+export type { ProjectDeposits }
+
+export const fundersLimitBytes = 262_144
+
+export const fundersMessages = { invalid: "The funders could not be verified." } as const
+
+export function fundersValid(read: ProjectDeposits, projectId: string): boolean {
+  return read.projectId === projectId && read.total >= read.deposits.length && read.deposits.every((deposit) => deposit.projectId === projectId && transactionUrl(deposit.network, deposit.transactionId) !== undefined)
+}
+
+export effect function readFunders(projectId: string) {
+  const read = try call(projectDeposits, { params: { id: projectId } }, { limitBytes: fundersLimitBytes })
+  if (!fundersValid(read, projectId)) throw new Unreadable({ message: fundersMessages.invalid })
+  return read
+}
+
+export effect function fundersReads() {
+  return try resource((projectId: string) => readFunders(projectId), (read: ProjectDeposits) => read.deposits.length)
+}

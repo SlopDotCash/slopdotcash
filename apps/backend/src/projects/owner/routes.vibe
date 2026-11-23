@@ -191,8 +191,8 @@ effect function notAlreadyListed(manifest: Json) {
   const origin = try originOf()
   const listed = try listedManifests()
   const holder = listed.find((project) => entries(project.manifest).some((entry) => namesOf(entry).some((name) => names.has(name))))
-  if (holder !== undefined) throw refusal(putProjectsById.registryConflict, `${repositoryName} is already listed on Slop as ${holder.id}. Open ${origin}/projects/${holder.id}/manage to continue its setup instead of creating it again.`)
-  if (listed.some((project) => project.id === manifest.id)) throw refusal(putProjectsById.registryConflict, `The project id ${String(manifest.id)} is already used by another project. Choose a different project id.`)
+  if (holder !== undefined) throw refusal(postProjects.registryConflictAlreadyListedOnSlop, `${repositoryName} is already listed on Slop as ${holder.id}. Open ${origin}/projects/${holder.id}/manage to continue its setup instead of creating it again.`)
+  if (listed.some((project) => project.id === manifest.id)) throw refusal(postProjects.registryConflictTheProjectIdIsAlreadyUsed, `The project id ${String(manifest.id)} is already used by another project. Choose a different project id.`)
 }
 
 effect function registryFits(manifest: Json, replaces: boolean) {
@@ -500,17 +500,17 @@ effect function moveIntegrationBranch(projectId: string, actor: Actor, request: 
   const { current, state, by, account, checked } = try ownedCurrent(projectId, actor, expectedRevision, undefined)
   const access = checked.access
   const repository = access.state === "read" && access.access.installation === "installed" && access.access.permission === "admin" ? access.access.repository : undefined
-  if (repository === undefined || !identityMatches(current.manifest, repository)) throw refusal(putProjectsById.authorityRequired, "The integration branch requires current GitHub repository admin permission.")
+  if (repository === undefined || !identityMatches(current.manifest, repository)) throw refusal(putProjectsById.authorityRequiredTheIntegrationBranchRequires)
   const selection = selectionOf(request.integrationBranch)
   if (selection === "unexpected") throw new Refused(admission.unexpectedFields)
-  if (selection === undefined) throw refusal(putProjectsById.invalidRequestInvalidExpectedRevision, "Expected an integration branch and its GitHub commit.")
+  if (selection === undefined) throw refusal(putProjectsById.invalidRequestExpectedAnIntegrationBranch)
   const from = primaryBranch(current.manifest)
-  if (from === selection.name) throw refusal(putProjectsById.noChange, "The integration branch is unchanged.")
-  if (current.manifest.listingTier === "retired") throw refusal(putProjectsById.projectRestrictedS409, "A retired project cannot change integration branches.")
+  if (from === selection.name) throw refusal(putProjectsById.noChangeTheIntegrationBranchIsUnchanged)
+  if (current.manifest.listingTier === "retired") throw refusal(putProjectsById.projectRestrictedARetiredProjectCannot)
   const manifest = withBranch(current.manifest, selection.name, request.contribution)
   try decodedManifest(manifest, { escrow: current.manifest.escrow, securityBounty: current.manifest.securityBounty })
   const proof = try readIntegrationBranchAuthority({ numericId: repository.id, nodeId: repository.node_id }, selection.name, selection.commitSha)
-  if (!declarationMatches(proof, current.manifest, repository.full_name, selection.name)) throw refusal({ status: 422, error: "branch_proof_required", message: "The selected commit must contain a matching .github/slop-project.json declaration." })
+  if (!declarationMatches(proof, current.manifest, repository.full_name, selection.name)) throw refusal(putProjectsById.branchProofRequired)
   const now = try isoNow()
   try transitionFits(withBranch(current.manifest, selection.name, undefined), manifest, now)
   try registryFits(manifest, true)

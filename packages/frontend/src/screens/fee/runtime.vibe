@@ -1,0 +1,33 @@
+// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"
+import { browserServices } from "../../platform/layer.vibe"
+import { walletChoiceServices } from "../../wallets/core/discovery.vibe"
+import { sessionSlots } from "../../wallets/core/slots.ts"
+import { type FeePay, type FeeSetup, type FeeShown, type PayAddress, openPayPage, publishedSetup } from "./payFlow.vibe"
+
+export { watchOffers } from "../funding/vault/funding.vibe"
+
+export function feeServices(setup: Layer.Layer<FeeSetup>) {
+  return Layer.merge(Layer.provideMerge(walletChoiceServices, browserServices), setup)
+}
+
+export type FeeServices = Layer.Success<ReturnType<typeof feeServices>>
+export type FeeRuntime = ManagedRuntime.ManagedRuntime<FeeServices, Layer.Error<ReturnType<typeof feeServices>>>
+
+const memo = Layer.makeMemoMapUnsafe()
+const runtimes = new WeakMap<Layer.Layer<FeeSetup>, FeeRuntime>()
+
+export function feeRuntime(setup: Layer.Layer<FeeSetup> = publishedSetup): FeeRuntime {
+  const known = runtimes.get(setup)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(feeServices(setup), { memoMap: memo })
+  runtimes.set(setup, made)
+  return made
+}
+
+export effect function openFeePage(address: PayAddress) {
+  return try openPayPage(address, sessionSlots())
+}
+
+export effect function followFeePage(pay: FeePay, show: (shown: FeeShown) => void!!) {
+  try Effect.all([Stream.runForEach(pay.changes, show), pay.follow()], { concurrency: "unbounded", discard: true })
+}

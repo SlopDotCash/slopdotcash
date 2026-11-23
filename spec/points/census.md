@@ -227,6 +227,16 @@ enumerated node that became unavailable (`SourceNodeUnavailableError`)
 discards the first attempt and recollects every source once, with the same
 client: the cost spent, the reserve and the reset already waited for carry
 over. Any other failure, or a second such failure, stops the collection.
+One exception (operator decision, 20 November 2026; main 2ffedc0c6,
+development 7f71c6ce9, `JOINT_SOURCE_CONFIRMATION_PROBES`,
+`JOINT_SOURCE_CONFIRMATION_DELAY_MS`): a joint value-record member outside
+the live census that GitHub cannot resolve is, in the first attempt, probed
+twice more, 5,000 ms apart, each probe a counted request of the same budget.
+When every probe reports the same unavailable sources, its work unit is held
+and the source recorded unavailable in that attempt, with no recollection; a
+probe that resolves the batch, reports other sources or fails otherwise
+discards the attempt and the collection recollects once, as above. The
+recollection holds such a member on its own single probe.
 Publication is outside the retry. The [ingestion read](./ingestion.md) is a
 separate REST transport with no budget of its own.
 
@@ -248,6 +258,15 @@ pure def budgetDecision(budget: Budget, cost: int): BudgetDecision =
   else WaitForReset
 pure def afterReset(remaining: int): Budget = { windowSpent: 0, windowDrain: 0, remaining: remaining, waitedForReset: true }
 pure def recollects(attempt: int, cause: RetryCause): bool = attempt == 1 and cause != OtherFailure
+pure val confirmationProbes = 2
+pure val confirmationDelayMs = 5000
+pure def holdsJointMember(attempt: int, agreeingProbes: int): bool =
+  (attempt == 1 and agreeingProbes == confirmationProbes + 1) or (attempt == 2 and agreeingProbes >= 1)
+pure def lawFirstAttemptHoldNeedsEveryProbe(agreeingProbes: int): bool =
+  holdsJointMember(1, agreeingProbes) implies agreeingProbes == confirmationProbes + 1
+pure def lawRecollectionHoldsOnOneProbe(agreeingProbes: int): bool =
+  agreeingProbes >= 1 implies holdsJointMember(2, agreeingProbes)
+pure def lawUnprobedMemberNeverHeld(attempt: int): bool = not(holdsJointMember(attempt, 0))
 pure def lawSpendKeepsCapAndReserve(budget: Budget, cost: int): bool =
   budgetDecision(budget, cost) == SpendNow implies
     (budget.windowSpent + cost <= maxGenerationCost and budget.windowDrain + cost <= maxGenerationCost and
@@ -265,6 +284,7 @@ pure val budgetValues = Set(openBudget, { ...openBudget, windowSpent: 4800 }, { 
 pure val costValues = Set(-1, 0, 1, 100, 4900, 4901)
 pure val remainingValues = Set(0, 100, 5000)
 pure val attemptValues = Set(1, 2)
+pure val agreeingProbesValues = Set(0, 1, 2, 3, 4)
 ```
 
 ### A split Search range whose children disagree with the parent count is repeated once

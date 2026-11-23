@@ -79,7 +79,7 @@ function valued(reviewId: string, tier: ReviewValue["tier"]): ReviewValue {
 }
 
 function claim(source: MergedPull | ClosedPull, commitOid: string, path = `${commitOid}.ts`): JointClaim {
-  return { id: `${source.id}:${commitOid}:${path}`, sourceId: source.id, commitOid, path, copy: null }
+  return { id: `${source.id}:${commitOid}:${path}`, sourceId: source.id, commitOid, path, copy: null, carriers: [source.id] }
 }
 
 function unit(workUnitId: string, tier: JointUnit["tier"], sources: ReadonlyArray<MergedPull | ClosedPull>, commits: ReadonlyArray<string>, rationale: string): JointUnit {

@@ -28,6 +28,12 @@ export interface Target {
   readonly within?: Target;
 }
 
+export interface Upload {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly bytes: ReadonlyArray<number>;
+}
+
 export interface Shown {
   readonly count: number;
   readonly visible: boolean;
@@ -109,6 +115,8 @@ export type Op =
   | { readonly kind: "read"; readonly target: Target }
   | { readonly kind: "focused" }
   | { readonly kind: "refocus" }
+  | { readonly kind: "blockCookies" }
+  | { readonly kind: "upload"; readonly target: Target; readonly file: Upload }
   | { readonly kind: "fetch"; readonly method: "GET" | "POST"; readonly path: string; readonly body?: unknown }
   | { readonly kind: "leaks"; readonly text: string }
   | { readonly kind: "hold"; readonly method: string; readonly path: string }
@@ -142,6 +150,8 @@ export interface Results {
   readonly read: Shown;
   readonly focused: Focused;
   readonly refocus: null;
+  readonly blockCookies: null;
+  readonly upload: null;
   readonly fetch: Answered;
   readonly leaks: boolean;
   readonly hold: null;

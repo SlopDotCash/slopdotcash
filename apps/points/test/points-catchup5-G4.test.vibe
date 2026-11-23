@@ -55,7 +55,7 @@ function ratification(by: Actor, head: string): Ratification {
 }
 
 function claim(source: MergedPull, commitOid: string): JointClaim {
-  return { id: `claim-${commitOid}`, sourceId: source.id, commitOid, path: `src/${commitOid}.ts`, copy: null }
+  return { id: `claim-${commitOid}`, sourceId: source.id, commitOid, path: `src/${commitOid}.ts`, copy: null, carriers: [source.id] }
 }
 
 function unit(workUnitId: string, tier: ValueTier, claims: ReadonlyArray<JointClaim>): JointUnit {

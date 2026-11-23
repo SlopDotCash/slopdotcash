@@ -1,10 +1,13 @@
-// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
+// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import { entrypoint } from "@repo/platform/entrypoints"
+import { refreshMergeActivity } from "@repo/backend/live"
 import { worker } from "@repo/platform/worker"
 import { repositoryAccessRoutes } from "../access/route.vibe"
 import { refreshReportingReadiness } from "../readiness/reporting.vibe"
 import { type AppVars, appServices } from "./base.vibe"
 
-export const ReportingReadinessRefresher = entrypoint((env: AppVars) => appServices(env), { refreshReportingReadiness })
+export { HistoricalValuePublisher } from "./slopbot.vibe"
+
+export const ReportingReadinessRefresher = entrypoint((env: AppVars) => appServices(env), { refreshReportingReadiness, refreshMergeActivity })
 
 export default worker({ services: (env: AppVars) => appServices(env), routes: repositoryAccessRoutes })

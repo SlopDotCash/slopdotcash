@@ -47,7 +47,7 @@ const siteConfig = {
 function notifyConfig(name: string, environment: string, databaseId: string) {
   return {
     name,
-    main: "../dist/notify.js",
+    main: "../../app/dist/notify.js",
     no_bundle: true,
     compatibility_date: "2026-07-30",
     workers_dev: false,
@@ -210,7 +210,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try written(files.join(root, "apps/operations/wrangler/notify.production.jsonc"), `// reviewed production notify Worker\n${JSON.stringify(notifyConfig("slop-notify", "production", productionDatabase), null, 2)}\n`)
     try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", productionDatabase), null, 2)}\n`)
     try written(files.join(root, "apps/operations/src/tables.ts"), "export const writes = [\"security_notification_outbox\"]\n")
-    try written(files.join(bundle, "apps/operations/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
+    try written(files.join(bundle, "apps/app/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
     const disclosures = files.join(directory, "disclosures.jsonl")
     try written(files.join(bundle, "apps/settlement/dist/programs/main.js"), `require("node:fs").appendFileSync(${JSON.stringify(disclosures)}, JSON.stringify({ args: process.argv.slice(2), account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN !== undefined }) + "\\n")\n`)
     const feeRoot = files.join(directory, "fee-checkout")

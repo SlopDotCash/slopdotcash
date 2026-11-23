@@ -1,0 +1,65 @@
+// spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges"
+import type { D1Database, ScheduledController } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { SubmissionFeeRatesLive } from "@repo/backend/ports"
+import { ReportDepositsLive } from "@repo/security/live"
+import { SubmissionFeeItemsLive } from "@repo/slopbot/live"
+import { submissionFeeAnyAny } from "../client/refusals.vibe"
+import { feeNetworks } from "../../gen/backend__submissionFeeTerms.ts"
+import { type DepositRun, type SubmissionFeeWorkerEnv, depositPass, ratePassOf } from "../submissionFee/run.vibe"
+import { message } from "../submissionFee/steps.vibe"
+
+export interface Env extends SubmissionFeeWorkerEnv {
+  readonly SUBMISSION_FEE_DB: D1Database
+}
+
+export const depositCron = "*/5 * * * *"
+export const rateCron = "7 * * * *"
+
+export service SubmissionFeeWorkerEnvironment { readonly env: SubmissionFeeWorkerEnv }
+
+export error SubmissionFeeScheduleUnknown { cron: string; message: string }
+export error SubmissionFeeRunFailed { cron: string; message: string }
+
+function failedNetworks(result: DepositRun) {
+  return result.status === "ran" && result.networks.some((network) => "error" in network)
+}
+
+effect function scheduledRun(cron: string) {
+  const { env } = try SubmissionFeeWorkerEnvironment
+  if (cron === depositCron) {
+    const result = try depositPass(env, feeNetworks)
+    try Console.log(JSON.stringify({ event: "submission_fee_run", cron, result }))
+    if (failedNetworks(result)) throw new SubmissionFeeRunFailed({ cron, message: "submission_fee_operation_failed" })
+    return
+  }
+  if (cron === rateCron) {
+    const result = try ratePassOf(env, feeNetworks)
+    try Console.log(JSON.stringify({ event: "submission_fee_run", cron, result }))
+    return
+  }
+  throw new SubmissionFeeScheduleUnknown({ cron, message: "Unknown submission fee schedule" })
+}
+
+effect function scheduled(controller: ScheduledController) {
+  const { cron } = controller
+  return scheduledRun(cron) catch effect (error) => {
+    if (error._tag === "SubmissionFeeScheduleUnknown") throw error
+    try Console.error(JSON.stringify({ event: "submission_fee_error", cron, error: message(error) }))
+    throw new SubmissionFeeRunFailed({ cron, message: message(error) })
+  }
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SUBMISSION_FEE_DB), webCrypto, outbound, Layer.succeed(SubmissionFeeWorkerEnvironment, { env }))
+  return Layer.mergeAll(base, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), base))
+}
+
+export default worker({
+  services,
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text(submissionFeeAnyAny.notFound.text, { status: submissionFeeAnyAny.notFound.status, contentType: submissionFeeAnyAny.notFound.headers["content-type"] })),
+  scheduled,
+})

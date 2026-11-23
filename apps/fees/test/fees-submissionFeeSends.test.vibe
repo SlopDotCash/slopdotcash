@@ -1,0 +1,399 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { type Hex, decodeFunctionData, encodeErrorResult, encodeFunctionResult, keccak256, parseTransaction, toHex } from "viem"
+import { privateKeyToAccount } from "viem/accounts"
+import { SubmissionFeeRatesLive } from "@repo/backend/submissionFee/rates"
+import type { D1Database } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { asFetch } from "@repo/platform/testing/quotes"
+import type { SubmissionFeeRates } from "@repo/ports/backend"
+import type { ReportDeposits } from "@repo/ports/security"
+import type { SubmissionFeeItems } from "@repo/ports/slopbot"
+import { ReportDepositsLive } from "@repo/security/deposit/port"
+import { SubmissionFeeItemsLive, askItem, dueOutcome } from "@repo/slopbot/fee/items"
+import { depositContract, feeNetworks, feeWallet } from "../gen/backend__submissionFeeTerms.ts"
+import { submissionDepositsAbi } from "../src/submissionFee/abi.ts"
+import { type DepositRun, type NetworkFailure, type NetworkResult, type SubmissionFeeWorkerEnv, depositPass } from "../src/submissionFee/run.vibe"
+
+const network = "robinhood-mainnet"
+const contract = depositContract.toLowerCase() as Hex
+const usdg = "0x5fc5360d0400a0fd4f2af552add042d716f1d168" as Hex
+const payer = "0x00000000000000000000000000000000000000a1" as Hex
+const wallet = feeWallet.toLowerCase() as Hex
+const resolverKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+const resolver = privateKeyToAccount(resolverKey).address.toLowerCase() as Hex
+const start = Date.parse("2026-11-22T00:00:00.000Z")
+const day = 24 * 60 * 60 * 1000
+const firstBlock = 118_349_990
+
+interface Record {
+  readonly payer: Hex
+  readonly token: Hex
+  readonly amount: bigint
+  readonly keptTo: Hex
+  readonly item: Hex
+  readonly depositedAt: bigint
+  readonly state: number
+}
+
+interface Contract {
+  latest: number
+  nonce: number
+  estimate: bigint
+  broken: boolean
+  sendFails: boolean
+  readonly refuses: Set<number>
+  readonly silent: Set<number>
+  readonly deposits: Map<number, Record>
+  readonly sent: Hex[]
+  readonly mined: Map<Hex, { readonly block: number; readonly ok: boolean }>
+}
+
+service World {
+  readonly db: D1Database
+  readonly clock: SettableClock
+  readonly chain: Contract
+  readonly fetch: typeof globalThis.fetch
+  readonly robinhoodUrl: string
+  readonly baseUrl: string
+}
+
+const none: Record = { payer: "0x0000000000000000000000000000000000000000", token: "0x0000000000000000000000000000000000000000", amount: 0n, keptTo: "0x0000000000000000000000000000000000000000", item: toHex(0n, { size: 32 }), depositedAt: 0n, state: 0 }
+
+function item(n: number) {
+  return toHex(BigInt(n), { size: 32 })
+}
+
+function blockHash(n: number) {
+  return toHex((1n << 200n) + BigInt(n), { size: 32 })
+}
+
+function idsOf(raw: Hex) {
+  const call = decodeFunctionData({ abi: submissionDepositsAbi, data: parseTransaction(raw).data ?? "0x" })
+  return call.functionName === "resolveMany" ? call.args[0].map(Number).map((id, index) => ({ id, refund: call.args[1][index] })) : []
+}
+
+function contractRpc(chain: Contract): Handler {
+  return async (request) => {
+    const call = JSON.parse(await request.text()) as { readonly id: unknown; readonly method: string; readonly params: ReadonlyArray<unknown> }
+    const answered = (result: unknown) => Response.json({ jsonrpc: "2.0", id: call.id, result })
+    const refused = (code: number, message: string, data?: Hex) => Response.json({ jsonrpc: "2.0", id: call.id, error: { code, message, ...data === undefined ? {} : { data } } })
+    const block = (n: number) => ({ number: toHex(n), hash: blockHash(n), parentHash: blockHash(n - 1), timestamp: toHex(1_800_000_000 + n), baseFeePerGas: toHex(1_000_000), transactions: [...chain.mined].filter(([, mined]) => mined.block === n).map(([hash]) => hash) })
+    switch (call.method) {
+      case "eth_chainId": return answered(toHex(4663))
+      case "eth_getBlockByNumber": {
+        const tag = String(call.params[0])
+        return answered(block(tag === "latest" || tag === "finalized" ? chain.latest : Number(BigInt(tag))))
+      }
+      case "eth_getLogs": return answered([])
+      case "eth_call": {
+        const decoded = decodeFunctionData({ abi: submissionDepositsAbi, data: (call.params[0] as { readonly data: Hex }).data })
+        if (decoded.functionName === "deposits")
+          return answered(encodeFunctionResult({ abi: submissionDepositsAbi, functionName: "deposits", result: chain.deposits.get(Number(decoded.args[0])) ?? none }))
+        if (decoded.functionName !== "resolveMany") return refused(-32601, "unexpected call")
+        const ids = decoded.args[0].map(Number)
+        const named = ids.find((id) => chain.refuses.has(id))
+        if (named !== undefined) return refused(3, "execution reverted", encodeErrorResult({ abi: submissionDepositsAbi, errorName: "PayoutFailed", args: [BigInt(named)] }))
+        if (chain.broken || ids.some((id) => chain.silent.has(id))) return refused(3, "execution reverted", "0x")
+        return answered("0x")
+      }
+      case "eth_getTransactionCount": return answered(toHex(chain.nonce))
+      case "eth_estimateGas": return answered(toHex(chain.estimate))
+      case "eth_maxPriorityFeePerGas": return answered("0x0")
+      case "eth_sendRawTransaction": {
+        if (chain.sendFails) return refused(-32000, "upstream unavailable")
+        const raw = String(call.params[0]) as Hex
+        chain.sent.push(raw)
+        return answered(keccak256(raw))
+      }
+      case "eth_getTransactionReceipt": {
+        const hash = String(call.params[0]) as Hex
+        const mined = chain.mined.get(hash)
+        return answered(mined === undefined ? null : { transactionHash: hash, blockHash: blockHash(mined.block), blockNumber: toHex(mined.block), transactionIndex: "0x0", status: mined.ok ? "0x1" : "0x0", from: resolver, to: contract, gasUsed: "0x1", logs: [] })
+      }
+      case "eth_getTransactionByHash": return answered(null)
+      default: return refused(-32601, `unexpected ${call.method}`)
+    }
+  }
+}
+
+const down: Handler = async () => new Response("down", { status: 500 })
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { FEE_DB: "fees-submission-fee-sends" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "FEE_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  const db = try promise(() => database(mf, "FEE_DB"))
+  const chain: Contract = { latest: firstBlock, nonce: 0, estimate: 100_000n, broken: false, sendFails: false, refuses: new Set(), silent: new Set(), deposits: new Map(), sent: [], mined: new Map() }
+  const handler = contractRpc(chain)
+  const robinhood: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
+  const base: Served = try acquireRelease(promise(() => serve(down)), (server) => promise(() => server.close()))
+  const net = internet({ rpc: { [robinhood.url]: handler, [base.url]: down } })
+  return { db, clock: settableClock(start), chain, fetch: asFetch(net.handler), robinhoodUrl: robinhood.url, baseUrl: base.url }
+})
+
+effect function provided<A, E>(program: A!E!(D1 | HttpClient.HttpClient | SubmissionFeeItems | ReportDeposits | SubmissionFeeRates | Experimental.Crypto.Crypto)) {
+  const world = try World
+  const storage = d1(world.db)
+  const services = Layer.mergeAll(storage, Layer.provide(Layer.mergeAll(SubmissionFeeItemsLive, ReportDepositsLive, SubmissionFeeRatesLive), storage), world.clock.layer, FetchHttpClient.layer, webCrypto)
+  return try Effect.provideService(Effect.provide(program, services), FetchHttpClient.Fetch, world.fetch)
+}
+
+effect function environment(mode: string, keyed = true) {
+  const world = try World
+  return {
+    SUBMISSION_FEE_MODE: mode,
+    RPC_URL_SUBMISSION_FEE_ROBINHOOD: world.robinhoodUrl,
+    RPC_URL_SUBMISSION_FEE_BASE: world.baseUrl,
+    SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "200000000000",
+    SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "1000000000000",
+    ...keyed ? { SUBMISSION_FEE_RESOLVER_KEY: ` ${resolverKey} ` } : {},
+  } satisfies SubmissionFeeWorkerEnv
+}
+
+function entryOf(run: DepositRun, name: string): NetworkResult | NetworkFailure | undefined {
+  return run.status === "ran" ? run.networks.find((entry) => entry.network === name) : undefined
+}
+
+function sendOf(run: DepositRun) {
+  const entry = entryOf(run, network)
+  return entry === undefined ? "missing" : "send" in entry ? entry.send : entry.error
+}
+
+effect function pass(mode = "live", keyed = true) {
+  return try provided(depositPass(try environment(mode, keyed), feeNetworks))
+}
+
+effect function write(statement: Statement) {
+  return try provided((try D1).run(statement))
+}
+
+effect function nextDay() {
+  const world = try World
+  world.clock.advance(day)
+}
+
+schema SendSeen { readonly deposits: string; readonly mode: string; readonly state: string; readonly reason: string | null; readonly raw_tx: string | null }
+schema ParkedSeen { readonly deposit_id: number; readonly reason: string; readonly released: number }
+
+effect function sends() {
+  const found = try provided(rows(SendSeen, sql`SELECT deposits, mode, state, reason, raw_tx FROM submission_fee_sends ORDER BY rowid`))
+  return found.map((row) => ({ deposits: JSON.parse(row.deposits) as unknown, mode: row.mode, state: row.state, reason: row.reason, raw: row.raw_tx }))
+}
+
+effect function parkedRows() {
+  return try provided(rows(ParkedSeen, sql`SELECT deposit_id, reason, released_at IS NOT NULL AS released FROM submission_fee_parked WHERE network = ${network} ORDER BY deposit_id`))
+}
+
+effect function deposit(id: number, itemNumber: number, amount: bigint, options: { readonly final?: boolean; readonly chainAmount?: bigint } = {}) {
+  const world = try World
+  const at = new Date(start).toISOString()
+  try write(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, state)
+    VALUES (${network}, ${id}, ${item(itemNumber)}, ${payer}, ${usdg}, ${amount.toString()}, ${wallet}, ${toHex(BigInt(id), { size: 32 })}, ${firstBlock - 10}, ${at}, ${options.final === false ? null : at}, 'open')`)
+  world.chain.deposits.set(id, { payer, token: usdg, amount: options.chainAmount ?? amount, keptTo: wallet, item: item(itemNumber), depositedAt: 1n, state: 1 })
+}
+
+effect function mine(ok: boolean) {
+  const { chain } = try World
+  const raw = chain.sent[chain.sent.length - 1]
+  chain.latest += 1
+  chain.mined.set(keccak256(raw), { block: chain.latest, ok })
+  chain.nonce += 1
+  if (!ok) return
+  for (const entry of idsOf(raw)) {
+    chain.deposits.set(entry.id, { ...chain.deposits.get(entry.id) ?? none, state: 2 })
+  }
+}
+
+effect function ask(pullNumber: number, itemNumber: number) {
+  try write(askItem({ pull: { repositoryId: 900, pullNumber }, projectId: "pr_submission_fee", item: item(itemNumber), stableMinor: "2000000", askedAt: "2026-11-21T00:00:00.000Z" }))
+}
+
+effect function decide(pullNumber: number, outcome: "refund_due" | "kept_due") {
+  try write(dueOutcome({ repositoryId: 900, pullNumber }, outcome, new Date(start).toISOString()))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('Due refunds and kept fees are recorded before broadcast, confirmed from the chain, resent unchanged and never signed twice (spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings"; spec/fees/submissionFeeDeposits.md, "What may be sent for a deposit is the pull request row\'s due outcome or a refund")', () => effect {
+    const world = try World
+    const { chain } = world
+    try write(sql`INSERT INTO submission_fee_cursors (network, next_block) VALUES (${network}, ${firstBlock + 1})`)
+    try ask(1, 1)
+    try deposit(1, 1, 2_000_000n)
+    try deposit(2, 1, 2_000_000n, { final: false })
+    const undecided = try pass()
+    try decide(1, "refund_due")
+    const merged = try pass()
+    const recorded = try sends()
+    try mine(true)
+    const confirmed = try pass()
+    const finalized = try sends()
+    try nextDay()
+    try ask(3, 3)
+    try deposit(3, 3, 2_000_000n)
+    try pass()
+    try decide(3, "kept_due")
+    try deposit(4, 3, 2_000_000n)
+    const kept = try pass()
+    const keptRaw = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    try nextDay()
+    try deposit(5, 1, 2_000_000n)
+    chain.sendFails = true
+    const lost = try pass()
+    const unknown = (try sends()).at(-1)
+    chain.sendFails = false
+    const resent = try pass()
+    const resentRow = (try sends()).at(-1)
+    try mine(true)
+    try nextDay()
+    try deposit(6, 1, 2_000_000n)
+    try pass()
+    const firstTry = chain.sent[chain.sent.length - 1]
+    try mine(false)
+    const again = try pass()
+    const secondTry = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    try nextDay()
+    try deposit(7, 1, 2_000_000n)
+    try pass()
+    chain.nonce += 1
+    const consumed = try pass()
+    try mine(true)
+    try pass()
+    try nextDay()
+    try deposit(8, 1, 2_000_000n)
+    const before = chain.sent.length
+    const racing = try Effect.all([pass(), pass()], { concurrency: 2 })
+    const racedRows = (try sends()).filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 8, refund: true }]))
+    try mine(true)
+    const all = try sends()
+    try Effect.try(() => assert.deepStrictEqual({
+      undecided: [sendOf(undecided), entryOf(undecided, "base-mainnet")?.network, (entryOf(undecided, "base-mainnet") as NetworkFailure | undefined)?.reason.startsWith("chain/")],
+      merged: [sendOf(merged), recorded.map((row) => [row.deposits, row.state]), recorded[0]?.raw === chain.sent[0], idsOf(chain.sent[0])],
+      confirmed: [sendOf(confirmed), finalized[0]?.state],
+      kept: [sendOf(kept), idsOf(keptRaw)],
+      lost: [sendOf(lost), unknown?.state, sendOf(resent), resentRow?.state, resentRow?.raw === chain.sent[chain.sent.length - 1]],
+      reverted: [sendOf(again), firstTry === secondTry, all.filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 6, refund: true }])).map((row) => [row.state, row.reason])],
+      consumed: [sendOf(consumed), all.filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 7, refund: true }])).map((row) => [row.state, row.reason])],
+      racing: [racing.map(sendOf).sort(), racedRows.length, new Set(chain.sent.slice(before)).size],
+    }, {
+      undecided: ["none", "base-mainnet", true],
+      merged: ["sent", [[[{ id: 1, refund: true }], "submitted"]], true, [{ id: 1, refund: true }]],
+      confirmed: ["none", "finalized"],
+      kept: ["sent", [{ id: 3, refund: false }, { id: 4, refund: true }]],
+      lost: ["in_flight", "unknown", "in_flight", "submitted", true],
+      reverted: ["sent", false, [["failed", "resolve transaction reverted"], ["finalized", null]]],
+      consumed: ["sent", [["failed", "nonce used by another finalized transaction"], ["finalized", null]]],
+      racing: [["in_flight", "sent"], 1, 1],
+    }))
+  })
+
+  it.effect('A refused payout is parked while the rest go, released once it would pay, and an unexplained revert parks nothing (spec/fees/submissionFeeSends.md, "A deposit whose payout the token refuses is parked and never holds up the rest")', () => effect {
+    const { chain } = try World
+    try nextDay()
+    try deposit(9, 1, 2_000_000n)
+    try deposit(10, 1, 2_000_000n)
+    chain.refuses.add(9)
+    const refusedRun = try pass()
+    const refusedRaw = chain.sent[chain.sent.length - 1]
+    const parkedFirst = try parkedRows()
+    try mine(true)
+    chain.refuses.clear()
+    try nextDay()
+    const releasedRun = try pass()
+    const releasedRaw = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    try nextDay()
+    try deposit(11, 1, 2_000_000n)
+    chain.broken = true
+    const rowsBefore = (try sends()).length
+    const brokenRun = try pass()
+    const rowsAfter = (try sends()).length
+    chain.broken = false
+    chain.silent.add(12)
+    try deposit(12, 1, 2_000_000n)
+    try nextDay()
+    const aloneRun = try pass()
+    const aloneRaw = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    const parkedLast = try parkedRows()
+    const robinhood = (run: DepositRun) => entryOf(run, network) as NetworkResult
+    try Effect.try(() => assert.deepStrictEqual({
+      refused: [robinhood(refusedRun).send, robinhood(refusedRun).parked, idsOf(refusedRaw), parkedFirst],
+      released: [robinhood(releasedRun).released, idsOf(releasedRaw)],
+      broken: [robinhood(brokenRun).send, robinhood(brokenRun).parked, rowsAfter - rowsBefore],
+      alone: [robinhood(aloneRun).send, robinhood(aloneRun).parked, idsOf(aloneRaw), parkedLast],
+    }, {
+      refused: ["sent", 1, [{ id: 10, refund: true }], [{ deposit_id: 9, reason: "payout_failed", released: 0 }]],
+      released: [1, [{ id: 9, refund: true }]],
+      broken: ["reverted", 0, 0],
+      alone: ["sent", 1, [{ id: 11, refund: true }], [{ deposit_id: 9, reason: "payout_failed", released: 1 }, { deposit_id: 12, reason: "reverted_alone", released: 0 }]],
+    }))
+  })
+
+  it.effect('At most twenty deposits go in one transaction, the native ceilings stop signing and a differing stored row stops the network (spec/fees/submissionFeeSends.md, "The resolver signs only resolveMany for due deposits on the published contract, inside its native ceilings")', () => effect {
+    const { chain } = try World
+    try nextDay()
+    for (let id = 13; id <= 33; id += 1) {
+      try deposit(id, 1, 2_000_000n)
+    }
+    const batched = try pass()
+    const batchRaw = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    chain.estimate = 200_000n
+    const perTransaction = try pass()
+    chain.estimate = 100_000n
+    const today = try provided(isoNow())
+    try write(sql`INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, reason, block_number, created_at, updated_at, finalized_at)
+      VALUES ('sfs_elsewhere_today', ${network}, 'live', ${contract}, '[{"id":99,"refund":true}]', ${resolver}, ${toHex(7n, { size: 32 })}, '0x02deadbeef', 9999, '900000000000', 'finalized', NULL, 1, ${today}, ${today}, ${today})`)
+    const perDay = try pass()
+    try nextDay()
+    const nextDayRun = try pass()
+    const lastRaw = chain.sent[chain.sent.length - 1]
+    try mine(true)
+    try nextDay()
+    try deposit(34, 1, 2_000_000n, { chainAmount: 3_000_000n })
+    const differing = try pass()
+    try Effect.try(() => assert.deepStrictEqual({
+      batched: [sendOf(batched), idsOf(batchRaw).map((entry) => entry.id)],
+      ceilings: [sendOf(perTransaction), sendOf(perDay), sendOf(nextDayRun), idsOf(lastRaw)],
+      differing: [sendOf(differing), (entryOf(differing, network) as NetworkFailure).reason.split("/")[0]],
+    }, {
+      batched: ["sent", Array.from({ length: 20 }, (_, index) => 13 + index)],
+      ceilings: ["gas_budget", "gas_budget", "sent", [{ id: 33, refund: true }]],
+      differing: ["submission_fee_operation_failed", "send"],
+    }))
+  })
+
+  it.effect('Off does nothing, dry_run signs nothing and records once, and live without the key refuses (spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key")', () => effect {
+    const world = try World
+    const { chain } = world
+    const deposit34 = chain.deposits.get(34) ?? none
+    chain.deposits.set(34, { ...deposit34, amount: 2_000_000n })
+    const sentBefore = chain.sent.length
+    const rowsBefore = (try sends()).length
+    const off = try provided(depositPass({ SUBMISSION_FEE_MODE: "off", SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "not a number" }, feeNetworks))
+    const rowsOff = (try sends()).length
+    const dry = try pass("dry_run")
+    const dryAgain = try pass("dry_run")
+    const dryRows = (try sends()).slice(rowsBefore)
+    const keyless = try Effect.flip(pass("live", false))
+    try Effect.try(() => assert.deepStrictEqual({
+      off: [off, rowsOff - rowsBefore],
+      dry: [sendOf(dry), sendOf(dryAgain), dryRows.map((row) => [row.mode, row.state, row.deposits, row.raw]), chain.sent.length - sentBefore],
+      keyless: [keyless._tag, "issue" in keyless ? keyless.issue : undefined],
+    }, {
+      off: [{ status: "off" }, 0],
+      dry: ["recorded", "unchanged", [["dry_run", "recorded", [{ id: 34, refund: true }], null]], 0],
+      keyless: ["SubmissionFeeConfigInvalid", "live mode needs SUBMISSION_FEE_RESOLVER_KEY"],
+    }))
+  })
+})

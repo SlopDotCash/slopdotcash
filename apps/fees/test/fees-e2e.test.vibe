@@ -1,0 +1,99 @@
+import { assert, layer } from "@effect/vitest"
+import { database, bundle, migrate, scheduled, workerOptions } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Miniflare, Response } from "miniflare"
+
+service Bundled { readonly script: string }
+
+error MigrationFailed { file: string }
+
+const BundledLive = Layer.effect(Bundled, effect {
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "submissionFee" }))
+  return { script }
+})
+
+interface Started {
+  readonly mf: Miniflare
+  readonly logs: ReadonlyArray<string>
+  readonly hosts: ReadonlyArray<string>
+  readonly outboundErrors: ReadonlyArray<string>
+}
+
+const limits = { SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "200000000000000", SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "2000000000000000" }
+
+const unavailableRpc = { RPC_URL_SUBMISSION_FEE_BASE: "https://base.rpc.test", RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://robinhood.rpc.test" }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function started(vars: Readonly<Record<string, string>>) {
+  const { script } = try Bundled
+  const logs: string[] = []
+  const hosts: string[] = []
+  const outboundErrors: string[] = []
+  const mf = try acquireRelease(sync(() => new Miniflare({ ...workerOptions({
+    script,
+    d1: { SUBMISSION_FEE_DB: "slop-private" },
+    vars,
+    outbound: (request) => {
+      hosts.push(new URL(request.url).host)
+      return new Response("unavailable", { status: 503 })
+    },
+  }, outboundErrors), handleStructuredLogs: (log) => { logs.push(String(log.message)) } })), (made) => promise(() => made.dispose()))
+  const applied = try promise(() => migrate(mf, "SUBMISSION_FEE_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return { mf, logs, hosts, outboundErrors } satisfies Started
+}
+
+effect function page(worker: Started, path: string) {
+  return try promise(async () => {
+    const response = await worker.mf.dispatchFetch(`https://slop-submission-fee.test${path}`)
+    return [response.status, await response.text()]
+  })
+}
+
+effect function sends(worker: Started) {
+  const db = try promise(() => database(worker.mf, "SUBMISSION_FEE_DB"))
+  const found = try promise(() => db.prepare("SELECT count(*) AS count FROM submission_fee_sends").first<{ readonly count: number }>())
+  return found?.count ?? 0
+}
+
+function events(worker: Started) {
+  return worker.logs.filter((line) => line.startsWith('{"event":"submission_fee_'))
+}
+
+effect function logged(worker: Started, expected: number) {
+  for (let attempt = 0; attempt < 100 && events(worker).length < expected; attempt++) try sleep("20 millis")
+  return events(worker)
+}
+
+layer(BundledLive, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The submission fee Worker answers its two schedules, refuses any other, and fails a run whose network failed (spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges")', () => Effect.scoped(effect {
+    const off = try started({ SUBMISSION_FEE_MODE: "off", SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "not a number" })
+    const offPage = try page(off, "/api/v1/submission-fee/rate")
+    const offDeposits = try promise(() => scheduled(off.mf, "*/5 * * * *"))
+    const offRates = try promise(() => scheduled(off.mf, "7 * * * *"))
+    const unknown = try promise(() => scheduled(off.mf, "* * * * *"))
+    const offLogs = try logged(off, 2)
+
+    const dry = try started({ SUBMISSION_FEE_MODE: "dry_run", ...unavailableRpc, ...limits })
+    const failed = try promise(() => scheduled(dry.mf, "*/5 * * * *"))
+    const dryLogs = try logged(dry, 2)
+
+    try same({
+      offPage,
+      off: [offDeposits.outcome, offRates.outcome, offLogs, off.hosts.length],
+      unknown: unknown.outcome,
+      dry: [failed.outcome, dryLogs.filter((line) => line.startsWith('{"event":"submission_fee_run","cron":"*/5 * * * *","result":{"status":"ran","mode":"dry_run"')).length, dryLogs.filter((line) => line.startsWith('{"event":"submission_fee_error"')), [...new Set(dry.hosts)].sort(), try sends(dry)],
+      unexpected: [off.outboundErrors, dry.outboundErrors],
+    }, {
+      offPage: [404, "Not found"],
+      off: ["ok", "ok", ['{"event":"submission_fee_run","cron":"*/5 * * * *","result":{"status":"off"}}', '{"event":"submission_fee_run","cron":"7 * * * *","result":null}'], 0],
+      unknown: "exception",
+      dry: ["exception", 1, ['{"event":"submission_fee_error","cron":"*/5 * * * *","error":"submission_fee_operation_failed"}'], ["base.rpc.test", "robinhood.rpc.test"], 0],
+      unexpected: [[], []],
+    })
+  }))
+})

@@ -1,7 +1,7 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"
 import { github } from "@repo/platform/github"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectSnapshot, collectedTargets, fetchRegistry, graphqlClient } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectorRenewal, collectSnapshot, collectedTargets, fetchRegistry, graphqlClient } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
@@ -45,8 +45,10 @@ effect function written(args: ReadonlyArray<string>) {
   const graph = graphqlClient({ token })
   const reads = Layer.mergeAll(rest, graph, acceptanceWith(collectRetainedMergeReferences))
   const inputs = Layer.provide(collectValueInputs({ repositories, ...(checkpoint === undefined ? {} : { discussionDeadlineMs: checkpoint.deadlineMs }) }), reads)
-  provide Layer.mergeAll(rest, graph, inputs) {
-    try collectSnapshot({ ...options, ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }) })
+  provide collectorRenewal() {
+    provide Layer.mergeAll(rest, graph, inputs) {
+      try collectSnapshot({ ...options, ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }) })
+    }
   }
 }
 

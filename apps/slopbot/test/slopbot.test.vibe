@@ -1,0 +1,83 @@
+// spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"
+import { readFileSync } from "node:fs"
+import { assert, layer } from "@effect/vitest"
+import { Area, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { maxRetries } from "../src/jobs/retry.vibe"
+import { journeyBuild } from "./support/journey.vibe"
+
+const Database = Schema.Struct({ binding: Schema.String, database_name: Schema.String })
+
+const Wrangler = Schema.Struct({
+  name: Schema.String,
+  main: Schema.String,
+  triggers: Schema.optional(Schema.Struct({ crons: Schema.Array(Schema.String) })),
+  vars: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  d1_databases: Schema.Array(Database),
+})
+
+function wrangler(file: string) {
+  return Schema.decodeUnknownSync(Wrangler)(JSON.parse(readFileSync(new URL(`../wrangler/${file}`, import.meta.url), "utf8")))
+}
+
+const production = wrangler("slopbot.production.jsonc")
+const staging = wrangler("slopbot.staging.jsonc")
+const stagingText = readFileSync(new URL("../wrangler/slopbot.staging.jsonc", import.meta.url), "utf8")
+const github = githubFake()
+
+function databases(config: typeof Wrangler.Type) {
+  return Object.fromEntries(config.d1_databases.map((database) => [database.binding, database.database_name]))
+}
+
+const Production = areaLayer({
+  root: journeyBuild.root,
+  entry: "slopbot",
+  d1: databases(production),
+  vars: {
+    ...production.vars,
+    SLOPBOT_APP_ID: github.app.id,
+    SLOPBOT_APP_PRIVATE_KEY: github.app.privateKeyPem,
+    SLOPBOT_APP_USER_ID: "424242",
+    SLOPBOT_WEBHOOK_SECRET: "bundle-webhook-secret",
+  },
+  services: {
+    SLOP_NOTIFY: () => new Response(null, { status: 202 }),
+    VALUE_MERGE_VERIFIER: () => new Response(null, { status: 404 }),
+  },
+  queues: {
+    producers: { SLOPBOT_QUEUE: "slopbot-jobs" },
+    consumers: { "slopbot-jobs": { maxRetries, deadLetterQueue: "slopbot-jobs-dlq" }, "slopbot-jobs-dlq": { maxRetries: 0 } },
+  },
+  internet: internet({ github: github.handler }),
+})
+
+layer(Production, { excludeTestServices: true, timeout: "480 seconds" })((it) => {
+  it.effect('The built production Worker answers health and runs exactly the crons both wrangler files declare, and staging names no production resource (spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+    const area = try Area
+    const health = try area.get("/health")
+    const declared = production.triggers?.crons ?? []
+    const ran: Array<readonly [string, string]> = []
+    for (const cron of declared) ran.push([cron, (try area.scheduled(cron)).outcome])
+    const unknown = (try area.scheduled("0 0 * * *")).outcome
+    assert.deepStrictEqual({
+      health: [health.status, health.body],
+      production: { name: production.name, main: production.main, crons: declared, databases: databases(production) },
+      ran,
+      unknown,
+      staging: {
+        name: staging.name,
+        main: staging.main,
+        crons: staging.triggers?.crons ?? [],
+        databases: databases(staging),
+        production: ["slop-private", "slop-slopbot", "slopbot-jobs", "slop-notify", "1b453124-2709-45af-8389-151a8105c461"].filter((resource) => stagingText.includes(resource)),
+      },
+    }, {
+      health: [200, { service: "slopbot", ok: true }],
+      production: { name: "slop-slopbot", main: "../dist/slopbot.js", crons: ["*/5 * * * *"], databases: { SLOPBOT_DB: "slop-private" } },
+      ran: [["*/5 * * * *", "ok"]],
+      unknown: "exception",
+      staging: { name: "slop-repository-access-staging", main: "../dist/repositoryAccess.js", crons: [], databases: { SLOPBOT_DB: "slop-staging" }, production: [] },
+    })
+  })
+})

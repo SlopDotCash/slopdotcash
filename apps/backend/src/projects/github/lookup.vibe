@@ -322,7 +322,7 @@ export effect function readIntegrationBranchAuthority(identity: Identity, branch
   const node = try repositoryNode(identity, integrationBranchAuthorityQuery, { qualifiedName: `refs/heads/${branch}`, expression: `${commit}:.github/slop-project.json` })
   const ref = record(node.ref)
   const target = record(ref?.target)
-  if (ref?.name !== branch || ref.prefix !== "refs/heads/" || target?.__typename !== "Commit" || target.oid !== commit) throw refusal({ status: 409, error: "branch_head_changed", message: "The GitHub branch moved. Reload and verify its current head." })
+  if (ref?.name !== branch || ref.prefix !== "refs/heads/" || target?.__typename !== "Commit" || target.oid !== commit) throw refusal(putProjectsById.branchHeadChanged)
   const blob = record(node.object)
   const text = blob?.text
   const byteSize = blob?.byteSize

@@ -1,11 +1,11 @@
 import { workerBuild } from "@repo/platform/vite";
 import { defineConfig } from "vite";
 
-// The payment attester (release service PaymentAttesters, `dist/attester.js`) and the payments Worker have no entry
-// yet, so the release refuses the attesters' publication for the missing bundle rather than build one.
 export default defineConfig(
   workerBuild({
     workers: {
+      attester: "src/workers/attester.vibe",
+      payments: "src/workers/payments.vibe",
       referralAccrual: "src/workers/referralAccrual.vibe",
       keeper: "src/workers/keeper.vibe",
     },

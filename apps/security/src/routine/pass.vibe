@@ -5,6 +5,7 @@ import { routineClockPending } from "../../gen/security__cases.effect.vibe"
 import type { Event, Observation, Reading } from "../../gen/security__routineDecisions.ts"
 import { earlierCases, failuresNow, maxUnavailableAttempts, readable, screeningWaitMs, unavailableRetryMs, withoutCalls } from "../../gen/security__routineDecisions.effect.vibe"
 import { type MissingEvidence, type RoutineProposal, routineMissingEvidence, routinePromptRevision } from "../analysis/prompts.ts"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { routineCalls } from "./calls.vibe"
 import { routineProofNextAction } from "./reasons.ts"
 import { type DecisionFacts, type Loaded, type Rank, recorded, routineAt } from "./store.vibe"
@@ -36,6 +37,7 @@ interface Tally {
 interface Planned {
   readonly event: Event
   readonly facts: Omit<DecisionFacts, "runId">
+  readonly proofFile: boolean
 }
 
 schema RunId { id: number }
@@ -51,7 +53,7 @@ const unknownRank: Rank = { lossPlausible: null, severity: null, proofPresent: n
 const clockRank: Rank = { lossPlausible: false, severity: null, proofPresent: false }
 
 function plannedWithout(found: Observation, rank: Rank, duplicateOf: string | null = null): Planned {
-  return { event: { type: "decideReport", found }, facts: { duplicateOf, exclusionLine: null, missing: [], rank, calls: [], promptRevision: routinePromptRevision } }
+  return { event: { type: "decideReport", found }, facts: { duplicateOf, exclusionLine: null, missing: [], rank, calls: [], promptRevision: routinePromptRevision }, proofFile: false }
 }
 
 effect function leased(mode: ActiveMode, source: RoutineSource, nowMs: number, limits: RoutineLimits) {
@@ -71,6 +73,7 @@ effect function candidates(mode: ActiveMode, nowMs: number, limit: number) {
       AND appeal_state = 'none'
       AND award_state NOT IN ('reserved', 'approved')
       AND related_party_review <> 'pending'
+      AND NOT ${depositHeldOn("security_cases.id")}
       AND NOT EXISTS (SELECT 1 FROM security_case_events e WHERE e.case_id = security_cases.id AND e.kind IN ('appeal', 'decide-appeal'))
       AND (receipt_state = 'received'
         OR (receipt_state = 'needs-information' AND next_action = ${routineProofNextAction} AND (next_action_due_at <= ${now}
@@ -94,6 +97,7 @@ effect function earlierSameDigest(caseId: string, digest: string) {
       AND (c.received_at < r.received_at OR (c.received_at = r.received_at AND c.rowid < r.rowid))
       AND (c.receipt_evidence_digest = ${digest} OR EXISTS (SELECT 1 FROM security_submission_intake i JOIN security_intake_reports x ON x.submission_id = i.submission_id WHERE i.case_id = c.id AND x.content_sha256 = ${digest}))
       AND NOT EXISTS (SELECT 1 FROM security_submissions s WHERE s.case_id = c.id AND s.state IN ('failed', 'abandoned'))
+      AND NOT ${depositHeldOn("c.id")}
     ORDER BY c.received_at ASC, c.rowid ASC LIMIT 1`))?.id
 }
 
@@ -116,11 +120,11 @@ function missingOf(first: RoutineProposal, second: RoutineProposal): ReadonlyArr
   return routineMissingEvidence.filter((word) => first.missing.includes(word) || second.missing.includes(word))
 }
 
-function rankOf(first: RoutineProposal, second: RoutineProposal): Rank {
+function rankOf(first: RoutineProposal, second: RoutineProposal, proofFile: boolean): Rank {
   return {
     lossPlausible: first.lossOfFundsPlausible || second.lossOfFundsPlausible,
     severity: severityRanks[first.severity] >= severityRanks[second.severity] ? first.severity : second.severity,
-    proofPresent: first.proof === "present" && second.proof === "present",
+    proofPresent: proofFile || (first.proof === "present" && second.proof === "present"),
   }
 }
 
@@ -134,11 +138,12 @@ effect function plannedFor(loaded: Loaded, allowModel: boolean, timeoutMs: numbe
   if (failuresNow(routine) >= maxUnavailableAttempts) return plannedWithout({ tag: "NoCallNeeded" }, try analysisRank(caseId))
   if (!allowModel) return undefined
   const answer = try routineCalls({ caseId, submissionId: intake.submission_id, reportVersion: intake.report_version, nowMs: routine.nowMs, timeoutMs })
-  if (answer.kind === "failed") return { event: { type: "failCalls" }, facts: { duplicateOf: null, exclusionLine: null, missing: [], rank: unknownRank, calls: answer.calls, promptRevision: routinePromptRevision } } satisfies Planned
+  if (answer.kind === "failed") return { event: { type: "failCalls" }, facts: { duplicateOf: null, exclusionLine: null, missing: [], rank: unknownRank, calls: answer.calls, promptRevision: routinePromptRevision }, proofFile: false } satisfies Planned
   const labels = labelsOf(answer.first, answer.second)
   return {
     event: { type: "decideReport", found: { tag: "Calls", first: readingOf(answer.first, labels, answer.closing), second: readingOf(answer.second, labels, answer.closing) } },
-    facts: { duplicateOf: answer.first.duplicateOfCaseId, exclusionLine: answer.first.doesNotQualifyLine, missing: missingOf(answer.first, answer.second), rank: rankOf(answer.first, answer.second), calls: answer.calls, promptRevision: routinePromptRevision },
+    facts: { duplicateOf: answer.first.duplicateOfCaseId, exclusionLine: answer.first.doesNotQualifyLine, missing: answer.proofFile ? [] : missingOf(answer.first, answer.second), rank: rankOf(answer.first, answer.second, answer.proofFile), calls: answer.calls, promptRevision: routinePromptRevision },
+    proofFile: answer.proofFile,
   } satisfies Planned
 }
 
@@ -150,7 +155,7 @@ effect function passed(runId: number, mode: ActiveMode, nowMs: number, limits: R
     const planned = try plannedFor(loaded, tally.modelLeft > 0, limits.timeoutMs)
     if (planned === undefined) continue
     if (planned.facts.calls.length > 0) tally.modelLeft -= 1
-    if (try recorded(candidate.id, mode, { revision: loaded.routine.privateCase.revision, nowMs }, planned.event, { ...planned.facts, runId })) tally.recorded += 1
+    if (try recorded(candidate.id, mode, { revision: loaded.routine.privateCase.revision, nowMs, proofFile: planned.proofFile }, planned.event, { ...planned.facts, runId })) tally.recorded += 1
   }
   return tally
 }
