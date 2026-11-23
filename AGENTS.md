@@ -273,8 +273,8 @@ evidence. Info, low and medium model findings and reviewer coverage reasons the
 scanner verifies as outside the acquired revision are advisory; unreviewed
 supplied content, a missing or unexplained coverage area, a high or critical
 finding, suspected malice and scanner gaps still block. Slop's queued template
-is checked deterministically and not sent to the models; well-formed images are
-listed by digest (PRD section 8). Record the existing-project exemption
+is checked deterministically and not sent to the models; well-formed images and
+fonts are listed by digest (PRD section 8). Record the existing-project exemption
 explicitly, never as a passed scan; its project-ID scope is unchanged. Flags,
 pauses, confirmed-malicious bans and fresh-scan reinstatement requirements
 still apply.

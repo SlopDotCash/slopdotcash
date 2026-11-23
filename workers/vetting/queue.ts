@@ -61,27 +61,119 @@ export type QueueConnection = VettingConnection & {
    */
   testGitRemote?: (repository: string) => string;
 };
+/** The acquisition reads a failure can name. */
+export type AcquisitionRead =
+  | "queue"
+  | "revision"
+  | "github-identity"
+  | "template-index"
+  | "template-file";
+/**
+ * A pinned read that failed. Its label holds only the fixed read name and the
+ * HTTP status or error class, never a message, URL or body, so a retry can
+ * say which read failed without publishing source or provider text.
+ */
+export class AcquisitionReadError extends Error {
+  readonly label: string;
+  constructor(read: AcquisitionRead, detail: string) {
+    super("Pinned input unavailable");
+    this.name = "AcquisitionReadError";
+    this.label = `${read}-${detail}`;
+  }
+}
+/**
+ * The scanner's own fixed failure sentences. A retry may name one of these as
+ * a short label because Slop wrote it; any other message, which can carry
+ * source, Git or provider text, is never named.
+ */
+const FIXED_FAILURES = new Set([
+  "A review read another inventory",
+  "Acquired link bytes changed",
+  "Acquired object bytes changed",
+  "Acquired symlink target changed",
+  "Assessment is no longer pending",
+  "Blob bytes do not match the Git object",
+  "Commit pin mismatch",
+  "Conflicting template input digests",
+  "Incomplete Git object stream",
+  "Incomplete commit tree",
+  "Invalid accepted template revisions",
+  "Invalid acquired link",
+  "Invalid acquired object digest",
+  "Invalid immutable blob",
+  "Invalid immutable link blob",
+  "Invalid input path",
+  "Invalid pending queue",
+  "Invalid queued pin",
+  "Invalid source coverage",
+  "Invalid template digest",
+  "Invalid template file inventory",
+  "Manifest pin mismatch",
+  "Manifest project mismatch",
+  "Source entry is disconnected from its Git tree",
+  "Source inventory changed",
+  "Template file bytes changed",
+  "Template input digest mismatch",
+  "Template pin is stale or uncommitted",
+  "Tree bytes do not match the Git object",
+  "Unexpected Git object data",
+  "Unknown source inventory",
+  "Unknown queued input bundle",
+  "The queued input bundle names no repository",
+]);
+/**
+ * A safe label for a failed step: the named read for an acquisition read,
+ * a slug of one of the scanner's fixed sentences, or else the error class.
+ */
+export function failureLabel(error: unknown): string {
+  if (error instanceof AcquisitionReadError) return error.label;
+  if (!(error instanceof Error)) return "unknown";
+  if (FIXED_FAILURES.has(error.message))
+    return error.message
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-|-$/gu, "");
+  return error.name;
+}
 /** A pinned input of at most 1 MiB. */
-async function pinnedBytes(response: Response): Promise<Uint8Array> {
+async function pinnedBytes(
+  response: Response,
+  read: AcquisitionRead,
+): Promise<Uint8Array> {
   if (!response.ok || !response.body) {
     await response.body?.cancel();
-    throw new Error("Pinned input unavailable");
+    throw new AcquisitionReadError(
+      read,
+      response.body ? `http-${response.status}` : "no-body",
+    );
   }
   return readAcquisitionBody(response, 1024 * 1024);
+}
+/** The error class of a failed request, as a fixed label. */
+function requestFailure(read: AcquisitionRead, error: unknown) {
+  return new AcquisitionReadError(
+    read,
+    `request-${error instanceof Error && /^[A-Za-z]{1,40}$/u.test(error.name) ? error.name : "unknown"}`,
+  );
 }
 async function bytes(
   fetcher: typeof fetch,
   url: string,
+  read: AcquisitionRead,
   headers?: HeadersInit,
 ): Promise<Uint8Array> {
-  return pinnedBytes(
-    await fetcher(url, {
+  let response: Response;
+  try {
+    response = await fetcher(url, {
       method: "GET",
       headers,
       redirect: "error",
       signal: AbortSignal.timeout(15_000),
-    }),
-  );
+    });
+  } catch (error) {
+    throw requestFailure(read, error);
+  }
+  return pinnedBytes(response, read);
 }
 const json = (bytes: Uint8Array) =>
   object(JSON.parse(new TextDecoder().decode(bytes)));
@@ -96,6 +188,7 @@ export async function readPendingAssessments(
         path: "/api/v1/vetting/requests",
         timeoutMs: 15_000,
       }),
+      "queue",
     ),
   );
   if (
@@ -186,6 +279,7 @@ export async function acquireQueuedAssessment(
     await bytes(
       fetcher,
       `${origin}/api/v1/project-revisions/${assessment.projectId}/${assessment.revision}`,
+      "revision",
     ),
   );
   if (
@@ -227,15 +321,20 @@ export async function acquireQueuedAssessment(
     /^\/|\/$/gu,
     "",
   );
-  const identityResponse = await fetcher(
-    `https://api.github.com/repos/${currentPath}`,
-    {
-      method: "GET",
-      headers: githubHeaders(undefined, "slop-vetting-acquisition"),
-      redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
-    },
-  );
+  let identityResponse: Response;
+  try {
+    identityResponse = await fetcher(
+      `https://api.github.com/repos/${currentPath}`,
+      {
+        method: "GET",
+        headers: githubHeaders(undefined, "slop-vetting-acquisition"),
+        redirect: "manual",
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+  } catch (error) {
+    throw requestFailure("github-identity", error);
+  }
   // GitHub answers 404 for a deleted, hidden or private repository: the
   // pinned public source cannot be acquired, so a retry of the same pin
   // cannot pass. Rate limits and outages stay retryable.
@@ -250,7 +349,9 @@ export async function acquireQueuedAssessment(
     await identityResponse.body?.cancel();
     throw refusal(new AcquisitionRefusal("Repository moved on GitHub"));
   }
-  const repositoryIdentity = json(await pinnedBytes(identityResponse));
+  const repositoryIdentity = json(
+    await pinnedBytes(identityResponse, "github-identity"),
+  );
   if (
     !Number.isSafeInteger(repositoryIdentity.id) ||
     String(repositoryIdentity.id) !== expectedIdentity.githubId ||
@@ -263,7 +364,11 @@ export async function acquireQueuedAssessment(
       new AcquisitionRefusal("Immutable repository identity mismatch"),
     );
   const index = json(
-    await bytes(fetcher, `${origin}/skill-templates/index.json`),
+    await bytes(
+      fetcher,
+      `${origin}/skill-templates/index.json`,
+      "template-index",
+    ),
   );
   if (
     index.schemaVersion !== "1" ||
@@ -355,7 +460,7 @@ export async function acquireQueuedAssessment(
     ];
     let templateBytes = 0;
     for (const source of sources) {
-      const content = await bytes(fetcher, source.url);
+      const content = await bytes(fetcher, source.url, "template-file");
       templateBytes += content.byteLength;
       if (templateBytes > 32 * 1024 * 1024)
         throw new AcquisitionRefusal("Template acquisition size limit", {

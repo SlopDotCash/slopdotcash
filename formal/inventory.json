@@ -194,9 +194,9 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "48fbd7948eac50446fb35f1391b33a24a63dab5a244f2cbb307ae4db2996f87b",
+      "sha256": "f23a3e2a61929b034c34c3fc97e90a19f347a43fa75486b41efa69eb5881fb4e",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 138],
+      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 164, 165, 168, 173],
       "review": "mapped-abstraction"
     },
     {
@@ -1110,7 +1110,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "ee74ea6f1eec6acf032d6e9ec2db93b8fb5d545a22f58b13d2ec6bda4005686c",
+      "sha256": "ab1da36a6eb01434b52fcd6a7d8136d86857b51e8818935e9043b875ede36a0f",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -1129,12 +1129,12 @@
       ],
       "candidateLines": [
         315, 316, 367, 369, 376, 438, 446, 448, 521, 592, 660, 672, 694, 696,
-        704, 708, 724, 790, 943, 969, 1117, 1137, 1170, 1193, 1209, 1342, 1384,
-        1385, 1387, 1389, 1409, 1511, 1541, 1560, 1659, 1660, 1675, 1690, 1715,
-        1786, 1790, 1835, 1860, 2043, 2086, 2211, 2579, 2605, 2630, 2684, 2851,
-        2854, 2855, 2894, 2903, 2923, 2969, 3020, 3021, 3023, 3066, 3128, 3157,
-        3163, 3169, 3199, 3236, 3247, 3265, 3271, 3355, 3363, 3365, 3380, 3476,
-        3485, 3491, 3503, 3506, 3507, 3535, 3539, 3542, 3579
+        704, 708, 724, 790, 943, 985, 1130, 1150, 1183, 1206, 1222, 1355, 1397,
+        1398, 1400, 1402, 1422, 1524, 1554, 1573, 1672, 1673, 1688, 1703, 1728,
+        1799, 1803, 1848, 1873, 2056, 2099, 2224, 2592, 2618, 2643, 2697, 2864,
+        2867, 2868, 2907, 2916, 2936, 2982, 3033, 3034, 3036, 3079, 3141, 3170,
+        3176, 3182, 3212, 3249, 3260, 3278, 3284, 3368, 3376, 3378, 3393, 3489,
+        3498, 3504, 3516, 3519, 3520, 3548, 3552, 3555, 3592
       ],
       "review": "mapped-abstraction"
     },
@@ -1220,7 +1220,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "fa64f6f494c3ceba982d9a7c1b3bcf4c986b2301136a1ea0e1971c931806c9b8",
+      "sha256": "409987bf324f75d93538d3933716a091f20711c6ceb4d567b11ff07e8684be63",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -1235,8 +1235,8 @@
       "candidateLines": [
         82, 120, 147, 167, 172, 193, 200, 219, 226, 268, 273, 378, 407, 414,
         503, 516, 560, 570, 585, 592, 620, 631, 647, 649, 675, 709, 715, 727,
-        729, 732, 733, 908, 926, 937, 942, 947, 1023, 1294, 1373, 1388, 1428,
-        1468, 1474, 1488, 1493, 1505, 1510, 1515
+        729, 732, 733, 908, 926, 937, 942, 947, 1023, 1300, 1379, 1394, 1434,
+        1474, 1480, 1494, 1499, 1511, 1516, 1521
       ],
       "review": "mapped-abstraction"
     },
@@ -4422,7 +4422,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "ac27ac1532ffa12b5ec07010a400592abeadcf8afc419c6c6167874be56822c2",
+      "sha256": "24780b1f9a3f3bf4e904f5fb386a6b411efe06a9d96ccf607739de6bd49cf4b6",
       "models": [
         "formal/models/points/accepted_implementation_duplicates.qnt",
         "formal/models/points/commit_line_cache.qnt",
@@ -4437,22 +4437,22 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        43, 227, 238, 247, 338, 350, 352, 355, 584, 672, 693, 729, 760, 825,
-        872, 900, 991, 1024, 1033, 1045, 1081, 1178, 1374, 1609, 1671, 1679,
-        1737, 1790, 1793, 1986, 1995, 2000, 2007, 2090, 2091, 2257, 2258, 2341,
-        2374, 2402, 2404, 2408, 2418, 2420, 2432, 2442, 2452, 2477, 2480, 2481,
-        2484, 2486, 2511, 2563, 2868, 2871, 3171, 3291, 3412, 3425, 3436, 3437,
-        3624, 3625, 3816, 3832, 3844, 3851, 3877, 3887, 3891, 3895, 3899, 3954,
-        3973, 4000, 4017, 4051, 4052, 4054, 4070, 4087, 4088, 4089, 4098, 4103,
-        4283, 4641, 4663, 4672, 4722, 4757, 4763, 4770, 4839, 4927, 5113, 5242,
-        5440, 5599, 5988, 5998, 6000, 6013, 6046, 6048, 6049, 6053, 6057, 6113,
-        6178, 6231, 6234, 6323, 6371, 6451, 6461, 6468
+        43, 229, 240, 249, 340, 352, 354, 357, 586, 674, 695, 731, 762, 827,
+        874, 902, 993, 1026, 1035, 1047, 1083, 1180, 1376, 1611, 1673, 1681,
+        1739, 1792, 1795, 1988, 1997, 2002, 2009, 2092, 2093, 2259, 2260, 2343,
+        2376, 2404, 2406, 2410, 2420, 2422, 2434, 2444, 2454, 2479, 2482, 2483,
+        2486, 2488, 2513, 2565, 2870, 2873, 3173, 3293, 3414, 3427, 3438, 3439,
+        3626, 3627, 3818, 3834, 3846, 3853, 3879, 3889, 3893, 3897, 3901, 3956,
+        3975, 4002, 4019, 4053, 4054, 4056, 4072, 4089, 4090, 4091, 4100, 4105,
+        4285, 4643, 4665, 4674, 4724, 4759, 4765, 4772, 4841, 4929, 5115, 5246,
+        5492, 5660, 6049, 6059, 6061, 6074, 6107, 6109, 6110, 6114, 6118, 6174,
+        6240, 6293, 6296, 6385, 6433, 6513, 6523, 6530
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "de8de838bd63c98a212efc82162b649c14872eb7ae7cabec6b40cd4eef654bff",
+      "sha256": "13d2d8362433229755517b83bd67e6a7d713ab5329c2e1b421271542c8aeb8e7",
       "models": [
         "formal/models/api/api_protected_point_months.qnt",
         "formal/models/points/historical_implementation_allocation.qnt",
@@ -4463,8 +4463,9 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 45, 58, 94, 137, 159, 162, 175, 182, 191, 199, 207, 289, 321, 327,
-        335, 338, 339, 340, 341, 342, 432, 977, 984, 985, 987, 992, 996, 1000
+        2, 45, 58, 94, 146, 171, 174, 187, 194, 206, 214, 222, 322, 354, 360,
+        368, 371, 372, 373, 374, 375, 465, 1014, 1021, 1022, 1024, 1029, 1033,
+        1037
       ],
       "review": "mapped-abstraction"
     },
@@ -4543,10 +4544,10 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "sha256": "12cbdaef91ed34fb2920374514fad3963e5e243cbf44509eecb0063d138c158c",
+      "sha256": "3ecf7a0f2b33e50e4711c241f685daec376b0823c3abc79327570f80bcddeb40",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
       "candidateLines": [
-        74, 197, 385, 447, 493, 499, 513, 531, 541, 566, 591, 784, 792
+        78, 201, 389, 451, 497, 503, 517, 536, 549, 572, 598, 787, 796
       ],
       "review": "mapped-abstraction"
     },
@@ -4576,9 +4577,9 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "1ff730046cf774bf4b07b10bd3f04d90a89d661c5c8015663c32968ccee784fd",
+      "sha256": "3b576c87c5a33e57a04e8fa55a177649f4d141cba15d120660b83c35df0026e5",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [59, 86, 122, 123, 126, 127, 206],
+      "candidateLines": [64, 92, 110, 151, 157, 158, 160, 161, 248],
       "review": "mapped-abstraction"
     },
     {
@@ -5441,15 +5442,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "b03541227bc7e21267d57abb3dd6d3abf6517e95e241ac0a49988d9ab88653ac",
+      "sha256": "fa0be38b82a098d1f1c27233ad84a07c2ffc9071096c54f628d18c80fe1aaa94",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/historical_net_outcome_retirement.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 247, 248, 249, 250, 252, 257, 300, 315, 316, 322, 323, 458, 1182,
-        1411, 1431, 1642, 1660, 1667, 1794, 1889, 2060
+        3, 248, 249, 250, 251, 253, 258, 301, 316, 317, 323, 324, 459, 1183,
+        1412, 1432, 1643, 1661, 1668, 1796, 1891, 2062
       ],
       "review": "mapped-abstraction"
     },
@@ -9700,7 +9701,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "b7e9765eacce480d4bfb9c0b17b77ad2c5c79e66edaa4579bf80ac06673a22f2",
+      "sha256": "24deaa5b5d0edacbf54667dfa54de7f10b68d6c5b1b68565b3a149c70ebc9e40",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9716,13 +9717,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 170, 285, 300, 309, 319, 322, 514, 668, 847, 876, 886, 1021, 1026,
-        1031, 1033, 1036, 1038, 1039, 1050, 1053, 1055, 1112, 1113, 1115, 1116,
-        1132, 1138, 1189, 1217, 1218, 1226, 1231, 1332, 1334, 1354, 1373, 1456,
-        1461, 1619, 1741, 1754, 1755, 1792, 1809, 1812, 1813, 1976, 1981, 2043,
-        2056, 2061, 2068, 2069, 2073, 2074, 2082, 2098, 2155, 2308, 2368, 2374,
-        2385, 2411, 2441, 2466, 2474, 2497, 2502, 2578, 2579, 2629, 2664, 2715,
-        2860, 3131, 3206, 3393, 3404, 3412, 3510, 3511, 3551, 3601, 3615, 3631
+        3, 170, 285, 300, 309, 319, 322, 521, 675, 854, 883, 893, 1028, 1033,
+        1038, 1040, 1043, 1045, 1046, 1057, 1060, 1062, 1119, 1120, 1122, 1123,
+        1139, 1145, 1196, 1224, 1225, 1233, 1238, 1339, 1341, 1361, 1380, 1463,
+        1468, 1626, 1748, 1761, 1762, 1799, 1816, 1819, 1820, 1983, 1988, 2050,
+        2063, 2068, 2075, 2076, 2080, 2081, 2089, 2105, 2162, 2315, 2375, 2381,
+        2392, 2418, 2448, 2473, 2481, 2504, 2509, 2585, 2586, 2636, 2671, 2722,
+        2867, 3138, 3213, 3400, 3411, 3419, 3517, 3518, 3558, 3608, 3622, 3638
       ],
       "review": "mapped-abstraction"
     },
@@ -10623,7 +10624,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "c83a5f5cdae5c05983fcfe736a9b88aef812736bbf47eec623b44fa13130896e",
+      "sha256": "0b52ab383d3f47117316d5101e4d12b83b4827a30fbee4387461255c500636a9",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -10632,8 +10633,8 @@
         "formal/models/vetting/vetting_scan_clearance_rule.qnt"
       ],
       "candidateLines": [
-        256, 264, 265, 1988, 1989, 2025, 2026, 2211, 2274, 2280, 2283, 2303,
-        2370, 2386, 2445
+        256, 264, 265, 2106, 2107, 2143, 2144, 2329, 2392, 2398, 2401, 2421,
+        2488, 2504, 2563
       ],
       "review": "mapped-abstraction"
     },
@@ -10667,9 +10668,9 @@
     },
     {
       "path": "workers/vetting/local-install-helpers.ts",
-      "sha256": "7f19afa97bbf102f2522fc89f1b3637e14323c2796ed90ef9516b3847507922c",
+      "sha256": "d6dd7da1bec65200dea69d5fcfb1962ae4fbe89f82fa8dacbae850ccd4d586a6",
       "models": ["formal/models/vetting/vetting_local_helpers.qnt"],
-      "candidateLines": [194],
+      "candidateLines": [327],
       "review": "mapped-abstraction"
     },
     {
@@ -10698,12 +10699,15 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "5041091e4cf95ba2f996844d430862856b6f74fefe9336405ae4eb5c295bfd92",
+      "sha256": "1c00c804166f679cf9db77aaf6ee7b0756fd75382e8eda2bd642ead0c8d2f4c3",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "candidateLines": [2, 106, 180, 223, 240, 242, 249, 370, 386, 405, 417],
+      "candidateLines": [
+        2, 73, 85, 94, 106, 147, 199, 273, 317, 339, 341, 348, 475, 491, 510,
+        522
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -10732,16 +10736,16 @@
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "f517275eb9be4075947bee5b80268cfe3dff81cd139bf0e86d5abdd8ac7b624c",
+      "sha256": "c7bc4d9d48d0daaf08c8ca4391b3b67dbadfd68144de91e3011935fa2d5b8535",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 139, 152, 153, 173, 198, 202, 209, 215, 224, 275, 482, 511,
-        519, 536, 542, 557, 581, 583, 609, 610, 661, 663, 667, 747, 751, 755,
-        759, 764, 827
+        4, 11, 13, 140, 153, 154, 174, 199, 200, 205, 212, 218, 227, 278, 485,
+        514, 522, 539, 545, 560, 584, 586, 612, 613, 664, 666, 670, 750, 754,
+        758, 762, 767, 830
       ],
       "review": "mapped-abstraction"
     },
@@ -15822,7 +15826,7 @@
     },
     {
       "path": "formal/models/points/historical_assessment_audit.qnt",
-      "sha256": "66e62ec40a56e9f6a483f6d91896b14e2620cc29a8840f9c5a5d025cfc40573b",
+      "sha256": "8ee5ee63fd78e27d3f67f5d657bec353ce2ad7effc837de37b38b5772bbeb9c4",
       "sources": [
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/historical-assessment-catalog.ts",
@@ -15842,6 +15846,9 @@
         "changedReviewIdentityRefusesClosureReviewTest",
         "changedScopeCannotEnterAuditTest",
         "closureImplementationCannotBeStagedTest",
+        "emptyLegacyClosureWithFormalReviewRefusesReceiptTest",
+        "emptyLegacyClosureWithPriorAwardRefusesReceiptTest",
+        "exactEmptyLegacyClosureDoesNotRequireValueReplayTest",
         "exactStandaloneClosureReviewCanBeStagedTest",
         "invalidRecordRemainsIncompleteTest",
         "matchedActiveRecordRequiresReplayTest",
@@ -17890,7 +17897,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_evidence.qnt",
-      "sha256": "8641b17053a6577d07b3bc955cc32d6b93ddfe1ac3b0e819425479a23be4f0f9",
+      "sha256": "7a52a9b48180a7b9038506c9bef018e0142c17e98a63288fffe55cb8b67dea3b",
       "sources": [
         "workers/slopbot/contracts.ts",
         "workers/slopbot/penalties.ts",
@@ -17904,6 +17911,8 @@
         "nonUiScreenshotsCannotCloseTest",
         "optOutCannotCloseTest",
         "screenshotsAddedBeforeCloseTest",
+        "targetGuideUnavailableCannotCloseTest",
+        "targetTipMovedBeforeCloseTest",
         "unrequestedScreenshotsCannotCloseTest",
         "unsignedCannotCloseTest"
       ]
