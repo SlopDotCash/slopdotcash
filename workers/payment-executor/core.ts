@@ -2019,13 +2019,14 @@ async function cancelObsoleteStoredBinding(
     );
   // Canonical receipts win over current D1 state, including after a lost send.
   if ((await observe()).state !== "pending") return { settled: true };
-  // A binding whose broadcast was lost before a registrar rotation can never
-  // land: its bytes were signed by an authority the factory no longer
-  // recognizes, so including them can only revert, and no same-nonce
-  // cancellation can be signed for another sender's nonce. Retire the journal
-  // entry locally with a tombstone instead of failing every scheduled run on
-  // it; the contributor can bind again with fresh bytes once the signer is
-  // swapped, and the tombstone keeps the history auditable.
+  // A binding whose broadcast was lost before a registrar rotation cannot
+  // land while the current authority differs: its bytes were signed by an
+  // authority the factory no longer recognizes, so including them can only
+  // revert, and no same-nonce cancellation can be signed for another
+  // sender's nonce. Retire the journal entry locally with a tombstone
+  // instead of failing every scheduled run on it; the contributor can bind
+  // again with fresh bytes once the signer is swapped, and the tombstone
+  // keeps the history auditable.
   const sender = await recoverTransactionAddress({
     serializedTransaction: attempt.rawTransaction as `0x02${string}`,
   });

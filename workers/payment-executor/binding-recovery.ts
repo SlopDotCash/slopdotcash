@@ -124,10 +124,12 @@ export async function reconcileBindingWinner(
   const deployment = await preflightEvmDeployment(env, input);
   const raw = attempt.rawTransaction;
   const original = parseTransaction(raw);
-  // The recovered sender is checked against the reviewed pin only after a
-  // finalized receipt is read below: a receipt is an on-chain fact, so a
-  // binding mined before a rotation still reconciles after the pin names the
-  // new authority. The structural checks still throw immediately.
+  // The reconcile endpoint checks the recovered sender against the reviewed
+  // pin right after the structural checks: a rotated-away signer still needs
+  // separate review there. The scheduled path skips that check and reads a
+  // finalized receipt first: a receipt is an on-chain fact, so a binding
+  // mined before a rotation still reconciles after the pin names the new
+  // authority. The structural checks still throw immediately.
   const sender = await recoverTransactionAddress({
     serializedTransaction: raw as `0x02${string}`,
   });
@@ -141,6 +143,8 @@ export async function reconcileBindingWinner(
     typeof original.nonce !== "number" ||
     !Number.isSafeInteger(original.nonce)
   )
+    throw new Error("Stored binding identity differs");
+  if (!allowMissingReceipt && !same(sender, deployment.identityAuthority))
     throw new Error("Stored binding identity differs");
   decodeFunctionData({ abi: storedBindingAbi, data: original.data });
   // A proved legacy winner can be observed without granting it a new budget.
@@ -212,14 +216,15 @@ export async function reconcileBindingWinner(
           : "original_reverted",
     };
   } else {
-    // No finalized receipt for the original yet. Only now is the recovered
-    // sender checked against the reviewed pin: when the registrar has rotated
-    // the authority and the operator has updated the pin, the old signer
-    // differs, and throwing here would wedge the scheduled run on this key
-    // before the caller can retire bytes that can never land. The scheduled
-    // path (allowMissingReceipt) therefore reports pending and lets the
-    // caller run its rotated-authority retirement; the reconcile endpoint
-    // still throws, as before.
+    // No finalized receipt for the original yet. The scheduled path reaches
+    // this branch only because its sender check above was skipped: when the
+    // registrar has rotated the authority and the operator has updated the
+    // pin, the old signer differs, and throwing here would wedge the
+    // scheduled run on this key before the caller can retire bytes that
+    // cannot land while the current authority differs. The scheduled path
+    // therefore reports pending and lets the caller run its rotated-authority
+    // retirement; the reconcile endpoint already threw right after the
+    // structural checks.
     if (!same(sender, deployment.identityAuthority)) {
       if (allowMissingReceipt) return { state: "pending" as const };
       throw new Error("Stored binding identity differs");

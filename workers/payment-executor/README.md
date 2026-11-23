@@ -367,7 +367,14 @@ whose signer differs from the pin ("Stored binding identity differs"). A
 `:rotated:` tombstone counts as retained consent history, exactly like a
 `:reverted:` tombstone, so the same consent may fund one new binding only
 after the old binding has been retired into its tombstone — never two live
-bindings in parallel.
+bindings in parallel. Unlike a `:reverted:` retirement, which keeps the key
+held under the one-nonce opt-ins (`bindingConsentNonceLimit: 1`,
+`BINDING_NONCE_LIMIT: 1`, or a `bindingConsentBudgetKey`) because a
+finalized revert proves the nonce was consumed on-chain, a rotated
+retirement deletes the key in every case, opt-ins included: no receipt
+exists, so no nonce was consumed and nothing needs to stay held. The
+`:rotated:` tombstone is what preserves the consent history for the next
+admission.
 
 The journal atomically archives the exact original attempt and observed proof,
 then retires only that pending entry. Repeating the same request is idempotent;

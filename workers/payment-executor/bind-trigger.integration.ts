@@ -43,6 +43,7 @@ import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
+import { reconcileBindingWinner } from "./binding-recovery";
 import type { JournalStore } from "./binding-shared";
 import { paymentStack } from "./configure.mjs";
 import {
@@ -805,6 +806,33 @@ try {
     await send(factory, "executeIdentityAuthorityRotation()", [], registrar);
     await mine(64);
     await checkRotationState(5);
+    // The recovery endpoint must still refuse a rotated-away signer even
+    // when a finalized receipt exists for the old bytes: the receipt is an
+    // on-chain fact for the scheduled path, but the endpoint keeps the
+    // reviewed pin rule. Deliver the old bytes outside the service, mine
+    // them to finality, and call reconcileBindingWinner the way the
+    // endpoint does (allowMissingReceipt is false). The scheduled run below
+    // must still retire the entry, so the delivery is reverted afterwards.
+    const endpointSnapshot = await rpc("evm_snapshot", []);
+    try {
+      await rpc("eth_sendRawTransaction", [oldAttempt.rawTransaction]);
+      await mine(64);
+      const outsideReceipt = (await rpc("eth_getTransactionReceipt", [
+        oldAttempt.transactionId,
+      ])) as { status: string };
+      assert.equal(outsideReceipt.status, "0x0");
+      await assert.rejects(
+        reconcileBindingWinner(rotatedPinEnvironment, {
+          network: "base-mainnet",
+          vault,
+          originalTransactionId: oldAttempt.transactionId,
+          winnerTransactionId: oldAttempt.transactionId,
+        }),
+        /Stored binding identity differs/,
+      );
+    } finally {
+      await rpc("evm_revert", [endpointSnapshot]);
+    }
     const sendsBeforeRotationRetry = bindingBroadcasts;
     // The broadcast was lost before the rotation, so no receipt exists and
     // the old bytes can never land as a valid binding: the first scheduled

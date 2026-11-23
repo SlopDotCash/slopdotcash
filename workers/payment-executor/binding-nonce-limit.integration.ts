@@ -51,6 +51,10 @@ const fee = "0x0000000000000000000000000000000000000fee";
 const attester = privateKeyToAccount(
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
 );
+// Anvil's public deterministic account 2; the fixture's vault owner.
+const ownerAccount = privateKeyToAccount(
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+);
 const wallet = privateKeyToAccount(`0x${"0".repeat(63)}1`);
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -1271,6 +1275,86 @@ try {
       assert.equal(current.signatures(), 1);
       assert.equal(current.broadcasts, 0);
       assert.deepEqual(await journal.get(original.key), original.value);
+    },
+  );
+  await run(
+    "rotated retirement clears the key and its tombstone admits a fresh consent binding",
+    async () => {
+      active = await fixture("137", "consent");
+      // Lose the broadcast before the rotation: no receipt exists.
+      await rpc("evm_setAutomine", [false]);
+      await bindStoredDestination(active.env, active.candidate);
+      const original = active.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      await rpc("anvil_dropTransaction", [original.value.transactionId]);
+      await rpc("evm_setAutomine", [true]);
+      assert.equal(
+        await rpc("eth_getTransactionByHash", [original.value.transactionId]),
+        null,
+      );
+      // Rotate the authority to the vault owner, as the registrar would,
+      // and update the reviewed pin to the new authority. The destination
+      // wallet cannot be the new authority: a binding may not pay out to
+      // the identity authority itself.
+      assert.equal(ownerAccount.address.toLowerCase(), owner);
+      await send(
+        factory,
+        "proposeIdentityAuthority(address)",
+        [owner],
+        registrar,
+      );
+      await send(factory, "executeIdentityAuthorityRotation()", [], registrar);
+      await mine(64);
+      assert.equal(
+        `0x${(await read(factory, "identityAuthority()")).slice(-40)}`.toLowerCase(),
+        owner,
+      );
+      const rotatedPin = JSON.parse(active.env.PAYMENT_DEPLOYMENTS);
+      rotatedPin[0].identityAuthority = owner.toLowerCase();
+      active.env.PAYMENT_DEPLOYMENTS = JSON.stringify(rotatedPin);
+      // The first scheduled run retires the entry locally: the key is
+      // deleted in every case, opt-ins included, and the :rotated:
+      // tombstone keeps the consent history for the next admission.
+      const retired = await runStoredBindings(active.env, []);
+      assert.equal(retired.failed, 0);
+      assert.equal(await active.env.JOURNAL.get(original.key), null);
+      assert.ok(
+        await active.env.JOURNAL.get(
+          `${original.key}:rotated:${original.value.transactionId}`,
+        ),
+      );
+      // Bind again with fresh bytes signed under the new authority: the
+      // :rotated: tombstone must admit the new binding instead of refusing
+      // it as missing retired history.
+      await renewConsent(active);
+      let newSignatures = 0;
+      const authorityNonce = async () =>
+        Number(BigInt(await rpc("eth_getTransactionCount", [owner, "latest"])));
+      const nonceBeforeRebind = await authorityNonce();
+      active.env.SIGNER = {
+        address: ownerAccount.address,
+        async signTransaction(input) {
+          newSignatures++;
+          return ownerAccount.signTransaction(input);
+        },
+      };
+      const rebound = await bindStoredDestination(active.env, active.candidate);
+      assert.equal(rebound.state, "submitted");
+      assert.notEqual(rebound.transactionId, original.value.transactionId);
+      assert.equal(newSignatures, 1);
+      assert.equal(active.broadcasts, 2);
+      await mine(64);
+      const rebindReceipt = (await rpc("eth_getTransactionReceipt", [
+        rebound.transactionId,
+      ])) as { status: string };
+      assert.equal(rebindReceipt.status, "0x1");
+      assert.equal(await authorityNonce(), nonceBeforeRebind + 1);
+      assert.equal(
+        (await bindStoredDestination(active.env, active.candidate)).state,
+        "current",
+      );
     },
   );
   console.log(
