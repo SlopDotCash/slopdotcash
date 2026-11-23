@@ -5828,6 +5828,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "skills/project-contributor-template/scripts/session-export.mjs",
+      "sha256": "6e18bbc562a61afb4b1fb34179da573ccc08f90eb64f086db4b060b6ed584152",
+      "models": ["formal/models/contributor/contributor_session_cleaner.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "skills/project-contributor-template/scripts/skill-authority.mjs",
       "sha256": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
       "models": [
@@ -14067,6 +14074,18 @@
         "incompleteFrontierNoPermitTest",
         "staleHeadIsExplicitDispositionTest",
         "wrongFrozenHeadRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contributor/contributor_session_cleaner.qnt",
+      "sha256": "46de0165eb7190577cda8331f4a28d1e16c5aa457a174a66fc3e20a23568fe5a",
+      "sources": [
+        "skills/project-contributor-template/scripts/session-export.mjs"
+      ],
+      "scenarios": [
+        "keptWhenLicensedTest",
+        "outsideRedactedTest",
+        "unlicensedRedactedTest"
       ]
     },
     {
