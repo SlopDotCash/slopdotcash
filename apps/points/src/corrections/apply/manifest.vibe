@@ -20,6 +20,7 @@ export schema CorrectionCommit {
   readonly deletions: number | null
   readonly firstAcceptedSourceId: string | null
   readonly files?: ReadonlyArray<CorrectionFile>
+  readonly zeroLinePaths?: "empty" | "present"
   readonly retainedCopy?: RetainedCopy
 }
 export schema CorrectionSource {

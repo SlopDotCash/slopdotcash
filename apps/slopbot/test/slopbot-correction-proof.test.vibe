@@ -1,0 +1,176 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+import type { CorrectionCommit, CorrectionSource } from "@repo/points/corrections"
+import { verifyNativeCorrection } from "../src/value/evidence/acceptedCorrection.vibe"
+import { historicalCorrectionBranch } from "../src/value/evidence/correctionBranch.ts"
+import { verifiedCorrectionFollowup } from "../src/value/evidence/correctionFollowup.ts"
+import { type Actor, type Evidence } from "../src/value/evidence/types.vibe"
+import type { FileChange } from "../src/value/proofs/changes.vibe"
+
+const path = "value.ts"
+const timestamp = "2026-10-15T02:00:00Z"
+const author: Actor = { node_id: "user-original", login: "original", type: "User" }
+const maintainer: Actor = { node_id: "user-carrier", login: "carrier", type: "User" }
+const parentText = "export const reply = () => f({ error: 'old' }, { status: 400 });\n"
+const originalText = "export const reply = () => f({ error: 'new' }, { status: 400 });\n"
+const formattedText = "export const reply = () => f(\n  { error: 'new' },\n  { status: 400 },\n);\n"
+const legacyPolicy = "Every change ships through a PR against `develop`; do not push feature or fix\nwork straight to `develop`. Link the issue."
+const unrelatedText = "export const reply = () => f(\n  { error: 'unrelated' },\n  { status: 400 },\n);\n"
+
+function bound(sha: string, parent: string, actor: Actor, additions: number, deletions = 1) {
+  return {
+    sha, parentCount: 1, parentShas: [parent], author: { id: actor.node_id, login: actor.login, kind: actor.type },
+    additions, deletions, firstAcceptedSourceId: "accepted",
+    files: [{ path, additions, deletions }],
+  } satisfies CorrectionCommit
+}
+
+function provenance(id: string, headSha: string, actor: Actor, commits: ReadonlyArray<CorrectionCommit>) {
+  return {
+    repository: "owner/repository", repositoryNodeId: "repository", sourceId: id,
+    sourceUrl: `https://github.com/owner/repository/pull/${id === "accepted" ? 2 : 1}`,
+    headSha, occurredAt: id === "accepted" ? timestamp : null,
+    author: { id: actor.node_id, login: actor.login, kind: actor.type },
+    complete: true, commitCount: commits.length, commits,
+  } satisfies CorrectionSource
+}
+
+function evidence(source: CorrectionSource, baseSha: string, actor: Actor, additions: number, merge: string | null, deletions = 1) {
+  const files: ReadonlyArray<FileChange> = [{ filename: path, additions, deletions, status: "modified", blob_url: null }]
+  return {
+    repository: source.repository, repositoryNodeId: source.repositoryNodeId, repositoryDatabaseId: 1, repositoryPolicy: null, collectedAt: timestamp,
+    pull: {
+      node_id: source.sourceId, number: merge === null ? 1 : 2, html_url: source.sourceUrl, title: "", body: null, user: actor,
+      merged_by: merge === null ? null : maintainer, state: "closed", merged_at: source.occurredAt, closed_at: timestamp,
+      merge_commit_sha: merge, updated_at: timestamp, head: { sha: source.headSha }, base: { sha: baseSha, ref: "main" },
+      changed_files: 1, comments: 0, review_comments: 0, commits: source.commitCount,
+    },
+    files, mergeCommitEvidence: merge === null ? null : {
+      sha: merge, html_url: source.sourceUrl, parents: [{ sha: baseSha }, { sha: source.headSha }], files,
+      stats: { additions, deletions, total: additions + deletions },
+    },
+    commits: [], reviews: [], comments: [], reviewComments: [], limitations: [], evidenceUrls: [], eligibleReviewIds: [],
+    implementationActorNodeIds: [], commitAttribution: [], relatedPullRequests: [],
+  } satisfies Evidence
+}
+
+effect function git(directory: string, args: ReadonlyArray<string>) {
+  const out = try gitBytes({
+    args: ["-C", directory, "-c", "user.name=Test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", ...args],
+    env: { GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp }, seconds: 20, limit: 65536,
+  }, "could not create native correction fixture")
+  return (utf8Text(out) ?? "").trim()
+}
+
+effect function fixture(directory: string, changed: string | null, placement?: { readonly parent: string; readonly original: string; readonly policy?: string }) {
+  const fs = try FileSystem.FileSystem
+  const paths = try Path.Path
+  const file = paths.join(directory, path)
+  try git(directory, ["init", "--template=", "-b", "main"])
+  try fs.writeFileString(file, placement?.parent ?? parentText)
+  if (placement?.policy !== undefined) try fs.writeFileString(paths.join(directory, "biome.json"), placement.policy)
+  try git(directory, ["add", "."])
+  try git(directory, ["commit", "-m", "Base"])
+  const base = try git(directory, ["rev-parse", "HEAD"])
+  try git(directory, ["checkout", "-b", "carrier"])
+  try fs.writeFileString(file, placement?.original ?? originalText)
+  try git(directory, ["commit", "-am", "Original accepted change"])
+  const original = try git(directory, ["rev-parse", "HEAD"])
+  if (changed !== null) {
+    try fs.writeFileString(file, changed)
+    try git(directory, ["commit", "-am", "Carrier follow-up"])
+  }
+  const accepted = try git(directory, ["rev-parse", "HEAD"])
+  try git(directory, ["checkout", "main"])
+  try git(directory, ["merge", "--no-ff", "carrier", "-m", "Merge verified carrier"])
+  const merge = try git(directory, ["rev-parse", "HEAD"])
+  const removed = placement === undefined ? 1 : 0
+  const first = bound(original, base, author, 1, removed)
+  const commits = changed === null ? [first] : [first, bound(accepted, original, maintainer, placement === undefined ? 4 : 1)]
+  const source = provenance("original", original, author, [first])
+  const carrier = provenance("accepted", accepted, maintainer, commits)
+  const supplied = evidence(carrier, base, maintainer, changed === null || placement !== undefined ? 1 : 4, merge, removed)
+  const submitted = evidence(source, base, author, 1, null, removed)
+  return { source, carrier, supplied, submitted }
+}
+
+layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true })((it) => {
+  it.effect("The carrier must introduce the exact original Git objects through a verified first-parent change", () => effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped()
+    const { carrier, source, supplied, submitted } = try fixture(directory, null)
+    const result = try verifyNativeCorrection(directory, supplied, submitted, carrier, source)
+    const forged = { ...carrier, commits: carrier.commits.map((commit) => ({ ...commit, parentShas: ["f".repeat(40)] })) }
+    const rejected = verifyNativeCorrection(directory, supplied, submitted, forged, source) catch effect () => undefined
+    try Effect.sync(() => {
+      assert.strictEqual(result.parents[1], carrier.headSha)
+      assert.strictEqual(result.range.length, 2)
+      assert.deepStrictEqual(result.followups, [])
+      assert.strictEqual(rejected, undefined)
+    })
+  })
+
+  it.effect("A formatting-only descendant can follow the original; same-path implementation does not become original credit", () => effect {
+    const fs = try FileSystem.FileSystem
+    const formatting = try fs.makeTempDirectoryScoped()
+    const mixed = try fs.makeTempDirectoryScoped()
+    const genuine = try fixture(formatting, formattedText)
+    const independent = try fixture(mixed, unrelatedText)
+    const result = try verifyNativeCorrection(formatting, genuine.supplied, genuine.submitted, genuine.carrier, genuine.source)
+    const refused = verifyNativeCorrection(mixed, independent.supplied, independent.submitted, independent.carrier, independent.source) catch effect () => undefined
+    try Effect.sync(() => {
+      assert.deepStrictEqual(result.followups, [{ sha: genuine.carrier.headSha, path, proof: "equivalent-typescript-syntax" }])
+      assert.strictEqual(refused, undefined)
+    })
+  })
+
+  it.effect("A historical declaration binds the same branch outside examples and comments", () => effect {
+    try Effect.sync(() => {
+      assert.strictEqual(historicalCorrectionBranch(legacyPolicy, "develop"), true)
+      assert.strictEqual(historicalCorrectionBranch(legacyPolicy, "vibestack"), false)
+      assert.strictEqual(historicalCorrectionBranch(`<!--\n${legacyPolicy}\n-->`, "develop"), false)
+      assert.strictEqual(historicalCorrectionBranch(`~~~markdown\n${legacyPolicy}\n~~~`, "develop"), false)
+      assert.strictEqual(historicalCorrectionBranch(`Pull requests target \`vibestack\`.\n${legacyPolicy}`, "develop"), false)
+      assert.strictEqual(historicalCorrectionBranch(legacyPolicy.replace("straight to \`develop\`", "straight to \`vibestack\`"), "develop"), false)
+    })
+  })
+
+  it.effect("Sorting an original import requires byte-identical runtime module order", () => effect {
+    const prior = 'import { b } from "b";\n'
+    const value = 'import { a } from "a";\n'
+    const erased = 'import type { A } from "a";\n'
+    try Effect.sync(() => {
+      assert.strictEqual(verifiedCorrectionFollowup(path, prior + value, value + prior, prior, prior + value), undefined)
+      assert.strictEqual(verifiedCorrectionFollowup(path, prior + erased, erased + prior, prior, prior + erased), "sort-native-original-import")
+    })
+  })
+
+  it.effect("An organizer-only placement attaches the introduced declaration to its original contributor", () => effect {
+    const parent = 'import { b } from "b";\n'
+    const introduced = 'import { a } from "a";\n'
+    const original = parent + introduced
+    const ordered = introduced + parent
+    const policy = JSON.stringify({
+      $schema: "https://biomejs.dev/schemas/2.5.15/schema.json",
+      root: true,
+      assist: { actions: { source: { organizeImports: "on" } } },
+      overrides: [{ includes: ["**/*.ts"], linter: {} }],
+    })
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped()
+    const noPolicyDirectory = try fs.makeTempDirectoryScoped()
+    const genuine = try fixture(directory, ordered, { parent, original, policy })
+    const noPolicy = try fixture(noPolicyDirectory, ordered, { parent, original })
+    const verified = try verifyNativeCorrection(directory, genuine.supplied, genuine.submitted, genuine.carrier, genuine.source)
+    const refused = verifyNativeCorrection(noPolicyDirectory, noPolicy.supplied, noPolicy.submitted, noPolicy.carrier, noPolicy.source) catch effect () => undefined
+    try Effect.sync(() => {
+      assert.strictEqual(verified.followups[0]?.proof, "place-original-import-under-organizer-policy")
+      assert.match(verified.followups[0]?.organizerConfigBlob ?? "", /^[a-f0-9]{40}$/u)
+      assert.strictEqual(refused, undefined)
+    })
+  })
+
+})

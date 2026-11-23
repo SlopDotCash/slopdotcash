@@ -1,0 +1,175 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { gitBytes, publicFiles, publicGitArguments, withPublicGitObjects, type PublicMergeRepository } from "@repo/platform/git"
+import { utf8Text } from "@repo/platform/git/bytes"
+import type { CorrectionCommit, CorrectionFile, CorrectionSource } from "@repo/points/corrections"
+import { isSafePath } from "../proofs/gitObject.ts"
+import { organizerSelects, solePlacementOfOriginalImport, verifiedCorrectionFollowup } from "./correctionFollowup.ts"
+import { historicalCorrectionBranch } from "./correctionBranch.ts"
+import type { Evidence } from "./types.vibe"
+
+error NativeCorrectionRefused { reason: string }
+
+const limit = 8 * 1024 * 1024
+const oid = /^[a-f0-9]{40}$/u
+const refused = "Native historical acceptance could not be verified"
+
+export interface NativeCorrection {
+  readonly merge: string
+  readonly parents: ReadonlyArray<string>
+  readonly integrationBase: string
+  readonly originalBase: string
+  readonly firstParentDiff: string
+  readonly range: ReadonlyArray<readonly [string, ReadonlyArray<string>]>
+  readonly historicPolicyBlob?: string
+  readonly followups: ReadonlyArray<{ readonly sha: string; readonly path: string; readonly proof: string; readonly organizerConfigBlob?: string }>
+}
+
+effect function git(directory: string, args: ReadonlyArray<string>) {
+  const output = utf8Text(try gitBytes({ args: publicGitArguments(directory, args), limit, seconds: 120 }, refused))
+  if (output === undefined) throw new NativeCorrectionRefused({ reason: refused })
+  return output
+}
+
+effect function singleBase(directory: string, base: string, head: string) {
+  const ancestor = (try git(directory, ["merge-base", "--all", base, head])).trim()
+  if (!oid.test(ancestor)) throw new NativeCorrectionRefused({ reason: refused })
+  return ancestor
+}
+
+effect function rawFiles(directory: string, base: string, head: string) {
+  return try git(directory, ["diff-tree", "--no-commit-id", "-r", "--no-renames", "--raw", "--no-abbrev", "-z", base, head])
+}
+
+effect function paths(directory: string, base: string, head: string) {
+  const listed = try git(directory, ["diff-tree", "--no-commit-id", "-r", "--no-renames", "--numstat", "-z", base, head])
+  if (listed === "") return []
+  if (!listed.endsWith("\u0000")) throw new NativeCorrectionRefused({ reason: refused })
+  const files: CorrectionFile[] = []
+  for (const line of listed.slice(0, -1).split("\u0000")) {
+    const match = /^([0-9]+)\t([0-9]+)\t(.+)$/u.exec(line)
+    if (match === null || !isSafePath(match[3] ?? "")) throw new NativeCorrectionRefused({ reason: refused })
+    const [additions, deletions] = [Number(match[1]), Number(match[2])]
+    if (!Number.isSafeInteger(additions) || !Number.isSafeInteger(deletions)) throw new NativeCorrectionRefused({ reason: refused })
+    files.push({ path: match[3] ?? "", additions, deletions })
+  }
+  return files.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function same(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function expectedFiles(files: ReadonlyArray<{ readonly filename: string; readonly additions: number; readonly deletions: number }>) {
+  return files.map((file) => ({ path: file.filename, additions: file.additions, deletions: file.deletions })).sort((left, right) => left.path.localeCompare(right.path))
+}
+
+effect function verifyFiles(directory: string, source: CorrectionSource) {
+  for (const commit of source.commits) {
+    const [parent] = commit.parentShas ?? []
+    if (parent === undefined || !same(try paths(directory, parent, commit.sha), commit.files)) throw new NativeCorrectionRefused({ reason: refused })
+  }
+}
+
+function digestEdge(commit: CorrectionCommit) {
+  return [commit.sha, commit.parentShas ?? []] as const
+}
+
+effect function organizerConfig(directory: string, base: string, first: string, path: string, before: string) {
+  const original = (try git(directory, ["ls-tree", base, "--", "biome.json"])).trim()
+  const accepted = (try git(directory, ["ls-tree", first, "--", "biome.json"])).trim()
+  const blob = /^100644 blob ([a-f0-9]{40})\tbiome\.json$/u.exec(original)?.[1]
+  if (blob === undefined || original !== accepted) return undefined
+  const parts = path.split("/")
+  const conflicts = ["biome.jsonc", ...parts.slice(0, -1).flatMap((_, index) => {
+    const ancestor = parts.slice(0, index + 1).join("/")
+    return [`${ancestor}/biome.json`, `${ancestor}/biome.jsonc`]
+  })]
+  if ((try git(directory, ["ls-tree", "-r", "--name-only", base, "--", ...conflicts])) !== "" ||
+    (try git(directory, ["ls-tree", "-r", "--name-only", first, "--", ...conflicts])) !== "") return undefined
+  const policy = try git(directory, ["cat-file", "blob", blob])
+  return (try Effect.try(() => organizerSelects(policy, path, before))) ? blob : undefined
+}
+
+effect function verifyFollowups(directory: string, carrier: CorrectionSource, source: CorrectionSource, submittedBase: string, first: string) {
+  const original = source.commits.find((commit) => commit.sha === source.headSha)
+  const originalParent = original?.parentShas?.[0]
+  if (original === undefined || originalParent === undefined) throw new NativeCorrectionRefused({ reason: refused })
+  const sourceCommits = new Set(source.commits.map((commit) => commit.sha))
+  const originalPaths = new Set(source.commits.flatMap((commit) => commit.files?.map((file) => file.path) ?? []))
+  const bySha = new Map(carrier.commits.map((commit) => [commit.sha, commit]))
+  const followups: Array<NativeCorrection["followups"][number]> = []
+  let tip = carrier.headSha
+  let seen = 0
+  while (tip !== source.headSha) {
+    const commit = bySha.get(tip)
+    const parent = commit?.parentShas?.[0]
+    if (commit === undefined || parent === undefined || commit.author?.id !== carrier.author?.id ||
+      commit.files === undefined || commit.files.length === 0 || !commit.files.every((file) => originalPaths.has(file.path)) ||
+      seen >= carrier.commitCount - source.commitCount) throw new NativeCorrectionRefused({ reason: refused })
+    for (const { path } of commit.files) {
+      const before = try git(directory, ["show", `${parent}:${path}`])
+      const after = try git(directory, ["show", `${tip}:${path}`])
+      const atOrigin = try git(directory, ["show", `${source.headSha}:${path}`])
+      const beforeOrigin = try git(directory, ["show", `${originalParent}:${path}`])
+      const proof = try Effect.try(() => verifiedCorrectionFollowup(path, before, after, beforeOrigin, atOrigin))
+      if (proof !== undefined) {
+        followups.push({ sha: tip, path, proof })
+        continue
+      }
+      if (!(try Effect.try(() => solePlacementOfOriginalImport(path, before, after, beforeOrigin, atOrigin)))) throw new NativeCorrectionRefused({ reason: refused })
+      const policy = try organizerConfig(directory, submittedBase, first, path, before)
+      if (policy === undefined) throw new NativeCorrectionRefused({ reason: refused })
+      followups.push({ sha: tip, path, proof: "place-original-import-under-organizer-policy", organizerConfigBlob: policy })
+    }
+    tip = parent
+    seen += 1
+  }
+  if (seen !== carrier.commits.filter((commit) => !sourceCommits.has(commit.sha)).length) throw new NativeCorrectionRefused({ reason: refused })
+  return followups
+}
+
+export effect function verifyNativeCorrection(directory: string, accepted: Evidence, original: Evidence, carrier: CorrectionSource, source: CorrectionSource) {
+  const merge = accepted.mergeCommitEvidence
+  const [first, second] = merge?.parents.map(({ sha }) => sha) ?? []
+  const anchor = source.headSha
+  if (merge === null || first === undefined || second === undefined || second !== carrier.headSha || first === second) throw new NativeCorrectionRefused({ reason: refused })
+  const expected = new Map([...carrier.commits.map(digestEdge), [merge.sha, [first, second]] as const])
+  const listing = (try git(directory, ["rev-list", "--parents", merge.sha, `^${first}`])).trim()
+  const range: Array<readonly [string, ReadonlyArray<string>]> = []
+  for (const line of listing.split("\n")) {
+    const [sha = "", ...parents] = line.split(" ")
+    const cited = expected.get(sha)
+    if (cited === undefined || !same(cited, parents)) throw new NativeCorrectionRefused({ reason: refused })
+    expected.delete(sha)
+    range.push([sha, parents])
+  }
+  if (expected.size !== 0 || !range.some(([sha]) => sha === anchor)) throw new NativeCorrectionRefused({ reason: refused })
+  const integrationBase = try singleBase(directory, first, carrier.headSha)
+  const originalBase = try singleBase(directory, original.pull.base.sha, anchor)
+  const firstParentDiff = try rawFiles(directory, first, merge.sha)
+  const submittedDiff = try rawFiles(directory, integrationBase, carrier.headSha)
+  if (
+    firstParentDiff === "" || firstParentDiff !== submittedDiff ||
+    !same(try paths(directory, first, merge.sha), expectedFiles(merge.files)) ||
+    !same(try paths(directory, integrationBase, carrier.headSha), expectedFiles(accepted.files)) ||
+    !same(try paths(directory, originalBase, anchor), expectedFiles(original.files))
+  ) throw new NativeCorrectionRefused({ reason: refused })
+  try verifyFiles(directory, carrier)
+  const followups = try verifyFollowups(directory, carrier, source, originalBase, first)
+  return { merge: merge.sha, parents: [first, second], integrationBase, originalBase, firstParentDiff, range, followups } satisfies NativeCorrection
+}
+
+export effect function collectNativeCorrection(repository: PublicMergeRepository, accepted: Evidence, original: Evidence, carrier: CorrectionSource, source: CorrectionSource, integrationBranch: string) {
+  const merge = accepted.mergeCommitEvidence
+  if (merge === null || merge.parents.length !== 2) return undefined
+  const base = accepted.pull.base
+  const objects = [merge.sha, carrier.headSha, source.headSha, original.pull.base.sha, base.sha]
+  return (withPublicGitObjects(repository, objects, (directory) => effect {
+    if (base.ref === integrationBranch) return try verifyNativeCorrection(directory, accepted, original, carrier, source)
+    const policy = try publicFiles(directory, repository).read(accepted.repository, base.sha, "CONTRIBUTING.md")
+    if (policy === null || policy.bytes.length === 0 || policy.bytes.length > 65536) return undefined
+    const policyText = utf8Text(policy.bytes)
+    if (policyText === undefined || !(try Effect.try(() => historicalCorrectionBranch(policyText, base.ref)))) return undefined
+    return { ...(try verifyNativeCorrection(directory, accepted, original, carrier, source)), historicPolicyBlob: policy.sha } satisfies NativeCorrection
+  })) catch effect () => undefined
+}

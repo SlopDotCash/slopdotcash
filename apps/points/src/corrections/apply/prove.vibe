@@ -1,15 +1,28 @@
 // spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub } from "@repo/platform/github"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import type { Actor } from "../../score/facts.vibe"
 import { type CollectedEvidence, type ProvedCandidates, type SourceRead, repositoryIdOf } from "../collect/collect.vibe"
 import type { CorrectionCandidate } from "../collect/inventory.vibe"
-import type { CorrectionActor, CorrectionSource } from "./manifest.vibe"
+import type { CompleteProof, CorrectionActor, CorrectionCommit, CorrectionSource } from "./manifest.vibe"
+import { ordinaryPromotionEvidence } from "./derive.vibe"
 
 const groupedProofUnavailable = "grouped-retained-decision-unavailable"
 const retainedEvidenceUnavailable = "retained-source-evidence-unavailable"
 const octoberProofUnavailable = "october-original-contributor-proof-unavailable"
 const outcomeMissing = "Complete source outcome missing"
+const missingPromotionPaths = "zero-line-promotion-paths-unavailable"
+const emptyPromotion = "unproved-zero-line-promotion"
+
+schema ZeroLineCommit {
+  readonly sha: string
+  readonly url: string
+  readonly html_url: string
+  readonly parents: ReadonlyArray<{ readonly sha: string }>
+  readonly stats: { readonly additions: 0; readonly deletions: 0; readonly total: 0 }
+  readonly files: ReadonlyArray<{ readonly filename: string; readonly additions: 0; readonly deletions: 0 }>
+}
 
 function actorOf(actor: Actor | null): CorrectionActor | null {
   return actor === null ? null : { id: actor.id, login: actor.login, kind: actor.kind }
@@ -46,7 +59,39 @@ function unlinked(source: CorrectionSource) {
     !(commit.author !== null && commit.author.kind === "User" && isCreditEligibleCommitAuthor(commit.author)))
 }
 
-export effect function proveCandidates(evidence: CollectedEvidence) {
+function whollyOwnedBySourceAuthor(source: CorrectionSource) {
+  const author = source.author
+  const accepted = source.commits.filter((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId)
+  return author !== null && author.kind === "User" && isCreditEligibleCommitAuthor(author) && accepted.length > 0 &&
+    accepted.every((commit) => commit.author?.kind === "User" && commit.author.id === author.id)
+}
+
+effect function withZeroLinePaths(source: CorrectionSource) {
+  const commits: CorrectionCommit[] = []
+  const client = try GitHub
+  for (const commit of source.commits) {
+    if (commit.parentCount > 1 || commit.firstAcceptedSourceId !== source.sourceId ||
+      commit.additions !== 0 || commit.deletions !== 0 || commit.files !== undefined || commit.zeroLinePaths !== undefined) {
+      commits.push(commit)
+      continue
+    }
+    const path = `/repos/${source.repository}/commits/${commit.sha}`
+    const actual = client.json(path, ZeroLineCommit) catch () => undefined
+    if (actual === undefined || actual.sha !== commit.sha || actual.url !== `https://api.github.com${path}` ||
+      actual.html_url !== `https://github.com/${source.repository}/commit/${commit.sha}` ||
+      actual.parents.length !== commit.parentCount || actual.parents.some((parent) => parent.sha === commit.sha || !/^[a-f0-9]{40}$/u.test(parent.sha)) ||
+      actual.files.some((file) => file.filename === "")) {
+      commits.push(commit)
+      continue
+    }
+    commits.push({ ...commit, zeroLinePaths: actual.files.length === 0 ? "empty" : "present" })
+  }
+  return { ...source, commits } satisfies CorrectionSource
+}
+
+export type OctoberProof<E, R> = (evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, source: CorrectionSource) => (CompleteProof | undefined)!E!R
+
+export effect function proveCandidates<E = never, R = never>(evidence: CollectedEvidence, proveOctober?: OctoberProof<E, R>) {
   const limitations = new Map(evidence.limitations)
   const selected = new Set(evidence.selected.map((pool) => pool.candidate.id))
   const october = evidence.options.octoberOriginalCredit === true
@@ -57,16 +102,42 @@ export effect function proveCandidates(evidence: CollectedEvidence) {
       candidates.push(candidate)
       continue
     }
-    const reason = candidate.kind === "work-unit" ? groupedProofUnavailable : october && candidate.occurredAt.startsWith("2026-10-") ? octoberProofUnavailable : undefined
-    const source = reason === undefined ? try ordinarySource(read, evidence.owners) : undefined
-    const held = reason ?? (source === undefined ? outcomeMissing : unlinked(source) ? retainedEvidenceUnavailable : undefined)
+    const wantsOctober = october && candidate.occurredAt.startsWith("2026-10-")
+    const source = candidate.kind === "work-unit" ? undefined : try ordinarySource(read, evidence.owners)
+    const octoberNeedsProof = wantsOctober && source !== undefined && !whollyOwnedBySourceAuthor(source)
+    if (octoberNeedsProof && proveOctober !== undefined && source !== undefined && !unlinked(source)) {
+      const proof = try proveOctober(evidence, candidate, read, source)
+      if (proof !== undefined) {
+        candidates.push({ ...candidate, sourceIds: proof.sources.map((item) => item.sourceId), proof })
+        continue
+      }
+    }
+    const held = candidate.kind === "work-unit" ? groupedProofUnavailable
+      : source === undefined ? outcomeMissing
+      : octoberNeedsProof ? octoberProofUnavailable
+      : unlinked(source) && !evidence.withoutRetainedOriginals.has(source.sourceId) ? retainedEvidenceUnavailable
+      : undefined
     if (held !== undefined || source === undefined) {
       limitations.set(candidate.id, held ?? outcomeMissing)
       candidates.push(candidate)
       continue
     }
     const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [source] }
-    candidates.push({ ...candidate, sourceIds: [source.sourceId], proof })
+    const ordinary = { ...candidate, sourceIds: [source.sourceId], proof }
+    const status = ordinaryPromotionEvidence(ordinary)
+    if (status === "ordinary") {
+      candidates.push(ordinary)
+      continue
+    }
+    if (status === "empty") {
+      limitations.set(candidate.id, emptyPromotion)
+      candidates.push(candidate)
+      continue
+    }
+    const verified = { ...ordinary, proof: { ...proof, sources: [try withZeroLinePaths(source)] } }
+    const promotion = ordinaryPromotionEvidence(verified)
+    if (promotion !== "ordinary") limitations.set(candidate.id, promotion === "empty" ? emptyPromotion : missingPromotionPaths)
+    candidates.push(promotion === "ordinary" ? verified : candidate)
   }
   return { candidates, limitations } satisfies ProvedCandidates
 }

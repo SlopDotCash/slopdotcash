@@ -1,0 +1,65 @@
+import { assert, it } from "@effect/vitest"
+import { deriveProof } from "../src/corrections/apply/derive.vibe"
+import type { CorrectionCommit, ManifestCandidate } from "../src/corrections/apply/manifest.vibe"
+import { author, beta, carrier, censusDigest, sourceOf, urlOf } from "./support/u14/fixtures.ts"
+
+it.effect('A same-SHA replacement holds when a submitted commit is absent or differs (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines")', effect () => {
+  const repository = "elizaOS/eliza"
+  const pool = { ...beta, project: "eliza", repository }
+  const originalPool = { ...pool, number: 9, source: "PR_kwDOearlier" }
+  const base = "1".repeat(40)
+  const earlier: CorrectionCommit = {
+    sha: "2".repeat(40), parentCount: 1, parentShas: [base], author,
+    additions: 10, deletions: 2, firstAcceptedSourceId: pool.source,
+    files: [{ path: "src/earlier.ts", additions: 10, deletions: 2 }],
+  }
+  const anchor: CorrectionCommit = {
+    sha: "3".repeat(40), parentCount: 1, parentShas: [earlier.sha], author,
+    additions: 30, deletions: 1, firstAcceptedSourceId: pool.source,
+    files: [{ path: "src/anchor.ts", additions: 30, deletions: 1 }],
+  }
+  const followup: CorrectionCommit = {
+    sha: "4".repeat(40), parentCount: 1, parentShas: [anchor.sha], author: carrier,
+    additions: 4, deletions: 0, firstAcceptedSourceId: pool.source,
+    files: [{ path: "src/anchor.ts", additions: 4, deletions: 0 }],
+  }
+  const acceptedSource = { ...sourceOf(pool), headSha: followup.sha }
+  const originalSource = { ...sourceOf(originalPool), headSha: anchor.sha, occurredAt: null, author }
+  const candidate = (accepted: ReadonlyArray<CorrectionCommit>, original: ReadonlyArray<CorrectionCommit>): ManifestCandidate => ({
+    id: pool.source, kind: "pull-request", projectId: pool.project, sourceId: pool.source,
+    sourceUrl: urlOf(pool), occurredAt: pool.occurredAt, workUnitId: pool.source,
+    sourceIds: [pool.source, originalPool.source], expectedPredecessors: [],
+    proof: {
+      status: "complete", censusDigest,
+      sources: [
+        { ...acceptedSource, commitCount: accepted.length, commits: accepted },
+        { ...originalSource, commitCount: original.length, commits: original },
+      ],
+      originalContributor: {
+        exactAcceptance: true, originalSourceId: originalPool.source,
+        originalCommitSha: anchor.sha, acceptedCommitSha: anchor.sha,
+        boundPaths: ["src/anchor.ts"], bindingDigest: "b".repeat(64),
+      },
+    },
+  })
+  const projectOf = (name: string) => name === repository ? pool.project : undefined
+  const complete = [earlier, anchor, followup]
+  const submitted = [earlier, anchor]
+  const { parentShas: _parents, ...withoutParent } = earlier
+  const { files: _files, ...withoutFiles } = earlier
+  const valid = try deriveProof(candidate(complete, submitted), projectOf)
+  const missing = try deriveProof(candidate([anchor, followup], submitted), projectOf)
+  const differentParent = try deriveProof(candidate([{ ...earlier, parentShas: ["5".repeat(40)] }, anchor, followup], submitted), projectOf)
+  const differentFile = try deriveProof(candidate([{ ...earlier, files: [{ path: "src/other.ts", additions: 10, deletions: 2 }] }, anchor, followup], submitted), projectOf)
+  const differentCounts = try deriveProof(candidate([{ ...earlier, additions: 11, files: [{ path: "src/earlier.ts", additions: 11, deletions: 2 }] }, anchor, followup], submitted), projectOf)
+  const missingParent = try deriveProof(candidate(complete, [withoutParent, anchor]), projectOf)
+  const missingFiles = try deriveProof(candidate(complete, [withoutFiles, anchor]), projectOf)
+  const foreignOwner = try deriveProof(candidate(complete, [{ ...earlier, firstAcceptedSourceId: originalPool.source }, anchor]), projectOf)
+  try Effect.try(() => assert.deepStrictEqual({
+    allocation: [...(valid?.weights ?? [])],
+    held: [missing, differentParent, differentFile, differentCounts, missingParent, missingFiles, foreignOwner].map((outcome) => outcome === null),
+  }, {
+    allocation: [[author.id, 47]],
+    held: [true, true, true, true, true, true, true],
+  }))
+})

@@ -4,6 +4,7 @@ import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
 import { Socket } from "effect/socket"
 import { collect } from "./collect.vibe"
+import { collectCorrections } from "./collectCorrections.vibe"
 import { inspectValueIntakeCommand } from "./inspectValueIntake.vibe"
 import { inspectValueIntakeHistoryCommand } from "./inspectValueIntakeHistory.vibe"
 import { qualifyValueModelsCommand } from "./qualify.vibe"
@@ -19,5 +20,6 @@ program({
     "inspect-value-intake": command(inspectValueIntakeCommand),
     "inspect-value-intake-history": command(inspectValueIntakeHistoryCommand),
     collect: command(collect),
+    "collect-corrections": command(collectCorrections),
   },
 }).runMain()

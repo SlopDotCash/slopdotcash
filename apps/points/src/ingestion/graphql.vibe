@@ -445,7 +445,7 @@ export function graphqlClient(options: GraphqlOptions) {
       const limitMs = Math.min(timeoutMs, deadlineMs - startedAt)
       if (limitMs <= 0) return null
       requests += 1
-      const exchange = exchanged(outgoing(historicalDiscussionQuery, variables, undefined), "GitHub GraphQL", limitMs) catch effect (error) => {
+      const exchange = exchanged(outgoing(historicalDiscussionQuery, { ...variables }, undefined), "GitHub GraphQL", limitMs) catch effect (error) => {
         if (error._tag === "GraphqlBoundary") return { kind: "transient", timedOut: false } satisfies Exchange
         throw error
       }

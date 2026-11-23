@@ -1,37 +1,22 @@
 import { assert, it } from "@effect/vitest"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import type { Fetcher } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { outboundVia } from "@repo/platform/http"
-import { githubFake } from "@repo/platform/testing/github"
 import { proveCandidates } from "../src/corrections/apply/prove.vibe"
+import type { CompleteProof } from "../src/corrections/apply/manifest.vibe"
 import { type CollectionInputs, type CollectionOptions, type Provenance, collectCorrections } from "../src/corrections/collect/collect.vibe"
 import type { Revision } from "../src/kernels/records/canonical.ts"
 import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { collectionServices } from "../src/programs/corrections.vibe"
 import { resumeAcrossQuota } from "../src/quotaRecovery/run.vibe"
-import { actionsRepository, day, fastClock, mainHead, repository, start } from "./support/u13/github.ts"
+import { actionsRepository, day, mainHead, repository, start } from "./support/u13/github.ts"
+import { type Recorded, type World, supplementWorld } from "./support/u13/supplement.ts"
 
 const project = "widgets"
 const missingSource = "PR_kwDOmissing"
 
-interface Recorded {
-  readonly sourceId: string
-  readonly number: number
-  readonly mergedAt: number
-  readonly login: string
-  readonly actorId: string
-}
-
 function iso(millis: number) {
   return new Date(millis).toISOString()
-}
-
-function answer(value: unknown, status = 200) {
-  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } })
 }
 
 function registryProject() {
@@ -45,80 +30,6 @@ function registryProject() {
     repositories: [{ id: repository, githubUrl: `https://github.com/${repository}`, displayName: project, description: project, integrationBranch: "main" }],
   }
 }
-
-function omittedSearch(text: string, omitted: ReadonlySet<string>) {
-  const envelope = JSON.parse(text) as { data?: { search?: { issueCount: number; nodes: ReadonlyArray<{ readonly id?: string }> } } }
-  const search = envelope.data?.search
-  if (search === undefined) return text
-  const nodes = search.nodes.filter((node) => node.id === undefined || !omitted.has(node.id))
-  return JSON.stringify({ ...envelope, data: { ...envelope.data, search: { ...search, issueCount: search.issueCount - (search.nodes.length - nodes.length), nodes } } })
-}
-
-function supplementWorld() {
-  const clock = fastClock(start - 50 * day)
-  const fake = githubFake({ now: () => clock.now() })
-  fake.world.addUser({ id: 101, login: "ada" })
-  fake.world.addUser({ id: 102, login: "grace" })
-  const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
-  const base = created.branches.get(created.defaultBranch) ?? ""
-  const commit = (branch: string, parents: ReadonlyArray<string>, author: string, file: string) => fake.world.addCommit(repository, { branch, parents: [...parents], author, files: { [file]: `${branch}\n` } })
-  const earlyWork = commit("early", [base], "grace", "src/early.ts")
-  const earlySquash = commit("early-squash", [base], "grace", "src/early.ts")
-  const laterWork = commit("later", [earlySquash], "ada", "src/later.ts")
-  const heldWork = commit("held", [base], "grace", "src/held.ts")
-  const heldSquash = commit("held-squash", [base], "grace", "src/held.ts")
-  const blockedWork = commit("blocked", [heldSquash], "ada", "src/blocked.ts")
-  const merged = (number: number, author: string, at: number, commits: ReadonlyArray<string>, mergeCommit?: string) => {
-    fake.world.addPull({ repo: repository, number, author, mergedAt: iso(at), commits: [...commits], headSha: commits[commits.length - 1] ?? base, ...(mergeCommit === undefined ? {} : { mergeCommit }) })
-    return fake.world.pull(repository, number).nodeId
-  }
-  const early = merged(1, "grace", start - 20 * day, [earlyWork], earlySquash)
-  const later = merged(2, "ada", start - 10 * day, [earlySquash, laterWork])
-  const held = merged(3, "grace", start - 18 * day, [heldWork], heldSquash)
-  const blocked = merged(4, "ada", start - 8 * day, [heldSquash, blockedWork])
-  clock.set(start)
-  const grace = fake.world.account("grace").nodeId
-  const ada = fake.world.account("ada").nodeId
-  const recorded: ReadonlyArray<Recorded> = [
-    { sourceId: early, number: 1, mergedAt: start - 20 * day, login: "grace", actorId: grace },
-    { sourceId: later, number: 2, mergedAt: start - 10 * day, login: "ada", actorId: ada },
-    { sourceId: held, number: 3, mergedAt: start - 18 * day, login: "grace", actorId: grace },
-    { sourceId: blocked, number: 4, mergedAt: start - 8 * day, login: "ada", actorId: ada },
-    { sourceId: missingSource, number: 99, mergedAt: start - 15 * day, login: "grace", actorId: grace },
-  ]
-  const omitted = new Set([early, held])
-  const acceptedObjectReads: string[] = []
-  let offline = false
-  const fetcher: Fetcher = {
-    fetch: async (request) => {
-      if (offline) throw new Error("Offline replay attempted a GitHub read")
-      const url = new URL(request.url)
-      if (url.pathname.includes("/git/commits/")) {
-        acceptedObjectReads.push(url.pathname)
-        if (url.pathname.endsWith(`/${heldSquash}`)) return answer({ message: "Not Found" }, 404)
-      }
-      const body = request.method === "POST" ? await request.clone().text() : ""
-      const response = await fake.fetch(request)
-      if (!body.includes("LeaderboardSearchReferences") || !response.ok) return response
-      return new Response(omittedSearch(await response.text(), omitted), { status: response.status, headers: response.headers })
-    },
-  }
-  return {
-    clock,
-    fetcher,
-    recorded,
-    acceptedObjectReads,
-    token: fake.tokens.user("ada"),
-    directory: mkdtempSync(join(tmpdir(), "slop-supplement-")),
-    sources: { early, later, held, blocked },
-    shas: { earlyWork, earlySquash, laterWork, blockedWork, heldSquash },
-    goOffline: () => {
-      offline = true
-    },
-  }
-}
-
-type World = ReturnType<typeof supplementWorld>
 
 effect function revisionOf(entry: Recorded) {
   const category = "merged-pull-request"
@@ -155,13 +66,18 @@ function provenanceOf(restoring: boolean): Provenance {
 
 effect function collected(world: World, restoring: boolean) {
   const options = { projects: [project], directory: world.directory, before: iso(start - 3_600_000) } satisfies CollectionOptions
-  const inputs = try inputsOf(world)
   const services = Layer.provideMerge(
     collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
     Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
   )
   provide services, world.clock.layer {
-    return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
+    const inputs = try inputsOf(world)
+    let supplementedMerge: string | undefined
+    const result = try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), (evidence) => effect {
+      supplementedMerge = evidence.reads.get(world.sources.early)?.mergeCommit?.oid
+      return try proveCandidates(evidence)
+    }), (millis) => Effect.sleep(Duration.millis(millis)), false)
+    return { ...result, supplementedMerge }
   }
 }
 
@@ -182,16 +98,21 @@ effect function same(actual: unknown, expected: unknown) {
 
 it.live('A recorded pull request the historical search omitted fences its accepted commit and an unavailable accepted object holds only the pools it affects (spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained")', () => effect {
   const world = try Effect.try(() => supplementWorld())
-  const { early, later, held, blocked } = world.sources
-  const { earlyWork, earlySquash, laterWork } = world.shas
+  const { early, later, held, blocked, empty, binary, unknown } = world.sources
+  const { earlyWork, earlySquash, laterWork, emptyHead, binaryHead, unknownHead } = world.shas
 
   const first = try collected(world, false)
+  const binaryProof = first.manifest.candidates.find((candidate) => candidate.sourceId === binary)?.proof
   try same({
     ownershipComplete: first.receipt.ownershipComplete,
     supplements: first.receipt.supplementDigests?.length,
     proofs: proofsOf(first),
-    unavailable: first.receipt.limitations.filter((entry) => entry.id === held || entry.id === missingSource).sort(byId),
+    unavailable: first.receipt.limitations.filter((entry) => [held, missingSource, empty, unknown].includes(entry.id)).sort(byId),
     acceptedObjectReads: [...world.acceptedObjectReads].sort(),
+    supplementedMerge: first.supplementedMerge,
+    zeroLineReads: [...world.zeroLineReads].sort(),
+    binaryPresenceRecorded: binaryProof?.status === "complete" && (binaryProof as CompleteProof).sources.some((source) =>
+      source.commits.some((commit) => commit.sha === binaryHead && commit.zeroLinePaths === "present")),
   }, {
     ownershipComplete: true,
     supplements: 1,
@@ -200,21 +121,32 @@ it.live('A recorded pull request the historical search omitted fences its accept
       [later]: [[earlySquash, early], [laterWork, later]],
       [held]: "held",
       [blocked]: "held",
+      [empty]: "held",
+      [binary]: [[earlySquash, early], [binaryHead, binary]],
+      [unknown]: "held",
       [missingSource]: "held",
     },
-    unavailable: [{ id: held, reason: "accepted-object-unavailable" }, { id: missingSource, reason: "source-unavailable" }].sort(byId),
+    unavailable: [
+      { id: held, reason: "accepted-object-unavailable" }, { id: missingSource, reason: "source-unavailable" },
+      { id: empty, reason: "unproved-zero-line-promotion" }, { id: unknown, reason: "zero-line-promotion-paths-unavailable" },
+    ].sort(byId),
     acceptedObjectReads: [`/repos/${repository}/git/commits/${earlySquash}`, `/repos/${repository}/git/commits/${world.shas.heldSquash}`].sort(),
+    supplementedMerge: earlySquash,
+    zeroLineReads: [emptyHead, binaryHead, unknownHead].sort(),
+    binaryPresenceRecorded: true,
   })
 
-  world.goOffline()
+  try Effect.try(() => world.goOffline())
   const replay = try collected(world, true)
   try same({
     requests: replay.receipt.requests,
     censusDigest: replay.receipt.censusDigest,
     manifestDigest: replay.receipt.manifestDigest,
+    supplementedMerge: replay.supplementedMerge,
   }, {
     requests: 0,
     censusDigest: first.receipt.censusDigest,
     manifestDigest: first.receipt.manifestDigest,
+    supplementedMerge: first.supplementedMerge,
   })
 })

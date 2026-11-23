@@ -1,0 +1,6 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+export { proveCandidates } from "./apply/prove.vibe"
+export type { CompleteProof, CorrectionCommit, CorrectionFile, CorrectionSource } from "./apply/manifest.vibe"
+export type { CollectedEvidence, SourceRead } from "./collect/collect.vibe"
+export type { CorrectionCandidate } from "./collect/inventory.vibe"
+export { collectImplementationCorrections } from "../programs/corrections.vibe"

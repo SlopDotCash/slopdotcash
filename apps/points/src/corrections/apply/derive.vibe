@@ -1,16 +1,33 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { instantOf } from "../../kernels/records/instants.ts"
 import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
-import { type CensusCommit, unprovedZeroLinePromotion } from "../../../gen/points__corrections.effect.vibe"
+import { type CensusCommit, octoberReplacementScope, unprovedZeroLinePromotion } from "../../../gen/points__corrections.effect.vibe"
 import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
 
 export interface Scope { readonly commit: string; readonly path: string }
+
+type ReplacementLine =
+  | { readonly kind: "original"; readonly author: string; readonly lines: number }
+  | { readonly kind: "followup"; readonly author: string; readonly origin: string; readonly lines: number }
 
 export interface DerivedProof {
   readonly actors: ReadonlyMap<string, CorrectionActor>
   readonly weights: ReadonlyMap<string, number>
   readonly scopes: ReadonlyArray<Scope>
+  readonly replacement?: ReadonlyArray<ReplacementLine>
 }
+
+schema ExactOriginalContributor {
+  readonly exactAcceptance: true
+  readonly originalSourceId: string
+  readonly originalCommitSha: string
+  readonly acceptedCommitSha: string
+  readonly boundPaths: ReadonlyArray<string>
+  readonly bindingDigest: string
+}
+
+const isExactOriginalContributor = Schema.is(ExactOriginalContributor)
 
 export type ProjectOfRepository = (repository: string) => string | undefined
 
@@ -98,7 +115,7 @@ function censusRow(source: CorrectionSource, commit: CorrectionCommit): CensusCo
     linesKnown: commit.additions !== null && commit.deletions !== null,
     additions: commit.additions ?? 0,
     deletions: commit.deletions ?? 0,
-    files: commit.files?.length ?? 0,
+    files: commit.files?.length ?? (commit.zeroLinePaths === "present" ? 1 : 0),
   }
 }
 
@@ -106,11 +123,15 @@ function emptyPromotion(source: CorrectionSource) {
   return unprovedZeroLinePromotion(source.commits.map((commit) => censusRow(source, commit)))
 }
 
-export function isEmptyPromotion(candidate: ManifestCandidate) {
+export function ordinaryPromotionEvidence(candidate: ManifestCandidate) {
   const proof = candidate.proof
-  if (candidate.kind !== "pull-request" || proof.status !== "complete" || proof.originalContributor !== undefined) return false
+  if (candidate.kind !== "pull-request" || proof.status !== "complete" || proof.originalContributor !== undefined || proof.originalContributorParts !== undefined) return "ordinary"
   const accepted = proof.sources.find((source) => source.sourceId === candidate.sourceId)
-  return accepted !== undefined && emptyPromotion(accepted)
+  if (accepted === undefined || !emptyPromotion(accepted)) return "ordinary"
+  return accepted.commits.some((commit) =>
+    commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId && commit.files === undefined && commit.zeroLinePaths === undefined)
+    ? "paths-unavailable"
+    : "empty"
 }
 
 effect function validCommit(commit: CorrectionCommit) {
@@ -126,6 +147,10 @@ effect function validCommit(commit: CorrectionCommit) {
     try check(sameFiles(counted, commit.files), "resolution file evidence differs from canonical patch")
   }
   const files = commit.files
+  if (commit.zeroLinePaths !== undefined) {
+    try check(commit.parentCount <= 1 && commit.additions === 0 && commit.deletions === 0 &&
+      (files === undefined || (files.length === 0) === (commit.zeroLinePaths === "empty")), "zero-line path evidence conflicts")
+  }
   if (files === undefined) return
   try check(distinct(files.map((file) => file.path)) && files.every((file) => file.path !== "" && count(file.additions) && count(file.deletions)), "invalid or duplicate commit file")
   if (resolution === undefined && commit.additions !== null && commit.deletions !== null) {
@@ -207,13 +232,96 @@ effect function addClaims(tally: Tally, sources: ReadonlyMap<string, CorrectionS
   }
 }
 
+function afterOriginal(source: CorrectionSource, originals: ReadonlySet<string>) {
+  const commits = new Map(source.commits.map((commit) => [commit.sha, commit] as const))
+  const reachable = new Set([source.headSha])
+  for (const oid of reachable) {
+    for (const parent of commits.get(oid)?.parentShas ?? []) if (commits.has(parent)) reachable.add(parent)
+  }
+  if (reachable.size !== commits.size) return null
+  const pending = new Map<string, number>()
+  const children = new Map<string, string[]>()
+  const ready: string[] = []
+  for (const commit of source.commits) {
+    if (commit.parentShas === undefined) return null
+    const parents = commit.parentShas.filter((parent) => commits.has(parent))
+    pending.set(commit.sha, parents.length)
+    if (parents.length === 0) ready.push(commit.sha)
+    for (const parent of parents) {
+      const siblings = children.get(parent)
+      if (siblings === undefined) children.set(parent, [commit.sha])
+      else siblings.push(commit.sha)
+    }
+  }
+  const descendants = new Set<string>()
+  for (const oid of ready) {
+    const started = originals.has(oid) || descendants.has(oid)
+    for (const child of children.get(oid) ?? []) {
+      if (started) descendants.add(child)
+      const waiting = (pending.get(child) ?? 0) - 1
+      pending.set(child, waiting)
+      if (waiting === 0) ready.push(child)
+    }
+  }
+  return ready.length === commits.size ? descendants : null
+}
+
+function exactReplacement(candidate: ManifestCandidate, binding: unknown, accepted: CorrectionSource, sources: ReadonlyMap<string, CorrectionSource>): DerivedProof | null {
+  if (candidate.kind !== "pull-request" || !octoberReplacementScope(candidate.projectId, instantOf(candidate.occurredAt) ?? -1) ||
+    !isExactOriginalContributor(binding) || Object.keys(binding).length !== 6 || !digestPattern.test(binding.bindingDigest) || sources.size !== 2) return null
+  const original = sources.get(binding.originalSourceId)
+  const origin = original?.author ?? null
+  const carrier = accepted.author
+  if (original === undefined || original.sourceId === accepted.sourceId || original.occurredAt !== null ||
+    original.repositoryNodeId !== accepted.repositoryNodeId || original.repository.toLowerCase() !== accepted.repository.toLowerCase() ||
+    !eligible(origin) || !eligible(carrier) || origin.id === carrier.id ||
+    binding.originalCommitSha !== original.headSha || binding.originalCommitSha !== binding.acceptedCommitSha) return null
+  const acceptedBySha = new Map(accepted.commits.map((commit) => [commit.sha, commit] as const))
+  const originalShas = new Set(original.commits.map((commit) => commit.sha))
+  for (const commit of original.commits) {
+    const copy = acceptedBySha.get(commit.sha)
+    if (copy === undefined || commit.parentCount !== 1 || copy.parentCount !== 1 ||
+      commit.parentShas === undefined || commit.parentShas[0] !== copy.parentShas?.[0] ||
+      commit.author?.id !== origin.id || commit.author.kind !== origin.kind ||
+      copy.author?.id !== origin.id || copy.author.kind !== origin.kind || copy.author.login !== commit.author.login ||
+      commit.firstAcceptedSourceId !== accepted.sourceId || copy.firstAcceptedSourceId !== accepted.sourceId ||
+      commit.additions === null || commit.deletions === null ||
+      commit.additions !== copy.additions || commit.deletions !== copy.deletions ||
+      commit.retainedCopy !== undefined || commit.files === undefined || commit.files.length === 0 ||
+      commit.files.some((file) => file.additions + file.deletions === 0) || !sameFiles(copy.files ?? null, commit.files)) return null
+  }
+  const acceptedHead = acceptedBySha.get(binding.acceptedCommitSha)
+  if (acceptedHead === undefined || binding.boundPaths.length === 0 ||
+    !sameSet(binding.boundPaths, acceptedHead.files?.map((file) => file.path) ?? []) ||
+    afterOriginal(original, originalShas) === null) return null
+  const firstAccepted = accepted.commits.filter((commit) => commit.firstAcceptedSourceId === accepted.sourceId)
+  if (firstAccepted.some((commit) => commit.parentCount > 1 && correctionClaimCommit(commit))) return null
+  const acceptedOrdinary = firstAccepted.filter((commit) => commit.parentCount <= 1)
+  const verified = afterOriginal(accepted, originalShas)
+  if (verified === null) return null
+  const replacement: ReplacementLine[] = []
+  const scopes: Scope[] = []
+  let total = 0
+  for (const commit of acceptedOrdinary) {
+    if (commit.additions === null || commit.deletions === null || commit.retainedCopy !== undefined) return null
+    const lines = commit.additions + commit.deletions
+    if (originalShas.has(commit.sha)) replacement.push({ kind: "original", author: origin.id, lines })
+    else if (commit.author?.id === carrier.id && commit.author.kind === carrier.kind && verified.has(commit.sha)) replacement.push({ kind: "followup", author: carrier.id, origin: origin.id, lines })
+    else return null
+    total += lines
+    scopes.push({ commit: `${accepted.repositoryNodeId}\u0000${commit.sha}`, path: "*" })
+  }
+  return Number.isSafeInteger(total) && total > 0
+    ? { actors: new Map([[origin.id, origin]]), weights: new Map([[origin.id, total]]), scopes, replacement }
+    : null
+}
+
 export effect function deriveProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
   const proof = candidate.proof
   if (proof.status === "held") return null
   try check(digestPattern.test(proof.censusDigest), "invalid ownership census digest")
   if (proof.originalContributorParts !== undefined) return null
   try check(proof.independentClaimIds === undefined, "independent claims require a complete original partition")
-  if (proof.originalContributor !== undefined) return null
   try check(sameSet(candidate.sourceIds, proof.sources.map((source) => source.sourceId)), "incomplete or duplicate source scope")
   const sources = new Map(proof.sources.map((source) => [source.sourceId, source] as const))
   const claims = proof.claims
@@ -225,6 +333,7 @@ export effect function deriveProof(candidate: ManifestCandidate, projectOf: Proj
   const accepted = sources.get(candidate.sourceId)
   try check(accepted !== undefined && accepted.sourceUrl === candidate.sourceUrl && accepted.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
   if (incomplete || accepted === undefined) return null
+  if (proof.originalContributor !== undefined) return exactReplacement(candidate, proof.originalContributor, accepted, sources)
   const tally: Tally = { actors: new Map(), weights: new Map(), scopes: [], incomplete: false }
   if (candidate.kind === "pull-request") {
     if (emptyPromotion(accepted)) return null
