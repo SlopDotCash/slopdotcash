@@ -31,6 +31,26 @@ export function validRepoPath(value: unknown): value is string {
   return typeof value === "string" && REPO_PATH.test(value);
 }
 
+/**
+ * What a person types into the flag field: `owner/name` or a GitHub link to
+ * the repository or anything inside it. Answers `owner/name`, or null when
+ * the text is neither.
+ */
+export function parseRepoInput(value: string): string | null {
+  const text = value.trim();
+  const link =
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s?#]+)\/([^/\s?#]+)(?:[/?#].*)?$/iu.exec(
+      text,
+    );
+  const path = link
+    ? `${link[1]}/${link[2].replace(/\.git$/iu, "")}`
+    : text.replace(/\/+$/u, "");
+  return validRepoPath(path) ? path : null;
+}
+
+export const REPO_INPUT_RULE =
+  "Enter the repository as owner/name or paste its GitHub link.";
+
 export function repoUrl(repo: string): string {
   return `https://github.com/${repo}`;
 }
