@@ -68,12 +68,12 @@ function layers(world: Seeded, asked: Array<ValueCensus>) {
   )
 }
 
+error UnmergedFixturePull { number: number }
+
 effect function auditedPull(world: Seeded, number: number) {
-  return try Effect.try(() => {
-    const pull = world.fake.world.pull(repository, number)
-    if (pull.mergedAt === null) throw new Error("the audited pull did not merge")
-    return { id: pull.nodeId, number: pull.number, headSha: pull.headSha, mergedAt: pull.mergedAt }
-  })
+  const pull = try Effect.try(() => world.fake.world.pull(repository, number))
+  if (pull.mergedAt === null) throw new UnmergedFixturePull({ number })
+  return { id: pull.nodeId, number: pull.number, headSha: pull.headSha, mergedAt: pull.mergedAt }
 }
 
 effect function reviewed(world: Seeded, directory: string) {
