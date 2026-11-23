@@ -411,6 +411,37 @@ export function notifyMonthlyUnderfunded<S>(
 }
 
 /**
+ * A backlog rule notice for a project's owners (operator decision,
+ * 23 November 2026; PRD section 5): a preview before the rule starts, a
+ * warning when dormancy is near, and the day a project leaves rotation. It
+ * reuses the `project_revision` kind with an event key under
+ * `backlog-rule:`; the caller's key makes each notice once. The audience is
+ * the user steward, or an Organization steward's lister. `detail` names no
+ * contributor and no amount.
+ */
+export function notifyBacklogRule<S>(
+  db: Preparer<S>,
+  projectId: string,
+  eventKey: string,
+  detail: string,
+  at: string,
+): S {
+  return db
+    .prepare(
+      `${INSERT}
+       SELECT ?1, recipient, 'project_revision', p.id, ?3,
+              '/projects/' || p.id || '/manage', ?4, ?4
+         FROM projects p
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("?2")}
+        WHERE p.id = ?2
+          AND substr(?1, 1, length('backlog-rule:' || ?2 || ':')) = 'backlog-rule:' || ?2 || ':'
+          AND ${GITHUB_ID("recipient")}
+       ${ONCE}`,
+    )
+    .bind(eventKey, projectId, detail, at);
+}
+
+/**
  * An owner cut a contributor's monthly amount below the proposal (PRD
  * section 6, operator decision of 15 November 2026). The contributor gets one
  * notice per cut change, keyed by its sequence. The statement reads the
