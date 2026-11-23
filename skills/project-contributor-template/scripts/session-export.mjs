@@ -1,7 +1,15 @@
 // Local session cleaner. Runs on the contributor's machine before any upload.
 // It reduces what leaves the machine; it does not promise that every secret is
 // found, so the contributor sees the cleaned file before it is sent.
-import { isAbsolute, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export const CLEANER_VERSION = "slop-session-cleaner-1";
 
@@ -307,4 +315,353 @@ export function truncateToLimit(lines, limitBytes) {
     if (total <= limitBytes) return { lines: out, truncated };
   }
   return null;
+}
+
+// ---- Reading half: find the client's own session file and read it through an
+// allowlist. Only the fields named here are copied; anything else, including
+// thinking blocks and records this code does not know, never leaves the file.
+
+export const RULES_URL = "https://slop.cash/protocol/private-trace-v3.md";
+const LIMIT_BYTES = 8 * 1024 * 1024;
+const READ_TOOL = /^(?:read|notebookread|view|readfile|read_file|cat)$/i;
+
+function listDir(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function candidateFiles(homeDir) {
+  const found = [];
+  const claude = join(homeDir, ".claude", "projects");
+  for (const d of listDir(claude))
+    if (d.isDirectory())
+      for (const f of listDir(join(claude, d.name)))
+        if (f.isFile() && f.name.endsWith(".jsonl"))
+          found.push({
+            path: join(claude, d.name, f.name),
+            client: "claude-code",
+          });
+  const walk = (dir) => {
+    for (const d of listDir(dir)) {
+      const full = join(dir, d.name);
+      if (d.isDirectory()) walk(full);
+      else if (
+        d.isFile() &&
+        d.name.startsWith("rollout-") &&
+        d.name.endsWith(".jsonl")
+      )
+        found.push({ path: full, client: "codex" });
+    }
+  };
+  walk(join(homeDir, ".codex", "sessions"));
+  return found;
+}
+
+export function findSessionFile(marker, opts) {
+  if (!marker) return null;
+  const files = [];
+  for (const c of candidateFiles(opts.homeDir)) {
+    try {
+      files.push({ ...c, mtime: statSync(c.path).mtimeMs });
+    } catch {}
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  for (const f of files) {
+    try {
+      if (readFileSync(f.path, "utf8").includes(marker))
+        return { path: f.path, client: f.client };
+    } catch {}
+  }
+  return null;
+}
+
+function parseLines(lines) {
+  return lines.map((l) => {
+    try {
+      const o = JSON.parse(l);
+      return o && typeof o === "object" ? o : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+function resultText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text)
+    .join("\n");
+}
+
+function readPathOf(name, input) {
+  if (typeof name !== "string" || !READ_TOOL.test(name)) return undefined;
+  if (!input || typeof input !== "object") return undefined;
+  for (const k of PATH_KEYS) if (typeof input[k] === "string") return input[k];
+  return undefined;
+}
+
+export function readClaudeCode(lines, marker) {
+  const records = parseLines(lines);
+  const start = lines.findIndex((l) => l.includes(marker));
+  if (start < 0) return [];
+  const calls = new Map();
+  const events = [];
+  records.forEach((r, i) => {
+    if (!r || r.isSidechain === true) return;
+    if (r.type !== "user" && r.type !== "assistant") return;
+    const content = r.message?.content;
+    const t = typeof r.timestamp === "string" ? r.timestamp : undefined;
+    const emit = i >= start;
+    if (typeof content === "string") {
+      if (emit && r.type === "user" && r.isMeta !== true)
+        events.push({ t, kind: "user", text: content });
+      return;
+    }
+    if (!Array.isArray(content)) return;
+    for (const b of content) {
+      if (!b || typeof b !== "object") continue;
+      if (b.type === "text" && typeof b.text === "string") {
+        if (emit && r.isMeta !== true)
+          events.push({ t, kind: r.type, text: b.text });
+      } else if (b.type === "tool_use" && r.type === "assistant") {
+        if (typeof b.id === "string")
+          calls.set(b.id, { name: b.name, input: b.input });
+        if (emit)
+          events.push({ t, kind: "tool_call", tool: b.name, args: b.input });
+      } else if (b.type === "tool_result" && r.type === "user") {
+        if (!emit) continue;
+        const call = calls.get(b.tool_use_id);
+        const e = {
+          t,
+          kind: "tool_result",
+          tool: call?.name,
+          text: resultText(b.content),
+        };
+        const path = readPathOf(call?.name, call?.input);
+        if (path !== undefined) e.path = path;
+        events.push(e);
+      }
+    }
+  });
+  return events;
+}
+
+const CODEX_HARNESS_TEXT =
+  /^\s*(?:<environment_context>|<user_instructions>|# AGENTS\.md)/;
+
+function codexText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (b) =>
+        b &&
+        (b.type === "input_text" || b.type === "output_text") &&
+        typeof b.text === "string",
+    )
+    .map((b) => b.text)
+    .join("\n");
+}
+
+function codexArgs(raw) {
+  if (typeof raw !== "string") return raw && typeof raw === "object" ? raw : {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? v : { input: raw };
+  } catch {
+    return { input: raw };
+  }
+}
+
+// Shapes follow openai/codex: codex-rs/history RolloutLine {timestamp, type,
+// payload} with ResponseItem payloads (message, function_call,
+// function_call_output, custom_tool_call, custom_tool_call_output). Reasoning,
+// session_meta, turn_context and event_msg are not read.
+export function readCodex(lines, marker) {
+  const records = parseLines(lines);
+  const start = lines.findIndex((l) => l.includes(marker));
+  if (start < 0) return [];
+  const calls = new Map();
+  const events = [];
+  records.forEach((r, i) => {
+    if (r?.type !== "response_item") return;
+    const p = r.payload;
+    if (!p || typeof p !== "object") return;
+    const t = typeof r.timestamp === "string" ? r.timestamp : undefined;
+    const emit = i >= start;
+    if (p.type === "message") {
+      if (!emit || (p.role !== "user" && p.role !== "assistant")) return;
+      const text = codexText(p.content);
+      if (p.role === "user" && CODEX_HARNESS_TEXT.test(text)) return;
+      events.push({ t, kind: p.role, text });
+    } else if (p.type === "function_call" || p.type === "custom_tool_call") {
+      const args = codexArgs(
+        p.type === "function_call" ? p.arguments : p.input,
+      );
+      if (typeof p.call_id === "string")
+        calls.set(p.call_id, { name: p.name, input: args });
+      if (emit) events.push({ t, kind: "tool_call", tool: p.name, args });
+    } else if (
+      p.type === "function_call_output" ||
+      p.type === "custom_tool_call_output"
+    ) {
+      if (!emit) return;
+      const call = calls.get(p.call_id);
+      const out = p.output;
+      const text =
+        typeof out === "string"
+          ? out
+          : Array.isArray(out)
+            ? out
+                .filter((b) => b && typeof b.text === "string")
+                .map((b) => b.text)
+                .join("\n")
+            : "";
+      const e = { t, kind: "tool_result", tool: call?.name ?? p.name, text };
+      const path = readPathOf(e.tool, call?.input);
+      if (path !== undefined) e.path = path;
+      events.push(e);
+    }
+  });
+  return events;
+}
+
+export async function repoLicence(repo, fetchImpl) {
+  try {
+    const res = await fetchImpl(
+      `https://api.github.com/repos/${repo}/license`,
+      {
+        headers: { accept: "application/vnd.github+json" },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (!res?.ok) return null;
+    const id = (await res.json())?.license?.spdx_id;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function git(repoRoot, args, input) {
+  const r = spawnSync("git", ["-C", repoRoot, ...args], {
+    input,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  return r.status === null ? null : r;
+}
+
+function writtenPaths(events) {
+  const out = [];
+  for (const e of events) {
+    if (
+      e.kind !== "tool_call" ||
+      typeof e.tool !== "string" ||
+      !CONTENT_TOOL.test(e.tool) ||
+      !e.args ||
+      typeof e.args !== "object"
+    )
+      continue;
+    for (const k of PATH_KEYS)
+      if (typeof e.args[k] === "string") out.push(e.args[k]);
+  }
+  return out;
+}
+
+// Built once per export: tracked files plus files this run wrote, minus
+// anything .gitignore covers. Lookups afterwards are set membership.
+export function makeIsRepoFile(events, repoRoot, homeDir) {
+  const root = repoRoot.replace(/\/+$/, "");
+  const tracked = new Set();
+  const listed = git(root, ["ls-files", "-z"]);
+  if (listed && listed.status === 0)
+    for (const rel of listed.stdout.toString("utf8").split("\0"))
+      if (rel) tracked.add(`${root}/${rel}`);
+  const written = new Set();
+  const candidates = new Set(tracked);
+  for (const p of [...writtenPaths(events)]) {
+    const abs = normalise(p, root, homeDir);
+    if (insideRepo(abs, root)) {
+      written.add(abs);
+      candidates.add(abs);
+    }
+  }
+  const ignored = new Set();
+  const rels = [...candidates].map((a) => a.slice(root.length + 1));
+  if (rels.length > 0) {
+    const r = git(
+      root,
+      ["check-ignore", "--stdin", "-z"],
+      `${rels.join("\0")}\0`,
+    );
+    if (r && r.status === 0)
+      for (const rel of r.stdout.toString("utf8").split("\0"))
+        if (rel) ignored.add(`${root}/${rel}`);
+  }
+  return (abs) => (tracked.has(abs) || written.has(abs)) && !ignored.has(abs);
+}
+
+export async function exportSession(opts) {
+  const fallback = {
+    path: opts.outPath,
+    source: "fallback-needed",
+    counts: {},
+    licence: null,
+  };
+  const found = findSessionFile(opts.marker, { homeDir: opts.homeDir });
+  if (!found) return fallback;
+  let lines;
+  try {
+    lines = readFileSync(found.path, "utf8")
+      .split("\n")
+      .filter((l) => l.trim() !== "");
+  } catch {
+    return fallback;
+  }
+  const read = found.client === "claude-code" ? readClaudeCode : readCodex;
+  const raw = read(lines, opts.marker);
+  if (raw.length === 0) return fallback;
+  const licence = await repoLicence(opts.repo, opts.fetchImpl);
+  const keepRepoFiles = licence !== null && OSI_LICENCES.has(licence);
+  const userName =
+    opts.env?.USER || opts.env?.LOGNAME || basename(opts.homeDir || "");
+  const { events, counts } = cleanEvents(raw, {
+    repoRoot: opts.repoRoot,
+    homeDir: opts.homeDir,
+    userName,
+    env: opts.env,
+    keepRepoFiles,
+    isRepoFile: keepRepoFiles
+      ? makeIsRepoFile(raw, opts.repoRoot, opts.homeDir)
+      : () => false,
+  });
+  const header = {
+    format: "slop-session-v1",
+    source: "client-file",
+    client: opts.client,
+    clientVersion: opts.clientVersion,
+    provider: opts.provider,
+    model: opts.model,
+    repository: opts.repo,
+    startCommit: opts.startCommit,
+    endCommit: opts.endCommit,
+    startedAt: events[0]?.t ?? null,
+    endedAt: events[events.length - 1]?.t ?? null,
+    cleaner: CLEANER_VERSION,
+    licence,
+    repoFilesKept: keepRepoFiles,
+    counts,
+    rules: RULES_URL,
+  };
+  const all = [header, ...events].map((o) => JSON.stringify(o));
+  const fitted = truncateToLimit(all, LIMIT_BYTES);
+  if (fitted === null) return fallback;
+  mkdirSync(dirname(opts.outPath), { recursive: true });
+  writeFileSync(opts.outPath, `${fitted.lines.join("\n")}\n`);
+  return { path: opts.outPath, source: "client-file", counts, licence };
 }
