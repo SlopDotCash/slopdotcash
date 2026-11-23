@@ -4537,14 +4537,14 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "c5d6e105aa8a465bfee8456ce37985ff60d20a420c5f5d9005c2fe6294869583",
+      "sha256": "e8996460197da03ee98ddd8c42464ba5e542a927abd5dc7ddf2bd7ceadd8b524",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/points/local_git_objects.qnt"
       ],
       "candidateLines": [
-        36, 54, 87, 108, 110, 128, 168, 246, 278, 301, 311, 316, 320, 324, 325,
-        326, 329, 331, 333, 338, 348, 357, 379, 389, 398, 406
+        36, 54, 87, 108, 110, 128, 168, 256, 288, 311, 321, 326, 330, 334, 335,
+        336, 339, 341, 343, 348, 358, 367, 389, 399, 408, 416
       ],
       "review": "mapped-abstraction"
     },
@@ -16058,7 +16058,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "e00a34a6b6d0d13ad521eda1d41111709a92eb85eed124d8254478eedd3773e9",
+      "sha256": "f58c4b2ffb8186f94c9abc09ebef943b9adee10c2b67fd8f5f9b654b87e3c69e",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/github-discussion-cache.ts",
@@ -16087,6 +16087,9 @@
         "mismatchedValidatorReadsLiveTest",
         "prFileServerErrorRecoversTest",
         "prFileServerErrorsStayBoundedTest",
+        "pullReadServerErrorRecoversTest",
+        "pullReadValidationErrorsRecoverTest",
+        "pullReadValidationErrorsStayBoundedTest",
         "quotaWaitAtAbsoluteDeadlineRefusesTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
