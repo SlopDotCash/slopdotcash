@@ -194,9 +194,12 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "f23a3e2a61929b034c34c3fc97e90a19f347a43fa75486b41efa69eb5881fb4e",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 164, 165, 168, 173],
+      "sha256": "27fa0462af4d9e883b09b6e46fd6583c123c2993d13098714d23302a582fa5f3",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [53, 58, 62, 63, 72, 74, 101, 107, 159, 160, 163, 168],
       "review": "mapped-abstraction"
     },
     {
@@ -5474,9 +5477,12 @@
     },
     {
       "path": "scripts/run-vetting-controller.ts",
-      "sha256": "accc465ec0ead5270ff90d1f4a45c5cdc058c706189063bd02838be027450dba",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [3, 53, 134, 135],
+      "sha256": "1c343ba37f10ceece683a54054c795f0c4d0e9cf5ef1dbeebefef7c2b6996345",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [3, 58, 127, 148, 151, 153, 186, 187],
       "review": "mapped-abstraction"
     },
     {
@@ -5704,6 +5710,13 @@
       "sha256": "2dfb4d302bc438d7a4e059c5c31416045c31499ff7bedf132253e1cd74adc4d4",
       "models": ["formal/models/release/deployment_probe.qnt"],
       "candidateLines": [4, 6, 29, 42, 44, 47, 51],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/vetting-runner-equivalence.ts",
+      "sha256": "cdb7d43e053b373a898567c5c2b6d44d538da6b23bd9b17ba4002ae77b646cc3",
+      "models": ["formal/models/vetting/vetting_runner_equivalence.qnt"],
+      "candidateLines": [141, 152, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -22547,6 +22560,22 @@
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",
         "unknownRetryStaysUnknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_runner_equivalence.qnt",
+      "sha256": "f9240ca4367837865433402503ee4c3b3d9cb5a6c0ecd2b2f3080eed57596112",
+      "sources": [
+        ".github/workflows/vetting-controller.yml",
+        "scripts/run-vetting-controller.ts",
+        "scripts/vetting-runner-equivalence.ts"
+      ],
+      "scenarios": [
+        "laterUnrelatedMergeRunsTest",
+        "sameCommitRunsTest",
+        "scannerChangeWaitsForReleaseTest",
+        "unreadableCompareRefusesTest",
+        "unrelatedMergeAfterScannerReleaseRunsTest"
       ]
     },
     {
