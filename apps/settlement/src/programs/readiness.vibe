@@ -88,9 +88,10 @@ effect function probeOf(network: NetworkKey, url: string) {
   const urls = Redacted.make([url])
   const probed: Probe = registry.family === "evm"
     ? effect {
-      provide evmRpc({ urls, chainId: BigInt(registry.chainId) }) {
+      const chainId = try orDie(Effect.try(() => BigInt(registry.chainId)))
+      provide evmRpc({ urls, chainId }) {
         const rpc = try EvmRpc
-        if ((try rpc.chainId()) !== BigInt(registry.chainId)) return "wrong-chain" satisfies Probe
+        if ((try rpc.chainId()) !== chainId) return "wrong-chain" satisfies Probe
         const head = try rpc.head("finalized")
         return (head.number >= 0n ? "finalized" : "no-finalized-head") satisfies Probe
       }
@@ -144,7 +145,7 @@ export effect function readinessCommand(args: ReadonlyArray<string>) {
   const records: Fields[] = []
   for (const network of Object.keys(NETWORKS)) {
     if (!isNetworkKey(network)) continue
-    const listed = try paymentDeployments(snapshot, { testnet: NETWORKS[network].testnet, registry: options.registry, network, scope: "ordinary" })
+    const listed = try paymentDeployments(snapshot, { testnet: NETWORKS[network].testnet, network, scope: "ordinary" })
     for (const record of listed) if (typeof record === "object" && record !== null) records.push(record as Fields)
   }
   const configs: StackConfig[] = []

@@ -82,7 +82,7 @@ function sameOriginJson(request: HttpServerRequest.HttpServerRequest) {
   return request.headers.origin === originOf(request) && declaredType(request) === "application/json"
 }
 
-function isJsonObject(value: unknown) {
+function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 

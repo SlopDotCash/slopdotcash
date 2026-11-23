@@ -1,7 +1,7 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"
 import { sha256Of } from "@repo/platform/git/bytes"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
-import { githubLinkDestinations, sameRepositoryCommitHints } from "../evidence/hints.vibe"
+import { githubLinkDestinations, sameRepositoryCommitHints } from "@repo/points/corrections"
 import type { Commit, Evidence, Pull, RegisteredRepository, RepairBodyEdit } from "../evidence/types.vibe"
 import { prepareWorkUnitEvidence, sourceDigestOf } from "../workUnits/prepare.vibe"
 import { type WorkUnitRecord, workUnitSourceBindings } from "../workUnits/record.vibe"

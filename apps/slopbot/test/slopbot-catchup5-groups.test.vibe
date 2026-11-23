@@ -68,9 +68,10 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-function historicalReference(world: World): RelatedPullRequest {
-  const pull = world.fake.world.pull(repository, historicalNumber)
-  return { id: pull.nodeId, number: historicalNumber, url: `https://github.com/${repository}/pull/${historicalNumber}`, repository }
+effect function historicalReference(world: World) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, historicalNumber))
+  const reference: RelatedPullRequest = { id: pull.nodeId, number: historicalNumber, url: `https://github.com/${repository}/pull/${historicalNumber}`, repository }
+  return reference
 }
 
 effect function grouped(world: World, related: ReadonlyArray<RelatedPullRequest>, extraCarriers: ReadonlyArray<number>) {
@@ -96,7 +97,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('A group leaves out a referenced pull request of another project, of an unregistered repository or from before the start, and a carrier from before the start keeps it pending (spec/slopbot/workUnits.md, "Story: Prepare a group whose every claim is credited once"; spec/slopbot/workUnits.md, "A referenced pull request that can never join the group is left out instead of holding it"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
     const { world } = try Journey
     const [firstId, secondId] = world.pullIds
-    const historical = historicalReference(world)
+    const historical = try historicalReference(world)
     const referenced = try grouped(world, [
       { id: "PR_kwDOother7", number: 7, url: "https://github.com/grace/other/pull/7", repository: "grace/other" },
       { id: "PR_kwDOelsewhere8", number: 8, url: "https://github.com/eve/elsewhere/pull/8", repository: "eve/elsewhere" },

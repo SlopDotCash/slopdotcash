@@ -78,7 +78,7 @@ effect function ensure(holds: boolean, message: string) {
 }
 
 function wire(value: unknown) {
-  return canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value ?? null)
+  return canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value)
 }
 
 function sameJson(left: unknown, right: unknown) {

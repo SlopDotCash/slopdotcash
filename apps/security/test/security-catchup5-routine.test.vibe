@@ -133,7 +133,7 @@ async function sent(routined: Routined.Shape, handler: WebHandler, path: string,
 
 effect function exchanged(routined: Routined.Shape, handler: WebHandler, path: string, as: string, body?: unknown) {
   const answer = try promise(() => sent(routined, handler, path, as, body))
-  for (let work = routined.pending.shift(); work !== undefined; work = routined.pending.shift()) try promise(() => work)
+  while (routined.pending.length > 0) try promise(() => Promise.all(routined.pending.splice(0)))
   return answer
 }
 

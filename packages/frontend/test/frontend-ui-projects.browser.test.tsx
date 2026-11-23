@@ -337,6 +337,45 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await lastRevision(id)).toMatchObject({ status: "paused" });
   });
 
+  it('the owner moves the integration branch to a branch that declares the project: a head that moved after the branches were read is refused with the reload notice and publishes nothing, and the reloaded head publishes the branch with its contribution guide (spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration")', async () => {
+    await site.allow(refusedLoads, "^409 PUT /api/v1/projects/");
+    const fullName = await repository(users.eli, "routing");
+    const id = await createProject(users.eli, fullName, "Routing");
+    const [record] = await site.sql("SELECT manifest FROM projects WHERE id = ?", id);
+    const manifest = parsed(record?.manifest) as { readonly terms: { readonly revision: unknown }; readonly authority: { readonly repositoryId: unknown }; readonly steward: { readonly github: { readonly actorId: unknown; readonly nodeId: unknown } } };
+    const branch = "proof-routing";
+    const guide = "Work from proof-routing and show evidence in each pull request.";
+    const declaration = {
+      kind: "slop-project-authority",
+      schemaVersion: "1",
+      projectId: id,
+      policyRevision: manifest.terms.revision,
+      repository: { fullName, id: manifest.authority.repositoryId, integrationBranch: branch },
+      steward: { actorId: manifest.steward.github.actorId, nodeId: manifest.steward.github.nodeId },
+    };
+    await site.branch(fullName, branch, { ".github/slop-project.json": JSON.stringify(declaration) });
+
+    const load = named("button", "Change integration branch");
+    await openGroup("Repositories");
+    await site.click(load);
+    await site.select(field("New integration branch"), branch);
+    await openGroup("Contribution rules");
+    await openGroup("More rules");
+    await site.fill(field("Contribution guide"), guide);
+    await site.branch(fullName, branch, { "NOTES.md": "The head moved after the branches were read.\n" });
+    await site.click(publish);
+    await shown(text("The GitHub branch moved. Reload and verify its current head.")).toMatchObject({ visible: true });
+    expect((await revisions(id)).length).toBe(1);
+
+    await site.click(load);
+    await site.select(field("New integration branch"), branch);
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    const [primary] = parsed((await lastRevision(id))?.repositories) as ReadonlyArray<{ readonly integrationBranch?: string }>;
+    expect(primary?.integrationBranch).toBe(branch);
+    expect(await site.sql("SELECT json_extract(manifest, '$.contribution.contributionGuide') AS guide, status FROM projects WHERE id = ?", id)).toEqual([{ guide, status: "paused" }]);
+  });
+
   it('access is checked against current GitHub authority: a failed check offers Retry, a stranger sees "Maintainers only" and is refused, and lost admin permission closes the editor (spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository")', async () => {
     await site.allow(refusedLoads, "^40[0139] (PUT|POST) /api/v1/projects/", "^(40[13]|50[23]) GET /api/v1/project-setup/");
     const fullName = await repository(users.uma, "authority");
@@ -740,6 +779,62 @@ describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMo
     await shown({ text: "Saved", exact: true }).toMatchObject({ count: 0 });
     await at("/");
     expect(await site.sql("SELECT count(*) AS changes FROM monthly_allocation_changes WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ changes: 1 }]);
+  });
+
+  it('a save the allocation service cannot take keeps the unsaved award and reason in the editor with the service\'s reason, and the same save goes through once the service is back (spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+    const fullName = await repository(users.tia, "outage");
+    const id = await createProject(users.tia, fullName, "Outage");
+    const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
+    await site.allow(refusedLoads, "^404 GET /data/", `^503 POST ${path}$`, "^console Failed to load resource: the server responded with a status of 503");
+    await monthlyPool(id, users.tia);
+    await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
+
+    const awards = await openAwards(id);
+    const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
+    const reason = field("Reason (shown publicly and sent to the contributor)");
+    const save = named("button", `Save ${users.pia.login}`, { within: awards });
+    const why = "The second half of the change duplicated work already merged earlier.";
+    await site.fill(award, "1");
+    await site.fill(reason, why);
+    await site.fail("POST", path, 503, { error: "unavailable", message: "Allocation service unavailable." });
+    await site.click(save);
+    await shown({ text: "Allocation service unavailable.", within: awards }).toMatchObject({ visible: true });
+    await shown(award).toMatchObject({ value: "1", disabled: false });
+    await shown(reason).toMatchObject({ value: why });
+    await shown({ text: "Saved", exact: true, within: awards }).toMatchObject({ count: 0 });
+    expect(await site.sql("SELECT count(*) AS changes FROM monthly_allocation_changes WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ changes: 0 }]);
+
+    await site.unfail("POST", path);
+    await site.click(save);
+    await shown({ text: "Saved", exact: true, within: awards }).toMatchObject({ visible: true });
+    await expect.poll(() => site.sql("SELECT reason FROM monthly_allocation_cut_reasons WHERE project_id = ? AND period = ?", id, awardPeriod()), { timeout: 30_000 }).toEqual([{ reason: why }]);
+  });
+
+  it('a save answered after another tab signed in a different account shows nothing of the earlier account\'s editor and no Saved status (spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out")', async () => {
+    await site.allow(refusedLoads, "^404 GET /data/");
+    const fullName = await repository(users.uma, "handover");
+    const id = await createProject(users.uma, fullName, "Handover");
+    await monthlyPool(id, users.uma);
+    await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
+
+    const awards = await openAwards(id);
+    const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
+    const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
+    await site.fill(award, "1");
+    await site.fill(field("Reason (shown publicly and sent to the contributor)"), "The second half of the change duplicated work already merged earlier.");
+    await site.hold("POST", path);
+    await site.click(named("button", `Save ${users.pia.login}`, { within: awards }));
+    await expect.poll(async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === path).map((sent) => sent.actor), { timeout: 30_000 }).toEqual([String(users.uma.id)]);
+
+    await site.open("/", "other");
+    await signOut(users.uma.login);
+    await signIn(users.pia.login, "/", "other");
+    await site.tab("main");
+    await site.refocus();
+    await site.release("POST", path);
+    await shown(award).toMatchObject({ count: 0 });
+    await shown({ text: "Saved", exact: true }).toMatchObject({ count: 0 });
+    await shown(named("button", `Save ${users.pia.login}`)).toMatchObject({ count: 0 });
   });
 });
 

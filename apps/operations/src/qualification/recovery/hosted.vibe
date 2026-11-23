@@ -1,7 +1,7 @@
 // spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
 import { Cloudflare, ToolFailed } from "../../release/wrangler/cloudflare.vibe"
 import { ControlPlane, ControlRefused, type Method } from "./account.vibe"
-import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
+import { type Names, RecoveryRefused, bucketBindings, databaseBindings, protectedWorkflow, qualificationAccounts, qualificationMigrations, qualificationSchema, queueBinding, runtimeVars } from "./plan.vibe"
 
 schema Database { readonly uuid: string; readonly name: string }
 schema Bucket { readonly name: string; readonly creation_date: string }
@@ -342,6 +342,7 @@ export effect function hostedQualification(hosted: Hosted) {
     try fs.makeDirectory(migrations, { recursive: true })
     try fs.writeFileString(files.join(migrations, "0000_qualification_schema.sql"), qualificationSchema)
     for (const name of qualificationMigrations) try fs.copyFile(files.join(hosted.root, "migrations", name), files.join(migrations, name))
+    try fs.writeFileString(files.join(migrations, qualificationAccounts.name), qualificationAccounts.schema)
     const [work, failed] = names.queues
     const config = {
       name: run,

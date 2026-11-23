@@ -61,7 +61,7 @@ export { type ReservedAwardFeedVars, reservedAwardFeedAccess } from "./operator/
 export { type PaymentNetworkVars, paymentNetworks } from "./owner/networks.vibe"
 export { sweepSavedVaultCreations } from "./owner/savedCreations.vibe"
 export { type RecoveryBindings, bindingRecovery } from "./signer/recoveryBinding.vibe"
-export { paymentRpc } from "./vault/rpc.vibe"
+export { paymentRpc, reviewedGenesis } from "./vault/rpc.vibe"
 
 export const settlement = area({
   name: "settlement",

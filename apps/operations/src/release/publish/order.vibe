@@ -42,6 +42,7 @@ export interface Publication {
 export interface Overrides {
   readonly vars: Readonly<Record<string, string>>
   readonly withoutBindings: ReadonlyArray<string>
+  readonly crons?: ReadonlyArray<string>
 }
 
 export const noOverrides: Overrides = { vars: {}, withoutBindings: [] }
@@ -128,6 +129,7 @@ effect function generatedConfig(reviewed: Reviewed, publication: Publication, ov
     vars,
     ...reviewed.file.d1_databases === undefined ? {} : { d1_databases: reviewed.file.d1_databases.map((database) => ({ ...database, migrations_dir: files.join(publication.root, "migrations") })) },
     ...reviewed.file.services === undefined ? {} : { services },
+    ...overrides.crons === undefined ? {} : { triggers: { crons: overrides.crons } },
     ...extra,
   }
   const path = files.join(publication.workspace, `${reviewed.file.name}.json`)
@@ -216,7 +218,7 @@ export effect function publishWorker(reviewed: Reviewed, publication: Publicatio
   try cloudflare.wrangler(`${name} deploy`, { args: ["versions", "deploy", "--name", name, `--version-id=${versionId}`, "--percentage=100", `--message=${releaseMessage(sha)}`, "--yes"], seconds: deploySeconds })
   if (release.triggers) {
     try cloudflare.wrangler(`${name} triggers`, { args: ["triggers", "deploy", "--config", config], seconds: deploySeconds })
-    const crons = reviewed.file.triggers?.crons
+    const crons = release.overrides.crons ?? reviewed.file.triggers?.crons
     if (crons !== undefined) try checkedSchedules(name, crons)
   }
   return { tag: try readBack(name, versionId, () => uploaded), config }

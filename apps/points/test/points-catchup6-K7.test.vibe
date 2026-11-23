@@ -2,10 +2,21 @@ import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { gitAt, gitBytes } from "@repo/platform/git"
 import { sha256Of } from "@repo/platform/git/bytes"
+import { webCrypto } from "@repo/platform/crypto"
 import { github } from "@repo/platform/github"
+import { type Award, type Journal, keyText } from "../src/kernels/records/canonical.ts"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
 import type { CorrectionSource } from "../src/corrections/apply/manifest.vibe"
-import { type IdenticalAcceptedChange, type PacketRetirement, type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
-import { type RetirementScope, verifyCarrierTips, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges } from "../src/corrections/reviewed/verify.vibe"
+import { commitObjectId } from "../src/corrections/reviewed/bytes.ts"
+import { type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
+import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
+import { type RetirementScope, verifyCarrierTips, verifyHistoricalAcceptedSquashes, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges } from "../src/corrections/reviewed/verify.vibe"
+import { periodOf } from "../gen/points__periods.effect.vibe"
+import { distinctOrder } from "../gen/points__reviewedHistory.ts"
+import { jsonReply } from "./support/catchup3-e2/replies.ts"
+import { type Packet, type Retirement, actor, appended, baselineOf, batchDigestOf, duplicateReason, duplicateRetirementFixture, earlierAcceptanceFixture, hash, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const repository = { id: 1, node_id: "R_feed", private: false, full_name: "feedforagents/feed" }
 const root = `/repos/${repository.full_name}`
@@ -91,8 +102,8 @@ function api(server: Remote) {
     const reads = (server.reads.get(path) ?? 0) + 1
     server.reads.set(path, reads)
     const body = server.routes.get(path)?.(reads)
-    const response = HttpServerResponse.jsonUnsafe(body ?? { message: "Not Found" }, { status: body === undefined ? 404 : 200 })
-    return succeed(HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(response)))
+    const response = jsonReply(body ?? { message: "Not Found" }, { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
+    return succeed(HttpClientResponse.fromWeb(request, response))
   })
 }
 
@@ -325,6 +336,185 @@ effect function withRemote<A, E, R>(use: (server: Remote) => A!E!R) {
   }
 }
 
+const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
+const emptyRegistry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
+const mergeTree = "e".repeat(40)
+
+type Source = Retirement["source"]
+type Proof = NonNullable<Retirement["earlierAcceptanceProof"]>
+type Context = Proof["contextSources"][number]
+
+interface Duplicate {
+  readonly packet: Packet
+  readonly baseline: Journal
+  readonly retirement: Retirement
+  readonly original: Award
+}
+
+function rawCommit(tree: string, parents: ReadonlyArray<string>, second: number, message: string) {
+  return `tree ${tree}\n${parents.map((parent) => `parent ${parent}\n`).join("")}author Human <human@example.test> ${second} +0000\ncommitter Human <human@example.test> ${second} +0000\n\n${message}\n`
+}
+
+function orderOf(packet: Packet) {
+  return new Map((packet.duplicateRetirements ?? []).map((retirement) => [digestText(retirement), [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])].map(() => distinctOrder)] as const))
+}
+
+effect function rebuilt(packet: Packet, baseline: Journal, duplicates: ReadonlySet<string> = new Set()) {
+  const protection = try Effect.try(() => protectionFor(october))
+  const result = reconstructHistoricalPoints({
+    packet: packet as HistoricalPacket,
+    baseline,
+    now: time,
+    bans: new Map(),
+    protection,
+    registry: emptyRegistry,
+    repositories: repositoriesOf(emptyRegistry, {}),
+    projectOf: () => "feed",
+    preview: true,
+    verifiedRetirements: { duplicates, order: orderOf(packet) },
+  }) catch (failure) => messageOf(failure)
+  return result
+}
+
+function bind(f: Duplicate) {
+  const retirement = f.retirement
+  retirement.evidence = JSON.stringify({
+    sourceId: retirement.sourceId,
+    workUnitId: retirement.workUnitId,
+    sourceSha256: hash(retirement.source),
+    earlierSourcesSha256: hash(retirement.earlierSources),
+    coverageSha256: hash(retirement.coverage),
+    ...(retirement.identicalAcceptedChange === undefined ? {} : { identicalAcceptedChangeSha256: hash(retirement.identicalAcceptedChange) }),
+    ...(retirement.earlierAcceptanceProof === undefined ? {} : { earlierAcceptanceProofSha256: hash(retirement.earlierAcceptanceProof) }),
+    ...(retirement.acceptedPromotion === undefined ? {} : { acceptedPromotionSha256: hash(retirement.acceptedPromotion) }),
+  })
+  retirement.evidenceSha256 = sha256Of(retirement.evidence)
+  const expected = appended(f.baseline, { ...f.original, amount: 0 }, hash(retirement), { sourceId: `owner_duplicate_${retirement.evidenceSha256}`, reason: duplicateReason })
+  f.packet.candidateDigest = batchDigestOf(expected)
+  return expected
+}
+
+effect function identicalFixture(survivingCarrier = false, earlierAmount?: number) {
+  const f = try Effect.try(() => duplicateRetirementFixture(earlierAmount))
+  const { retirement } = f
+  const [earlier] = retirement.earlierSources
+  const [first] = earlier?.commits ?? []
+  const audited = f.packet.sourceAudit.sources[1]
+  if (earlier === undefined || first === undefined || audited === undefined) throw Error("fixture earlier source")
+  earlier.headSha = "e".repeat(40)
+  first.sha = earlier.headSha
+  audited.headSha = earlier.headSha
+  retirement.coverage = []
+  retirement.identicalAcceptedChange = { earlierSourceId: earlier.sourceId, earlierMergeSha: "1".repeat(40), mergeSha: "2".repeat(40), diffSha256: "3".repeat(64), ...(survivingCarrier ? { survivingCarrier: true } : {}) }
+  const expected = bind(f)
+  const retired = try Effect.try(() => hash(retirement))
+  return { ...f, earlier, expected, verified: new Set([retired]) }
+}
+
+effect function carriedEdgeFixture() {
+  const f = try Effect.try(() => earlierAcceptanceFixture())
+  const { retirement } = f
+  const { source } = retirement
+  const [earlier] = retirement.earlierSources
+  const [work, base] = retirement.earlierAcceptanceProof?.objects ?? []
+  if (earlier === undefined || work === undefined || base === undefined) throw Error("fixture earlier source")
+  const { sha, raw } = work
+  const { sha: baseSha, raw: baseRaw } = base
+  const nativeMerge = rawCommit(mergeTree, [baseSha, sha], 2, "earlier acceptance with distinct tree")
+  const nativeMergeSha = try Effect.try(() => commitObjectId(nativeMerge))
+  const context: Context = { id: earlier.sourceId, number: 2, headSha: sha, baseSha, mergedAt: earlier.occurredAt ?? "", mergeSha: nativeMergeSha }
+  const proof: Proof = {
+    commits: [{ sha, sourceId: earlier.sourceId }],
+    acceptedMergeEdges: [{ sha: nativeMergeSha, earlierSourceId: earlier.sourceId }],
+    sourceBaseSha: baseSha,
+    objects: [{ sha, raw }, { sha: baseSha, raw: baseRaw }, { sha: nativeMergeSha, raw: nativeMerge }],
+    contextSources: [context],
+  }
+  retirement.earlierAcceptanceProof = proof
+  source.headSha = nativeMergeSha
+  source.commits.push({ sha: nativeMergeSha, parentCount: 2, parentShas: [baseSha, sha], author: source.author, firstAcceptedSourceId: source.sourceId, additions: 0, deletions: 0 })
+  source.commitCount = source.commits.length
+  const audited = f.packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
+  if (audited !== undefined) audited.headSha = nativeMergeSha
+  const next = rawCommit(mergeTree, [baseSha, nativeMergeSha], 3, "promotion of the accepted merge")
+  const nextSha = try Effect.try(() => commitObjectId(next))
+  retirement.acceptedPromotion = { headCommit: nativeMerge, mergeCommit: next, mergeSha: nextSha }
+  const expected = bind(f)
+  return { ...f, earlier, context, proof, expected }
+}
+
+effect function groupedWitness() {
+  const f = try carriedEdgeFixture()
+  const earlier = f.baseline.revisions.find((row) => row.award.sourceId === f.earlier.sourceId)
+  const candidate = f.packet.corrections.candidates.find((entry) => entry.sourceId === f.earlier.sourceId)
+  if (earlier === undefined || candidate === undefined) throw Error("fixture earlier award")
+  const workUnitId = `wu_${"a".repeat(64)}`
+  const ordinary: Award = { ...earlier.award, workUnitId, amount: 0 }
+  const grouped: Award = { ...earlier.award, workUnitId, key: sha256Of(keyText({ projectId: "feed", actorId: actor.id, category: "merged-pull-request", sourceId: f.earlier.sourceId, workUnitId })) }
+  const changed = try Effect.try(() => appended(appended({ ...f.baseline, revisions: f.baseline.revisions.slice(0, 1) }, ordinary, "b".repeat(64)), grouped, "b".repeat(64)))
+  const prior = changed.revisions.find((row) => row.award.key === ordinary.key)
+  const groupedPrior = changed.revisions.find((row) => row.award.key === grouped.key)
+  if (prior === undefined || groupedPrior === undefined) throw Error("fixture pool predecessors")
+  f.packet.baselineDigest = try Effect.try(() => batchDigestOf(changed))
+  f.packet.baselineRevisionCount = changed.revisions.length
+  f.packet.corrections.baseline = try Effect.try(() => baselineOf(changed))
+  candidate.workUnitId = workUnitId
+  candidate.expectedPredecessors = [{ key: ordinary.key, revisionId: prior.id }]
+  f.packet.corrections.candidates.push({ ...structuredClone(candidate), id: "earlier_grouped", kind: "work-unit", proof: { status: "held" }, expectedPredecessors: [{ key: grouped.key, revisionId: groupedPrior.id }] })
+  return try rebuilt(f.packet, changed)
+}
+
+effect function carriedRange(server: Remote) {
+  const { gitDir } = server
+  const accepted = { "w.ts": "earlier work\n", "x.ts": "independent accepted change\n" }
+  const base = try commit(gitDir, "Shared base", {}, [])
+  const actualParent = try commit(gitDir, "Separate actual integration parent", {}, [base])
+  const omitted = try commit(gitDir, "Changed line", { "x.ts": accepted["x.ts"] }, [base])
+  const work = try commit(gitDir, "Earlier submitted work", { "w.ts": accepted["w.ts"] }, [base])
+  const head = try commit(gitDir, "Earlier accepted merge", accepted, [omitted, work])
+  const promoted = try commit(gitDir, "Clean outer promotion", accepted, [actualParent, head])
+  const headCommit = `${try fixtureGit(gitDir, ["cat-file", "commit", head])}\n`
+  const mergeCommit = `${try fixtureGit(gitDir, ["cat-file", "commit", promoted])}\n`
+  const verify = (declaredBase: string, changeAfterNativeRead: boolean) => effect {
+    const f = try carriedEdgeFixture()
+    const { retirement, proof, context } = f
+    const { source } = retirement
+    const prior = f.earlier
+    const item = (sha: string, ...parentShas: string[]) => ({ sha, parentShas, parentCount: parentShas.length, author: actor, firstAcceptedSourceId: prior.sourceId, additions: 1, deletions: 0 })
+    prior.headSha = work
+    prior.commits = [item(work, base)]
+    source.headSha = head
+    source.commits = [item(work, base), item(head, omitted, work), ...(declaredBase === base ? [item(omitted, base)] : [])]
+    source.commitCount = source.commits.length
+    proof.sourceBaseSha = declaredBase
+    context.headSha = work
+    context.baseSha = base
+    context.mergeSha = head
+    proof.acceptedMergeEdges = [{ sha: head, earlierSourceId: prior.sourceId }]
+    retirement.acceptedPromotion = { headCommit, mergeCommit, mergeSha: promoted }
+    for (const row of f.packet.sourceAudit.sources) {
+      if (row.id === prior.sourceId) row.headSha = work
+      if (row.id === source.sourceId) row.headSha = head
+    }
+    const user = { node_id: actor.id, type: "User" }
+    const listed = (selected: Source) => selected.commits.map(({ sha, parentShas }) => ({ sha, parents: (parentShas ?? []).map((parent) => ({ sha: parent })), author: user }))
+    const answer = (selected: Source, baseSha: string, merge: string) => ({ node_id: selected.sourceId, user, head: { sha: selected.headSha }, base: { sha: baseSha }, commits: selected.commitCount, merged_at: selected.occurredAt, merge_commit_sha: merge })
+    server.routes.set(root, () => repository)
+    server.routes.set(`${root}/pulls/2`, () => answer(prior, base, head))
+    server.routes.set(`${root}/pulls/2/commits?per_page=100`, () => listed(prior))
+    server.routes.set(`${root}/compare/${base}...${work}?per_page=100&page=1`, () => ({ total_commits: prior.commits.length, commits: listed(prior) }))
+    server.routes.set(`${root}/pulls/1`, (reads) => answer(source, declaredBase, changeAfterNativeRead && reads > 1 ? omitted : promoted))
+    server.routes.set(`${root}/pulls/1/commits?per_page=100`, () => listed(source))
+    server.routes.set(`${root}/compare/${declaredBase}...${head}?per_page=100&page=1`, () => ({ total_commits: source.commits.length, commits: listed(source) }))
+    server.routes.set("/graphql", () => ({ data: { node: { id: source.sourceId, headRefOid: head, mergedAt: source.occurredAt, repository: { id: source.repositoryNodeId }, mergeCommit: { oid: promoted } } } }))
+    const outcome = try attempt(server, verifyHistoricalAcceptedSquashes(f.packet as HistoricalPacket))
+    return typeof outcome === "string" ? outcome : "verified"
+  }
+  const merged = try fixtureGit(gitDir, ["merge-tree", "--write-tree", "--no-messages", actualParent, head])
+  const tree = try fixtureGit(gitDir, ["rev-parse", `${promoted}^{tree}`])
+  return [merged === tree, try verify(base, false), try verify(omitted, false), try verify(base, true)]
+}
+
 layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Reviewed identical accepted changes are verified against the complete accepted Git objects in one acquisition, and a surviving carrier stays pinned to its refreshed branch tip (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
     const results: unknown[] = []
@@ -389,5 +579,66 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
       "Duplicate acceptance ancestry is inconsistent",
       "Duplicate acceptance source changed",
     ])
+  }))
+
+  it.effect('An independently verified identical accepted change retires only its later ordinary award, a carried merge keeps the earlier pool and a surviving carrier keeps only an equal original-author award (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
+    provide webCrypto {
+      const lacking = "Identical accepted change lacks a verified earlier ordinary pool"
+      const identical = try identicalFixture()
+      const unverified = try rebuilt(identical.packet, identical.baseline)
+      const verified = try rebuilt(identical.packet, identical.baseline, identical.verified)
+      const kept = typeof verified === "string" ? [] : verified.revisions.slice(0, identical.baseline.revisions.length)
+      const proof = identical.retirement.identicalAcceptedChange
+      if (proof !== undefined) proof.diffSha256 = "4".repeat(64)
+      const changedDiff = try rebuilt(identical.packet, identical.baseline, identical.verified)
+      const carried = try identicalFixture()
+      const carriedProof = carried.retirement.identicalAcceptedChange
+      const [audited] = carried.packet.sourceAudit.sources
+      const [earlierCommit] = carried.earlier.commits
+      if (carriedProof === undefined || audited === undefined || earlierCommit === undefined) throw Error("fixture carried proof")
+      carriedProof.carriedAcceptance = true
+      carried.retirement.source.headSha = carriedProof.earlierMergeSha
+      audited.headSha = carriedProof.earlierMergeSha
+      carried.retirement.source.commits = [...carried.earlier.commits, { ...earlierCommit, sha: carriedProof.earlierMergeSha, parentCount: 2, parentShas: ["c".repeat(40), carried.earlier.headSha] }]
+      carried.retirement.source.commitCount = carried.retirement.source.commits.length
+      const carriedExpected = bind(carried)
+      const carriedRetired = try Effect.try(() => hash(carried.retirement))
+      const carriedKept = try rebuilt(carried.packet, carried.baseline, new Set([carriedRetired]))
+      carried.retirement.source.commits.push({ ...earlierCommit, sha: "4".repeat(40) })
+      carried.retirement.source.commitCount += 1
+      const extendedRetired = try Effect.try(() => hash(carried.retirement))
+      const carriedExtra = try rebuilt(carried.packet, carried.baseline, new Set([extendedRetired]))
+      const surviving = try identicalFixture(true)
+      const survived = try rebuilt(surviving.packet, surviving.baseline, surviving.verified)
+      const unequal = try identicalFixture(true, 29)
+      const unequalAward = try rebuilt(unequal.packet, unequal.baseline, unequal.verified)
+      try same([unverified, verified, kept, changedDiff, carriedKept, carriedExtra, survived, unequalAward], [
+        lacking, identical.expected, identical.baseline.revisions, lacking, carriedExpected, lacking, surviving.expected, "Surviving carrier must preserve the equal original-author award",
+      ])
+    }
+  })
+
+  it.effect('A carried earlier merge counts only as the exact accepted merge edge of a retained ordinary award (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
+    provide webCrypto {
+      const unboundEdge = "Earlier accepted merge edge is not bound to a retained ordinary award"
+      const imported = try carriedEdgeFixture()
+      const kept = try rebuilt(imported.packet, imported.baseline)
+      const moved = try carriedEdgeFixture()
+      const [edge] = moved.proof.acceptedMergeEdges ?? []
+      if (edge !== undefined) edge.sha = moved.context.headSha
+      const notAccepted = try rebuilt(moved.packet, moved.baseline)
+      delete moved.proof.acceptedMergeEdges
+      const withoutEdges = try rebuilt(moved.packet, moved.baseline)
+      const alone = try carriedEdgeFixture()
+      alone.packet.corrections.candidates = alone.packet.corrections.candidates.filter((candidate) => candidate.sourceId !== alone.earlier.sourceId)
+      const positiveAlone = try rebuilt(alone.packet, alone.baseline)
+      const grouped = try groupedWitness()
+      try same([kept, notAccepted, withoutEdges, positiveAlone, grouped], [imported.expected, unboundEdge, "Duplicate merge has unreviewed resolution work", unboundEdge, unboundEdge])
+    }
+  })
+
+  it.effect('A carried acceptance is checked against the actual first-parent-exclusive members of its promotion (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const checked = try withRemote(carriedRange)
+    try same(checked, [true, "verified", "Carried acceptance promotion has different native members", "Accepted promotion changed during collection"])
   }))
 })

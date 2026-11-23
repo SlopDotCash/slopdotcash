@@ -5,7 +5,7 @@ import { type ConstraintViolation, type Statement, sql } from "@repo/platform/d1
 import { Roles } from "@repo/platform/roles"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Notices } from "@repo/ports/operations"
-import { type Event, type Registry, type RegistryRead, apply, decodeEvent, decodeState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { type Event, type Registry, type RegistryObservation, type RegistryRead, apply, decodeEvent, decodeState, initial, observation } from "../../../gen/backend__projectComposition.effect.vibe"
 import { platform } from "../../../gen/security__enforcement.effect.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
 import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, fieldsCompleteOf, fundedOf, idOf, licenseOf, mismatchOf, monthOf, networkOf, participationOf, projectState, repositoryIdsOf, repositoryKeysOf, rewardPromiseOf, sameExclusions, shareHistoryOf, statusOf, statusText, tierOf, tierText, vaultsOf } from "./codec.vibe"
@@ -34,6 +34,7 @@ export interface Action {
   readonly basedOn?: number
   readonly recordId?: string
   readonly observations?: ReadonlyArray<Observation>
+  readonly setupRead?: RegistryObservation
 }
 
 export type Observation = Extract<Event, { type: "observeEvidence" | "observePins" }>
@@ -171,7 +172,8 @@ effect function loaded(projectId: string, rows: ReadonlyArray<Rows>, action: Act
   const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], network: networkOf(prospect.manifest), asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
   const mirror = mirrorOf(backend)
   const security = try (try EnforcementRows).decode(projectId, rows.slice(3), prospect === undefined ? mirror : { ...mirror, repositoryGithubIds: [String(prospect.repository)] })
-  const state = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current) })
+  const decoded = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current), setupRead: initial.setupRead })
+  const state = { ...decoded, setupRead: action?.setupRead ?? observation(decoded) }
   return { rows: backend, state, event: action === undefined ? undefined : try trusted(backend, state, action, prospect) } satisfies Loaded
 }
 

@@ -167,7 +167,7 @@ export effect function escrowProgram(caseId: string) {
 }
 
 effect function written(caseId: string, statements: ReadonlyArray<Statement>) {
-  try (try D1).batch(statements) catch effect (error) => match (error) {
+  (try D1).batch(statements) catch effect (error) => match (error) {
     when ConstraintViolation: throw new Conflict({ aggregate: `security settlement ${caseId}`, attempts: 1 });
     default: throw error;
   }
@@ -246,19 +246,21 @@ effect function ownerRequestOf(row: SettlementRow, deployment: StoredDeployment)
   if (!isChain(deployment.chain) || actor === undefined || gross === undefined) throw new RowMismatch({ text: "security_settlements", issue: "the settlement's chain, actor or amount is malformed" })
   if (chainFamily(deployment.chain) === "solana") {
     const full = try Effect.try({ try: () => parsedJson(row.deployment), catch: () => new RowMismatch({ text: "security_settlements", issue: "the deployment is not JSON" }) })
-    return {
+    const request: Json = {
       network: deployment.network,
       programId: deployment.programId ?? null,
       operation: "commit-bounty",
       deployment: full,
       awards: [{ awardId: row.obligation_id, sourceDigest: row.source_digest, githubUserId: row.reporter_github_id, grossMicro: row.gross_base }],
-    } satisfies Json
+    }
+    return request
   }
   const id = bytes32(row.obligation_id)
   const sourceDigest = bytes32(`0x${row.source_digest}`)
   if (id === undefined || sourceDigest === undefined || deployment.owner === undefined) throw new RowMismatch({ text: "security_settlements", issue: "the obligation, source commitment or owner is malformed" })
   const data = try Effect.try({ try: () => commitAwardCalldata({ purpose: "BountyPurpose", id, actor, gross, sourceDigest }), catch: () => new RowMismatch({ text: "security_settlements", issue: "the award commitment does not encode" }) })
-  return { network: deployment.network, from: deployment.owner, to: deployment.vault, data, value: "0x0" } satisfies Json
+  const request: Json = { network: deployment.network, from: deployment.owner, to: deployment.vault, data, value: "0x0" }
+  return request
 }
 
 export effect function securitySettlementView(caseId: string) {

@@ -704,7 +704,7 @@ export const OwnerProjectRoutes = Layer.mergeAll(
   handleRaw(createProject, (input) => create(input.actor)),
   handleRaw(reviseProject, (input) => effect {
     const raw = try jsonBody(128)
-    if (Object.hasOwn(raw, "integrationBranch")) {
+    if (typeof raw === "object" && raw !== null && Object.hasOwn(raw, "integrationBranch")) {
       const request = Schema.decodeUnknownEffect(BranchRequest)(raw, { onExcessProperty: "error" }) catch effect () => { throw new Refused(admission.unexpectedFields) }
       return answer(try moveIntegrationBranch(input.params.id ?? "", input.actor, request))
     }

@@ -34,6 +34,7 @@ const userSteward = "9200000005"
 const organization = "9200000006"
 const lister = "9200000007"
 const optedOut = "9200000008"
+const activityOnly = "9200000009"
 const reviewer = "9200000098"
 const caseId = "sc_delivery_journey"
 const projectId = "delivery-journey"
@@ -59,6 +60,7 @@ const activityPilotFile = JSON.stringify({
   recipients: {
     [second]: { email: "second@slop.test", verifiedAt: seededAt, evidenceReference: "operator check second" },
     [optedOut]: { email: "opted-out@slop.test", verifiedAt: seededAt, evidenceReference: "operator check opted out" },
+    [activityOnly]: { email: "activity-only@slop.test", verifiedAt: seededAt, evidenceReference: "operator check activity only" },
   },
 })
 
@@ -275,13 +277,13 @@ effect function outbox(eventKey: string, recipient: string) {
 effect function securityPilot() {
   const settings = try NotifySettings
   if (settings.security.kind !== "on") return try die(new Error("the journey's security pilot is not configured"))
-  return { pilot: settings.security, release: releaseFor(settings) }
+  return { pilot: settings.security, release: releaseFor(settings, "security") }
 }
 
 effect function activityPilot() {
   const settings = try NotifySettings
   if (settings.activity.kind !== "on") return try die(new Error("the journey's activity mail is not configured"))
-  return { pilot: settings.activity, release: releaseFor(settings) }
+  return { pilot: settings.activity, release: releaseFor(settings, "activity") }
 }
 
 effect function dispatchSecurity() {
@@ -569,16 +571,19 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     ])
 
     try db.run(sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${optedOut}, 0, 0, NULL, ${seededAt})`)
-    try save([second, optedOut].map((recipientGithubId, index) => ({ eventKey: `wallet-claim:pilot-${index + 1}`, recipientGithubId, kind: "WalletChanged", subject: "base", actionPath: "/account#wallets", sourceAt: seededAt })))
+    try save([second, optedOut, activityOnly].map((recipientGithubId, index) => ({ eventKey: `wallet-claim:pilot-${index + 1}`, recipientGithubId, kind: "WalletChanged", subject: "base", actionPath: "/account#wallets", sourceAt: seededAt })))
     try dispatch("activity", pilot, from, release)
     const pilotWallet = try outbox("wallet-claim:pilot-1", second)
     const optedOutWallet = try outbox("wallet-claim:pilot-2", optedOut)
+    const activityOnlyWallet = try outbox("wallet-claim:pilot-3", activityOnly)
     try same({
       pilotWallet: [pilotWallet.state, sentTo(pilotWallet.id).map(([to]) => to)],
       optedOutWallet: [optedOutWallet.state, sentTo(optedOutWallet.id).length],
+      activityOnlyWallet: [activityOnlyWallet.state, sentTo(activityOnlyWallet.id).map(([to]) => to)],
     }, {
       pilotWallet: ["provider-accepted", ["second@slop.test"]],
       optedOutWallet: ["suppressed", 0],
+      activityOnlyWallet: ["provider-accepted", ["activity-only@slop.test"]],
     })
   })
 

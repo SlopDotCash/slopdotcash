@@ -1,25 +1,40 @@
-// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"
 import { GitHub } from "@repo/platform/github"
 import type { Journal } from "../../../kernels/records/canonical.ts"
+import { batchDigest } from "../../../kernels/records/ids.vibe"
 import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
 import { valueReferenceQuery } from "../../collect/cache.vibe"
-import { refusal } from "../packet.vibe"
-import type { Row } from "../audit/catalog.vibe"
-import type { HistoricalAssessmentReceipt } from "../audit/reconcile.vibe"
+import type { HistoricalAssessmentHeads, Row } from "../audit/catalog.vibe"
+import { type HistoricalAssessmentReceipt, InvalidAssessmentJournal } from "../audit/reconcile.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply, catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
 import { latestOf } from "./latest.vibe"
+import type { HistoricalEmptyLegacyClosureBinding } from "./merged.vibe"
 
 export type VerifiedClosedFinding = "verified-closed-context" | "verified-standalone-closed-review"
+
+export type VerifiedClosure = VerifiedClosedFinding | "verified-legacy-closure-without-awards"
 
 export interface JointCandidate {
   readonly source: Row
   readonly standalone: boolean
 }
 
+export interface EmptyLegacyClosureFacts {
+  readonly exactClosure: boolean
+  readonly noFormalReviews: boolean
+  readonly noPriorAward: boolean
+}
+
 export interface HistoricalEvidence {
   readonly removed: ReadonlySet<string>
-  readonly verifiedClosed: ReadonlyMap<string, VerifiedClosedFinding>
+  readonly verifiedClosed: ReadonlyMap<string, VerifiedClosure>
+  readonly legacyClosures: ReadonlyMap<string, EmptyLegacyClosureFacts>
+}
+
+interface ClosedCandidate {
+  readonly source: Row
+  readonly finding: VerifiedClosure
 }
 
 export interface HistoricalArchiveScope {
@@ -28,7 +43,7 @@ export interface HistoricalArchiveScope {
 }
 
 const sha = /^[a-f0-9]{40}$/u
-const closedContextQuery = "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid repository{id databaseId isPrivate nameWithOwner}}}}"
+const closedContextQuery = "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid reviews(first:1){totalCount} repository{id databaseId isPrivate nameWithOwner}}}}"
 const missingItem: ReadonlyArray<ReadonlyArray<string>> = [["repository", "issueOrPullRequest"]]
 const dispatch = "TrustedMainDispatch" as const
 const closedBatch = 30
@@ -66,7 +81,7 @@ export function isStandaloneHistoricalReview(record: Row) {
 }
 
 effect function unless(holds: boolean) {
-  if (!holds) throw refusal("Historical assessment catalog: removed accepted merge evidence differs")
+  if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
 }
 
 effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
@@ -125,31 +140,69 @@ function restLifecycle(rest: Row, source: Row) {
     fields(rest.head).sha === source.headSha && base.node_id === source.repositoryNodeId && base.id === source.repositoryDatabaseId && base.private === false
 }
 
-effect function closedContexts(candidates: ReadonlyArray<JointCandidate>) {
+effect function closedContexts(candidates: ReadonlyArray<ClosedCandidate>) {
   const github = try GitHub
-  const verified = new Map<string, VerifiedClosedFinding>()
+  const verified = new Map<string, VerifiedClosure>()
+  const facts = new Map<string, EmptyLegacyClosureFacts>()
   for (let offset = 0; offset < candidates.length; offset += closedBatch) {
     const batch = candidates.slice(offset, offset + closedBatch)
     const answer = fields(try github.graphql(closedContextQuery, { ids: batch.map(({ source }) => source.pullRequestNodeId) }, Schema.Unknown))
     const nodes = list(answer.nodes)
-    if (!Array.isArray(answer.nodes) || nodes.length !== batch.length) throw refusal("Historical assessment catalog: closed context read is incomplete")
-    for (const [index, { source, standalone }] of batch.entries()) {
-      if (!closedLifecycle(fields(nodes[index]), source)) continue
-      if (standalone || (source.mergeSha ?? null) !== null) {
+    try unless(Array.isArray(answer.nodes) && nodes.length === batch.length)
+    for (const [index, { source, finding }] of batch.entries()) {
+      const id = String(source.pullRequestNodeId)
+      const legacy = finding === "verified-legacy-closure-without-awards"
+      const observed = fields(nodes[index])
+      const unreviewed = fields(observed.reviews).totalCount === 0
+      let exact = closedLifecycle(observed, source) && (!legacy || unreviewed)
+      if (exact && (finding !== "verified-closed-context" || (source.mergeSha ?? null) !== null)) {
         const rest = fields(try github.json(`/repos/${String(source.repository)}/pulls/${Number(source.pullRequestNumber)}`, Schema.Unknown))
-        if (!restLifecycle(rest, source)) continue
+        exact = restLifecycle(rest, source) && (!legacy || fields(rest.base).sha === source.policySha)
       }
-      verified.set(String(source.pullRequestNodeId), standalone ? "verified-standalone-closed-review" : "verified-closed-context")
+      if (legacy) facts.set(id, { exactClosure: exact, noFormalReviews: unreviewed, noPriorAward: true })
+      if (exact) verified.set(id, finding)
     }
   }
-  return verified
+  return { verified, facts }
 }
 
-export function historicalEvidence(archive: HistoricalArchiveScope, projectId: string) {
-  return (candidates: ReadonlyArray<JointCandidate>) => effect {
-    const removed = try removedMerges(candidates, archive, projectId)
-    const verifiedClosed = try closedContexts(candidates.filter(({ source }) => !removed.has(String(source.pullRequestNodeId))))
-    return { removed, verifiedClosed } satisfies HistoricalEvidence
+effect function awardPath(sourceUrl: string) {
+  const url = URL.parse(sourceUrl)
+  if (url === null) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
+  return `${url.origin}${url.pathname.replace(/\/$/u, "")}`.toLowerCase()
+}
+
+export function historicalEvidence(archive: HistoricalArchiveScope | undefined, projectId: string) {
+  return (candidates: ReadonlyArray<JointCandidate>, legacy: ReadonlyArray<Row>, heads: HistoricalAssessmentHeads) => effect {
+    if (archive !== undefined) {
+      try unless(archive.baseline.revisions.length === heads.d1PointsCount && (try batchDigest(archive.baseline)) === heads.d1PointsDigest)
+    }
+    const removed = archive === undefined ? new Set<string>() : try removedMerges(candidates, archive, projectId)
+    const legacyClosures = new Map<string, EmptyLegacyClosureFacts>()
+    const unawarded: Row[] = []
+    if (archive !== undefined && legacy.length > 0) {
+      const awardedIds = new Set<string>()
+      const awardedUrls = new Set<string>()
+      for (const { award } of latestOf(archive.baseline.revisions).values()) {
+        if (award.projectId !== projectId || award.amount <= 0) continue
+        awardedIds.add(award.sourceId)
+        awardedUrls.add(try awardPath(award.sourceUrl))
+      }
+      for (const record of legacy) {
+        const id = String(record.pullRequestNodeId)
+        if (awardedIds.has(id) || awardedUrls.has(`https://github.com/${String(record.repository).toLowerCase()}/pull/${Number(record.pullRequestNumber)}`)) {
+          legacyClosures.set(id, { exactClosure: false, noFormalReviews: false, noPriorAward: false })
+        } else unawarded.push(record)
+      }
+    }
+    const contexts: ReadonlyArray<ClosedCandidate> = [
+      ...candidates.filter(({ source }) => !removed.has(String(source.pullRequestNodeId)))
+        .map(({ source, standalone }): ClosedCandidate => ({ source, finding: standalone ? "verified-standalone-closed-review" : "verified-closed-context" })),
+      ...unawarded.map((source): ClosedCandidate => ({ source, finding: "verified-legacy-closure-without-awards" })),
+    ]
+    const checked = try closedContexts(contexts)
+    for (const [id, facts] of checked.facts) legacyClosures.set(id, facts)
+    return { removed, verifiedClosed: checked.verified, legacyClosures } satisfies HistoricalEvidence
   }
 }
 
@@ -167,13 +220,17 @@ export function historicalClosedContextBindings(receipt: Pick<HistoricalAssessme
   }))
 }
 
-export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAssessmentReceipt, verifiedReviewParents: ReadonlySet<string>) {
+export function historicalEmptyLegacyClosureBindings(receipt: Pick<HistoricalAssessmentReceipt, "emptyLegacyClosures">) {
+  return new Map((receipt.emptyLegacyClosures ?? []).flatMap(({ digest, sources }) =>
+    sources.map(({ id, number, headSha, occurredAt }) => [id, { digest, number, headSha, occurredAt } satisfies HistoricalEmptyLegacyClosureBinding] as const)))
+}
+
+export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAssessmentReceipt) {
   if (!catalogsComplete(state)) return state
   let bound = state
   for (const record of receipt.records) {
     for (const source of record.sources) {
       if (source.finding === "retained-removed-merge") bound = try apply(bound, { type: "bindRemovedMerge", removal: goodRemoval }, dispatch)
-      if (!verifiedReviewParents.has(source.id)) continue
       if (source.finding === "verified-closed-context") bound = try apply(bound, { type: "bindClosureReview", closure: goodClosure }, dispatch)
       if (source.finding === "verified-standalone-closed-review") {
         bound = try apply(bound, { type: "bindClosureReview", closure: { ...goodClosure, auditedMergedAnchor: false, standaloneReviewOnlyRecord: true } }, dispatch)

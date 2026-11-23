@@ -52,7 +52,7 @@ function intakeSource(evidence: Evidence, cutoff: number, joint: boolean) {
   return occurred < cutoff * 1000 || (joint && evidence.pull.merged_at === null)
 }
 
-function preparedFacts(prepared: WorkUnitEvidence): PreparedFacts {
+export function preparedFacts(prepared: WorkUnitEvidence): PreparedFacts {
   return {
     limitations: prepared.limitations.length,
     claims: prepared.claims.length,

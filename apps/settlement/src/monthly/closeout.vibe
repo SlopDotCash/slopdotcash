@@ -1,16 +1,14 @@
 // spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
 import { millisOf } from "@repo/platform/clock"
-import { first, sql } from "@repo/platform/d1"
 import { closeoutCutoff, closeoutGross, closeoutMonth } from "../../gen/settlement__asiNovemberCloseout.effect.vibe"
-import { type Period, formatPeriod } from "../kernels/calendar.ts"
+import type { Period } from "../kernels/calendar.ts"
 
-schema CloseoutBase { readonly early_close_at: string | null; readonly cap_base: string }
+interface CloseoutBase { readonly early_close_at: string | null; readonly cap_base: string }
 
 function reviewedClose(base: CloseoutBase | undefined) {
   return base !== undefined && base.early_close_at !== null && millisOf(base.early_close_at) === closeoutCutoff * 1000 && base.cap_base === String(closeoutGross) ? closeoutCutoff : 0
 }
 
-export effect function earlyCloseAt(projectId: string, period: Period) {
-  if (!closeoutMonth(projectId, period)) return 0
-  return reviewedClose(try first(CloseoutBase, sql`SELECT early_close_at, cap_base FROM monthly_reward_bases WHERE project_id = ${projectId} AND period = ${formatPeriod(period)}`))
+export function earlyCloseAt(projectId: string, period: Period, base: CloseoutBase | undefined) {
+  return closeoutMonth(projectId, period) ? reviewedClose(base) : 0
 }

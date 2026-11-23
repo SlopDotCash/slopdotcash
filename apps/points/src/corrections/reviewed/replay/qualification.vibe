@@ -32,7 +32,7 @@ export effect function verifyHistoricalReplayQualification(packet: HistoricalPac
   }
   const catalog = try readHistoricalAssessmentCatalog(scope, { jointThrough: donor.jointThrough, legacyThrough: donor.legacyThrough })
   const { heads } = catalog
-  const classified = try classifyHistoricalAssessmentScope(catalog, audit, scope.projectId, historicalEvidence({ baseline, integrationBranch }, scope.projectId))
+  const classified = try classifyHistoricalAssessmentScope(catalog, audit, scope.projectId, historicalEvidence(integrationBranch !== undefined && integrationBranch !== "" ? { baseline, integrationBranch } : undefined, scope.projectId))
   const { receipt } = classified
   try holds(heads.enforcementGeneration === donor.enforcementGeneration && heads.jointScopedCount === donor.jointRecords && heads.legacyRepoCount === donor.legacyRecords &&
     receipt.scope.sourceAuditSha256 === donor.sourceDigest && receipt.receiptSha256 === donor.receiptDigest && receipt.status === donor.status,

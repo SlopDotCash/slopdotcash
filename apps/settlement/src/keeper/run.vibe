@@ -225,7 +225,7 @@ effect function serveDeployment(scope: KeeperScope, deployment: EvmDeployment, l
       return [...months, ...found]
     }
   }
-  return work catch effect (error) => failedDeployment(scan, item, error, classifyFailure)
+  return work catch effect (error) => try failedDeployment(scan, item, error, classifyFailure)
 }
 
 effect function serveSolanaDeployment(scope: SolanaScope, deployment: SolanaDeployment, listing: Listing, run: RunState) {
@@ -270,7 +270,7 @@ effect function serveSolanaDeployment(scope: SolanaScope, deployment: SolanaDepl
       return [...months, ...found]
     })
   }
-  return work catch effect (error) => failedDeployment(scan, item, error, solanaCause)
+  return work catch effect (error) => try failedDeployment(scan, item, error, solanaCause)
 }
 
 effect function serveReviewed(scope: RunScope, deployment: ReviewedDeployment, listing: Listing, run: RunState) {

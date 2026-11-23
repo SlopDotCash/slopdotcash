@@ -116,12 +116,12 @@ interface Seeded {
   readonly kind: string
 }
 
-effect function project(id: string, revisions: ReadonlyArray<Seeded>, repositoryId: string) {
+effect function project(id: string, revisions: ReadonlyArray<Seeded>, repositoryId: string, extra: Readonly<Record<string, unknown>> = {}) {
   const area = try Area
   const digests: string[] = []
   let last = { text: "", digest: "", status: "" }
   for (const [index, revision] of revisions.entries()) {
-    const text = JSON.stringify(manifest(id, revision.status, revision.tier, repositoryId))
+    const text = JSON.stringify(manifest(id, revision.status, revision.tier, repositoryId, extra))
     const digest = try sha256Hex(text)
     try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, index + 1, text, digest, "Seeded revision", index === 0 ? steward : null, index === 0 ? `member-${steward}` : null, `2026-11-0${index + 1}T00:00:00.000Z`)
     if (index > 0) try area.sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, ?)", id, index + 1, revision.kind)
@@ -179,14 +179,26 @@ effect function appeal(as: Session, projectId: string) {
   return try (try Area).request("/api/v1/project-appeals", { json: { projectId, reason: "I did not write that code", evidenceReference: "pr-12", appealScope: "account" }, as })
 }
 
-effect function exception(as: Session, projectId: string, expectedRevision: number, next: unknown) {
-  return try (try Area).request(`/api/v1/admin/projects/${projectId}/manifest`, { method: "PUT", json: { manifest: next, expectedRevision, reason: "Set the approved monthly vault policy" }, as })
+effect function exception(as: Session, projectId: string, expectedRevision: number, next: unknown, bountyAmount?: string) {
+  return try (try Area).request(`/api/v1/admin/projects/${projectId}/manifest`, { method: "PUT", json: { manifest: next, expectedRevision, reason: "Set the approved monthly vault policy", ...(bountyAmount === undefined ? {} : { bountyAmount }) }, as })
+}
+
+function securityBounty(amount: Readonly<Record<string, unknown>>) {
+  return {
+    version: "1", status: "paused", rewardMode: "bounty-only", eligibility: "in-scope-security", amount,
+    split: { researcherBasisPoints: 7500, slopBasisPoints: 2500 },
+    sponsor: { name: "Slop", githubId: null },
+    funding: { state: "pledged" },
+    capacity: { awards: 3, closesAt: null, exhaustionRule: "Each qualifying finding is decided on its own." },
+    intake: { kind: "github-private-vulnerability-reporting", repository: "owner/bounty-target" },
+    disclosure: "Keep reports private until the owner approves disclosure.",
+  }
 }
 
 const responsibleAccount = { githubLogin: "responsible-41" }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('An administrator exception replaces any manifest field in one revision (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project")', () => effect {
+  it.effect('An administrator exception replaces any manifest field in one revision (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project")', () => effect {
     const area = try Area
     const admin = try member(administrator)
     const a = try member(moderatorA)
@@ -204,18 +216,30 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const restricted = try area.sql("SELECT revision, reason FROM project_revisions WHERE project_id = 'held-target' ORDER BY revision DESC LIMIT 1")
     const record = try area.sql("SELECT id FROM project_enforcements WHERE project_id = 'held-target' ORDER BY sequence DESC LIMIT 1")
     const relisted = try exception(admin, "held-target", 2, manifest("held-target", "paused", "community", "3102", { name: "Listed again" }))
+    const seededTerms = { currency: "USDC", decimals: 6, grossMinor: "0", network: "base" }
+    try project("bounty-target", [{ status: "paused", tier: "community", kind: "Created" }], "3103", { securityBounty: securityBounty(seededTerms) })
+    try project("plain-target", [{ status: "paused", tier: "community", kind: "Created" }], "3104")
+    const nativeTerms = { ...seededTerms, network: "ethereum", asset: { network: "ethereum", kind: "native" } }
+    const bountied = try exception(admin, "bounty-target", 1, manifest("bounty-target", "paused", "community", "3103", { securityBounty: securityBounty(nativeTerms) }), "250")
+    const bountyTerms = try area.sql("SELECT r.revision, json_extract(r.manifest, '$.securityBounty.amount.grossMinor') AS grossMinor, json_extract(r.manifest, '$.securityBounty.amount.decimals') AS decimals, json_extract(r.manifest, '$.securityBounty.amount.currency') AS currency, json_extract(r.manifest, '$.securityBounty.amount.asset.address') AS asset FROM project_revisions r JOIN projects p ON p.id = r.project_id AND p.revision = r.revision WHERE r.project_id = 'bounty-target'")
+    const noTerms = try exception(admin, "plain-target", 1, manifest("plain-target", "paused", "community", "3104", { name: "Plain target" }), "250")
+    const plain = try area.sql("SELECT revision FROM projects WHERE id = 'plain-target'")
     try same({
       replaced: [outcome(replaced), field(replaced.body, "project", "revision")],
       refused: [outcome(unchanged), outcome(stale), outcome(relisted)],
       stored,
       kinds,
       quarantine: [outcome(quarantined), String(restricted[0]?.reason ?? "").startsWith("Quarantined by a project moderator (enf_"), String(restricted[0]?.reason ?? "").includes(String(record[0]?.id ?? "-"))],
+      bounty: [outcome(bountied), bountyTerms],
+      noTerms: [outcome(noTerms), field(noTerms.body, "message"), plain],
     }, {
       replaced: [[200, null], 2],
       refused: [[422, "no_change"], [409, "stale_revision"], [409, "project_restricted"]],
       stored: [{ revision: 2, fee: 200, chain: "ethereum", name: "Vault target" }],
       kinds: [{ revision: 2, kind: "AdminException" }],
       quarantine: [[200, null], true, true],
+      bounty: [[200, null], [{ revision: 2, grossMinor: "250000000000000000000", decimals: 18, currency: "ETH", asset: "0x0000000000000000000000000000000000000000" }]],
+      noTerms: [[422, "invalid_manifest"], "A bounty amount needs security bounty terms", [{ revision: 1 }]],
     })
   })
 

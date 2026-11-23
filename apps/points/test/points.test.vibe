@@ -6,7 +6,7 @@ import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { systemGit } from "@repo/platform/git"
 import { sha256Of, textBytes } from "@repo/platform/git/bytes"
-import { GitHub, github } from "@repo/platform/github"
+import { GitHub, type GitHubFailure, github } from "@repo/platform/github"
 import { outbound, outboundVia } from "@repo/platform/http"
 import { program } from "@repo/platform/program"
 import { database, type Handler, migrate, startWorker } from "@repo/platform/testing"
@@ -16,18 +16,16 @@ import { readManifest } from "@repo/platform/testing/frozen"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { internet, type Internet } from "@repo/platform/testing/internet"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
-import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs } from "@repo/ports/points"
 import type { PublicVaultPayment } from "@repo/ports/settlement"
 import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { decide } from "../gen/points__census.effect.vibe"
 import { retirementZeroDigest, retirementZeroRule } from "../gen/points__evaluations.effect.vibe"
 import { periodOf as periodOfPointsperiodsEffect } from "../gen/points__periods.effect.vibe"
 import { november2026, october2026, periodOf } from "../gen/points__periods.ts"
 import type { Protection } from "../gen/points__protectedMonths.ts"
 import type { Environment } from "../gen/points__recovery.ts"
+import { distinctOrder } from "../gen/points__reviewedHistory.ts"
 import { emptyReview } from "../gen/points__reviews.effect.vibe"
 import { Machine, machine } from "../gen/points__window.effect.vibe"
 import { collectOpen, identities, type OpenReference } from "../src/census/collect.vibe"
@@ -47,11 +45,12 @@ import { valueHistoryPage, valueHistoryRecords, workUnitHistory, workUnitHistory
 import { collectSearchReferences } from "../src/collect/merged/census.vibe"
 import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
 import { commitLineLoader } from "../src/collect/merged/commits.vibe"
-import { AssemblyRefused, type Collection, collectSnapshot, SnapshotAssembly } from "../src/collect/run/pipeline.vibe"
+import { type Collection, collectSnapshot, SnapshotAssembly } from "../src/collect/run/pipeline.vibe"
+import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { applyCorrections } from "../src/corrections/apply/command.vibe"
 import { proveCandidates } from "../src/corrections/apply/prove.vibe"
 import { collectCorrections, type CollectedEvidence, type CollectionInputs, type CollectionOptions, type Provenance } from "../src/corrections/collect/collect.vibe"
-import { decodePacketBytes, type HistoricalPacket } from "../src/corrections/reviewed/packet.vibe"
+import { decodePacketBytes, digestText, type HistoricalPacket } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { evaluationInputs } from "../src/evaluations/check.vibe"
 import { applyEvaluations } from "../src/evaluations/journal.vibe"
@@ -69,7 +68,7 @@ import { holdProtected } from "../src/journal/hold.vibe"
 import { finish, journalOf, openStore, type Repositories, type Store, storeOf } from "../src/journal/ledger.vibe"
 import { reconcilePenalties } from "../src/journal/penalties.vibe"
 import { applyRetainedReviews, retainedAwards, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
+import { applySnapshots, batchOwnedKeys, jointHoldReasons } from "../src/journal/snapshot.vibe"
 import { type Award, type Coverage, type Journal, journalText, type Penalty, type Revision, type RevisionBody, revisionText, type Revision as Row } from "../src/kernels/records/canonical.ts"
 import { batchDigest, journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { instantOf } from "../src/kernels/records/instants.ts"
@@ -106,8 +105,11 @@ import { restoreLocal } from "../src/snapshot/restoreLocal.vibe"
 import { packTransport } from "../src/snapshot/write.vibe"
 import { observe, publishRefresh, startWindow, type WindowBounds, windowBounds, windowRun } from "../src/window/window.vibe"
 import { answeringAfter, declaredRun, type EvidenceObject, evidenceObject, type QueuedRow, scanResult, serviceKeys, signingKeySha256, skillTemplates, vettingRequest } from "./support/backendRoutes/world.ts"
-import { acceptedReviewHistoryJson, creditlessSnapshot, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
+import { declaredIdentifier, malformedBody, ratificationBody, traceSha256, tracedBody } from "./support/catchup3-e1/attribution.ts"
 import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
+import { iso as isoE6, missingSource as missingSourceE6, project as projectE6, type Recorded as RecordedE6, registryProject as registryProjectE6, type SupplementWorld, supplementWorld } from "./support/catchup3-e6/world.ts"
 import { historyText as historyTextU1 } from "./support/u1/history.ts"
 import { registry as registryU10, userNodeId } from "./support/u10/actors.ts"
 import { absentService, areaApi, type Site, site } from "./support/u11/pages.ts"
@@ -118,13 +120,50 @@ import { type HistoricalCycle, historicalCycle, type HistoricalEvent } from "./s
 import { type ArchivedFile, checkedOutCommit, type Checkpoint, checkpointOf, resumedRun, servedCheckpoint } from "./support/u3/archive.ts"
 import { failNext, fetcherOf, gatewayText, notModified, pullNodeIds, repository, seeded, start, statuses, withEtag, withRateLimit } from "./support/u3/github.ts"
 import { fetcherOf as fetcherOfU4, hydratedFromWorld, nodeIdOf, openedDuringPage, registrySnapshot, repository as repositoryU4, seeded as seededU4, servedRegistry, start as startU4, unchangedPage } from "./support/u4/github.ts"
-import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf as fetcherOfU5, gatewayFailures, repeatFirst, requestsMatching, type Seeded, seeded as seededU5, start as startU5, statisticsUnavailableAt } from "./support/u5/github.ts"
+import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf as fetcherOfU5, gatewayFailures, repeatFirst, repository as repositoryU5, requestsMatching, type Seeded, seeded as seededU5, start as startU5, statisticsUnavailableAt } from "./support/u5/github.ts"
 import { banFeed, historyRow, jointPage, penaltyPage, penaltyRow, scripted, valuePage } from "./support/u6/feeds.ts"
 import { gif, png } from "./support/u6/images.ts"
 import { plain, type Published, published } from "./support/u7/published.ts"
 import { oldBuilderReplay } from "./support/u7/replay.ts"
 import { largeJson, pagesOrigin, type Publication, sameBytes } from "./support/u8/pages.ts"
 import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+
+module host {
+  /** @throws {never} */
+  export function webRequest(input: string | URL | Request, init?: RequestInit): Request {
+    return new globalThis.Request(input, init)
+  }
+
+  /** @throws {never} */
+  export function webResponse(body?: ConstructorParameters<typeof globalThis.Response>[0], init?: ResponseInit): Response {
+    return new globalThis.Response(body, init)
+  }
+
+  /** @throws {never} */
+  export function webJson(data: unknown, init?: ResponseInit): Response {
+    return globalThis.Response.json(data, init)
+  }
+
+  /** @throws {never} */
+  export function unfinished(text: string, init?: ResponseInit): Response {
+    return new globalThis.Response(new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(new TextEncoder().encode(text)) }), init)
+  }
+
+  /** @throws {never} */
+  export function brokenAfter(text: string, error: unknown): Response {
+    let partial = false
+    return new globalThis.Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (partial) controller.error(error)
+        else {
+          partial = true
+          controller.enqueue(new TextEncoder().encode(text))
+        }
+      },
+    }))
+  }
+}
+import { brokenAfter, unfinished, webJson, webRequest, webResponse } from host
 
 module availability {
   import { Response as WebResponse } from "miniflare"
@@ -750,39 +789,62 @@ import { seededGithub, slopbotFake } from fakes
     }
   })
 
-  it.live('Paused, retired, quarantined and legacy projects are never collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
+  it.live('Paused, retired, quarantined and unregistered legacy projects are never collected, while a registered legacy id is collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
     const clock = settableClock(start)
     const world = try Effect.try(() => seeded(clock.now))
-    const served = servedRegistry(registrySnapshot)
+    const eliza = {
+      id: "eliza",
+      name: "eliza",
+      status: "active",
+      listingTier: "community",
+      authority: { repositoryId: "elizaOS/eliza", repositoryNodeId: "R_eliza", role: "admin", state: "verified", proof: "github-admin", reason: "fixture" },
+      reward: { committedMinor: "400000000", monthlyCapMinor: "100000000", fundingState: "committed" },
+      skill: { publishAtRoot: false },
+      repositories: [{ id: "elizaOS/eliza", displayName: "elizaOS/eliza", githubUrl: "https://github.com/elizaOS/eliza", description: "The eliza source repository.", integrationBranch: "main", aliases: [] }],
+    }
+    const served = servedRegistry({ ...registrySnapshot, projects: [...registrySnapshot.projects, eliza] })
     const registered = try Effect.provide(fetchRegistry("https://slop.test"), outboundVia(served.fetcher))
     const targets = try collectedTargets(registered)
     const bounds = try windowBounds(start)
+    const census = { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() }
     const refusals: Array<readonly [string, unknown]> = []
     for (const project of registered) {
-      if (project.projectId === "widgets") continue
+      if (targets.some((target) => target.projectId === project.projectId)) continue
       const refused = Effect.provide(collectOpen({
           projectId: project.projectId,
           view: project.view,
           repository: { owner: "ada", name: "widgets" },
-          census: { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+          census,
           hydrate: hydration(world),
         }), githubLayer(world)) catch (error) => error._tag
       refusals.push([project.projectId, refused])
     }
+    const unregisteredLegacy = Effect.provide(collectOpen({
+        projectId: "darling-arm64",
+        view: { ...view, registered: false, legacy: true },
+        repository: { owner: "ada", name: "widgets" },
+        census,
+        hydrate: hydration(world),
+      }), githubLayer(world)) catch (error) => error._tag
     const movedBack = Effect.provide(collectOpen({
         projectId: "widgets",
         view,
         repository: { owner: "ada", name: "widgets" },
-        census: { lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+        census: { ...census, lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay },
         hydrate: hydration(world),
       }), githubLayer(world)) catch (error) => error._tag
     const unknownRestriction = registeredProjects(try registryAnswer({ ...registrySnapshot, restrictions: [{ projectId: "missing", state: "quarantined" }] })) catch (error) => error._tag
     const extraKey = registryAnswer({ ...registrySnapshot, revisions: [] }) catch (error) => error._tag
+    const target = (projectId: string, id: string, description: string, role: "primary" | "member") => {
+      const [owner, name] = id.split("/")
+      return { projectId, id, owner, name, displayName: id, githubUrl: `https://github.com/${id}`, description, integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role }
+    }
     try same({
       paths: served.paths,
       views: registered.map((project) => [project.projectId, project.view]),
       targets,
       refusals,
+      unregisteredLegacy,
       movedBack,
       githubRequests: world.fake.requests.length,
       unknownRestriction,
@@ -791,13 +853,19 @@ import { seededGithub, slopbotFake } from fakes
       paths: ["GET https://slop.test/api/v1/projects"],
       views: [
         ["paused-gadgets", { ...view, paused: true }],
-        ["asi", { ...view, legacy: true }],
+        ["asi", view],
         ["delisted", { ...view, retired: true }],
         ["held", { ...view, quarantined: true }],
         ["widgets", view],
+        ["eliza", view],
       ],
-      targets: [{ projectId: "widgets", id: repository, owner: "ada", name: "widgets", displayName: repository, githubUrl: `https://github.com/${repository}`, description: "The widgets source repository.", integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role: "primary" }],
-      refusals: [["paused-gadgets", "NotCollected"], ["asi", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
+      targets: [
+        target("asi", "elizaOS/asi", "The asi source repository.", "primary"),
+        target("widgets", repository, "The widgets source repository.", "member"),
+        target("eliza", "elizaOS/eliza", "The eliza source repository.", "member"),
+      ],
+      refusals: [["paused-gadgets", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
+      unregisteredLegacy: "NotCollected",
       movedBack: "CensusWindowBack",
       githubRequests: 0,
       unknownRestriction: "RegistryMalformed",
@@ -1948,9 +2016,37 @@ import { seededGithub, slopbotFake } from fakes
     "an unchanged debit request appends no revision for new reversal evidence",
     "the recorded history of this award is outside the journal model",
     "the journal refused",
+    ...Object.values(jointHoldReasons),
   ]
 
   const valueDecision = `value:${"b".repeat(64)}`
+  const unitDecision = `value:${"c".repeat(64)}`
+  const unitDecidedAt = "2026-11-01T00:00:00.000Z"
+
+  effect function firstUnitCredit(snapshot: LeaderboardSnapshot, repositories: Repositories) {
+    const repository = "elizaOS/eliza"
+    const carrier = { id: "U_kgDOcarrier", login: "carrier", kind: "User", avatarUrl: "", url: "https://github.com/carrier" }
+    const completion = "PR_kwDOunitcredit"
+    const workUnitId = `wu_${"d".repeat(64)}`
+    const decided = {
+      ...snapshot,
+      generatedAt: unitDecidedAt,
+      reviewExclusions: [],
+      window: { ...snapshot.window, from: "2026-10-01T00:00:00.000Z", to: "2026-11-15T00:00:00.000Z" },
+      ledger: [{
+        id: `${completion}:joint:${workUnitId}:merged:${carrier.id}`, actor: carrier, category: "merged-pull-request", points: 1, scoreThirds: 3, workUnitId,
+        scoreDecisionSourceId: unitDecision, scoreDecisionAt: unitDecidedAt, occurredAt: "2026-10-30T00:00:00.000Z", repository,
+        source: { id: completion, kind: "pull-request", number: 2, title: "Reviewed completion", url: `https://github.com/${repository}/pull/2` },
+        reason: "Reviewed implementation",
+      }],
+      valueAssessmentCoverage: [{ pullRequestId: completion, pullRequestNumber: 2, repository, status: "assessed", recordDigest: "c".repeat(64) }],
+    }
+    const empty = `${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: unitDecidedAt, coverage: [], revisions: [] })}\n`
+    const store = try openStore(empty, null, [])
+    try applySnapshots(store, repositories, [{ snapshot: decided, digest: "4".repeat(64) }], recordedAt)
+    const first = store.revisions.find((row) => row.award.workUnitId === workUnitId)
+    return { amount: first?.award.amount, previous: first?.previous, decision: first?.decision }
+  }
 
   function valueReview(review: ScoreEvent, scoreThirds: number, decided: boolean) {
     return {
@@ -2015,6 +2111,7 @@ import { seededGithub, slopbotFake } from fakes
       const withoutFirst = `${journalText({ ...journalOf(original), revisions: checkedIn.slice(1) })}\n`
       const forked = Effect.as(openStore(history, withoutFirst, []), "opened") catch (error) => error._tag === "HistoryDiverges" ? `${error._tag} ${error.id}` : error._tag
       const valueDecided = review === undefined ? undefined : try retainedOmission(history, repositories, reviewed, review)
+      const unitCredit = try firstUnitCredit(snapshot, repositories)
       try Effect.try(() => assert.deepStrictEqual({
         ancestor: checkedIn.every((row, position) => built.journal.revisions[position]?.id === row.id),
         applied,
@@ -2030,6 +2127,7 @@ import { seededGithub, slopbotFake } from fakes
         reopened: reopened.revisions.length,
         forked,
         valueDecided,
+        unitCredit,
       }, {
         ancestor: true,
         applied: 1,
@@ -2049,6 +2147,7 @@ import { seededGithub, slopbotFake } from fakes
           omitted: { unchanged: true, appended: 0 },
           explicit: { amount: 20, follows: true, appended: 1 },
         },
+        unitCredit: { amount: 30, previous: null, decision: { sourceId: unitDecision, effectiveAt: unitDecidedAt, reason: "Reviewed implementation", delta: 30 } },
       }))
     })
   })
@@ -2071,7 +2170,10 @@ import { seededGithub, slopbotFake } from fakes
     readonly penalty?: Penalty
   }
 
-  service Bench { readonly db: D1Database }
+  service Bench {
+    static readonly key = "@repo/points/test/points.test#Bench"
+    readonly db: D1Database
+  }
 
   const widgets = "widgets"
   const october = "2026-10-31T23:00:00.000Z"
@@ -3589,20 +3691,19 @@ import { seededGithub, slopbotFake } from fakes
     try Effect.try(() => assert.deepStrictEqual(actual, expected))
   }
 
-  const read: ValueInputsRead = { valueDecisions: [], jointValueDecisions: [], valueActors: [], retainedCommitCredits: [], attributionHolds: [], heldWorkUnits: [] }
-
-  type Assembly = "refused" | "invalid" | "creditless"
+  const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 
   interface Attempt {
     readonly name: string
     readonly outage?: boolean
-    readonly assembly: Assembly
+    readonly unboundHold?: boolean
     readonly deadlineMs?: number
   }
 
   interface Asked {
     readonly census: Array<ValueCensus>
     readonly collections: Array<Collection>
+    readonly assembled: Array<unknown>
   }
 
   function layers(world: Seeded, attempt: Attempt, asked: Asked) {
@@ -3611,22 +3712,31 @@ import { seededGithub, slopbotFake } from fakes
       load: (census: ValueCensus) => effect {
         asked.census.push(census)
         if (attempt.outage === true) throw new ValueFeedUnavailable({ message: "The hosted value feed is unavailable" })
-        return read
+        return {
+          valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+          jointValueDecisions: [],
+          valueActors: [],
+          retainedCommitCredits: [],
+          attributionHolds: [],
+          heldWorkUnits: attempt.unboundHold === true ? [{ recordDigest: "0".repeat(64), sourceNodeIds: census.value.slice(0, 1).map((outcome) => outcome.id), unavailableNodeIds: [] }] : [],
+        }
       },
     })
-    const assembly = Layer.succeed(SnapshotAssembly, {
-      assemble: (collection: Collection) => effect {
+    const recorded = Layer.effect(SnapshotAssembly, effect {
+      const real = try SnapshotAssembly
+      return { assemble: (collection: Collection) => effect {
         asked.collections.push(collection)
-        if (attempt.assembly === "refused") throw new AssemblyRefused({ message: "assembly refused" })
-        return attempt.assembly === "invalid" ? {} : creditlessSnapshot(collection, leaderboardMethodology)
-      },
+        const raw = try real.assemble(collection)
+        asked.assembled.push(raw)
+        return raw
+      } }
     })
     return Layer.mergeAll(
       outbound,
       Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
       Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
       values,
-      assembly,
+      Layer.provide(recorded, snapshotAssembly),
     )
   }
 
@@ -3640,38 +3750,60 @@ import { seededGithub, slopbotFake } from fakes
     return { outcome: typeof outcome === "string" ? outcome : "Published", written, bytes }
   }
 
-  it.live('Collect merged work end to end through the ValueInputs port (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
+  it.live('Collect merged work end to end through the ValueInputs port (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/modelAttribution.md, "The status is complete, partial, invalid or missing, in that order"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")', () => effect {
     const world = try Effect.try(() => seeded())
-    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+    provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
     const fs = try FileSystem.FileSystem
     try scoped(effect {
       const directory = try fs.makeTempDirectoryScoped()
       try fs.makeDirectory(`${directory}/data`, { recursive: true })
       try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
       try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
-      const asked: Asked = { census: [], collections: [] }
-      const outage = try collectOnce(world, directory, { name: "outage", outage: true, assembly: "creditless" }, asked)
-      const deferred = try collectOnce(world, directory, { name: "deferred", assembly: "creditless", deadlineMs: 1 }, asked)
-      const refused = try collectOnce(world, directory, { name: "refused", assembly: "refused" }, asked)
-      const invalid = try collectOnce(world, directory, { name: "invalid", assembly: "invalid" }, asked)
-      const published = try collectOnce(world, directory, { name: "published", assembly: "creditless" }, asked)
+      const asked: Asked = { census: [], collections: [], assembled: [] }
+      const outage = try collectOnce(world, directory, { name: "outage", outage: true }, asked)
+      const deferred = try collectOnce(world, directory, { name: "deferred", deadlineMs: 1 }, asked)
+      const refused = try collectOnce(world, directory, { name: "refused", unboundHold: true }, asked)
+      const published = try collectOnce(world, directory, { name: "published" }, asked)
+      const publishedAssembly = asked.assembled.at(-1)
+      const reason = "Maintainer ratified the stacked change as micro work."
+      const ratification = try Effect.try(() => {
+        const pulls = world.fake.world
+        pulls.pull(repositoryU5, world.pulls.paired).body = tracedBody(new Date(start - 2 * day).toISOString())
+        pulls.pull(repositoryU5, world.pulls.bulk).body = malformedBody
+        const comment = pulls.addComment(repositoryU5, world.pulls.stacked, {
+          author: "ada",
+          body: ratificationBody({ pullRequestNodeId: world.ids.stacked, headSha: world.commits.linus, workUnitId: "wu_widgets_stacked", reason }),
+          createdAt: new Date(start - day / 2).toISOString(),
+        })
+        return pulls.pull(repositoryU5, world.pulls.stacked).comments.find((row) => row.id === comment)?.nodeId
+      })
+      const attributed = try collectOnce(world, directory, { name: "attributed" }, asked)
+      const scored = attributed.written ? (try Effect.try(() => JSON.parse(attributed.bytes) as LeaderboardSnapshot)) : undefined
+      const merged = (id: string) => scored?.ledger.find((event) => event.id === `${id}:merged`)
       const collection = asked.collections.at(-1)
       const censuses = collection?.work.collections.flatMap((repository) => [repository.open.census.issues.census, repository.open.census.pullRequests.census]) ?? []
       const ids = (outcomes: ValueCensus["value"]) => outcomes.map((outcome) => outcome.id).sort()
       try same({
-        outcomes: [outage, deferred, refused, invalid].map(({ outcome, written }) => ({ outcome, written })),
-        published: { outcome: published.outcome, written: published.written, bytes: collection === undefined ? "" : `${JSON.stringify(creditlessSnapshot(collection, leaderboardMethodology))}\n` === published.bytes },
+        outcomes: [outage, deferred, refused].map(({ outcome, written }) => ({ outcome, written })),
+        published: { outcome: published.outcome, written: published.written, bytes: `${JSON.stringify(publishedAssembly)}\n` === published.bytes },
         asked: { loads: asked.census.length, assemblies: asked.collections.length },
         value: asked.census.map((census) => ({ value: ids(census.value), attribution: ids(census.attribution) })).at(-1),
         censuses: censuses.map((census) => ({ phase: census.phase, totalCount: census.totalCount, items: census.items.length })),
         counts: collection?.source.counts,
         repositories: collection?.source.repositories,
+        attribution: {
+          outcome: attributed.outcome,
+          bonus: merged(world.ids.paired)?.evidenceBonusBasisPoints,
+          declared: scored?.attributions.filter((row) => row.sourceId === `${world.ids.paired}:body`).map((row) => [row.identifier, row.format, row.run?.traceUpload?.objectId]),
+          invalid: scored?.invalidAttributionMarkers.map((row) => [row.sourceId, row.reason]),
+          coverage: [scored?.attributionCoverage.status, scored?.attributionCoverage.validSourceCount, scored?.attributionCoverage.invalidSourceCount],
+          ratified: [merged(world.ids.stacked)?.scoreDecisionSourceId, merged(world.ids.stacked)?.workUnitId, scored?.valueAssessmentCoverage?.find((row) => row.pullRequestId === world.ids.stacked)?.status],
+        },
       }, {
         outcomes: [
           { outcome: "ValueFeedUnavailable", written: false },
           { outcome: "CollectDeferred", written: false },
           { outcome: "AssemblyRefused", written: false },
-          { outcome: "SnapshotInvalid", written: false },
         ],
         published: { outcome: "Published", written: true, bytes: true },
         asked: { loads: 5, assemblies: 3 },
@@ -3679,6 +3811,14 @@ import { seededGithub, slopbotFake } from fakes
         censuses: [{ phase: "ReadyForPublication", totalCount: 0, items: 0 }, { phase: "ReadyForPublication", totalCount: 0, items: 0 }],
         counts: { unavailableSources: 0, unavailableMergedPullRequests: 0, heldWorkUnits: 0, mergedPullRequests: 3, detailedMergedPullRequests: 3, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
         repositories: [{ id: "ada/widgets", repositoryId: world.repositoryNodeId }],
+        attribution: {
+          outcome: "Published",
+          bonus: 1500,
+          declared: [[declaredIdentifier, "machine-marker", `sha256:${traceSha256}`]],
+          invalid: [[`${world.ids.bulk}:body`, "marker JSON is malformed"]],
+          coverage: ["partial", 1, 1],
+          ratified: [ratification, "wu_widgets_stacked", "human-ratified"],
+        },
       })
     })
     }
@@ -3704,9 +3844,9 @@ import { seededGithub, slopbotFake } from fakes
     for (const reply of replies) fake.alterNext(match, reply)
   }
 
-  const serverError = () => new Response("internal error", { status: 500 })
-  const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
-  const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
+  const serverError = () => webResponse("internal error", { status: 500 })
+  const validationFailed = () => webJson({ message: "Validation Failed" }, { status: 422 })
+  const limited = () => webResponse("limited", { status: 429, headers: { "retry-after": "3" } })
 
   it.live('Exact evidence pages retry a server error twice and a commit file page once without spending quota attempts (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
     const clock = settableClock(start)
@@ -3759,24 +3899,24 @@ import { seededGithub, slopbotFake } from fakes
         const answer = try read(client, `${authority}${path}`)
         return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
       })
-      answers(fake, exact("GET", pullFiles[0] ?? ""), [serverError, serverError, () => new Response(finalBody, { status: 500, headers: { "content-type": "application/json" } })])
+      answers(fake, exact("GET", pullFiles[0] ?? ""), [serverError, serverError, () => webResponse(finalBody, { status: 500, headers: { "content-type": "application/json" } })])
       const persistentFiles = try read(client, `${authority}${pullFiles[0] ?? ""}`)
       const recoveredCommits = try Effect.forEach(commitFiles, (path) => effect {
         answers(fake, exact("GET", path), [validationFailed])
         const answer = try read(client, `${authority}${path}`)
         return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
       })
-      answers(fake, exact("GET", commitFiles[0] ?? ""), [validationFailed, () => Response.json({ message: "Still unavailable", errors: ["commit"] }, { status: 422 })])
+      answers(fake, exact("GET", commitFiles[0] ?? ""), [validationFailed, () => webJson({ message: "Still unavailable", errors: ["commit"] }, { status: 422 })])
       const persistentCommit = try read(client, `${authority}${commitFiles[0] ?? ""}`)
       const otherValidation = try Effect.forEach([`${repoPath}/commits/${world.commit}`, `${repoPath}/commits/abcdef0?per_page=100&page=1`, pullFiles[0] ?? ""], (path) => effect {
         answers(fake, exact("GET", path), [validationFailed])
         return try read(client, `${authority}${path}`)
       })
       const recoveredPulls = try Effect.forEach(commitPulls, (path) => effect {
-        answers(fake, exact("GET", path), [serverError, serverError, () => Response.json([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])])
+        answers(fake, exact("GET", path), [serverError, serverError, () => webJson([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])])
         return try read(client, `${authority}${path}`)
       })
-      answers(fake, exact("GET", commitPullsPath), [serverError, serverError, () => new Response("{incomplete upstream failure", { status: 500 })])
+      answers(fake, exact("GET", commitPullsPath), [serverError, serverError, () => webResponse("{incomplete upstream failure", { status: 500 })])
       const persistentPulls = try read(client, `${authority}${commitPullsPath}`)
       const outOfScope = try Effect.forEach([
         commitPullsPath.replace(commitSha, "main"),
@@ -3806,18 +3946,18 @@ import { seededGithub, slopbotFake } from fakes
         return { statuses: answer.statuses, waits: answer.waits }
       })
       const otherStatuses = try Effect.forEach([403, 404, 422, 502], (status) => effect {
-        answers(fake, exact("GET", commitPullsPath), [() => Response.json({ message: "unavailable" }, { status })])
+        answers(fake, exact("GET", commitPullsPath), [() => webJson({ message: "unavailable" }, { status })])
         const answer = try read(client, `${authority}${commitPullsPath}`)
         return { statuses: answer.statuses, waits: answer.waits }
       })
       const page1 = `${commitPullsPath}&page=1`
       const page2 = `${commitPullsPath}&page=2`
-      answers(fake, exact("GET", page1), [serverError, () => Response.json([{ number: 1 }]), () => Response.json([{ number: 102 }])])
-      answers(fake, exact("GET", page2), [serverError, () => Response.json([{ number: 101 }])])
+      answers(fake, exact("GET", page1), [serverError, () => webJson([{ number: 1 }]), () => webJson([{ number: 102 }])])
+      answers(fake, exact("GET", page2), [serverError, () => webJson([{ number: 101 }])])
       const live = [try read(client, `${authority}${page1}`), try read(client, `${authority}${page2}`), try read(client, `${authority}${page1}`)]
       answers(fake, exact("GET", commitPullsPath), [serverError, limited, serverError, limited, limited, limited, limited])
       const quotaKept = try read(client, `${authority}${commitPullsPath}`)
-      answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [() => new Response("missing", { status: 404 })])
+      answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [() => webResponse("missing", { status: 404 })])
       const missing = try read(client, `${authority}${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`)
       return { recoveredFiles, persistentFiles, recoveredCommits, persistentCommit, otherValidation, recoveredPulls, persistentPulls, outOfScope, otherRequests, otherStatuses, live, quotaKept, missing }
     })
@@ -3845,7 +3985,7 @@ import { seededGithub, slopbotFake } from fakes
     })
 
     const incomplete = try scenario({ requestTimeoutMs: 10 }, (client) => effect {
-      answers(fake, exact("GET", commitPullsPath), [() => new Response(new ReadableStream({ start: (controller) => controller.enqueue(new TextEncoder().encode("partial")) }), { status: 500 })])
+      answers(fake, exact("GET", commitPullsPath), [() => unfinished("partial", { status: 500 })])
       return try read(client, `${authority}${commitPullsPath}`)
     })
 
@@ -3958,16 +4098,16 @@ import { seededGithub, slopbotFake } from fakes
 
       const unreported = try probe(undefined)
       const available = try loaded(400)
-      const discovered = try probe(() => Response.json({ data: discussion(false, when) }))
-      const partial = try probe(() => Response.json({ data: discussion(true, when) }))
-      const stale = try probe(() => Response.json({ data: discussion(false, "2026-11-13T20:00:00Z") }))
-      const rejected = try probe(() => Response.json({ errors: [{ message: "Unsupported discussion field" }] }))
-      const malformed = try probe(() => Response.json({ data: discussion(false, when), errors: {} }))
+      const discovered = try probe(() => webJson({ data: discussion(false, when) }))
+      const partial = try probe(() => webJson({ data: discussion(true, when) }))
+      const stale = try probe(() => webJson({ data: discussion(false, "2026-11-13T20:00:00Z") }))
+      const rejected = try probe(() => webJson({ errors: [{ message: "Unsupported discussion field" }] }))
+      const malformed = try probe(() => webJson({ data: discussion(false, when), errors: {} }))
       const expired = try probe(undefined, clock.now() - 1)
-      const checkpointed = try probe(() => Response.json({}, { status: 429 }), clock.now() + 30_000)
-      const forbidden = try probe(() => Response.json({}, { status: 403 }))
-      const resetUnavailable = try probe(() => Response.json({ errors: [{ type: "RATE_LIMITED" }] }))
-      const deferred = try probe(() => Response.json({}, { status: 429, headers: { "retry-after": "1" } }))
+      const checkpointed = try probe(() => webJson({}, { status: 429 }), clock.now() + 30_000)
+      const forbidden = try probe(() => webJson({}, { status: 403 }))
+      const resetUnavailable = try probe(() => webJson({ errors: [{ type: "RATE_LIMITED" }] }))
+      const deferred = try probe(() => webJson({}, { status: 429, headers: { "retry-after": "1" } }))
       const low = try loaded(101)
       const reserved = try probe(undefined)
       try same(
@@ -4180,7 +4320,7 @@ import { seededGithub, slopbotFake } from fakes
     const urls: string[] = []
     let calls = 0
     const fetch = (input: string | URL | Request) => {
-      const url = new URL(input instanceof Request ? input.url : String(input))
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
       urls.push(url.href)
       calls += 1
       return Promise.resolve(answer(url, calls))
@@ -4189,7 +4329,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   function page(body: Page) {
-    return Response.json(body)
+    return webJson(body)
   }
 
   effect function emptyStore(rows: ReadonlyArray<Row> = []) {
@@ -4262,7 +4402,7 @@ import { seededGithub, slopbotFake } from fakes
       const faults: string[] = []
       for (const fault of ["missing", "duplicate", "moving", "unavailable", "malformed"]) {
         faults.push(try readFailure(slopCash((_, call) => {
-          if (fault === "unavailable") return new Response("Unavailable", { status: 503 })
+          if (fault === "unavailable") return webResponse("Unavailable", { status: 503 })
           if (fault === "malformed") return page({ payments: [{ ...payment, netBase: "-1" }], through: 1, total: 1, next: null })
           const second = call === 2
           return page({ payments: [{ ...payment, id: second && fault !== "duplicate" ? "second" : "first" }], through: second && fault === "moving" ? 3 : 2, total: 2, next: second || fault === "missing" ? null : 1 })
@@ -4407,7 +4547,8 @@ import { seededGithub, slopbotFake } from fakes
       claim("claim-old", first, "a1", "src/score/old.ts"),
       claim("claim-b", stacked, "b1", "src/b.ts"),
     ])
-    try Effect.try(() => assert.deepStrictEqual(try outcome([first, stacked], [decision("a", [first, stacked], [renamed])]), {
+    const scored1 = try outcome([first, stacked], [decision("a", [first, stacked], [renamed])])
+    try Effect.try(() => assert.deepStrictEqual(scored1, {
       credited: [["PR_102:joint:wu_slop_renamed:merged:U_alice", 6], ["PR_102:joint:wu_slop_renamed:merged:U_bob", 3]],
       held: [],
     }))
@@ -4415,7 +4556,8 @@ import { seededGithub, slopbotFake } from fakes
     const resolved = pull(201, "2026-11-04T10:00:00Z", carol, [merge("m1", carol, [[changed("src/conflict.ts", 4, 2), changed("src/other.ts", 90, 90)]])])
     const follow = pull(202, "2026-11-06T10:00:00Z", dave, [commit("d1", dave, [changed("src/d.ts", 2, 1)])])
     const resolution = unit("wu_slop_resolution", [resolved, follow], [claim("claim-m", resolved, "m1", "src/conflict.ts"), claim("claim-d", follow, "d1", "src/d.ts")])
-    try Effect.try(() => assert.deepStrictEqual(try outcome([resolved, follow], [decision("b", [resolved, follow], [resolution])]), {
+    const scored2 = try outcome([resolved, follow], [decision("b", [resolved, follow], [resolution])])
+    try Effect.try(() => assert.deepStrictEqual(scored2, {
       credited: [["PR_202:joint:wu_slop_resolution:merged:U_carol", 6], ["PR_202:joint:wu_slop_resolution:merged:U_dave", 3]],
       held: [],
     }))
@@ -4423,7 +4565,8 @@ import { seededGithub, slopbotFake } from fakes
     const limited = pull(301, "2026-11-04T10:00:00Z", erin, [commit("e1", erin, [changed("src/e.ts", 8, 0)], { attributions: [attributed([changed("src/e.ts", 8, 0)], true)] })])
     const paired = pull(302, "2026-11-06T10:00:00Z", frank, [commit("f1", frank, [changed("src/f.ts", 4, 0)])])
     const twoActors = unit("wu_slop_two_actors", [limited, paired], [claim("claim-e", limited, "e1", "src/e.ts"), claim("claim-f", paired, "f1", "src/f.ts")])
-    try Effect.try(() => assert.deepStrictEqual(try outcome([limited, paired], [decision("c", [limited, paired], [twoActors])]), {
+    const scored3 = try outcome([limited, paired], [decision("c", [limited, paired], [twoActors])])
+    try Effect.try(() => assert.deepStrictEqual(scored3, {
       credited: [],
       held: [["PR_301", "incomplete-lines"], ["PR_302", "incomplete-lines"]],
     }))
@@ -4431,7 +4574,8 @@ import { seededGithub, slopbotFake } from fakes
     const unresolved = pull(401, "2026-11-04T10:00:00Z", carol, [merge("m2", carol, [])])
     const tail = pull(402, "2026-11-06T10:00:00Z", carol, [commit("c2", carol, [changed("src/c.ts", 3, 0)])])
     const syncOnly = unit("wu_slop_unresolved", [unresolved, tail], [claim("claim-m2", unresolved, "m2", "src/c.ts"), claim("claim-c2", tail, "c2", "src/c.ts")])
-    try Effect.try(() => assert.deepStrictEqual(try outcome([unresolved, tail], [decision("d", [unresolved, tail], [syncOnly])]), {
+    const scored4 = try outcome([unresolved, tail], [decision("d", [unresolved, tail], [syncOnly])])
+    try Effect.try(() => assert.deepStrictEqual(scored4, {
       credited: [],
       held: [["PR_401", "incomplete-lines"], ["PR_402", "incomplete-lines"]],
     }))
@@ -4443,110 +4587,12 @@ import { seededGithub, slopbotFake } from fakes
   const repository = repositoryU13
   const start = startU13
 
-  const project = "widgets"
-  const missingSource = "PR_kwDOmissing"
-
-  interface Recorded {
-    readonly sourceId: string
-    readonly number: number
-    readonly mergedAt: number
-    readonly login: string
-    readonly actorId: string
-  }
-
-  function iso(millis: number) {
-    return new Date(millis).toISOString()
-  }
-
-  function answer(value: unknown, status = 200) {
-    return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } })
-  }
-
-  function registryProject() {
-    return {
-      id: project,
-      status: "active",
-      listingTier: "listed",
-      authority: {},
-      reward: { committedMinor: "0", monthlyCapMinor: "0" },
-      skill: {},
-      repositories: [{ id: repository, githubUrl: `https://github.com/${repository}`, displayName: project, description: project, integrationBranch: "main" }],
-    }
-  }
-
-  function omittedSearch(text: string, omitted: ReadonlySet<string>) {
-    const envelope = JSON.parse(text) as { data?: { search?: { issueCount: number; nodes: ReadonlyArray<{ readonly id?: string }> } } }
-    const search = envelope.data?.search
-    if (search === undefined) return text
-    const nodes = search.nodes.filter((node) => node.id === undefined || !omitted.has(node.id))
-    return JSON.stringify({ ...envelope, data: { ...envelope.data, search: { ...search, issueCount: search.issueCount - (search.nodes.length - nodes.length), nodes } } })
-  }
-
-  function supplementWorld() {
-    const clock = fastClock(start - 50 * day)
-    const fake = githubFake({ now: () => clock.now() })
-    fake.world.addUser({ id: 101, login: "ada" })
-    fake.world.addUser({ id: 102, login: "grace" })
-    const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
-    const base = created.branches.get(created.defaultBranch) ?? ""
-    const commit = (branch: string, parents: ReadonlyArray<string>, author: string, file: string) => fake.world.addCommit(repository, { branch, parents: [...parents], author, files: { [file]: `${branch}\n` } })
-    const earlyWork = commit("early", [base], "grace", "src/early.ts")
-    const earlySquash = commit("early-squash", [base], "grace", "src/early.ts")
-    const laterWork = commit("later", [earlySquash], "ada", "src/later.ts")
-    const heldWork = commit("held", [base], "grace", "src/held.ts")
-    const heldSquash = commit("held-squash", [base], "grace", "src/held.ts")
-    const blockedWork = commit("blocked", [heldSquash], "ada", "src/blocked.ts")
-    const merged = (number: number, author: string, at: number, commits: ReadonlyArray<string>, mergeCommit?: string) => {
-      fake.world.addPull({ repo: repository, number, author, mergedAt: iso(at), commits: [...commits], headSha: commits[commits.length - 1] ?? base, ...(mergeCommit === undefined ? {} : { mergeCommit }) })
-      return fake.world.pull(repository, number).nodeId
-    }
-    const early = merged(1, "grace", start - 20 * day, [earlyWork], earlySquash)
-    const later = merged(2, "ada", start - 10 * day, [earlySquash, laterWork])
-    const held = merged(3, "grace", start - 18 * day, [heldWork], heldSquash)
-    const blocked = merged(4, "ada", start - 8 * day, [heldSquash, blockedWork])
-    clock.set(start)
-    const grace = fake.world.account("grace").nodeId
-    const ada = fake.world.account("ada").nodeId
-    const recorded: ReadonlyArray<Recorded> = [
-      { sourceId: early, number: 1, mergedAt: start - 20 * day, login: "grace", actorId: grace },
-      { sourceId: later, number: 2, mergedAt: start - 10 * day, login: "ada", actorId: ada },
-      { sourceId: held, number: 3, mergedAt: start - 18 * day, login: "grace", actorId: grace },
-      { sourceId: blocked, number: 4, mergedAt: start - 8 * day, login: "ada", actorId: ada },
-      { sourceId: missingSource, number: 99, mergedAt: start - 15 * day, login: "grace", actorId: grace },
-    ]
-    const omitted = new Set([early, held])
-    const acceptedObjectReads: string[] = []
-    let offline = false
-    const fetcher: Fetcher = {
-      fetch: async (request) => {
-        if (offline) throw new Error("Offline replay attempted a GitHub read")
-        const url = new URL(request.url)
-        if (url.pathname.includes("/git/commits/")) {
-          acceptedObjectReads.push(url.pathname)
-          if (url.pathname.endsWith(`/${heldSquash}`)) return answer({ message: "Not Found" }, 404)
-        }
-        const body = request.method === "POST" ? await request.clone().text() : ""
-        const response = await fake.fetch(request)
-        if (!body.includes("LeaderboardSearchReferences") || !response.ok) return response
-        return new Response(omittedSearch(await response.text(), omitted), { status: response.status, headers: response.headers })
-      },
-    }
-    return {
-      clock,
-      fetcher,
-      recorded,
-      acceptedObjectReads,
-      token: fake.tokens.user("ada"),
-      directory: mkdtempSync(join(tmpdir(), "slop-supplement-")),
-      sources: { early, later, held, blocked },
-      shas: { earlyWork, earlySquash, laterWork, blockedWork, heldSquash },
-      goOffline: () => {
-        offline = true
-      },
-    }
-  }
-
-  type World = ReturnType<typeof supplementWorld>
+  const project = projectE6
+  const missingSource = missingSourceE6
+  const iso = isoE6
+  const registryProject = registryProjectE6
+  type Recorded = RecordedE6
+  type World = SupplementWorld
 
   effect function revisionOf(entry: Recorded) {
     const category = "merged-pull-request"
@@ -4583,12 +4629,12 @@ import { seededGithub, slopbotFake } from fakes
 
   effect function collected(world: World, restoring: boolean) {
     const options = { projects: [project], directory: world.directory, before: iso(start - 3_600_000) } satisfies CollectionOptions
-    const inputs = try inputsOf(world)
     const services = Layer.provideMerge(
       collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
       Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
     )
     provide services, world.clock.layer {
+      const inputs = try inputsOf(world)
       return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
     }
   }
@@ -4655,30 +4701,37 @@ import { seededGithub, slopbotFake } from fakes
   const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
   const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
 
+  function orderOf(packet: HistoricalPacket) {
+    return new Map((packet.duplicateRetirements ?? []).map((retirement) => [digestText(retirement), [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])].map(() => distinctOrder)] as const))
+  }
+
   effect function same(actual: unknown, expected: unknown) {
     try Effect.try(() => assert.deepStrictEqual(actual, expected))
   }
 
   effect function rebuilt(packet: unknown, baseline: Journal) {
+    const historical = packet as HistoricalPacket
     return try reconstructHistoricalPoints({
-      packet: packet as HistoricalPacket,
+      packet: historical,
       baseline,
       now: time,
       bans: new Map(),
-      protection: protectionFor(october),
+      protection: try Effect.try(() => protectionFor(october)),
       registry,
       repositories: repositoriesOf(registry, {}),
       projectOf: () => "feed",
+      preview: true,
+      verifiedRetirements: { duplicates: new Set(), order: orderOf(historical) },
     })
   }
 
   effect function outcome(packet: unknown, baseline: Journal) {
     const result = rebuilt(packet, baseline) catch (error) => error._tag
-    return typeof result === "string" ? result : batchDigestOf(result)
+    return typeof result === "string" ? result : try Effect.try(() => batchDigestOf(result))
   }
 
-  function changed(change: (typeof changes)[number]) {
-    const f = mixedSubmittedAndSquashFixture()
+  effect function changed(change: (typeof changes)[number]) {
+    const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
     const squash = f.retirement.acceptedSquashes?.[0]
     if (squash === undefined || squash.author === null) throw Error("fixture squash")
     if (change === "merge") f.context.mergeSha = f.prior.headSha
@@ -4696,30 +4749,31 @@ import { seededGithub, slopbotFake } from fakes
     const [first] = f.retirement.coverage
     if (change === "wrong-commit-path" && first !== undefined) first.commitSha = f.prior.headSha
     if (change === "absent-context" && f.retirement.earlierAcceptanceProof !== undefined) f.retirement.earlierAcceptanceProof.contextSources = []
-    f.bind()
+    try Effect.try(() => f.bind())
     return f
   }
 
   describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
     it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
       provide webCrypto {
-        const f = mixedSubmittedAndSquashFixture()
-        const expected = f.bind()
+        const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
+        const expected = try Effect.try(() => f.bind())
         try same(try rebuilt(f.packet, f.baseline), expected)
       }
     })
 
     it.effect("path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path", () => effect {
       provide webCrypto {
-        const f = mixedSubmittedAndSquashFixture(true)
-        const expected = f.bind()
-        try same(try outcome(f.packet, f.baseline), batchDigestOf(expected))
+        const f = try Effect.try(() => mixedSubmittedAndSquashFixture(true))
+        const expected = try Effect.try(() => f.bind())
+        const expectedDigest = try Effect.try(() => batchDigestOf(expected))
+        try same(try outcome(f.packet, f.baseline), expectedDigest)
         const submitted = f.retirement.source.commits.find((commit) => commit.files?.some((file) => file.path === "submitted.ts") === true)
         const [file] = submitted?.files ?? []
         if (submitted === undefined || file === undefined) throw Error("fixture submitted path")
         file.additions = 2
         submitted.additions = 2
-        f.bind()
+        try Effect.try(() => f.bind())
         try same(try outcome(f.packet, f.baseline), "ReviewedRefused")
       }
     })
@@ -4727,7 +4781,7 @@ import { seededGithub, slopbotFake } from fakes
     it.effect("a mixed submitted and squash proof refuses every changed binding", () => effect {
       provide webCrypto {
         for (const change of changes) {
-          const f = changed(change)
+          const f = try changed(change)
           const found = try outcome(f.packet, f.baseline)
           try same([change, found === f.packet.candidateDigest], [change, false])
         }
@@ -4736,8 +4790,8 @@ import { seededGithub, slopbotFake } from fakes
 
     it.effect("the reviewed packet is read only under its exact digest", () => effect {
       provide webCrypto {
-        const f = mixedSubmittedAndSquashFixture()
-        f.bind()
+        const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
+        try Effect.try(() => f.bind())
         const bytes = textBytes(JSON.stringify(f.packet))
         const decoded = try decodePacketBytes(bytes, sha256Of(bytes))
         try same(try outcome(decoded, f.baseline), f.packet.candidateDigest)
@@ -4750,7 +4804,7 @@ import { seededGithub, slopbotFake } from fakes
     })
 
     it.effect("an untrusted publication is refused before any private input is read", () => effect {
-      provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+      provide Layer.mergeAll(NodeServices.layer, webCrypto, outbound, Layer.provide(systemGit, NodeServices.layer)) {
         const digest = sha256Of(actor.id)
         const failure = try Effect.flip(reviewed(["registry.json", "--reviewed-sha256", digest]))
         try same([failure._tag, failure.message.includes(digest)], ["ReviewedPublicationRefused", false])
@@ -4774,10 +4828,10 @@ import { seededGithub, slopbotFake } from fakes
     for (const reply of replies) fake.alterNext(match, reply)
   }
 
-  const serverError = () => new Response("internal error", { status: 500 })
-  const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
-  const gatewayFailed = () => new Response("bad gateway", { status: 502 })
-  const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
+  const serverError = () => webResponse("internal error", { status: 500 })
+  const validationFailed = () => webJson({ message: "Validation Failed" }, { status: 422 })
+  const gatewayFailed = () => webResponse("bad gateway", { status: 502 })
+  const limited = () => webResponse("limited", { status: 429, headers: { "retry-after": "3" } })
 
   it.live('Per-item list pages retry two server errors and an exact commit file page two gateway errors on budgets of their own (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
     const clock = settableClock(start)
@@ -4839,10 +4893,10 @@ import { seededGithub, slopbotFake } from fakes
     const commitFilesUrl = `${authority}${commitFiles}`
     const finalBody = "GitHub still cannot serve the commit file page"
     const commit = JSON.stringify({ sha: world.commit, files: [{ filename: "source.ts" }] })
-    const recovered = () => new Response(commit, { status: 200, headers: { "content-type": "application/json" } })
+    const recovered = () => webResponse(commit, { status: 200, headers: { "content-type": "application/json" } })
 
     const outcome = try scenario({}, (client) => effect {
-      const recoveredLists = try Effect.forEach(itemLists, (path) => scripted(client, path, [serverError, serverError, () => Response.json([{ id: 1 }])]))
+      const recoveredLists = try Effect.forEach(itemLists, (path) => scripted(client, path, [serverError, serverError, () => webJson([{ id: 1 }])]))
       const immediate = try Effect.forEach(otherPages, (path) => scripted(client, path, [serverError]))
       const separateBudgets = try Effect.forEach([
         [commitFiles, [gatewayFailed, validationFailed, gatewayFailed]],
@@ -4851,7 +4905,7 @@ import { seededGithub, slopbotFake } from fakes
         answers(fake, exact("GET", path), [...failures, recovered])
         return try read(client, `${authority}${path}`)
       })
-      answers(fake, exact("GET", commitFiles), [gatewayFailed, gatewayFailed, () => new Response(finalBody, { status: 502, statusText: "Still unavailable" })])
+      answers(fake, exact("GET", commitFiles), [gatewayFailed, gatewayFailed, () => webResponse(finalBody, { status: 502, statusText: "Still unavailable" })])
       const persistent = try read(client, commitFilesUrl)
       answers(fake, exact("GET", commitFiles), [gatewayFailed, limited, validationFailed, gatewayFailed, limited, limited, limited, limited])
       const quotaKept = try read(client, commitFilesUrl)
@@ -4985,13 +5039,15 @@ import { seededGithub, slopbotFake } from fakes
     try Effect.try(() => assert.deepStrictEqual(actual, expected))
   }
 
-  function collectorWorld(now: () => number) {
-    const fake = githubFake({ now })
-    fake.world.addUser({ id: 101, login: "ada" })
-    fake.world.addUser({ id: 102, login: "grace" })
-    fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
-    fake.world.addInstallation({ id: 42, account: "ada", repositories: ["widgets"], permissions: { contents: "read", issues: "read", pull_requests: "read" } })
-    return { fake, original: fake.tokens.user("ada"), other: fake.tokens.user("grace") }
+  effect function collectorWorld(now: () => number) {
+    return try Effect.try(() => {
+      const fake = githubFake({ now })
+      fake.world.addUser({ id: 101, login: "ada" })
+      fake.world.addUser({ id: 102, login: "grace" })
+      fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
+      fake.world.addInstallation({ id: 42, account: "ada", repositories: ["widgets"], permissions: { contents: "read", issues: "read", pull_requests: "read" } })
+      return { fake, original: fake.tokens.user("ada"), other: fake.tokens.user("grace") }
+    })
   }
 
   function recording(fake: GitHubFake, original: string, other: string) {
@@ -5037,7 +5093,7 @@ import { seededGithub, slopbotFake } from fakes
 
   effect function collection<A>(environment: (fake: GitHubFake) => Readonly<Record<string, string>>, run: (collector: Collector) => A!!) {
     const clock = settableClock(start)
-    const world = collectorWorld(clock.now)
+    const world = try collectorWorld(clock.now)
     const { sent, fetcher } = recording(world.fake, world.original, world.other)
     const renewed = Layer.provide(collectorRenewal(), outboundVia(fetcher))
     const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ ...environment(world.fake), GITHUB_TOKEN: world.original }))
@@ -5067,7 +5123,7 @@ import { seededGithub, slopbotFake } from fakes
       const first = try read(0, repoUrl, "Bearer original")
       const beforeRenewal = try read(49, repoUrl, "Bearer original")
       const renewal = try read(50, repoUrl, "Bearer original")
-      fake.failNext(mintMatch, { status: 500 })
+      try orDie(Effect.try(() => fake.failNext(mintMatch, { status: 500 })))
       const before = fake.requests.length
       const failedMint = try read(100, repoUrl, "Bearer original")
       const failedStatuses = statuses(fake, before)
@@ -5117,8 +5173,8 @@ import { seededGithub, slopbotFake } from fakes
   function answering(fake: GitHubFake, answers: ReadonlyMap<string, unknown>, status: 200 | 304) {
     for (const [path, body] of answers) {
       fake.alterNext(exactly("GET", path), () => status === 304
-        ? new Response(null, { status: 304, headers: { etag } })
-        : new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", etag } }))
+        ? webResponse(null, { status: 304, headers: { etag } })
+        : webResponse(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", etag } }))
     }
   }
 
@@ -5164,14 +5220,15 @@ import { seededGithub, slopbotFake } from fakes
           const live = Layer.provide(ingestionGitHub({ token: Redacted.make(token), discussions: cache }), outboundVia(fetcher))
           provide live {
             const github = try GitHub
-            const read = try Effect.forEach([...answers.keys()], (path) => path.includes("/compare/") ? github.json(path, Compared) : github.json(path, Commit))
+            const read = try Effect.forEach([...answers.keys()], (path): (Commit | Compared)!GitHubFailure => path.includes("/compare/") ? github.json(path, Compared) : github.json(path, Commit))
             return { read, validators: seen, entries: (try fs.readDirectory(directory)).length }
           }
         }
 
         const kept = try fs.makeTempDirectoryScoped()
         const observed = try pass(kept, immutable, 200, world.token)
-        const resumed = try pass(kept, immutable, 304, world.fake.tokens.user("grace"))
+        const grace = try Effect.try(() => world.fake.tokens.user("grace"))
+        const resumed = try pass(kept, immutable, 304, grace)
         const refused = try fs.makeTempDirectoryScoped()
         const others = try pass(refused, rejected, 200, world.token)
         return { observed, resumed, others: others.entries }
@@ -5208,7 +5265,7 @@ import { seededGithub, slopbotFake } from fakes
         const split = filler("x")
         const restored = try restoredDirectory(split)
         const splitBytes = try restoreLocal(restored.directory, `${restored.directory}/out.json`)
-        const splitSame = Buffer.compare(try fs.readFile(`${restored.directory}/out.json`), split) === 0
+        const splitSame = sameBytes(try fs.readFile(`${restored.directory}/out.json`), split)
 
         const tampered = try restoredDirectory(filler("y"))
         const first = tampered.parts[0]
@@ -5260,6 +5317,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   service World {
+    static readonly key = "@repo/points/test/points.test#ProtectedMonthsWorld"
     readonly db: D1Database
     readonly open: WebHandler
     readonly closed: WebHandler
@@ -5334,7 +5392,7 @@ import { seededGithub, slopbotFake } from fakes
   function site(answer: Answer) {
     const sent: Sent[] = []
     const fetch = (input: string | URL | globalThis.Request, init?: RequestInit) => {
-      const request = new globalThis.Request(input, init)
+      const request = webRequest(input, init)
       sent.push({ url: request.url, authorization: request.headers.get("authorization"), accept: request.headers.get("accept") })
       return Promise.resolve(answer(new URL(request.url)))
     }
@@ -5342,7 +5400,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   function listing(body: unknown, status = 200) {
-    return () => new globalThis.Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+    return () => webResponse(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
   }
 
   function answer(months: ReadonlyArray<unknown>, everyMonthProjects: ReadonlyArray<unknown>, extra: Readonly<Record<string, unknown>> = {}) {
@@ -5367,7 +5425,7 @@ import { seededGithub, slopbotFake } from fakes
 
   effect function routeAnswer(handler: WebHandler, path: string, init: RequestInit = {}) {
     return try promise(async () => {
-      const response = await handler(new globalThis.Request(`${origin}${path}`, init))
+      const response = await handler(webRequest(`${origin}${path}`, init))
       const text = await response.text()
       const body: unknown = text === "" ? null : JSON.parse(text)
       return { status: response.status, cache: response.headers.get("cache-control"), body }
@@ -5394,29 +5452,20 @@ import { seededGithub, slopbotFake } from fakes
     let attempts = 0
     let indexReads = 0
     const fetch = (input: string | URL | globalThis.Request, init?: RequestInit) => {
-      const url = new URL(new globalThis.Request(input, init).url)
-      if (url.pathname === "/api/v1/points/journal") return Promise.resolve(globalThis.Response.json(checkpoint))
+      const url = new URL(webRequest(input, init).url)
+      if (url.pathname === "/api/v1/points/journal") return Promise.resolve(webJson(checkpoint))
       if (url.pathname === target) {
         attempts += 1
         if (scenario === "persistent-reset" || scenario === "other-error" || attempts <= (scenario === "shard-reset" ? 2 : 1)) {
           const error = Object.assign(new Error("socket connection closed"), { code: scenario === "other-error" ? "OTHER_ERROR" : "ECONNRESET" })
           if (scenario !== "body-reset") return Promise.reject(error)
-          let partial = false
-          return Promise.resolve(new globalThis.Response(new ReadableStream<Uint8Array>({
-            pull(controller) {
-              if (partial) controller.error(error)
-              else {
-                partial = true
-                controller.enqueue(new TextEncoder().encode("["))
-              }
-            },
-          })))
+          return Promise.resolve(brokenAfter("[", error))
         }
       }
       if (url.pathname === "/data/points.json") indexReads += 1
       const file = files.get(url.pathname)
-      if (file === undefined) return Promise.resolve(new globalThis.Response(null, { status: 404 }))
-      return Promise.resolve(new globalThis.Response(scenario === "reset-then-corrupt" && url.pathname === "/data/points/1.json" ? `${file} ` : file))
+      if (file === undefined) return Promise.resolve(webResponse(null, { status: 404 }))
+      return Promise.resolve(webResponse(scenario === "reset-then-corrupt" && url.pathname === "/data/points/1.json" ? `${file} ` : file))
     }
     const recovered = provideService(recoverPublished({ environment: "Production", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, fetch as typeof globalThis.fetch) catch effect (error) => {
       return error._tag === "RecoveryRefused" ? error.outcome : error._tag
@@ -5507,7 +5556,7 @@ import { seededGithub, slopbotFake } from fakes
       const aliceChanged = try revision({ project: "alpha", source: "issue-11", amount: 60, occurredAt: october, previous: alice })
       const aliceChained = try revision({ project: "alpha", source: "issue-11", amount: 90, occurredAt: october, previous: aliceChanged })
       const carol = try revision({ project: "gamma", source: "issue-13", amount: 20, occurredAt: october })
-      const viaRoute = ((input: string | URL | globalThis.Request, init?: RequestInit) => world.open(new globalThis.Request(input, init))) as typeof globalThis.fetch
+      const viaRoute = ((input: string | URL | globalThis.Request, init?: RequestInit) => world.open(webRequest(input, init))) as typeof globalThis.fetch
       provide d1(world.db) {
         const published = try importJournal(try fixture("2026-11-02T00:00:00.000Z", [alice, bob]), { wait })
         try (try D1).run(sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at) VALUES ('base-mainnet', '0x01', 'alpha', '2026-10', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'base', '0x0000000000000000000000000000000000000001', '1000000', '2026-10-25T00:00:00.000Z', '1', 'direct/alpha.json', '2026-10-25T00:00:00.000Z')`)
@@ -5688,14 +5737,16 @@ import { seededGithub, slopbotFake } from fakes
 
   it.effect('A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")', () => effect {
     const open = group(false, [commit("b1", bob, 10)])
-    try Effect.try(() => assert.deepStrictEqual(try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])])), {
+    const scored5 = try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])]))
+    try Effect.try(() => assert.deepStrictEqual(scored5, {
       merged: [["PR_502:joint:wu_slop_pair:merged:U_alice", 16], ["PR_502:joint:wu_slop_pair:merged:U_bob", 8]],
       held: [],
     }))
 
     const ratified = group(true, [commit("b1", bob, 10)])
     const assessedMember = { ...ratified.member, assessment: { tier: "large" as const, source: "PaidApiReceipt" as const, digest: "e".repeat(64), rubric: "slop-value-v1", model: "slopbot-model", head: ratified.member.headRefOid, recordedAt: "2026-11-14T02:00:00.000Z", rationale: "Superseded per-pull-request assessment." } }
-    try Effect.try(() => assert.deepStrictEqual(try outcome(facts([ratified.first, assessedMember], [decision([ratified.first, assessedMember], [ratified.pair])])), {
+    const scored6 = try outcome(facts([ratified.first, assessedMember], [decision([ratified.first, assessedMember], [ratified.pair])]))
+    try Effect.try(() => assert.deepStrictEqual(scored6, {
       merged: [["PR_501:merged", 9], ["PR_502:merged", 1]],
       held: [],
     }))
@@ -5703,19 +5754,22 @@ import { seededGithub, slopbotFake } from fakes
 
   it.effect('A withheld joint member without attribution proof holds its Points and the group\'s other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum")', () => effect {
     const syncOnly = group(true, [{ ...commit("m1", bob, 10), parentCount: 2, attributions: [] }])
-    try Effect.try(() => assert.deepStrictEqual(try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])])), {
+    const scored7 = try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])]))
+    try Effect.try(() => assert.deepStrictEqual(scored7, {
       merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
       held: [["PR_502", "synchronization-only"]],
     }))
 
     const twoAuthors = group(true, [commit("b1", bob, 10), commit("e1", erin, 10, { parentCount: -1 })])
-    try Effect.try(() => assert.deepStrictEqual(try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])])), {
+    const scored8 = try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])]))
+    try Effect.try(() => assert.deepStrictEqual(scored8, {
       merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
       held: [["PR_502", "incomplete-lines"]],
     }))
 
     const attributionHeld = group(true, [commit("b1", bob, 10)])
-    try Effect.try(() => assert.deepStrictEqual(try outcome(facts([attributionHeld.first, attributionHeld.member, attributionHeld.third], [decision([attributionHeld.first, attributionHeld.member, attributionHeld.third], [attributionHeld.pair, attributionHeld.alone])], new Set(["PR_502"]))), {
+    const scored9 = try outcome(facts([attributionHeld.first, attributionHeld.member, attributionHeld.third], [decision([attributionHeld.first, attributionHeld.member, attributionHeld.third], [attributionHeld.pair, attributionHeld.alone])], new Set(["PR_502"])))
+    try Effect.try(() => assert.deepStrictEqual(scored9, {
       merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
       held: [["PR_502", "attribution-hold"]],
     }))
@@ -5860,6 +5914,7 @@ import { seededGithub, slopbotFake } from fakes
   }
 
   service World {
+    static readonly key = "@repo/points/test/points.test#RegistryWorld"
     readonly github: GitHubFake
     readonly net: Internet
     readonly access: AccessScript

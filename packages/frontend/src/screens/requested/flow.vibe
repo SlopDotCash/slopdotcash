@@ -34,9 +34,12 @@ export function pitchLink(origin: string, viewer: Viewer | undefined): string {
   return `${origin}/r/${viewer.login}`
 }
 
-function doneText(answer: RepoRequestAnswer): string | undefined {
+effect function doneText(answer: RepoRequestAnswer) {
   if (!answer.flagged) return `Withdrawn your flag on ${answer.repo}.`
-  return answer.expiresAt === null ? undefined : `Flagged ${answer.repo} until ${formatDate(answer.expiresAt)}.`
+  const expiresAt = answer.expiresAt
+  if (expiresAt === null) return undefined
+  const until: string | undefined = Effect.try(() => formatDate(expiresAt)) catch () => undefined
+  return until === undefined ? undefined : `Flagged ${answer.repo} until ${until}.`
 }
 
 function failureMessage(failure: CallFailure): string {
@@ -98,7 +101,7 @@ const requestedRepos = Layer.effect(RequestedRepos, effect {
     const before = try page.get()
     if (!before.loading) return try SubscriptionRef.get(shown)
     const board = call(repoRequestBoard, {}, { limitBytes: boardLimitBytes }) catch () => undefined
-    const answered = try step({ type: "boardAnswered", ok: board !== undefined, life: before.lifetime }, board === undefined ? {} : { board })
+    const answered = try step({ type: "boardAnswered", ok: board !== undefined, read: before.reading, life: before.lifetime }, board === undefined ? {} : { board })
     return answered.view
   }
 
@@ -113,7 +116,7 @@ const requestedRepos = Layer.effect(RequestedRepos, effect {
     if (!submitted.accepted) return submitted.view
     const life = submitted.view.page.lifetime
     const answered = call(flagRepoRequest, { body: { repo, action } }, { limitBytes: actLimitBytes, expectedActor: submitted.view.page.actor }) catch (failure) => ({ failure })
-    const done = "failure" in answered ? undefined : doneText(answered)
+    const done = "failure" in answered ? undefined : try doneText(answered)
     const problem = done !== undefined ? undefined : "failure" in answered ? failureMessage(answered.failure) : requestedMessages.unreadable
     const settled = try step({ type: "actAnswered", ok: done !== undefined, life }, { done, problem })
     if (!settled.accepted || done === undefined) return settled.view

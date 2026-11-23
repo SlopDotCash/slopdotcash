@@ -246,6 +246,7 @@ jobs:
       VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'staging' || 'production' }}
       SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'slop-staging' || 'slop-production' }}
       SLOP_COLLECTION_DEADLINE_S: ${{ (github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '19200' }}
+      SLOP_POINTS_BOOTSTRAP: "1"
     steps:
       - name: Reserve checked bundle time for hosted main collection
         if: github.ref == 'refs/heads/main' && inputs.use_published_data != true && runner.environment == 'github-hosted'
@@ -323,7 +324,34 @@ jobs:
           publication: "true"
 
       - name: Reject known production dependency vulnerabilities
-        run: pnpm audit --prod
+        run: |
+          set -euo pipefail
+          pnpm audit --prod
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from "node:fs";
+          const lock = readFileSync("pnpm-lock.yaml", "utf8");
+          const section = (name) => {
+            const start = lock.indexOf(`\n${name}:\n`);
+            if (start < 0) return "";
+            const rest = lock.slice(start + name.length + 3);
+            const end = rest.search(/\n[A-Za-z]/u);
+            return end < 0 ? rest : rest.slice(0, end);
+          };
+          const reviewed = ["2.3.2", "4.0.7"];
+          const hashes = new Map([...section("patchedDependencies").matchAll(/^  picomatch@([^:\s]+):\n    hash: ([0-9a-f]{64})$/gmu)].map((match) => [match[1], match[2]]));
+          const copies = [...section("packages").matchAll(/^  '?picomatch@([^:(\s']+)[^\n]*:$/gmu)].map((match) => match[1]).sort();
+          const references = [...section("snapshots").matchAll(/picomatch(?:@|: )(\d+\.\d+\.\d+)(?:\(patch_hash=([0-9a-f]{64})\))?/gu)];
+          if (
+            hashes.size !== reviewed.length ||
+            !reviewed.every((version) => hashes.has(version)) ||
+            JSON.stringify(copies) !== JSON.stringify(reviewed) ||
+            references.length === 0 ||
+            references.some((match) => match[2] === undefined || hashes.get(match[1]) !== match[2])
+          ) {
+            console.error("::error::The lockfile has unexpected Picomatch copies.");
+            process.exit(1);
+          }
+          NODE
 
       - name: Build every application
         run: pnpm all build --filter="./apps/*"
@@ -444,6 +472,7 @@ jobs:
           SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
           SLOP_VALUE_FEED_CONCURRENCY: "6"
+          SLOP_REGISTRY_SNAPSHOT: ${{ runner.temp }}/slop-release/registry/snapshot.json
           SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
           SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}
         run: |
@@ -627,19 +656,22 @@ jobs:
           if [ "${{ inputs.use_published_data == true }}" = true ]; then
             node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
           fi
+          node apps/points/dist/programs/main.js snapshot pack "$BUNDLE/site/data/leaderboard.json"
 
       - name: Assemble the release bundle
         run: |
           set -euo pipefail
           test -f apps/app/dist/_worker.js
+          test -f apps/app/dist/notify.js
           cp -R apps/app/dist/. "$BUNDLE/site/"
-          rm "$BUNDLE/site/_worker.js"
+          rm "$BUNDLE/site/_worker.js" "$BUNDLE/site/notify.js"
           for dist in apps/*/dist; do
             app="$(basename "$(dirname "$dist")")"
             mkdir -p "$BUNDLE/apps/$app"
             if [ "$app" = app ]; then
               mkdir -p "$BUNDLE/apps/app/dist"
               cp apps/app/dist/_worker.js "$BUNDLE/apps/app/dist/_worker.js"
+              cp apps/app/dist/notify.js "$BUNDLE/apps/app/dist/notify.js"
             else
               cp -R "$dist" "$BUNDLE/apps/$app/dist"
             fi
@@ -1109,6 +1141,33 @@ jobs:
             (umask 077 && printf '%s' "$AGENT_CLIENT_RECORDS" > "$records")
           fi
           node "$BUNDLE/apps/operations/dist/programs/main.js" evidence agent-clients "$records" .
+
+      - name: Validate optional Slopbot value scoring settings
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        env:
+          SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: ${{ vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD }}
+          SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: ${{ vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD }}
+          SLOPBOT_VALUE_START_AT: ${{ vars.SLOPBOT_VALUE_START_AT }}
+        run: |
+          set -euo pipefail
+          settings="$RUNNER_TEMP/slopbot-value-settings"
+          node "$BUNDLE/apps/slopbot/dist/programs/main.js" value-settings > "$settings"
+          if grep -Ev '^SLOPBOT_VALUE_(MONTHLY_BUDGET_MICRO_USD|ATTEMPT_RESERVE_MICRO_USD|START_AT)=[^[:space:]]+$' "$settings"; then
+            echo "::error::The Slopbot value scoring settings did not normalise."
+            exit 1
+          fi
+          cat "$settings" >> "$GITHUB_ENV"
+
+      - name: Preflight the fee-converter release
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          converter_secrets="$RUNNER_TEMP/slop-fee-converter-secrets.json"
+          apps/operations/node_modules/.bin/wrangler secret list --name slop-fee-converter --format=json > "$converter_secrets"
+          node "$BUNDLE/apps/fees/dist/programs/main.js" preflight apps/fees/wrangler/feeConverter.production.jsonc "$converter_secrets"
 
       - name: Publish and verify the production release
         if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''

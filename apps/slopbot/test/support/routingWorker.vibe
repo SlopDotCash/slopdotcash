@@ -59,7 +59,7 @@ effect function routed() {
     const registry = registered(ask.repositoryId)
     const context = try loadContext(target, { observation: registry, projectId: routingProject })
     if (context === undefined) return json({ readable: false })
-    const reviewKey = try reviewKeyOf(context, target, "", [])
+    const reviewKey = try reviewKeyOf(context, target, "", [], [])
     const closureEligible = try closureEligibility(target, context)
     const decided = try routeItem({ target, context, reviewKey, registry, appUserId, closureEligible })
     const claim = ask.claim === undefined || !reviews(decided.route) ? undefined : try claimReview(reviewRowOf(target, context, reviewKey), { token: ask.claim, route: decided.route, history: decided.history })

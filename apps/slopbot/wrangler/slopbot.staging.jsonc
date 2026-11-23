@@ -5,6 +5,10 @@
   "compatibility_date": "2026-07-30",
   "workers_dev": false,
   "preview_urls": false,
+  "vars": {
+    "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855"
+  },
   "d1_databases": [
     {
       "binding": "SLOPBOT_DB",

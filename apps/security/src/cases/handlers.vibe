@@ -104,7 +104,7 @@ effect function paid(action: DirectPaymentAction, input: CaseActionInput) {
     accessLog(row.id, actor.githubId, observed.roles, "write", at),
     ...recoveryProgress(action, detail) ? [] : notices,
   ]
-  try payments.value.act(action, contextOf(observed, actor.githubId), body, alongside) catch effect (error) => match (error) {
+  payments.value.act(action, contextOf(observed, actor.githubId), body, alongside) catch effect (error) => match (error) {
     when DirectRefused: throw refused(actionRows[error.reason]);
     when RecoveryRefused: throw refused(actionRows[error.reason]);
     when SolanaPayerRefused: throw refuse(actionRows.payerRefused.status, actionRows.payerRefused.error, error.message);

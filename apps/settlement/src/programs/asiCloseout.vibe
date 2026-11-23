@@ -11,6 +11,7 @@ import { checkedSnapshot, repositoryRegistry, restoreSnapshot } from "@repo/poin
 import { Registry, Restrictions } from "@repo/ports/backend"
 import { EnforcementRowsLive } from "@repo/security/live"
 import { type Event, Machine, closeoutCutoff, heldSourcesAdmitted, machine } from "../../gen/settlement__asiNovemberCloseout.effect.vibe"
+import { configuredEnforcementPorts } from "../jobs/services.vibe"
 import { automaticCutoffAt, formatPeriod, periodEndSeconds } from "../kernels/calendar.ts"
 import { manifestOf, monthlyFacts } from "../monthly/store.vibe"
 import { IdentityRegistry, countedRepositories, digestPattern, heldWorkOf, readHeldWorkUnitRecords, refusal } from "../closeout/heldSources.vibe"
@@ -112,7 +113,7 @@ export effect function asiNovemberCloseout<E>(args: ReadonlyArray<string>, seams
       const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
       const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
       const registered = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive)
-      provide Layer.provideMerge(monthlyFacts(seams.served), Layer.provideMerge(registered, seams.database(accountId, token))) {
+      provide Layer.provideMerge(monthlyFacts(seams.served), Layer.provideMerge(registered, Layer.merge(configuredEnforcementPorts, seams.database(accountId, token)))) {
         const key = try closeoutKey()
         const generation = try enforcementGeneration()
         const view = try (try Registry).project(key.projectId)
@@ -173,7 +174,7 @@ export effect function asiNovemberCloseout<E>(args: ReadonlyArray<string>, seams
       }
     }
   }
-  try (run catch effect () => {
+  run catch effect () => {
     throw new CloseoutStopped({ message: `ASI closeout refused during ${stage}.` })
-  })
+  }
 }

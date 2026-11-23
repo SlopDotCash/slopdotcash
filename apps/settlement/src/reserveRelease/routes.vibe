@@ -3,18 +3,45 @@ import * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { EvmRpc } from "@repo/platform/chain/evm"
 import { D1 } from "@repo/platform/d1"
 import { type Actor, Refused, handle } from "@repo/platform/http"
-import { Authority, Registry, RegistryManifests } from "@repo/ports/backend"
+import { Registry, RegistryManifests } from "@repo/ports/backend"
 import { type ReleaseAnswer, ReleaseReview, monthlyReserveRelease } from "../client/reserveRelease.vibe"
 import { postPaymentsProjectsByIdMonthlyByPeriodReserveRelease as rows } from "../client/refusals.vibe"
 import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import { authorize, periodOf, refused, unchanged } from "../monthly/owner.vibe"
 import { servedDeploymentOf } from "../monthly/store.vibe"
 import { registryDeployments } from "../vault/deployments.vibe"
-import { type OwnerReleaseRequest, type ReleaseCheckRequest, type ReleaseOwner, ReleaseApprover, ReleaseRefused, checkRelease, prepareRelease, refuseUnsupportedNetwork } from "./release.vibe"
+import { type OwnerReleaseRequest, type RegisteredEvmDeployment, type ReleaseOwner, ReleaseApprover, ReleaseRefused, checkRelease, prepareRelease, refuseUnsupportedNetwork } from "./release.vibe"
 
-export interface ReleaseCall {
-  readonly request: OwnerReleaseRequest | ReleaseCheckRequest
-  readonly owner: ReleaseOwner
+schema ReleaseStartCall {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly manifestSha256: string
+}
+
+schema ReleaseCheckCall {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly manifestSha256: string
+  readonly planId: string
+  readonly transactionId: string
+}
+
+export schema ReleaseCallRequest = ReleaseStartCall | ReleaseCheckCall
+
+schema ReleaseCallOwner {
+  readonly githubId: string
+}
+
+export schema ReleaseCall {
+  readonly request: ReleaseCallRequest
+  readonly owner: ReleaseCallOwner
+}
+
+interface EvmServices {
+  readonly rpc: EvmRpc.Shape
+  readonly approver: ReleaseApprover.Shape
 }
 
 export error ReleaseUnavailable { network: string }
@@ -31,12 +58,17 @@ effect function registeredDeployment(request: OwnerReleaseRequest, network: Netw
   return found
 }
 
-effect function released(call: ReleaseCall, network: NetworkKey) {
+effect function evmReleased(request: ReleaseCallRequest, deployment: RegisteredEvmDeployment, owner: ReleaseOwner) {
+  if ("planId" in request) return try checkRelease(request, deployment)
+  return try prepareRelease(request, deployment, owner)
+}
+
+effect function released(call: ReleaseCall, network: NetworkKey, evm: EvmServices | undefined) {
   const { request, owner } = call
   const deployment = try registeredDeployment(request, network)
   if (deployment.family === "solana") return try refuseUnsupportedNetwork(request, deployment, owner)
-  if ("planId" in request) return try checkRelease(request, deployment)
-  return try prepareRelease(request, deployment, owner)
+  if (evm === undefined) throw new ReleaseUnavailable({ network })
+  return try provideService(provideService(evmReleased(request, deployment, owner), EvmRpc, evm.rpc), ReleaseApprover, evm.approver)
 }
 
 function tagOf(error: unknown) {
@@ -45,12 +77,15 @@ function tagOf(error: unknown) {
 
 export function reserveReleaseJournal(networks: ReadonlyArray<NetworkKey>) {
   return Layer.effect(ReserveReleases, effect {
-    const services = try Effect.context<D1 | Experimental.Crypto.Crypto | EvmRpc | ReleaseApprover | KeyValueStore.KeyValueStore | Registry | Authority | RegistryManifests>()
+    const services = try Effect.context<D1 | Experimental.Crypto.Crypto | KeyValueStore.KeyValueStore | Registry | RegistryManifests>()
+    const rpc = try Effect.serviceOption(EvmRpc)
+    const approver = try Effect.serviceOption(ReleaseApprover)
+    const evm = Option.isSome(rpc) && Option.isSome(approver) ? { rpc: rpc.value, approver: approver.value } satisfies EvmServices : undefined
     return {
       release: (call) => effect {
         const network = call.request.network
         if (!isNetworkKey(network) || !networks.includes(network)) throw new ReleaseUnavailable({ network })
-        const answer: ReleaseAnswer = Effect.provide(released(call, network), services) catch effect (error) => {
+        const answer: ReleaseAnswer = Effect.provide(released(call, network, evm), services) catch effect (error) => {
           try Effect.logError("monthly reserve release held", tagOf(error))
           throw new ReleaseHeld({ reason: tagOf(error) })
         }

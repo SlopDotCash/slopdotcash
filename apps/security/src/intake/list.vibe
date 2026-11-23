@@ -14,7 +14,7 @@ import { getSecuritySubmissions as listRows, getSecuritySubmissionsById as readR
 import type { ReportDepositView } from "../client/reportDeposit.ts"
 import { listSubmissions, readSubmission } from "../client/submissions.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"
-import { type HeldReport, depositView, depositViews, heldIntake } from "../deposit/view.vibe"
+import { depositView, depositViews } from "../deposit/view.vibe"
 import { idleMs, loaded, noVolatile, settled } from "../forwarding/store.vibe"
 import { ReadAborted, ReportUnreadable, githubNumber, readReport } from "../privacy/reads.vibe"
 import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
@@ -58,13 +58,13 @@ function holds(roles: ReadonlySet<CaseRole>, wanted: ReadonlyArray<CaseRole>) {
   return wanted.some((role) => roles.has(role))
 }
 
-export function withDeposit(view: ReturnType<typeof reporterView>, held: HeldReport, deposit: ReportDepositView | null) {
-  return { ...view, intake: heldIntake(view.intake, deposit, held), deposit }
+export function withDeposit(view: ReturnType<typeof reporterView>, deposit: ReportDepositView | null) {
+  return { ...view, deposit }
 }
 
 function roleView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding, roles: ReadonlySet<CaseRole>, nowMs: number, deposit: ReportDepositView | null) {
   const view = reporterView(row, stored, record, nowMs)
-  if (roles.has("reporter")) return withDeposit(view, { row, stored, record }, deposit)
+  if (roles.has("reporter")) return withDeposit(view, deposit)
   return { ...view, intake: { ...view.intake, canReview: roles.has("security-maintainer"), canAuthorize: false, canRevise: false } }
 }
 
@@ -93,7 +93,7 @@ effect function ownView(row: SubmissionRow, stored: StoredIntake | undefined, st
   const current = settledRow(row, stored !== undefined, nowMs) catch () => row
   if (stored === undefined) return { ...submissionView(current), intake: null }
   if (standing === undefined) throw refused(listRows.notFoundReportNotFound)
-  return withDeposit(reporterView(current, stored, standing, nowMs), { row: current, stored, record: standing }, deposit)
+  return withDeposit(reporterView(current, stored, standing, nowMs), deposit)
 }
 
 effect function scopedProjects(actor: Actor) {

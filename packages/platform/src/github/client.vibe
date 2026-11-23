@@ -178,10 +178,10 @@ export effect function answered(response: HttpClientResponse.HttpClientResponse,
   const headers = response.headers
   const kind = classify(status, headers)
   if (kind === "notFound") throw new NotFound({ path })
-  if (kind === "rateLimited") throw rateLimited(status, headers, try Clock.currentTimeMillis)
+  if (kind === "rateLimited") throw rateLimited(status, headers, try Clock.currentTimeMillis, path, try refusalMessage(response))
   if (kind === "refused" && isRefusal(status)) {
     const message = try refusalMessage(response)
-    if (status === 403 && secondaryLimitMessage(message)) throw rateLimited(status, headers, try Clock.currentTimeMillis, true)
+    if (status === 403 && secondaryLimitMessage(message)) throw rateLimited(status, headers, try Clock.currentTimeMillis, path, message, true)
     throw refused(status, path, headers, message)
   }
   if (kind !== "ok") throw new GitHubUnavailable({ status, path })
@@ -288,7 +288,7 @@ export function githubWith(settings: Settings): Layer.Layer<GitHub, never, HttpC
         const answer = try read({ method: "POST", url, accept: githubJson, json: { query, variables } }, options?.limitBytes ?? defaultLimitBytes)
         const envelope = try decoded(GraphQLEnvelope, try parsed(answer.bytes, "/graphql"), "/graphql")
         const problems = envelope.errors ?? []
-        if (problems.some((problem) => problem.type === "RATE_LIMITED")) throw rateLimited(answer.status, answer.headers, try Clock.currentTimeMillis)
+        if (problems.some((problem) => problem.type === "RATE_LIMITED")) throw rateLimited(answer.status, answer.headers, try Clock.currentTimeMillis, "/graphql", problems.find((problem) => problem.type === "RATE_LIMITED")?.message ?? "")
         const absent = (options?.absent ?? []).map((where) => JSON.stringify(where))
         const tolerated = problems.every((problem) => problem.type === "NOT_FOUND" && absent.includes(JSON.stringify(problem.path ?? [])))
         if (!tolerated) throw new GitHubMalformed({ path: "/graphql", issue: (problems[0]?.message ?? "GraphQL answered an error").slice(0, 300) })

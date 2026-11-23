@@ -1,4 +1,4 @@
-// spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+// spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
 import { D1, type NonEmpty, type Statement, rows, sql } from "@repo/platform/d1"
 import { type Journal, coverageText, revisionText } from "../kernels/records/canonical.ts"
 import { batchDigest } from "../kernels/records/ids.vibe"
@@ -65,14 +65,7 @@ function economicAward(payload: Statement) {
 
 function changesProtectedAwards(digest: string) {
   const historicalDecision = sql`json_extract(${staged},'$.award.category')='merged-pull-request' AND json_extract(${staged},'$.decision.reason') IN (${verifiedAllocationReason}, ${octoberOriginalContributorReason})`
-  return sql`EXISTS (
-    SELECT 1 FROM points_staging s LEFT JOIN points_revisions prior ON prior.id=json_extract(s.payload,'$.previous')
-    WHERE s.batch_id=${digest}
-      AND NOT EXISTS (SELECT 1 FROM points_revisions known WHERE known.id=json_extract(s.payload,'$.id'))
-      AND json_extract(s.payload,'$.award.category')!='payout-received'
-      AND (prior.id IS NULL OR ${economicAward(prior)} IS NOT ${economicAward(staged)} OR (${historicalDecision}))
-      AND (${protectedAward(staged)} OR ${protectedAward(prior)})
-  )`
+  return sql`EXISTS (SELECT 1 FROM points_staging s LEFT JOIN points_revisions prior ON prior.id=json_extract(s.payload,'$.previous') WHERE s.batch_id=${digest} AND NOT EXISTS (SELECT 1 FROM points_revisions known WHERE known.id=json_extract(s.payload,'$.id')) AND json_extract(s.payload,'$.award.category')!='payout-received' AND (prior.id IS NULL OR ${economicAward(prior)} IS NOT ${economicAward(staged)} OR (${historicalDecision})) AND (${protectedAward(staged)} OR ${protectedAward(prior)}))`
 }
 
 export function importStatements(digest: string, journal: Journal) {

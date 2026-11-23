@@ -2,18 +2,21 @@
 import type { ValueInputs } from "@repo/ports/points"
 import type { RepositoryRegistry } from "../../../client/snapshot/schema.vibe"
 import type { HistoricalPin, HistoricalProject } from "../../../client/snapshot/validate.vibe"
+import { parsedJson } from "@repo/platform/git/bytes"
 import { nativeProofReader } from "../../../collect/implementation/native.vibe"
 import { type HistoricalRequest, collectHistorical } from "../../../collect/run/historical.vibe"
+import { actionsToken } from "../../../ingestion/token.vibe"
 import { repositoriesOf } from "../../../journal/build.vibe"
+import { PointsJournal } from "../../../kernels/records/records.schema.ts"
 import { readRegistry } from "../../../snapshot/adaptPr.vibe"
 import { publishedRegistry } from "../../collect/published.vibe"
-import { type ReviewedRefused, digestText, require } from "../packet.vibe"
+import { type ReviewedRefused, digestText, refusal, require } from "../packet.vibe"
 import { exactMainHead, trustedMain } from "../transport.vibe"
 import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from "../audit/run.vibe"
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
-import { boundCut, historicalClosedContextBindings } from "./bindings.vibe"
+import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings } from "./bindings.vibe"
 import { historicalAssessmentTransport } from "./history.vibe"
 import { mergedHistoricalReplaySnapshot } from "./merged.vibe"
 import type { ReplaySummary } from "./receipt.vibe"
@@ -82,20 +85,24 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
   const { receipt } = audited.classified
   if (receipt.status !== "requires-value-replay") {
     const qualificationSha256 = try verifyHistoricalValueReplay(packetOf(audited, null, []), audited.baseline, receipt, null, new Map(), context)
-    return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string>, state: audited.state }
+    return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string> }
   }
   const approved = historicalClosedContextBindings(receipt)
   const history = historicalAssessmentTransport(audited.catalog, { projectId: audited.inputs.projectId, repository: audited.repository, repositoryNodeId: audited.scope.repositoryNodeId })
   const proofs = try nativeProofReader()
+  const baseline = Schema.decodeUnknownEffect(PointsJournal)(audited.baseline) catch effect () => {
+    throw refusal("Assessment audit Points baseline is not a valid points journal")
+  }
   const collected = try historicalCollection(valueInputs(history), {
     registryPath,
     pin: context.pin,
     project,
     mergedScope: audited.sourceAudit,
     heads: audited.catalog.heads,
-    baseline: audited.baseline,
+    baseline,
     closedContexts: approved,
     implementation: { proofs, memo: undefined },
+    evidenceToken: try actionsToken(),
   })
   const snapshot = try mergedHistoricalReplaySnapshot({
     collection: collected.collection,
@@ -104,9 +111,10 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     baseline: audited.baseline,
     repositories: context.repositories,
     approved,
+    emptyLegacyClosures: historicalEmptyLegacyClosureBindings(receipt),
     history: collected.collection.implementation?.history,
   })
-  const raw: unknown = try Effect.try(() => JSON.parse(JSON.stringify(snapshot)))
+  const raw: unknown = parsedJson(JSON.stringify(snapshot))?.value
   const closedReviews = try verifyHistoricalClosedReviews(snapshot, receipt, audited.catalog)
   const allocation = try projectHistoricalValueChanges(packetOf(audited, raw, []), audited.baseline, raw, closedReviews, context)
   const valueKeys = allocation.rows.map((row) => row.award.key)
@@ -118,9 +126,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     valueEventCount: snapshot.ledger.filter((row) => row.scoreDecisionSourceId?.startsWith("value:") === true).length,
     qualificationSha256,
   }
-  const verifiedReviewParents = new Set([...closedReviews.values()].map((proof) => proof.parentId))
-  const state = try boundCut(audited.state, receipt, verifiedReviewParents)
-  return { summary, valueSnapshot: raw, valueKeys, state }
+  return { summary, valueSnapshot: raw, valueKeys }
 }
 
 effect function recheckedCut(audited: AuditedScope, state: AssessmentAudit) {
@@ -138,7 +144,7 @@ effect function replayRun<E, R>(setPhase: (phase: ReplayPhase) => void, args: Re
   setPhase("historical assessment replay")
   const result = try replayed(audited, registryPath, valueInputs)
   const summary = { ...audited.report, replay: result.summary }
-  let state = result.state
+  let state = audited.state
   let output: unknown = summary
   if (audited.inputs.stageReview) {
     setPhase("assessment qualification recheck")

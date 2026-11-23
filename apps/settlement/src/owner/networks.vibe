@@ -25,8 +25,16 @@ function httpsUrl(value: unknown): string | undefined {
   return value
 }
 
+effect function configuredNetworks(text: string | undefined) {
+  if (text === undefined || text === "[]") return [] as ReadonlyArray<NetworkKey>
+  return servedNetworks(text) catch effect () => {
+    try Effect.logError("PAYMENT_NETWORKS is invalid")
+    return [] as ReadonlyArray<NetworkKey>
+  }
+}
+
 export effect function paymentNetworksFrom(vars: PaymentNetworkVars) {
-  const names = vars.PAYMENT_NETWORKS === undefined || vars.PAYMENT_NETWORKS === "[]" ? [] : try servedNetworks(vars.PAYMENT_NETWORKS)
+  const names = try configuredNetworks(vars.PAYMENT_NETWORKS)
   const map = try parsed(vars.PAYMENT_RPC_URLS ?? "{}")
   const endpoints: Fields = typeof map === "object" && map !== null && !Array.isArray(map) ? map as Fields : {}
   const url = (network: NetworkKey) => httpsUrl(endpoints[network])

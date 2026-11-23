@@ -8,8 +8,7 @@ import { scoreTiers } from "../../kernels/scoring/tiers.ts"
 import { verifiedHistoricalAllocationDecision } from "../../journal/snapshot.vibe"
 import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
 import type { CorrectionCommit, CorrectionSource } from "../apply/manifest.vibe"
-import type { AcceptanceOrder, AcceptanceSource, AcceptedPromotion, AcceptedSquash, CarriedMergeEdge, ClaimCover, EarlierBasis, IdenticalChange, IdenticalKind, MixedProof, NativeCover, NetOutcome, Retirement, UnchangedPromotion } from "../../../gen/points__reviewedHistory.ts"
-import { noNetOutcome } from "../../../gen/points__reviewedHistory.effect.vibe"
+import { type AcceptanceOrder, type AcceptanceSource, type AcceptedPromotion, type AcceptedSquash, type CarriedMergeEdge, type ClaimCover, type EarlierBasis, type IdenticalChange, type IdenticalKind, type MixedProof, type NativeCover, type NetOutcome, type Retirement, type UnchangedPromotion, noNetOutcome } from "../../../gen/points__reviewedHistory.ts"
 import { commitObjectId } from "./bytes.ts"
 import { assertHistoricalNetOutcome } from "./netOutcome.vibe"
 import { type ContextSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, digestPattern, digestText, identicalKeys, matchesCarriedAcceptance, mergeGitVersion, octoberStart, pullUrl, require, shaPattern } from "./packet.vibe"
@@ -58,8 +57,7 @@ function objectOfJson(value: unknown): Json | undefined {
 }
 
 function listOf(value: unknown): ReadonlyArray<Json> {
-  if (!Array.isArray(value)) return []
-  return value.map(objectOfJson).filter((item): item is Json => item !== undefined)
+  return Array.isArray(value) ? value.flatMap<Json>((item: unknown) => objectOfJson(item) ?? []) : []
 }
 
 function textOf(value: unknown): string | undefined {

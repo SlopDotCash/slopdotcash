@@ -15,7 +15,7 @@ import { EvidenceCache, atomicJson, atomicText, metadataDocument, readJson, reta
 import { type CorrectionBaseline, type CorrectionCandidate, type CorrectionManifest, type CorrectionPool, correctionBaseline, correctionRule, digestOf, encoded, hasBaselinePrefix, inventoryCorrectionPools } from "./inventory.vibe"
 import { type CensusMonth, canonicalInstant, censusMonths, historicalCutoff, isCanonicalInstant, isCensusMonth, wholeSecondIso } from "./calendar.vibe"
 import { assertCorrectionRegistry } from "./registry.vibe"
-import { discoverRetained, discoveryStale, hasUnlinkedCommit } from "./retained.vibe"
+import { type RetainedOriginals, discoveryStale, hasUnlinkedCommit, retainedOriginals } from "./retained.vibe"
 
 export const collectorWorkflow = ".github/workflows/points-implementation-corrections.yml"
 export const newCampaignPageSize = 50
@@ -105,7 +105,8 @@ export interface CollectedEvidence {
   readonly reads: ReadonlyMap<string, SourceRead>
   readonly outcomes: ReadonlyArray<MergedOutcome>
   readonly owners: ReadonlyMap<string, string>
-  readonly withoutRetainedOriginals: ReadonlySet<string>
+  readonly retainedOriginals: ReadonlyMap<string, RetainedOriginals>
+  readonly unresolved: UnresolvedOwnership
   readonly ownershipComplete: boolean
   readonly missingMonths: ReadonlyArray<string>
   readonly supplementDigests: ReadonlyArray<string>
@@ -487,7 +488,7 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
   return { outcomes, missingMonths, partDigests, loaders }
 }
 
-type UnresolvedOwnership = (repository: string, sha: string, id: string) => boolean
+export type UnresolvedOwnership = (repository: string, sha: string, id: string) => boolean
 
 function unresolvedOwnership(unavailable: ReadonlyMap<string, MergedOutcome>, owners: ReadonlyMap<string, string>, byId: ReadonlyMap<string, MergedOutcome>): UnresolvedOwnership {
   return (repository, sha, id) => {
@@ -507,7 +508,7 @@ effect function supplementHolds(affects: boolean) {
   return settled.supplementAffects && settled.supplement === "SupplementUnavailable"
 }
 
-effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: Campaign, byId: ReadonlyMap<string, MergedOutcome>, limitations: Map<string, string>, unresolved: UnresolvedOwnership, acceptedObjects: ReadonlyMap<string, MergeCommit>) {
+effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: Campaign, byId: ReadonlyMap<string, MergedOutcome>, limitations: Map<string, string>, unresolved: UnresolvedOwnership) {
   const reads = new Map<string, SourceRead>()
   for (const plan of campaign.repositories) {
     const targets = selected.map((pool) => pool.candidate).filter((candidate) => repositoryIdOf(candidate.sourceUrl).toLowerCase() === plan.repository.id.toLowerCase())
@@ -539,8 +540,7 @@ effect function censusReads(selected: ReadonlyArray<CorrectionPool>, campaign: C
         limitations.set(candidate.id, earlierAcceptedObjectUnavailable)
         continue
       }
-      const mergeCommit = acceptedObjects.get(candidate.sourceId)
-      reads.set(candidate.sourceId, { outcome, repositoryNodeId: plan.nodeId, ...(mergeCommit === undefined ? {} : { mergeCommit }) })
+      reads.set(candidate.sourceId, { outcome, repositoryNodeId: plan.nodeId })
     }
   }
   return reads
@@ -678,8 +678,7 @@ effect function censusSupplements(directory: string, campaign: Campaign, pools: 
   const digests: string[] = []
   const fences = new Map<string, string>()
   const unavailable = new Map<string, MergedOutcome>()
-  const acceptedObjects = new Map<string, MergeCommit>()
-  if (!ownershipComplete) return { outcomes, digests, fences, unavailable, acceptedObjects }
+  if (!ownershipComplete) return { outcomes, digests, fences, unavailable }
   for (const plan of campaign.repositories) {
     const targets = new Map<string, CorrectionCandidate>()
     for (const { candidate } of pools) {
@@ -716,17 +715,16 @@ effect function censusSupplements(directory: string, campaign: Campaign, pools: 
         const key = commitKey(plan.repository.id, object.sha)
         const earlier = unavailable.get(key)
         if (earlier === undefined || precedes(source.outcome, earlier)) unavailable.set(key, source.outcome)
-      } else {
-        acceptedObjects.set(source.sourceId, { oid: object.sha })
-        if (object.parents.length === 1) fences.set(source.sourceId, object.sha)
+      } else if (object.parents.length === 1) {
+        fences.set(source.sourceId, object.sha)
       }
     }
   }
-  return { outcomes, digests, fences, unavailable, acceptedObjects }
+  return { outcomes, digests, fences, unavailable }
 }
 
 effect function retainedDiscoveries(selected: ReadonlyArray<CorrectionPool>, reads: ReadonlyMap<string, SourceRead>, owners: ReadonlyMap<string, string>, options: CollectionOptions, limitations: Map<string, string>) {
-  const discovered = new Set<string>()
+  const discovered = new Map<string, RetainedOriginals>()
   for (const { candidate } of selected) {
     const read = reads.get(candidate.sourceId)
     const commits = read?.outcome.commits ?? null
@@ -749,12 +747,12 @@ effect function retainedDiscoveries(selected: ReadonlyArray<CorrectionPool>, rea
       occurredAt,
       ...(read.mergeCommit === undefined ? {} : { mergeCommit: read.mergeCommit }),
     }
-    const found = discoverRetained(source) catch effect (error) => {
+    const found = retainedOriginals(source) catch effect (error) => {
       if (error._tag !== "RetainedRefused") throw error
       limitations.set(candidate.id, error.message)
       return undefined
     }
-    if (found === "no-retained-original") discovered.add(candidate.sourceId)
+    if (found !== undefined) discovered.set(candidate.sourceId, found)
   }
   return discovered
 }
@@ -801,13 +799,13 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
   }
   const byId = new Map(supplemented.outcomes.map((outcome) => [outcome.id, outcome]))
   const unresolved = unresolvedOwnership(supplemented.unavailable, owners, byId)
-  const reads = ownershipComplete ? try censusReads(selected, campaign, byId, limitations, unresolved, supplemented.acceptedObjects) : try sourceReads(selected, campaign, limitations)
+  const reads = ownershipComplete ? try censusReads(selected, campaign, byId, limitations, unresolved) : try sourceReads(selected, campaign, limitations)
   for (const pool of selected) {
     const candidate = pool.candidate
     if (!ownershipComplete) limitations.set(candidate.id, "repository-ownership-census-incomplete")
     else if (!reads.has(candidate.sourceId)) limitations.set(candidate.id, limitations.get(candidate.sourceId) ?? "source-unavailable")
   }
-  const withoutRetainedOriginals = ownershipComplete ? try retainedDiscoveries(selected, reads, owners, options, limitations) : new Set<string>()
+  const discovered = ownershipComplete ? try retainedDiscoveries(selected, reads, owners, options, limitations) : new Map<string, RetainedOriginals>()
   return {
     options,
     campaign,
@@ -817,7 +815,8 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     reads,
     outcomes: supplemented.outcomes,
     owners,
-    withoutRetainedOriginals,
+    retainedOriginals: discovered,
+    unresolved,
     ownershipComplete,
     missingMonths: census.missingMonths,
     supplementDigests,

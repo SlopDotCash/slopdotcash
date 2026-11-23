@@ -197,10 +197,14 @@ layer(Layer.mergeAll(EscrowStarted, outbound, webCrypto), { excludeTestServices:
       })
       if (reviewed.family !== "solana") return try die(new Error("a Solana entry parsed as another family"))
       const deployedAt = Number(readU64(programData.data, 4))
-      const outcome = (slot?: number) => verifiedDeployment(reviewed, slot).pipe(
-        Effect.map((verified) => verified.project),
-        Effect.catchTag("DeploymentUnverified", (refused: DeploymentUnverified) => Effect.succeed(refused.message)),
-      )
+      const outcome = (slot?: number) => effect {
+        return effect {
+          return (try verifiedDeployment(reviewed, slot)).project
+        } catch effect (refused) => match (refused) {
+          when DeploymentUnverified: refused.message;
+          default: throw refused;
+        }
+      }
       try same({
         unbounded: try outcome(),
         atDeploymentSlot: try outcome(deployedAt),

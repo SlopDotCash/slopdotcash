@@ -1,33 +1,34 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
-import { ValueFeedUnavailable, type ValueCensus, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
-import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
-import { AssemblyRefused, type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { ValueFeedUnavailable, type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { type Seeded, seeded, start } from "./support/u5/github.ts"
-import { acceptedReviewHistoryJson, creditlessSnapshot, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-const read: ValueInputsRead = { valueDecisions: [], jointValueDecisions: [], valueActors: [], retainedCommitCredits: [], attributionHolds: [], heldWorkUnits: [] }
-
-type Assembly = "refused" | "invalid" | "creditless"
+const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 
 interface Attempt {
   readonly name: string
   readonly outage?: boolean
-  readonly assembly: Assembly
+  readonly unboundHold?: boolean
   readonly deadlineMs?: number
 }
 
 interface Asked {
   readonly census: Array<ValueCensus>
   readonly collections: Array<Collection>
+  readonly assembled: Array<unknown>
 }
 
 function layers(world: Seeded, attempt: Attempt, asked: Asked) {
@@ -36,22 +37,31 @@ function layers(world: Seeded, attempt: Attempt, asked: Asked) {
     load: (census: ValueCensus) => effect {
       asked.census.push(census)
       if (attempt.outage === true) throw new ValueFeedUnavailable({ message: "The hosted value feed is unavailable" })
-      return read
+      return {
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: attempt.unboundHold === true ? [{ recordDigest: "0".repeat(64), sourceNodeIds: census.value.slice(0, 1).map((outcome) => outcome.id), unavailableNodeIds: [] }] : [],
+      }
     },
   })
-  const assembly = Layer.succeed(SnapshotAssembly, {
-    assemble: (collection: Collection) => effect {
+  const recorded = Layer.effect(SnapshotAssembly, effect {
+    const real = try SnapshotAssembly
+    return { assemble: (collection: Collection) => effect {
       asked.collections.push(collection)
-      if (attempt.assembly === "refused") throw new AssemblyRefused({ message: "assembly refused" })
-      return attempt.assembly === "invalid" ? {} : creditlessSnapshot(collection, leaderboardMethodology)
-    },
+      const raw = try real.assemble(collection)
+      asked.assembled.push(raw)
+      return raw
+    } }
   })
   return Layer.mergeAll(
     outbound,
     Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
     Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
     values,
-    assembly,
+    Layer.provide(recorded, snapshotAssembly),
   )
 }
 
@@ -67,25 +77,24 @@ effect function collectOnce(world: Seeded, directory: string, attempt: Attempt, 
 
 it.live('Collect merged work end to end through the ValueInputs port (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   const fs = try FileSystem.FileSystem
   try scoped(effect {
     const directory = try fs.makeTempDirectoryScoped()
     try fs.makeDirectory(`${directory}/data`, { recursive: true })
     try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
     try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
-    const asked: Asked = { census: [], collections: [] }
-    const outage = try collectOnce(world, directory, { name: "outage", outage: true, assembly: "creditless" }, asked)
-    const deferred = try collectOnce(world, directory, { name: "deferred", assembly: "creditless", deadlineMs: 1 }, asked)
-    const refused = try collectOnce(world, directory, { name: "refused", assembly: "refused" }, asked)
-    const invalid = try collectOnce(world, directory, { name: "invalid", assembly: "invalid" }, asked)
-    const published = try collectOnce(world, directory, { name: "published", assembly: "creditless" }, asked)
+    const asked: Asked = { census: [], collections: [], assembled: [] }
+    const outage = try collectOnce(world, directory, { name: "outage", outage: true }, asked)
+    const deferred = try collectOnce(world, directory, { name: "deferred", deadlineMs: 1 }, asked)
+    const refused = try collectOnce(world, directory, { name: "refused", unboundHold: true }, asked)
+    const published = try collectOnce(world, directory, { name: "published" }, asked)
     const collection = asked.collections.at(-1)
     const censuses = collection?.work.collections.flatMap((repository) => [repository.open.census.issues.census, repository.open.census.pullRequests.census]) ?? []
     const ids = (outcomes: ValueCensus["value"]) => outcomes.map((outcome) => outcome.id).sort()
     try same({
-      outcomes: [outage, deferred, refused, invalid].map(({ outcome, written }) => ({ outcome, written })),
-      published: { outcome: published.outcome, written: published.written, bytes: collection === undefined ? "" : `${JSON.stringify(creditlessSnapshot(collection, leaderboardMethodology))}\n` === published.bytes },
+      outcomes: [outage, deferred, refused].map(({ outcome, written }) => ({ outcome, written })),
+      published: { outcome: published.outcome, written: published.written, bytes: `${JSON.stringify(asked.assembled.at(-1))}\n` === published.bytes },
       asked: { loads: asked.census.length, assemblies: asked.collections.length },
       value: asked.census.map((census) => ({ value: ids(census.value), attribution: ids(census.attribution) })).at(-1),
       censuses: censuses.map((census) => ({ phase: census.phase, totalCount: census.totalCount, items: census.items.length })),
@@ -96,10 +105,9 @@ it.live('Collect merged work end to end through the ValueInputs port (spec/point
         { outcome: "ValueFeedUnavailable", written: false },
         { outcome: "CollectDeferred", written: false },
         { outcome: "AssemblyRefused", written: false },
-        { outcome: "SnapshotInvalid", written: false },
       ],
       published: { outcome: "Published", written: true, bytes: true },
-      asked: { loads: 5, assemblies: 3 },
+      asked: { loads: 4, assemblies: 2 },
       value: { value: [world.ids.paired, world.ids.stacked, world.ids.bulk, world.ids.closed].sort(), attribution: [world.ids.paired, world.ids.stacked, world.ids.bulk].sort() },
       censuses: [{ phase: "ReadyForPublication", totalCount: 0, items: 0 }, { phase: "ReadyForPublication", totalCount: 0, items: 0 }],
       counts: { unavailableSources: 0, unavailableMergedPullRequests: 0, heldWorkUnits: 0, mergedPullRequests: 3, detailedMergedPullRequests: 3, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },

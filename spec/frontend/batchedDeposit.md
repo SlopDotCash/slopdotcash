@@ -34,6 +34,13 @@ any connected wallet, signed in or not (development `src/VaultActions.tsx`
 signed-out person as the owner vault's `canReviewDeposit` does, and that
 person alone then saves the intent and recovers its hash.
 
+A review that has sent nothing can be repeated by the same sender, and each
+review decides the capability again (development `src/VaultActions.tsx`
+`inspect` stores a fresh review on every press of Review). A new review
+starts from no approval evidence: the deposit review reads the live
+allowance again, so an approval observed for an earlier review never
+carries over to the capability the new review decides.
+
 ```quint
 import walletAttempt as WA from "./walletAttempt"
 import ownerVault as OV from "./ownerVault"
@@ -47,9 +54,11 @@ pure val initial: Batch = { phase: Unreviewed, capability: NoCapability, owner: 
   reference: "", transaction: "", requests: 0, evidence: ChainPending, slot: WA::noAttempt, storageBlocked: false,
   approval: ApprovalPending }
 pure val walletAdapter = -2
-pure def canReview(b: Batch, capability: BatchCapability, by: int): bool = b.phase == Unreviewed and (by > 0 or by == OV::visitor)
+pure def canReview(b: Batch, capability: BatchCapability, by: int): bool = (by > 0 or by == OV::visitor)
+  and (b.phase == Unreviewed or ((b.phase == Offered or b.phase == Separate) and b.requests == 0 and by == b.owner))
 pure def review(b: Batch, capability: BatchCapability, by: int): Batch =
-  { ...b, owner: by, capability: capability, phase: if (capability == AlreadyAtomic) Offered else Separate }
+  { ...b, owner: by, capability: capability, phase: if (capability == AlreadyAtomic) Offered else Separate,
+    approval: ApprovalPending }
 pure def sometimesVisitorBatch(b: Batch): bool = b.owner == OV::visitor and b.requests == 1
 pure def intentAttempt(digest: str): WA::Attempt = { identity: digest, bytesId: digest, hash: "", candidate: "" }
 pure def canSaveIntent(b: Batch, intent: int, digest: str, stored: bool, by: int): bool = b.phase == Offered and b.capability == AlreadyAtomic

@@ -22,14 +22,14 @@ import { WalletChoice, type WalletOffer, walletChoiceServices } from "../core/di
 import { type EvmConnection, connectEvm, evmRequest, sendTransaction } from "../core/evm.vibe"
 import { type SolanaConnection, connectSolana } from "../core/solana.vibe"
 import { sessionSlots } from "../core/slots.ts"
-import { evmChainIdOf } from "./commitmentCalls.ts"
+import { baseUnits, evmChainIdOf } from "./commitmentCalls.ts"
 import { evmVaultOf } from "./commitments.vibe"
-import { type EvmVault, type TransferReview, reviewTransfer } from "./evmVault.vibe"
+import type { EvmVault, TransferReview } from "./evmVault.vibe"
 import { ownerMonthlyPage } from "./ownerMonthly.vibe"
 import type { VaultCreationPlan } from "./ownerPlans.schema.ts"
 import { readText, slotOfText } from "./flowSlots.ts"
 import { type Saved, autoSpacingMs, ownerVaultPage } from "./ownerVault.vibe"
-import { type Setup, type VaultKind, provisionalMessages, provisionalVault } from "./provisionalVault.vibe"
+import { type Setup, type VaultKind, provisionalMessages, provisionalSlotKey, provisionalVault } from "./provisionalVault.vibe"
 import { type ReviewedWire, wireMatches } from "./solanaPlans.ts"
 import { signAndVerify } from "./solanaVault.vibe"
 
@@ -97,6 +97,7 @@ export interface ProvisionalDeployment {
 export interface ProvisionalChecked {
   readonly state: Setup
   readonly hash: string
+  readonly approval: boolean
 }
 
 export error SetupStopped { message: string; code: string }
@@ -266,14 +267,22 @@ function expectedAsset(terms: SetupTerms, network: string): string | undefined {
   return terms.purpose === "security-bounty" ? reference : terms.rewardAsset ?? reference
 }
 
-function evmCreationMatches(terms: SetupTerms, review: CreationReview, owner: string, automatic: boolean): boolean {
+effect function evmCreationMatches(terms: SetupTerms, review: CreationReview, owner: string, automatic: boolean) {
   if (review.family !== "evm" || !isNetworkKey(review.network)) return false
   const facts = NETWORKS[review.network]
-  if (facts.family !== "evm" || BigInt(review.chainId) !== evmChainIdOf(facts.chainId)) return false
+  const monthlyCap = baseUnits(review.cap, false)
+  if (facts.family !== "evm" || baseUnits(review.chainId, true) !== evmChainIdOf(facts.chainId) || monthlyCap === undefined) return false
   const { transaction } = review
   if (transaction.from.toLowerCase() !== owner.toLowerCase() || !/^0x[0-9a-fA-F]{40}$/u.test(transaction.to) || (review.existingVault !== null && !/^0x[0-9a-fA-F]{40}$/u.test(review.existingVault))) return false
-  const creation = creationOf({ owner: review.owner, projectDigest: registryProjectDigest(terms.projectId), asset: review.asset, bounty: terms.purpose === "security-bounty", monthlyCap: BigInt(review.cap), automatic })
-  return creation !== undefined && createVaultCalldata(creation).toLowerCase() === transaction.data.toLowerCase()
+  const creation = creationOf({ owner: review.owner, projectDigest: registryProjectDigest(terms.projectId), asset: review.asset, bounty: terms.purpose === "security-bounty", monthlyCap, automatic })
+  if (creation === undefined) return false
+  const data = Effect.try(() => createVaultCalldata(creation)) catch () => undefined
+  return data !== undefined && data.toLowerCase() === transaction.data.toLowerCase()
+}
+
+function unsignedOf(value: string | undefined) {
+  const units = value !== undefined && /^(0|[1-9][0-9]{0,19})$/u.test(value) ? baseUnits(value, false) : undefined
+  return units === undefined ? undefined : u64(units)
 }
 
 function text(fields: Readonly<Record<string, unknown>>, name: string): string | undefined {
@@ -289,14 +298,14 @@ function solanaCreationOf(terms: SetupTerms, fields: Readonly<Record<string, unk
   const networkDomain = digest(text(fields, "networkDomain") ?? "")
   const identityAuthority = address(text(fields, "identityAuthority") ?? "")
   const feeRecipient = address(text(fields, "feeRecipient") ?? "")
-  const delays = [text(fields, "bindingDelaySeconds"), text(fields, "rotationDelaySeconds")].map((value) => value !== undefined && /^(0|[1-9][0-9]{0,19})$/u.test(value) ? u64(BigInt(value)) : undefined)
+  const delays = [text(fields, "bindingDelaySeconds"), text(fields, "rotationDelaySeconds")].map(unsignedOf)
   const [bindingDelay, rotationDelay] = delays
   const tokenProgram = text(fields, "tokenProgram") ?? ""
   const mint = address(text(fields, "mint") ?? "")
   if (program === undefined || signer === undefined || signer !== owner || text(fields, "mint") !== asset || projectDigest === undefined || projectDigest !== registryProjectDigest(terms.projectId)
     || networkDomain === undefined || identityAuthority === undefined || feeRecipient === undefined || bindingDelay === undefined || rotationDelay === undefined || text(fields, "payoutPolicy") !== terms.purpose) return undefined
   const monthlyCap = fields.monthlyCap
-  const monthly = bounty ? undefined : typeof monthlyCap === "string" && monthlyCap === cap && fields.automaticMonthly === automatic && /^(0|[1-9][0-9]{0,19})$/u.test(cap) ? u64(BigInt(cap)) : undefined
+  const monthly = bounty ? undefined : typeof monthlyCap === "string" && monthlyCap === cap && fields.automaticMonthly === automatic ? unsignedOf(cap) : undefined
   if (bounty ? monthlyCap !== undefined || fields.automaticMonthly !== undefined : monthly === undefined) return undefined
   const programAddress = address(tokenProgram)
   const kind = tokenProgram === SYSTEM_PROGRAM ? { kind: "Native" as const } : mint !== undefined && programAddress !== undefined && isTokenProgram(programAddress) ? { kind: "Token" as const, mint, tokenProgram: programAddress } : undefined
@@ -317,14 +326,14 @@ function solanaWireOf(terms: SetupTerms, review: CreationReview, owner: string, 
   return { ok: wire !== undefined, wire }
 }
 
-function checkedCreation(terms: SetupTerms, input: SetupInput, review: CreationReview, owner: string): ReviewedCreation | undefined {
+effect function checkedCreation(terms: SetupTerms, input: SetupInput, review: CreationReview, owner: string) {
   const bounty = terms.purpose === "security-bounty"
   const asset = expectedAsset(terms, input.network)
   if (review.payoutPolicy !== terms.purpose || review.network !== input.network || !sameWallet(input.network, review.owner, owner) || asset === undefined || !sameWallet(input.network, review.asset, asset)
     || !/^(0|[1-9][0-9]*)$/u.test(review.cap) || review.cap !== (bounty ? "0" : terms.monthlyCapMinor) || review.capDisplay !== (bounty ? "" : terms.monthlyCapDisplay) || review.automatic !== input.automatic || (bounty && input.automatic)) return undefined
-  if (review.family === "evm") return evmCreationMatches(terms, review, owner, input.automatic) ? { input, review, wire: undefined } : undefined
+  if (review.family === "evm") return (try evmCreationMatches(terms, review, owner, input.automatic)) ? { input, review, wire: undefined } satisfies ReviewedCreation : undefined
   const solana = solanaWireOf(terms, review, owner, input.automatic)
-  return solana.ok ? { input, review, wire: solana.wire } : undefined
+  return solana.ok ? { input, review, wire: solana.wire } satisfies ReviewedCreation : undefined
 }
 
 effect function asked(input: SetupInput, step: "review" | "register", transactionId?: string) {
@@ -340,7 +349,7 @@ effect function reviewed(input: SetupInput, owner: string) {
   const { terms } = try SetupDesk
   const answer = try asked(input, "review")
   if (!("review" in answer)) throw stopped(setupMessages.mismatch)
-  const checked = checkedCreation(terms, input, answer.review, owner)
+  const checked = try checkedCreation(terms, input, answer.review, owner)
   if (checked === undefined) throw stopped(setupMessages.mismatch)
   return checked
 }
@@ -385,7 +394,9 @@ export effect function createVault(connection: SetupConnection, shown: ReviewedC
   const hash = try page.submit("Creation", (before) => effect {
     if (connection.family === "evm" && fresh.review.family === "evm") {
       const { transaction, chainId } = fresh.review
-      return try sendTransaction(connection.evm, BigInt(chainId), { from: transaction.from, to: transaction.to, data: transaction.data, value: transaction.value }, before(plan))
+      const chain = baseUnits(chainId, true)
+      if (chain === undefined) throw stopped(setupMessages.changed)
+      return try sendTransaction(connection.evm, chain, { from: transaction.from, to: transaction.to, data: transaction.data, value: transaction.value }, before(plan))
     }
     if (connection.family === "solana" && fresh.wire !== undefined) return try signAndVerify(shown.input.network, connection.solana, fresh.wire, plan, before)
     throw stopped(setupMessages.recover)
@@ -499,22 +510,18 @@ export function provisionalDeploymentOf(value: Readonly<Record<string, unknown>>
   return { network: plan.network, vault: vault.toLowerCase(), owner: owner.toLowerCase(), asset: asset.toLowerCase(), deploymentTransaction: deploymentTransaction.toLowerCase() }
 }
 
-function provisionalKey(shown: ProvisionalDeployment): string {
-  return `${storageKeys.vaultAction.key}${shown.network}:provisional:${shown.vault}`
-}
-
 function vaultKindOf(terms: SetupTerms, vault: EvmVault): VaultKind {
   if (terms.purpose === "security-bounty") return "BountyEvm"
   return vault.asset.toLowerCase() === EVM_NATIVE_ASSET ? "EvmNative" : "OrdinaryEvmToken"
 }
 
 export effect function openProvisional(shown: ProvisionalDeployment) {
-  const { terms, provisional } = try SetupDesk
+  const { terms, provisional, page: setup } = try SetupDesk
   const known = try Ref.get(provisional)
   if (known !== undefined && known.deployment.vault === shown.vault && known.deployment.deploymentTransaction === shown.deploymentTransaction) return try known.page.machine.get()
   const vault = evmVaultOf(shown, terms.purpose === "security-bounty" ? "BountyPurpose" : "OrdinaryPurpose")
   if (vault === undefined) throw stopped(setupMessages.unavailable)
-  const page = try provisionalVault(sessionSlots(), provisionalKey(shown), vault, shown.owner)
+  const page = try provisionalVault(sessionSlots(), provisionalSlotKey(shown.network, shown.vault), vault, shown.owner, (try setup.machine.get()).owner)
   try page.reviewCreation(vaultKindOf(terms, vault), true)
   try Ref.set(provisional, { deployment: shown, vault, page })
   return try page.machine.get()
@@ -547,7 +554,7 @@ export effect function reviewProvisionalDeposit(connection: EvmConnection, amoun
   const held = try heldProvisional()
   const state = try followedCreation(held, connection)
   if (state.form !== "Provisional") throw stopped(provisionalMessages.closed)
-  return try reviewTransfer(connection, held.vault, "deposit", amount, "latest")
+  return try held.page.review(connection, amount)
 }
 
 export effect function depositProvisional(connection: EvmConnection, amount: string) {
@@ -573,8 +580,15 @@ export effect function checkProvisional(connection: EvmConnection) {
 
 export effect function recoverProvisionalHash(connection: EvmConnection, transaction: string) {
   const held = try heldProvisional()
-  try held.page.recoverHash(transaction)
+  try followedCreation(held, connection)
+  try held.page.recoverHash(connection, transaction)
   return try checkProvisional(connection)
+}
+
+export effect function clearProvisionalUnsent(connection: EvmConnection) {
+  const held = try heldProvisional()
+  try followedCreation(held, connection)
+  return try held.page.clearUnsent(connection)
 }
 
 export effect function watchProvisional(connection: EvmConnection, hidden: () => boolean, report: (checked: ProvisionalChecked) => void!!) {
@@ -586,7 +600,7 @@ export effect function watchProvisional(connection: EvmConnection, hidden: () =>
     const checked = checkProvisional(connection) catch () => undefined
     if (checked === undefined) continue
     try report(checked)
-    if (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified") return checked
+    if (checked.state.approval !== "ApprovalSubmitted" && (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified")) return checked
   }
   return undefined
 }

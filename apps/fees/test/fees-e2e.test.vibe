@@ -10,6 +10,7 @@ import type { Address, Hex } from "viem"
 import { feeWalletEvmMarker } from "../src/signer/evmKey.ts"
 import { feeWalletSolanaMarker } from "../src/signer/solanaKey.ts"
 import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
+import { EVM_NATIVE_ASSET } from "@repo/settlement/kernels/networks"
 import { feeConversionsPath } from "../src/client/report.vibe"
 import { type FeeTokens, allowanceOf, balanceOf, feeTokens, finalize, fixtureBuild, kyberRoutes, landed, mint, nonceOf, router, simpleModeRouter, unit, zeroFeeSource } from "./support/chains/evm.ts"
 import { type Converter, type JournalRow, answered, buybackLimits, bundledText, converterBinding, converterDatabase, converterLimits, execute, heldLocks, journal, redeploy, runAt, sessionHash, settledEvents, signedWithoutReservation, signerMarkers, stagingVars, startConverter } from "./support/scenarios/feeConverter.ts"
@@ -68,6 +69,8 @@ const at = {
   third: "2026-11-23T12:30:00.000Z",
   fourth: "2026-11-23T12:45:00.000Z",
 }
+
+const solanaWallet = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
 
 const dust = 4_000_000_000_000_000n
 const quotable = 6_000_000_000_000_000n
@@ -131,6 +134,7 @@ function baseVars(wallet: Address, rpc: string, tokens: ReadonlyArray<Address>, 
     SLOP_ENVIRONMENT: "production",
     FEE_CONVERTER_NETWORKS: "base",
     FEE_WALLET_BASE: wallet,
+    FEE_WALLET_SOLANA: solanaWallet,
     RPC_URL_BASE: rpc,
     FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: tokens }),
     BUYBACK_MODE: "off",
@@ -175,6 +179,39 @@ effect function chainFacts(wallet: Address, token: Address) {
 effect function minted(token: Address, wallet: Address, amount: bigint) {
   const { base } = try FeeWorld
   try promise(() => mint(base.chain, token, wallet, amount))
+}
+
+const directFee = 4_000_000_000_000_000n
+const nativeReserve = 1_000_000_000_000_000n
+
+effect function completedNativeAward(running: Converter, feeWallet: Address) {
+  const caseId = "direct-native-1"
+  const payer = `0x${"a1".repeat(20)}`
+  const reporter = `0x${"b2".repeat(20)}`
+  const intent = JSON.stringify({
+    chain: "base",
+    afterBlock: "1",
+    afterBlocks: ["1", "1"],
+    asset: { address: EVM_NATIVE_ASSET },
+    payer: { id: "payer-claim", address: payer, digest: "1".repeat(64) },
+    recipient: { id: "reporter-claim", address: reporter, digest: "2".repeat(64) },
+    grossBase: (directFee * 4n).toString(),
+    feeBase: directFee.toString(),
+    transfers: [{ recipient: reporter, amountBase: (directFee * 3n).toString() }, { recipient: feeWallet, amountBase: directFee.toString() }],
+    transactions: [{ nonce: "0" }, { nonce: "1" }],
+  })
+  const legs = [`0x${"c3".repeat(32)}`, `0x${"d4".repeat(32)}`]
+  const manifest = JSON.stringify({ id: "direct-native", status: "active" })
+  const statements: ReadonlyArray<readonly [string, ...ReadonlyArray<string | number>]> = [
+    ["INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)", "direct-native", manifest, "a".repeat(64), at.recovery],
+    ["INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)", "direct-native", manifest, "a".repeat(64), at.recovery, at.recovery],
+    ["INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key) VALUES (?, 'direct-native', 'owner/repo', '202', 'reporter', 'verified', ?, ?, '7', 1, '{}', 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ?, ?, ?)", caseId, at.recovery, at.recovery, at.recovery, at.recovery, `root-${caseId}`],
+    ["INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (?, 'direct-native', ?, '{}', ?, ?)", caseId, `root-${caseId}`, (directFee * 4n).toString(), at.recovery],
+    ["INSERT INTO security_direct_payments (case_id, network, intent, prepared_at) VALUES (?, 'base-mainnet', ?, ?)", caseId, intent, "2026-11-20T00:00:00.000Z"],
+    ...legs.map((transactionId, leg) => ["INSERT INTO security_direct_transfer_receipts (case_id, leg_index, network, transaction_id, evidence, verified_at) VALUES (?, ?, 'base-mainnet', ?, ?, ?)", caseId, leg, transactionId, JSON.stringify({ transactionId, blockNumber: String(10 + leg) }), "2026-11-20T00:10:00.000Z"] as const),
+    ["INSERT INTO security_direct_payment_receipts (case_id, evidence, verified_at) VALUES (?, ?, ?)", caseId, JSON.stringify(legs.map((transactionId, leg) => ({ transactionId, blockNumber: String(10 + leg) }))), "2026-11-20T00:10:00.000Z"],
+  ]
+  for (const [text, ...params] of statements) try promise(() => execute(running, text, ...params))
 }
 
 effect function finalized() {
@@ -249,21 +286,22 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_NETWORKS: "base",
       FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [base.dustToken] }),
       RPC_URL_BASE: base.chain.url,
-      FEE_WALLET_KEY_BASE: stagingKey.key,
       FEE_READY: `base:${stagingWallet}`,
     })
     const stagedOutcome = try ran(staged, at.recovery)
     const stagedRows = (try rowsOf(staged)).map((row) => [...outline(row), row.raw_tx])
+    const keyed = try rerun(staged, { FEE_WALLET_KEY_BASE: stagingKey.key }, [], at.second)
+    const keyedRows = (try rowsOf(staged)).map((row) => [...outline(row), row.raw_tx])
     const stagedChain = try chainFacts(stagingWallet, base.dustToken)
 
     try same({
       off: [offOutcomes, offEvents.map((event) => [event.event, event.trigger, event.results]), offRequests, offRows, offLocks],
       dry: [dryOutcome, dryRows, dryChain.nonce, dryChain.allowance],
-      staging: [staging.FEE_CONVERTER_MODE, stagedOutcome, stagedRows, stagedChain.nonce],
+      staging: [staging.FEE_CONVERTER_MODE, stagedOutcome, stagedRows, keyed, keyedRows, stagedChain.nonce],
     }, {
       off: [["ok", "ok"], [["fee_converter_run", "recovery", []], ["fee_converter_run", "receipts", []]], 0, [], 0],
       dry: ["ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null, null]], 0n, 0n],
-      staging: ["dry_run", "ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], 0n],
+      staging: ["dry_run", "ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], "exception", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], 0n],
     })
   }))
 
@@ -309,6 +347,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_MODE: "dry_run",
       FEE_CONVERTER_NETWORKS: "robinhood",
       FEE_WALLET_ROBINHOOD: wallet.address,
+      FEE_WALLET_SOLANA: solanaWallet,
       RPC_URL_ROBINHOOD: robinhood.url,
       FEE_CONVERTER_ALLOWLIST: JSON.stringify({ robinhood: [base.dustToken, robinhoodUsdg] }),
       BUYBACK_MODE: "off",
@@ -318,7 +357,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     const quoted = quotes.calls.length
     const outcomes: string[] = []
     for (const mode of ["dry_run", "live"]) {
-      try promise(() => redeploy(retained, { FEE_CONVERTER_MODE: mode }))
+      try promise(() => redeploy(retained, mode === "live" ? { FEE_CONVERTER_MODE: mode, FEE_WALLET_KEY_ROBINHOOD: wallet.key } : { FEE_CONVERTER_MODE: mode }))
       for (const time of [at.receipts, at.recovery]) outcomes.push(try ran(retained, time))
     }
     const runs = try promise(() => settledEvents(retained, 4))
@@ -385,6 +424,36 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     })
   }))
 
+  it.effect('A completed native direct award on Base is sold through the scheduled Worker only down to the per-transaction reserve, and its receipt is counted once (spec/fees/conversion.md, "A token is converted from the wallet\'s observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => Effect.scoped(effect {
+    const { base } = try FeeWorld
+    const wallet = try walletAt(9)
+    const live = try converter({
+      ...baseVars(wallet.address, base.chain.url, [EVM_NATIVE_ASSET], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address}` }),
+      FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({ base: { perTransaction: nativeReserve.toString(), perDay: "100000000000000000", additionalFeeReserve: "1000000000000" } }),
+    })
+    try completedNativeAward(live, wallet.address)
+    const outcomes = [try ran(live, at.recovery)]
+    try finalized()
+    outcomes.push(try ran(live, at.second))
+    try finalized()
+    outcomes.push(try ran(live, at.third))
+    const native = (try rowsOf(live)).filter((row) => row.token === EVM_NATIVE_ASSET)
+    const sold = try Effect.try(() => native.filter((row) => row.kind === "conversion" && row.state === "finalized").reduce((total, row) => total + BigInt(row.amount_in), 0n))
+    try same({
+      outcomes,
+      native: native.map((row) => [row.kind, row.mode, row.state]),
+      sold: [sold > 0n, sold <= directFee - nativeReserve],
+      unknown: live.logs.some((line) => line.includes("fee_direct_income_unknown")),
+      unreserved: try promise(() => signedWithoutReservation(live)),
+    }, {
+      outcomes: ["ok", "ok", "ok"],
+      native: [["conversion", "live", "finalized"]],
+      sold: [true, true],
+      unknown: false,
+      unreserved: [],
+    })
+  }))
+
   it.effect('J19: a request cannot assert a fact to the Worker, and a redeploy that withdraws readiness or binds it to another wallet stops signing while recorded sends still settle (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => Effect.scoped(effect {
     const { base } = try FeeWorld
     const wallet = try walletAt(5)
@@ -443,6 +512,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_NETWORKS: "base,robinhood",
       FEE_WALLET_BASE: wallet.address,
       FEE_WALLET_ROBINHOOD: wallet.address,
+      FEE_WALLET_SOLANA: solanaWallet,
       RPC_URL_BASE: base.chain.url,
       RPC_URL_ROBINHOOD: robinhood.url,
       BUYBACK_MODE: "dry_run",

@@ -80,6 +80,7 @@ const ports = Layer.mergeAll(
     has: (id, role) => Effect.succeed(role === "moderator" && ids(staff.moderators).includes(id)),
     isTeam: (id) => Effect.succeed(ids(staff.moderators).includes(id)),
     snapshot: (role) => Effect.succeed(role === "moderator" ? ids(staff.moderators) : []),
+    ownerSession: () => Effect.succeed(undefined),
   }),
   Layer.succeed(ReportingPrograms, {
     current: () => Effect.succeed({ repository, approvers: { technical: ids(staff.technical), financial: ids(staff.financial), dispute: [], sponsor: [] }, status: "open", closesAt: undefined, acknowledgeHours: 0 }),

@@ -9,6 +9,7 @@ import type { Driver, Options } from "../../gen/security__forwarding.conformance
 import type { AdvisoryRead, Copy, Event, Forwarding, Listing, SendClaim, SendGate } from "../../gen/security__forwarding.ts";
 import type { Screening } from "../../gen/security__screening.ts";
 import { type AdvisoryFacts, ghsaOfRank } from "../../src/forwarding/advisories.vibe";
+import { noAnalysis } from "../../src/forwarding/analysis.vibe";
 import { type Shell, type Volatile, forwarded, loaded, noVolatile } from "../../src/forwarding/store.vibe";
 import { objectKey } from "../../src/intake/attempt.vibe";
 import { receiptTermsOf } from "../../src/receipt/program.vibe";
@@ -137,6 +138,7 @@ function shellOf(entry: Entry, event: Event): Shell {
       createdAt: new Date(copy.createdAtMs).toISOString(),
       markerFound: copy.marker === 1,
       evidenceDigest: copy.digest,
+      analysis: noAnalysis,
     }),
     code: event.type === "recordPostResult" && event.result === "DefiniteTerminal" ? "author-mismatch" : "forbidden",
     retryAfterSeconds: null,

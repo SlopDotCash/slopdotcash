@@ -119,7 +119,7 @@ effect function writesFor(context: Context, current: Webhook, next: Webhook, eve
       return event.committed ? [sql`UPDATE slopbot_deliveries SET processed_at = ${at} WHERE delivery_id = ${id} AND processed_at IS NULL`] : release
     case "confirmReopen":
       return [sql`UPDATE slopbot_deliveries SET reopen_confirmed_at = ${at} WHERE delivery_id = ${id} AND reopen_source IS NOT NULL AND reopen_confirmed_at IS NULL`]
-    case "releaseOrdinary":
+    case "failRouting":
       return release
     case "finishInstallation":
       return event.committed && context.installation !== undefined ? try installationWrites(context.installation, current.install) : []

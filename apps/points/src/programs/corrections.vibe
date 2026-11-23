@@ -154,7 +154,7 @@ export function collectionServices(settings: CollectionSettings) {
   return Layer.mergeAll(run, cache, graph, rest)
 }
 
-export effect function collectImplementationCorrections<E, R>(args: ReadonlyArray<string>, prove: ProveCandidates<E, R>) {
+effect function collect<E, R>(args: ReadonlyArray<string>, prove: ProveCandidates<E, R>) {
   const parsed = try parseCollectArguments(args)
   const token = try actionsToken()
   const provenance = try provenanceOf(parsed.resumeRun, token)
@@ -179,7 +179,7 @@ export effect function collectImplementationCorrections<E, R>(args: ReadonlyArra
 export function corrections<PE, PR, AE, AR>(commands: CorrectionCommands<PE, PR, AE, AR>) {
   return (args: ReadonlyArray<string>) => effect {
     const [subcommand, ...rest] = args
-    if (subcommand === "collect") return try collectImplementationCorrections(rest, commands.prove)
+    if (subcommand === "collect") return try collect(rest, commands.prove)
     if (subcommand === "apply") return try commands.apply(rest)
     throw refused(`Usage: ${usage}`)
   }

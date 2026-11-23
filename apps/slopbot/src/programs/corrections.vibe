@@ -1,0 +1,134 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+import { systemGit } from "@repo/platform/git"
+import { validMergeRecipe } from "@repo/platform/git/evidence"
+import { collectedTargets, fetchRegistry } from "@repo/points/collect"
+import {
+  type CollectedEvidence,
+  type OctoberFollowupRequest,
+  type OctoberOriginalRequest,
+  type OctoberPartsRequest,
+  type OctoberUnitRequest,
+  type OrdinaryProof,
+  type RetainedRequest,
+  type SyncMergesRequest,
+  applyCorrections,
+  corrections,
+  proveRetained,
+} from "@repo/points/corrections"
+import { collectValueInputs } from "../value/collect/inputs.vibe"
+import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
+import { bindRetained, collectedSource, refused, relevantOriginals, sourceEvidenceUnavailable } from "../value/corrections/bind.vibe"
+import { nativeOriginalWithSyncMerges, originalContributorFollowupProof } from "../value/corrections/followup.vibe"
+import { octoberOriginalContributorProof } from "../value/corrections/original.vibe"
+import { octoberOriginalContributorPartsProof, octoberOriginalContributorUnitProof } from "../value/corrections/units.vibe"
+import { Evidence, type RegisteredRepository, findRepository } from "../value/evidence/types.vibe"
+import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
+import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
+import type { WorkUnitSource } from "../value/workUnits/types.vibe"
+
+schema SourcePolicy { readonly sha: string; readonly text: string }
+schema RecordedSource { readonly evidence: Evidence; readonly policy: SourcePolicy; readonly mergeRecipe?: Schema.Unknown }
+
+const competingOriginals = "October replacement names competing original PRs"
+
+effect function recordedSource(raw: unknown) {
+  const recorded = Schema.decodeUnknownEffect(RecordedSource)(raw) catch effect () => { throw refused(sourceEvidenceUnavailable) }
+  const recipe = recorded.mergeRecipe
+  if (recipe !== undefined && !validMergeRecipe(recipe)) throw refused(sourceEvidenceUnavailable)
+  const source: WorkUnitSource = { evidence: recorded.evidence, policy: recorded.policy, ...(recipe === undefined ? {} : { mergeRecipe: recipe }) }
+  return source
+}
+
+effect function recordedSources(raws: ReadonlyArray<unknown>) {
+  const decoded: WorkUnitSource[] = []
+  for (const raw of raws) decoded.push(try recordedSource(raw))
+  return decoded
+}
+
+function ordinaryBinding(repositories: ReadonlyArray<RegisteredRepository>) {
+  return (request: RetainedRequest) => effect {
+    const policy = findRepository(repositories, request.repository) ?? null
+    const { accepted, acceptance, originals } = request.retained
+    const october = request.october
+    provide acceptanceWith(collectRetainedMergeReferences) {
+      const acceptedSource = try collectedSource(request.repository, policy, accepted, acceptance)
+      const collected: WorkUnitSource[] = []
+      for (const original of originals) collected.push(try collectedSource(request.repository, policy, original, undefined))
+      const relevant = try relevantOriginals(request.repository, policy, acceptedSource.evidence, collected)
+      const plainAuthor = request.plain.author?.id
+      const possibleOriginals = october === undefined ? [] : relevant.filter(({ evidence: { pull } }) =>
+        pull.user.node_id !== plainAuthor && (october.hasUnlinked || october.otherAuthors.includes(pull.user.node_id)))
+      if (possibleOriginals.length > 1) throw refused(competingOriginals)
+      const [possibleOriginal] = possibleOriginals
+      if (possibleOriginal !== undefined) return try octoberOriginalContributorProof(request.plain, [acceptedSource, possibleOriginal], request.owners)
+      const selected = october === undefined || october.hasUnlinked ? relevant : []
+      if (selected.length === 0) {
+        const plain: OrdinaryProof = { sources: [] }
+        return plain
+      }
+      const bound: OrdinaryProof = { sources: try bindRetained([acceptedSource, ...selected], request.owners, false) }
+      return bound
+    }
+  }
+}
+
+effect function groupedBinding(sources: ReadonlyArray<unknown>, owners: ReadonlyMap<string, string>) {
+  const decoded = try recordedSources(sources)
+  return try bindRetained(decoded, owners, true)
+}
+
+effect function octoberOriginal(request: OctoberOriginalRequest) {
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorProof(request.accepted, sources, request.owners, request.allowMergedOriginal)
+}
+
+effect function octoberFollowup(request: OctoberFollowupRequest) {
+  const retained = try recordedSource(request.retained)
+  const proved = try originalContributorFollowupProof(request.accepted, request.followup, retained.evidence, retained.policy)
+  return proved.binding
+}
+
+effect function octoberUnit(request: OctoberUnitRequest) {
+  const original = try recordedSource(request.original)
+  const integration = try recordedSource(request.integration)
+  const followups = try recordedSources(request.followups)
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorUnitProof(request.accepted, original, integration, request.owners, request.claims, followups, sources)
+}
+
+effect function octoberParts(request: OctoberPartsRequest) {
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorPartsProof(sources, request.owners, request.claims, request.originating, request.candidateSourceId)
+}
+
+effect function syncMerges(request: SyncMergesRequest) {
+  provide acceptanceWith(collectRetainedMergeReferences) {
+    return try nativeOriginalWithSyncMerges(request)
+  }
+}
+
+export function retainedBinder(repositories: ReadonlyArray<RegisteredRepository>) {
+  return {
+    ordinary: ordinaryBinding(repositories),
+    grouped: groupedBinding,
+    october: { original: octoberOriginal, followup: octoberFollowup, unit: octoberUnit, parts: octoberParts, syncMerges },
+  }
+}
+
+type Binder = ReturnType<typeof retainedBinder>
+type BinderEffect = ReturnType<Binder["ordinary"] | Binder["grouped"] | Binder["october"][keyof Binder["october"]]>
+
+effect function proveWithBinder(evidence: CollectedEvidence) {
+  const repositories = try collectedTargets(try fetchRegistry())
+  const feedConcurrency = try valueFeedConcurrency()
+  const inputs = Layer.provide(collectValueInputs({ repositories, feedConcurrency }), acceptanceWith(collectRetainedMergeReferences))
+  provide inputs {
+    return try proveRetained<Effect.Error<BinderEffect>, Effect.Services<BinderEffect>>(evidence, retainedBinder(repositories))
+  }
+}
+
+export effect function correctionsCommand(args: ReadonlyArray<string>) {
+  provide systemGit {
+    return try corrections({ prove: proveWithBinder, apply: applyCorrections })(args)
+  }
+}

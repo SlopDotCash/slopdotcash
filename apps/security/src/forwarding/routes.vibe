@@ -1,6 +1,6 @@
 // spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant"; spec/security/forwarding.md, "The atomic claim and exact readback precede any GitHub POST"; spec/security/forwarding.md, "Only recognized throttling reopens the same draft without a listing"; spec/security/forwarding.md, "A complete matching listing chooses the earliest copy or permits retry after the quiet window"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/journey.md, "Forwarding sends only the current qualified version with the reporter's grant"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
 import { isoAt } from "@repo/platform/clock"
-import { randomId, randomToken } from "@repo/platform/crypto"
+import { randomId, randomToken, utf8 } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
@@ -22,6 +22,7 @@ import { type StoredIntake, type SubmissionRow, decorated, reportVersions, scree
 import { githubNumber, reportBytes } from "../privacy/reads.vibe"
 import { ReportingPrograms, termsAtReceipt } from "../receipt/program.vibe"
 import { caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { analyzerId, noAnalysis } from "./analysis.vibe"
 import { type AdvisoryFacts, type FailureCode, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaPattern, ghsaRank, installed, markerLine, sameRepository } from "./advisories.vibe"
 import { IntakeApp, type IntakeAppConfig, type ReporterGrant, beginAuthorization, clearGrantCookie, completeAuthorization, readGrant } from "./grant.vibe"
 import { type Loaded, type Shell, type Volatile, claimed, copyOf, failedTransition, forwarded, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stayTransition, stepped, transitionStatements, written } from "./store.vibe"
@@ -45,6 +46,7 @@ interface Current {
 
 schema Candidate { github_id: string }
 schema Found { id: string }
+schema DuplicateDetail { detail: string | null }
 schema Blocker { state: string }
 
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
@@ -240,7 +242,7 @@ function factsByRank(all: ReadonlyArray<AdvisoryFacts>, rank: number) {
 
 function shellFor(row: SubmissionRow, all: ReadonlyArray<AdvisoryFacts>, code: FailureCode = "invalid", retryAfterSeconds: number | null = null): Shell {
   return {
-    factsOf: (copy) => factsByRank(all, copy.ghsa) ?? { ghsa: "", repository: row.repository, authorId: null, privateReport: false, state: "unknown", createdAt: "", markerFound: false, evidenceDigest: "" },
+    factsOf: (copy) => factsByRank(all, copy.ghsa) ?? { ghsa: "", repository: row.repository, authorId: null, privateReport: false, state: "unknown", createdAt: "", markerFound: false, evidenceDigest: "", analysis: noAnalysis },
     code,
     retryAfterSeconds,
     actorGithubId: row.reporter_github_id,
@@ -483,6 +485,13 @@ export effect function directCreated(actor: Actor, body: Readonly<Record<string,
   return try directAuthorized(app, actor, row, 201, {})
 }
 
+effect function duplicatesListed(submissionId: string) {
+  const found = try first(DuplicateDetail, sql`SELECT detail FROM security_submission_events WHERE submission_id = ${submissionId} AND kind = 'duplicate-advisories' ORDER BY revision DESC LIMIT 1`)
+  const listed = found === undefined || found.detail === null ? undefined : jsonDocument(utf8(found.detail))
+  const ghsas = typeof listed === "object" && listed !== null && !Array.isArray(listed) ? (listed as Readonly<Record<string, unknown>>).ghsas : undefined
+  return Array.isArray(ghsas) ? ghsas.filter((ghsa): ghsa is string => typeof ghsa === "string") : []
+}
+
 effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: number) {
   const program = try (try ReportingPrograms).current(row.project_id)
   const receipt = try termsAtReceipt(row.project_id, facts.createdAt)
@@ -498,6 +507,7 @@ effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: numb
   const acknowledgeHours = program?.acknowledgeHours ?? 0
   const guard = sql`(SELECT revision FROM security_submissions WHERE id = ${row.id}) = ${row.revision} AND (SELECT state FROM security_submissions WHERE id = ${row.id}) = ${row.state}`
   const ask = try depositAsk({ caseId, projectId: row.project_id, reporterGithubId: row.reporter_github_id, at })
+  const duplicateAdvisories = try duplicatesListed(row.id)
   const notices = try caseNotices({ caseId, revision: 1, kind: "submit-direct", idempotencyKey: `intake-${row.id}`, actorGithubId: row.reporter_github_id, reporterGithubId: row.reporter_github_id, detail: {}, program: ask.held ? undefined : program, relatedReview: false, at })
   const receiptNotice = try (try Notices).statements({
     notices: [{ eventKey: `security-receipt:${caseId}`, recipientGithubId: row.reporter_github_id, kind: "SecurityReportReceived", subject: caseId, actionPath: `/inbox?submission=${row.id}`, sourceAt: at }],
@@ -509,7 +519,8 @@ effect function directCase(row: SubmissionRow, facts: AdvisoryFacts, nowMs: numb
       nextActionDueAt: acknowledgeHours > 0 ? try isoAt(nowMs + acknowledgeHours * 3600000) : null, at, guard,
       verified: { receivedAt: facts.createdAt, verifiedBy: "github", policyRevision: receipt.policyRevision, terms: receipt.terms, award: received.award, source: "github-verified", receiptEvidenceDigest: facts.evidenceDigest } }),
     caseEvent({ caseId, revision: 1, kind: "submit-direct", actorGithubId: row.reporter_github_id, role: "reporter", idempotencyKey: `intake-${row.id}`, reason: null, evidenceReference: null, at, guard: true,
-      detail: { submissionId: row.id, advisory: facts.ghsa, receivedAt: facts.createdAt, receivedAtSource: "github-verified", verifiedBy: "github", policyRevision: receipt.policyRevision } }),
+      detail: { submissionId: row.id, advisory: facts.ghsa, receivedAt: facts.createdAt, receivedAtSource: "github-verified", verifiedBy: "github", policyRevision: receipt.policyRevision,
+        autoAnalysis: { ...facts.analysis, analyzer: analyzerId }, ...duplicateAdvisories.length > 0 ? { duplicateAdvisories } : {} } }),
     sql`INSERT INTO security_case_access_log (case_id, actor_github_id, actor_role, action, at) SELECT ${caseId}, ${row.reporter_github_id}, 'reporter', 'write', ${at} WHERE EXISTS (SELECT 1 FROM security_cases WHERE id = ${caseId})`,
     ...ask.statements,
     ...receiptNotice,

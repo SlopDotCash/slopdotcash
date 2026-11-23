@@ -3,10 +3,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
 import type { D1Database, SqlValue } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { d1, sql } from "@repo/platform/d1"
+import { d1, decoded, sql } from "@repo/platform/d1"
 import { gitText, systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { program } from "@repo/platform/program"
+import { rolesFrom } from "@repo/platform/roles"
+import { noticePorts } from "@repo/operations/live"
+import { contributorAudience } from "@repo/points/live"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
@@ -18,6 +21,7 @@ import { closeoutKey } from "../src/closeout/packet.vibe"
 import { guardQueries, holdsAll } from "../src/closeout/run.vibe"
 import { loadMonth, monthlyFacts } from "../src/monthly/store.vibe"
 import { asiNovemberCloseout } from "../src/programs/asiCloseout.vibe"
+import { closeoutFetch } from "./support/web.ts"
 
 service Journey {
   readonly db: D1Database
@@ -43,7 +47,7 @@ interface World {
   readonly runnerTemp: string
   readonly hub: GitHubFake
   readonly requests: string[]
-  published: Uint8Array
+  published: Uint8Array<ArrayBuffer>
 }
 
 const cutoff = "2026-11-19T00:00:00.000Z"
@@ -91,8 +95,11 @@ effect function seed(db: D1Database, text: string, ...params: ReadonlyArray<SqlV
   try promise(() => db.prepare(text).bind(...params).run())
 }
 
+schema Counted { readonly n: number }
+
 effect function count(db: D1Database, table: string) {
-  const found = try promise(() => db.prepare(`SELECT count(*) AS n FROM ${table} WHERE project_id = 'asi' AND period = '2026-11'`).first<{ n: number }>())
+  const text = `SELECT count(*) AS n FROM ${table} WHERE project_id = 'asi' AND period = '2026-11'`
+  const [found] = try decoded(Counted, (try promise(() => db.prepare(text).all())).results, text)
   return found?.n ?? 0
 }
 
@@ -138,7 +145,7 @@ function snapshotOf(held: ReadonlyArray<HeldUnit>, unavailable: ReadonlyArray<st
   }
 }
 
-effect function journal(db: D1Database, digit: string, sources: ReadonlyArray<{ readonly repository: Repository; readonly pullRequestNodeId: string }>, stored?: (raw: string) => string) {
+effect function journal<E = never>(db: D1Database, digit: string, sources: ReadonlyArray<{ readonly repository: Repository; readonly pullRequestNodeId: string }>, stored?: (raw: string) => string!E) {
   const record = {
     schemaVersion: "slop-work-unit-record:v1",
     projectId: "eliza",
@@ -150,7 +157,7 @@ effect function journal(db: D1Database, digit: string, sources: ReadonlyArray<{ 
   }
   const raw = JSON.stringify(record)
   const digest = try sha256Hex(raw)
-  try seed(db, "INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (?, ?, 'eliza', ?, ?, ?)", digest, try sha256Hex(`assessment ${raw}`), record.sourceDigest, stored === undefined ? raw : stored(raw), generatedAt)
+  try seed(db, "INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (?, ?, 'eliza', ?, ?, ?)", digest, try sha256Hex(`assessment ${raw}`), record.sourceDigest, stored === undefined ? raw : try stored(raw), generatedAt)
   for (const source of sources) try seed(db, "INSERT INTO slopbot_work_unit_sources (record_digest, repository_node_id, pull_request_node_id) VALUES (?, ?, ?)", digest, source.repository.nodeId, source.pullRequestNodeId)
   return digest
 }
@@ -201,24 +208,13 @@ effect function worldOf(db: D1Database) {
   try retain(db, "fixture-recipient-1", 7101, 1, "2026-11-18T23:59:59.999Z")
   try retain(db, "fixture-recipient-2", 7102, 2, "2026-11-10T12:00:00.000Z")
   try retain(db, "fixture-recipient-3", 7103, 3, cutoff)
-  const hub = githubFake()
-  hub.world.addUser({ id: owner.id, login: owner.login, nodeId: owner.nodeId })
-  hub.world.addUser({ id: 7200, login: "fixture-producer" })
-  hub.world.addRepo({ id: asiRepository.githubId, nodeId: asiRepository.nodeId, owner: owner.login, name: "asi" })
-  hub.world.addInstallation({ id: 77, account: owner.login, repositories: "all", permissions: { metadata: "read" } })
-  hub.world.setPermission(asiRepository.id, owner.login, "admin")
+  const hub = try Effect.try(() => githubFake())
+  try Effect.try(() => hub.world.addUser({ id: owner.id, login: owner.login, nodeId: owner.nodeId }))
+  try Effect.try(() => hub.world.addUser({ id: 7200, login: "fixture-producer" }))
+  try Effect.try(() => hub.world.addRepo({ id: asiRepository.githubId, nodeId: asiRepository.nodeId, owner: owner.login, name: "asi" }))
+  try Effect.try(() => hub.world.addInstallation({ id: 77, account: owner.login, repositories: "all", permissions: { metadata: "read" } }))
+  try Effect.try(() => hub.world.setPermission(asiRepository.id, owner.login, "admin"))
   return { db, checkout, head, registryPath, runnerTemp: root, hub, requests: [], published: new Uint8Array() } satisfies World
-}
-
-function fetchOf(world: World): typeof globalThis.fetch {
-  return async (input, init) => {
-    const request = new Request(input, init)
-    const url = new URL(request.url)
-    world.requests.push(`${url.host}${url.pathname}`)
-    if (url.host === "slop.cash" && url.pathname === "/data/leaderboard.json") return new Response(world.published, { status: 200, headers: { "content-type": "application/json" } })
-    if (url.host === "api.github.com") return world.hub.fetch(request)
-    return new Response("not found", { status: 404 })
-  }
 }
 
 function recording(out: string[], errors: string[]): Console.Console {
@@ -232,8 +228,10 @@ function recording(out: string[], errors: string[]): Console.Console {
   }
 }
 
+const audiences = Layer.mergeAll(noticePorts, contributorAudience, rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }))
+
 effect function closeoutCommand(world: World, args: ReadonlyArray<string>) {
-  provide systemGit {
+  provide systemGit, audiences {
     try asiNovemberCloseout(args, { database: () => d1(world.db), checkout: world.checkout, served })
   }
 }
@@ -242,8 +240,9 @@ effect function run(world: World, values: Readonly<Record<string, string>>) {
   const out: string[] = []
   const errors: string[] = []
   const runner = program({ services: Layer.mergeAll(webCrypto, outbound), commands: { "asi-november-closeout": (args) => closeoutCommand(world, args) } })
+  const path = try Config.withDefault(Config.String("PATH"), "")
   const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
-    PATH: process.env.PATH ?? "",
+    PATH: path,
     GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
     GITHUB_REF: "refs/heads/main",
@@ -255,10 +254,10 @@ effect function run(world: World, values: Readonly<Record<string, string>>) {
     SLOPBOT_APP_PRIVATE_KEY: world.hub.app.privateKeyPem,
     ...values,
   }))
-  provide NodeServices.layer, clock.layer, environment, Console.Console = recording(out, errors), FetchHttpClient.Fetch = fetchOf(world) {
+  provide NodeServices.layer, clock.layer, environment, Console.Console = recording(out, errors), FetchHttpClient.Fetch = closeoutFetch(world) {
     const status = try runner.run(["asi-november-closeout", world.registryPath])
     const [line] = out
-    return { status, printed: line === undefined ? undefined : JSON.parse(line) as Readonly<Record<string, unknown>>, stage: errors.join("\n") }
+    return { status, printed: line === undefined ? undefined : try Effect.try(() => JSON.parse(line) as Readonly<Record<string, unknown>>), stage: errors.join("\n") }
   }
 }
 
@@ -273,7 +272,8 @@ effect function same(actual: unknown, expected: unknown) {
 layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect(`Close ASI's November pool early from one reviewed import with another project's work held (spec/settlement/asiNovemberCloseout.md, "Story: Close ASI's November pool early from one reviewed import"; spec/settlement/asiNovemberCloseout.md, "The closeout is exactly ASI's November 2026 pool up to its cutoff"; spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"; spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"; spec/settlement/asiNovemberCloseout.md, "A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change")`, () => scoped(effect {
     const { db } = try Journey
-    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: process.env.PATH ?? "" }))) {
+    const path = try Config.withDefault(Config.String("PATH"), "")
+    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: path }))) {
       const world = try worldOf(db)
       const held = try journal(db, "1", [{ repository: elizaRepository, pullRequestNodeId: "PR_held_1" }])
       world.published = encoder.encode(JSON.stringify(snapshotOf([{ recordDigest: held, sourceNodeIds: ["PR_held_1"], unavailableNodeIds: ["PR_unavailable_1"] }], ["PR_unavailable_1"])))
@@ -281,7 +281,8 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       const pointsBatch = "b".repeat(64)
       try seed(db, "INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (?, ?, ?, 3)", pointsBatch, generatedAt, JSON.stringify([{ repository: asiRepository.id, from: "2026-11-01T00:00:00.000Z", to: cutoff, digest: snapshotSha256 }]))
 
-      for (const untrusted of [{ GITHUB_REPOSITORY: "fork/slopdotcash" }, { GITHUB_REF: "refs/heads/vibestack" }, { GITHUB_EVENT_NAME: "workflow_run" }]) {
+      const untrustedInvocations: ReadonlyArray<Readonly<Record<string, string>>> = [{ GITHUB_REPOSITORY: "fork/slopdotcash" }, { GITHUB_REF: "refs/heads/vibestack" }, { GITHUB_EVENT_NAME: "workflow_run" }]
+      for (const untrusted of untrustedInvocations) {
         const refused = try run(world, { ...untrusted, ASI_CLOSEOUT_MODE: "inspect" })
         try same([refused.status, refused.stage.includes(refusedDuring("trusted invocation"))], [1, true])
       }
@@ -302,7 +303,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
 
       const applied = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "apply", ASI_CLOSEOUT_PREVIEW_SHA256: previewSha256 })
       try same([applied.status, applied.printed?.mode, applied.printed?.previewSha256], [0, "applied", previewSha256])
-      const base = try promise(() => db.prepare("SELECT cap_base, early_close_at, source_snapshot_sha256, recipient_count FROM monthly_reward_bases WHERE project_id = 'asi' AND period = '2026-11'").first())
+      const [base] = (try promise(() => db.prepare("SELECT cap_base, early_close_at, source_snapshot_sha256, recipient_count FROM monthly_reward_bases WHERE project_id = 'asi' AND period = '2026-11'").all())).results
       const rows = try promise(() => db.prepare("SELECT github_user_id, gross_base FROM monthly_reward_base_rows WHERE project_id = 'asi' AND period = '2026-11' ORDER BY github_user_id").all())
       try same({ base, rows: rows.results }, {
         base: { cap_base: "150000000", early_close_at: cutoff, source_snapshot_sha256: snapshotSha256, recipient_count: 2 },
@@ -312,19 +313,20 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       const replayed = try run(world, { ...reviewed, ASI_CLOSEOUT_MODE: "apply", ASI_CLOSEOUT_PREVIEW_SHA256: previewSha256 })
       try same([replayed.status, replayed.printed?.mode, try count(db, "monthly_reward_base_rows")], [0, "already-imported", 2])
 
-      provide clock.layer, Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive), d1(db))) {
+      provide clock.layer, Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive), Layer.merge(audiences, d1(db)))) {
         const month = try loadMonth(try closeoutKey())
-        try same([month.phase, month.earlyCloseAt], ["Proposed", closeoutCutoff])
+        try same([month.state.phase, month.state.earlyCloseAt], ["Proposed", closeoutCutoff])
       }
     }
   }))
 
   it.effect(`Unproved held work, a missing or altered journal row, an ASI source, a repeated pull request and an unbound unavailable source stop the closeout (spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision")`, () => scoped(effect {
     const { db } = try Journey
-    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: process.env.PATH ?? "" }))) {
+    const path = try Config.withDefault(Config.String("PATH"), "")
+    provide NodeServices.layer, Layer.provide(systemGit, ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: path }))) {
       const world = try worldOf(db)
       const before = try count(db, "monthly_reward_base_rows")
-      const altered = try journal(db, "2", [{ repository: elizaRepository, pullRequestNodeId: "PR_altered" }], (raw) => JSON.stringify(JSON.parse(raw), null, 1))
+      const altered = try journal(db, "2", [{ repository: elizaRepository, pullRequestNodeId: "PR_altered" }], (raw) => Effect.try(() => JSON.stringify(JSON.parse(raw), null, 1)))
       const asiSource = try journal(db, "3", [{ repository: asiRepository, pullRequestNodeId: "PR_asi" }])
       const first = try journal(db, "4", [{ repository: elizaRepository, pullRequestNodeId: "PR_twice" }])
       const second = try journal(db, "5", [{ repository: elizaRepository, pullRequestNodeId: "PR_twice" }])

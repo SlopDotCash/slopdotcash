@@ -92,10 +92,10 @@ function evmAnswer(chain: EvmChain) {
     if (method === "eth_chainId") return hex(chain.chainId)
     if (method === "eth_getTransactionReceipt")
       return { transactionHash: CREATION, blockHash: blockHash(ORIGIN), blockNumber: hex(ORIGIN), transactionIndex: "0x0", status: "0x1", from: FUNDER, to: null, contractAddress: VAULT, gasUsed: "0x1", logs: [] }
-    if (method === "eth_getBlockByNumber") return header(params[0] === "finalized" ? chain.finalized : Number(BigInt(String(params[0]))))
+    if (method === "eth_getBlockByNumber") return header(params[0] === "finalized" ? chain.finalized : Number(String(params[0])))
     if (method === "eth_getLogs") {
       const filter = params[0] as { readonly fromBlock: string; readonly toBlock: string }
-      return chain.logs.filter((log) => log.block >= Number(BigInt(filter.fromBlock)) && log.block <= Number(BigInt(filter.toBlock))).map((log) => ({
+      return chain.logs.filter((log) => log.block >= Number(filter.fromBlock) && log.block <= Number(filter.toBlock)).map((log) => ({
         address: VAULT,
         topics: [EVENT_TOPICS.Deposited, `0x${"0".repeat(24)}${FUNDER.slice(2)}`],
         data: word(log.amount),
@@ -169,13 +169,15 @@ interface Listed {
   readonly inner: ReadonlyArray<unknown>
 }
 
-function solanaTransaction(serial: number, instructions: ReadonlyArray<Instruction>, inner: (keys: ReadonlyArray<Address>) => ReadonlyArray<unknown>, err = false): Listed {
+error FixtureRefused { reason: string }
+
+effect function solanaTransaction(serial: number, instructions: ReadonlyArray<Instruction>, inner: (keys: ReadonlyArray<Address>) => ReadonlyArray<unknown>, err = false) {
   const compiled = compileLegacy({ payer: DEPOSITOR, blockhash: BLOCKHASH, instructions })
-  if (compiled.kind === "refused") throw new Error(`the test transaction did not compile: ${compiled.issue}`)
+  if (compiled.kind === "refused") throw new FixtureRefused({ reason: `the test transaction did not compile: ${compiled.issue}` })
   const wire = withSignature(unsignedTransaction(compiled.message) ?? new Uint8Array(), DEPOSITOR, Uint8Array.from({ length: 64 }, (_, at) => (at === 0 ? 1 + serial : at === 1 ? 77 : at)))
   const signature = wire === undefined ? undefined : transactionId(wire)
-  if (wire === undefined || signature === undefined) throw new Error("the test transaction did not sign")
-  return { signature, slot: 1000 + serial, err, wire, inner: inner(compiled.message.accountKeys) }
+  if (wire === undefined || signature === undefined) throw new FixtureRefused({ reason: "the test transaction did not sign" })
+  return { signature, slot: 1000 + serial, err, wire, inner: inner(compiled.message.accountKeys) } satisfies Listed
 }
 
 const depositCall = (project: Address, amount: bigint, trailing: ReadonlyArray<number> = []): Instruction =>
@@ -183,21 +185,25 @@ const depositCall = (project: Address, amount: bigint, trailing: ReadonlyArray<n
 
 const unrelated: Instruction = { program: ROUTER, accounts: [meta(DEPOSITOR, true, true)], data: Uint8Array.from([1]) }
 
-function routedDeposit(serial: number, amount: bigint): Listed {
+effect function routedDeposit(serial: number, amount: bigint) {
   const routed: Instruction = { program: ROUTER, accounts: [meta(DEPOSITOR, true, true), meta(PROJECT, true), meta(PROGRAM, false)], data: Uint8Array.from([2]) }
-  return solanaTransaction(serial, [routed], (keys) => [{ index: 0, instructions: [{ programIdIndex: keys.indexOf(PROGRAM), accounts: [keys.indexOf(DEPOSITOR), keys.indexOf(PROJECT)], data: base58Encode(anchorData("deposit", u64le(amount as Parameters<typeof u64le>[0]))), stackHeight: 2 }] }])
+  return try solanaTransaction(serial, [routed], (keys) => [{ index: 0, instructions: [{ programIdIndex: keys.indexOf(PROGRAM), accounts: [keys.indexOf(DEPOSITOR), keys.indexOf(PROJECT)], data: base58Encode(anchorData("deposit", u64le(amount as Parameters<typeof u64le>[0]))), stackHeight: 2 }] }])
 }
 
-function solanaHistory(): Listed[] {
-  return Array.from({ length: 30 }, (_, serial) => {
-    if (serial === 0) return solanaTransaction(serial, [depositCall(PROJECT, 3_000_000_000n)], () => [])
-    if (serial === 9) return solanaTransaction(serial, [depositCall(PROJECT, 2_000_000n, [9, 9, 9, 9])], () => [])
-    if (serial === 15) return solanaTransaction(serial, [depositCall(PROJECT, 4_000_000n)], () => [], true)
-    if (serial === 20) return routedDeposit(serial, 5_000_000n)
-    if (serial === 25) return solanaTransaction(serial, [depositCall(OTHER_PROJECT, 6_000_000n)], () => [])
-    if (serial === 29) return solanaTransaction(serial, [unrelated, depositCall(PROJECT, 1_000_000n)], () => [])
-    return solanaTransaction(serial, [unrelated], () => [])
-  })
+function historyEntry(serial: number) {
+  if (serial === 0) return solanaTransaction(serial, [depositCall(PROJECT, 3_000_000_000n)], () => [])
+  if (serial === 9) return solanaTransaction(serial, [depositCall(PROJECT, 2_000_000n, [9, 9, 9, 9])], () => [])
+  if (serial === 15) return solanaTransaction(serial, [depositCall(PROJECT, 4_000_000n)], () => [], true)
+  if (serial === 20) return routedDeposit(serial, 5_000_000n)
+  if (serial === 25) return solanaTransaction(serial, [depositCall(OTHER_PROJECT, 6_000_000n)], () => [])
+  if (serial === 29) return solanaTransaction(serial, [unrelated, depositCall(PROJECT, 1_000_000n)], () => [])
+  return solanaTransaction(serial, [unrelated], () => [])
+}
+
+effect function solanaHistory() {
+  const history: Listed[] = []
+  for (let serial = 0; serial < 30; serial++) history.push(try historyEntry(serial))
+  return history
 }
 
 function solanaAnswer(history: Listed[], unavailable: Set<string>, genesis: string) {
@@ -282,7 +288,7 @@ layer(Started, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
 
   it.effect('Record every finalized deposit of an ordinary Solana vault once (spec/settlement/solanaVaultDeposits.md, "Story: Record every finalized deposit of an ordinary Solana vault once"; spec/settlement/solanaVaultDeposits.md, "A run reads newest first below the interval it resumes and above the covered position"; spec/settlement/solanaVaultDeposits.md, "Rules"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event")', () => effect {
     const world = try World
-    const history = solanaHistory()
+    const history = try solanaHistory()
     const unavailable = new Set([history[12]?.signature ?? ""])
     const asked: string[] = []
     const wrongUrl = try world.serve(rpcServer(solanaAnswer(history, unavailable, key(8)), asked))
@@ -301,7 +307,7 @@ layer(Started, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
       const second = try recordRegistryDeposits([solanaVault], "ordinary")
       try same([second?.recorded, try storedSolanaCursor(solanaKey)], [2, { position: signature(29), pendingTop: null, resumeBefore: null }])
       try same([try stale.read(1, "payments-worker", []), try storedSolanaCursor(solanaKey)], ["Overtaken", { position: signature(29), pendingTop: null, resumeBefore: null }])
-      history.push(solanaTransaction(30, [depositCall(PROJECT, 8_000_000n)], () => []))
+      history.push(try solanaTransaction(30, [depositCall(PROJECT, 8_000_000n)], () => []))
       const third = try recordRegistryDeposits([solanaVault], "ordinary")
       const idle = try recordRegistryDeposits([solanaVault], "ordinary")
       try same([third?.recorded, idle?.recorded, try storedSolanaCursor(solanaKey)], [1, 0, { position: signature(30), pendingTop: null, resumeBefore: null }])

@@ -1,21 +1,38 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { sha256Of } from "@repo/platform/git/bytes"
 import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type SourceDecision, type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { type HistoricalPin, validateHistoricalSnapshot, validatePublishable, validateSnapshot } from "../src/client/snapshot/validate.vibe"
 import type { LeaderboardSnapshot } from "../src/client/snapshot/schema.vibe"
+import type { PullRequestRecord } from "../src/collect/merged/hydrate.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { type HistoricalEmptyLegacyClosureBinding, mergedHistoricalReplaySnapshot } from "../src/corrections/reviewed/replay/merged.vibe"
+import { latestOf } from "../src/corrections/reviewed/replay/latest.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { finish, openStore } from "../src/journal/ledger.vibe"
+import { applySnapshot } from "../src/journal/snapshot.vibe"
+import { type Journal, type Revision, journalText } from "../src/kernels/records/canonical.ts"
+import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { assembleSnapshot, createHistoricalSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
-import { type Seeded, repository, seeded, start } from "./support/u5/github.ts"
+import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
 import { acceptedReviewHistoryJson, registryAnswer, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
 
 const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 
@@ -100,9 +117,59 @@ function withJoint(collection: Collection, rows: ReadonlyArray<SourceDecision>):
   return { ...collection, value: { ...collection.value, jointValueDecisions: rows } }
 }
 
+const closedPull = "PR_legacy_closed"
+const closureDigest = "a".repeat(64)
+const closedReview = "PRR_closed_review"
+
+function refusal(error: { readonly _tag: string }) {
+  return error._tag === "HistoricalClosedOutcomeRefused" && "reason" in error ? String(error.reason) : message(error)
+}
+
+function emptyJournal(generatedAt: string): Journal {
+  return { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt, coverage: [], revisions: [] }
+}
+
+effect function emptyClosure(collection: Collection) {
+  const [first] = collection.work.mergedPullRequests
+  if (first === undefined) throw new Error("the census has no merged pull request")
+  const number = Math.max(...[...collection.work.outcomes, ...collection.work.closedUnmergedPullRequests].map((pull) => pull.number)) + 1
+  const closedAt = new Date(Date.parse(collection.bounds.to) - 2 * day).toISOString()
+  const pull: PullRequestRecord = { ...first, id: closedPull, number, url: `https://github.com/${repository}/pull/${number}`, updatedAt: closedAt, mergedAt: null, closedAt, comments: [], reviews: [] }
+  const review: PullRequestRecord["reviews"][number] = { id: closedReview, body: "Validates the submitted change.", state: "APPROVED", submittedAt: new Date(Date.parse(closedAt) - 3_600_000).toISOString(), url: `${pull.url}#pullrequestreview-123`, author: { id: "U_reviewer", login: "reviewer", avatarUrl: "https://avatars.githubusercontent.com/u/9", url: "https://github.com/reviewer", kind: "User" }, commitId: null, inlineCommentCount: 0 }
+  const binding: HistoricalEmptyLegacyClosureBinding = { digest: closureDigest, number, headSha: pull.headRefOid, occurredAt: closedAt }
+  return { pull, review, binding }
+}
+
+function legacyDecision(pull: PullRequestRecord, status: "assessed" | "unresolved", recordedAt: string) {
+  const assessment = { status, tier: null, reviews: [] as ReadonlyArray<unknown> }
+  const record = { pullRequestNodeId: pull.id, repository, headSha: pull.headRefOid, occurredAt: pull.closedAt, rubricVersion: "slop-value-2026-10-01", model: { reported: "claude-opus-5.5" }, assessment: { tier: null, rationale: "", reviews: [] } }
+  return { status, history: [{ sequence: 1, record_digest: closureDigest, record_json: JSON.stringify(record), recorded_at: recordedAt }], latestDigest: closureDigest, implementationActorNodeIds: [], record, assessment }
+}
+
+function withEmptyClosure(collection: Collection, pull: PullRequestRecord, decision: unknown, extra: { readonly joint?: ReadonlyArray<SourceDecision>; readonly penalties?: Collection["penalties"] } = {}): Collection {
+  return {
+    ...collection,
+    work: {
+      ...collection.work,
+      closedUnmergedPullRequests: [...collection.work.closedUnmergedPullRequests, pull],
+      collections: collection.work.collections.map((entry, index) => index === 0 ? { ...entry, closedUnmerged: [...entry.closedUnmerged, pull] } : entry),
+    },
+    value: { ...collection.value, valueDecisions: [...collection.value.valueDecisions, { sourceId: pull.id, decision }], jointValueDecisions: extra.joint ?? collection.value.jointValueDecisions },
+    penalties: extra.penalties ?? collection.penalties,
+  }
+}
+
+effect function reviewAward(review: PullRequestRecord["reviews"][number], recordedAt: string) {
+  const actor = { id: "U_reviewer", login: "reviewer" }
+  const award = { key: try pointKey({ projectId: "widgets", actorId: actor.id, category: "substantive-review", sourceId: review.id }), actor, projectId: "widgets", category: "substantive-review", amount: 10, occurredAt: review.submittedAt ?? recordedAt, sourceId: review.id, sourceUrl: review.url, workUnitId: review.id, provisional: true }
+  const body = { previous: null, recordedAt, sourceDigest: "b".repeat(64), sourceRule: "slop-score-v2", award }
+  const revision = { id: try pointRevisionId(body), ...body } satisfies Revision
+  return { ...emptyJournal(recordedAt), revisions: [revision] } satisfies Journal
+}
+
 it.live('Publish a collected window through the real snapshot assembly (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
     const { snapshot, collection, written } = try collected(world)
     const registry = repositoryRegistry(world)
@@ -136,7 +203,7 @@ it.live('Publish a collected window through the real snapshot assembly (spec/poi
 
 it.live('The snapshot publishes exact unit memberships from hash-pinned stale history (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
     const { collection } = try collected(world)
     const history = try staleHistory(world, collection)
@@ -169,8 +236,8 @@ it.live('The snapshot publishes exact unit memberships from hash-pinned stale hi
     })
     const repeated = { ...snapshot, reviewedImplementationUnits: (snapshot.reviewedImplementationUnits ?? []).map((source) => source.pullRequestId === world.ids.paired ? { ...source, units: [...source.units, source.units[0]] } : source) }
     const inconsistent = validateSnapshot(repeated, registry) catch (error) => message(error)
-    const record = try Effect.try(() => JSON.parse(history.row.record_json))
-    const forged = { ...history.decision, history: [{ ...history.row, record_json: JSON.stringify({ ...record, projectId: "other" }) }, ...history.decision.history.slice(1)] }
+    const original: object = try Effect.try(() => JSON.parse(history.row.record_json) as object)
+    const forged = { ...history.decision, history: [{ ...history.row, record_json: JSON.stringify({ ...original, projectId: "other" }) }, ...history.decision.history.slice(1)] }
     const mismatched = assembleSnapshot(withJoint(collection, history.rows.map((row) => ({ ...row, decision: forged }))), scope) catch (error) => message(error)
     try same({ inconsistent, mismatched }, { inconsistent: "Reviewed implementation units must be unique and consistent", mismatched: "Reviewed implementation record digest does not match" })
   })
@@ -179,7 +246,7 @@ it.live('The snapshot publishes exact unit memberships from hash-pinned stale hi
 
 it.live('A pinned repository uses the real historical scoring and snapshot validator (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
     const { collection } = try collected(world)
     const project = registryAnswer(world).projects[0]
@@ -214,6 +281,73 @@ it.live('A pinned repository uses the real historical scoring and snapshot valid
       wrongNode: "Historical leaderboard source differs from the pinned repository",
       foreign: "Historical leaderboard input is outside the pinned repository",
     })
+  })
+  }
+})
+
+it.live('A verified empty legacy closure earns nothing in the merged replay and refuses any changed term (spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
+  try scoped(effect {
+    const { collection } = try collected(world)
+    const project = registryAnswer(world).projects[0]
+    const pin: HistoricalPin = { projectId: "widgets", repository, repositoryNodeId: world.repositoryNodeId, manifestSha256: try sha256Hex(JSON.stringify(project)) }
+    const repositories = repositoriesOf(collection.registry, {})
+    const baselineAt = new Date(Date.parse(collection.generatedAt) - day).toISOString()
+    const { pull, review, binding } = try emptyClosure(collection)
+    const replay = (input: Collection, bound: boolean, baseline: Journal = emptyJournal(baselineAt)) =>
+      mergedHistoricalReplaySnapshot({ collection: input, pin, project, baseline, repositories, approved: new Map(), emptyLegacyClosures: bound ? new Map([[closedPull, binding]]) : new Map() })
+
+    for (const status of ["assessed", "unresolved"] as const) {
+      const closure = withEmptyClosure(collection, pull, legacyDecision(pull, status, baselineAt))
+      const full = try createHistoricalSnapshot(closure, pin, project)
+      const row = (full.valueAssessmentCoverage ?? []).find((coverage) => coverage.pullRequestId === closedPull)
+      const unbound = replay(closure, false) catch (error) => refusal(error)
+      const projected = try replay(closure, true)
+      try same({
+        coverage: { status: row?.status, recordDigest: row?.recordDigest },
+        unbound,
+        closedCount: projected.source.counts.closedUnmergedPullRequests,
+        covered: (projected.valueAssessmentCoverage ?? []).map((coverage) => coverage.pullRequestId).sort(),
+        ledger: projected.ledger,
+        basis: projected.paymentReviewBasis,
+      }, {
+        coverage: { status, recordDigest: closureDigest },
+        unbound: "assessment",
+        closedCount: 0,
+        covered: [world.ids.paired, world.ids.stacked, world.ids.bulk].sort(),
+        ledger: full.ledger,
+        basis: full.paymentReviewBasis,
+      })
+    }
+
+    const decision = legacyDecision(pull, "unresolved", baselineAt)
+    const author = pull.author
+    if (author === null) throw new Error("the closed pull request has no author")
+    const changed = [
+      withEmptyClosure(collection, { ...pull, headRefOid: "f".repeat(40) }, decision),
+      withEmptyClosure(collection, pull, { ...decision, latestDigest: "b".repeat(64) }),
+      withEmptyClosure(collection, pull, { ...decision, assessment: { ...decision.assessment, tier: "small" } }),
+      withEmptyClosure(collection, pull, { ...decision, assessment: { ...decision.assessment, reviews: [review] } }),
+      withEmptyClosure(collection, { ...pull, reviews: [review] }, decision),
+      withEmptyClosure(collection, pull, decision, { joint: [{ sourceId: closedPull, decision: { status: "unresolved", sourceUnavailable: true, history: [], throughSequence: 1, latestDigest: "c".repeat(64) } }] }),
+      withEmptyClosure(collection, pull, decision, { penalties: [{ itemNodeId: closedPull, authorGithubId: String(githubUserIdFromNodeId(author.id)), category: "spam", tableVersion: "slopbot-penalties-v1", debitThirds: 1, period: binding.occurredAt.slice(0, 7), recordedAt: binding.occurredAt }] }),
+    ]
+    const outcomes: Array<unknown> = []
+    for (const input of changed) {
+      const outcome = replay(input, true) catch (error) => refusal(error)
+      outcomes.push(outcome)
+    }
+    try same(outcomes, ["lifecycle", "assessment", "assessment", "assessment", "assessment", "assessment", "scored-work"])
+
+    const existing = try reviewAward(review, baselineAt)
+    const [kept] = existing.revisions
+    if (kept === undefined) throw new Error("the baseline holds no review award")
+    const projected = try replay(withEmptyClosure(collection, pull, decision), true, existing)
+    const scratch = try openStore(`${journalText(existing)}\n`, null, [])
+    try applySnapshot(scratch, repositories, projected, sha256Of(JSON.stringify(projected)), projected.generatedAt, { preserveHeldImplementation: true })
+    const { journal } = try finish(scratch, projected.generatedAt)
+    try same(latestOf(journal.revisions).get(kept.award.key), latestOf(existing.revisions).get(kept.award.key))
   })
   }
 })

@@ -212,10 +212,21 @@ occurrence in the unit's reward month, on or after the repository's start
 month, in a collected project. The recipients' line allocation must be
 writable for the unit's value: valid unique recipients, and complete lines
 when there is more than one. The revision's shares sum to the unit's value.
+The producer's scoring decision is admitted as for a first source revision:
+development's `appendPointAward` attaches the producer's decision to every
+first award key, work-unit pool keys included. Supplied with no decision,
+the first unit revision carries none; supplied with one, it carries a
+reassessment under the v2 score or value rule with that decision's source,
+effective time in `[0, now]` and reason, and its delta is the unit's whole
+value (the prior amount is zero).
 
 ```quint
 type UnitCredit = { project: str, unit: int, recipients: List[A::Recipient], completeLines: bool, occurredAt: int,
-  repositoryCountsFrom: int, projectCollected: bool, rule: SourceRule, provisional: bool, digest: str }
+  repositoryCountsFrom: int, projectCollected: bool, rule: SourceRule, provisional: bool, digest: str, decision: Decision }
+pure def firstDecisionAllowed(now: int, cat: Category, rule: SourceRule, decision: Decision): bool =
+  (decision.basis == NoBasis implies decision == noDecision) and
+  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
+    decision.effectiveAt >= 0 and decision.effectiveAt <= now and decisionRule(cat, rule)))
 pure def appendRevision(r: Revision, l: Ledger): Ledger =
   { ...l, revisions: l.revisions.append(r), nextId: l.nextId + 1 }
 pure def canCreditUnit(l: Ledger, c: UnitCredit): bool =
@@ -224,6 +235,7 @@ pure def canCreditUnit(l: Ledger, c: UnitCredit): bool =
   u.value >= 10 and u.value <= P::maxSafe and not(unitCredited(l, c.unit)) and c.projectCollected and c.digest != "" and
   c.occurredAt >= c.repositoryCountsFrom and c.occurredAt >= 0 and c.occurredAt <= l.now and
   P::periodOf(c.occurredAt) == u.acceptedPeriod and ruleAllowed(MergedWork, c.rule) and
+  firstDecisionAllowed(l.now, MergedWork, c.rule, c.decision) and
   A::canWriteAllocation(u.value, c.recipients, c.completeLines, false) and
   u.sources.forall(s => not(sourceHasEvaluation(l, s))) and
   l.units.units.every(o => (o.supersededBy == c.unit and unitCredited(l, o.id)) implies latest(l, unitKey(o.project, o.id)).amount == 0)
@@ -232,7 +244,8 @@ pure def creditUnit(l: Ledger, c: UnitCredit): Ledger =
   appendRevision({ ...noRevision, id: l.nextId, key: unitKey(c.project, c.unit), amount: u.value,
     occurredAt: c.occurredAt, recordedAt: l.now, rule: c.rule, sourceDigest: c.digest,
     provisional: c.provisional, recipients: c.recipients, completeLines: c.completeLines,
-    shares: A::allocatePoints(u.value, c.recipients) }, l)
+    shares: A::allocatePoints(u.value, c.recipients),
+    decision: if (c.decision.basis == Reassessment) { ...c.decision, delta: u.value } else noDecision }, l)
 ```
 
 ### One verified accepted source creates one first revision per key
@@ -260,9 +273,7 @@ pure def evidenceBinds(a: AwardInput, e: SourceEvidence): bool =
   e.source == a.key.source and e.project == a.key.project and e.actor == a.key.actor and
   e.workUnit == a.key.workUnit and e.occurredAt == a.occurredAt and e.digest == a.digest and e.digest != ""
 pure def scoreDecisionAllowed(l: Ledger, a: AwardInput, decision: Decision): bool =
-  (decision.basis == NoBasis implies decision == noDecision) and
-  (decision.basis != NoBasis implies (decision.basis == Reassessment and decision.reason != "" and decision.source != "" and
-    decision.effectiveAt >= 0 and decision.effectiveAt <= l.now and decisionRule(a.key.category, a.rule)))
+  firstDecisionAllowed(l.now, a.key.category, a.rule, decision)
 pure def canCredit(l: Ledger, a: AwardInput, e: SourceEvidence, decision: Decision): bool =
   validKey(a.key) and ordinaryCategory(a.key.category) and
   latest(l, a.key) == noRevision and evidenceBinds(a, e) and scoreDecisionAllowed(l, a, decision) and
@@ -978,13 +989,19 @@ pure val atValues = Set(2432005, 2432119, 2432210)
 pure val twoRecipients: List[A::Recipient] = List({ actor: 1, lines: 1 }, { actor: 2, lines: 3 })
 pure val cValues = Set(
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1" },
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u1", decision: noDecision },
   { project: "p", unit: 2, recipients: List({ actor: 1, lines: 0 }), completeLines: true, occurredAt: 2432005,
-    repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2" },
+    repositoryCountsFrom: 2432000, projectCollected: true, rule: ValueV1, provisional: true, digest: "u2", decision: noDecision },
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: false, occurredAt: 2432005, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u3" },
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u3", decision: noDecision },
   { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432110, repositoryCountsFrom: 2432000,
-    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u4" })
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u4", decision: noDecision },
+  { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u5",
+    decision: { basis: Reassessment, effectiveAt: 2432000, reason: "scored", delta: 0, source: "value:u5", valued: true } },
+  { project: "p", unit: 1, recipients: twoRecipients, completeLines: true, occurredAt: 2432005, repositoryCountsFrom: 2432000,
+    projectCollected: true, rule: ScoreV2, provisional: false, digest: "u6",
+    decision: { basis: Reassessment, effectiveAt: 2432000, reason: "", delta: 0, source: "value:u6", valued: true } })
 pure val sValues = Set({ ...SP::initial, phase: SP::Assessed, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 90 },
   { ...SP::initial, phase: SP::Ratified, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 30 },
   { ...SP::initial, phase: SP::Provisional, project: "p", unit: 1, head: "h", acceptedAt: 2432005, points: 10 },

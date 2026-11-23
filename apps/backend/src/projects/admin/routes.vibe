@@ -76,7 +76,9 @@ effect function reviewBudgetFits(previous: Json, next: Json, nowIso: string) {
   if (nextBudget === undefined) return
   const changesBudget = priorBudget === undefined || (priorBudget.fundingState !== "committed" && nextBudget.fundingState === "committed")
   if (!changesBudget) return
-  if (BigInt(String(after.monthlyCapMinor ?? "0")) < BigInt(String(before.monthlyCapMinor ?? "0"))) throw refused(manifestRows.invalidManifestAReviewBudgetCannot)
+  const caps = Effect.try(() => ({ next: BigInt(String(after.monthlyCapMinor ?? "0")), prior: BigInt(String(before.monthlyCapMinor ?? "0")) })) catch () => undefined
+  if (caps === undefined) throw invalid("Project manifest is invalid")
+  if (caps.next < caps.prior) throw refused(manifestRows.invalidManifestAReviewBudgetCannot)
   if (Date.parse(String(nextBudget.effectiveAt ?? "")) < nextCycleStart(nowIso)) throw refused(manifestRows.invalidManifestAReviewBudgetCannotAffectAnOpen)
 }
 

@@ -1,9 +1,9 @@
-// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"
+// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Handler, type WorkerOptions, bundle, migrate, startWorker, workerOptions } from "@repo/platform/testing";
-import { type Anvil, anvil } from "@repo/platform/testing/chains";
+import { type Handler, type WorkerOptions, bundle, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
+import { type Anvil, anvil, forward } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
 import { internet } from "@repo/platform/testing/internet";
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths";
@@ -15,10 +15,11 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
-import { escrowStack, word } from "../../../../../apps/settlement/test/support/evm/deploy.ts";
-import type { Answered, Bucket, Deployed, Diagnostics, Downloaded, Layout, Method, Op, Result, Roles, Row, Sent, Shown, Target, Verification } from "./protocol.ts";
+import { feeNetworks } from "@repo/backend/client";
+import { escrowStack, word } from "@repo/settlement/testing/evm";
+import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
-import { type Wallets, injectWallets } from "./wallets.ts";
+import { type Wallets, homeChainId, injectWallets } from "./wallets.ts";
 
 const site = "https://slop.cash";
 const identityOrigin = "https://identity.slop.cash";
@@ -30,11 +31,21 @@ const reader = { id: 4_000_001, login: "slop-reader" };
 const vaultNetwork = "base-mainnet";
 const depositorFunds = 1_000_000_000n;
 const mintAbi = parseAbi(["function mint(address to, uint256 amount)"]);
+const backendRpcHost = "rpc.base-mainnet.test";
+const zeroWordCode = "0x600060005260206000f3";
+const fundedWordCode = `0x6f${"ff".repeat(16)}60005260206000f3`;
 const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#777"/></svg>')}`;
 
 interface Fetching {
   fetch(request: Request): Promise<Response>;
 }
+
+interface Deployment {
+  readonly roles: Roles;
+  readonly rpc: boolean;
+}
+
+const defaultDeployment: Deployment = { roles: defaultRoles, rpc: false };
 
 interface Started {
   readonly site: (request: Request) => Promise<Response>;
@@ -42,7 +53,8 @@ interface Started {
   readonly github: ReturnType<typeof githubFake>;
   readonly rows: (text: string, params: ReadonlyArray<string | number | null>) => Promise<ReadonlyArray<Row>>;
   readonly verifications: Verification[];
-  readonly deploy: (roles: Roles) => Promise<void>;
+  readonly deployed: () => Deployment;
+  readonly deploy: (deployment: Deployment) => Promise<void>;
   readonly scanner: (method: Method, path: string, body: string) => Promise<Answered>;
   readonly replace: (bucket: Bucket, key: string, text: string) => Promise<void>;
 }
@@ -52,10 +64,18 @@ interface Held {
   readonly release: () => void;
 }
 
+type Canned =
+  | { readonly kind: "json"; readonly status: number; readonly body: unknown }
+  | { readonly kind: "bytes"; readonly status: number; readonly bytes: Uint8Array; readonly contentType: string };
+
+type PointsTesting = typeof import("@repo/points/testing");
+
 interface Session {
   readonly context: BrowserContext;
   readonly tabs: Map<string, Page>;
   readonly holds: Map<string, Held>;
+  readonly canned: Map<string, Canned>;
+  readonly chains: Map<number, Promise<Anvil>>;
   readonly sent: Sent[];
   readonly console: string[];
   readonly failed: string[];
@@ -65,7 +85,7 @@ interface Session {
   cookiesBlocked: boolean;
   restore: (() => Promise<void>) | undefined;
   wallets: Wallets | undefined;
-  chain: Promise<Anvil> | undefined;
+  clocked: boolean;
   downloaded: Promise<Downloaded> | undefined;
 }
 
@@ -73,7 +93,8 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-const sameRoles = (left: Roles, right: Roles) => left.ADMIN_GITHUB_IDS === right.ADMIN_GITHUB_IDS && left.PROJECT_MODERATOR_GITHUB_IDS === right.PROJECT_MODERATOR_GITHUB_IDS && left.OPERATOR_GITHUB_IDS === right.OPERATOR_GITHUB_IDS;
+const sameDeployment = (left: Deployment, right: Deployment) =>
+  left.rpc === right.rpc && left.roles.ADMIN_GITHUB_IDS === right.roles.ADMIN_GITHUB_IDS && left.roles.PROJECT_MODERATOR_GITHUB_IDS === right.roles.PROJECT_MODERATOR_GITHUB_IDS && left.roles.OPERATOR_GITHUB_IDS === right.roles.OPERATOR_GITHUB_IDS;
 
 function scannerKey() {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -117,11 +138,11 @@ async function start(): Promise<Started> {
   const slopbotScript = await bundle(slopbotRoot, { entry: "repositoryAccess" });
   const github = githubFake();
   github.world.addUser(reader);
-  const net = internet({ github: github.handler });
+  const net = internet({ github: github.handler, hosts: { [backendRpcHost]: sessionRpc } });
   const verifications: Verification[] = [];
   const signer = scannerKey();
   const readToken = github.tokens.user(reader.login);
-  const options = (roles: Roles): WorkerOptions => ({
+  const options = ({ roles, rpc }: Deployment): WorkerOptions => ({
     script,
     assets,
     d1: { SLOP_DB: "slop-private" },
@@ -133,9 +154,11 @@ async function start(): Promise<Started> {
       PAYMENT_NETWORKS: "[]",
       MONTHLY_PAYMENT_SCHEDULE: '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
       SLOP_PRIVATE_INTAKE_MODE: "on",
+      SECURITY_REPORT_DEPOSIT: "live",
       TRACE_AUTH_SECRET: "trace-auth-secret-for-the-browser-journeys-0001",
       SLOP_GITHUB_READ_TOKEN: readToken,
       VETTING_RESULT_PUBLIC_KEYS: signer.configured,
+      ...(rpc ? { PAYMENT_RPC_URLS: JSON.stringify({ [vaultNetwork]: `https://${backendRpcHost}/` }) } : {}),
     },
     services: { SLOP_NOTIFY: notifyOf(verifications) },
     outbound: net.handler,
@@ -161,7 +184,7 @@ async function start(): Promise<Started> {
       },
     },
   });
-  let deployed = defaultRoles;
+  let deployed = defaultDeployment;
   const mf = startWorker(options(deployed));
   await mf.ready;
   const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((file) => file.error !== undefined);
@@ -172,10 +195,11 @@ async function start(): Promise<Started> {
     github,
     rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
     verifications,
-    deploy: async (roles) => {
-      if (sameRoles(roles, deployed)) return;
-      deployed = roles;
-      await mf.setOptions(workerOptions(options(roles), []));
+    deployed: () => deployed,
+    deploy: async (deployment) => {
+      if (sameDeployment(deployment, deployed)) return;
+      deployed = deployment;
+      await mf.setOptions(workerOptions(options(deployment), []));
     },
     scanner: async (method, path, body) => {
       const bytes = new TextEncoder().encode(body);
@@ -185,16 +209,22 @@ async function start(): Promise<Started> {
       return answered(await mf.dispatchFetch(`${site}${path}`, { method, headers, redirect: "manual", ...(method === "GET" ? {} : { body: bytes }) }));
     },
     replace: async (bucket, key, text) => {
-      const objects = await mf.getR2Bucket(bucket);
+      const objects = await storage(mf, bucket);
       const found = await objects.head(key);
       if (found === null) throw new Error(`site: no ${bucket} object ${key}`);
-      await objects.put(key, text, { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
+      await objects.put(key, new TextEncoder().encode(text), { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
     },
   };
 }
 
 let started: Promise<Started> | undefined;
 let session: Session | undefined;
+
+async function sessionRpc(request: Request): Promise<Response> {
+  const chain = session?.chains.get(homeChainId);
+  if (chain === undefined) return new Response("no session chain", { status: 503 });
+  return forward((await chain).url)(request);
+}
 
 const backend = () => (started ??= start());
 
@@ -232,9 +262,20 @@ async function answer(route: Route, worker: (request: Request) => Promise<Respon
   await route.fulfill({ status: response.status, headers: shown, body: bytes }).catch(() => undefined);
 }
 
+function cannedFor(method: string, path: string): Canned | undefined {
+  const { canned } = current();
+  return canned.get(holdKey(method, path)) ?? canned.get(holdKey("*", path));
+}
+
 async function routed(route: Route) {
   const backendNow = await backend();
   const url = new URL(route.request().url());
+  const canned = url.origin === site ? cannedFor(route.request().method(), url.pathname) : undefined;
+  if (canned !== undefined) {
+    current().sent.push({ method: route.request().method(), path: url.pathname, actor: (await route.request().allHeaders())["x-slop-expected-github-id"] ?? null });
+    const fulfilled = canned.kind === "json" ? { contentType: "application/json", body: JSON.stringify(canned.body) } : { contentType: canned.contentType, body: Buffer.from(canned.bytes) };
+    return route.fulfill({ status: canned.status, ...fulfilled }).catch(() => undefined);
+  }
   if (url.origin === site) return answer(route, backendNow.site);
   if (url.origin === identityOrigin) return answer(route, backendNow.identity);
   if (url.origin === "https://github.com" && url.pathname === "/login/oauth/authorize")
@@ -276,13 +317,13 @@ async function reset(context: BrowserCommandContext) {
   if (previous !== undefined) {
     for (const held of previous.holds.values()) held.release();
     await previous.context.close();
-    if (previous.chain !== undefined) await (await previous.chain).close();
+    for (const chain of previous.chains.values()) await (await chain).close();
   }
-  await (await backend()).deploy(defaultRoles);
+  await (await backend()).deploy(defaultDeployment);
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, chain: undefined, downloaded: undefined };
+  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), canned: new Map(), chains: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, clocked: false, downloaded: undefined };
   session = made;
   watch(opened, made);
   await opened.route("**/*", routed);
@@ -311,33 +352,66 @@ function locate(scope: Page | Locator, target: Target): Locator {
   return within.locator("body");
 }
 
-function walletChain(into: Session): Promise<Anvil> {
-  into.chain ??= anvil({ chainId: 8453 });
-  return into.chain;
+async function feeChain(chainId: number): Promise<Anvil> {
+  const chain = await anvil({ chainId });
+  for (const terms of feeNetworks.filter((network) => network.chainId === chainId)) {
+    await chain.rpc("anvil_setCode", [terms.contract, zeroWordCode]);
+    for (const token of terms.tokens) await chain.rpc("anvil_setCode", [token.address, fundedWordCode]);
+  }
+  return chain;
 }
 
-async function vault(projectId: string): Promise<Deployed> {
+function walletChain(into: Session, chainId: number): Promise<Anvil> {
+  const known = into.chains.get(chainId);
+  if (known !== undefined) return known;
+  const made = feeChain(chainId);
+  into.chains.set(chainId, made);
+  return made;
+}
+
+type Fields = Readonly<Record<string, unknown>>;
+
+const fieldsOf = (value: unknown): Fields | undefined => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Fields) : undefined);
+
+function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose, now: string): Fields {
+  if (purpose === "ordinary") return { ...manifest, escrow: { ...fieldsOf(manifest.escrow), chain: "base", deployments: [deployment] } };
+  const program = fieldsOf(manifest.securityBounty);
+  const amount = fieldsOf(program?.amount);
+  if (amount?.network !== vaultNetwork || amount.currency !== "USDC") throw new Error(`site: the project has no USDC bounty on ${vaultNetwork}`);
+  const settlement = fieldsOf(program?.settlement) ?? {};
+  return {
+    ...manifest,
+    securityBounty: { ...program, settlement: { schemaVersion: "1", effectiveCycle: now.slice(0, 7), chain: vaultNetwork, feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", ...settlement, deployments: [deployment] } },
+  };
+}
+
+async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed> {
   const started = await backend();
-  const chain = await walletChain(current());
+  const chain = await walletChain(current(), homeChainId);
   const [depositor, owner] = [chain.accounts[0], chain.accounts[6]];
   const ownerAddress = owner === undefined ? undefined : evmAddress(owner.address);
   if (depositor === undefined || ownerAddress === undefined) throw new Error("site: the wallet anvil has no accounts 0 and 6");
   const stack = await escrowStack(chain);
   try {
-    const created = await stack.createVault({ owner: ownerAddress, projectId: word(BigInt(`0x${sha256(`slop-project:${projectId}`)}`)), asset: stack.dollar, purpose: "OrdinaryPurpose", monthlyCap: 0n, monthlyEnabled: false });
+    const projectWord = word(BigInt(`0x${sha256(`slop-project:${projectId}`)}`));
+    const created = await stack.createVault(
+      purpose === "security-bounty"
+        ? { owner: ownerAddress, projectId: projectWord, asset: stack.dollar, purpose: "BountyPurpose" }
+        : { owner: ownerAddress, projectId: projectWord, asset: stack.dollar, purpose: "OrdinaryPurpose", monthlyCap: 0n, monthlyEnabled: false },
+    );
     await stack.send(depositor.address, stack.dollar, encodeFunctionData({ abi: mintAbi, functionName: "mint", args: [depositor.address, depositorFunds] }));
     const block = await stack.head();
     const [record] = await started.rows("SELECT revision, manifest FROM projects WHERE id = ?", [projectId]);
     const [author] = await started.rows("SELECT actor_github_id, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision LIMIT 1", [projectId]);
     if (record === undefined || author === undefined) throw new Error(`site: no project ${projectId}`);
-    const recorded = JSON.parse(String(record.manifest)) as Readonly<Record<string, unknown>>;
+    const recorded = fieldsOf(JSON.parse(String(record.manifest))) ?? {};
     const deployment = { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
+    const now = new Date().toISOString();
     const active = { ...recorded, status: "active" };
     const revisions = [
-      { kind: "Activated", reason: `Activated automatically after setup checks for @${String(author.actor_github_login)}.`, manifest: active },
-      { kind: "VaultRegistered", reason: "Owner registered a finalized vault verified against the reviewed factory and project policy.", manifest: { ...active, escrow: { chain: "base", deployments: [deployment] } } },
+      ...(recorded.status === "active" ? [] : [{ kind: "Activated", reason: `Activated automatically after setup checks for @${String(author.actor_github_login)}.`, manifest: active }]),
+      { kind: "VaultRegistered", reason: "Owner registered a finalized vault verified against the reviewed factory and project policy.", manifest: registered(active, deployment, purpose, now) },
     ];
-    const now = new Date().toISOString();
     for (const [index, appended] of revisions.entries()) {
       const revision = Number(record.revision) + index + 1;
       const manifest = JSON.stringify(appended.manifest);
@@ -347,13 +421,26 @@ async function vault(projectId: string): Promise<Deployed> {
       await started.rows("UPDATE projects SET status = 'active', revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", [revision, manifest, digest, now, projectId]);
     }
     await started.rows(
-      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,'base',?,?,6,'0','0','0','0','0','0','0','0','0','0','0',?,?,?)",
+      `INSERT INTO ${purpose === "security-bounty" ? "security_vault_snapshots" : "vault_snapshots"}(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,'base',?,?,6,'0','0','0','0','0','0','0','0','0','0','0',?,?,?)`,
       [projectId, vaultNetwork, created, stack.dollar, block.toString(), now, now],
     );
     return { vault: created, asset: stack.dollar };
   } finally {
     await stack.close();
   }
+}
+
+async function published(context: BrowserCommandContext, leaderboard: LeaderboardTransport): Promise<Published> {
+  const { publishedFixture } = await context.project.import<PointsTesting>("@repo/points/testing");
+  const fixture = await publishedFixture();
+  const transport = [{ path: "/data/leaderboard.json", bytes: fixture.transport.root }, ...fixture.transport.parts];
+  const files = leaderboard === "whole" ? fixture.files : [...fixture.files.filter((file) => file.path !== "/data/leaderboard.json" && !file.path.startsWith("/data/leaderboard/")), ...transport];
+  for (const file of files) current().canned.set(holdKey("*", file.path), { kind: "bytes", status: 200, bytes: file.bytes, contentType: file.path.endsWith(".part") ? "text/plain; charset=utf-8" : "application/json" });
+  return {
+    registry: fixture.registry,
+    leaders: fixture.leaderboard.snapshot.leaders.map(({ actor }) => ({ id: actor.id, login: actor.login, avatarUrl: actor.avatarUrl })),
+    parts: fixture.transport.parts.map((part) => part.path),
+  };
 }
 
 const absent: Shown = { count: 0, visible: false, text: "", value: null, disabled: false, checked: null, focused: false, href: null };
@@ -432,9 +519,11 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       if (world.accountById(op.id) === undefined) world.addUser({ id: op.id, login: op.login, nodeId: `U_${op.login}` });
       return null;
     }
-    case "deploy":
-      await (await backend()).deploy(op.roles);
+    case "deploy": {
+      const started = await backend();
+      await started.deploy({ ...started.deployed(), roles: op.roles });
       return null;
+    }
     case "repository": {
       const { id, owner, name, fork, archived, license, files } = op.setup;
       (await backend()).github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
@@ -455,7 +544,25 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       await (await backend()).replace(op.bucket, op.key, op.text);
       return null;
     case "vault":
-      return vault(op.projectId);
+      return vault(op.projectId, op.purpose);
+    case "backendRpc": {
+      await walletChain(current(), homeChainId);
+      const started = await backend();
+      await started.deploy({ ...started.deployed(), rpc: true });
+      return null;
+    }
+    case "finalize": {
+      const chain = await walletChain(current(), op.chainId);
+      const head = BigInt(String(await chain.rpc("eth_blockNumber")));
+      chain.setFinalized(head);
+      return Number(head);
+    }
+    case "branch": {
+      const { world } = (await backend()).github;
+      const repository = world.repo(op.repository);
+      const head = repository.branches.get(op.name) ?? repository.branches.get(repository.defaultBranch);
+      return world.addCommit(op.repository, { branch: op.name, files: op.files, parents: head === undefined ? [] : [head] });
+    }
     case "github":
       current().consenting = op.login;
       return null;
@@ -524,6 +631,30 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       current().holds.delete(key);
       return null;
     }
+    case "fail":
+      current().canned.set(holdKey(op.method, op.path), { kind: "json", status: op.status, body: op.body });
+      return null;
+    case "unfail":
+      current().canned.delete(holdKey(op.method, op.path));
+      return null;
+    case "serve":
+      current().canned.set(
+        holdKey("*", op.path),
+        op.bytes === undefined ? { kind: "json", status: op.status, body: op.body } : { kind: "bytes", status: op.status, bytes: new Uint8Array(Buffer.from(op.bytes, "base64")), contentType: op.contentType ?? "application/octet-stream" },
+      );
+      return null;
+    case "published":
+      return published(context, op.leaderboard);
+    case "unserve":
+      current().canned.delete(holdKey("*", op.path));
+      return null;
+    case "clock": {
+      const into = current();
+      if (into.clocked) await into.context.clock.setSystemTime(op.iso);
+      else await into.context.clock.install({ time: op.iso });
+      into.clocked = true;
+      return null;
+    }
     case "sent":
       return [...current().sent];
     case "verifications":
@@ -546,19 +677,53 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     case "layout":
       return layout();
+    case "box": {
+      const found = locate(page(), op.target);
+      if ((await found.count()) === 0) return null;
+      const box = await found.first().boundingBox();
+      return box === null ? null : ({ top: box.y, bottom: box.y + box.height } satisfies Box);
+    }
+    case "scrollY":
+      return page().evaluate(() => window.scrollY);
+    case "wheel":
+      await page().mouse.wheel(op.dx, op.dy);
+      return null;
+    case "scrollEnd":
+      return page().evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+    case "reveal":
+      await locate(page(), op.target).first().scrollIntoViewIfNeeded();
+      await page().evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      return null;
+    case "back":
+      await page().goBack({ waitUntil: "load" });
+      return null;
+    case "forward":
+      await page().goForward({ waitUntil: "load" });
+      return null;
+    case "stamp":
+      await page().evaluate((value) => history.replaceState({ ...(history.state as object | null), readerState: value }, ""), op.value);
+      return null;
+    case "stamped":
+      return page().evaluate(() => {
+        const state: unknown = history.state;
+        return typeof state === "object" && state !== null && "readerState" in state && typeof state.readerState === "string" ? state.readerState : null;
+      });
     case "allow":
       current().allowed = [...current().allowed, ...op.patterns.map((pattern) => new RegExp(pattern, "u"))];
       return null;
     case "diagnostics":
       return diagnostics();
     case "wallets":
-      current().wallets = await injectWallets(current().context, op.setup, op.setup.evm === undefined ? undefined : await walletChain(current()));
+      current().wallets = await injectWallets(current().context, op.setup, op.setup.evm === undefined ? undefined : (chainId) => walletChain(current(), chainId));
       return null;
     case "walletAccount":
       wallets().useAccount(op.index);
       return null;
     case "walletReject":
       wallets().rejectNext();
+      return null;
+    case "walletFail":
+      wallets().failNext(op.method);
       return null;
     case "walletAsked":
       return [...wallets().asked];

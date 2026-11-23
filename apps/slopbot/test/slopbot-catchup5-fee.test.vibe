@@ -9,6 +9,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
+import { asFetch } from "@repo/platform/testing/quotes"
 import { IntakePause, type ProjectView, Registry, RegistryManifests, Restrictions, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
 import { dispatchFeeChecks } from "../src/fee/dispatch.vibe"
@@ -30,23 +31,57 @@ const t0 = Date.parse("2026-11-22T12:00:00.000Z")
 const day = 86_400_000
 const since = "2026-11-21T00:00:00.000Z"
 
-interface Fees {
-  readonly fake: GitHubFake
+module host {
+  import { Response as WorkerResponse } from "miniflare"
+  import type { GitHubFake } from "@repo/platform/testing/github"
+  import type { Handler } from "@repo/platform/testing/internet"
+  export interface Wire {
+    readonly fake: GitHubFake
+    failLabels: boolean
+    unreadLink: boolean
+    readonly reports: Map<number, Record<string, unknown>>
+  }
+  /** @throws {never} */
+  export function handlerOf(wire: () => Wire): Handler {
+    return async (request) => {
+      const current = wire()
+      const path = new URL(request.url).pathname
+      if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new WorkerResponse("{\"message\":\"unavailable\"}", { status: 500 })
+      if (current.unreadLink && path.endsWith("/graphql")) return new WorkerResponse("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } })
+      const found = /\/pulls\/(\d+)$/u.exec(path)
+      const answer = await current.fake.handler(request)
+      const report = found === null || request.method !== "GET" ? undefined : current.reports.get(Number(found[1]))
+      if (report === undefined || answer.status !== 200) return answer
+      const pull = await answer.json() as Record<string, unknown>
+      return new WorkerResponse(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
+    }
+  }
+  export function keepLabelCreatedOnce(fake: GitHubFake, repo: string, repositoryId: number): void {
+    fake.alterNext(new RegExp(`^POST /repositories/${repositoryId}/labels$`, "u"), () => {
+      const label = fake.world.addLabel(repo, { name: "slop-keep-fee", color: "b60205" })
+      return new globalThis.Response(JSON.stringify({ name: label.name, color: label.color }), { status: 201, headers: { "content-type": "application/json" } })
+    })
+  }
+}
+import { type Wire, handlerOf, keepLabelCreatedOnce } from host
+
+interface Fees extends Wire {
   readonly db: D1Database
   readonly clock: ReturnType<typeof settableClock>
   readonly sent: Job[]
   mode: "FeeOff" | "FeeDryRun" | "FeeLive"
   manifest: string
   paused: boolean
-  failLabels: boolean
-  unreadLink: boolean
-  readonly reports: Map<number, Record<string, unknown>>
 }
 
 service FeeWorld {
   readonly fees: Fees
-  readonly services: Layer.Layer<never>
+  readonly services: ReturnType<typeof servicesOf>
 }
+
+const GateReason = Schema.Struct({ reason: Schema.String, next_check_at: Schema.NullOr(Schema.String) })
+const GateState = Schema.Struct({ state: Schema.String, comment_id: Schema.NullOr(Schema.Number) })
+const FeeItem = Schema.Struct({ stable_minor: Schema.String, paid: Schema.Number, outcome: Schema.NullOr(Schema.String) })
 
 function iso(millis: number) {
   return new Date(millis).toISOString()
@@ -64,36 +99,7 @@ function viewOf(): ProjectView {
   }
 }
 
-function handlerOf(fees: () => Fees) {
-  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const request = new Request(input, init)
-    const current = fees()
-    const path = new URL(request.url).pathname
-    if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 })
-    if (current.unreadLink && path.endsWith("/graphql")) return new Response("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } })
-    const found = /\/pulls\/(\d+)$/u.exec(path)
-    const answer = await current.fake.handler(request)
-    const report = found === null || request.method !== "GET" ? undefined : current.reports.get(Number(found[1]))
-    if (report === undefined || answer.status !== 200) return answer
-    const pull = await answer.json() as Record<string, unknown>
-    return new Response(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
-  }
-}
-
-const World = Layer.effect(FeeWorld, effect {
-  const mf = startWorker({ d1: { FEE: "fee-journeys" } })
-  const applied = try Effect.promise(() => migrate(mf, "FEE", migrationsDir))
-  const failed = applied.find((entry) => entry.error !== undefined)
-  if (failed !== undefined) return try Effect.die(new Error(`migration ${failed.file} failed`))
-  const db = try Effect.promise(() => database(mf, "FEE"))
-  try Effect.promise(() => db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1)").bind(installationId, iso(t0)).run())
-  const fake = githubFake()
-  fake.world.addUser({ id: 100, login: "ada" })
-  fake.world.addUser({ id: 301, login: "carol" })
-  fake.world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" })
-  fake.world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } })
-  const clock = settableClock(t0)
-  const fees: Fees = { fake, db, clock, sent: [], mode: "FeeLive", manifest: settingOn(true), paused: false, failLabels: false, unreadLink: false, reports: new Map() }
+function servicesOf(fees: Fees, token: string) {
   const manifestRow = () => ({ projectId, active: true, revision: 1, manifest: fees.manifest, manifestSha256: "0".repeat(64), updatedAt: iso(t0) })
   const ports = Layer.mergeAll(
     Layer.succeed(Registry, {
@@ -122,26 +128,48 @@ const World = Layer.effect(FeeWorld, effect {
     Layer.succeed(SubmissionFeeMode, { get mode() { return fees.mode } }),
     Layer.succeed(JobQueue, { send: (job: Job) => Effect.sync(() => { fees.sent.push(job) }) }),
   )
-  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, handlerOf(() => fees) as typeof globalThis.fetch))
-  const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-fee-journeys" }), http)
-  const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-journeys-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) })
-  return { fees, services: Layer.mergeAll(d1(db), webCrypto, clock.layer, ports, githubLayer, settings) as Layer.Layer<never> }
+  const http = Layer.provide(FetchHttpClient.layer, Layer.succeed(FetchHttpClient.Fetch, asFetch(handlerOf(() => fees))))
+  const githubLayer = Layer.provide(github({ authority: fees.fake.authority, token: Redacted.make(token), userAgent: "slopbot-fee-journeys" }), http)
+  const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-journeys-secret", SLOPBOT_APP_USER_ID: String(fees.fake.app.bot.id) })
+  return Layer.mergeAll(d1(fees.db), webCrypto, fees.clock.layer, ports, githubLayer, settings)
+}
+
+const World = Layer.effect(FeeWorld, effect {
+  const mf = try Effect.try(() => startWorker({ d1: { FEE: "fee-journeys" } }))
+  const applied = try Effect.promise(() => migrate(mf, "FEE", migrationsDir))
+  const failed = applied.find((entry) => entry.error !== undefined)
+  if (failed !== undefined) return try Effect.die(new Error(`migration ${failed.file} failed`))
+  const db = try Effect.promise(() => database(mf, "FEE"))
+  try Effect.promise(() => db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1)").bind(installationId, iso(t0)).run())
+  const fake = try Effect.try(() => {
+    const seeded = githubFake()
+    seeded.world.addUser({ id: 100, login: "ada" })
+    seeded.world.addUser({ id: 301, login: "carol" })
+    seeded.world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" })
+    seeded.world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } })
+    return seeded
+  })
+  const clock = settableClock(t0)
+  const fees: Fees = { fake, db, clock, sent: [], mode: "FeeLive", manifest: settingOn(true), paused: false, failLabels: false, unreadLink: false, reports: new Map() }
+  const token = try Effect.try(() => fake.tokens.installation(installationId))
+  return { fees, services: servicesOf(fees, token) }
 })
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function at<A, E>(millis: number, program: A!E!unknown) {
+effect function at<A, E, R>(millis: number, program: A!E!R) {
   const { fees, services } = try FeeWorld
   fees.clock.set(millis)
-  const provided = Effect.provide(program, services) as Effect.Effect<A, E>
-  return try provided
+  provide services {
+    return try program
+  }
 }
 
 effect function opened(title: string, openedAt: number, body: string = "") {
   const { fees } = try FeeWorld
-  const number = fees.fake.world.addPull({ repo, author: "carol", title, body, createdAt: iso(openedAt), headSha: "1".padStart(40, "0") })
+  const number = try Effect.try(() => fees.fake.world.addPull({ repo, author: "carol", title, body, createdAt: iso(openedAt), headSha: "1".padStart(40, "0") }))
   fees.reports.set(number, { created_at: iso(openedAt) })
   return number
 }
@@ -149,19 +177,23 @@ effect function opened(title: string, openedAt: number, body: string = "") {
 effect function wantedIssue(labelledAt: number) {
   const { fees } = try FeeWorld
   const world = fees.fake.world
-  const number = world.addIssue({ repo, author: "ada", title: `Wanted ${labelledAt}` })
-  const issue = world.item(repo, number)
-  world.addLabel(repo, { name: "slop-wanted" })
-  world.record(issue, "labeled", world.account("ada"), { label: { name: "slop-wanted" } })
-  const event = issue.timeline[issue.timeline.length - 1]
-  issue.timeline[issue.timeline.length - 1] = { ...event, createdAt: iso(labelledAt) }
-  return number
+  return try Effect.try(() => {
+    const number = world.addIssue({ repo, author: "ada", title: `Wanted ${labelledAt}` })
+    const issue = world.item(repo, number)
+    world.addLabel(repo, { name: "slop-wanted" })
+    world.record(issue, "labeled", world.account("ada"), { label: { name: "slop-wanted" } })
+    const event = issue.timeline[issue.timeline.length - 1]
+    issue.timeline[issue.timeline.length - 1] = { ...event, createdAt: iso(labelledAt) }
+    return number
+  })
 }
 
 effect function keepMarked(number: number) {
   const { fees } = try FeeWorld
-  const pull = fees.fake.world.pull(repo, number)
-  pull.labels = [...pull.labels, fees.fake.world.addLabel(repo, { name: "slop-keep-fee" })]
+  try Effect.try(() => {
+    const pull = fees.fake.world.pull(repo, number)
+    pull.labels = [...pull.labels, fees.fake.world.addLabel(repo, { name: "slop-keep-fee" })]
+  })
 }
 
 effect function keepLabelCalls() {
@@ -172,7 +204,8 @@ effect function keepLabelCalls() {
 
 effect function gateOf(number: number) {
   const { fees } = try FeeWorld
-  return try Effect.promise(() => fees.db.prepare("SELECT reason, next_check_at FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ reason: string; next_check_at: string | null }>())
+  const [row] = (try Effect.promise(() => fees.db.prepare("SELECT reason, next_check_at FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).all())).results
+  return row === undefined ? null : try Schema.decodeUnknownEffect(GateReason)(row)
 }
 
 function pullRef(number: number) {
@@ -192,9 +225,11 @@ effect function refreshed(number: number, millis: number) {
 
 effect function seen(number: number) {
   const { fees } = try FeeWorld
-  const pull = fees.fake.world.pull(repo, number)
-  const gate = try Effect.promise(() => fees.db.prepare("SELECT state, comment_id FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ state: string; comment_id: number | null }>())
-  const item = try Effect.promise(() => fees.db.prepare("SELECT stable_minor, paid_at IS NOT NULL AS paid, outcome FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ stable_minor: string; paid: number; outcome: string | null }>())
+  const pull = try Effect.try(() => fees.fake.world.pull(repo, number))
+  const [gateRow] = (try Effect.promise(() => fees.db.prepare("SELECT state, comment_id FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).all())).results
+  const [itemRow] = (try Effect.promise(() => fees.db.prepare("SELECT stable_minor, paid_at IS NOT NULL AS paid, outcome FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).all())).results
+  const gate = gateRow === undefined ? null : try Schema.decodeUnknownEffect(GateState)(gateRow)
+  const item = itemRow === undefined ? null : try Schema.decodeUnknownEffect(FeeItem)(itemRow)
   return {
     gate: gate?.state ?? null,
     item: item === null ? null : { stableMinor: item.stable_minor, paid: item.paid === 1, outcome: item.outcome },
@@ -286,10 +321,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     for (const number of wanted) try closed(number, t0 + 4000, false)
     const decidedAt = t0 + 4000 + 7 * day
     const labelCallsBefore = try keepLabelCalls()
-    fees.fake.alterNext(new RegExp(`^POST /repositories/${repositoryId}/labels$`, "u"), () => {
-      const label = fees.fake.world.addLabel(repo, { name: "slop-keep-fee", color: "b60205" })
-      return new Response(JSON.stringify({ name: label.name, color: label.color }), { status: 201, headers: { "content-type": "application/json" } })
-    })
+    try Effect.try(() => keepLabelCreatedOnce(fees.fake, repo, repositoryId))
     try refreshed(invited, decidedAt)
     const labelCallsInvited = try keepLabelCalls()
     try keepMarked(marked)
@@ -300,8 +332,9 @@ layer(World, { timeout: "240 seconds" })((it) => {
     fees.unreadLink = false
     const labelCallsUnread = try keepLabelCalls()
     try refreshed(lateLabel, decidedAt)
+    const repositoryLabel = try Effect.try(() => fees.fake.world.repo(repo).labels.has("slop-keep-fee"))
     try same({
-      invited: { item: (try seen(invited)).item?.outcome ?? null, gate: (try gateOf(invited))?.reason ?? null, labelCalls: labelCallsInvited.slice(labelCallsBefore.length), repositoryLabel: fees.fake.world.repo(repo).labels.has("slop-keep-fee") },
+      invited: { item: (try seen(invited)).item?.outcome ?? null, gate: (try gateOf(invited))?.reason ?? null, labelCalls: labelCallsInvited.slice(labelCallsBefore.length), repositoryLabel },
       marked: { item: (try seen(marked)).item?.outcome ?? null, gate: (try gateOf(marked))?.reason ?? null, labelCalls: labelCallsMarked.slice(labelCallsInvited.length) },
       unread: { item: (try seen(unread)).item?.outcome ?? null, gate: try gateOf(unread), labelCalls: labelCallsUnread.slice(labelCallsMarked.length) },
       lateLabel: { item: (try seen(lateLabel)).item?.outcome ?? null, gate: (try gateOf(lateLabel))?.reason ?? null },

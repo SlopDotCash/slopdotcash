@@ -1,9 +1,9 @@
-// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/readyLabel.md, "A push, a review decision or a finished review queues a check, and the pull request's own events are GitHub's"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
 import { ConfigInvalid, idList, secret } from "@repo/platform/config"
 import { sha256Hex } from "@repo/platform/crypto"
 import { verifyWebhook } from "@repo/platform/github/webhook"
 import { bytesBody } from "@repo/platform/http"
-import { type Bytes, type Event, type Outcome, type Webhook, apply, initial, noBody, qualifiedJob, request } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { type Bytes, type Event, type Outcome, type Webhook, apply, initial, noBody, qualifiedJob, queueDelaySeconds, request } from "../../gen/slopbot__webhookDelivery.effect.vibe"
 import { queuesReadyCheck } from "../../gen/slopbot__readyLabel.effect.vibe"
 import { type RegistryObservation, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
 import { slopbotPostGithubWebhook as refusals } from "../client/refusals.vibe"
@@ -24,7 +24,6 @@ module verified {
 import { hasSlopParticipationFooter } from verified
 
 export const webhookLimitBytes = 25 * 1024 * 1024
-export const receiptDelaySeconds = 60
 
 const requestId = 1
 
@@ -153,11 +152,10 @@ effect function queuedFee(parsed: Parsed) {
   if (fee !== undefined && (try feeCheckWanted(fee))) try send(fee)
 }
 
-function queueDelay(settings: WebhookSettings.Shape, eventName: string, payload: Readonly<Record<string, unknown>>, job: Parsed["job"]) {
+function queueDelay(settings: WebhookSettings.Shape, eventName: string, payload: Readonly<Record<string, unknown>>, parsed: Parsed) {
   const pull = payload.pull_request
   const body = typeof pull === "object" && pull !== null && "body" in pull ? pull.body : undefined
-  const awaitsReceipt = settings.evidenceSwitch === "true" && job?.kind === "review" && eventName === "pull_request" && payload.action === "opened" && typeof body === "string" && hasSlopParticipationFooter(body)
-  return awaitsReceipt ? receiptDelaySeconds : 0
+  return queueDelaySeconds(settings.evidenceSwitch === "true", parsed.body.job, eventName === "pull_request" && payload.action === "opened", typeof body === "string" && hasSlopParticipationFooter(body))
 }
 
 effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
@@ -181,7 +179,7 @@ effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delay
 effect function releasing(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
   return routed(context, claimed, parsed, delaySeconds) catch effect (error) => {
     try Effect.logError("slopbot webhook failed", { delivery: context.deliveryId, failure: error._tag })
-    const _released = durable(context, claimed, { type: "releaseOrdinary" }) catch () => claimed
+    const _released = durable(context, claimed, { type: "failRouting", requestId }) catch () => claimed
     throw error
   }
 }
@@ -209,5 +207,5 @@ export effect function webhook() {
   const claimed = try durable(context, claimable, { type: "claim", requestId })
   if (settled(claimed)) return replied(claimed)
   if (request(claimed, requestId).phase === "InstallPending") return replied(try finishedInstallation(context, claimed, parsed))
-  return replied(try releasing(context, claimed, parsed, queueDelay(settings, eventName, decoded.payload ?? {}, parsed.job)))
+  return replied(try releasing(context, claimed, parsed, queueDelay(settings, eventName, decoded.payload ?? {}, parsed)))
 }

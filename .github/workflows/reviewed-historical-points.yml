@@ -43,9 +43,6 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     environment: slop-production
-    permissions:
-      contents: read
-      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.operation == 'replay-assessments' && 360 || 90 }}
     steps:
@@ -87,7 +84,34 @@ jobs:
           verification: "false"
           publication: "true"
       - name: Reject known production dependency vulnerabilities
-        run: pnpm audit --prod
+        run: |
+          set -euo pipefail
+          pnpm audit --prod
+          node --input-type=module - <<'NODE'
+          import { readFileSync } from "node:fs";
+          const lock = readFileSync("pnpm-lock.yaml", "utf8");
+          const section = (name) => {
+            const start = lock.indexOf(`\n${name}:\n`);
+            if (start < 0) return "";
+            const rest = lock.slice(start + name.length + 3);
+            const end = rest.search(/\n[A-Za-z]/u);
+            return end < 0 ? rest : rest.slice(0, end);
+          };
+          const reviewed = ["2.3.2", "4.0.7"];
+          const hashes = new Map([...section("patchedDependencies").matchAll(/^  picomatch@([^:\s]+):\n    hash: ([0-9a-f]{64})$/gmu)].map((match) => [match[1], match[2]]));
+          const copies = [...section("packages").matchAll(/^  '?picomatch@([^:(\s']+)[^\n]*:$/gmu)].map((match) => match[1]).sort();
+          const references = [...section("snapshots").matchAll(/picomatch(?:@|: )(\d+\.\d+\.\d+)(?:\(patch_hash=([0-9a-f]{64})\))?/gu)];
+          if (
+            hashes.size !== reviewed.length ||
+            !reviewed.every((version) => hashes.has(version)) ||
+            JSON.stringify(copies) !== JSON.stringify(reviewed) ||
+            references.length === 0 ||
+            references.some((match) => match[2] === undefined || hashes.get(match[1]) !== match[2])
+          ) {
+            console.error("::error::The lockfile has unexpected Picomatch copies.");
+            process.exit(1);
+          }
+          NODE
       - run: pnpm all build --filter=@repo/operations --filter=@repo/points --filter=@repo/slopbot
       - name: Snapshot the current project registry for verification
         run: |

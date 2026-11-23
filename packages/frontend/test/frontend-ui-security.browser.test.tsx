@@ -233,7 +233,7 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
   const patch = "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  vault.withdraw(1);\n+}\n";
   const textFile = (name: string, text: string, mimeType = "text/plain") => ({ name, mimeType, bytes: [...new TextEncoder().encode(text)] });
 
-  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, sends the proof with the report, and the Inbox follows the deposit from needed, through its pay page where a connected wallet can be put back, to recorded (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item")', async () => {
+  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, sends the proof with the report, and the Inbox follows the deposit from needed, through its pay page where a connected wallet can be put back and a request the wallet left unclear is cleared as not sent, to recorded (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item")', async () => {
     const summary = "Withdrawal rounds shares in the wrong direction";
     const description = "At commit abc, withdraw() rounds shares down. The attached test repeats a synthetic withdrawal.";
     await site.wallets({ evm: { name: "Anvil Wallet" } });
@@ -298,6 +298,21 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
     await shown(named("button", "Choose another wallet", { within: payForm })).toMatchObject({ count: 0 });
     await shown(named("button", "Connect Anvil Wallet", { within: payForm })).toMatchObject({ visible: true, disabled: false });
     expect((await site.walletAsked()).filter((request) => request.method === "eth_sendTransaction")).toEqual([]);
+
+    const ratePath = "/api/v1/submission-fee/rate";
+    await site.serve(ratePath, 200, { schema: "slop-submission-fee-rate-v1", slopShareBps: 5000, rate: { effectiveAt: "2026-11-01T00:00:00.000Z", slopPerUsd: "79" }, previous: null });
+    await site.walletFail("eth_sendTransaction");
+    await site.click(named("button", "Connect Anvil Wallet", { within: payForm }));
+    await site.click(named("button", "Review deposit", { within: payForm }));
+    await site.click(named("button", "Confirm deposit in wallet", { within: payForm }));
+    const unsent = { text: "Nothing was sent?", exact: true, within: payForm } satisfies Target;
+    await shown(unsent).toMatchObject({ visible: true });
+    await site.click(unsent);
+    await site.click(named("button", "Not sent — clear", { within: payForm }));
+    await shown({ text: "Local request cleared. Review again before sending.", within: payForm }).toMatchObject({ visible: true });
+    await shown(unsent).toMatchObject({ count: 0 });
+    expect((await site.walletAsked()).filter((request) => request.method === "eth_sendTransaction")).toHaveLength(1);
+    await site.unserve(ratePath);
 
     await site.sql("UPDATE security_report_deposits SET paid_at = ? WHERE case_id = ?", new Date().toISOString(), caseId);
     await site.open("/inbox");

@@ -1,4 +1,4 @@
-// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap"
 import type { D1Database } from "@repo/platform/bindings"
 import { jsonVar } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
@@ -14,6 +14,7 @@ import { type Job, JobQueue, ReviewJob } from "../../src/jobs/job.vibe"
 import { type ReviewHooks, type ReviewOutcome, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
 import { routeProviders } from "../../src/route/route.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
+import { reviewIntakeGate } from "./intakeGate.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -35,9 +36,13 @@ schema TestProject {
 
 const TestProjects = Schema.Array(TestProject)
 
+schema IntakeSwitch { readonly paused: boolean }
+
 const registryReads = { count: 0 }
 
 const queued: Job[] = []
+
+const intake = { paused: false }
 
 function viewOf(project: typeof TestProject.Type): ProjectView {
   return {
@@ -130,6 +135,12 @@ const queue = Layer.succeed(JobQueue, { send: (job: Job) => Effect.sync(() => { 
 
 const reads = HttpRouter.add("POST", "/test/registry-reads", answered(effect { return json(registryReads.count) }))
 
+const pausing = HttpRouter.add("POST", "/test/intake-pause", answered(effect {
+  const { paused } = try body(IntakeSwitch, 1)
+  intake.paused = paused
+  return json(intake.paused)
+}))
+
 const resumed = HttpRouter.add("POST", "/test/budget-resume", answered(effect {
   const sent = try resumeBudgetBlocks()
   return json({ sent, queued: queued.map((job) => job.deliveryId) })
@@ -144,8 +155,9 @@ function services(env: Env) {
     registryOver(env.TEST_PROJECTS),
     nobody,
     queue,
+    reviewIntakeGate(() => intake.paused),
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
   )
 }
 
-export default worker({ services, routes: Layer.mergeAll(HttpRouter.add("POST", "/test/review", reviewed()), reads, resumed) })
+export default worker({ services, routes: Layer.mergeAll(HttpRouter.add("POST", "/test/review", reviewed()), reads, resumed, pausing) })

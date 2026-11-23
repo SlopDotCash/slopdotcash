@@ -6,10 +6,10 @@ import { outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { type Anvil, type Validator, anvil, solanaValidator } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { type EffectiveWallet, Registry, RegistryManifests, Wallets } from "@repo/ports/backend"
+import { type EffectiveWallet, Registry, type RegistryManifest, RegistryManifests, Wallets } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
-import { DirectBounty } from "@repo/ports/settlement"
+import { type CaseContext, DirectBounty, DirectRefused, RecoveryRefused } from "@repo/ports/settlement"
 import { reviewedFactory } from "../src/chain/evm/factories.ts"
 import { DirectIntent } from "../src/client/direct.vibe"
 import { SOLANA_NATIVE_ASSET } from "../src/kernels/networks.ts"
@@ -17,9 +17,9 @@ import { evmDirectRails } from "../src/direct/evm.vibe"
 import { nothing } from "../src/direct/journal.vibe"
 import { DirectBountyLive } from "../src/direct/port.vibe"
 import { type RecoverPaymentBody, directActions, recoverPayment, recoveryView } from "../src/direct/recovery.vibe"
-import { type CaseContext, DirectRefused } from "../src/direct/routes.vibe"
-import { IssuedPlan, RecoveryRefused, solanaDirectRails } from "../src/direct/solana.vibe"
-import { runSecurityPayments } from "../src/securityScope/engine.vibe"
+import { IssuedPlan, solanaDirectRails } from "../src/direct/solana.vibe"
+import type { ExecutorBindings } from "../src/payments/dispatch.vibe"
+import { SecurityPaymentsFailed, runSecurityPayments } from "../src/securityScope/engine.vibe"
 import { paymentRpc } from "../src/vault/rpc.vibe"
 
 module helpers {
@@ -69,7 +69,7 @@ module helpers {
   export function recordingFetcher(paths: string[]): Fetcher {
     return {
       fetch: (request) => {
-        paths.push(new URL(request.url).pathname)
+        paths.push(`${request.method} ${new URL(request.url).pathname}`)
         return Promise.resolve(Response.json({ transactionId: null, retired: false }))
       },
     }
@@ -111,6 +111,7 @@ const ChainsStarted = Layer.mergeAll(LedgerStarted, Layer.effect(Chains, effect 
 
 const awards = new Map<string, ApprovedAward>()
 const wallets = new Map<string, EffectiveWallet>()
+const authorizations = new Map<string, ReadonlyArray<EffectiveWallet>>()
 
 function walletKey(githubId: string, network: string) {
   return `${githubId}:${network}`
@@ -121,7 +122,10 @@ const fakePorts = Layer.mergeAll(
   Layer.succeed(Wallets, {
     effective: ({ githubId, network }) => effect { return wallets.get(walletKey(githubId, network)) },
     payable: ({ githubId, network }) => effect { return wallets.get(walletKey(githubId, network)) },
-    authorized: ({ githubId, network }) => effect { return [...wallets.entries()].flatMap(([owner, wallet]) => owner === walletKey(githubId, network) ? [wallet] : []) },
+    authorized: ({ githubId, network }) => effect {
+      const current = wallets.get(walletKey(githubId, network))
+      return authorizations.get(walletKey(githubId, network)) ?? (current === undefined ? [] : [current])
+    },
     fence: ({ githubId, network, claimId, digest }) => effect {
       const current = wallets.get(walletKey(githubId, network))
       return sql`${current?.claimId === claimId && current?.digest === digest ? 1 : 0} = 1`
@@ -382,31 +386,69 @@ layer(ChainsStarted, { excludeTestServices: true, timeout: "900 seconds" })((it)
   })
 })
 
+function privateBountyManifest(projectId: string, vault: string, asset: string) {
+  const deployment = {
+    network: "base-mainnet", vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset, owner: `0x${"2".repeat(40)}`,
+    identityAuthority: `0x${"3".repeat(40)}`, feeRecipient: `0x${"4".repeat(40)}`, deploymentTransaction: `0x${"7".repeat(64)}`,
+    sourceCommit: "a".repeat(40), codeSha256: "b".repeat(64), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: `0x${"5".repeat(40)}`, factoryCodeSha256: "c".repeat(64), registrar: `0x${"6".repeat(40)}`,
+  }
+  return JSON.stringify({
+    id: projectId,
+    status: "active",
+    securityBounty: { settlement: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 2500, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] } },
+  })
+}
+
+effect function securityFailures(bindings: ExecutorBindings) {
+  const failed = runSecurityPayments(["base-mainnet"], bindings) catch effect (error) => {
+    if (error instanceof SecurityPaymentsFailed) return error.failures
+    throw error
+  }
+  return Array.isArray(failed) ? failed.filter((failure): failure is string => typeof failure === "string") : []
+}
+
 layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('The security-scope vault engine readies only its own private ledger (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+  it.effect('The security-scope vault engine readies only its own private ledger, dispatches a ready private obligation and holds it for a new wallet (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/privateAward.md, "Award and payment progress notify the reporter, current maintainers and financial approvers")', () => effect {
     const { db } = try Ledger
     const now = "2026-11-17T00:00:00.000Z"
     const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    const vault = "0x00000000000000000000000000000000000000c1"
+    const manifest = privateBountyManifest("private-project", vault, usdc)
+    const deployment = JSON.stringify({ projectId: "private-project", network: "base-mainnet", vault })
+    const formerWallet = { address: "0x00000000000000000000000000000000000000d3", claimId: "claim-private-303", digest: "7".repeat(64) }
+    const nextWallet = { address: "0x00000000000000000000000000000000000000d4", claimId: "claim-private-303-next", digest: "8".repeat(64) }
     try promise(() => db.batch([
-      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-ready', 'private-project', '303', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c1', ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(usdc, "4".repeat(64), now),
-      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-walletless', 'private-project', '304', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c1', ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(usdc, "5".repeat(64), now),
+      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-ready', 'private-project', '303', 'base-mainnet', 'base', ?, ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(vault, usdc, "4".repeat(64), now),
+      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-walletless', 'private-project', '304', 'base-mainnet', 'base', ?, ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(vault, usdc, "5".repeat(64), now),
       db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('ordinary-reserved', 'ordinary-project', '303', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c2', ?, 6, '4000000', '80000', ?, 'reserved', ?, NULL)").bind(usdc, "6".repeat(64), now),
       db.prepare("INSERT INTO security_payment_outbox (obligation_id, state, updated_at) VALUES ('private-walletless', 'held', ?)").bind(now),
+      db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('private-project', 1, ?, ?, 'seed', ?)").bind(manifest, "a".repeat(64), now),
+      db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('private-project', 'active', 1, ?, ?, ?, ?)").bind(manifest, "a".repeat(64), now, now),
+      db.prepare("INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key) VALUES ('sc_private_ready', 'private-project', 'owner/repo', '303', 'reporter', 'verified', ?, ?, '7', 1, '{}', 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ?, ?, 'root-sc_private_ready')").bind(now, now, now, now),
+      db.prepare("INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment) VALUES ('sc_private_ready', 'private-ready', ?, 'base-mainnet', ?, ?, 6, '4000000', '1000000', '303', '101', ?, 3, ?)").bind("4".repeat(64), vault, usdc, now, deployment),
+      db.prepare("INSERT INTO security_vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, block_number, block_time, observed_at) VALUES ('private-project', 'base-mainnet', 'base', ?, ?, 6, '10000000', '0', '0', '0', '0', '0', '10000000', '1', ?, ?)").bind(vault, usdc, now, now),
+      db.prepare("INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, created_at, chain) VALUES (?, '303', 'reporter', ?, 'd1_registry', ?, ?, ?, ?, 'base')").bind(formerWallet.claimId, formerWallet.address, "9".repeat(64), now, formerWallet.digest, now),
     ]))
-    const asked: string[] = []
+    const asked: Array<{ readonly kind: string; readonly eventKey: string }> = []
     const executed: string[] = []
     const executor = recordingFetcher(executed)
-    wallets.set(walletKey("303", "Base"), { address: "0x00000000000000000000000000000000000000d3", claimId: "claim-private-303", digest: "7".repeat(64) })
+    const manifests: RegistryManifest[] = []
+    wallets.set(walletKey("303", "Base"), formerWallet)
+    authorizations.set(walletKey("303", "Base"), [formerWallet])
     const ports = Layer.mergeAll(
       fakePorts,
-      Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+      Layer.succeed(RegistryManifests, {
+        current: () => effect { return [...manifests] },
+        project: (projectId) => effect { return manifests.find((registered) => registered.projectId === projectId) },
+      }),
       Layer.succeed(Notices, {
         statements: (batch) => effect {
-          asked.push(...batch.notices.map((notice) => notice.kind))
+          asked.push(...batch.notices.map((notice) => ({ kind: notice.kind, eventKey: notice.eventKey })))
           return []
         },
         fanout: (fanout) => effect {
-          asked.push(fanout.kind)
+          asked.push({ kind: fanout.kind, eventKey: fanout.eventKey })
           return []
         },
         payoutRecipient: (project) => effect { return project.stewardGithubId },
@@ -420,20 +462,61 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it)
         appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
         fence: () => effect { return sql`1` },
       }),
-      paymentRpc("{}", "{}"),
+      paymentRpc(JSON.stringify({ "base-mainnet": "http://127.0.0.1:9" }), "{}"),
     )
+    const bindings = { evm: executor, solana: executor } satisfies ExecutorBindings
+    const privateOutbox = () => rowsOf(db, "SELECT obligation_id, state FROM security_payment_outbox ORDER BY obligation_id")
+    const attemptsOf = () => rowsOf(db, "SELECT id, claim_id, state, transaction_id FROM security_payment_attempts WHERE obligation_id = 'private-ready'")
     provide Layer.mergeAll(d1(db), outbound, webCrypto, ports) {
-      try runSecurityPayments(["base-mainnet"], { evm: executor, solana: executor })
+      const unregistered = try securityFailures(bindings)
       try same({
-        privateOutbox: try rowsOf(db, "SELECT obligation_id, state FROM security_payment_outbox ORDER BY obligation_id"),
+        privateOutbox: try privateOutbox(),
         ordinaryOutbox: try rowsOf(db, "SELECT obligation_id FROM payment_outbox WHERE obligation_id = 'ordinary-reserved'"),
         asked,
-        executed: executed.filter((path) => !path.startsWith("/v1/security/")),
+        executed,
+        failures: unregistered,
       }, {
         privateOutbox: [{ obligation_id: "private-ready", state: "ready" }, { obligation_id: "private-walletless", state: "held" }],
         ordinaryOutbox: [],
         asked: [],
         executed: [],
+        failures: ["Project registry has no escrow deployment for served network base-mainnet"],
+      })
+
+      manifests.push({ projectId: "private-project", active: true, revision: 1, manifest, manifestSha256: "a".repeat(64), updatedAt: now })
+      const dispatched = try securityFailures(bindings)
+      const sent = [...executed]
+      const attempts = try attemptsOf()
+      const attemptId = String(attempts[0]?.id)
+      try same({
+        privateOutbox: try privateOutbox(),
+        attempts: attempts.map(({ claim_id, state, transaction_id }) => ({ claim_id, state, transaction_id })),
+        asked: [...asked],
+        executed: sent,
+        failures: dispatched.filter((failure) => failure.includes("private-ready")),
+      }, {
+        privateOutbox: [{ obligation_id: "private-ready", state: "ready" }, { obligation_id: "private-walletless", state: "held" }],
+        attempts: [{ claim_id: "claim-private-303", state: "unknown", transaction_id: null }],
+        asked: [],
+        executed: ["POST /v1/security/pay"],
+        failures: ["Base private-ready: ExecutorUnavailable"],
+      })
+
+      wallets.set(walletKey("303", "Base"), nextWallet)
+      authorizations.set(walletKey("303", "Base"), [formerWallet, nextWallet])
+      const held = try securityFailures(bindings)
+      try same({
+        privateOutbox: try privateOutbox(),
+        attempts: try attemptsOf(),
+        asked,
+        executed: executed.slice(sent.length),
+        failures: held.filter((failure) => failure.includes("private-ready") || failure.startsWith(`${attemptId}:`)),
+      }, {
+        privateOutbox: [{ obligation_id: "private-ready", state: "held" }, { obligation_id: "private-walletless", state: "held" }],
+        attempts,
+        asked: [{ kind: "SecurityCase", eventKey: "security-payment:private-ready:held" }],
+        executed: ["POST /v1/security/attempt-status", "POST /v1/security/cancel-unsubmitted"],
+        failures: [`${attemptId}: RecoveryFailed`],
       })
     }
   })

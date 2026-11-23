@@ -1,7 +1,9 @@
 // spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
 import { Response as WebResponse } from "miniflare"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { outboundVia } from "@repo/platform/http"
 import { type Handler, internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
@@ -41,9 +43,9 @@ function emptyHistory(feed: Feed): Handler {
 
 function inputsOver(world: Seeded, feed: Feed) {
   const net = internet({ github: world.fake.handler, hosts: { [feedHost]: emptyHistory(feed) } })
-  const outbound = outboundVia({ fetch: asFetch(net.handler) })
+  const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
   const reads = Layer.mergeAll(githubOver(world), Layer.provide(graphqlClient({ token: Redacted.make(world.token) }), outbound), acceptanceRecorder().layer)
-  return Layer.provide(collectValueInputs({ repositories: [policyOf(world)] }), Layer.mergeAll(reads, outbound, webCrypto))
+  return Layer.provide(collectValueInputs({ repositories: [policyOf(world)] }), Layer.mergeAll(reads, outbound, webCrypto, systemGit, NodeServices.layer))
 }
 
 effect function outcomeOf(world: Seeded, overrides: Partial<CensusOutcome> = {}) {

@@ -3,6 +3,7 @@ import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, first, sql } from "@repo/platform/d1"
+import { unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { handle, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
@@ -13,6 +14,7 @@ import { Authority, type ProjectView, Registry, Restrictions, VaultRegistrationR
 import { ReportingReadiness } from "@repo/ports/slopbot"
 import { privateRoute } from "../../../src/analysis/route.vibe"
 import { reportDepositSettings } from "../../../src/deposit/settings.vibe"
+import { intakeApp } from "../../../src/forwarding/grant.vibe"
 import { intakeSettings } from "../../../src/intake/availability.vibe"
 import { submissionReadRoutes } from "../../../src/intake/list.vibe"
 import { intakeRoutes } from "../../../src/intake/routes.vibe"
@@ -138,9 +140,11 @@ export default worker({
     d1(env.SLOP_DB),
     webCrypto,
     noEdgeCache,
+    unconfiguredGitHubApp,
     rolesFrom(env),
     reportBucket(faultyBucket(env.PRIVATE_TRACES, plan)),
     intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: false }),
+    intakeApp(env),
     reportDepositSettings(env.SECURITY_REPORT_DEPOSIT ?? "off"),
     Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),

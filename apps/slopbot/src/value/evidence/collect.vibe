@@ -2,6 +2,7 @@
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { GitHub, GitHubMalformed, decoded } from "@repo/platform/github"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { sameRepositoryCommitHints } from "@repo/points/corrections"
 import { capReached, commitFileCap, evidencePageSize, listingComplete } from "../../../gen/slopbot__valueEvidence.effect.vibe"
 import { type AcceptedPatchReplay, acceptedPatchReplay } from "../proofs/acceptedReplay.vibe"
 import { addedBinaryRecovery, binarySourceLimitations, recoverRetainedBinaryAtMerge } from "../proofs/binary.vibe"
@@ -27,7 +28,6 @@ import {
 import { fetched } from "../proofs/reads.vibe"
 import { Acceptance, type CollectedChanges, nativeMergeContext, noChangePromotionContext } from "./acceptance.vibe"
 import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "./branchPolicy.vibe"
-import { sameRepositoryCommitHints } from "./hints.vibe"
 import { type ReferenceDiscussion, relatedPullRequests } from "./references.vibe"
 import {
   type AcceptedRange,
@@ -98,11 +98,22 @@ export interface Listed<A> {
   readonly pageSizes: ReadonlyArray<number>
 }
 
+export interface HistoricalAcceptance {
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly headSha: string
+  readonly acceptedSha: string
+  readonly mergedAt: string
+  readonly baseSha: string
+  readonly baseRef: string
+}
+
 export interface Collection {
   readonly repository: string
   readonly number: number
   readonly policy: RegisteredRepository | null
   readonly recovered?: Recovered
+  readonly historicalAcceptance?: HistoricalAcceptance
 }
 
 export effect function read<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, limitBytes = objectLimitBytes) {
@@ -276,7 +287,7 @@ effect function withBinaries(recover: BinaryRecovery, files: ReadonlyArray<FileC
 }
 
 export effect function collectEvidence(collection: Collection) {
-  const { repository, number, policy } = collection
+  const { repository, number, policy, historicalAcceptance } = collection
   const recovered = collection.recovered ?? unrecovered
   const acceptance = try Acceptance
   if (!/^[\w.-]+\/[\w.-]+$/u.test(repository) || !Number.isSafeInteger(number) || number < 1) throw new EvidenceRefused({ reason: "Invalid PR identity" })
@@ -423,12 +434,18 @@ export effect function collectEvidence(collection: Collection) {
   let historicalBranchPolicy: BranchPolicy | undefined
   const noChangePromotion: NoChangePromotion | undefined = acceptance.promotion({ repository, pull, mergeCommitEvidence }) catch () => undefined
   if (noChangePromotion !== undefined) limitations.push(noChangePromotionContext)
+  if (historicalAcceptance !== undefined && (
+    policy === null || historicalAcceptance.repositoryNodeId !== identity.node_id || historicalAcceptance.pullRequestNodeId !== pull.node_id ||
+    historicalAcceptance.headSha !== pull.head.sha || historicalAcceptance.acceptedSha !== pull.merge_commit_sha || historicalAcceptance.acceptedSha !== mergeCommitEvidence?.sha ||
+    historicalAcceptance.mergedAt !== pull.merged_at || historicalAcceptance.baseSha !== pull.base.sha || historicalAcceptance.baseRef !== pull.base.ref ||
+    indirect.acceptance !== undefined || pull.state !== "closed"
+  )) throw new EvidenceRefused({ reason: "Historical allocation acceptance changed" })
   if (
     noChangePromotion === undefined && pull.merged_at !== null && policy !== null && pull.base.ref !== policy.integrationBranch &&
     commits.some((commit) => commit.parents.length <= 1 && commit.author !== null && commit.author.node_id !== pull.user.node_id && creditEligible(commit.author))
   ) {
     historicalBranchPolicy = collectBranchPolicy(repository, pull.base.sha) catch () => undefined
-    if (historicalBranchPolicy === undefined) limitations.push("Historical integration branch authority is unavailable or ambiguous")
+    if (historicalBranchPolicy === undefined && historicalAcceptance === undefined) limitations.push("Historical integration branch authority is unavailable or ambiguous")
   }
   if (pull.base.ref === policy?.integrationBranch || matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base)) {
     for (const commit of commits) {

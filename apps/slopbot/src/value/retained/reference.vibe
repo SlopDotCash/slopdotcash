@@ -1,7 +1,7 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
 import { sha256Of } from "@repo/platform/git/bytes"
+import { sameRepositoryCommitHints } from "@repo/points/corrections"
 import type { RetainedOutcome, RetainedSource } from "../evidence/acceptance.vibe"
-import { sameRepositoryCommitHints } from "../evidence/hints.vibe"
 import type { Comment, Evidence, RetainedMergeReference, Review } from "../evidence/types.vibe"
 import { count, fetched, fields, text } from "../proofs/reads.vibe"
 import { listingLimitBytes, millis } from "../workUnits/source.vibe"

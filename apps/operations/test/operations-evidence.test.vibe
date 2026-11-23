@@ -843,7 +843,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const files = try Path.Path
     const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-app-quota-" })
     const receiptPath = files.join(runnerTemp, "slopbot-app-quota.json")
-    const pem = new GitHubWorld(() => 0).addApp({ id: "5257625", slug: "slopbot", botId: 1 }).privateKeyPem
+    const pem = try Effect.try(() => new GitHubWorld(() => 0).addApp({ id: "5257625", slug: "slopbot", botId: 1 }).privateKeyPem)
     const manifest = try sha256Hex(JSON.stringify(quotaProject))
     const reset = Math.floor((try Clock.currentTimeMillis) / 1000) + 1800
     const run = {

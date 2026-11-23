@@ -814,6 +814,9 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const investigation = try investigate(admin, id, first)
     const placerReinstates = try act(a, id, "reinstate")
     const reinstated = try act(b, id, "reinstate")
+    const reinstatedId = field(field(reinstated.body, "record"), "id")
+    const reinstatement = try area.sql("SELECT id FROM project_enforcements WHERE project_id = ? AND action = 'reinstate'", id)
+    const restoredReason = try area.sql("SELECT reason FROM project_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1", id)
     const rows = try area.sql("SELECT sequence, action, state_after, appeal_after, actor_role FROM project_enforcements WHERE project_id = ? ORDER BY sequence", id)
     const review = try area.sql("SELECT r.assessment_id FROM project_vetting_reinstatements r JOIN project_enforcements e ON e.id = r.enforcement_id WHERE e.project_id = ?", id)
     const pending = try area.sql("SELECT state FROM vetting_assessments WHERE project_id = ? ORDER BY rowid DESC LIMIT 1", id)
@@ -831,6 +834,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       investigation: [investigation.status, investigation.rows.length, pending],
       placerReinstates: refused(placerReinstates),
       reinstated: [outcome(reinstated), field(field(reinstated.body, "record"), "action")],
+      reinstatement: [reinstatement, restoredReason],
       rows,
       listing: try listing(id),
       review,
@@ -847,6 +851,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       investigation: [201, 1, [{ state: "pending" }]],
       placerReinstates: [403, "independent_review_required", "A moderator who did not place this restriction must decide the appeal"],
       reinstated: [[200, null], "reinstate"],
+      reinstatement: [[{ id: reinstatedId }], [{ reason: `Reinstated after independent review (${String(reinstatedId)})` }]],
       rows: [
         { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
         { sequence: 2, action: "request_reinstatement", state_after: "quarantined", appeal_after: "requested", actor_role: "project-steward" },

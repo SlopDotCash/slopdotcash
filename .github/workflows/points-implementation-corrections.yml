@@ -67,7 +67,7 @@ jobs:
           job: points-corrections-collect
           verification: "false"
           publication: "true"
-      - run: pnpm all build --filter=@repo/slopbot --filter=@repo/points
+      - run: pnpm all build --filter=@repo/points --filter=@repo/slopbot
       - name: Install the pinned merge evidence collector
         run: |
           set -euo pipefail
@@ -133,7 +133,7 @@ jobs:
           if [ "$GRAPHQL_DISCUSSIONS" = true ]; then args+=(--graphql-discussions true); fi
           if [ "$OCTOBER_ORIGINAL_CREDIT" = true ]; then args+=(--october-original-credit true); fi
           timeout --signal=TERM --kill-after=10s 18000 node apps/slopbot/dist/programs/main.js \
-            collect-corrections "${args[@]}" --resume-for-seconds 18000 --request-budget 50000
+            corrections collect "${args[@]}" --resume-for-seconds 18000 --request-budget 50000
       - name: Retain public source evidence and collection dispositions
         if: always() && steps.restore.outcome == 'success' && (steps.collect.outcome == 'success' || steps.collect.outcome == 'failure')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

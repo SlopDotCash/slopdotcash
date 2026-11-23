@@ -64,7 +64,7 @@ export function sameBatch(saved: EvmBatchPlan, expected: EvmBatchPlan): boolean 
 
 /** The setting a saved plan asks for; the chain check verifies the plan against it before it counts. @throws {never} */
 export function savedSetting(plan: OwnerPlan | undefined): MonthlySetting | undefined {
-  if (plan?.kind === "solanaSetting") return { cap: BigInt(plan.cap), enabled: plan.enabled };
+  if (plan?.kind === "solanaSetting" || plan?.kind === "evmSetting") return { cap: BigInt(plan.cap), enabled: plan.enabled };
   return plan?.kind === "evmCall" ? settingOf(`0x${plan.data.slice(10, 74)}`, `0x${plan.data.slice(74, 138)}`) : undefined;
 }
 

@@ -144,6 +144,7 @@ export interface MergedPull {
   readonly automatedReviews: ReadonlyArray<AutomatedReview>
   readonly emptyAcceptanceMarker?: boolean
   readonly acceptedOrdinaryCommitOid?: string
+  readonly valueActorIds?: ReadonlyArray<string>
 }
 
 export interface ClosedPull {
@@ -237,6 +238,8 @@ export interface ScoringFacts extends Partial<ImplementationHistory> {
   readonly closedUnmerged: ReadonlyArray<ClosedPull>
   readonly contexts: ReadonlyArray<MergedPull | ClosedPull>
   readonly joint: ReadonlyArray<JointDecision>
+  readonly valueActors?: ReadonlyMap<string, Actor>
+  readonly evaluated?: ReadonlyArray<ScoreEvent>
   readonly attributionHolds: ReadonlySet<string>
   readonly heldUnits: ReadonlyArray<HeldUnit>
   readonly openReviewedAt: ReadonlyArray<string>
@@ -249,12 +252,28 @@ export interface ScoringFacts extends Partial<ImplementationHistory> {
 
 export type EventCategory = "merged-pull-request" | "resolved-issue" | "material-test-change" | "evidence" | "substantive-review" | "evaluated-contribution"
 
+export interface ExternalEvidence {
+  readonly archiveUrl: string
+  readonly contentSha256: string
+  readonly capturedAt: string
+}
+
 export interface EventSource {
   readonly id: string
-  readonly kind: "pull-request" | "review" | "comment"
+  readonly kind: "pull-request" | "review" | "comment" | "issue" | "external"
   readonly number: number
   readonly title: string
   readonly url: string
+  readonly platform?: string
+  readonly evidence?: ExternalEvidence
+}
+
+export interface Evaluation {
+  readonly decisionUrl: string
+  readonly reviewedAt: string
+  readonly reviewer: string
+  readonly manifestPath: string
+  readonly manifestSha256: string
 }
 
 export interface ReviewDecision {
@@ -281,6 +300,7 @@ export interface ScoreEvent {
   readonly source: EventSource
   readonly reason: string
   readonly reviewHistory?: ReadonlyArray<ReviewDecision>
+  readonly evaluation?: Evaluation
 }
 
 export type ReviewExclusionReason =

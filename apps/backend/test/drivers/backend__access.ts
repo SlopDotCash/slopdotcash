@@ -47,7 +47,7 @@ const journalOverD1 = Layer.succeed(AccessJournal, {
 
 const moderators = new Set([18633264, 202660855]);
 const moderatorIds = [...moderators].join(",");
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto, journalOverD1, rolesFrom({ ADMIN_GITHUB_IDS: moderatorIds, PROJECT_MODERATOR_GITHUB_IDS: moderatorIds })));
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto, journalOverD1, Layer.orDie(rolesFrom({ ADMIN_GITHUB_IDS: moderatorIds, PROJECT_MODERATOR_GITHUB_IDS: moderatorIds }))));
 let generation = 0;
 const projects = new Map<number, { id: string; row: number }>();
 const decisions = new Map<number, number>();

@@ -71,7 +71,7 @@ const dayMs = 24 * hourMs
 
 const weekMs = 7 * dayMs
 
-const maxShare = BigInt(Number.MAX_SAFE_INTEGER)
+const maxShare = 9_007_199_254_740_991n
 
 schema SampledHour { sampled_hour: string }
 
@@ -89,11 +89,15 @@ effect function scaledOf(text: string) {
   return scaled
 }
 
+effect function whole(value: number) {
+  return try orDie(Effect.try(() => BigInt(value)))
+}
+
 effect function averageOf(readings: ReadonlyArray<string>) {
   if (readings.length === 0) return undefined
   let prices = 0n
   for (const reading of readings) prices += slopPriceOf(try scaledOf(reading))
-  const text = prices > 0n ? slopRateText(harmonicRate(BigInt(readings.length), prices)) : undefined
+  const text = prices > 0n ? slopRateText(harmonicRate(try whole(readings.length), prices)) : undefined
   if (text === undefined) throw new SlopRateUnrepresentable({ value: readings[0] ?? "" })
   return text
 }
@@ -116,7 +120,8 @@ export effect function averagesAt(at: number, label: string, rateInForce: string
   const day = week.filter((row) => row.sampled_at >= daySince)
   const weekAverage = try averageOf(week.map((row) => row.slop_per_usd))
   const dayAverage = try averageOf(day.map((row) => row.slop_per_usd))
-  const share = rateInForce === undefined || dayAverage === undefined ? BigInt(slopShareBps) : feeShareBps(BigInt(slopShareBps), try scaledOf(rateInForce), try scaledOf(dayAverage))
+  const baseShare = try whole(slopShareBps)
+  const share = rateInForce === undefined || dayAverage === undefined ? baseShare : feeShareBps(baseShare, try scaledOf(rateInForce), try scaledOf(dayAverage))
   const window: RateWindow = {
     weekReadings: week.length,
     dayReadings: day.length,
@@ -172,6 +177,6 @@ export effect function ratePass(config: SubmissionFeeConfig) {
   const set = try sentByWorker(ledger, { type: "setRate", window: averages.window, slopPerUsd: chosen }, label)
   if (!set.written) return { sampled, sample, rate: null } satisfies RateResult
   const rate: RateSet = { slopPerUsd: chosen, effectiveAt: try isoAt(nextHourStart(at)), reason: reasons[change] }
-  try Effect.annotateLogs(Effect.logInfo("submission_fee_rate_set"), rate)
+  try Effect.annotateLogs(Effect.logInfo("submission_fee_rate_set"), { slopPerUsd: rate.slopPerUsd, effectiveAt: rate.effectiveAt, reason: rate.reason })
   return { sampled, sample, rate } satisfies RateResult
 }

@@ -15,6 +15,9 @@ export type SlotRead = { readonly kind: "empty" } | { readonly kind: "owned"; re
 const allowed = ["account", "attemptId", "request", "plan", "hash", "candidate"];
 const maxPlanLength = 65_536;
 const legacyIdentity = "development";
+const releaseKeys = ["attemptId", "planId", "hash"];
+const evmAddressPattern = /^0x[0-9a-fA-F]{40}$/u;
+const settingCapPattern = /^(0|[1-9][0-9]{0,38})$/u;
 const attemptIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const evmHashPattern = /^0x[0-9a-fA-F]{64}$/u;
 const solanaSignaturePattern = /^[1-9A-HJ-NP-Za-km-z]{86,88}$/u;
@@ -70,11 +73,30 @@ function legacySolanaSetting(record: Readonly<Record<string, unknown>>): OwnedSl
   return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, true), hashSource === "recovery");
 }
 
+/** An automatic-payment setting development saved for an EVM vault: its wallet and target only, checked by the hash against the call the target makes. @throws {never} */
+function legacyEvmSetting(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
+  const { cap, enabled, decimals, wallet, hashSource } = record;
+  if (typeof wallet !== "string" || !evmAddressPattern.test(wallet) || typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36 || typeof cap !== "string" || !settingCapPattern.test(cap) || typeof enabled !== "boolean" || (enabled && cap === "0")) return undefined;
+  if (hashSource !== undefined && (record.hash === null || (hashSource !== "wallet" && hashSource !== "recovery"))) return undefined;
+  const plan = planOf(planText({ kind: "evmSetting", from: wallet.toLowerCase(), cap, enabled }));
+  return legacySlot(record.attemptId, "prepared", plan, legacyHash(record.hash, false), hashSource !== "wallet");
+}
+
+/** A reserve release development saved: its plan id and the hash, checked by the plan id and hash alone. @throws {never} */
+function legacyRelease(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
+  if (!Object.keys(record).every((key) => releaseKeys.includes(key)) || typeof record.planId !== "string") return undefined;
+  const plan = planOf(planText({ kind: "evmRelease", planId: record.planId }));
+  const hash = record.hash === null ? "" : typeof record.hash === "string" && (evmHashPattern.test(record.hash) || solanaSignaturePattern.test(record.hash)) ? record.hash : undefined;
+  return legacySlot(record.attemptId, "release", plan, hash, false);
+}
+
 /** The record development wrote in this slot before the cut-over, read into the same attempt and plan. @throws {never} */
 function legacyOf(record: Readonly<Record<string, unknown>>): OwnedSlot | undefined {
+  if (!("version" in record)) return "planId" in record ? legacyRelease(record) : undefined;
   if (record.version !== 1) return undefined;
   if ("input" in record && "review" in record) return legacyCreation(record);
   if ("wallet" in record && "solanaBlockhash" in record) return legacySolanaSetting(record);
+  if ("wallet" in record && "cap" in record && "enabled" in record) return legacyEvmSetting(record);
   return undefined;
 }
 
@@ -88,7 +110,7 @@ export function slotOfText(text: string | null): SlotRead {
     return { kind: "unreadable", text };
   }
   if (!isRecord(parsed)) return { kind: "unreadable", text };
-  if ("version" in parsed) {
+  if ("version" in parsed || "planId" in parsed) {
     const legacy = legacyOf(parsed);
     return legacy === undefined ? { kind: "unreadable", text } : { kind: "owned", slot: legacy };
   }

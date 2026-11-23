@@ -10,9 +10,11 @@ import type { Denial } from "../../gen/slopbot__budgetBlocks.ts";
 import type { Driver, Options } from "../../gen/slopbot__review.conformance.ts";
 import type { CallRecord as ModelCall, Event, Review } from "../../gen/slopbot__review.ts";
 import type { Route } from "../../gen/slopbot__routing.ts";
+import { feeNeededReason } from "../../src/fee/store.vibe";
 import type { ReviewJob } from "../../src/jobs/job.vibe";
 import type { ReviewRow } from "../../src/lease/writes.vibe";
 import { admitMonth } from "../../src/review/cap.vibe";
+import { intakeCapReason } from "../../src/review/intake.vibe";
 import { type Attempt, type ReviewView, admitAttempt, bindAttempt, blockAttempt, completeAttempt, finishAttempt, keepCalls, openAttempt, recheckAttempt, recordAttemptCall, refuseAttempt, reviewView, skipAttemptStep, startCalls } from "../../src/review/store.vibe";
 import { type CallRecord, budgetExhausted, stepOf, triageRoute } from "../../src/route/route.vibe";
 import { settled } from "../support/settled.ts";
@@ -135,6 +137,10 @@ async function dispatch(event: Event) {
       return settled(settledStep(held, recheckAttempt(held, event.registry)), runtime);
     case "skipMissingCredential":
       return settled(settledStep(held, skipAttemptStep(held)), runtime);
+    case "skipForIntake":
+      return settled(held.review.send(event).pipe(Effect.flatMap(() => finishAttempt(held, "skipped", { skipReason: intakeCapReason }))), runtime);
+    case "skipForFee":
+      return settled(held.review.send(event).pipe(Effect.flatMap(() => finishAttempt(held, "skipped", { skipReason: feeNeededReason }))), runtime);
     case "recordCall": {
       const call = routeCall(event.call);
       const denial = denialOf(event.call, event.resetAt);

@@ -1,4 +1,4 @@
-// spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/composition.md, "Current and historical consent belong to the shared outbox"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
+// spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/composition.md, "Current and historical consent belong to the shared outbox"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/settlement/privateAward.md, "Award and payment progress notify the reporter, current maintainers and financial approvers"
 import type { Fetcher } from "@repo/platform/bindings"
 import { serviceClient } from "@repo/platform/binding"
 import { isoAt, isoNow } from "@repo/platform/clock"
@@ -9,6 +9,7 @@ import { Registry } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { type DeliveryUpdate, type Settlement, apply as applySettlement } from "../../gen/settlement__composition.effect.vibe"
 import { type Dispatch, type DispatchRequest, type Event as DispatchEvent, apply as applyDispatch, attempt, canPark, noBinding, request } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { bountyNotices } from "../securityScope/authorization.vibe"
 import { projectionFor } from "./ledger.vibe"
 import { type ObligationRows, type Projected, type Projection, leaseHorizon, obligationAggregate, outboxStates, ownToken, project } from "./obligation.vibe"
 import { type PaymentDeployment, type VaultAsset, bindingOf, failureTag, networkOf } from "./terms.vibe"
@@ -94,7 +95,7 @@ export type Dispatched = "Submitted" | "Unavailable"
 const leaseSeconds = 60
 
 effect function heldNotices(deployment: PaymentDeployment, obligationId: string, githubUserId: string, heldAt: string) {
-  if (deployment.scope !== "Ordinary") return []
+  if (deployment.scope === "PrivateBounty") return try bountyNotices(obligationId, "held", heldAt)
   const project = try (try Registry).project(deployment.projectId)
   const contributor = { eventKey: `payout-held:${obligationId}:${heldAt}`, recipientGithubId: githubUserId, kind: "PayoutHeld" as const, subject: deployment.projectId, actionPath: "/earnings", sourceAt: heldAt }
   const notices = try Notices

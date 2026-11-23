@@ -35,7 +35,7 @@ const signing = {
 const curves = ["ed25519", "ed25519ph", "ed25519ctx", "secp256k1", "schnorr", "p256"]
 const signs = curves.flatMap((object) => ["sign", "keygen", "getPublicKey"].map((property) => ({ object, property, message: custody })))
 // The attester, keeper and fee-wallet keys, and the referral root poster, each with its own entry.
-const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/fees/src/workers/feeConverter.*"]
+const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/settlement/src/keeper/{signer,solana}.*", "apps/fees/src/workers/feeConverter.*"]
 const poster = ["apps/settlement/src/signer/rootPoster*", "apps/settlement/src/programs/referralRoots.*"]
 const imports = {
   patterns: [

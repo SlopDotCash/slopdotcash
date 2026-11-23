@@ -211,11 +211,7 @@ export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: Va
       if (next.notice === "LockedFundsRefused") try refuse(next.notice)
       return next
     },
-    reviewDeposit: effect () => {
-      const state = try machine.get()
-      if (state.transfer.phase === "Reviewed" && state.transfer.depositOnly) return state
-      return try asActor(() => true, (current, by) => canReviewDeposit(current, by), { type: "reviewDeposit" })
-    },
+    reviewDeposit: () => asActor(() => true, (current, by) => canReviewDeposit(current, by), { type: "reviewDeposit" }),
     saved: effect (target: Target) => {
       const state = try machine.get()
       return { attempt: flowOf(state, target).slot, plan: planOf(keeper.plan(slotTarget(target))) }

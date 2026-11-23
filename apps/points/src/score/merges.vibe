@@ -32,8 +32,9 @@ export interface Merges {
 export interface MergeInput {
   readonly pulls: ReadonlyArray<MergedPull>
   readonly closed: ReadonlyArray<ClosedPull>
-  readonly contexts: ReadonlyArray<Source>
+  readonly contexts: ReadonlyArray<MergedPull | ClosedPull>
   readonly decisions: ReadonlyArray<JointDecision>
+  readonly valueActors?: ReadonlyMap<string, Actor>
   readonly attributionHolds: ReadonlySet<string>
   readonly windowFrom: number
   readonly windowTo: number
@@ -70,6 +71,8 @@ const shareSuffix = (count: number, zeroLines: boolean, who: string) =>
 const withheldReason = "A maintainer ratification of another pull request withheld this merge's joint value assessment; the accepted merge keeps the one-third minimum."
 
 const memberRefused = "Joint scoring requires current human decision and review sources for every member"
+
+const valueActorUnverified = "Value implementation actor lacks a verified GitHub identity"
 
 function commitKey(pull: Source, oid: string) {
   return `${pull.repository.toLowerCase()}\u0000${oid}`
@@ -377,8 +380,11 @@ effect function jointCredit(plan: Plan, input: MergeInput, ratified: (id: string
     if (allocation.kind === "none") continue
     const credited = creditOrder(allocation.shares, actors.of(primary))
     for (const share of credited) {
-      const actor = actors.actor(share.actor)
-      if (actor === undefined || share.points === 0) continue
+      const found = actors.actor(share.actor)
+      if (found === undefined) continue
+      const actor = input.valueActors === undefined ? found : input.valueActors.get(found.id)
+      if (actor === undefined || actor.kind === "Bot") throw new FactsRefused({ reason: "Joint implementation actor lacks a verified GitHub identity", sourceId: unit.workUnitId })
+      if (share.points === 0) continue
       events.push({
         id: `${completion.pull.id}:joint:${unit.workUnitId}:merged:${actor.id}`,
         actor,
@@ -405,6 +411,18 @@ effect function unitLinesOf(decision: JointDecision, byId: ReadonlyMap<string, S
   return lines
 }
 
+effect function valueRecipients(pull: MergedPull, valueActors: ReadonlyMap<string, Actor>, actors: ActorIndex) {
+  const author = humanAuthor(pull)
+  const resolved: Actor[] = []
+  for (const id of pull.valueActorIds ?? []) {
+    const actor = author?.id === id ? author : valueActors.get(id)
+    if (actor === undefined || actor.id !== id || actor.kind === "Bot") throw new FactsRefused({ reason: valueActorUnverified, sourceId: pull.id })
+    resolved.push(actor)
+  }
+  resolved.sort((left, right) => left.id === author?.id ? -1 : right.id === author?.id ? 1 : compareCodeUnits(left.id, right.id))
+  return { recipients: resolved.map((actor) => ({ actor: actors.of(actor), lines: 0 })), complete: resolved.length <= 1 } satisfies Weights
+}
+
 function humanAuthor(pull: MergedPull): Actor | null {
   return pull.author !== null && pull.author.kind !== "Bot" ? pull.author : null
 }
@@ -425,8 +443,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     observedCommits.set(pull.id, observations)
     outcomeActors.set(pull.id, actorIds(recipientsOf(observations, eligibleAuthor(pull.author, actors)), actors) ?? new Set())
   }
-  for (const pull of [...input.pulls, ...input.contexts]) {
-    if (!("mergedAt" in pull)) continue
+  for (const pull of [...input.pulls, ...input.contexts.flatMap((context) => "ratification" in context ? [context] : [])]) {
     const shared = outcomeActors.get(pull.id) ?? new Set<string>()
     try checkedRatification(pull, (who) => sameActor(who, pull.author) || shared.has(who.id))
   }
@@ -567,6 +584,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       continue
     }
     if (assessment !== null && ratification === null && assessment.head !== pull.headRefOid) throw new FactsRefused({ reason: "Current value decision does not match the collected accepted outcome", sourceId: pull.id })
+    const recipients = assessment !== null && ratification === null && (pull.commits === null || pull.commits.length === 0) ? try valueRecipients(pull, input.valueActors ?? new Map(), actors) : found
     const outcome = try scoredSource({ key: pull.id, unit: index + 1, project: pull.project, head: pull.headRefOid, acceptedAt: pull.mergedAt, assessment, ratification }, actors)
     if (outcome.assessed) assessed.add(pull.id)
     const scored = jointMember && canWithholdJoint(outcome.scored, membership(pull.id)) ? try (try Sources).send(pull.id, { type: "withholdJoint", membership: membership(pull.id) }) : outcome.scored
@@ -580,7 +598,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
       standaloneReview.add(pull.id)
       continue
     }
-    const allocation = allocated(scored.points, found)
+    const allocation = allocated(scored.points, recipients)
     if (allocation.kind === "held") {
       hold([pull.id], allocation.reason)
       continue

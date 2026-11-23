@@ -1,16 +1,29 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/modelAttribution.md, "The status is complete, partial, invalid or missing, in that order"; spec/points/modelAttribution.md, "Attribution never changes Points, rank, share or payment"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { pinnedScope, historicalInputAdmitted } from "../../../gen/points__reviewedHistory.effect.vibe"
-import { registryOf, repositoryIdFromUrl } from "../../client/snapshot/checks.vibe"
+import { type AttributionStatus, type Declaration, type TextSource, status } from "../../../gen/points__modelAttribution.effect.vibe"
+import { type ProjectRunReceipt, verifyRunReceipt } from "@repo/contributor/client"
+import { millisOf } from "@repo/platform/clock"
+import type { RegistryManifests } from "@repo/ports/backend"
+import { type Registry, exactIdentifier, registryOf, repositoryIdFromUrl } from "../../client/snapshot/checks.vibe"
 import { leaderboardMethodology } from "../../client/snapshot/methodology.vibe"
-import type { LeaderboardSnapshot, PublishedRepository, RegisteredRepository } from "../../client/snapshot/schema.vibe"
+import type { AttributionCoverage, InvalidAttributionMarker, LeaderboardSnapshot, ModelAttribution, PublishedRepository, RegisteredRepository, ScoreOpportunity } from "../../client/snapshot/schema.vibe"
 import { ruleVersion, schemaVersion, scoreWindowDays } from "../../client/snapshot/schema.vibe"
 import { type HistoricalPin, type HistoricalProject, historicalRepository, validateHistoricalSnapshot } from "../../client/snapshot/validate.vibe"
-import type { PullRequestRecord } from "../../collect/merged/hydrate.vibe"
 import { AssemblyRefused, type Collection, SnapshotAssembly } from "../../collect/run/pipeline.vibe"
-import type { ImplementationHistory, ScoringMode } from "../facts.vibe"
+import { type PullRequestEvidence, type PullTextSource, type VerifiedEvidence, maxEvidenceArtifactsPerSnapshot, maxEvidenceSourcesPerSnapshot, pullRequestEvidenceStatus } from "../../collect/evidence/artifacts.vibe"
+import type { PullRequestRecord } from "../../collect/merged/hydrate.vibe"
+import type { Review as WireReview } from "../../collect/merged/wire.vibe"
+import { isNearMaterialTestChange, materialTestStats } from "../../kernels/scoring/legacyV2.ts"
+import { type ReviewFacts, type ReviewState, isExpandableReviewOpportunity, reviewContent } from "../../kernels/scoring/reviewBody.ts"
+import { emptyReview } from "../../../gen/points__reviews.effect.vibe"
+import { type AttributionContext, assessModelAttribution, exactModelIdentifiers } from "../attribution/markers.vibe"
+import { compareCodeUnits, isBot, sameActor } from "../facts.vibe"
+import type { ImplementationHistory, LeaderEntry, PaymentReviewBasis, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
+import { sortedModels } from "../ranks.vibe"
 import { scoreSnapshot } from "../snapshot.vibe"
 import { valueCoverage } from "./coverage.vibe"
-import { assemblyInputs } from "./inputs.vibe"
+import { type AttributionSources, assemblyInputs, verifiedEverySource } from "./inputs.vibe"
+import type { JointEvidence } from "./lines.vibe"
 import { reviewedImplementationUnits, reviewedUnitsBySource } from "./membership.vibe"
 import { workQueue } from "./queue.vibe"
 
@@ -18,7 +31,6 @@ export interface AssemblyScope {
   readonly mode: ScoringMode
   readonly repositories: ReadonlyArray<PublishedRepository>
   readonly history?: Partial<ImplementationHistory>
-  readonly closedContexts?: ReadonlyArray<PullRequestRecord>
 }
 
 schema JointSources {
@@ -26,10 +38,34 @@ schema JointSources {
   readonly record?: { readonly sources: ReadonlyArray<{ readonly repository: string; readonly repositoryNodeId: string }> } | null
 }
 
-const attributionCoverage = { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 }
-const maxEvidenceSources = 64
-const maxEvidenceArtifacts = 64
-const evidenceVerification = { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: maxEvidenceSources, maxArtifacts: maxEvidenceArtifacts }
+interface RetainedAttributions {
+  readonly events: ReadonlySet<string>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+}
+
+interface Attributed {
+  readonly ledger: ReadonlyArray<ScoreEvent>
+  readonly leaders: ReadonlyArray<LeaderEntry>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+  readonly invalidAttributionMarkers: ReadonlyArray<InvalidAttributionMarker>
+  readonly attributionCoverage: AttributionCoverage
+}
+
+interface ScoringOrder {
+  readonly merged: ReadonlyMap<string, number>
+  readonly evaluated: ReadonlyMap<string, number>
+  readonly pulls: ReadonlyMap<string, number>
+}
+
+interface Scored {
+  readonly source: PullTextSource
+  readonly rank: ReadonlyArray<number>
+}
+
+type Replay = { readonly kind: "replayed"; readonly run: ProjectRunReceipt; readonly claims: ReadonlyArray<string> } | { readonly kind: "rejected"; readonly rejection: string }
+
+const coverageStatusOf: Readonly<Record<AttributionStatus, string>> = { Complete: "complete", Partial: "partial", Invalid: "invalid", Missing: "missing" }
+const reviewStates: ReadonlyArray<string> = ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"]
 const inputOutside = "Historical leaderboard input is outside the pinned repository"
 const jointOutside = "Historical joint assessment is outside the pinned repository"
 
@@ -37,17 +73,298 @@ function published(target: RegisteredRepository, role: "primary" | "member"): Pu
   return { id: target.id, owner: target.owner, name: target.name, displayName: target.displayName, githubUrl: target.githubUrl, description: target.description, integrationBranch: target.integrationBranch, projectId: target.projectId, role }
 }
 
+function evidenceVerification(evidence: PullRequestEvidence) {
+  return { status: evidence.status, sourceCount: evidence.sourceCount, artifactCount: evidence.artifactCount, maxSources: maxEvidenceSourcesPerSnapshot, maxArtifacts: maxEvidenceArtifactsPerSnapshot }
+}
+
+function boundedSourceTitle(title: string) {
+  if (title.length <= 256) return title
+  return `${title.slice(0, 255).replace(/[\uD800-\uDBFF]$/u, "")}…`
+}
+
+function isReviewState(state: string): state is ReviewState {
+  return reviewStates.includes(state)
+}
+
+function reviewFacts(review: WireReview, state: ReviewState): ReviewFacts {
+  return { author: review.author, state, submittedAt: review.submittedAt === null ? -1 : millisOf(review.submittedAt), body: review.body, inlineCommentCount: review.inlineCommentCount }
+}
+
+function compareReviews(left: WireReview, right: WireReview) {
+  if (left.submittedAt === right.submittedAt) return left.id.localeCompare(right.id, "en")
+  if (left.submittedAt === null) return -1
+  if (right.submittedAt === null) return 1
+  return left.submittedAt.localeCompare(right.submittedAt)
+}
+
+function uniqueReviews(reviews: ReadonlyArray<WireReview>) {
+  const byId = new Map<string, WireReview>()
+  for (const review of reviews) if (!byId.has(review.id)) byId.set(review.id, review)
+  return [...byId.values()]
+}
+
+function compareOpportunities(left: ScoreOpportunity, right: ScoreOpportunity) {
+  return millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.source.number - right.source.number || left.id.localeCompare(right.id)
+}
+
+function hasOpportunitySignal(pullRequest: PullRequestRecord, files: ReadonlyArray<{ readonly path: string; readonly additions: number; readonly deletions: number }>) {
+  if (isNearMaterialTestChange([...files]) || materialTestStats([...files]).additions > 0) return true
+  if (pullRequest.reviews.some((review) => review.author !== null && !isBot(review.author) && pullRequest.author !== null && !sameActor(review.author, pullRequest.author))) return true
+  return pullRequest.commitCount >= 1 && pullRequest.changedFiles >= 1 && pullRequest.additions + pullRequest.deletions >= 20
+}
+
+effect function openPullRequestOpportunities(registry: Registry, openPullRequests: ReadonlyArray<PullRequestRecord>, verified: ReadonlyArray<VerifiedEvidence>) {
+  const opportunities: ScoreOpportunity[] = []
+  for (const pullRequest of openPullRequests) {
+    const files = pullRequest.files
+    if (pullRequest.mergedAt !== null || files === null) continue
+    const repository = repositoryIdFromUrl(registry, pullRequest.url)
+    if (repository === undefined) throw new AssemblyRefused({ message: `Cannot derive a target repository from URL: ${pullRequest.url}` })
+    const title = boundedSourceTitle(pullRequest.title)
+    const source = { id: pullRequest.id, kind: "pull-request", number: pullRequest.number, title, url: pullRequest.url }
+    const author = pullRequest.author
+    if (author !== null && !isBot(author) && !pullRequest.isDraft) {
+      if (isNearMaterialTestChange([...files])) {
+        opportunities.push({
+          id: `${pullRequest.id}:opportunity:near-material-test`,
+          actor: author,
+          kind: "near-material-test",
+          category: "material-test-change",
+          potentialPoints: null,
+          occurredAt: pullRequest.updatedAt,
+          repository,
+          source,
+          reason: "Test changes should demonstrate the accepted behavior or a reproduced regression; line counts do not establish usefulness.",
+          hint: "Test the behavior changed by this pull request. Do not add tests or lines merely to increase a score.",
+        })
+      }
+      const evidence = pullRequestEvidenceStatus(pullRequest, verified)
+      if (evidence.status === "partial" || (evidence.status === "missing" && hasOpportunitySignal(pullRequest, files))) {
+        opportunities.push({
+          id: `${pullRequest.id}:opportunity:${evidence.status}-evidence`,
+          actor: author,
+          kind: evidence.status === "missing" ? "missing-evidence" : "partial-evidence",
+          category: "evidence",
+          potentialPoints: null,
+          occurredAt: pullRequest.updatedAt,
+          repository,
+          source,
+          reason: `Open pull request evidence is ${evidence.status}; its legacy evidence assessment is ${evidence.points} of ${evidence.maxPoints}. Evidence does not add standalone Score v2 points.`,
+          hint: evidence.status === "missing" ? "Add verified screenshot, video, or log evidence before merge." : "Finish verified evidence categories before merge.",
+        })
+      }
+    }
+    if (pullRequest.isDraft) continue
+    const reviews = uniqueReviews(pullRequest.reviews)
+    const pull = { author: pullRequest.author, mergedAt: -1 }
+    const qualified = new Set(reviews.flatMap((review) => review.author !== null && (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") && !emptyReview(reviewContent(reviewFacts(review, review.state))) ? [review.author.id] : []))
+    const seen = new Set<string>()
+    for (const review of [...reviews].sort(compareReviews)) {
+      const reviewer = review.author
+      if (reviewer === null || seen.has(reviewer.id) || qualified.has(reviewer.id) || !isReviewState(review.state) || !isExpandableReviewOpportunity(reviewFacts(review, review.state), pull)) continue
+      seen.add(reviewer.id)
+      const submittedAt = review.submittedAt
+      if (submittedAt === null) throw new AssemblyRefused({ message: "expandable review lost its submission timestamp" })
+      opportunities.push({
+        id: `${pullRequest.id}:opportunity:expand-review:${reviewer.id}`,
+        actor: reviewer,
+        kind: "expand-review",
+        category: "substantive-review",
+        potentialPoints: null,
+        occurredAt: submittedAt,
+        repository,
+        source: { id: review.id, kind: "review", number: pullRequest.number, title, url: review.url },
+        reason: "The review does not yet explain its approval or requested changes.",
+        hint: "Explain a concrete correctness finding or why the change is ready. Padding the review does not make it useful.",
+      })
+    }
+  }
+  return opportunities.sort(compareOpportunities)
+}
+
+function rankOf(ids: ReadonlyArray<string>) {
+  return new Map(ids.map((id, index) => [id, index] as const))
+}
+
+function scoringOrder(facts: ScoringFacts): ScoringOrder {
+  const merged = (facts.acceptedImplementationDigests?.size ?? 0) > 0
+    ? [...facts.merged].sort((left, right) => millisOf(left.mergedAt) - millisOf(right.mergedAt) || compareCodeUnits(left.id, right.id))
+    : facts.merged
+  const evaluated = [...(facts.evaluated ?? [])].sort((left, right) => millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.id.localeCompare(right.id))
+  return { merged: rankOf(merged.map((pull) => pull.id)), evaluated: rankOf(evaluated.map((event) => event.id)), pulls: rankOf(facts.merged.map((pull) => pull.id)) }
+}
+
+function scoredSource(event: ScoreEvent, sources: AttributionSources, order: ScoringOrder): Scored | undefined {
+  const parent = event.id.split(":", 1)[0] ?? ""
+  const last = Number.MAX_SAFE_INTEGER
+  if (event.category === "merged-pull-request") {
+    const source = event.id === `${event.source.id}:merged` ? sources.bodies.get(event.source.id) : undefined
+    return source === undefined ? undefined : { source, rank: [0, order.merged.get(event.source.id) ?? last, 0, 0] }
+  }
+  if (event.category === "evaluated-contribution") {
+    const source = sources.evaluated.get(event.source.id)
+    return source === undefined ? undefined : { source, rank: [1, order.evaluated.get(event.id) ?? last, 0, 0] }
+  }
+  const automated = event.id === `${parent}:automated-review:${event.source.id}`
+  if (event.category !== "substantive-review" || (!automated && event.id !== `${parent}:reviewer:${event.actor.id}`)) return undefined
+  const pullSources = sources.pullSources.get(parent)
+  const source = pullSources?.get(event.source.id)
+  if (pullSources === undefined || source === undefined) return undefined
+  const pull = order.pulls.get(parent) ?? last
+  return { source, rank: automated ? [2, pull, 0, [...pullSources.keys()].indexOf(source.id)] : [2, pull, 1, millisOf(event.occurredAt)] }
+}
+
+function compareScored(left: Scored, right: Scored) {
+  for (const [index, value] of left.rank.entries()) {
+    const difference = value - (right.rank[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  return left.source.id.localeCompare(right.source.id, "en")
+}
+
+function scoredSources(ledger: ReadonlyArray<ScoreEvent>, sources: AttributionSources, order: ScoringOrder) {
+  const recorded = new Map<string, PullTextSource>()
+  const scored = ledger.flatMap((event) => scoredSource(event, sources, order) ?? [])
+  for (const { source } of scored.sort(compareScored)) if (!recorded.has(source.id)) recorded.set(source.id, source)
+  return [...recorded.values()]
+}
+
+function runClaims(run: { readonly runId: string; readonly traceUpload?: { readonly serverRunId: string; readonly objectId: string } | null } | null): ReadonlyArray<string> {
+  const upload = run?.traceUpload ?? null
+  return run === null || upload === null ? [] : [`client run:${run.runId}`, `server run:${upload.serverRunId}`, `trace object:${upload.objectId}`]
+}
+
+function wellFormed(candidate: ModelAttribution, registry: Registry) {
+  return repositoryIdFromUrl(registry, candidate.sourceUrl) !== undefined && candidate.identifier === exactIdentifier(candidate.provider, candidate.model)
+    && (candidate.format === "machine-marker" || candidate.format === "visible-declaration") && candidate.status === "self-reported"
+}
+
+effect function replayed(event: ScoreEvent, candidate: ModelAttribution, context: AttributionContext, claims: ReadonlySet<string>) {
+  const rejected = (rejection: string): Replay => ({ kind: "rejected", rejection })
+  if (!wellFormed(candidate, context.registry)) return rejected("invalid-attribution")
+  const verification = Effect.map(verifyRunReceipt(candidate.run, context.registry.receipts), (run) => ({ kind: "verified" as const, run })) catch (error) => ({ kind: "failed" as const, reason: error.reason })
+  if (verification.kind === "failed") return rejected("receipt-verification-failed")
+  const run = verification.run
+  if (candidate.format !== "machine-marker") return rejected("not-machine-marker")
+  if (candidate.actor?.id !== event.actor.id) return rejected("actor-mismatch")
+  if (candidate.sourceId !== event.source.id) return rejected("source-mismatch")
+  if (candidate.sourceUrl !== event.source.url) return rejected("source-url-mismatch")
+  if (candidate.artifactId !== event.id.split(":", 1)[0]) return rejected("parent-pull-request-mismatch")
+  if (run.traceUpload === null) return rejected("trace-not-finalized")
+  if (run.repositoryId !== event.repository) return rejected("repository-mismatch")
+  if (run.provider !== candidate.provider || run.model !== candidate.model || run.client !== candidate.client || run.skillRevision !== candidate.skillRevision) return rejected("declared-identity-mismatch")
+  if (millisOf(run.completedAt) > millisOf(event.occurredAt)) return rejected("run-completed-after-review")
+  const replayClaims = runClaims(run)
+  if (replayClaims.some((claim) => claims.has(claim))) return rejected("receipt-already-claimed")
+  return { kind: "replayed", run, claims: replayClaims } satisfies Replay
+}
+
+function coverageStatus(eligible: number, valid: number, invalid: number) {
+  const assessed = (declaration: Declaration): TextSource => ({ node: 0, author: 1, bot: false, attached: true, signal: true, declaration })
+  const sources = [
+    ...Array.from({ length: valid }, () => assessed({ tag: "ExactDeclaration" })),
+    ...Array.from({ length: invalid }, () => assessed({ tag: "Malformed" })),
+    ...Array.from({ length: Math.max(0, eligible - valid) }, () => assessed({ tag: "NoDeclaration" })),
+  ]
+  return coverageStatusOf[status(sources, 1)]
+}
+
+function bonusRun(event: ScoreEvent, attributions: ReadonlyArray<ModelAttribution>) {
+  return attributions.find((attribution) => attribution.actor?.id === event.actor.id && (attribution.artifactId === event.source.id || attribution.sourceId === event.source.id) && attribution.run !== null)?.run ?? null
+}
+
+function withoutBonus(event: ScoreEvent): ScoreEvent {
+  const { evidenceBonusBasisPoints: _bonus, ...rest } = event
+  return rest
+}
+
+function withModels(leaders: ReadonlyArray<LeaderEntry>, attributions: ReadonlyArray<ModelAttribution>) {
+  const models = new Map<string, string[]>()
+  for (const attribution of attributions) {
+    const actor = attribution.actor
+    if (actor === null || isBot(actor)) continue
+    models.set(actor.id, [...(models.get(actor.id) ?? []), ...exactModelIdentifiers([attribution])])
+  }
+  return leaders.map((leader) => ({ ...leader, reportedModels: sortedModels([...leader.reportedModels, ...(models.get(leader.actor.id) ?? [])]) }))
+}
+
+effect function attributed(ledger: ReadonlyArray<ScoreEvent>, leaders: ReadonlyArray<LeaderEntry>, sources: AttributionSources, order: ScoringOrder, retained: RetainedAttributions) {
+  const overall = try assessModelAttribution(scoredSources(ledger, sources, order), sources.context, verifiedEverySource)
+  const attributions: ModelAttribution[] = [...overall.declarations]
+  const claims = new Set(attributions.flatMap((attribution) => runClaims(attribution.run)))
+  const invalidMarkers: InvalidAttributionMarker[] = [...overall.invalidMarkers]
+  const rejectedSources = new Set<string>()
+  const events = [...ledger]
+  for (const [index, event] of events.entries()) {
+    if (!retained.events.has(event.id)) continue
+    const candidates = retained.attributions.filter((attribution) => attribution.sourceId === event.source.id)
+    const candidate = candidates[0]
+    if (candidates.length !== 1 || candidate === undefined) continue
+    const replay = try replayed(event, candidate, sources.context, claims)
+    if (replay.kind === "rejected") {
+      rejectedSources.add(event.source.id)
+      invalidMarkers.push({ sourceId: event.source.id, sourceUrl: event.source.url, reason: replay.rejection })
+      continue
+    }
+    for (const claim of replay.claims) claims.add(claim)
+    events[index] = { ...event, evidenceBonusBasisPoints: 1_500 }
+    attributions.push({ ...candidate, run: replay.run })
+  }
+  const retainedValid = attributions.length - overall.declarations.length
+  const eligibleSourceCount = overall.coverage.eligibleSourceCount + retainedValid + rejectedSources.size
+  const validSourceCount = overall.coverage.validSourceCount + retainedValid
+  const invalidSourceCount = new Set(invalidMarkers.map((marker) => marker.sourceId)).size
+  return {
+    ledger: events.map((event) => (event.evidenceBonusBasisPoints ?? 0) > 0 && bonusRun(event, attributions) === null ? withoutBonus(event) : event),
+    leaders: withModels(leaders, attributions),
+    attributions,
+    invalidAttributionMarkers: invalidMarkers.sort((left, right) => left.sourceId.localeCompare(right.sourceId) || left.reason.localeCompare(right.reason)),
+    attributionCoverage: {
+      ...overall.coverage,
+      status: coverageStatus(eligibleSourceCount, validSourceCount, invalidSourceCount),
+      eligibleSourceCount,
+      validSourceCount,
+      invalidSourceCount,
+      missingSourceCount: eligibleSourceCount - validSourceCount,
+    },
+  } satisfies Attributed
+}
+
+function publishedOrder(left: ScoreEvent, right: ScoreEvent) {
+  return right.points - left.points || left.source.number - right.source.number || left.id.localeCompare(right.id, "en")
+}
+
+function paymentLedger(ledger: ReadonlyArray<ScoreEvent>, basis: PaymentReviewBasis) {
+  const replaced = new Set([...basis.removedEventIds, ...basis.ledger.map((event) => event.id)])
+  return [...ledger.filter((event) => !replaced.has(event.id)), ...basis.ledger].sort(publishedOrder)
+}
+
+function changedRecords<T extends { readonly id: string }>(before: ReadonlyArray<T>, after: ReadonlyArray<T>) {
+  const original = new Map(before.map((record) => [record.id, JSON.stringify(record)] as const))
+  return after.filter((record) => original.get(record.id) !== JSON.stringify(record))
+}
+
+function removedIds<T extends { readonly id: string }>(before: ReadonlyArray<T>, after: ReadonlyArray<T>) {
+  const kept = new Set(after.map((record) => record.id))
+  return before.filter((record) => !kept.has(record.id)).map((record) => record.id)
+}
+
 export function rollingRepositories(collection: Collection) {
   return collection.registry.targets.map((target, index) => published(target, index === 0 ? "primary" : "member"))
 }
 
 export effect function assembleSnapshot(collection: Collection, scope: AssemblyScope) {
-  const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {}, scope.closedContexts)
+  const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {})
   const scored = try scoreSnapshot(inputs.facts)
   const coverage = try valueCoverage(inputs, scored)
   const reviewed = reviewedImplementationUnits(coverage, collection.source.repositories, try reviewedUnitsBySource(inputs.joint, collection.registry))
-  const queue = try workQueue(collection)
+  const queue = try workQueue(collection, inputs.attribution.context)
+  const opportunities = try openPullRequestOpportunities(registryOf(collection.registry), collection.openPullRequests, collection.evidence.artifacts)
+  const retained: RetainedAttributions = { events: new Set((inputs.facts.retainedReviews ?? []).map((event) => event.id)), attributions: collection.acceptedReviewHistory.value.attributions }
+  const order = scoringOrder(inputs.facts)
+  const current = try attributed(scored.ledger, scored.leaders, inputs.attribution, order, retained)
   const basis = scored.paymentReviewBasis
+  const payments = basis === undefined ? undefined : try attributed(paymentLedger(scored.ledger, basis), basis.leaders, inputs.attribution, order, retained)
   const omitted = scored.paymentReviewBasisOmitted
   return {
     schemaVersion,
@@ -59,35 +376,35 @@ export effect function assembleSnapshot(collection: Collection, scope: AssemblyS
     stale: false,
     window: { days: scoreWindowDays, from: collection.bounds.from, to: collection.bounds.to },
     methodology: leaderboardMethodology,
-    source: { ...collection.source, counts: { ...collection.source.counts, closedUnmergedPullRequests: inputs.closedCount }, evidenceVerification },
-    leaders: scored.leaders,
+    source: { ...collection.source, counts: { ...collection.source.counts, closedUnmergedPullRequests: inputs.closedCount }, evidenceVerification: evidenceVerification(collection.evidence) },
+    leaders: current.leaders,
     valuePolicyEffectiveAt: collection.valuePolicyEffectiveAt,
     valueAssessmentCoverage: coverage,
-    ledger: scored.ledger,
+    ledger: current.ledger,
     reviewExclusions: scored.reviewExclusions,
     penalties: inputs.penalties,
     ...(collection.penaltyHistory === undefined ? {} : { penaltyHistory: collection.penaltyHistory }),
-    ...(basis === undefined ? {} : {
+    ...(basis === undefined || payments === undefined ? {} : {
       paymentReviewBasis: {
         policy: basis.policy,
         effectiveAt: basis.effectiveAt,
-        leaders: basis.leaders,
-        ledger: basis.ledger,
-        removedEventIds: basis.removedEventIds,
-        removedAttributionIds: [],
-        attributionOrder: [],
+        leaders: payments.leaders,
+        ledger: changedRecords(current.ledger, payments.ledger),
+        removedEventIds: removedIds(current.ledger, payments.ledger),
+        removedAttributionIds: removedIds(current.attributions, payments.attributions),
+        attributionOrder: payments.attributions.map((attribution) => attribution.id),
         reviewExclusions: basis.reviewExclusions,
-        attributions: [],
-        invalidAttributionMarkers: [],
-        attributionCoverage,
-        opportunities: [],
+        attributions: changedRecords(current.attributions, payments.attributions),
+        invalidAttributionMarkers: payments.invalidAttributionMarkers,
+        attributionCoverage: payments.attributionCoverage,
+        opportunities,
       },
     }),
     ...(omitted === undefined ? {} : { paymentReviewBasisOmitted: omitted }),
-    opportunities: [],
-    attributions: [],
-    invalidAttributionMarkers: [],
-    attributionCoverage,
+    opportunities,
+    attributions: current.attributions,
+    invalidAttributionMarkers: current.invalidAttributionMarkers,
+    attributionCoverage: current.attributionCoverage,
     workQueue: queue,
     ...(reviewed.length === 0 ? {} : { reviewedImplementationUnits: reviewed }),
   } satisfies LeaderboardSnapshot
@@ -104,7 +421,7 @@ effect function jointInside(collection: Collection, pin: HistoricalPin, reposito
   return true
 }
 
-export effect function createHistoricalSnapshot(collection: Collection, pin: HistoricalPin, project: HistoricalProject, history: Partial<ImplementationHistory> = {}, closedContexts: ReadonlyArray<PullRequestRecord> = []) {
+export effect function createHistoricalSnapshot(collection: Collection, pin: HistoricalPin, project: HistoricalProject, history: Partial<ImplementationHistory> = {}) {
   const repository = try historicalRepository(collection.registry, pin, project)
   const registry = registryOf(collection.registry)
   const inside = (url: string) => repositoryIdFromUrl(registry, url) === repository.id
@@ -114,13 +431,13 @@ export effect function createHistoricalSnapshot(collection: Collection, pin: His
   const input = {
     censusRepository: source.repositoryId === pin.repositoryNodeId && listed !== undefined && listed.id === repository.id && listed.repositoryId === pin.repositoryNodeId,
     listedRepositories: source.repositories.length,
-    sourcesInside: [...work.outcomes, ...work.mergedPullRequests, ...work.reviewedMergedPullRequests, ...work.closedUnmergedPullRequests, ...closedContexts, ...work.closedIssues, ...collection.openIssues, ...collection.openPullRequests].every((record) => inside(record.url)),
+    sourcesInside: [...work.outcomes, ...work.mergedPullRequests, ...work.reviewedMergedPullRequests, ...collection.valueContextPullRequests, ...work.closedUnmergedPullRequests, ...work.closedIssues, ...collection.openIssues, ...collection.openPullRequests].every((record) => inside(record.url)),
     eventsInside: retained.events.every((event) => event.repository === repository.id) && retained.attributions.every((attribution) => inside(attribution.sourceUrl)),
     penaltiesInside: (collection.penaltyHistory ?? []).every((penalty) => penalty.projectId === pin.projectId),
     jointInside: try jointInside(collection, pin, repository),
   }
   if (!historicalInputAdmitted(pinnedScope, input)) throw new AssemblyRefused({ message: historicalInputAdmitted(pinnedScope, { ...input, jointInside: true }) ? jointOutside : inputOutside })
-  const raw = try assembleSnapshot(collection, { mode: "historical", repositories: [published(repository, "primary")], history, closedContexts })
+  const raw = try assembleSnapshot(collection, { mode: "historical", repositories: [published(repository, "primary")], history })
   return try validateHistoricalSnapshot(raw, collection.registry, pin, project, try Clock.currentTimeMillis)
 }
 
@@ -141,11 +458,11 @@ effect function refusedAs<A, E extends { readonly _tag: string }, R>(run: A!E!R)
 }
 
 export const snapshotAssembly = Layer.effect(SnapshotAssembly, effect {
-  const services = try Effect.context<Experimental.Crypto.Crypto>()
+  const services = try Effect.context<Experimental.Crypto.Crypto | RegistryManifests | JointEvidence>()
   return {
     assemble: (collection: Collection) => effect {
       provide services {
-        return try refusedAs(assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection) }))
+        return try refusedAs(assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection), ...(collection.implementation === undefined ? {} : { history: collection.implementation.history }) }))
       }
     },
   }

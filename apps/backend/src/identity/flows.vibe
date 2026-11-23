@@ -172,7 +172,7 @@ effect function startAdmitted(local: boolean, principal: string) {
   const authorizationUrl = new URL("/v1/oauth/authorize", settings.publicOrigin)
   authorizationUrl.searchParams.set("flow_id", flowId)
   authorizationUrl.searchParams.set("state", secrets.state)
-  const cookie = binding === undefined ? {} : { "set-cookie": bindingCookie(flowId, binding, flowLifetime) }
+  const cookie: Readonly<Record<string, string>> = binding === undefined ? {} : { "set-cookie": bindingCookie(flowId, binding, flowLifetime) }
   return json({ flowId, authorizationUrl: authorizationUrl.toString(), pollCapability: secrets.capability, expiresAt, pollAfterSeconds }, 201, cookie)
 }
 
@@ -181,7 +181,7 @@ effect function issued(facts: PollFacts, token: string) {
     when Rejected: throw refusedBy(pollRows.flowConsumed);
     default: throw error;
   }
-  const cleared = facts.audience === "PointsWeb" ? { "set-cookie": bindingCookie(facts.flowId, "", 0) } : {}
+  const cleared: Readonly<Record<string, string>> = facts.audience === "PointsWeb" ? { "set-cookie": bindingCookie(facts.flowId, "", 0) } : {}
   return json({ status: "complete", assertion: token, assertionType: "SlopIdentity", expiresAt: assertion.expires_at }, 200, cleared)
 }
 

@@ -1,6 +1,8 @@
 // spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
 import { historyOrigin, valueHistoryPath, valueHistoryVersion, workUnitHistoryPath, workUnitHistoryVersion } from "@repo/ports/slopbot"
+import { utf8 } from "@repo/platform/crypto"
 import { parsedJson } from "@repo/platform/git/bytes"
+import { replayed } from "../../../ingestion/replayed.ts"
 import { refusal } from "../packet.vibe"
 import type { AssessmentCatalogRow, HistoricalAssessmentCatalog, Row } from "../audit/catalog.vibe"
 
@@ -99,9 +101,7 @@ effect function frozenIndex(catalog: HistoricalAssessmentCatalog, scope: History
 }
 
 function answer(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  const options = { status, headers: { "content-type": "application/json" } }
-  const response = body === null ? HttpServerResponse.empty(options) : HttpServerResponse.jsonUnsafe(body, options)
-  return HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(response))
+  return orDie(Effect.try(() => replayed(request, status, { "content-type": "application/json" }, utf8(body === null ? "" : JSON.stringify(body)))))
 }
 
 export function historicalAssessmentTransport(catalog: HistoricalAssessmentCatalog, scope: HistoryScope) {
@@ -112,7 +112,7 @@ export function historicalAssessmentTransport(catalog: HistoricalAssessmentCatal
     return HttpClient.make((request) => {
       const url = URL.parse(request.url)
       if (url === null || url.origin !== historyOrigin) return underlying.execute(request)
-      const invalid = succeed(answer(request, 400, null))
+      const invalid = answer(request, 400, null)
       if (url.username !== "" || url.password !== "" || url.hash !== "" || request.method !== "GET") return invalid
       const isJoint = url.pathname === workUnitHistoryPath
       if (!isJoint && url.pathname !== valueHistoryPath) return invalid
@@ -147,7 +147,7 @@ export function historicalAssessmentTransport(catalog: HistoricalAssessmentCatal
         records.push(entry.record)
         bytes += entry.bytes + 1
       }
-      return succeed(answer(request, 200, { ...envelope, records, nextAfter }))
+      return answer(request, 200, { ...envelope, records, nextAfter })
     })
   })
 }

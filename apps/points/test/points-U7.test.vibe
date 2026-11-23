@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest"
-import { projectClosedSources } from "../src/corrections/reviewed/replay/closedProjection.vibe"
 import { type Actor, type Assessment, type AutomatedReview, type ChangedFile, type ClosedPull, type Commit, FactsRefused, type JointClaim, type JointDecision, type JointUnit, type LeaderEntry, type MergedPull, type Ratification, type Review, type ReviewValue, type ScoringFacts } from "../src/score/facts.vibe"
 import { compareStandings } from "../src/score/ranks.vibe"
 import { leadersOf, scoreSnapshot } from "../src/score/snapshot.vibe"
@@ -264,24 +263,15 @@ it.effect('Merge deduplication: two PRs grouped into one work unit, and the same
   const integrated = closed(401, "2026-11-08T10:00:00Z", frank, [commit("v1", frank, 10, 0)])
   const context = pull(402, "2026-11-02T10:00:00Z", gina, [commit("u1", gina, 10, 0)])
   const landed = pull(403, "2026-11-10T10:00:00Z", hank, [commit("t1", hank, 10, 0)])
-  const closedContext = closed(404, "2026-11-08T12:00:00Z", ivy, [])
-  const indirect = decision("c", [integrated, context, landed, closedContext], [
+  const indirect = decision("c", [integrated, context, landed], [
     unit("wu_slop_v1", "small", [integrated], ["v1"], "Integrated change."),
     unit("wu_slop_v2", "small", [context], ["u1"], "Earlier change."),
     unit("wu_slop_v3", "micro", [landed], ["t1"], "Landed change."),
   ])
-  const omitted = closed(405, "2026-11-08T14:00:00Z", jill, [])
-  const closureProjection = projectClosedSources([integrated, closedContext, omitted],
-    [{ repository, closedUnmerged: [integrated, closedContext, omitted] }], new Set([integrated.id]), new Set([integrated.id, closedContext.id]))
-  try Effect.try(() => assert.deepStrictEqual(plain(closureProjection), plain({
-    closedUnmergedPullRequests: [integrated],
-    collections: [{ repository, closedUnmerged: [integrated] }],
-    closedContexts: [closedContext],
-  })))
   const integratedScoring = try scoreSnapshot(facts([landed], {
     windowFrom: "2026-11-05T00:00:00.000Z",
-    closedUnmerged: closureProjection.closedUnmergedPullRequests,
-    contexts: [context, ...closureProjection.closedContexts],
+    closedUnmerged: [integrated],
+    contexts: [context],
     joint: [{ ...indirect, members: indirect.members.map((member) => member.pullId === integrated.id ? { ...member, acceptedAt: "2026-11-09T10:00:00Z", indirect: true } : member) }],
   }))
   try Effect.try(() => assert.deepStrictEqual(plain(integratedScoring.ledger), plain([

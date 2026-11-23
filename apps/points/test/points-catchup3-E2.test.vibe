@@ -6,6 +6,7 @@ import { validateHistoricalDiscussion } from "../src/ingestion/historicalDiscuss
 import { Graphql, availableBudget, graphqlClient, tryReferenceDiscussion } from "../src/ingestion/graphql.vibe"
 import { Ingestion, ingestion } from "../src/ingestion/read.vibe"
 import { fetcherOf, repository, seeded, start, statuses, withRateLimit } from "./support/u3/github.ts"
+import { type Reply, jsonReply, limited, partialReply, serverError, textReply, validationFailed } from "./support/catchup3-e2/replies.ts"
 
 const repoPath = `/repos/${repository}`
 const commitSha = "a".repeat(40)
@@ -21,13 +22,9 @@ function exact(method: string, path: string) {
   return new RegExp(`^${`${method} ${path}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u")
 }
 
-function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<() => Response>) {
+function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<Reply>) {
   for (const reply of replies) fake.alterNext(match, reply)
 }
-
-const serverError = () => new Response("internal error", { status: 500 })
-const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
-const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
 
 it.live('Exact evidence pages retry a server error twice and a commit file page once without spending quota attempts (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
   const clock = settableClock(start)
@@ -80,24 +77,24 @@ it.live('Exact evidence pages retry a server error twice and a commit file page 
       const answer = try read(client, `${authority}${path}`)
       return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
     })
-    answers(fake, exact("GET", pullFiles[0] ?? ""), [serverError, serverError, () => new Response(finalBody, { status: 500, headers: { "content-type": "application/json" } })])
+    answers(fake, exact("GET", pullFiles[0] ?? ""), [serverError, serverError, () => textReply(finalBody, { status: 500, headers: { "content-type": "application/json" } })])
     const persistentFiles = try read(client, `${authority}${pullFiles[0] ?? ""}`)
     const recoveredCommits = try Effect.forEach(commitFiles, (path) => effect {
       answers(fake, exact("GET", path), [validationFailed])
       const answer = try read(client, `${authority}${path}`)
       return { statuses: answer.statuses, waits: answer.waits, status: typeof answer.outcome === "string" ? answer.outcome : answer.outcome.status }
     })
-    answers(fake, exact("GET", commitFiles[0] ?? ""), [validationFailed, () => Response.json({ message: "Still unavailable", errors: ["commit"] }, { status: 422 })])
+    answers(fake, exact("GET", commitFiles[0] ?? ""), [validationFailed, () => jsonReply({ message: "Still unavailable", errors: ["commit"] }, { status: 422 })])
     const persistentCommit = try read(client, `${authority}${commitFiles[0] ?? ""}`)
     const otherValidation = try Effect.forEach([`${repoPath}/commits/${world.commit}`, `${repoPath}/commits/abcdef0?per_page=100&page=1`, pullFiles[0] ?? ""], (path) => effect {
       answers(fake, exact("GET", path), [validationFailed])
       return try read(client, `${authority}${path}`)
     })
     const recoveredPulls = try Effect.forEach(commitPulls, (path) => effect {
-      answers(fake, exact("GET", path), [serverError, serverError, () => Response.json([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])])
+      answers(fake, exact("GET", path), [serverError, serverError, () => jsonReply([{ node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" }])])
       return try read(client, `${authority}${path}`)
     })
-    answers(fake, exact("GET", commitPullsPath), [serverError, serverError, () => new Response("{incomplete upstream failure", { status: 500 })])
+    answers(fake, exact("GET", commitPullsPath), [serverError, serverError, () => textReply("{incomplete upstream failure", { status: 500 })])
     const persistentPulls = try read(client, `${authority}${commitPullsPath}`)
     const outOfScope = try Effect.forEach([
       commitPullsPath.replace(commitSha, "main"),
@@ -127,18 +124,18 @@ it.live('Exact evidence pages retry a server error twice and a commit file page 
       return { statuses: answer.statuses, waits: answer.waits }
     })
     const otherStatuses = try Effect.forEach([403, 404, 422, 502], (status) => effect {
-      answers(fake, exact("GET", commitPullsPath), [() => Response.json({ message: "unavailable" }, { status })])
+      answers(fake, exact("GET", commitPullsPath), [() => jsonReply({ message: "unavailable" }, { status })])
       const answer = try read(client, `${authority}${commitPullsPath}`)
       return { statuses: answer.statuses, waits: answer.waits }
     })
     const page1 = `${commitPullsPath}&page=1`
     const page2 = `${commitPullsPath}&page=2`
-    answers(fake, exact("GET", page1), [serverError, () => Response.json([{ number: 1 }]), () => Response.json([{ number: 102 }])])
-    answers(fake, exact("GET", page2), [serverError, () => Response.json([{ number: 101 }])])
+    answers(fake, exact("GET", page1), [serverError, () => jsonReply([{ number: 1 }]), () => jsonReply([{ number: 102 }])])
+    answers(fake, exact("GET", page2), [serverError, () => jsonReply([{ number: 101 }])])
     const live = [try read(client, `${authority}${page1}`), try read(client, `${authority}${page2}`), try read(client, `${authority}${page1}`)]
     answers(fake, exact("GET", commitPullsPath), [serverError, limited, serverError, limited, limited, limited, limited])
     const quotaKept = try read(client, `${authority}${commitPullsPath}`)
-    answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [() => new Response("missing", { status: 404 })])
+    answers(fake, exact("GET", `${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`), [() => textReply("missing", { status: 404 })])
     const missing = try read(client, `${authority}${repoPath}/pulls/${world.pull}/files?per_page=100&page=1`)
     return { recoveredFiles, persistentFiles, recoveredCommits, persistentCommit, otherValidation, recoveredPulls, persistentPulls, outOfScope, otherRequests, otherStatuses, live, quotaKept, missing }
   })
@@ -166,7 +163,7 @@ it.live('Exact evidence pages retry a server error twice and a commit file page 
   })
 
   const incomplete = try scenario({ requestTimeoutMs: 10 }, (client) => effect {
-    answers(fake, exact("GET", commitPullsPath), [() => new Response(new ReadableStream({ start: (controller) => controller.enqueue(new TextEncoder().encode("partial")) }), { status: 500 })])
+    answers(fake, exact("GET", commitPullsPath), [() => partialReply(500)])
     return try read(client, `${authority}${commitPullsPath}`)
   })
 
@@ -265,7 +262,7 @@ it.live('An optional discussion probe reads once with two available points, wait
       return try availableBudget()
     }
 
-    effect function probe(reply: (() => Response) | undefined, deadlineMs = clock.now() + 60_000) {
+    effect function probe(reply: Reply | undefined, deadlineMs = clock.now() + 60_000) {
       if (reply !== undefined) answers(fake, graphqlMatch, [reply])
       const from = fake.requests.length
       const waited = waits.length
@@ -279,16 +276,16 @@ it.live('An optional discussion probe reads once with two available points, wait
 
     const unreported = try probe(undefined)
     const available = try loaded(400)
-    const discovered = try probe(() => Response.json({ data: discussion(false, when) }))
-    const partial = try probe(() => Response.json({ data: discussion(true, when) }))
-    const stale = try probe(() => Response.json({ data: discussion(false, "2026-11-13T20:00:00Z") }))
-    const rejected = try probe(() => Response.json({ errors: [{ message: "Unsupported discussion field" }] }))
-    const malformed = try probe(() => Response.json({ data: discussion(false, when), errors: {} }))
+    const discovered = try probe(() => jsonReply({ data: discussion(false, when) }))
+    const partial = try probe(() => jsonReply({ data: discussion(true, when) }))
+    const stale = try probe(() => jsonReply({ data: discussion(false, "2026-11-13T20:00:00Z") }))
+    const rejected = try probe(() => jsonReply({ errors: [{ message: "Unsupported discussion field" }] }))
+    const malformed = try probe(() => jsonReply({ data: discussion(false, when), errors: {} }))
     const expired = try probe(undefined, clock.now() - 1)
-    const checkpointed = try probe(() => Response.json({}, { status: 429 }), clock.now() + 30_000)
-    const forbidden = try probe(() => Response.json({}, { status: 403 }))
-    const resetUnavailable = try probe(() => Response.json({ errors: [{ type: "RATE_LIMITED" }] }))
-    const deferred = try probe(() => Response.json({}, { status: 429, headers: { "retry-after": "1" } }))
+    const checkpointed = try probe(() => jsonReply({}, { status: 429 }), clock.now() + 30_000)
+    const forbidden = try probe(() => jsonReply({}, { status: 403 }))
+    const resetUnavailable = try probe(() => jsonReply({ errors: [{ type: "RATE_LIMITED" }] }))
+    const deferred = try probe(() => jsonReply({}, { status: 429, headers: { "retry-after": "1" } }))
     const low = try loaded(101)
     const reserved = try probe(undefined)
     try same(

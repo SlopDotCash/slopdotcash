@@ -1,18 +1,6 @@
 // spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
 import { allChunked, list, sql } from "@repo/platform/d1"
-import { revisionPermitted } from "../../gen/security__screening.effect.vibe"
 import { type ReportDepositState, type ReportDepositView, depositAmountText, reportDepositPayPath } from "../client/reportDeposit.ts"
-import { revisionEvidence } from "../intake/revision.vibe"
-import { type CaseStanding, type StoredIntake, type SubmissionRow, caseOf, type reporterView, screeningOf } from "../intake/rows.vibe"
-import { githubNumber } from "../privacy/reads.vibe"
-
-type ReporterIntake = ReturnType<typeof reporterView>["intake"]
-
-export interface HeldReport {
-  readonly row: SubmissionRow
-  readonly stored: StoredIntake
-  readonly record: CaseStanding
-}
 
 schema ViewRow { case_id: string; slop_amount: string; paid_at: string | null; outcome: string | null }
 
@@ -38,12 +26,4 @@ export function depositNeeded(deposit: ReportDepositView | null | undefined) {
 
 export function depositNextStep(deposit: ReportDepositView) {
   return `Deposit needed: ${depositAmountText(deposit.amount)}. Your report is saved and waits for its deposit.`
-}
-
-export function heldIntake(intake: ReporterIntake, deposit: ReportDepositView | null | undefined, held: HeldReport): ReporterIntake {
-  if (!depositNeeded(deposit)) return intake
-  const { row, stored, record } = held
-  const screening = { ...screeningOf(stored, githubNumber(row.reporter_github_id), []), depositHeld: true }
-  const evidence = revisionEvidence(row, caseOf(record, stored.report_version), row.reporter_github_id, { object: true, admitted: true })
-  return { ...intake, canRetryScreening: false, canRevise: revisionPermitted(screening, evidence) }
 }

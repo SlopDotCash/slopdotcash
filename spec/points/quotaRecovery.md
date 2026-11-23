@@ -297,7 +297,9 @@ pure val replyValues = tuples(1.to(4), Set(1, 2)).map(t => {
   { attempt: attempt, digest: 2, cost: 2, acceptableSuccess: false, recoverableStatistics: false,
     hint: { ...noHint, status: 429, retryAt: 10000 } },
   { attempt: attempt, digest: 3, cost: 0, acceptableSuccess: false, recoverableStatistics: false,
-    hint: { ...noHint, status: 403, remainingZero: true } })
+    hint: { ...noHint, status: 403, remainingZero: true } },
+  { attempt: attempt, digest: 4, cost: 1, acceptableSuccess: true, recoverableStatistics: false,
+    hint: { ...noHint, status: 404 } })
 }).flatten()
 pure val timeValues = Set(4000, 12000, 16000, 75000, 175000, 181000)
 pure val outputValues = Set({ manifest: 1, receipt: 2, boundManifest: 1, scope: scopeSample, checkedExact: true, ownershipComplete: true, missingMonths: 0 })

@@ -13,6 +13,7 @@ export interface KeeperResult {
   readonly operation: string
   readonly state: string
   readonly transactionId?: string | null
+  readonly transactionIds?: ReadonlyArray<string>
   readonly alreadyCommitted?: boolean
   readonly complete?: boolean
   readonly notAdmitted?: boolean

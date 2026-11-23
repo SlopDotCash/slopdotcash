@@ -1,0 +1,237 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"
+import { sha256Hex } from "@repo/platform/crypto"
+import { implementationCreditActors, isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { githubLinkDestinations, sameRepositoryCommitHints } from "../collect/retained.vibe"
+import { check, correctionClaimCommit, correctionFailure, digestPattern, validActor } from "./derive.vibe"
+import type { CorrectionActor, CorrectionClaim, CorrectionCommit, CorrectionSource, OriginalContributorBinding, OriginalContributorFollowup, OriginalContributorRepair } from "./manifest.vibe"
+import { verifiedHuman } from "./october.vibe"
+
+const sha = /^[a-f0-9]{40}$/u
+const sourceReference = /(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/|(?<![\w/?.:=&-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#)([1-9]\d*)\b/gu
+const reviewedUnbound = "reviewed original commits do not bind their authenticated PR revision"
+
+export interface FollowupScope {
+  readonly anchorSha: string
+  readonly origin: CorrectionActor
+}
+
+export function validParentShas(commit: CorrectionCommit): commit is CorrectionCommit & { readonly parentShas: ReadonlyArray<string> } {
+  const parents = commit.parentShas
+  return parents !== undefined && parents.length === commit.parentCount && new Set(parents).size === commit.parentCount &&
+    parents.every((parent) => sha.test(parent) && parent !== commit.sha)
+}
+
+export function referencesOriginalContributorSource(body: string, repository: string, number: number) {
+  const text = githubLinkDestinations(body).replace(/\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu, " ")
+  return [...text.matchAll(sourceReference)].some((match) =>
+    Number(match[3]) === number && (match[1] ?? match[2] ?? repository).toLowerCase() === repository.toLowerCase())
+}
+
+export effect function originalContributorSource(source: CorrectionSource, originatingActor?: CorrectionActor) {
+  if (originatingActor === undefined) return source
+  try validActor(originatingActor)
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1)
+  try check(source.complete && source.commitCount === source.commits.length && verifiedHuman(originatingActor) && ordinary.length > 0 &&
+    ordinary.every((commit) => implementationCreditActors(source.author, [commit.author])[0]?.id === originatingActor.id), "original primary author is not uniquely verified")
+  return { ...source, author: originatingActor } satisfies CorrectionSource
+}
+
+export effect function reviewedOriginalSource(source: CorrectionSource, accepted: CorrectionSource, binding: OriginalContributorBinding) {
+  const retained = binding.reviewedOriginal
+  if (retained === undefined) return source
+  const { digest: retainedDigest, ...evidence } = retained
+  const { review, bodyReference, commits } = retained
+  const head = commits.at(-1)
+  const metadata = bodyReference?.metadata
+  const bodyActor = metadata?.lastEditedAt === null ? metadata.author : metadata?.editor
+  const acceptedAt = accepted.occurredAt
+  const referenceValid = review !== undefined && bodyReference === undefined
+    ? review.node_id.length > 0 && Number.isSafeInteger(review.id) && review.html_url === `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+      review.commit_id === head?.sha && review.user?.type === "User" && Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
+      acceptedAt !== null && Date.parse(review.submitted_at ?? "") < Date.parse(acceptedAt)
+    : review === undefined && bodyReference?.kind === "pre-merge-body" && bodyReference.headSha === head?.sha &&
+      Number.isFinite(Date.parse(bodyReference.createdAt)) && Date.parse(bodyReference.createdAt) <= Date.parse(metadata?.lastEditedAt ?? "") &&
+      Number.isFinite(Date.parse(bodyReference.headCommittedAt)) && Date.parse(bodyReference.headCommittedAt) <= Date.parse(metadata?.lastEditedAt ?? "") &&
+      metadata !== undefined && metadata.id === source.sourceId && metadata.id === bodyReference.pull.node_id &&
+      bodyReference.pull.html_url === source.sourceUrl && bodyReference.pull.html_url === `https://github.com/${source.repository}/pull/${bodyReference.pull.number}` &&
+      Number.isSafeInteger(bodyReference.pull.number) && bodyReference.pull.number > 0 && bodyReference.pull.state === "closed" &&
+      bodyReference.pull.merged_by?.type === "User" && bodyReference.pull.merged_at !== null && source.occurredAt !== null &&
+      Date.parse(bodyReference.pull.merged_at) === Date.parse(source.occurredAt) && metadata.body === bodyReference.pull.body &&
+      metadata.headRefOid === source.headSha && metadata.headRefOid === bodyReference.pull.head.sha && metadata.updatedAt === bodyReference.pull.updated_at &&
+      metadata.author.id === bodyReference.pull.user.node_id && metadata.author.type === bodyReference.pull.user.type &&
+      Date.parse(metadata.lastEditedAt ?? "") <= Date.parse(bodyReference.pull.updated_at) && Date.parse(metadata.lastEditedAt ?? "") <= Date.parse(bodyReference.pull.merged_at) &&
+      metadata.mergedAt === bodyReference.pull.merged_at && bodyActor?.type === "User" && bodyActor.id === bodyReference.pull.merged_by.node_id &&
+      Number.isFinite(Date.parse(metadata.lastEditedAt ?? "")) && acceptedAt !== null && Date.parse(metadata.lastEditedAt ?? "") < Date.parse(acceptedAt) &&
+      sameRepositoryCommitHints(source.repository, metadata.body).includes(bodyReference.headSha)
+  const currentDigest = try sha256Hex(JSON.stringify(source))
+  const evidenceDigest = try sha256Hex(JSON.stringify(evidence))
+  const bound = binding.exactAcceptance === true && binding.claimIds !== undefined && digestPattern.test(retained.sourceDigest) &&
+    retained.currentSourceDigest === currentDigest && digestPattern.test(retainedDigest) && evidenceDigest === retainedDigest && referenceValid &&
+    commits.some((commit) => commit.sha === binding.originalCommitSha) && new Set(commits.map((commit) => commit.sha)).size === commits.length &&
+    commits.every((commit, index) =>
+      !source.commits.some((current) => current.sha === commit.sha) && commit.parentCount === 1 && validParentShas(commit) &&
+      (index === 0 || commit.parentShas?.[0] === commits[index - 1]?.sha) && commit.author?.kind === "User" && commit.author.id === source.author?.id &&
+      commit.firstAcceptedSourceId === accepted.sourceId && commit.retainedCopy === undefined && commit.files !== undefined && commit.files.length > 0 &&
+      accepted.commits.some((copy) =>
+        copy.sha === commit.sha && copy.author?.id === commit.author?.id && copy.author?.kind === commit.author?.kind && copy.parentCount === commit.parentCount &&
+        JSON.stringify(copy.parentShas) === JSON.stringify(commit.parentShas) && JSON.stringify(copy.files) === JSON.stringify(commit.files)))
+  if (!bound || head === undefined) throw correctionFailure(reviewedUnbound)
+  return { ...source, headSha: head.sha, commitCount: commits.length, commits } satisfies CorrectionSource
+}
+
+effect function referencedFollowup(source: CorrectionSource, accepted: CorrectionSource, binding: OriginalContributorFollowup, acceptedAuthor: CorrectionActor) {
+  const bound = binding.reference
+  if (bound === undefined) return false
+  const { digest: referenceDigest, ...reference } = bound
+  const { pull, target, acknowledgement } = reference
+  const occurredAt = source.occurredAt
+  const computed = try sha256Hex(JSON.stringify(reference))
+  return digestPattern.test(referenceDigest) && digestPattern.test(reference.sourceDigest) && computed === referenceDigest && binding.commits.length === 0 &&
+    pull.node_id === source.sourceId && pull.html_url === source.sourceUrl && pull.head.sha === source.headSha && pull.state === "closed" &&
+    pull.merged_at !== null && occurredAt !== null && Date.parse(pull.merged_at) === Date.parse(occurredAt) && pull.user.type === "User" &&
+    pull.user.node_id === acceptedAuthor.id && target.id === accepted.sourceId && target.url === accepted.sourceUrl &&
+    target.url === `https://github.com/${target.repository}/pull/${target.number}` && target.repository.toLowerCase() === accepted.repository.toLowerCase() &&
+    (referencesOriginalContributorSource(pull.body ?? "", target.repository, target.number) ||
+      (acknowledgement?.user?.type === "User" && acknowledgement.user.node_id === acceptedAuthor.id && Boolean(acknowledgement.node_id) &&
+        Number.isFinite(Date.parse(acknowledgement.created_at ?? acknowledgement.submitted_at ?? "")) &&
+        referencesOriginalContributorSource(acknowledgement.body, target.repository, target.number))) &&
+    source.commits.every((commit) =>
+      commit.parentCount > 1 || (commit.firstAcceptedSourceId === source.sourceId && commit.retainedCopy === undefined &&
+        commit.author?.id === acceptedAuthor.id && commit.author?.kind === acceptedAuthor.kind))
+}
+
+function descendingGraph(source: CorrectionSource, binding: OriginalContributorFollowup) {
+  const graph = new Map(binding.commits.map((commit) => [commit.sha, commit] as const))
+  if (graph.size !== binding.commits.length || !graph.has(source.headSha) ||
+    binding.commits.some((commit) => !sha.test(commit.sha) || commit.parentShas.length === 0 || new Set(commit.parentShas).size !== commit.parentShas.length ||
+      commit.parentShas.some((parent) => !sha.test(parent) || parent === commit.sha))) return undefined
+  const visited = new Set<string>()
+  const pending = [source.headSha]
+  for (let index = 0; index < pending.length; index += 1) {
+    const current = pending[index]
+    if (current === undefined || visited.has(current)) continue
+    visited.add(current)
+    for (const parent of graph.get(current)?.parentShas ?? []) {
+      if (graph.has(parent)) pending.push(parent)
+    }
+  }
+  if (visited.size !== graph.size || graph.has(binding.ancestorSha)) return undefined
+  const completed = new Set<string>()
+  const descends = new Set([binding.ancestorSha])
+  for (let pass = 0; pass < graph.size; pass += 1) {
+    let added = false
+    for (const commit of graph.values()) {
+      if (completed.has(commit.sha) || commit.parentShas.some((parent) => graph.has(parent) && !completed.has(parent))) continue
+      completed.add(commit.sha)
+      if (commit.parentShas.some((parent) => descends.has(parent))) descends.add(commit.sha)
+      added = true
+    }
+    if (!added) break
+  }
+  return completed.size === graph.size ? { graph, descends } : undefined
+}
+
+export effect function isOriginalContributorFollowup(
+  source: CorrectionSource,
+  accepted: CorrectionSource,
+  binding: OriginalContributorFollowup | undefined,
+  claims?: ReadonlyArray<CorrectionClaim>,
+  scoped?: FollowupScope,
+) {
+  const sourceAuthor = source.author
+  const acceptedAuthor = accepted.author
+  const occurredAt = source.occurredAt
+  const acceptedAt = accepted.occurredAt
+  if (binding === undefined || binding.sourceId !== source.sourceId || (binding.ancestorSha !== accepted.headSha && binding.ancestorSha !== scoped?.anchorSha) ||
+    !sha.test(binding.ancestorSha) || source.sourceId === accepted.sourceId || occurredAt === null || acceptedAt === null || occurredAt < acceptedAt ||
+    source.repositoryNodeId !== accepted.repositoryNodeId || !verifiedHuman(sourceAuthor) || !verifiedHuman(acceptedAuthor) ||
+    (sourceAuthor.id !== acceptedAuthor.id && (scoped === undefined || sourceAuthor.id !== scoped.origin.id))) return false
+  if (claims !== undefined && ((claims.length === 0 && scoped === undefined) || claims.some((claim) => claim.sourceId !== source.sourceId))) return false
+  if (binding.reference !== undefined) {
+    if (claims !== undefined) return false
+    return try referencedFollowup(source, accepted, binding, acceptedAuthor)
+  }
+  if (binding.commits.length === 0) return false
+  const walked = descendingGraph(source, binding)
+  if (walked === undefined) return false
+  const { graph, descends } = walked
+  const sameParents = (commit: CorrectionCommit) =>
+    descends.has(commit.sha) && validParentShas(commit) && JSON.stringify(commit.parentShas) === JSON.stringify(graph.get(commit.sha)?.parentShas)
+  return descends.has(source.headSha) && (claims !== undefined
+    ? claims.every((claim) => {
+      const commit = source.commits.find((item) => item.sha === claim.commitSha)
+      return commit !== undefined && correctionClaimCommit(commit) && (commit.files?.some((file) => file.path === claim.path) ?? false) &&
+        commit.firstAcceptedSourceId === source.sourceId && commit.retainedCopy === undefined &&
+        (commit.author?.id === acceptedAuthor.id || (scoped !== undefined && (commit.author === null || commit.author.id === scoped.origin.id))) &&
+        (commit.author === null || commit.author.kind === "User") && sameParents(commit)
+    })
+    : source.commits.every((commit) =>
+      commit.parentCount > 1 || (commit.firstAcceptedSourceId === source.sourceId && commit.retainedCopy === undefined &&
+        commit.author?.id === acceptedAuthor.id && commit.author?.kind === acceptedAuthor.kind && sameParents(commit))))
+}
+
+export effect function isOriginalContributorRepair(repair: OriginalContributorRepair, original: CorrectionSource, accepted: CorrectionSource, commit: CorrectionCommit) {
+  const { digest: referenceDigest, ...reference } = repair.reference
+  const { pull, acknowledgement, acceptingPull } = reference
+  const source = repair.sourceId === original.sourceId ? original : accepted
+  const historical = reference.historicalBodyEdit
+  const text = acknowledgement?.body ?? historical?.diff ?? pull.body ?? ""
+  const bodyEdit = reference.bodyEdit
+  const resolvedHead = reference.resolvedHead
+  const headHints = sameRepositoryCommitHints(source.repository, text)
+  const resolvedOriginalBodyHead = resolvedHead !== undefined && repair.sourceId === original.sourceId && acknowledgement === undefined &&
+    historical === undefined && bodyEdit !== undefined && /^[a-f0-9]{7,39}$/u.test(resolvedHead.hint) && headHints.includes(resolvedHead.hint) &&
+    resolvedHead.commitSha === reference.headSha && reference.headSha.startsWith(resolvedHead.hint)
+  const bodyActor = bodyEdit?.lastEditedAt === null ? bodyEdit.author : bodyEdit?.editor
+  const actorId = acknowledgement?.user?.node_id ?? historical?.editor.id ?? bodyActor?.id
+  const actorType = acknowledgement?.user?.type ?? historical?.editor.type ?? bodyActor?.type
+  const occurredAt = acknowledgement?.created_at ?? acknowledgement?.submitted_at ?? historical?.editedAt ?? bodyEdit?.lastEditedAt ?? pull.updated_at
+  const at = Date.parse(occurredAt)
+  const edited = acknowledgement?.updated_at
+  const originalComment = reference.originalAcknowledgement?.comment
+  const originalPull = reference.originalAcknowledgement?.pull
+  const mergedBy = acceptingPull.merged_by
+  const acceptedAt = accepted.occurredAt
+  const pairedNullRepair = commit.author === null && repair.authorNodeId === null && commit.parentCount <= 1 && repair.sourceId === accepted.sourceId &&
+    historical === undefined && bodyEdit === undefined && originalPull !== undefined && originalPull.node_id === original.sourceId &&
+    originalPull.html_url === original.sourceUrl && Number.isSafeInteger(originalPull.number) && originalPull.number > 0 &&
+    original.sourceUrl.endsWith(`/pull/${originalPull.number}`) && original.repository === accepted.repository &&
+    original.repositoryNodeId === accepted.repositoryNodeId && originalPull.head.sha === original.headSha && originalPull.state === "closed" &&
+    (original.occurredAt === null ? originalPull.merged_at === null : originalPull.merged_at !== null && Date.parse(originalPull.merged_at) === Date.parse(original.occurredAt)) &&
+    originalComment !== undefined && originalComment.user?.node_id === mergedBy?.node_id && originalComment.user?.type === "User" &&
+    originalComment.node_id.length > 0 && originalComment.html_url.startsWith(`${original.sourceUrl}#issuecomment-`) &&
+    /^\d+$/u.test(originalComment.html_url.split("#issuecomment-")[1] ?? "") && originalComment.created_at === originalComment.updated_at &&
+    Number.isFinite(Date.parse(originalPull.created_at)) && Number.isFinite(Date.parse(acceptingPull.created_at ?? "")) &&
+    Date.parse(originalComment.created_at) >= Date.parse(originalPull.created_at) && at >= Date.parse(acceptingPull.created_at ?? "") &&
+    Date.parse(originalComment.created_at) <= at && at <= Date.parse(acceptedAt ?? "") &&
+    referencesOriginalContributorSource(originalComment.body, accepted.repository, acceptingPull.number) &&
+    typeof acknowledgement?.html_url === "string" && acknowledgement.html_url.startsWith(`${accepted.sourceUrl}#issuecomment-`) &&
+    /^\d+$/u.test(acknowledgement.html_url.split("#issuecomment-")[1] ?? "")
+  const author = commit.author
+  const linkedRepair = reference.originalAcknowledgement === undefined && author !== null && repair.authorNodeId === author.id && author.kind === "User" &&
+    /^[A-Za-z0-9_=-]{4,256}$/u.test(author.id) && isCreditEligibleCommitAuthor(author)
+  const computed = try sha256Hex(JSON.stringify(reference))
+  return (repair.sourceId === original.sourceId || repair.sourceId === accepted.sourceId) && repair.commitSha === commit.sha &&
+    (pairedNullRepair || linkedRepair) && Object.keys(reference.sourceDigests).length === 2 &&
+    digestPattern.test(reference.sourceDigests[original.sourceId] ?? "") && digestPattern.test(reference.sourceDigests[accepted.sourceId] ?? "") &&
+    pull.node_id === source.sourceId && Number.isSafeInteger(pull.number) && pull.number > 0 && source.sourceUrl.endsWith(`/pull/${pull.number}`) &&
+    pull.html_url === source.sourceUrl && pull.head.sha === source.headSha && pull.state === "closed" &&
+    (source.occurredAt === null ? pull.merged_at === null : pull.merged_at !== null && Date.parse(pull.merged_at) === Date.parse(source.occurredAt)) &&
+    acceptedAt !== null && actorType === "User" && acceptingPull.node_id === accepted.sourceId && Number.isSafeInteger(acceptingPull.number) &&
+    accepted.sourceUrl.endsWith(`/pull/${acceptingPull.number}`) && acceptingPull.head.sha === accepted.headSha && acceptingPull.html_url === accepted.sourceUrl &&
+    acceptingPull.merged_at !== null && Date.parse(acceptingPull.merged_at) === Date.parse(acceptedAt) && mergedBy !== null && mergedBy.type === "User" &&
+    actorId === mergedBy.node_id && Number.isFinite(at) && at <= Date.parse(pull.updated_at) && (acknowledgement !== undefined || at <= Date.parse(acceptedAt)) &&
+    (historical === undefined || (acknowledgement === undefined && repair.sourceId === accepted.sourceId && historical.id.length > 0 &&
+      historical.deletedAt === null && historical.editor.type === "User" && historical.editor.id === mergedBy.node_id &&
+      historical.createdAt === historical.editedAt && historical.updatedAt === historical.editedAt && historical.diff.length > 0 &&
+      historical.headCommit.sha === reference.headSha && Number.isFinite(Date.parse(historical.headCommit.committedAt)) &&
+      Date.parse(historical.headCommit.committedAt) <= Date.parse(historical.editedAt))) &&
+    (acknowledgement === undefined || acknowledgement.node_id.length > 0) && (edited === undefined || edited === occurredAt) &&
+    (acknowledgement !== undefined || (bodyEdit !== undefined && bodyEdit.id === pull.node_id && bodyEdit.body === pull.body &&
+      bodyEdit.headRefOid === pull.head.sha && bodyEdit.mergedAt === pull.merged_at && bodyEdit.updatedAt === pull.updated_at)) &&
+    digestPattern.test(referenceDigest) && computed === referenceDigest && sha.test(reference.headSha) &&
+    (pairedNullRepair || repair.sourceId === original.sourceId ||
+      referencesOriginalContributorSource(text, original.repository, Number(original.sourceUrl.split("/").at(-1)))) &&
+    (resolvedHead === undefined || resolvedOriginalBodyHead) && (headHints.includes(reference.headSha) || resolvedOriginalBodyHead) &&
+    (reference.headSha === original.headSha || reference.headSha === accepted.headSha)
+}

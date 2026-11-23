@@ -20,7 +20,6 @@ export schema CorrectionCommit {
   readonly deletions: number | null
   readonly firstAcceptedSourceId: string | null
   readonly files?: ReadonlyArray<CorrectionFile>
-  readonly zeroLinePaths?: "empty" | "present"
   readonly retainedCopy?: RetainedCopy
 }
 export schema CorrectionSource {
@@ -35,14 +34,171 @@ export schema CorrectionSource {
   readonly commitCount: number
   readonly commits: ReadonlyArray<CorrectionCommit>
 }
+export schema GitHubActor { readonly node_id: string; readonly login: string; readonly type: string }
+export schema PullHead { readonly sha: string }
+export schema PullBase { readonly sha: string; readonly ref: string }
+export schema GitHubPull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly title: string
+  readonly body: string | null
+  readonly user: GitHubActor
+  readonly merged_by: GitHubActor | null
+  readonly state: string
+  readonly merged_at: string | null
+  readonly closed_at: string | null
+  readonly merge_commit_sha: string | null
+  readonly updated_at: string
+  readonly head: PullHead
+  readonly base: PullBase
+  readonly changed_files: number
+  readonly comments: number
+  readonly review_comments: number
+  readonly commits: number
+}
+export const AcceptingPull = Schema.Struct({ ...GitHubPull.fields, created_at: Schema.optionalKey(Schema.String) })
+export type AcceptingPull = typeof AcceptingPull.Type
+export const CreatedPull = Schema.Struct({ ...GitHubPull.fields, created_at: Schema.String })
+export type CreatedPull = typeof CreatedPull.Type
+export schema GitHubReview {
+  readonly node_id: string
+  readonly id: number
+  readonly html_url: string
+  readonly body: string
+  readonly user: GitHubActor | null
+  readonly submitted_at: string | null
+  readonly state: string
+  readonly commit_id: string
+}
+export schema GitHubComment {
+  readonly node_id: string
+  readonly html_url: string
+  readonly body: string
+  readonly user: GitHubActor | null
+  readonly created_at: string
+  readonly updated_at: string
+  readonly pull_request_review_id?: number | null
+}
+export schema EditActor { readonly id: string; readonly type: string }
+export schema BodyEdit {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: EditActor | null
+  readonly author: EditActor
+}
+export schema AcknowledgementUser { readonly node_id: string; readonly type: string }
+export schema Acknowledgement {
+  readonly node_id: string
+  readonly html_url?: string
+  readonly body: string
+  readonly user: AcknowledgementUser | null
+  readonly created_at?: string
+  readonly updated_at?: string
+  readonly submitted_at?: string | null
+}
+export schema FollowupTarget { readonly id: string; readonly number: number; readonly url: string; readonly repository: string }
+export schema FollowupReference {
+  readonly sourceDigest: string
+  readonly pull: GitHubPull
+  readonly target: FollowupTarget
+  readonly acknowledgement?: Acknowledgement
+  readonly digest: string
+}
+export schema FollowupCommit { readonly sha: string; readonly parentShas: ReadonlyArray<string> }
+export schema OriginalContributorFollowup {
+  readonly sourceId: string
+  readonly ancestorSha: string
+  readonly commits: ReadonlyArray<FollowupCommit>
+  readonly reference?: FollowupReference
+}
+export const SourceDigests = Schema.Record(Schema.String, Schema.String)
+export type SourceDigests = typeof SourceDigests.Type
+export schema OriginalAcknowledgement { readonly pull: CreatedPull; readonly comment: GitHubComment }
+export schema ResolvedHead { readonly hint: string; readonly commitSha: string }
+export schema HeadCommit { readonly sha: string; readonly committedAt: string }
+export schema HistoricalBodyEdit {
+  readonly id: string
+  readonly createdAt: string
+  readonly editedAt: string
+  readonly updatedAt: string
+  readonly deletedAt: null
+  readonly diff: string
+  readonly editor: EditActor
+  readonly headCommit: HeadCommit
+}
+export schema RepairReference {
+  readonly sourceDigests: SourceDigests
+  readonly pull: GitHubPull
+  readonly acceptingPull: AcceptingPull
+  readonly acknowledgement?: Acknowledgement
+  readonly originalAcknowledgement?: OriginalAcknowledgement
+  readonly headSha: string
+  readonly resolvedHead?: ResolvedHead
+  readonly bodyEdit?: BodyEdit
+  readonly historicalBodyEdit?: HistoricalBodyEdit
+  readonly digest: string
+}
+export schema OriginalContributorRepair {
+  readonly sourceId: string
+  readonly commitSha: string
+  readonly authorNodeId: string | null
+  readonly reference: RepairReference
+}
+export schema CopiedClaim {
+  readonly claimId: string
+  readonly originalCommitSha: string
+  readonly acceptedCommitSha: string
+  readonly path: string
+  readonly bindingDigest: string
+}
+export schema ResolutionAcceptance { readonly pull: GitHubPull; readonly sourceDigest: string }
+export schema BodyReference {
+  readonly kind: "pre-merge-body"
+  readonly pull: GitHubPull
+  readonly metadata: BodyEdit
+  readonly headSha: string
+  readonly headCommittedAt: string
+  readonly createdAt: string
+}
+export schema ReviewedOriginal {
+  readonly sourceDigest: string
+  readonly currentSourceDigest: string
+  readonly review?: GitHubReview
+  readonly bodyReference?: BodyReference
+  readonly commits: ReadonlyArray<CorrectionCommit>
+  readonly digest: string
+}
+export const ExactAcceptance = Schema.Literal(true)
+export type ExactAcceptance = typeof ExactAcceptance.Type
+export schema OriginalContributorBinding {
+  readonly exactAcceptance?: ExactAcceptance
+  readonly claimIds?: ReadonlyArray<string>
+  readonly copiedClaims?: ReadonlyArray<CopiedClaim>
+  readonly originatingActor?: CorrectionActor
+  readonly resolutionAcceptance?: ResolutionAcceptance
+  readonly acceptedSourceId?: string
+  readonly followups?: ReadonlyArray<OriginalContributorFollowup>
+  readonly repairs?: ReadonlyArray<OriginalContributorRepair>
+  readonly reviewedOriginal?: ReviewedOriginal
+  readonly originalSourceId: string
+  readonly originalCommitSha: string
+  readonly acceptedCommitSha: string
+  readonly boundPaths: ReadonlyArray<string>
+  readonly bindingDigest: string
+}
 export schema HeldProof { readonly status: "held" }
 export schema CompleteProof {
   readonly status: "complete"
   readonly censusDigest: string
   readonly sources: ReadonlyArray<CorrectionSource>
-  readonly originalContributor?: Schema.Unknown
-  readonly originalContributorParts?: Schema.Unknown
-  readonly independentClaimIds?: Schema.Unknown
+  readonly originalContributor?: OriginalContributorBinding
+  readonly originalContributorParts?: ReadonlyArray<OriginalContributorBinding>
+  readonly independentClaimIds?: ReadonlyArray<string>
   readonly decisionDigest?: string
   readonly expectedClaimIds?: ReadonlyArray<string>
   readonly claims?: ReadonlyArray<CorrectionClaim>
@@ -87,6 +243,7 @@ export interface Collection {
 }
 
 const maximumCollectionBytes = 256 * 1024 * 1024
+const isManifest = Schema.is(CorrectionManifest)
 const receiptSchema = "slop-implementation-correction-collection-v1"
 const unauthorized = "Collection receipt or current registry does not authorize this correction"
 
@@ -114,15 +271,13 @@ effect function parsed(text: string, path: string) {
 }
 
 export effect function collectionOf(manifestText: string, receiptText: string) {
-  const raw = try parsed(manifestText, "manifest.json")
-  const manifest = Schema.decodeUnknownEffect(CorrectionManifest)(raw) catch effect () => {
-    throw refused("Implementation correction: invalid manifest or recording time")
-  }
+  const manifest = try parsed(manifestText, "manifest.json")
+  if (!isManifest(manifest)) throw refused("Implementation correction: invalid manifest or recording time")
   const receipt = Schema.decodeUnknownEffect(CollectionReceipt)(try parsed(receiptText, "collection-receipt.json")) catch effect () => {
     throw refused(unauthorized)
   }
   const bytes = manifestText.endsWith("\n") ? manifestText.slice(0, -1) : manifestText
-  return { manifest, receipt, manifestDigest: try digestOf(raw), chunkDigest: try sha256Hex(bytes) } satisfies Collection
+  return { manifest, receipt, manifestDigest: try digestOf(manifest), chunkDigest: try sha256Hex(bytes) } satisfies Collection
 }
 
 export effect function readCollection(manifestPath: string) {

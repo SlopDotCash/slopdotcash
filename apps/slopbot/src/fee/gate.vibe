@@ -178,7 +178,7 @@ effect function firstAsk(target: FeeTarget, model: FeeGate, facts: FeeFacts, gat
   try (try D1).run(askItem({ pull: feePullOf(pull), projectId: target.projectId, item, stableMinor, askedAt: at }))
   try requireScope(scopedOf(target), "contributor")
   const ways = try waysAt(stableMinor, at)
-  const body = feeNeededComment({ owner: pull.owner, repo: pull.repo, number: pull.number, repositoryId: pull.repositoryId, item, stableMinor, ways })
+  const body = try orDie(Effect.try(() => feeNeededComment({ owner: pull.owner, repo: pull.repo, number: pull.number, repositoryId: pull.repositoryId, item, stableMinor, ways })))
   const commentId = postedAsk(target, gate?.comment_id ?? null, body) catch effect (error) => {
     const _handedBack = handBackLease(pull, at, leaseBefore) catch () => undefined
     throw error

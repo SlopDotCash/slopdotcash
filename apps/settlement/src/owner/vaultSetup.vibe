@@ -63,6 +63,8 @@ function creationRefused(code: "vault_creation_failed" | "vault_creation_invalid
 
 type Fields = Readonly<Record<string, unknown>>
 
+type JsonObject = { readonly [key: string]: Json }
+
 function fieldsOf(value: unknown): Fields | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
 }
@@ -311,8 +313,8 @@ effect function creatorOf(actor: VaultActor, input: VaultSetupInput, terms: Term
 }
 
 type Verified =
-  | { readonly kind: "pending"; readonly provisional: Json | undefined }
-  | { readonly kind: "verified"; readonly record: Json; readonly deployment: ReviewedDeployment; readonly decimals: number }
+  | { readonly kind: "pending"; readonly provisional: JsonObject | undefined }
+  | { readonly kind: "verified"; readonly record: JsonObject; readonly deployment: ReviewedDeployment; readonly decimals: number }
 
 type Attempt<A> = { readonly kind: "skip" } | { readonly kind: "mismatch"; readonly message: string } | { readonly kind: "done"; readonly value: A }
 
@@ -389,9 +391,9 @@ effect function evmUrls(network: NetworkKey) {
   return urls
 }
 
-function chainIdOf(network: NetworkKey): bigint {
+effect function chainIdOf(network: NetworkKey) {
   const facts = NETWORKS[network]
-  return BigInt(facts.family === "evm" ? facts.chainId : 0)
+  return try orDie(Effect.try(() => BigInt(facts.family === "evm" ? facts.chainId : 0)))
 }
 
 effect function evmReviewed(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
@@ -404,13 +406,13 @@ effect function evmReviewed(projectId: string, input: VaultSetupInput, creator: 
   }
   return {
     payoutPolicy: input.scope, family: "evm", network: input.network, owner: resolved.plan.from, asset: resolved.creation.asset,
-    cap: creator.cap.toString(), capDisplay: creator.capDisplay, automatic: input.automatic, chainId: chainIdOf(creator.network).toString(),
+    cap: creator.cap.toString(), capDisplay: creator.capDisplay, automatic: input.automatic, chainId: (try chainIdOf(creator.network)).toString(),
     existingVault: existing, transaction: { from: resolved.plan.from, to: resolved.plan.to, data: resolved.plan.data, value: "0x0" },
   } as const
 }
 
 effect function evmReviewAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields) {
-  provide evmRpc({ urls: try evmUrls(creator.network), chainId: chainIdOf(creator.network) }) {
+  provide evmRpc({ urls: try evmUrls(creator.network), chainId: try chainIdOf(creator.network) }) {
     return try evmReviewed(projectId, input, creator, record)
   }
 }
@@ -487,7 +489,7 @@ effect function evmRegistered(projectId: string, input: VaultSetupInput, creator
 }
 
 effect function evmRegisterAttempt(projectId: string, input: VaultSetupInput, creator: Creator, record: Fields, transactionId: `0x${string}`) {
-  provide evmRpc({ urls: try evmUrls(creator.network), chainId: chainIdOf(creator.network) }) {
+  provide evmRpc({ urls: try evmUrls(creator.network), chainId: try chainIdOf(creator.network) }) {
     return try evmRegistered(projectId, input, creator, record, transactionId)
   }
 }
@@ -513,7 +515,7 @@ effect function evmRegister(projectId: string, input: VaultSetupInput, creator: 
       continue
     }
     if (read.kind === "unmined") return { kind: "pending", provisional: undefined } satisfies Verified
-    const record: Json = {
+    const record: JsonObject = {
       ...(resolved.record as Readonly<Record<string, Json>>), programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, rotationDelaySeconds: null,
       vault: read.vault, owner: resolved.plan.from, asset: resolved.creation.asset, deploymentTransaction: transactionId,
     }
@@ -672,7 +674,7 @@ effect function solanaRegister(projectId: string, input: VaultSetupInput, creato
     }
     if (read.kind === "pending") return { kind: "pending", provisional: undefined } satisfies Verified
     const { resolved } = read
-    const record: Json = {
+    const record: JsonObject = {
       ...(resolved.record as Readonly<Record<string, Json>>), factory: null, factoryCodeSha256: null, registrar: null,
       projectPda: resolved.plan.project, vault: resolved.plan.vault, owner: creator.owner, asset: creator.asset, deploymentTransaction: transactionId,
     }
@@ -721,8 +723,8 @@ export effect function registrySession(project: VaultProject, expected: number) 
 }
 
 export type VaultAnswer =
-  | { readonly status: "pending"; readonly provisional?: Json }
-  | { readonly status: "registered"; readonly deployment: Json; readonly project: Json; readonly revision: number; readonly notice?: string }
+  | { readonly status: "pending"; readonly provisional?: JsonObject }
+  | { readonly status: "registered"; readonly deployment: Fields; readonly project: Fields; readonly revision: number; readonly notice?: string }
 
 export const REQUEST_ID = 1
 
@@ -777,7 +779,7 @@ effect function existingAnswer(context: RegisterContext, request: RequestRow) {
   try observe({ ...existing.deployment, revision: project.view.revision })
   try closeSaved(session, request.network, request.tx)
   const deployment = deploymentsOf(project.terms, input.scope).find((entry) => textOf(fieldsOf(entry)?.deploymentTransaction) === request.tx)
-  return { status: "registered", deployment: (deployment ?? {}) as Json, project: project.terms.manifest as Json, revision: project.view.revision } satisfies VaultAnswer
+  return { status: "registered", deployment: fieldsOf(deployment) ?? {}, project: project.terms.manifest, revision: project.view.revision } satisfies VaultAnswer
 }
 
 effect function chainEvidence(context: RegisterContext, terms: Terms, transactionId: string) {
@@ -841,11 +843,12 @@ export effect function registerBegun(context: RegisterContext) {
   try session.send({ type: "commitRegistration", requestId, saved: true })
   try closeSaved(session, begun.network, begun.tx)
   try observe({ ...evidence.deployment, revision: appended.project.revision })
-  const now = termsOf(fieldsOf(appended.manifest) ?? {}).reward
+  const manifest = fieldsOf(appended.manifest) ?? {}
+  const now = termsOf(manifest).reward
   const notice = input.scope === "ordinary" && textOf(now.monthlyCapMinor) !== textOf(terms.reward.monthlyCapMinor)
     ? `Creation used a monthly cap of ${textOf(terms.reward.monthlyCapDisplay) ?? ""}. The project now uses ${textOf(now.monthlyCapDisplay) ?? ""}. Use the automatic payment controls below to apply the new cap.`
     : undefined
-  return { status: "registered", deployment: evidence.record, project: appended.manifest, revision: appended.project.revision, ...(notice === undefined ? {} : { notice }) } satisfies VaultAnswer
+  return { status: "registered", deployment: evidence.record, project: manifest, revision: appended.project.revision, ...(notice === undefined ? {} : { notice }) } satisfies VaultAnswer
 }
 
 effect function reviewStep(project: VaultProject, actor: VaultActor, input: VaultSetupInput) {

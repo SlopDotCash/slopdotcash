@@ -1,15 +1,16 @@
 // spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { assert, layer } from "@effect/vitest"
-import { Response as WebResponse } from "miniflare"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { GitHub, github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
-import { internet } from "@repo/platform/testing/internet"
-import { asFetch } from "@repo/platform/testing/quotes"
 import { diagnosedIntake, reached } from "../src/import/diagnostics.vibe"
 import { background, importServed } from "./support/catchup/importWorker.vibe"
 
 module host {
+  import { Response as WebResponse } from "miniflare"
+  import type { Fetcher } from "@repo/platform/bindings"
+  import { internet } from "@repo/platform/testing/internet"
+  import { asFetch } from "@repo/platform/testing/quotes"
   import type { HistoricalValueBinding } from "../src/import/routes.vibe"
   export type Answer = (correlation: string) => unknown
   export interface Recorder {
@@ -42,8 +43,13 @@ module host {
       body: "{\"mode\":\"single\"}",
     })
   }
+  /** @throws {never} */
+  export function answering(status: number, headers: Readonly<Record<string, string>>, message: string): Fetcher {
+    const world = internet({ github: async () => WebResponse.json({ message }, { status, headers }) })
+    return { fetch: asFetch(world.handler) }
+  }
 }
-import { type Answer, intakeRequest, recorder } from host
+import { type Answer, answering, intakeRequest, recorder } from host
 
 const correlation = "a1".repeat(32)
 const other = "b2".repeat(32)
@@ -75,13 +81,32 @@ effect function logged<A, E, R>(program: A!E!R) {
 }
 
 function githubAnswering(status: number, headers: Readonly<Record<string, string>>, message: string) {
-  const world = internet({ github: async () => WebResponse.json({ message }, { status, headers }) })
-  return Layer.provide(github({ userAgent: "slopbot" }), outboundVia({ fetch: asFetch(world.handler) }))
+  return Layer.provide(github({ userAgent: "slopbot" }), outboundVia(answering(status, headers, message)))
 }
 
 const sourceRead = effect {
   try reached("source-repository", 0, 1)
   return try (try GitHub).json("/repos/ada/private", Schema.Unknown)
+}
+
+const observedReset = 1700000000
+
+effect function refusedRead(status: number, headers: Readonly<Record<string, string>>, message: string) {
+  const refused = try logged(Effect.provide(diagnosedIntake(correlation, sourceRead), githubAnswering(status, headers, message)))
+  return {
+    reply: Exit.isSuccess(refused.outcome) ? refused.outcome.value : undefined,
+    retained: try Effect.try(() => refused.lines.filter((line) => line.includes("historical-intake-failure")).map((line) => JSON.parse(line) as unknown)),
+    leaked: refused.lines.some((line) => line.includes("PRIVATE")),
+  }
+}
+
+effect function refusalRetained(status: 403 | 429, message: string, sourceReadRefusal: unknown) {
+  const terminal = { stage: "source-repository", sourceIndex: 0, sourceCount: 1, errorName: "GitHubError", httpStatus: status, messageSha256: try sha256Hex(message) }
+  return {
+    reply: { status: 409, correlation, diagnostic: terminal },
+    retained: [{ event: "historical-intake-failure", ...terminal, sourceReadRefusal }],
+    leaked: false,
+  }
 }
 
 layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
@@ -108,23 +133,20 @@ layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
     })
   })
 
-  it.effect('A source read refused with "Resource not accessible by integration" is retained as access-denied by its digest, never its message, and a malformed correlation is refused (spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once")', () => effect {
-    const message = "Resource not accessible by integration PRIVATE-SOURCE-TEXT"
-    const refused = try logged(Effect.provide(diagnosedIntake(correlation, sourceRead), githubAnswering(403, { "x-ratelimit-remaining": "4999" }, message)))
-    const reply = Exit.isSuccess(refused.outcome) ? refused.outcome.value : undefined
-    const retained = try Effect.try(() => refused.lines.filter((line) => line.includes("historical-intake-failure")).map((line) => JSON.parse(line) as unknown))
-    const malformed = try exit(Effect.provide(diagnosedIntake("not-a-correlation", sourceRead), githubAnswering(403, {}, message)))
-    const digest = try sha256Hex(message)
-    const terminal = { stage: "source-repository", sourceIndex: 0, sourceCount: 1, errorName: "GitHubError", httpStatus: 403, messageSha256: digest }
+  it.effect('A source read refused with "Resource not accessible by integration" is retained as access-denied, a 429 read as rate-limited and a 403 read with no remaining quota as primary-rate-limit, each by its digest, never its message, and a malformed correlation is refused (spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once")', () => effect {
+    const denied = "Resource not accessible by integration PRIVATE-SOURCE-TEXT"
+    const throttled = "API rate limit exceeded PRIVATE-SOURCE-TEXT"
+    const exhausted = "API rate limit exceeded for installation PRIVATE-SOURCE-TEXT"
+    const malformed = try exit(Effect.provide(diagnosedIntake("not-a-correlation", sourceRead), githubAnswering(403, {}, denied)))
     try same({
-      reply,
-      retained,
-      leaked: refused.lines.some((line) => line.includes("PRIVATE")),
+      denied: try refusedRead(403, { "x-ratelimit-remaining": "4999" }, denied),
+      throttled: try refusedRead(429, { "x-ratelimit-remaining": "12", "x-ratelimit-reset": String(observedReset), "retry-after": "30" }, throttled),
+      exhausted: try refusedRead(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(observedReset) }, exhausted),
       malformed: Exit.isFailure(malformed),
     }, {
-      reply: { status: 409, correlation, diagnostic: terminal },
-      retained: [{ event: "historical-intake-failure", ...terminal, sourceReadRefusal: { category: "access-denied", remaining: 4999, resetAt: null, retryAfterSeconds: null } }],
-      leaked: false,
+      denied: try refusalRetained(403, denied, { category: "access-denied", remaining: 4999, resetAt: null, retryAfterSeconds: null }),
+      throttled: try refusalRetained(429, throttled, { category: "rate-limited", remaining: 12, resetAt: observedReset, retryAfterSeconds: 30 }),
+      exhausted: try refusalRetained(403, exhausted, { category: "primary-rate-limit", remaining: 0, resetAt: observedReset, retryAfterSeconds: null }),
       malformed: true,
     })
   })

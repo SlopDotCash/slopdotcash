@@ -85,10 +85,6 @@ export effect function finishSavedVaultCreations() {
   return { registered, waiting, ended } satisfies SavedSweep
 }
 
-export function resetSavedSweep() {
-  sweep.nextAt = 0
-}
-
 export effect function sweepSavedVaultCreations() {
   const now = try Clock.currentTimeMillis
   if (now < sweep.nextAt) return

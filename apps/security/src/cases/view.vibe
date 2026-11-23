@@ -5,8 +5,7 @@ import type { Json } from "@repo/ports/backend"
 import type { PrivateCase } from "../../gen/security__cases.ts"
 import { awardOpen, canAppeal, canRejectLink, mayRequestReceiptCheck, receiptOpen, routineAppealable } from "../../gen/security__cases.effect.vibe"
 import { assessmentRead } from "../assessment/routes.vibe"
-import type { ReportDepositView } from "../client/reportDeposit.ts"
-import { depositNextStep, depositNeeded, depositView, heldIntake } from "../deposit/view.vibe"
+import { depositNextStep, depositNeeded, depositView } from "../deposit/view.vibe"
 import { reporterView, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { routineProofNextAction } from "../routine/reasons.ts"
@@ -119,13 +118,13 @@ effect function nextStep(observed: Observed, payment: PaymentView): NextStep!! {
   return { text: "No action needed.", dueAt: null }
 }
 
-effect function intakeOf(record: CaseRecord, model: PrivateCase, deposit: ReportDepositView | null) {
+effect function intakeOf(record: CaseRecord, model: PrivateCase) {
   const link = try first(IntakeLink, sql`SELECT submission_id FROM security_submission_intake WHERE case_id = ${record.row.id}`)
   if (link === undefined) return null
   const saved = try submission(link.submission_id)
   const stored = try storedIntake(link.submission_id)
   if (saved === undefined || stored === undefined || model.submission !== "Verified") return null
-  return heldIntake(reporterView(saved, stored, record.row, try Clock.currentTimeMillis).intake, deposit, { row: saved, stored, record: record.row })
+  return reporterView(saved, stored, record.row, try Clock.currentTimeMillis).intake
 }
 
 function eventView(event: EventRow) {
@@ -179,7 +178,7 @@ export effect function caseView(observed: Observed, viewerGithubId: string, incl
   const shared = {
     ...base,
     advisory,
-    intake: try intakeOf(record, observed.model, deposit),
+    intake: try intakeOf(record, observed.model),
     receiptState: row.receipt_state,
     remediationState: row.remediation_state,
     disclosureState: row.disclosure_state,

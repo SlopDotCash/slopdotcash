@@ -23,7 +23,8 @@ effect function transactionRecords(program: Address, project: Address, signature
   if (blockTime === undefined || !Number.isSafeInteger(fetched.slot) || !Number.isSafeInteger(blockTime)) throw new DepositReadFailed({ message: "Finalized transaction time unavailable" })
   const deposits = solanaDeposits(fetched, program, project)
   if (deposits.kind === "malformed") throw new DepositReadFailed({ message: deposits.issue })
-  return deposits.value.map((deposit) => ({ transactionId: signature, eventIndex: deposit.index, depositor: deposit.depositor, amount: deposit.amount, blockNumber: BigInt(fetched.slot), blockTime }) satisfies VaultDepositRecord)
+  const blockNumber = try orDie(Effect.try(() => BigInt(fetched.slot)))
+  return deposits.value.map((deposit) => ({ transactionId: signature, eventIndex: deposit.index, depositor: deposit.depositor, amount: deposit.amount, blockNumber, blockTime }) satisfies VaultDepositRecord)
 }
 
 effect function listedRecords(program: Address, project: Address, entry: { readonly signature: Signature; readonly err: boolean }, session: SolanaDepositSession) {

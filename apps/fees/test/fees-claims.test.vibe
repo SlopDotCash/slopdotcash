@@ -58,6 +58,10 @@ const vaultAbi = parseAbi([
   "function accruedFees() view returns (uint128)",
 ])
 const tokenAbi = parseAbi(["function mint(address to, uint256 amount)", "function approve(address spender, uint256 amount) returns (bool)", "function balanceOf(address owner) view returns (uint256)"])
+
+function balanceOf(owner: Address) {
+  return encodeFunctionData({ abi: tokenAbi, functionName: "balanceOf", args: [owner] })
+}
 const nativeLimits = { perTransaction: 1_000_000_000_000_000n, perDay: 10_000_000_000_000_000n, additionalFeeReserve: 0n }
 const kyber = { clientId: kyberswap.clientId, buyback: undefined }
 const tokens: ReadonlyArray<TokenFact> = [{ address: usdc, asset: "TargetStable" }]
@@ -178,7 +182,7 @@ function claimChain(fact: VaultFact) {
     const shape: ConversionChain.Shape = {
       balance: (token) => Effect.provideContext(effect {
         const held = Effect.mapError(effect {
-          return word(try (try EvmRpc).call({ to: token as Address, data: encodeFunctionData({ abi: tokenAbi, functionName: "balanceOf", args: [(try FeeChain).wallet as Address] }), block: "latest" }))
+          return word(try (try EvmRpc).call({ to: token as Address, data: balanceOf((try FeeChain).wallet as Address), block: "latest" }))
         }, (error) => new ChainUnavailable({ operation: "balance", detail: error._tag }))
         const balance = try held
         if (balance === undefined) throw new ChainUnavailable({ operation: "balance", detail: "the token answered a malformed balance" })
@@ -254,7 +258,7 @@ effect function vaultWord(name: "freeBalance" | "reservedPrincipal" | "reservedF
 
 effect function walletBalance() {
   const { escrow } = try Fixture
-  return word(try promise(() => called(escrow.chain, usdc, encodeFunctionData({ abi: tokenAbi, functionName: "balanceOf", args: [escrow.wallet.address] }))))
+  return word(try promise(() => called(escrow.chain, usdc, balanceOf(escrow.wallet.address))))
 }
 
 effect function act(from: (escrow: Escrow) => Account, to: (escrow: Escrow) => Address, data: Hex) {
@@ -277,7 +281,7 @@ interface Ahead { readonly from: (escrow: Escrow) => Account; readonly to: (escr
 effect function ahead(sends: ReadonlyArray<Ahead>) {
   const { escrow } = try Fixture
   for (const [index, send] of sends.entries()) {
-    const priority = 50_000_000_000n - BigInt(index) * 5_000_000_000n
+    const priority = 50_000_000_000 - index * 5_000_000_000
     try promise(() => escrow.chain.rpc("eth_sendTransaction", [{ from: send.from(escrow).address, to: send.to(escrow), data: send.data, maxPriorityFeePerGas: toHex(priority), maxFeePerGas: toHex(500_000_000_000n) }]))
   }
   try promise(() => escrow.chain.mine(1))

@@ -24,7 +24,7 @@ import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { type MonthlyEntry, SOURCE_SEQUENCE_CALL, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, monthlyDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
 import { readSignedType2 } from "../src/chain/evm/transactions.ts"
 import { accountDiscriminator } from "../src/chain/solana/accounts.ts"
-import { type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../src/chain/solana/allocationRoot.ts"
+import { type AllocationTree, type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../src/chain/solana/allocationRoot.ts"
 import { type Digest, type U64, digestBytes, hex, i64, u64 } from "../src/chain/solana/bytes.ts"
 import { solanaMonthlyMessage } from "../src/chain/solana/messages.ts"
 import { awardAddress, awardId as solanaAwardId, bindingAddress, configAddress, keyBytes, monthAddress, projectAddress, settledAddress, vaultAddress } from "../src/chain/solana/pda.ts"
@@ -698,7 +698,8 @@ const solanaProject = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 const solanaGenesis = NETWORKS[solanaNetwork].genesisHash
 const networkDomain = "e".repeat(64)
 const BINDING_DELAY = 86_400n
-const CHAIN_START = 1_795_000_000
+const CHAIN_START_AT = 1_795_000_000n
+const CHAIN_START = Number(CHAIN_START_AT)
 const FEE = 5_000n
 const RENT = 2_000_000n
 const PAYER_BALANCE = 1_000_000_000n
@@ -718,7 +719,7 @@ const paySource = bytesToHex(sha256(new TextEncoder().encode("source:keeper-sola
 const payAward = solanaAwardId(solanaProjectPda, paySource)
 const payAwardAddress = awardAddress(solanaProgram, solanaProjectPda, payAward)
 const monthPeriod = parsePeriod("2026-10") as Period
-const FROZEN_AT = BigInt(CHAIN_START - 1_000)
+const FROZEN_AT = CHAIN_START_AT - 1_000n
 
 function le64(value: bigint) {
   const bytes = new Uint8Array(8)
@@ -747,24 +748,23 @@ function awardAccount(paid: boolean): FakeAccount {
   const fee = ordinaryFeeBase(payGross)
   return programAccount(anchored("Obligation", 145, [
     [8, le64(payGross)], [16, digestBytes(paySource)], [48, keyBytes(solanaProjectPda)], [80, digestBytes(payAward)], [112, le64(payActor)],
-    [120, le64(payGross - fee)], [128, le64(fee)], [136, Uint8Array.of(paid ? 1 : 0)], [137, le64(BigInt(CHAIN_START - 10))],
+    [120, le64(payGross - fee)], [128, le64(fee)], [136, Uint8Array.of(paid ? 1 : 0)], [137, le64(CHAIN_START_AT - 10n)],
   ]))
 }
 
-const monthEntries: ReadonlyArray<SolanaEntry> = [1, 2, 3, 4, 5].map((index) => ({
-  actor: u64(600n + BigInt(index)) as U64,
+const monthEntries: ReadonlyArray<SolanaEntry> = [1n, 2n, 3n, 4n, 5n].map((index) => ({
+  actor: u64(600n + index) as U64,
   gross: u64(1_000_000n) as U64,
   source: bytesToHex(sha256(new TextEncoder().encode(`source:keeper-month-${index}`))) as Digest,
 }))
 
-function monthTree() {
+effect function monthTree() {
   const built = solanaAllocationRoot(monthEntries)
-  if (built.kind === "refused") throw new Error(`allocation refused: ${built.issue}`)
+  if (built.kind === "refused") return try die(new Error(`allocation refused: ${built.issue}`))
   return built.tree
 }
 
-function fixtureAccounts() {
-  const tree = monthTree()
+function fixtureAccounts(tree: AllocationTree) {
   const month = monthAddress(solanaProgram, solanaProjectPda, monthPeriod)
   return new Map<string, FakeAccount>([
     [solanaProgram, { owner: "BPFLoader2111111111111111111111111111111111", executable: true, data: solanaCode }],
@@ -839,7 +839,7 @@ function solanaPolicy() {
 }
 
 const SolanaStarted = Layer.effect(SolanaBench, effect {
-  const chain: SolanaChain = { accounts: fixtureAccounts(), statuses: new Map(), landed: new Map(), sent: new Map(), asked: [], genesis: solanaGenesis, chainTime: CHAIN_START, blockhashes: 0, seedReads: 0 }
+  const chain: SolanaChain = { accounts: fixtureAccounts(try monthTree()), statuses: new Map(), landed: new Map(), sent: new Map(), asked: [], genesis: solanaGenesis, chainTime: CHAIN_START, blockhashes: 0, seedReads: 0 }
   const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
   const rpc = try acquireRelease(promise(() => serve(async (request) => {
     const call = await request.json() as RpcCall
@@ -900,7 +900,7 @@ effect function solanaGas() {
 
 effect function publishSolanaMonth() {
   const { published } = try SolanaBench
-  const tree = monthTree()
+  const tree = try monthTree()
   const frozenAt = i64(FROZEN_AT)
   if (frozenAt === undefined) return try die(new Error("freeze time outside i64"))
   const message = solanaMonthlyMessage({ program: solanaProgram, project: solanaProjectPda, period: monthPeriod, root: tree.root, total: tree.total, frozenAt, network: networkDomain as Digest })

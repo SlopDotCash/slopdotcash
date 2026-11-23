@@ -18,7 +18,7 @@ export { type RepositoryIdentity, repositoryIdentity } from "../profiles/identit
 export { ProjectionInvalid, assembleProjection } from "../publication/projections.vibe"
 export { pointRevisionId } from "../kernels/records/ids.vibe"
 export type { RevisionBody } from "../kernels/records/canonical.ts"
-export { isCreditEligibleCommitAuthor } from "../kernels/scoring/lines.ts"
+export { implementationCreditActors, isCreditEligibleCommitAuthor } from "../kernels/scoring/lines.ts"
 export { type ScoreTier, scoreTiers, scoreTierThirds } from "../kernels/scoring/tiers.ts"
 
 export const api: ReadonlyArray<AnyRoute> = [...journal, ...disputes, ...protectedMonths]

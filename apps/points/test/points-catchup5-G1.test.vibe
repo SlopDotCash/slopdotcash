@@ -4,6 +4,7 @@ import { settableClock } from "@repo/platform/testing/clock"
 import type { GitHubFake } from "@repo/platform/testing/github"
 import { Ingestion, ingestion } from "../src/ingestion/read.vibe"
 import { type SearchPage, collectSearch, searchRange } from "../src/ingestion/search.vibe"
+import { type Reply, jsonReply, limited, serverError, textReply, validationFailed } from "./support/catchup3-e2/replies.ts"
 import { fetcherOf, repository, seeded, start, statuses } from "./support/u3/github.ts"
 
 const repoPath = `/repos/${repository}`
@@ -16,14 +17,11 @@ function exact(method: string, path: string) {
   return new RegExp(`^${`${method} ${path}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u")
 }
 
-function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<() => Response>) {
+function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<Reply>) {
   for (const reply of replies) fake.alterNext(match, reply)
 }
 
-const serverError = () => new Response("internal error", { status: 500 })
-const validationFailed = () => Response.json({ message: "Validation Failed" }, { status: 422 })
-const gatewayFailed = () => new Response("bad gateway", { status: 502 })
-const limited = () => new Response("limited", { status: 429, headers: { "retry-after": "3" } })
+const gatewayFailed = () => textReply("bad gateway", { status: 502 })
 
 it.live('Per-item list pages retry two server errors and an exact commit file page two gateway errors on budgets of their own (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
   const clock = settableClock(start)
@@ -64,7 +62,7 @@ it.live('Per-item list pages retry two server errors and an exact commit file pa
     return { outcome, statuses: statuses(fake, from), waits: waits.slice(waited) }
   }
 
-  effect function scripted(client: HttpClient.HttpClient, path: string, replies: ReadonlyArray<() => Response>) {
+  effect function scripted(client: HttpClient.HttpClient, path: string, replies: ReadonlyArray<Reply>) {
     answers(fake, exact("GET", path), replies)
     const answer = try read(client, `${authority}${path}`)
     return { statuses: answer.statuses, waits: answer.waits }
@@ -85,10 +83,10 @@ it.live('Per-item list pages retry two server errors and an exact commit file pa
   const commitFilesUrl = `${authority}${commitFiles}`
   const finalBody = "GitHub still cannot serve the commit file page"
   const commit = JSON.stringify({ sha: world.commit, files: [{ filename: "source.ts" }] })
-  const recovered = () => new Response(commit, { status: 200, headers: { "content-type": "application/json" } })
+  const recovered = () => textReply(commit, { status: 200, headers: { "content-type": "application/json" } })
 
   const outcome = try scenario({}, (client) => effect {
-    const recoveredLists = try Effect.forEach(itemLists, (path) => scripted(client, path, [serverError, serverError, () => Response.json([{ id: 1 }])]))
+    const recoveredLists = try Effect.forEach(itemLists, (path) => scripted(client, path, [serverError, serverError, () => jsonReply([{ id: 1 }])]))
     const immediate = try Effect.forEach(otherPages, (path) => scripted(client, path, [serverError]))
     const separateBudgets = try Effect.forEach([
       [commitFiles, [gatewayFailed, validationFailed, gatewayFailed]],
@@ -97,7 +95,7 @@ it.live('Per-item list pages retry two server errors and an exact commit file pa
       answers(fake, exact("GET", path), [...failures, recovered])
       return try read(client, `${authority}${path}`)
     })
-    answers(fake, exact("GET", commitFiles), [gatewayFailed, gatewayFailed, () => new Response(finalBody, { status: 502, statusText: "Still unavailable" })])
+    answers(fake, exact("GET", commitFiles), [gatewayFailed, gatewayFailed, () => textReply(finalBody, { status: 502, statusText: "Still unavailable" })])
     const persistent = try read(client, commitFilesUrl)
     answers(fake, exact("GET", commitFiles), [gatewayFailed, limited, validationFailed, gatewayFailed, limited, limited, limited, limited])
     const quotaKept = try read(client, commitFilesUrl)

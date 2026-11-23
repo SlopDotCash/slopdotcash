@@ -40,11 +40,16 @@ export interface RateLimitOptions {
   readonly period: 10 | 60;
 }
 
+export interface EntrypointBinding {
+  readonly worker: string;
+  readonly entrypoint: string;
+}
+
 export interface Bindings {
   readonly d1?: Readonly<Record<string, string>>;
   readonly r2?: ReadonlyArray<string>;
   readonly vars?: Readonly<Record<string, string>>;
-  readonly services?: Readonly<Record<string, Handler>>;
+  readonly services?: Readonly<Record<string, Handler | EntrypointBinding>>;
   readonly queues?: Queues;
   readonly ratelimits?: Readonly<Record<string, RateLimitOptions>>;
   readonly email?: Readonly<Record<string, true | MailSink | MailBinding>>;
@@ -296,7 +301,7 @@ function bindingsOf(worker: string, options: Bindings, namespaces: { next: numbe
     ...Object.fromEntries(Object.entries(options.d1 ?? {}).map(([binding, name]) => [binding, { type: "d1" as const, id: name, name }])),
     ...Object.fromEntries((options.r2 ?? []).map((binding) => [binding, { type: "r2" as const, name: binding }])),
     ...Object.fromEntries(Object.entries(options.vars ?? {}).map(([binding, value]) => [binding, { type: "text" as const, value }])),
-    ...Object.fromEntries(Object.entries(options.services ?? {}).map(([binding, handle]) => [binding, fetcher(handle)])),
+    ...Object.fromEntries(Object.entries(options.services ?? {}).map(([binding, service]) => [binding, typeof service === "function" ? fetcher(service) : { type: "worker" as const, worker: service.worker, exportName: service.entrypoint }])),
     ...Object.fromEntries(Object.entries(options.queues?.producers ?? {}).map(([binding, name]) => [binding, { type: "queue" as const, name }])),
     ...Object.fromEntries(Object.entries(options.ratelimits ?? {}).map(([binding, simple]) => [binding, { type: "rate-limit" as const, namespace: String(namespaces.next++), simple }])),
     ...Object.fromEntries(Object.entries(options.durableObjects ?? {}).map(([binding, exportName]) => [binding, { type: "durable-object" as const, worker, exportName }])),

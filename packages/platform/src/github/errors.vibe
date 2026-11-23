@@ -2,8 +2,8 @@
 import { boundedBytes } from "../browser.vibe"
 
 export error NotFound { path: string }
-export error GitHubRefused { status: RefusalStatus; path: string; message: string; remaining: number | null }
-export error RateLimited { status: number; remaining: number | null; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error GitHubRefused { status: RefusalStatus; path: string; message: string; remaining: number | null; resetAt: number | null; retryAfterSeconds: number | null }
+export error RateLimited { status: number; path: string; message: string; remaining: number | null; observedResetAt: number | null; observedRetryAfterSeconds: number | null; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
 export error GitHubUnavailable { status?: number; path: string }
 export error GitHubMalformed { path: string; issue: string }
 
@@ -33,11 +33,15 @@ export function secondaryLimitMessage(message: unknown): boolean {
   return typeof message === "string" && secondaryLimit.test(message)
 }
 
-export function remainingOf(headers: ResponseHeaders): number | null {
-  const value = headers["x-ratelimit-remaining"] ?? ""
+function integerOf(headers: ResponseHeaders, name: string): number | null {
+  const value = headers[name] ?? ""
   if (!integerHeader.test(value)) return null
-  const remaining = Number(value)
-  return Number.isSafeInteger(remaining) ? remaining : null
+  const integer = Number(value)
+  return Number.isSafeInteger(integer) ? integer : null
+}
+
+export function remainingOf(headers: ResponseHeaders): number | null {
+  return integerOf(headers, "x-ratelimit-remaining")
 }
 
 effect function messageOf(response: HttpClientResponse.HttpClientResponse) {
@@ -53,7 +57,14 @@ export effect function refusalMessage(response: HttpClientResponse.HttpClientRes
 }
 
 export function refused(status: RefusalStatus, path: string, headers: ResponseHeaders, message: string): GitHubRefused {
-  return new GitHubRefused({ status, path, message: message.slice(0, messageLength), remaining: remainingOf(headers) })
+  return new GitHubRefused({
+    status,
+    path,
+    message: message.slice(0, messageLength),
+    remaining: remainingOf(headers),
+    resetAt: integerOf(headers, "x-ratelimit-reset"),
+    retryAfterSeconds: integerOf(headers, "retry-after"),
+  })
 }
 
 export function isRefusal(status: number): status is RefusalStatus {
@@ -83,14 +94,18 @@ export function rateLimitHints(headers: ResponseHeaders, nowMillis: number): Rat
   return { primaryDelay: reset === undefined ? 0 : Math.max(0, reset - nowMillis + 1_000), retryAfter: usableRetryAfter(headers) ?? 0 }
 }
 
-export function rateLimited(status: number, headers: ResponseHeaders, nowMillis: number, secondaryMessage = false): RateLimited {
+export function rateLimited(status: number, headers: ResponseHeaders, nowMillis: number, path: string, message: string, secondaryMessage = false): RateLimited {
   const hints = rateLimitHints(headers, nowMillis)
   const hinted = usableReset(headers) !== undefined || usableRetryAfter(headers) !== undefined
   const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
   const delay = Math.max(hints.primaryDelay, hints.retryAfter)
   return new RateLimited({
     status,
+    path,
+    message: message.slice(0, messageLength),
     remaining: remainingOf(headers),
+    observedResetAt: integerOf(headers, "x-ratelimit-reset"),
+    observedRetryAfterSeconds: integerOf(headers, "retry-after"),
     ...hints,
     ...(delay > 0 ? { wait: delay } : status === 429 || secondaryMessage ? { wait: unhintedWait } : {}),
     ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(delay / 1_000)) } : {}),

@@ -12,10 +12,11 @@ import { type BackendVars, backend, backendServices } from "@repo/backend/live"
 import { AuthorityLive, EmailConsentLive, EmailEnrollmentLive, MembersLive, ProjectAudienceLive, ReferralAttributionsLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive } from "@repo/backend/ports"
 import { noticePorts } from "@repo/operations/live"
 import { contributorAudience } from "@repo/points/live"
-import { AccessJournalLive, AuditLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ScanRequestsLive, type SecurityEnv, securityBindings } from "@repo/security/live"
+import { AccessJournalLive, AuditLive, EnforcementRowsLive, ProjectEventsLive, PublicSecurityLive, ScanRequestsLive, SecurityProgramPublicationLive, type SecurityEnv, securityBindings } from "@repo/security/live"
 import { BindingAttemptsLive } from "../../../src/payments/bindingAttempts.vibe"
 import { dispatchPayment, executors } from "../../../src/payments/dispatch.vibe"
 import { failureTag } from "../../../src/payments/terms.vibe"
+import { SecurityProgramFundsLive } from "../../../src/securityScope/programFunds.vibe"
 import { bindingAsset, bindingDeployment } from "./deployment.vibe"
 
 interface Env extends RoleVars, BackendVars, SecurityEnv {
@@ -42,11 +43,10 @@ const noBearers = Layer.succeed(Bearers, { verify: () => effect { throw new Unau
 
 function services(env: Env) {
   const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(env), noBearers, BindingAttemptsLive, executors({ solana: env.SOLANA_PAYMENT_EXECUTOR }))
-  // The enforcement rows read retained scanner evidence, the live skill template and GitHub, as in the site worker.
   const settings = Layer.provideMerge(Layer.merge(backendServices(env), securityBindings(env)), base)
   const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), settings)
   const security = Layer.provideMerge(Layer.mergeAll(AccessJournalLive, AuditLive, PublicSecurityLive), Layer.provideMerge(EnforcementRowsLive, notices))
-  const ports = Layer.provideMerge(Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive), security)
+  const ports = Layer.provideMerge(Layer.mergeAll(CallerLive, MembersLive, ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive, Layer.provideMerge(SecurityProgramPublicationLive, SecurityProgramFundsLive)), security)
   return Layer.provideMerge(ScanRequestsLive, Layer.provideMerge(ProjectEventsLive, ports))
 }
 

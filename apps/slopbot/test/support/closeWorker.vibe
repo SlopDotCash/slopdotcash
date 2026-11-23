@@ -26,6 +26,7 @@ import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/rev
 import { routeProviders } from "../../src/route/route.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
 import { observe } from "../../src/scope/facts.vibe"
+import { reviewIntakeGate } from "./intakeGate.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -244,6 +245,7 @@ function services(env: Env) {
     rolesFrom(env),
     noticePorts,
     activationOver(env),
+    reviewIntakeGate(() => false),
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
   )
 }

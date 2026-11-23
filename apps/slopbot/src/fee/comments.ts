@@ -57,6 +57,7 @@ const networkNames: Readonly<Record<string, string>> = {
   "robinhood-mainnet": "Robinhood Chain",
 };
 
+/** @throws {never} */
 export function feeWays(options: ReadonlyArray<FeeOptionTerms>): FeeWay[] {
   return options.flatMap((option) =>
     address.test(option.contract)
@@ -75,6 +76,7 @@ export function feeWays(options: ReadonlyArray<FeeOptionTerms>): FeeWay[] {
   );
 }
 
+/** @throws {SyntaxError | RangeError} */
 export function unitsText(amount: string, decimals: number): string {
   const value = BigInt(amount);
   const unit = 10n ** BigInt(decimals);
@@ -99,6 +101,7 @@ function outcomeRules(ways: ReadonlyArray<FeeWay>): string[] {
   ];
 }
 
+/** @throws {SyntaxError | RangeError} */
 export function feeNeededComment(facts: CommentFacts): string {
   const amount = unitsText(facts.stableMinor, 6);
   const slop = hasSlop(facts.ways);
@@ -141,6 +144,7 @@ function outcomeText(outcome: FeeOutcomeNote, ways: ReadonlyArray<FeeWay>): stri
   return refundText(outcome.why);
 }
 
+/** @throws {never} */
 export function feePaidComment(facts: PaidFacts): string {
   const network = facts.ways.find((way) => way.network === facts.paidNetwork);
   const where = facts.paidDepositId !== null && network !== undefined ? `: deposit ${facts.paidDepositId} on ${network.networkName}` : "";
@@ -155,6 +159,7 @@ export function feePaidComment(facts: PaidFacts): string {
   ].join("\n\n");
 }
 
+/** @throws {never} */
 export function feeReleasedComment(why: FeeReleaseWhy): string {
   return [
     feeMarker,

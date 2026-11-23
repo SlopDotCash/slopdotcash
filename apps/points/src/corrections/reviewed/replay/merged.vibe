@@ -1,4 +1,4 @@
-// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
 import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
 import { type Journal, journalText } from "../../../kernels/records/canonical.ts"
 import { registryOf, repositoryIdFromUrl } from "../../../client/snapshot/checks.vibe"
@@ -11,9 +11,15 @@ import { createHistoricalSnapshot } from "../../../score/assemble/assemble.vibe"
 import type { ImplementationHistory } from "../../../score/facts.vibe"
 import { canonicalJson } from "../audit/reconcile.vibe"
 import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
-import { projectClosedSources } from "./closedProjection.vibe"
 
 export error HistoricalClosedOutcomeRefused { reason: "lifecycle" | "assessment" | "scored-work" | "projection"; message: string }
+
+export interface HistoricalEmptyLegacyClosureBinding {
+  readonly digest: string
+  readonly number: number
+  readonly headSha: string
+  readonly occurredAt: string
+}
 
 export interface MergedReplayRequest {
   readonly collection: Collection
@@ -22,12 +28,18 @@ export interface MergedReplayRequest {
   readonly baseline: Journal
   readonly repositories: Repositories
   readonly approved: ReadonlyMap<string, HistoricalClosedBinding>
+  readonly emptyLegacyClosures: ReadonlyMap<string, HistoricalEmptyLegacyClosureBinding>
   readonly history?: Partial<ImplementationHistory>
 }
 
 interface JointDecision {
   readonly status: string
   readonly latestDigest: string | null
+}
+
+interface LegacyDecision extends JointDecision {
+  readonly tier: unknown
+  readonly reviews: number
 }
 
 const pullPath = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/u
@@ -41,17 +53,29 @@ effect function holds(condition: boolean, reason: HistoricalClosedOutcomeRefused
 }
 
 function same(left: unknown, right: unknown) {
-  const wire = (value: unknown) => canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value ?? null)
+  const wire = (value: unknown) => canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value)
   return wire(left) === wire(right)
 }
 
+function fieldsOf(value: unknown): Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
+}
+
+function decisionOf(raw: unknown): JointDecision {
+  const decision = fieldsOf(raw)
+  return { status: String(decision.status ?? ""), latestDigest: typeof decision.latestDigest === "string" ? decision.latestDigest : null }
+}
+
 function jointDecisions(collection: Collection) {
-  const decisions = new Map<string, JointDecision>()
-  for (const row of collection.value.jointValueDecisions) {
-    const decision = typeof row.decision === "object" && row.decision !== null ? row.decision as Readonly<Record<string, unknown>> : {}
-    decisions.set(row.sourceId, { status: String(decision.status ?? ""), latestDigest: typeof decision.latestDigest === "string" ? decision.latestDigest : null })
-  }
-  return decisions
+  return new Map(collection.value.jointValueDecisions.map((row) => [row.sourceId, decisionOf(row.decision)] as const))
+}
+
+function legacyDecisions(collection: Collection) {
+  return new Map(collection.value.valueDecisions.map((row) => {
+    const assessment = fieldsOf(fieldsOf(row.decision).assessment)
+    const reviews = assessment.reviews
+    return [row.sourceId, { ...decisionOf(row.decision), tier: assessment.tier, reviews: Array.isArray(reviews) ? reviews.length : -1 } satisfies LegacyDecision] as const
+  }))
 }
 
 function paymentLedger(snapshot: LeaderboardSnapshot) {
@@ -70,7 +94,7 @@ effect function pointChanges(snapshot: LeaderboardSnapshot, baseline: Journal, r
 }
 
 export effect function mergedHistoricalReplaySnapshot(request: MergedReplayRequest) {
-  const { collection, pin, project, baseline, approved } = request
+  const { collection, pin, project, baseline, approved, emptyLegacyClosures } = request
   const closed = collection.work.closedUnmergedPullRequests
   const closedById = new Map(closed.map((pull) => [pull.id, pull] as const))
   const decisions = jointDecisions(collection)
@@ -80,6 +104,14 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
     try holds(pull !== undefined && pull.number === binding.number && pull.headRefOid === binding.headSha && Date.parse(pull.closedAt ?? "") === Date.parse(binding.occurredAt) &&
       decision !== undefined && decision.latestDigest === binding.digest, "lifecycle")
     if (binding.standaloneReview === true) try holds(decision?.status === "assessed", "assessment")
+  }
+  const legacy = legacyDecisions(collection)
+  for (const [id, binding] of emptyLegacyClosures) {
+    const pull = closedById.get(id)
+    try holds(pull !== undefined && pull.number === binding.number && pull.headRefOid === binding.headSha && Date.parse(pull.closedAt ?? "") === Date.parse(binding.occurredAt), "lifecycle")
+    const decision = legacy.get(id)
+    try holds(!approved.has(id) && !decisions.has(id) && pull?.reviews.length === 0 && decision !== undefined && decision.latestDigest === binding.digest &&
+      (decision.status === "assessed" || decision.status === "unresolved") && decision.tier === null && decision.reviews === 0, "assessment")
   }
   if (closed.length === 0) return try createHistoricalSnapshot(collection, pin, project, request.history)
   const closedIds = new Set(closedById.keys())
@@ -93,8 +125,11 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
   const complete = try createHistoricalSnapshot(collection, pin, project, request.history)
   const closedCoverage = (complete.valueAssessmentCoverage ?? []).filter((row) => closedIds.has(row.pullRequestId))
   try holds(closedCoverage.length === closed.length && !closedCoverage.some((row) => {
+    if (closedById.get(row.pullRequestId)?.number !== row.pullRequestNumber) return true
+    const empty = emptyLegacyClosures.get(row.pullRequestId)
+    if (empty !== undefined) return (row.status !== "assessed" && row.status !== "unresolved") || row.recordDigest !== empty.digest || row.reviewAssessmentDigest !== undefined
     const binding = approved.get(row.pullRequestId)
-    return !closedByNumber.has(row.pullRequestNumber) || (binding !== undefined
+    return (binding !== undefined
       ? row.status === "missing" || row.status === "legacy-policy" || (row.recordDigest !== binding.digest && !(row.status === "incomplete" && row.recordDigest === null))
       : row.status !== "missing" || row.recordDigest !== null)
   }) && !closed.some((pull) => decisions.has(pull.id) && !approved.has(pull.id)) &&
@@ -112,7 +147,9 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
   }
   const completePayment = paymentLedger(complete)
   const reviewSources = new Set<string>()
+  const emptyDecisions = new Set([...emptyLegacyClosures.values()].map(({ digest }) => `value:${digest}`))
   const scored = (event: ScoreEvent) => {
+    if (emptyLegacyClosures.has(event.source.id) || emptyDecisions.has(event.scoreDecisionSourceId ?? "")) return false
     const pull = closedSource(event.source.url)
     if (pull === undefined) return true
     const binding = approved.get(pull.id)
@@ -123,10 +160,16 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
     return valid
   }
   try holds([...complete.ledger, ...completePayment].every(scored) && !(complete.penalties ?? []).some((row) => closedIds.has(row.source.id)), "scored-work")
-  const contexts = new Set([...approved.keys()].filter((id) => decisions.get(id)?.status === "assessed"))
-  const { closedContexts, ...scoredWork } = projectClosedSources(closed, collection.work.collections, reviewSources, contexts)
-  const projectedCollection: Collection = { ...collection, work: { ...collection.work, ...scoredWork } }
-  const projected = try createHistoricalSnapshot(projectedCollection, pin, project, request.history, closedContexts)
+  const projectedCollection: Collection = {
+    ...collection,
+    work: {
+      ...collection.work,
+      collections: collection.work.collections.map((repository) => ({ ...repository, closedUnmerged: repository.closedUnmerged.filter((pull) => reviewSources.has(pull.id)) })),
+      closedUnmergedPullRequests: closed.filter((pull) => reviewSources.has(pull.id)),
+    },
+    valueContextPullRequests: [...collection.valueContextPullRequests, ...closed.filter((pull) => approved.has(pull.id) && !reviewSources.has(pull.id) && decisions.get(pull.id)?.status === "assessed")],
+  }
+  const projected = try createHistoricalSnapshot(projectedCollection, pin, project, request.history)
   const retainedProvenance = (snapshot: LeaderboardSnapshot) => ({
     coverage: (snapshot.valueAssessmentCoverage ?? []).filter((row) => !closedIds.has(row.pullRequestId) || reviewSources.has(row.pullRequestId)),
     units: (snapshot.reviewedImplementationUnits ?? []).filter((row) => !approved.has(row.pullRequestId) || reviewSources.has(row.pullRequestId)),

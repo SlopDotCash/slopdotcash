@@ -1,4 +1,4 @@
-// spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "An already-correct pool records its earlier-acceptance proof once"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit's whole value and changes only its recipients"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+// spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "An already-correct pool records its earlier-acceptance proof once"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit's whole value and changes only its recipients"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
 import { millisOf } from "@repo/platform/clock"
 import { D1, rows, sql } from "@repo/platform/d1"
 import { type Award, type Journal, type Revision as Row, type RevisionBody, coverageText, journalText, revisionText } from "../../kernels/records/canonical.ts"
@@ -6,7 +6,7 @@ import { batchDigest, pointKey, pointRevisionId } from "../../kernels/records/id
 import { instantOf } from "../../kernels/records/instants.ts"
 import { type Store, advanceTo, command, finish, jointUnit, openStore, ownUnit, unitNameOf } from "../../journal/ledger.vibe"
 import { appended, commit as commitRows, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "../../journal/rows.vibe"
-import { octoberOriginalContributorReason as octoberOriginalContributorDecision, verifiedAllocationReason as verifiedHistoricalAllocationDecision } from "../../../gen/points__journal.effect.vibe"
+import { octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../../journal/snapshot.vibe"
 import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
 import { importStatements } from "../../publication/import.vibe"
 import { hasBaselinePrefix } from "../collect/inventory.vibe"
@@ -17,7 +17,7 @@ import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { allocatePoints, canWriteAllocation } from "../../../gen/points__allocation.effect.vibe"
 import type { PointShare, Recipient } from "../../../gen/points__allocation.ts"
 import { type Collection, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
-import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, deriveProof, digestPattern, distinct, isInstant, isNodeId, ordinaryPromotionEvidence, sameSet, sourceRepository } from "./derive.vibe"
+import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, deriveProof, digestPattern, distinct, isEmptyPromotion, isInstant, isNodeId, sameSet, sourceRepository } from "./derive.vibe"
 
 module verified {
   import { ambiguousPlans as ambiguous, connectedLabels as connected } from "./proofs.ts"
@@ -62,6 +62,7 @@ interface Plan {
   readonly replacements: ReadonlyArray<Award>
   readonly changed: ReadonlyArray<Award>
   readonly confirmation: Award | undefined
+  readonly markers: ReadonlyArray<Award>
   readonly participationHeld: boolean
   readonly protectedMonth: FreezeEvidence | undefined
   readonly eligible: boolean
@@ -142,19 +143,36 @@ function sharesOf(revisions: ReadonlyArray<Row>, recipients: Plan["recipients"],
   return [...listed, ...others].map((id) => ({ actor: actors.get(id) ?? 0, points: amounts.get(id) ?? 0 }))
 }
 
-function writesOf(plan: Plan) {
-  return plan.confirmation === undefined ? plan.changed : [...plan.changed, plan.confirmation]
+function markersOf(plan: Plan) {
+  return plan.confirmation === undefined ? plan.markers : [...plan.markers, plan.confirmation]
 }
 
-function acceptedEarlier(candidate: ManifestCandidate) {
+function writesOf(plan: Plan) {
+  return [...plan.changed, ...markersOf(plan)]
+}
+
+function acceptedEarlier(candidate: ManifestCandidate, previous: ReadonlyArray<Row>) {
   const proof = candidate.proof
   return candidate.kind === "pull-request" && proof.status === "complete" &&
+    !previous.some((revision) => revision.decision?.reason === verifiedHistoricalAllocationDecision) &&
     proof.sources.some((source) => source.sourceId === candidate.sourceId && source.commits.some((commit) =>
       commit.parentCount <= 1 && commit.firstAcceptedSourceId !== null && (commit.firstAcceptedSourceId !== source.sourceId || commit.retainedCopy !== undefined)))
 }
 
 function historicalReason(plan: Plan) {
   return plan.proof?.replacement === undefined ? verifiedHistoricalAllocationDecision : octoberOriginalContributorDecision
+}
+
+function replacementAgrees(proof: DerivedProof, october: boolean) {
+  const work = proof.replacement
+  if (work === undefined) return !october
+  if (!october || work.length === 0) return false
+  const lines = new Map<string, number>()
+  for (const line of work) {
+    const recipient = line.kind === "original" ? line.author : line.origin
+    lines.set(recipient, (lines.get(recipient) ?? 0) + line.lines)
+  }
+  return sameSet([...lines.keys()], [...proof.actors.keys()]) && [...lines].every(([id, total]) => proof.weights.get(id) === total)
 }
 
 function valueSourceOf(plan: Plan) {
@@ -209,7 +227,7 @@ effect function replacementsOf(candidate: ManifestCandidate, previous: ReadonlyA
   return replacements
 }
 
-effect function planOf(index: number, candidate: ManifestCandidate, input: PlanInput, pools: { baseline: Map<string, Row[]>; current: Map<string, Row[]>; decisions: ReadonlyMap<string, ReadonlySet<string>> }, eligibility: ReadonlyMap<string, FreezeEvidence>, bannedAt: ReadonlyMap<string, number>) {
+effect function planOf(index: number, candidate: ManifestCandidate, input: PlanInput, pools: { baseline: Map<string, Row[]>; current: Map<string, Row[]> }, eligibility: ReadonlyMap<string, FreezeEvidence>, bannedAt: ReadonlyMap<string, number>) {
   const { manifest } = input.collection
   try check(isNodeId(candidate.id) && isNodeId(candidate.sourceId) && isInstant(candidate.occurredAt) && candidate.occurredAt <= manifest.generatedAt &&
     candidate.workUnitId !== "" && distinct(candidate.sourceIds) && candidate.sourceIds.includes(candidate.sourceId) && candidate.sourceIds.every(isNodeId), "invalid candidate identity")
@@ -221,9 +239,10 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
   try check(sameSet(previous.map((revision) => `${revision.award.key}\u0000${revision.id}`), candidate.expectedPredecessors.map((entry) => `${entry.key}\u0000${entry.revisionId}`)) &&
     previous.every(({ award }) => award.occurredAt === candidate.occurredAt && award.sourceUrl === candidate.sourceUrl && award.workUnitId === candidate.workUnitId), "pool predecessors or immutable identity differ")
   const complete = candidate.proof
-  const appliedOctober = previous.some((revision) => pools.decisions.get(octoberOriginalContributorDecision)?.has(revision.award.key) === true)
-  const needsOwnership = complete.status === "complete" && (complete.originalContributor !== undefined || complete.originalContributorParts !== undefined)
-  const proof = appliedOctober || (needsOwnership && !input.collection.receipt.ownershipComplete) ? null : try deriveProof(candidate, input.projectOf)
+  const usesOctober = complete.status === "complete" && (complete.originalContributor !== undefined || complete.originalContributorParts !== undefined)
+  const appliedOctober = previous.some((revision) => revision.decision?.reason === octoberOriginalContributorDecision)
+  const derived = appliedOctober && !usesOctober ? null : try deriveProof(candidate, input.projectOf)
+  const proof = derived !== null && replacementAgrees(derived, usesOctober) ? derived : null
   if (candidate.kind === "work-unit" && complete.status === "complete") {
     try check(previous.every((revision) => revision.decision?.sourceId === `value:${complete.decisionDigest ?? ""}`), "grouped proof does not match retained valuation provenance")
   }
@@ -237,9 +256,12 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
     const before = baseline.get(award.key)?.award
     return before === undefined || !sameAward(award, before)
   })
-  const confirmed = previous.some((revision) => pools.decisions.get(verifiedHistoricalAllocationDecision)?.has(revision.award.key) === true)
-  const confirmation = changed.length === 0 && proof !== null &&
-    (proof.replacement !== undefined || (!confirmed && acceptedEarlier(candidate)))
+  const october = proof?.replacement !== undefined
+  const markers = october
+    ? replacements.filter((award) => award.amount > 0 && !changed.some((other) => other.key === award.key) &&
+      baseline.get(award.key)?.decision?.reason !== octoberOriginalContributorDecision).sort((left, right) => left.key.localeCompare(right.key))
+    : []
+  const confirmation = changed.length === 0 && proof !== null && !october && acceptedEarlier(candidate, previous)
     ? replacements.filter((award) => award.amount > 0).sort((left, right) => left.key.localeCompare(right.key))[0]
     : undefined
   const occurred = millisOf(candidate.occurredAt)
@@ -249,7 +271,7 @@ effect function planOf(index: number, candidate: ManifestCandidate, input: PlanI
   })
   const evidence = eligibility.get(JSON.stringify([candidate.projectId, monthOf(candidate.occurredAt)]))
   const protectedMonth = evidence !== undefined && freezes(evidence) ? evidence : undefined
-  return { index, candidate, key, previous, current: pools.current.get(key) ?? [], proof, total, recipients, writable, replacements, changed, confirmation, participationHeld, protectedMonth, eligible: protectedMonth === undefined } satisfies Plan
+  return { index, candidate, key, previous, current: pools.current.get(key) ?? [], proof, total, recipients, writable, replacements, changed, confirmation, markers, participationHeld, protectedMonth, eligible: protectedMonth === undefined } satisfies Plan
 }
 
 effect function checkSelection(plans: ReadonlyArray<Plan>, baseline: ReadonlyMap<string, Row>) {
@@ -262,7 +284,6 @@ effect function checkSelection(plans: ReadonlyArray<Plan>, baseline: ReadonlyMap
   }
   const identities = new Map<string, string>()
   const parents = new Map<string, string>()
-  const zeroLinePaths = new Map<string, "empty" | "present">()
   for (const plan of plans) {
     const proof = plan.candidate.proof
     if (proof.status !== "complete") continue
@@ -272,13 +293,6 @@ effect function checkSelection(plans: ReadonlyArray<Plan>, baseline: ReadonlyMap
         const identity = JSON.stringify([commit.parentCount, commit.author?.id ?? null, commit.author?.kind ?? null, commit.additions, commit.deletions])
         try check((identities.get(key) ?? identity) === identity, "immutable commit evidence conflicts")
         identities.set(key, identity)
-        if (commit.additions === 0 && commit.deletions === 0) {
-          const presence = commit.files === undefined ? commit.zeroLinePaths : commit.files.length === 0 ? "empty" : "present"
-          if (presence !== undefined) {
-            try check((zeroLinePaths.get(key) ?? presence) === presence, "immutable zero-line commit path evidence conflicts")
-            zeroLinePaths.set(key, presence)
-          }
-        }
         if (commit.parentShas === undefined) continue
         const listed = JSON.stringify(commit.parentShas)
         try check((parents.get(key) ?? listed) === listed, "immutable commit parent evidence conflicts")
@@ -347,7 +361,7 @@ effect function startOf(plan: Plan, collection: Collection, source: number, appl
     packet: applied
       ? { digest, expected: [digest], staged: [{ index: 0, digest }], assembled: true, reviewedDigest: digest }
       : { digest, expected: [digest], staged: [], assembled: false, reviewedDigest: "" },
-    confirmed: applied && plan.confirmation !== undefined && plan.proof?.replacement === undefined,
+    confirmed: applied && plan.confirmation !== undefined,
   } satisfies Correction
 }
 
@@ -389,8 +403,8 @@ function machineManifest(plan: Plan, input: PlanInput, connected: boolean): Mani
       : replacementRecipients(work),
     kind: replacement === undefined ? "OrdinaryReallocation" : "OctoberReplacement",
     work,
-    emptyPromotion: ordinaryPromotionEvidence(plan.candidate) === "empty",
-    earlierAcceptance: plan.confirmation !== undefined && replacement === undefined,
+    emptyPromotion: isEmptyPromotion(plan.candidate),
+    earlierAcceptance: plan.confirmation !== undefined,
   }
 }
 
@@ -404,13 +418,13 @@ effect function settled(run: Machine.Shape | undefined, recipientBanned: boolean
 
 effect function replayed(plans: ReadonlyArray<Plan>, input: PlanInput, prior: ReadonlyArray<Row>) {
   const expected = new Map(plans.flatMap(writesOf).map((award) => [award.key, award] as const))
-  const confirmations = new Map(plans.flatMap((plan) => plan.previous
-    .filter((row) => row.award.key === plan.confirmation?.key)
-    .map((row) => [row.award.key, { id: row.id, reason: historicalReason(plan) }] as const)))
+  const marked = new Map(plans.flatMap((plan) => markersOf(plan).flatMap((award) => {
+    const row = plan.previous.find((revision) => revision.award.key === award.key)
+    return row === undefined ? [] : [[award.key, { id: row.id, reason: historicalReason(plan) }] as const]
+  })))
   try check(prior.every((revision) => {
-    const key = revision.award.key
-    const award = expected.get(key)
-    const marker = confirmations.get(key)
+    const award = expected.get(revision.award.key)
+    const marker = marked.get(revision.award.key)
     return award !== undefined && sameAward(award, revision.award) && (marker === undefined ||
       (revision.previous === marker.id && revision.decision?.reason === marker.reason && revision.decision.delta === 0))
   }), "recorded manifest application differs")
@@ -463,46 +477,50 @@ effect function confirmationRow(store: Store, plan: Plan, input: PlanInput, awar
   return { id: try pointRevisionId(body), ...body } satisfies Row
 }
 
+effect function reallocated(store: Store, plan: Plan, input: PlanInput) {
+  const { candidate } = plan
+  const unit = candidate.kind === "work-unit" ? jointUnit(candidate.projectId, candidate.workUnitId) : ownUnit(candidate.projectId, candidate.sourceId)
+  const recorded = store.units.get(unit)
+  if (recorded === undefined || !sameSet([...recorded.keys], plan.previous.map((revision) => revision.award.key))) return undefined
+  const templates = new Map(plan.replacements.map((award) => [award.actor.id, award] as const))
+  const opened = try command(store, { awards: [...templates.values()], units: [unit], sources: [candidate.sourceId] })
+  const unitId = opened.names.units.get(unit)
+  if (unitId === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key))) return undefined
+  const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
+  const recipients = plan.recipients.map((recipient) => ({ actor: actors.get(recipient.id) ?? 0, lines: recipient.lines })).sort((left, right) => left.actor - right.actor)
+  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: historicalReason(plan), digest: input.collection.manifestDigest, pullRequest: candidate.sourceId }])
+  if (refused !== "") return undefined
+  const valueSource = valueSourceOf(plan)
+  const decided = new Map(plan.previous.map((revision) => [revision.award.key, revision.decision?.sourceId] as const))
+  const provenance = {
+    recordedAt: input.recordedAt,
+    sourceDigest: input.collection.manifestDigest,
+    effectiveAt: input.recordedAt,
+    decisionSourceId: decisionSourceOf([valueSource, candidate.sourceId]),
+  }
+  const written: Row[] = []
+  for (const revision of try appended(opened)) {
+    for (const row of try rowsOf(store, opened, revision, templates, provenance)) written.push(try decidedBy(row, decisionSourceOf([decided.get(row.award.key), valueSource, candidate.sourceId])))
+  }
+  const planned = new Map(plan.changed.map((award) => [award.key, award] as const))
+  if (written.length !== planned.size || written.some((row) => {
+    const award = planned.get(row.award.key)
+    return award === undefined || !sameAward(award, row.award)
+  })) return undefined
+  return written
+}
+
 effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, input: PlanInput, buffer: Row[]) {
   const staged: Row[] = []
   for (const plan of component) {
-    if (plan.confirmation !== undefined) {
-      const row = try confirmationRow(store, plan, input, plan.confirmation)
+    const written = plan.changed.length === 0 ? [] : try reallocated(store, plan, input)
+    if (written === undefined) return false
+    staged.push(...written)
+    for (const award of markersOf(plan)) {
+      const row = try confirmationRow(store, plan, input, award)
       if (row === undefined) return false
       staged.push(row)
-      continue
     }
-    if (plan.changed.length === 0) continue
-    const { candidate } = plan
-    const unit = candidate.kind === "work-unit" ? jointUnit(candidate.projectId, candidate.workUnitId) : ownUnit(candidate.projectId, candidate.sourceId)
-    const recorded = store.units.get(unit)
-    if (recorded === undefined || !sameSet([...recorded.keys], plan.previous.map((revision) => revision.award.key))) return false
-    const templates = new Map(plan.replacements.map((award) => [award.actor.id, award] as const))
-    const opened = try command(store, { awards: [...templates.values()], units: [unit], sources: [candidate.sourceId] })
-    const unitId = opened.names.units.get(unit)
-    if (unitId === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key))) return false
-    const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
-    const recipients = plan.recipients.map((recipient) => ({ actor: actors.get(recipient.id) ?? 0, lines: recipient.lines })).sort((left, right) => left.actor - right.actor)
-    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: historicalReason(plan), digest: input.collection.manifestDigest, pullRequest: candidate.sourceId }])
-    if (refused !== "") return false
-    const valueSource = valueSourceOf(plan)
-    const decided = new Map(plan.previous.map((revision) => [revision.award.key, revision.decision?.sourceId] as const))
-    const provenance = {
-      recordedAt: input.recordedAt,
-      sourceDigest: input.collection.manifestDigest,
-      effectiveAt: input.recordedAt,
-      decisionSourceId: decisionSourceOf([valueSource, candidate.sourceId]),
-    }
-    const written: Row[] = []
-    for (const revision of try appended(opened)) {
-      for (const row of try rowsOf(store, opened, revision, templates, provenance)) written.push(try decidedBy(row, decisionSourceOf([decided.get(row.award.key), valueSource, candidate.sourceId])))
-    }
-    const planned = new Map(plan.changed.map((award) => [award.key, award] as const))
-    if (written.length !== planned.size || written.some((row) => {
-      const award = planned.get(row.award.key)
-      return award === undefined || !sameAward(award, row.award)
-    })) return false
-    staged.push(...written)
   }
   try commitRows(store, buffer, staged)
   return true
@@ -518,12 +536,9 @@ export effect function planCorrections(input: PlanInput) {
   try check(try hasBaselinePrefix(journal, manifest.baseline), "baseline is not the current journal prefix")
   try check(distinct(manifest.candidates.map((candidate) => candidate.id)), "private eligibility must cover every candidate exactly once")
   const eligibility = try eligibilityOf(input.protection, manifest.candidates)
-  const baseline = journal.revisions.slice(0, manifest.baseline.revisionCount)
-  const baselineLatest = latestOf(baseline)
+  const baselineLatest = latestOf(journal.revisions.slice(0, manifest.baseline.revisionCount))
   const currentLatest = latestOf(journal.revisions)
-  const decisions = new Map([verifiedHistoricalAllocationDecision, octoberOriginalContributorDecision].map((reason) =>
-    [reason, new Set(baseline.filter((row) => row.decision?.reason === reason).map((row) => row.award.key))] as const))
-  const pools = { baseline: try poolsOf(baselineLatest), current: try poolsOf(currentLatest), decisions }
+  const pools = { baseline: try poolsOf(baselineLatest), current: try poolsOf(currentLatest) }
   const plans: Plan[] = []
   for (const [index, candidate] of manifest.candidates.entries()) plans.push(try planOf(index, candidate, input, pools, eligibility, bannedAt))
   try checkSelection(plans, baselineLatest)
@@ -555,7 +570,7 @@ export effect function planCorrections(input: PlanInput) {
     if (decided !== undefined) {
       for (const plan of component) {
         status.set(plan.index, decided)
-        const settles = input.mode === "apply" && ((decided === "held" && banned.includes(plan)) || decided === "unchanged")
+        const settles = input.mode === "apply" && ((decided === "held" && banned.includes(plan)) || (decided === "unchanged" && plan.proof?.replacement === undefined))
         const phase = settles ? try settled(runs.get(plan.index), decided === "held") : undefined
         if (phase !== undefined) phases.set(plan.index, phase)
       }
@@ -586,7 +601,7 @@ export effect function planCorrections(input: PlanInput) {
         continue
       }
       status.set(plan.index, writesOf(plan).length > 0 ? "applied" : "unchanged")
-      const phase = input.mode === "apply" ? try settled(runs.get(plan.index), false) : undefined
+      const phase = input.mode === "apply" && (writesOf(plan).length > 0 || plan.proof?.replacement === undefined) ? try settled(runs.get(plan.index), false) : undefined
       if (phase !== undefined) phases.set(plan.index, phase)
     }
   }

@@ -1,5 +1,10 @@
 // spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"
+import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
+import { type EvidenceCategory, type VerifiedArtifact, assessEvidence } from "../../kernels/scoring/evidence.ts"
+import { type Actor, isBot, sameActor } from "../../score/facts.vibe"
+import type { PullRequestRecord, ReviewRecord } from "../merged/hydrate.vibe"
+import { type MergedOutcome, dedupedById } from "../merged/wire.vibe"
 import { chunkCrc } from "./crc.ts"
 import { type EvidenceRow, type TrustedArtifact, artifactCanBeEvidenceFile, evidenceFileExtensions, extractEvidenceRows, hasTrajectorySemantics, imageExtensions, ocrEvidence, surfaceOcrEvidenceRow, trustedArtifacts, videoExtensions } from "./policy.vibe"
 
@@ -11,6 +16,13 @@ module layout {
   export function mediaOf(bytes: Uint8Array, complete: boolean): Media { return parsed(bytes, complete) }
 }
 import { mediaOf } from layout
+
+module ranked {
+  import { type RankedArtifact, type VerifiedArtifact, selectUniqueVerifiedEvidence as selected } from "../../kernels/scoring/evidence.ts"
+  /** @throws {never} */
+  export function selectUniqueVerifiedEvidence(artifacts: RankedArtifact[]): VerifiedArtifact[] { return selected(artifacts) }
+}
+import { selectUniqueVerifiedEvidence } from ranked
 
 export const artifactReadLimitBytes = 64 * 1024
 export const documentReadLimitBytes = 2 * 1024 * 1024
@@ -403,4 +415,225 @@ export effect function verifyReferencedArtifacts(body: string, requiredRows: Rea
   const byIdentity = new Map(artifacts.map((artifact, index) => [artifact.identity, results[index]]))
   const findings = references.map((reference) => ({ id: reference.id, label: reference.label, url: reference.url, artifactKind: reference.kind, ...(byIdentity.get(reference.identity) ?? { status: "artifact-fetch-error" }) }) satisfies ArtifactFinding)
   return { ok: findings.every((finding) => finding.status === "ok"), findings } satisfies ArtifactVerification
+}
+
+export const maxEvidenceSourcesPerSnapshot = 64
+export const maxEvidenceArtifactsPerSnapshot = 64
+export const maxEvidenceArtifactsPerSource = maxEvidenceArtifactsPerSnapshot
+export const evidenceVerificationConcurrency = 4
+export const evidenceArtifactTimeoutMs = 5_000
+export const evidenceTransientRetries = 2
+export const evidenceTransientRetryDelayMs = 1_000
+export const evidenceContentDigestLimitBytes = 32 * 1024 * 1024
+
+export error EvidenceUnavailable { message: string }
+
+export interface ScoreEvidenceRow extends EvidenceRow {
+  readonly category: EvidenceCategory
+}
+
+export const scoreEvidenceRows: ReadonlyArray<ScoreEvidenceRow> = [
+  { id: "before-screenshots", label: "Before screenshots", category: "screenshot" },
+  { id: "after-screenshots", label: "After screenshots", category: "screenshot" },
+  { id: "walkthrough-video", label: "Walkthrough video", category: "video" },
+  { id: "backend-logs", label: "Backend logs", category: "logs" },
+  { id: "frontend-logs", label: "Frontend logs", category: "logs" },
+  { id: "llm-trajectory", label: "Real-LLM trajectory", category: "trajectory" },
+  { id: "domain-artifacts", label: "Domain artifacts", category: "domain-artifact" },
+]
+
+const scoreEvidenceCategory: ReadonlyMap<string, EvidenceCategory> = new Map(scoreEvidenceRows.map(({ id, category }) => [id, category] as const))
+const scoreArtifactKinds: ReadonlyArray<string> = ["opaque-upload"]
+
+export interface PullTextSource {
+  readonly id: string
+  readonly artifactId: string
+  readonly kind: "body" | "comment" | "review"
+  readonly body: string
+  readonly url: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly author: Actor | null
+  readonly artifactUrl?: string
+  readonly artifactHeadSha?: string
+}
+
+export interface VerifiedEvidence extends VerifiedArtifact {
+  readonly pullRequestMergedAt: string | null
+  readonly pullRequestHeadOid: string
+  readonly pullRequestUpdatedAt: string
+}
+
+export interface PullRequestEvidence {
+  readonly artifacts: ReadonlyArray<VerifiedEvidence>
+  readonly status: "complete" | "suppressed-limit"
+  readonly sourceCount: number
+  readonly artifactCount: number
+}
+
+export interface EvidenceCandidate {
+  readonly pullRequest: PullRequestRecord
+  readonly source: PullTextSource
+  readonly artifactCount: number
+}
+
+export interface PullRequestEvidenceOptions {
+  readonly repositories: ReadonlyArray<string>
+  readonly token?: Redacted.Redacted<string>
+}
+
+interface UnavailableEvidenceArtifact {
+  readonly pullRequestUrl: string
+  readonly artifactUrl: string
+  readonly status: string
+  readonly detail: string | null
+}
+
+export function pullRequestBodySource(pullRequest: ReviewRecord | MergedOutcome): PullTextSource {
+  const updatedAt = "lastEditedAt" in pullRequest ? (pullRequest.lastEditedAt ?? pullRequest.createdAt) : pullRequest.updatedAt
+  return { id: `${pullRequest.id}:body`, artifactId: pullRequest.id, kind: "body", body: pullRequest.body, url: pullRequest.url, createdAt: pullRequest.createdAt, updatedAt, author: pullRequest.author, artifactUrl: pullRequest.url }
+}
+
+export function pullRequestTextSources(pullRequest: ReviewRecord): ReadonlyArray<PullTextSource> {
+  const reviews = pullRequest.reviews.map((review) => ({ id: review.id, artifactId: pullRequest.id, kind: "review", body: review.body, url: review.url, createdAt: review.submittedAt ?? pullRequest.updatedAt, updatedAt: review.submittedAt ?? pullRequest.updatedAt, author: review.author }) satisfies PullTextSource)
+  const sources: ReadonlyArray<PullTextSource> = [pullRequestBodySource(pullRequest), ...pullRequest.comments, ...reviews]
+  return dedupedById(sources).map((source) => ({ ...source, artifactUrl: pullRequest.url, artifactHeadSha: pullRequest.headRefOid.toLowerCase() }))
+}
+
+export function pullRequestEvidenceStatus(pullRequest: PullRequestRecord, verified: ReadonlyArray<VerifiedEvidence>) {
+  const sources = pullRequestTextSources(pullRequest).map((source) => ({ id: source.id, kind: source.kind, authorBot: isBot(source.author), artifactId: source.artifactId, updatedAt: source.updatedAt, body: source.body }))
+  const artifacts = verified.filter((artifact) => artifact.pullRequestId === pullRequest.id && artifact.pullRequestMergedAt === pullRequest.mergedAt && artifact.pullRequestHeadOid === pullRequest.headRefOid && artifact.pullRequestUpdatedAt === pullRequest.updatedAt)
+  const assessment = assessEvidence(sources, [...artifacts])
+  return { status: assessment.points === 6 ? "complete" : assessment.points > 0 ? "partial" : "missing", points: assessment.points, maxPoints: assessment.maxPoints, categories: assessment.categories }
+}
+
+export function evidenceHeadOid(body: string) {
+  const matches = [...body.matchAll(/<!--\s*evidence-head:([a-f0-9]{40})\s*-->/gi)]
+  return matches.length === 1 ? (matches[0]?.[1] ?? "").toLowerCase() : null
+}
+
+export function mergedBodyEligibleForEvidence(pullRequest: PullRequestRecord, bodySource: Pick<PullTextSource, "createdAt" | "updatedAt" | "body">) {
+  if (pullRequest.mergedAt === null) return false
+  const mergedAt = millisOf(pullRequest.mergedAt)
+  if (millisOf(bodySource.createdAt) > mergedAt) return false
+  if (millisOf(bodySource.updatedAt) <= mergedAt) return true
+  const head = evidenceHeadOid(bodySource.body)
+  if (head === null || head !== pullRequest.headRefOid.toLowerCase()) return false
+  return pullRequest.editor !== null && pullRequest.author !== null && !sameActor(pullRequest.editor, pullRequest.author)
+}
+
+export function evidenceVerificationCandidates(pullRequests: ReadonlyArray<PullRequestRecord>, repositories: ReadonlyArray<string>) {
+  const candidates: EvidenceCandidate[] = []
+  for (const pullRequest of pullRequests) {
+    const mergedAt = pullRequest.mergedAt === null ? Number.POSITIVE_INFINITY : millisOf(pullRequest.mergedAt)
+    const source = pullRequestBodySource(pullRequest)
+    if (source.author === null || isBot(source.author) || millisOf(source.createdAt) > mergedAt) continue
+    if (pullRequest.mergedAt !== null ? !mergedBodyEligibleForEvidence(pullRequest, source) : millisOf(source.updatedAt) > mergedAt) continue
+    if (evidenceHeadOid(source.body) !== pullRequest.headRefOid) continue
+    const artifactCount = planReferencedArtifacts(source.body, scoreEvidenceRows, { repositories, allowedArtifactKinds: scoreArtifactKinds }).uniqueArtifactCount
+    if (artifactCount > 0) candidates.push({ pullRequest, source, artifactCount })
+  }
+  return candidates.sort((left, right) => left.pullRequest.id.localeCompare(right.pullRequest.id) || left.source.id.localeCompare(right.source.id))
+}
+
+function unavailableMessage(unavailable: ReadonlyArray<UnavailableEvidenceArtifact>) {
+  const first = unavailable[0]
+  const detail = first === undefined ? "" : ` (first: ${first.artifactUrl} in ${first.pullRequestUrl}, ${first.status}${first.detail === null ? "" : ` ${first.detail}`})`
+  return `Evidence collection is incomplete: ${unavailable.length} score-bearing artifact(s) stayed unavailable after ${evidenceTransientRetries + 1} attempts${detail}`
+}
+
+function artifactIdentity(url: string) {
+  const parsed = URL.parse(url)
+  return parsed === null ? undefined : `${parsed.protocol}//${parsed.hostname.toLowerCase()}${parsed.pathname}`
+}
+
+function pullRequestRanks(pullRequests: ReadonlyArray<PullRequestRecord>) {
+  const ordered = [...pullRequests].sort((left, right) =>
+    Number(left.mergedAt === null) - Number(right.mergedAt === null)
+      || (left.mergedAt ?? left.updatedAt).localeCompare(right.mergedAt ?? right.updatedAt)
+      || left.number - right.number
+      || left.id.localeCompare(right.id))
+  return new Map(ordered.map((pullRequest, index) => [pullRequest.id, index] as const))
+}
+
+function uniqueVerifiedEvidence(artifacts: ReadonlyArray<VerifiedEvidence>, pullRequests: ReadonlyArray<PullRequestRecord>) {
+  const pullRank = pullRequestRanks(pullRequests)
+  const identities = [...new Set(artifacts.map((artifact) => artifact.artifactIdentity))].sort((left, right) => left.localeCompare(right))
+  const identityRank = new Map(identities.map((identity, index) => [identity, index] as const))
+  const key = (artifact: VerifiedArtifact) => `${artifact.pullRequestId}\u0000${artifact.sourceId}\u0000${artifact.category}\u0000${artifact.artifactIdentity}`
+  const byKey = new Map(artifacts.map((artifact) => [key(artifact), artifact] as const))
+  const kept = selectUniqueVerifiedEvidence(artifacts.map((artifact) => ({ artifact, pullRequestRank: pullRank.get(artifact.pullRequestId) ?? Number.MAX_SAFE_INTEGER, identityRank: identityRank.get(artifact.artifactIdentity) ?? Number.MAX_SAFE_INTEGER })))
+  return kept.flatMap((artifact) => {
+    const found = byKey.get(key(artifact))
+    return found === undefined ? [] : [found]
+  })
+}
+
+export effect function verifyPullRequestEvidence(pullRequests: ReadonlyArray<PullRequestRecord>, options: PullRequestEvidenceOptions) {
+  const candidates = evidenceVerificationCandidates(pullRequests, options.repositories)
+  const artifactCount = candidates.reduce((total, candidate) => total + candidate.artifactCount, 0)
+  const byTrust = [...candidates].sort((left, right) =>
+    Number(left.pullRequest.mergedAt === null) - Number(right.pullRequest.mergedAt === null)
+      || left.artifactCount - right.artifactCount
+      || left.pullRequest.id.localeCompare(right.pullRequest.id)
+      || left.source.id.localeCompare(right.source.id))
+  const selected: EvidenceCandidate[] = []
+  let selectedArtifactCount = 0
+  for (const candidate of byTrust) {
+    if (candidate.artifactCount > maxEvidenceArtifactsPerSource || selected.length >= maxEvidenceSourcesPerSnapshot || selectedArtifactCount + candidate.artifactCount > maxEvidenceArtifactsPerSnapshot) continue
+    selected.push(candidate)
+    selectedArtifactCount += candidate.artifactCount
+  }
+  const status = selected.length === candidates.length ? "complete" as const : "suppressed-limit" as const
+  const verdicts = try Effect.forEach(selected, ({ pullRequest, source }) => effect {
+    const verification = try verifyReferencedArtifacts(source.body, scoreEvidenceRows, {
+      repositories: options.repositories,
+      allowedArtifactKinds: scoreArtifactKinds,
+      concurrency: 1,
+      contentDigestLimitBytes: evidenceContentDigestLimitBytes,
+      timeoutMs: evidenceArtifactTimeoutMs,
+      transientRetries: evidenceTransientRetries,
+      transientRetryDelayMs: evidenceTransientRetryDelayMs,
+      ...(options.token === undefined ? {} : { token: options.token }),
+    })
+    const unavailable = verification.findings
+      .filter((finding) => scoreEvidenceCategory.has(finding.id) && isTransientArtifactFailure(finding))
+      .map((finding) => ({ pullRequestUrl: pullRequest.url, artifactUrl: finding.url, status: finding.status, detail: finding.detail ?? null }) satisfies UnavailableEvidenceArtifact)
+    const failedCategories = new Set<EvidenceCategory>()
+    for (const finding of verification.findings) {
+      const category = scoreEvidenceCategory.get(finding.id)
+      if (category !== undefined && finding.status !== "ok") failedCategories.add(category)
+    }
+    const artifacts = verification.findings.flatMap((finding) => {
+      const category = scoreEvidenceCategory.get(finding.id)
+      const identity = artifactIdentity(finding.url)
+      const contentSha256 = finding.contentSha256 ?? null
+      if (finding.status !== "ok" || category === undefined || failedCategories.has(category) || finding.artifactKind !== "opaque-upload" || contentSha256 === null || contentSha256 === "" || identity === undefined) return []
+      return [{
+        pullRequestId: pullRequest.id,
+        pullRequestMergedAt: pullRequest.mergedAt,
+        pullRequestHeadOid: pullRequest.headRefOid,
+        pullRequestUpdatedAt: pullRequest.updatedAt,
+        sourceId: source.id,
+        sourceBody: source.body,
+        sourceUpdatedAt: source.updatedAt,
+        category,
+        artifactIdentity: identity,
+        contentSha256,
+      } satisfies VerifiedEvidence]
+    })
+    return { pullRequestId: pullRequest.id, artifacts, failedCategories: [...failedCategories], unavailable }
+  }, { concurrency: evidenceVerificationConcurrency })
+  const unavailable = verdicts.flatMap((verdict) => verdict.unavailable)
+  if (unavailable.length > 0) throw new EvidenceUnavailable({ message: unavailableMessage(unavailable) })
+  const failed = new Set(verdicts.flatMap((verdict) => verdict.failedCategories.map((category) => `${verdict.pullRequestId}\u0000${category}`)))
+  const remotelyVerified = verdicts
+    .flatMap((verdict) => verdict.artifacts)
+    .filter((artifact) => !failed.has(`${artifact.pullRequestId}\u0000${artifact.category}`))
+    .sort((left, right) =>
+      left.pullRequestId.localeCompare(right.pullRequestId)
+        || left.sourceId.localeCompare(right.sourceId)
+        || left.category.localeCompare(right.category)
+        || left.artifactIdentity.localeCompare(right.artifactIdentity))
+  return { artifacts: uniqueVerifiedEvidence(remotelyVerified, pullRequests), status, sourceCount: candidates.length, artifactCount } satisfies PullRequestEvidence
 }

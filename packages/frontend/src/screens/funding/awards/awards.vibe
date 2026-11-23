@@ -383,7 +383,7 @@ export effect function connectReleaseOwner(id: number) {
   if (target.evm === undefined) throw stopped(awardMessages.unsupported)
   const evm = try connectEvm(id, false)
   const saved = try monthly.saved("Release")
-  const from = saved.plan?.kind === "evmRelease" ? saved.plan.call.from : undefined
+  const from = saved.plan?.kind === "evmRelease" ? saved.plan.call?.from : undefined
   if (from !== undefined && from !== evm.address.toLowerCase()) throw stopped(`${awardMessages.reconnect}${from}`)
   return { family: "evm", address: evm.address, evm } satisfies Connection
 }

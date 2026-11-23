@@ -95,7 +95,7 @@ effect function dispatched(channel: Channel, pilot: Pilot, unavailable: Row, inv
   if (pilot.kind !== "on") return answer(unavailable)
   const body = try objectBody(8)
   if (body === undefined || Object.keys(body).length !== 0) return answer(invalid)
-  try dispatch(channel, pilot, settings.from, releaseFor(settings))
+  try dispatch(channel, pilot, settings.from, releaseFor(settings, channel))
   return answer(done)
 }
 
@@ -106,7 +106,7 @@ effect function reconciled(channel: Channel, pilot: Pilot, unavailable: Row, inv
   if (body === undefined) return answer(invalid)
   const request = try reconcileRequest(body)
   if (request === undefined) return answer(refused)
-  return answer((try reconcile(channel, request, releaseFor(settings))) ? done : refused)
+  return answer((try reconcile(channel, request, releaseFor(settings, channel))) ? done : refused)
 }
 
 const githubId = /^[1-9]\d{0,19}$/u

@@ -10,6 +10,7 @@ import { type App, GitHubWorld } from "./github/world.ts";
 export { GitHubWorld } from "./github/world.ts";
 export type { Access, Account, Advisory, App, ChangedFile, Deployment, DeploymentStatus, Installation, Item, Permission, Permissions, Pull, Repository, WorkflowRun } from "./github/world.ts";
 export { signature256 } from "./github/webhooks.ts";
+export { reply } from "./github/rest.ts";
 
 export interface GitHubFakeOptions {
   readonly authority?: string;

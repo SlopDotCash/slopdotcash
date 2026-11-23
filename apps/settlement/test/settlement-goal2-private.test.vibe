@@ -13,6 +13,12 @@ import { evmDirectRails } from "../src/direct/evm.vibe"
 import { DirectPaymentsLive } from "../src/direct/port.vibe"
 import { solanaDirectRails } from "../src/direct/solana.vibe"
 
+type JsonObject = { readonly [key: string]: Json }
+
+function isJsonObject(value: Json | undefined): value is JsonObject {
+  return value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
+}
+
 error MigrationFailed { file: string }
 
 service Ledger {
@@ -145,8 +151,8 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it)
       const after = try payments.view({ caseContext: { ...payer, revision: 5 }, viewer })
       const settled = try rowsOf(db, "SELECT network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, case_revision, json_extract(deployment, '$.payoutPolicy') AS policy, json_extract(deployment, '$.projectId') AS project, json_extract(deployment, '$.chainId') AS chain_id, length(source_digest) AS source_length FROM security_settlements WHERE case_id = ?", caseId)
       const events = try rowsOf(db, "SELECT case_revision, kind, detail FROM security_case_events WHERE case_id = ? AND case_revision >= 4 ORDER BY case_revision", caseId)
-      const settlement = after.settlement !== null && typeof after.settlement === "object" && !Array.isArray(after.settlement) ? after.settlement : {}
-      const request = settlement.ownerRequest !== null && typeof settlement.ownerRequest === "object" && !Array.isArray(settlement.ownerRequest) ? settlement.ownerRequest : {}
+      const settlement: JsonObject = isJsonObject(after.settlement) ? after.settlement : {}
+      const request: JsonObject = isJsonObject(settlement.ownerRequest) ? settlement.ownerRequest : {}
       try same({
         before: { railAvailable: before.railAvailable, settlementState: before.settlementState, escrowOffered: before.paymentNetworks.includes("base-mainnet"), actions: before.actions.filter((action) => action === "consent-payment" || action === "prepare-payment") },
         refusals,

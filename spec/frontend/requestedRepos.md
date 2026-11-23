@@ -57,23 +57,32 @@ signed out (development `src/lib/repo-requests.ts` `pitchLink` and
 `mount` is a new lifetime of the page: the first render of an account, or an
 account change (`actor` "" is signed out). A reload keeps a ready board on
 screen until its answer arrives, and a failed reload keeps it too; a failed
-first read shows the error with Try again.
+first read shows the error with Try again. Each read carries the number of
+the read it answers; only the latest read of the lifetime settles the board,
+so an older answer never replaces the reload a success asked for
+(development `src/RequestedRepos.tsx` aborts the earlier load whenever a
+new one starts).
 
 ```quint
 type BoardStatus = BoardLoading | BoardReady | BoardFailed
 type RequestNotice = NoNotice | ActDone | ActRefused
-type RequestedPage = { actor: str, lifetime: int, board: BoardStatus, loading: bool, pending: int, notice: RequestNotice }
-pure val initial: RequestedPage = { actor: "", lifetime: 1, board: BoardLoading, loading: true, pending: 0, notice: NoNotice }
-pure def canMount(s: RequestedPage, actor: str): bool = s.lifetime < 9007199254740991
+type RequestedPage = { actor: str, lifetime: int, reading: int, board: BoardStatus, loading: bool, pending: int,
+  notice: RequestNotice }
+pure val initial: RequestedPage = { actor: "", lifetime: 1, reading: 1, board: BoardLoading, loading: true, pending: 0,
+  notice: NoNotice }
+pure def canMount(s: RequestedPage, actor: str): bool = s.lifetime < 9007199254740991 and s.reading < 9007199254740991
 pure def mount(s: RequestedPage, actor: str): RequestedPage =
-  { actor: actor, lifetime: s.lifetime + 1, board: BoardLoading, loading: true, pending: 0, notice: NoNotice }
-pure def canBoardAnswered(s: RequestedPage, life: int): bool = s.loading and life == s.lifetime
-pure def boardAnswered(s: RequestedPage, ok: bool, life: int): RequestedPage =
+  { actor: actor, lifetime: s.lifetime + 1, reading: s.reading + 1, board: BoardLoading, loading: true, pending: 0,
+    notice: NoNotice }
+pure def canBoardAnswered(s: RequestedPage, read: int, life: int): bool = s.loading and life == s.lifetime
+  and read == s.reading
+pure def boardAnswered(s: RequestedPage, ok: bool, read: int, life: int): RequestedPage =
   { ...s, loading: false,
     board: if (ok) BoardReady else if (s.board == BoardReady) BoardReady else BoardFailed }
-pure def canRetry(s: RequestedPage): bool = not(s.loading) and s.board == BoardFailed
-pure def retry(s: RequestedPage): RequestedPage = { ...s, loading: true, board: BoardLoading }
+pure def canRetry(s: RequestedPage): bool = not(s.loading) and s.board == BoardFailed and s.reading < 9007199254740991
+pure def retry(s: RequestedPage): RequestedPage = { ...s, reading: s.reading + 1, loading: true, board: BoardLoading }
 pure def alwaysLifetimeIsPositive(s: RequestedPage): bool = s.lifetime >= 1
+pure def alwaysReadingIsPositive(s: RequestedPage): bool = s.reading >= 1
 pure def alwaysFailedBoardIsNotLoading(s: RequestedPage): bool = s.board == BoardFailed implies not(s.loading)
 pure def alwaysLoadingBoardIsBeingRead(s: RequestedPage): bool = s.board == BoardLoading implies s.loading
 pure def sometimesFailedBoardOffersTryAgain(s: RequestedPage): bool = s.board == BoardFailed and canRetry(s)
@@ -81,6 +90,7 @@ pure def sometimesReadyBoardReloading(s: RequestedPage): bool = s.board == Board
 pure val actorValues = Set("", "900000101", "900000102")
 pure val okValues = Set(true, false)
 pure val lifeValues = Set(1, 2, 3)
+pure val readValues = Set(1, 2, 3)
 ```
 
 ### One flag, renew or withdraw is in flight per lifetime, a success reloads the board and a refusal changes nothing else
@@ -94,9 +104,10 @@ on screen; a refusal shows its reason and leaves the board as it is.
 pure def canSubmit(s: RequestedPage): bool = s.pending == 0 and s.actor != ""
 pure def submit(s: RequestedPage): RequestedPage = { ...s, pending: s.lifetime, notice: NoNotice }
 pure def canActAnswered(s: RequestedPage, life: int): bool =
-  s.pending != 0 and s.pending == s.lifetime and life == s.lifetime
+  s.pending != 0 and s.pending == s.lifetime and life == s.lifetime and s.reading < 9007199254740991
 pure def actAnswered(s: RequestedPage, ok: bool, life: int): RequestedPage =
   { ...s, pending: 0, notice: if (ok) ActDone else ActRefused,
+    reading: if (ok) s.reading + 1 else s.reading,
     loading: if (ok) true else s.loading,
     board: if (ok and s.board == BoardFailed) BoardLoading else s.board }
 pure def alwaysRequestBelongsToThisLifetime(s: RequestedPage): bool = s.pending == 0 or s.pending == s.lifetime
@@ -108,5 +119,5 @@ pure def sometimesFlagReloadsTheBoard(s: RequestedPage): bool = s.notice == ActD
 pure def sometimesRefusalKeepsTheBoard(s: RequestedPage): bool = s.notice == ActRefused and s.board == BoardReady and not(s.loading)
 pure val eval_witness_sometimesFlagReloadsTheBoard = (("mount", "900000101"), "submit", ("actAnswered", true, 2))
 pure val eval_witness_sometimesRefusalKeepsTheBoard =
-  (("mount", "900000101"), ("boardAnswered", true, 2), "submit", ("actAnswered", false, 2))
+  (("mount", "900000101"), ("boardAnswered", true, 2, 2), "submit", ("actAnswered", false, 2))
 ```

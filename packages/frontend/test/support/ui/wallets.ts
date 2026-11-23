@@ -21,12 +21,20 @@ export interface Wallets {
   readonly asked: ReadonlyArray<WalletAsked>;
   useAccount(index: number): void;
   rejectNext(): void;
-  addresses(): Addresses;
+  failNext(method: string): void;
+  addresses(): Promise<Addresses>;
 }
+
+export type Chains = (chainId: number) => Promise<Anvil>;
+
+export const homeChainId = 8453;
+
+const walletChainIds: ReadonlyArray<number> = [homeChainId, 4663];
 
 const icon = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#5b6cff"/></svg>').toString("base64")}`;
 const prompting = new Set(["eth_requestAccounts", "wallet_requestPermissions", "personal_sign", "eth_sendTransaction", "standard:connect", "solana:signMessage"]);
 const rejected: Answer = { error: { code: 4001, message: "User rejected the request." } };
+const failed: Answer = { error: { code: -32603, message: "Internal JSON-RPC error." } };
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function base58(bytes: Uint8Array): string {
@@ -128,21 +136,38 @@ async function solanaKey() {
   return { pair, publicKey, address: base58(publicKey) };
 }
 
-export async function injectWallets(context: BrowserContext, setup: WalletSetup, chain: Anvil | undefined): Promise<Wallets> {
+function switchedTo(params: ReadonlyArray<unknown>): number | undefined {
+  const [asked] = params;
+  const chainId = typeof asked === "object" && asked !== null && "chainId" in asked ? asked.chainId : undefined;
+  if (typeof chainId !== "string" || !/^0x[0-9a-f]+$/iu.test(chainId)) return undefined;
+  const id = Number(BigInt(chainId));
+  return walletChainIds.includes(id) ? id : undefined;
+}
+
+export async function injectWallets(context: BrowserContext, setup: WalletSetup, chains: Chains | undefined): Promise<Wallets> {
   const key = setup.solana === undefined ? undefined : await solanaKey();
   const asked: WalletAsked[] = [];
+  const failing: string[] = [];
   let account = 0;
   let rejections = 0;
-  const evmAddress = () => {
-    const chosen = chain?.accounts[account];
+  let selected = homeChainId;
+  const evmAddress = async (on: Chains) => {
+    const chosen = (await on(homeChainId)).accounts[account];
     if (chosen === undefined) throw new Error(`anvil has no account ${account}`);
     return chosen.address.toLowerCase();
   };
   const evm = async (method: string, params: ReadonlyArray<unknown>): Promise<Answer> => {
-    if (chain === undefined) return { error: { code: 4900, message: "No EVM wallet" } };
-    if (method === "eth_requestAccounts" || method === "eth_accounts") return { result: [evmAddress()] };
+    if (chains === undefined) return { error: { code: 4900, message: "No EVM wallet" } };
+    if (method === "eth_requestAccounts" || method === "eth_accounts") return { result: [await evmAddress(chains)] };
     if (method === "wallet_requestPermissions") return { result: [{ parentCapability: "eth_accounts" }] };
     if (method === "wallet_getCapabilities") return { error: { code: 4200, message: "The wallet does not support this method." } };
+    if (method === "wallet_switchEthereumChain") {
+      const next = switchedTo(params);
+      if (next === undefined) return { error: { code: 4902, message: "Unrecognized chain ID." } };
+      selected = next;
+      return { result: null };
+    }
+    const chain = await chains(selected);
     return chain.rpc(method, params).then((result) => ({ result }), (error: unknown) => ({ error: { code: -32603, message: String(error instanceof Error ? error.message : error) } }));
   };
   const solana = async (method: string, params: ReadonlyArray<unknown>): Promise<Answer> => {
@@ -156,6 +181,11 @@ export async function injectWallets(context: BrowserContext, setup: WalletSetup,
   };
   await context.exposeBinding("__slopWallet", async (_source, request: Asked): Promise<Answer> => {
     asked.push({ family: request.family, method: request.method });
+    const failure = request.family === "evm" ? failing.indexOf(request.method) : -1;
+    if (failure >= 0) {
+      failing.splice(failure, 1);
+      return failed;
+    }
     if (prompting.has(request.method) && rejections > 0) {
       rejections -= 1;
       return rejected;
@@ -175,6 +205,9 @@ export async function injectWallets(context: BrowserContext, setup: WalletSetup,
     rejectNext: () => {
       rejections += 1;
     },
-    addresses: () => ({ evm: chain === undefined ? null : evmAddress(), solana: key?.address ?? null }),
+    failNext: (method) => {
+      failing.push(method);
+    },
+    addresses: async () => ({ evm: chains === undefined ? null : await evmAddress(chains), solana: key?.address ?? null }),
   };
 }

@@ -3,23 +3,15 @@ import { isoNow } from "@repo/platform/clock"
 import { sql } from "@repo/platform/d1"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type CaseContext, type DirectRefusal, DirectRefused } from "@repo/ports/settlement"
 import type { Network } from "../../gen/fees__runtime.ts"
 import { type DirectBounty, type Event, type Transfer, Rejected, authorizedWallets, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
 import { type Purpose, type PaymentRail, fullRailAdmission, validSplit } from "../../gen/settlement__payment.effect.vibe"
-import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type DirectRefusal, type DirectSettlementView, type PaymentAsset, type PaymentWallet, type PrepareDetail, type PreparePaymentBody, type RemainingTransfer, type VerifyDetail, type VerifyPaymentBody } from "../client/direct.vibe"
+import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type DirectSettlementView, type PaymentAsset, type PaymentWallet, type PrepareDetail, type PreparePaymentBody, type RemainingTransfer, type VerifyDetail, type VerifyPaymentBody } from "../client/direct.vibe"
 import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { EVM_NATIVE_ASSET, NETWORKS } from "../kernels/networks.ts"
 import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
 import { type Alongside, type Facts, type Journal, asAmount, commit, currentIntent, decided, directModel, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
-
-export interface CaseContext {
-  readonly caseId: string
-  readonly revision: number
-  readonly reporterGithubId: string
-  readonly actorGithubId: string
-}
-
-export error DirectRefused { reason: DirectRefusal }
 
 effect function refuse(reason: DirectRefusal): never!DirectRefused {
   throw new DirectRefused({ reason })

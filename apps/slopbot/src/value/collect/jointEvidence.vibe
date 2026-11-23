@@ -1,0 +1,27 @@
+// spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { JointEvidence, type RepairRequest } from "@repo/points/collect"
+import { Evidence } from "../evidence/types.vibe"
+import { FileChange, valueAdditionCount, valueDeletionCount } from "../proofs/changes.vibe"
+import { retainedRepair } from "../retained/repair.vibe"
+
+schema SourcePolicy { readonly sha: string; readonly text: string }
+schema RecordedSource { readonly evidence: Evidence; readonly policy: SourcePolicy }
+
+function countable(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function lines(file: unknown) {
+  if (!Schema.is(FileChange)(file)) return undefined
+  const additions = valueAdditionCount(file)
+  const deletions = valueDeletionCount(file)
+  return countable(additions) && countable(deletions) ? { additions, deletions } : undefined
+}
+
+effect function repair(request: RepairRequest) {
+  const { original, accepted } = request
+  if (!Schema.is(RecordedSource)(original) || !Schema.is(RecordedSource)(accepted)) return undefined
+  return try retainedRepair({ original, accepted, acceptedCommitSha: request.acceptedCommitSha, originalCommitSha: request.commitSha, path: request.path })
+}
+
+export const jointEvidence = Layer.succeed(JointEvidence, { lines, repair } satisfies JointEvidence.Shape)

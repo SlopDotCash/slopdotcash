@@ -6,13 +6,13 @@ import { type ReactNode, useId, useRef, useState, useSyncExternalStore } from "r
 import { useMachine as useVault } from "../../../../gen/frontend__ownerVault.react.ts";
 import { formatAssetAmount, formatRewardCapDisplay, knownAssetSymbol, networkLabel } from "../../../kernels/assetText.ts";
 import { transactionUrl } from "../../../kernels/explorers.ts";
-import { evmVaultMessages } from "../../../wallets/owner/evmVault.vibe";
-import { depositVerified, provisionalMessages, provisionalReceived } from "../../../wallets/owner/provisionalVault.vibe";
+import { depositVerified, provisionalMessages, provisionalReceived, stepOf } from "../../../wallets/owner/provisionalVault.vibe";
 import {
   askRegistrationSoon,
   checkProvisional,
   checkRegistration,
   claimFor,
+  clearProvisionalUnsent,
   clearUnreadableCreation,
   confirmCreationUnsent,
   connectProvisionalOwner,
@@ -53,11 +53,11 @@ import {
   watchRegistration,
   watchSetupOffers,
 } from "../../../wallets/owner/vaultSetup.vibe";
-import { run, useSettled } from "./hooks.ts";
+import { run, useSettled, useTabHidden } from "./hooks.ts";
 import { pageHidden } from "./pageVisibility.ts";
 import { PendingCheck } from "./PendingCheck.tsx";
 import type { FundingProject } from "./project.schema.ts";
-import { NetworkName } from "./VaultActions.tsx";
+import { NetworkName, resetNote, signLabel } from "./VaultActions.tsx";
 
 export type CreationSummary = {
   readonly network: string;
@@ -346,34 +346,6 @@ function useSetupOffers(runtime: SetupRuntime): ReadonlyArray<WalletOffer> {
   return useSyncExternalStore(store.subscribe, () => store.seen, () => store.seen);
 }
 
-const visibilityStores = new WeakMap<SetupRuntime, (notify: () => void) => () => void>();
-
-function useSetupTabHidden(runtime: SetupRuntime): boolean {
-  const subscribe =
-    visibilityStores.get(runtime) ??
-    (() => {
-      const listeners = new Set<() => void>();
-      const changed = () => {
-        void run(runtime, setupTabHidden(pageHidden()));
-        for (const listener of listeners) listener();
-      };
-      const made = (notify: () => void) => {
-        if (listeners.size === 0 && typeof document !== "undefined") {
-          document.addEventListener("visibilitychange", changed);
-          void run(runtime, setupTabHidden(pageHidden()));
-        }
-        listeners.add(notify);
-        return () => {
-          listeners.delete(notify);
-          if (listeners.size === 0 && typeof document !== "undefined") document.removeEventListener("visibilitychange", changed);
-        };
-      };
-      visibilityStores.set(runtime, made);
-      return made;
-    })();
-  return useSyncExternalStore(subscribe, pageHidden, () => false);
-}
-
 export type ProvisionalDepositProps = {
   /** The included vault the owner may fund before it is registered. */
   deployment: ProvisionalDeployment;
@@ -383,10 +355,10 @@ export type ProvisionalDepositProps = {
   address?: string;
   /** The token amount as typed. */
   amount: string;
-  /** The reviewed deposit, read at the latest block. */
+  /** The reviewed deposit, read at the latest block: its step is an exact approval, an allowance reset, one request that approves and deposits, or the deposit. */
   review?: TransferReview;
-  /** A saved deposit waits for its chain check, with its transaction hash when one is known. */
-  pending?: { readonly hash: string };
+  /** A saved deposit or token approval waits for its chain check, with its transaction hash when one is known; `sent` is false when the wallet's answer was unclear. */
+  pending?: { readonly action: string; readonly hash: string; readonly sent: boolean };
   error?: string;
   notice?: string;
   busy?: boolean;
@@ -397,11 +369,14 @@ export type ProvisionalDepositProps = {
   onDeposit: () => void;
   onCheck: () => void;
   onEnterHash: (candidate: string) => void;
+  /** Clears a saved request the wallet never answered with a hash, after the owner confirmed in wallet activity that nothing was sent. */
+  onConfirmUnsent?: () => void;
 };
 
 /** The owner's deposit into a vault whose creation is included but not final: it counts only once the vault is registered and the deposit is final. */
-export function ProvisionalDeposit({ deployment, wallets, address, amount, review, pending, error, notice, busy = false, onConnect, onChooseAnother, onAmount, onReview, onDeposit, onCheck, onEnterHash }: ProvisionalDepositProps) {
+export function ProvisionalDeposit({ deployment, wallets, address, amount, review, pending, error, notice, busy = false, onConnect, onChooseAnother, onAmount, onReview, onDeposit, onCheck, onEnterHash, onConfirmUnsent }: ProvisionalDepositProps) {
   const formatted = (value: bigint) => formatAssetAmount(value, { network: deployment.network, assetAddress: deployment.asset, assetDecimals: review?.decimals ?? 0 });
+  const step = review === undefined ? "send" : stepOf(review);
   const rows: ReadonlyArray<readonly [string, string]> = review
     ? [
         ["Current free balance", formatted(review.freeBalance)],
@@ -427,13 +402,14 @@ export function ProvisionalDeposit({ deployment, wallets, address, amount, revie
       <WalletChooser legend={pending ? "Reconnect to check this transaction" : "Choose a wallet"} family="evm" address={address} disabled={busy} wallets={wallets} onConnect={onConnect} />
       {pending ? (
         <PendingCheck
-          action="Deposit"
+          action={pending.action}
           hash={pending.hash}
           explorerUrl={transactionUrl(deployment.network, pending.hash || undefined)}
           canCheck={address !== undefined}
           busy={busy}
           onCheck={onCheck}
-          onEnterHash={pending.hash === "" ? onEnterHash : undefined}
+          onEnterHash={pending.sent ? undefined : onEnterHash}
+          onConfirmUnsent={!pending.sent && pending.hash === "" ? onConfirmUnsent : undefined}
         />
       ) : address ? (
         <>
@@ -464,13 +440,10 @@ export function ProvisionalDeposit({ deployment, wallets, address, amount, revie
               </dl>
               <p className="text-sm text-foreground">This deposit joins the project's free funds. Only the vault owner can award them, or withdraw them less a 2% withdrawal fee to the refund destination below. Depositors have no refund right.</p>
               <Address value={deployment.owner} label="Refund destination" />
-              {review.approvalNeeded ? (
-                <p className="text-sm text-muted-foreground">{evmVaultMessages.approveFirst}</p>
-              ) : (
-                <Button className="self-start" loading={busy} onClick={onDeposit}>
-                  Confirm deposit in wallet
-                </Button>
-              )}
+              {step === "reset" ? <p className="text-sm text-muted-foreground">{resetNote}</p> : null}
+              <Button className="self-start" loading={busy} onClick={onDeposit}>
+                {signLabel(step, "deposit")}
+              </Button>
             </section>
           ) : null}
           <Button variant="ghost" className="self-start" disabled={busy} onClick={onChooseAnother}>
@@ -506,9 +479,17 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const network = networkLabel(deployment.network);
-  const settle = (checked: ProvisionalChecked) => {
+  const settle = (checked: ProvisionalChecked, connection = wallet) => {
     setReads((count) => count + 1);
     const view = checked.state.view;
+    if (checked.approval && checked.state.approval === "ApprovalConfirmed") {
+      setNotice(provisionalMessages.approved);
+      if (connection === undefined || amount.trim() === "") return;
+      void run(runtime, reviewProvisionalDeposit(connection, amount)).then((done) => {
+        if (done.ok) setReview(done.value);
+      });
+      return;
+    }
     if (view === "Received") setNotice(provisionalReceived(network, checked.hash));
     else if (view === "DepositVerified") {
       setNotice(depositVerified(checked.hash));
@@ -530,8 +511,8 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
     else setError(done.message);
   };
   const plan = saved.status === "done" ? saved.value : undefined;
-  const watchKey = wallet && plan && plan.hash !== "" && !busy ? `provisional-watch:${plan.hash}` : "provisional-watch:idle";
-  useSettled(runtime, watchKey, () => (watchKey === "provisional-watch:idle" || wallet === undefined ? Effect.void : watchProvisional(wallet, pageHidden, (checked) => Effect.sync(() => settle(checked)))));
+  const watchKey = wallet && plan?.sent && !busy ? `provisional-watch:${plan.action}:${plan.hash}` : "provisional-watch:idle";
+  useSettled(runtime, watchKey, () => (watchKey === "provisional-watch:idle" || wallet === undefined ? Effect.void : Effect.asVoid(watchProvisional(wallet, pageHidden, (checked) => Effect.sync(() => settle(checked, wallet))))));
   return (
     <ProvisionalDeposit
       deployment={deployment}
@@ -539,7 +520,7 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
       address={wallet?.address}
       amount={amount}
       review={review}
-      pending={plan ? { hash: plan.hash } : undefined}
+      pending={plan}
       error={error || (opened.status === "failed" ? opened.message : "")}
       notice={notice}
       busy={busy}
@@ -565,8 +546,9 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
           setNotice(provisionalMessages.waiting);
         })
       }
-      onCheck={() => wallet && act(checkProvisional(wallet), settle)}
-      onEnterHash={(candidate) => wallet && act(recoverProvisionalHash(wallet, candidate), settle)}
+      onCheck={() => wallet && act(checkProvisional(wallet), (checked) => settle(checked, wallet))}
+      onEnterHash={(candidate) => wallet && act(recoverProvisionalHash(wallet, candidate), (checked) => settle(checked, wallet))}
+      onConfirmUnsent={wallet === undefined ? undefined : () => act(clearProvisionalUnsent(wallet), () => setNotice(setupMessages.cleared))}
     />
   );
 }
@@ -594,7 +576,7 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
   const runtime = setupRuntime({ projectId: project.id, purpose, rewardAsset: reward.asset?.address, rewardDecimals: reward.asset?.decimals, monthlyCapMinor: reward.monthlyCapMinor ?? "0", monthlyCapDisplay: reward.monthlyCapDisplay ?? "" });
   const vault = useVault(runtime);
   const offers = useSetupOffers(runtime);
-  useSetupTabHidden(runtime);
+  useTabHidden(runtime, setupTabHidden);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

@@ -1,6 +1,5 @@
 // spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
 import type { Fetcher } from "@repo/platform/bindings";
-import type { Collection } from "../../../src/collect/run/pipeline.vibe";
 import { type Seeded, fetcherOf as githubFetcher, repository } from "../u5/github.ts";
 import { banFeed, penaltyPage, scripted } from "../u6/feeds.ts";
 
@@ -54,38 +53,5 @@ export function served(world: Seeded): Served {
   return {
     seen: feeds.seen,
     fetcher: { fetch: (request) => (new URL(request.url).hostname === "api.github.com" ? github.fetch(request) : feeds.fetcher.fetch(request)) },
-  };
-}
-
-/** A snapshot of a window whose collection credited nothing and listed no open work. @throws {never} */
-export function creditlessSnapshot(collection: Collection, methodology: unknown): unknown {
-  return {
-    schemaVersion: "6",
-    repository: collection.registry.targets[0]?.id ?? null,
-    repositories: collection.registry.targets.map((target, index) => ({
-      id: target.id,
-      owner: target.owner,
-      name: target.name,
-      displayName: target.displayName,
-      githubUrl: target.githubUrl,
-      description: target.description,
-      integrationBranch: target.integrationBranch,
-      projectId: target.projectId,
-      role: index === 0 ? "primary" : "member",
-    })),
-    ruleVersion: "slop-score-v2",
-    generatedAt: collection.generatedAt,
-    sourceUpdatedAt: collection.latestPreflightUpdate,
-    stale: false,
-    window: { days: collection.bounds.days, from: collection.bounds.from, to: collection.bounds.to },
-    methodology,
-    source: { ...collection.source, evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 0, maxArtifacts: 0 } },
-    leaders: [],
-    ledger: [],
-    opportunities: [],
-    attributions: [],
-    invalidAttributionMarkers: [],
-    attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
-    workQueue: { issues: [], pullRequests: [] },
   };
 }

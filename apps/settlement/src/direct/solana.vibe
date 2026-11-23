@@ -6,9 +6,10 @@ import { type Address, type Blockhash, type TokenBalance, SYSTEM_PROGRAM, Solana
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type CaseContext, type DirectRefusal, DirectRefused, type RecoveryRefusal, RecoveryRefused, SolanaPayerRefused } from "@repo/ports/settlement"
 import { type DirectBounty, Rejected, authorizedWallets } from "../../gen/settlement__directBounty.effect.vibe"
 import { fullRailAdmission, validSplit } from "../../gen/settlement__payment.effect.vibe"
-import type { ConsentDetail, ConsentPaymentBody, DirectIntent, DirectRefusal, PaymentAsset, PaymentWallet, PrepareDetail, PreparePaymentBody, VerifyDetail, VerifyPaymentBody } from "../client/direct.vibe"
+import type { ConsentDetail, ConsentPaymentBody, DirectIntent, PaymentAsset, PaymentWallet, PrepareDetail, PreparePaymentBody, VerifyDetail, VerifyPaymentBody } from "../client/direct.vibe"
 import { createTokenAccount, meta } from "../chain/solana/instructions.ts"
 import { isTokenProgram, tokenAccountAddress } from "../chain/solana/pda.ts"
 import { REVIEWED_SOLANA_PROGRAMS } from "../chain/solana/programs.ts"
@@ -18,7 +19,7 @@ import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey, SOLANA_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
 import { type Mint, TOKEN_PROGRAM, readMint, readRefusalMessage, readTokenAccount } from "../kernels/token2022.ts"
 import { type Alongside, type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, intentModel, journalFor, snapshotOf, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
-import { type CaseContext, DirectRefused, receiptEvent } from "./routes.vibe"
+import { receiptEvent } from "./routes.vibe"
 
 module limbs {
   import { sha256 } from "@noble/hashes/sha2.js"
@@ -69,31 +70,6 @@ module limbs {
 import { canonicalKey, joined, messageIdOf, positiveU64, sameBytes, slotAfter, u64Bytes, withinU64 } from limbs
 
 export error SolanaDirectInvalid { reason: string }
-export error SolanaPayerRefused { message: string }
-
-export type RecoveryRefusal =
-  | "paymentRecoveryRequired"
-  | "paymentRecoveryRequiredProveTheExpiredRequest"
-  | "paymentNotPreparedPrepareTheExactPayment"
-  | "paymentWalletRequiredConfirmAPayoutWallet"
-  | "paymentAlreadyVerifiedThisPaymentIsAlready"
-  | "paymentAlreadyVerifiedThisTransferIsAlready"
-  | "originalPayerRequired"
-  | "railUnavailablePaymentRecoveryIsUnavailable"
-  | "paymentConsentRequiredTheReporterMustConsent"
-  | "paymentWalletConflict"
-  | "paymentRecoveryChanged"
-  | "legacyPaymentReviewRequired"
-  | "legacyPaymentReviewRequiredThisLegacyRequestHas"
-  | "invalidRequestEachExpiredRequestNeeds"
-  | "invalidRequestSignTheExactExpired"
-  | "expiryProofRequired"
-  | "feePaymentPending"
-  | "cancellationRequired"
-  | "cancellationUnverified"
-  | "confirmationRequiredConfirmTheReviewedPayment"
-
-export error RecoveryRefused { reason: RecoveryRefusal }
 
 export schema IssuedPlan {
   readonly transaction: string

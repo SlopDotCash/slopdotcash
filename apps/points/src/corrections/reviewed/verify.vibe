@@ -10,12 +10,12 @@ import { batchDigest } from "../../kernels/records/ids.vibe"
 import { importStatements } from "../../publication/import.vibe"
 import { protectionEvidence } from "../../publication/protection.vibe"
 import { batchRecorded, isExtension } from "../apply/apply.vibe"
-import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { instantOf } from "../../kernels/records/instants.ts"
 import { numstatFiles, readPullRequestGitFiles } from "../../collect/merged/files.vibe"
 import type { CorrectionFile, CorrectionSource } from "../apply/manifest.vibe"
+import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
 import { type AuditedSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, digestText, githubIdPattern, historicalFrom, historicalThrough, matchesCarriedAcceptance, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
 import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
 
@@ -145,7 +145,7 @@ effect function mergedRange(from: number, through: number) {
   return `merged:${(try isoAt(from)).replace(".000Z", "Z")}..${(try isoAt(through)).replace(".000Z", "Z")}`
 }
 
-effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[]!(GitHubFailure | ReviewedRefused)!GitHub {
+effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[]!(ReviewedRefused | GitHubFailure)!GitHub {
   const github = try GitHub
   const rowsFound: AuditedSource[] = []
   let cursor: string | null = null
@@ -153,16 +153,15 @@ effect function censusRange(repository: string, repositoryNodeId: string, from: 
   do {
     const query = `repo:${repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
     const page: CensusSearch = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
-    const count = page.issueCount
-    try require(Number.isSafeInteger(count) && (total === undefined || total === count), "Historical census count changed")
-    total = count
-    if (count >= 1000) {
+    try require(Number.isSafeInteger(page.issueCount) && (total === undefined || total === page.issueCount), "Historical census count changed")
+    total = page.issueCount
+    if (total >= 1000) {
       const start = Date.parse(from)
       const end = Date.parse(through)
       try require(end - start > 1000, "Historical census cannot be split further")
       const middle = new Date(Math.floor((start + end) / 2000) * 1000).toISOString()
       const combined = [...(try censusRange(repository, repositoryNodeId, from, middle)), ...(try censusRange(repository, repositoryNodeId, middle, through))]
-      try require(combined.length === count && new Set(combined.map((row) => row.id)).size === count, "Historical split census changed")
+      try require(combined.length === total && new Set(combined.map((row) => row.id)).size === total, "Historical split census changed")
       return combined
     }
     for (const node of page.nodes) {
@@ -353,13 +352,12 @@ effect function found<S extends Schema.ConstraintDecoder<unknown>>(path: string,
 
 export effect function verifyHistoricalDuplicateAcceptanceOrder(packet: RetirementScope) {
   const orders = new Map<string, ReadonlyArray<AcceptanceOrder>>()
-  const retirements = (packet.duplicateRetirements ?? []).filter((item) => item.identicalAcceptedChange === undefined && item.netOutcome === undefined)
+  const retirements = (packet.duplicateRetirements ?? []).filter((item) => item.identicalAcceptedChange === undefined)
   if (retirements.length === 0) return orders
   const audit = packet.sourceAudit
   const root = `/repos/${audit.repository}`
   const repository = try found(root, PublicRepository)
-  try require(repository !== undefined && !repository.private && repository.node_id === audit.repositoryNodeId &&
-    repository.full_name.toLowerCase() === audit.repository.toLowerCase(), "Duplicate acceptance repository changed")
+  try require(repository?.node_id === audit.repositoryNodeId && repository.full_name.toLowerCase() === audit.repository.toLowerCase(), "Duplicate acceptance repository changed")
   const audited = new Map(audit.sources.map((row) => [row.id, row] as const))
   const pulls = new Map<number, ReviewedPull | undefined>()
   const checked = new Set<string>()

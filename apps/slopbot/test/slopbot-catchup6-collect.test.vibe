@@ -1,20 +1,23 @@
-// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
-import { Response as WebResponse } from "miniflare"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { GitHub } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
+import { temporaryFailure } from "@repo/platform/program"
 import type { GitHubFake } from "@repo/platform/testing/github"
-import { type Handler, internet } from "@repo/platform/testing/internet"
+import { internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { type AuthorRow, type OpenedMemo, auditSample, audited, graphqlClient, openMemoFromEnv, writeMemo } from "@repo/points/collect"
 import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
-import { historyOrigin, workUnitHistoryPath } from "@repo/ports/slopbot"
+import { historyOrigin } from "@repo/ports/slopbot"
 import type { RegisteredRepository } from "../src/value/evidence/types.vibe"
 import { type ValueInputsOptions, collectValueInputs } from "../src/value/collect/inputs.vibe"
 import { invalidConcurrency, valueFeedConcurrency } from "../src/value/collect/warmup.vibe"
+import { collect } from "../src/programs/collect.vibe"
 import { reviewedReplay } from "../src/programs/replay.vibe"
+import { type CollectWorld, type Feed, collectWorld, emptyHistory, feedOf, inDirectory } from "./support/collectWorld.vibe"
 import { type Seeded, acceptanceRecorder, githubOver, mergedAt, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
 import { githubOverKept, pullUrl, registeredKept, repository as keptRepository, seededKept } from "./support/retainedWorker.vibe"
 
@@ -22,13 +25,6 @@ const feedHost = new URL(historyOrigin).host
 const codeDigest = "a".repeat(64)
 const trustedMain = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "push" }
 const discoveryRead = /^GET \/repos\/ada\/widgets\/pulls\/1$/u
-
-interface Feed {
-  readonly asked: string[]
-  readonly failing: Map<string, number>
-  inFlight: number
-  peak: number
-}
 
 interface Reads {
   readonly fake: GitHubFake
@@ -41,50 +37,15 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-function feedOf(): Feed {
-  return { asked: [], failing: new Map(), inFlight: 0, peak: 0 }
-}
-
-function pageKey(url: URL) {
-  return `${url.pathname === workUnitHistoryPath ? "joint" : "single"}:${url.searchParams.get("pull")}`
-}
-
-function emptyHistory(feed: Feed): Handler {
-  return async (request) => {
-    const url = new URL(request.url)
-    const key = pageKey(url)
-    feed.asked.push(key)
-    feed.inFlight += 1
-    feed.peak = Math.max(feed.peak, feed.inFlight)
-    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve()
-    feed.inFlight -= 1
-    const failures = feed.failing.get(key) ?? 0
-    if (failures > 0) {
-      feed.failing.set(key, failures - 1)
-      return new WebResponse("missing", { status: 404 })
-    }
-    const joint = url.pathname === workUnitHistoryPath
-    return WebResponse.json({
-      schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
-      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
-      repository: url.searchParams.get("repository"),
-      pullRequestNumber: Number(url.searchParams.get("pull")),
-      records: [],
-      nextAfter: null,
-      ...(joint ? { throughSequence: 0, totalRecords: 0 } : {}),
-    })
-  }
-}
-
 function widgetsReads(world: Seeded): Reads {
   return { fake: world.fake, token: world.token, github: githubOver(world), repositories: [policyOf(world)] }
 }
 
 function inputsOver(reads: Reads, feed: Feed, options: Omit<ValueInputsOptions, "repositories"> = {}) {
   const net = internet({ github: reads.fake.handler, hosts: { [feedHost]: emptyHistory(feed) } })
-  const outbound = outboundVia({ fetch: asFetch(net.handler) })
+  const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
   const services = Layer.mergeAll(reads.github, Layer.provide(graphqlClient({ token: Redacted.make(reads.token) }), outbound), acceptanceRecorder().layer)
-  return Layer.provide(collectValueInputs({ repositories: reads.repositories, ...options }), Layer.mergeAll(services, outbound, webCrypto))
+  return Layer.provide(collectValueInputs({ repositories: reads.repositories, ...options }), Layer.mergeAll(services, outbound, webCrypto, systemGit, NodeServices.layer))
 }
 
 effect function loaded(census: ValueCensus) {
@@ -278,10 +239,87 @@ describe('Recover complete history at a fixed sequence boundary (spec/slopbot/hi
   })
 })
 
+const commitPage = /^\/repos\/[^/]+\/[^/]+\/commits\/[a-f0-9]{40}\?per_page=100&page=[1-9][0-9]*$/u
+
+interface Written {
+  readonly ledger: ReadonlyArray<{ readonly category: string; readonly actor: { readonly login: string }; readonly source: { readonly url: string } }>
+}
+
+effect function collected(world: CollectWorld, settings: Readonly<Record<string, string>>) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown(settings)), outboundVia({ fetch: async (request) => asFetch(world.handler)(request) }) {
+    const run = Effect.map(inDirectory(world.outputDirectory, collect([world.registryPath, "--cutoff", world.cutoffAt])), (code) => code === temporaryFailure ? "deferred" : "completed")
+    const outcome: string = run catch (error) => error._tag
+    return outcome
+  }
+}
+
+effect function readWritten(world: CollectWorld) {
+  const fs = try FileSystem.FileSystem
+  const read = effect {
+    const text = try fs.readFileString(world.leaderboardPath)
+    return try Effect.try(() => JSON.parse(text) as Written)
+  }
+  const written: Written = read catch () => ({ ledger: [] })
+  return written
+}
+
+function repeatedCommitPages(world: CollectWorld, from: number) {
+  const reads = new Map<string, number>()
+  for (const request of world.requests.slice(from)) {
+    const url = new URL(request.url)
+    const page = `${url.pathname}${url.search}`
+    if (request.method === "GET" && commitPage.test(page)) reads.set(page, (reads.get(page) ?? 0) + 1)
+  }
+  return [...reads].filter(([, count]) => count > 1)
+}
+
+describe('Collect publishes a verified window (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment")', () => {
+  it.live("slopbot collect publishes the window of ada/widgets with its contributor, keeps the memo, reads each commit page once from it, and refuses a run without the registry snapshot before any request", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const world = try collectWorld()
+      const firstMemo = `${world.outputDirectory}/memo/first.json`
+      const first = try collected(world, { ...world.env, SLOP_COLLECTION_MEMO_OUT: firstMemo })
+      const written = try readWritten(world)
+      const paired = `https://github.com/ada/widgets/pull/${world.github.pulls.paired}`
+      const contributors = written.ledger.filter((event) => event.category === "merged-pull-request" && event.source.url === paired).map((event) => event.actor.login)
+      const memoKept = try fs.exists(firstMemo)
+
+      const beforeSecond = world.requests.length
+      const second = try collected(world, { ...world.env, SLOP_COLLECTION_MEMO: firstMemo, SLOP_COLLECTION_MEMO_OUT: `${world.outputDirectory}/memo/second.json` })
+      const repeated = repeatedCommitPages(world, beforeSecond)
+
+      const beforeMissing = world.requests.length
+      const unset = Object.fromEntries(Object.entries(world.env).filter(([name]) => name !== "SLOP_REGISTRY_SNAPSHOT"))
+      const missing = try collected(world, unset)
+
+      try same({
+        first,
+        contributors,
+        memoKept,
+        second,
+        repeated,
+        missing,
+        missingRequests: world.requests.length - beforeMissing,
+        unexpected: world.unexpected.map((request) => request.url),
+      }, {
+        first: "completed",
+        contributors: ["grace"],
+        memoKept: true,
+        second: "completed",
+        repeated: [],
+        missing: "RegistrySnapshotMissing",
+        missingRequests: 0,
+        unexpected: [],
+      })
+    }
+  })
+})
+
 describe('Replay a historical scope only from a trusted dispatch (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => {
   it.live("reviewed-replay refuses a push run and a dispatch without its registry before any read", () => effect {
     const net = internet()
-    const outbound = outboundVia({ fetch: asFetch(net.handler) })
+    const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
     const main = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_TOKEN: "replay-token" }
     const runs: ReadonlyArray<readonly [Readonly<Record<string, string>>, ReadonlyArray<string>]> = [
       [{ ...main, GITHUB_EVENT_NAME: "push" }, ["registry.json"]],

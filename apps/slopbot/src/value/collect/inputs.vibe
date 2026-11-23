@@ -102,14 +102,14 @@ interface Run {
   recorder: AttributionRecorder | undefined
 }
 
-interface CreditSource {
+export interface CreditSource {
   readonly actorNodeId: string
   readonly originalPullRequestId: string
   readonly originalPullRequestUrl: string
   readonly originalCommitSha: string
 }
 
-type RetainedCredit =
+export type RetainedCredit =
   | { readonly kind: "bound"; readonly bindings: ReadonlyMap<string, CreditSource> }
   | { readonly kind: "incomplete"; readonly limitations: ReadonlyArray<string> }
 
@@ -234,10 +234,10 @@ function incomplete(limitations: ReadonlyArray<string>): RetainedCredit {
   return { kind: "incomplete", limitations }
 }
 
-function retainedCredit(accepted: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>): RetainedCredit {
+export function retainedCredit(accepted: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>, acceptedSubset = false): RetainedCredit {
   if (sources.some((entry) => entry.evidence.limitations.length > 0))
     return incomplete(sources.flatMap((entry) => entry.evidence.limitations.map((limitation) => `#${entry.evidence.pull.number}: ${limitation}`)))
-  const retained = retainedCopyBindings(sources, { ordinaryCommitsOnly: true, acceptedSubset: false })
+  const retained = retainedCopyBindings(sources, { ordinaryCommitsOnly: true, acceptedSubset })
   if (retained.limitations.length > 0) return incomplete(retained.limitations)
   const resolved = new Map<string, CreditSource>()
   for (const commit of accepted.evidence.commits) {

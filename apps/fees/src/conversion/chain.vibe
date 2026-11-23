@@ -22,7 +22,7 @@ export error FeeCapTooLow { operation: string; detail: string }
 export const rawTxLimit = 262146
 
 export function detailOf(error: ChainUnavailable | SendRefused | FeeCapTooLow) {
-  return `${error.operation}: ${error.detail}`
+  return error.detail
 }
 
 export function chainFailure<A>(outcome: A | ChainUnavailable | SendRefused | FeeCapTooLow) {

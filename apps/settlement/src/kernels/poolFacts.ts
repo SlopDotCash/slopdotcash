@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/monthPledges.md, "Pool funding serves a vault's open total, or none without pledge support, with its pledges above zero from the previous UTC month on and every one still open"
 import type { Amount } from "../../gen/settlement__money.ts";
 import { mainnet, mainnetExecution, reviewedActivation } from "../../gen/settlement__signer.ts";
 import { toAmount } from "./amounts.ts";

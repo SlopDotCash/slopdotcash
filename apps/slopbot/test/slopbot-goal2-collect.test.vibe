@@ -1,7 +1,9 @@
-// spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"
+// spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"
 import { assert, it } from "@effect/vitest"
 import { settableClock } from "@repo/platform/testing/clock"
-import { discussionCheckpoint } from "../src/programs/collect.vibe"
+import { discussionCheckpoint } from "@repo/points/collect"
+import { registryOrigin } from "../src/programs/collect.vibe"
+import { valueBindings } from "../src/programs/valueSettings.vibe"
 
 const now = Date.parse("2026-11-22T12:00:00.000Z")
 const trusted = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "workflow_dispatch", SLOP_DISCUSSION_CHECKPOINT: "/tmp/discussions", SLOP_DISCUSSION_DEADLINE_MS: String(now + 3_600_000) }
@@ -13,6 +15,13 @@ effect function checkpointUnder(variables: Readonly<Record<string, string>>) {
       const checkpoint = try discussionCheckpoint()
       return checkpoint === undefined ? "none" : `${checkpoint.directory}@${checkpoint.deadlineMs}`
     } catch effect (error) => error._tag
+    return found
+  }
+}
+
+effect function originUnder(variables: Readonly<Record<string, string>>) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown(variables)) {
+    const found = registryOrigin() catch effect (error) => `${error._tag}: ${error.message}`
     return found
   }
 }
@@ -30,6 +39,41 @@ it.effect('A resumed discussion read takes its checkpoint only from a trusted ma
     try checkpointUnder({ ...trusted, SLOP_DISCUSSION_CHECKPOINT: "" }),
   ]
   const resumed = `/tmp/discussions@${now + 3_600_000}`
-  const invalid = "DiscussionCheckpointInvalid"
+  const invalid = "CheckpointInvalid"
   try Effect.sync(() => assert.deepStrictEqual(outcomes, ["none", resumed, resumed, invalid, invalid, invalid, invalid, invalid, invalid]))
+})
+
+effect function bindings(vars: Readonly<Record<string, string>>) {
+  const found = valueBindings(vars) catch effect (error) => [error.message]
+  return found
+}
+
+it.effect('A collection reads the registry of the environment it publishes to (spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment")', () => effect {
+  const origins = [
+    try originUnder({}),
+    try originUnder({ VITE_SLOP_ENVIRONMENT: "production" }),
+    try originUnder({ VITE_SLOP_ENVIRONMENT: "staging" }),
+    try originUnder({ VITE_SLOP_ENVIRONMENT: "preview" }),
+  ]
+  try Effect.sync(() => assert.deepStrictEqual(origins, ["https://slop.cash", "https://slop.cash", "https://staging.slop.cash", "DeploymentTierInvalid: Invalid deployment tier"]))
+})
+
+it.effect('A release passes on only a valid value budget, normalised (spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key")', () => effect {
+  const outcomes = [
+    try bindings({}),
+    try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "", SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "", SLOPBOT_VALUE_START_AT: "" }),
+    try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only" }),
+    try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "5000000", SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "250000", SLOPBOT_VALUE_START_AT: "2026-12-01T00:00:00.000Z" }),
+    try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "5000000", SLOPBOT_VALUE_START_AT: "2026-12-01T00:00:00.000Z" }),
+    try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "5000000", SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "250000", SLOPBOT_VALUE_START_AT: "2026-10-01T00:00:00.000Z" }),
+  ]
+  const invalid = ["Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter API assessment."]
+  try Effect.sync(() => assert.deepStrictEqual(outcomes, [
+    [],
+    [],
+    ["SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD=alerts-only", "SLOPBOT_VALUE_START_AT=2026-11-01T00:00:00.000Z"],
+    ["SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD=5000000", "SLOPBOT_VALUE_START_AT=2026-12-01T00:00:00.000Z", "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD=250000"],
+    invalid,
+    invalid,
+  ]))
 })

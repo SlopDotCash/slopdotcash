@@ -1,5 +1,5 @@
 // spec/slopbot/composition.md, "Story: Close only from a complete current review under the live claim"; spec/slopbot/composition.md, "Story: A confirmed close debits once, and a reopen or upheld appeal reverses it once"
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1, sql } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -22,6 +22,7 @@ import { confirmSlot, rejectSlot, reserveSlot } from "../../src/closeCapacity/st
 import { type ReviewClaim, assertReviewClaim, claimReview, finishReview, heldLease, leaseView } from "../../src/lease/store.vibe";
 import { settled } from "../support/settled.ts";
 
+const ReopenRow = Schema.Struct({ at: Schema.NullOr(Schema.String) });
 const author = 5;
 const slopbotWorker = -10;
 const githubWebhook = -11;
@@ -377,7 +378,8 @@ async function observe(): Promise<Observed> {
   const { lease } = await run(leaseView(reviewKey()));
   const penalties = await run(penaltiesOf(node()));
   const { appeal } = await run(loadAppeal(appealKey()));
-  const reopen = await db.prepare("SELECT reopen_confirmed_at AS at FROM slopbot_deliveries WHERE delivery_id = ?").bind(`reopen-${generation}`).first<{ at: string | null }>();
+  const [found] = (await db.prepare("SELECT reopen_confirmed_at AS at FROM slopbot_deliveries WHERE delivery_id = ?").bind(`reopen-${generation}`).all()).results;
+  const reopen = found === undefined ? undefined : Schema.decodeUnknownSync(ReopenRow)(found);
   return view({ attempt, lease, penalties, appeal, confirmedReopen: reopen?.at != null });
 }
 

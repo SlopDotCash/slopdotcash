@@ -1,5 +1,6 @@
 // spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"
 import { assert, layer } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
 import type { Handler } from "@repo/platform/testing"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { githubFake, signature256 } from "@repo/platform/testing/github"
@@ -32,18 +33,18 @@ const cleanFile = { path: "src/a.ts", additions: 10, deletions: 2, status: "modi
 const commentBody = [marker, "### Slopbot review", "", "No finding.", "", "<details><summary>Review details</summary>", "", "Checked.", "</details>"].join("\n")
 const clean = { mergeable: true, mergeable_state: "clean" }
 
-function seed() {
-  const fake = githubFake()
+effect function seed() {
+  const fake = try Effect.try(() => githubFake())
   const world = fake.world
-  world.addUser({ id: 100, login: "ada" })
-  world.addUser({ id: 301, login: "carol" })
-  world.addUser({ id: 302, login: "maya" })
-  world.addUser({ id: 303, login: "otto" })
-  world.addUser({ id: 304, login: "helper[bot]", type: "Bot" })
-  world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" })
-  world.setPermission(repo, "maya", "write")
-  world.setPermission(repo, "otto", "read")
-  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } })
+  try Effect.try(() => world.addUser({ id: 100, login: "ada" }))
+  try Effect.try(() => world.addUser({ id: 301, login: "carol" }))
+  try Effect.try(() => world.addUser({ id: 302, login: "maya" }))
+  try Effect.try(() => world.addUser({ id: 303, login: "otto" }))
+  try Effect.try(() => world.addUser({ id: 304, login: "helper[bot]", type: "Bot" }))
+  try Effect.try(() => world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" }))
+  try Effect.try(() => world.setPermission(repo, "maya", "write"))
+  try Effect.try(() => world.setPermission(repo, "otto", "read"))
+  try Effect.try(() => world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } }))
   const merges = new Map<number, MergeReport>()
   const flips = new Map<number, HeadFlip>()
   const handler: Handler = async (request) => {
@@ -59,12 +60,13 @@ function seed() {
     const report = merges.get(number)
     if (report === undefined || answer.status !== 200) return answer
     const pull = await answer.json() as Record<string, unknown>
-    return new Response(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
+    return new WebResponse(JSON.stringify({ ...pull, ...report }), { status: 200, headers: answer.headers })
   }
-  return { fake, merges, flips, net: internet({ github: handler }), token: fake.tokens.installation(installationId) }
+  const token = try Effect.try(() => fake.tokens.installation(installationId))
+  return { fake, merges, flips, net: internet({ github: handler }), token }
 }
 
-type Seeded = ReturnType<typeof seed>
+type Seeded = Effect.Success<ReturnType<typeof seed>>
 
 service World {
   readonly fake: Fake
@@ -73,7 +75,7 @@ service World {
 }
 
 const ReadyArea = Layer.unwrap(effect {
-  const seeded = try Effect.try(() => seed())
+  const seeded = try seed()
   return Layer.merge(
     areaLayer({
       ...journeyBuild,

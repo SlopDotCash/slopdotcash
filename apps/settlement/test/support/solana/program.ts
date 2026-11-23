@@ -1,15 +1,17 @@
-// spec/contracts/solanaEscrow.md, "The program upgrade authority writes the Config once with three distinct keys"; spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"
+// spec/contracts/solanaEscrow.md, "The program upgrade authority writes the Config once with three distinct keys"; spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { type Address, type Blockhash, type Signature, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, addressOf, base64Encode } from "@repo/platform/chain/solana";
+import { type Address, type Blockhash, type Signature, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, addressOf, base64Encode, findPda } from "@repo/platform/chain/solana";
 import { type Validator, sbfBuild, solanaValidator } from "@repo/platform/testing/chains";
 import { repoRoot } from "@repo/platform/testing/paths";
-import { concat, u32le, u64le, utf8, type U64 } from "../../../src/chain/solana/bytes.ts";
-import { UPGRADEABLE_LOADER, keyBytes, programDataAddress, tokenAccountAddress } from "../../../src/chain/solana/pda.ts";
+import { PRE_PLEDGE_PROJECT_SIZE, accountDiscriminator } from "../../../src/chain/solana/accounts.ts";
+import { concat, digestBytes, u32le, u64le, utf8, type U64 } from "../../../src/chain/solana/bytes.ts";
+import { PURPOSE_BYTE, UPGRADEABLE_LOADER, keyBytes, programDataAddress, tokenAccountAddress, vaultAddress } from "../../../src/chain/solana/pda.ts";
+import { registryProjectDigest } from "../../../src/owner/ownerInstructions.ts";
 import { type Instruction, compileLegacy, requiredSigners, transactionId, unsignedTransaction, withSignature } from "../../../src/chain/solana/transactions.ts";
 
 export interface Keypair {
@@ -25,6 +27,7 @@ export interface EscrowChain extends AsyncDisposable {
   readonly holder: Keypair;
   readonly mints: { readonly classic: Address; readonly token2022: Address; readonly refused: Address };
   readonly sources: { readonly classic: Address; readonly token2022: Address };
+  readonly prePledge: { readonly projectId: string; readonly project: Address; readonly vault: Address };
   close(): Promise<void>;
 }
 
@@ -34,6 +37,9 @@ const FIXTURE_MINT_KEY = new Uint8Array(32).fill(0x2a);
 const SUPPLY = 1_000_000_000_000n as U64;
 const FIXTURE_LAMPORTS = 10_000_000;
 const PROGRAM_LAMPORTS = 100_000_000_000;
+const PRE_PLEDGE_PROJECT_ID = "owner-pre-pledge";
+const PRE_PLEDGE_DEPOSIT = 4_000_000n as U64;
+const PRE_PLEDGE_MONTHLY_CAP = 7n as U64;
 
 export function keypair(): Keypair {
   const seed = ed25519.utils.randomSecretKey();
@@ -81,6 +87,25 @@ function refusedMint(fixture: Uint8Array, address: Address, freezeAuthority: Add
   return data;
 }
 
+function prePledgeAddress(program: Address, owner: Address): { readonly address: Address; readonly bump: number } {
+  const found = findPda([utf8("project"), keyBytes(owner), digestBytes(registryProjectDigest(PRE_PLEDGE_PROJECT_ID)), Uint8Array.of(PURPOSE_BYTE.Ordinary)], program);
+  if (found === undefined) throw new Error("The pre-pledge project has no program address");
+  return found;
+}
+
+function prePledgeProject(owner: Address, mint: Address, bump: number): Uint8Array {
+  const data = new Uint8Array(PRE_PLEDGE_PROJECT_SIZE);
+  data.set(accountDiscriminator("Project"), 0);
+  data.set(keyBytes(owner), 8);
+  data.set(digestBytes(registryProjectDigest(PRE_PLEDGE_PROJECT_ID)), 40);
+  data.set(keyBytes(mint), 168);
+  data.set(u64le(PRE_PLEDGE_DEPOSIT), 208);
+  data[248] = bump;
+  data.set(u64le(PRE_PLEDGE_MONTHLY_CAP), 307);
+  data[315] = 1;
+  return data;
+}
+
 function programAccounts(program: Address, authority: Address, code: Uint8Array) {
   const data = programDataAddress(program);
   const header = new Uint8Array(45);
@@ -100,6 +125,8 @@ export async function escrowChain(): Promise<EscrowChain> {
   const holder = keypair();
   const mints = { classic: seeded("slop-test-classic-mint"), token2022: addressOf(FIXTURE_MINT_KEY) as Address, refused: seeded("slop-test-refused-token-2022-mint") };
   const sources = { classic: tokenAccountAddress(holder.address, mints.classic, TOKEN_PROGRAM), token2022: tokenAccountAddress(holder.address, mints.token2022, TOKEN_2022_PROGRAM) };
+  const prePledgeKey = prePledgeAddress(program, holder.address);
+  const prePledge = { projectId: PRE_PLEDGE_PROJECT_ID, project: prePledgeKey.address, vault: vaultAddress(program, prePledgeKey.address) };
   const fixture = new Uint8Array(await readFile(fixtureMint));
   const build = await sbfBuild(contracts, "programs/slop-escrow/Cargo.toml");
   const directory = await mkdtemp(join(tmpdir(), "slop-escrow-accounts-"));
@@ -116,6 +143,7 @@ export async function escrowChain(): Promise<EscrowChain> {
       { address: mints.refused, owner: TOKEN_2022_PROGRAM, executable: false, lamports: FIXTURE_LAMPORTS, bytes: refusedMint(fixture, mints.refused, holder.address) },
       { address: sources.classic, owner: TOKEN_PROGRAM, executable: false, lamports: FIXTURE_LAMPORTS, bytes: tokenAccount(mints.classic, holder.address, undefined) },
       { address: sources.token2022, owner: TOKEN_2022_PROGRAM, executable: false, lamports: FIXTURE_LAMPORTS, bytes: tokenAccount(mints.token2022, holder.address, Uint8Array.of(7, 0, 0, 0)) },
+      { address: prePledge.project, owner: program, executable: false, lamports: FIXTURE_LAMPORTS, bytes: prePledgeProject(holder.address, mints.classic, prePledgeKey.bump) },
     ];
     const files = await Promise.all(accounts.map(async (account, at) => {
       const jsonPath = join(directory, `account-${at}.json`);
@@ -135,7 +163,7 @@ export async function escrowChain(): Promise<EscrowChain> {
     };
     const payer = { address: validator.payer.address as Address, seed: validator.payer.secretKey.slice(0, 32) };
     for (const funded of [upgradeAuthority, holder]) await validator.airdrop(funded.address, 10_000_000_000n);
-    return { validator, program, payer, upgradeAuthority, holder, mints, sources, close, [Symbol.asyncDispose]: close };
+    return { validator, program, payer, upgradeAuthority, holder, mints, sources, prePledge, close, [Symbol.asyncDispose]: close };
   } catch (error) {
     await release();
     throw error;

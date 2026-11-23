@@ -1,6 +1,6 @@
 // spec/points/payoutRecognition.md, "A finalized ordinary monthly vault payment earns recognition once per recipient, project and month"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/historicalImport.md, "Each import has its own hold and published rules stay prior until a release"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/protectedMonths.md, "A candidate holds every new revision that would change a protected project month"
 import { isoNow } from "@repo/platform/clock"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { journalText } from "../kernels/records/canonical.ts"
 import { type ReviewedMergeGroups, holdProtected, reviewedMergeGroups } from "../journal/hold.vibe"
 import { type Store, finish, openStore } from "../journal/ledger.vibe"
@@ -10,7 +10,7 @@ import { applyRetainedReviews } from "../journal/retained.vibe"
 import { applySnapshots } from "../journal/snapshot.vibe"
 import { recognizePayouts } from "../payoutRecognition/awards.vibe"
 import { loadVaultPayouts } from "../payoutRecognition/vault.vibe"
-import { databases, evaluationInputs } from "../evaluations/check.vibe"
+import { evaluationInputs } from "../evaluations/check.vibe"
 import { admittedOffline } from "../evaluations/offline.vibe"
 import { applyEvaluations } from "../evaluations/journal.vibe"
 import { evaluationEvents } from "../evaluations/manifests.vibe"
@@ -233,7 +233,7 @@ effect function importInto(args: ReadonlyArray<string>) {
   try publishable(current, candidate, { censusPhase: try censusPhaseOf(directory, registry), historicalHold: publicationHeld(try historicalHolds(current)) })
   const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
-  provide d1Http({ accountId, databaseId: databases.production, token }) {
+  provide d1Http({ accountId, databaseId: registryDatabases.production, token }) {
     const imported = try importJournal(candidate, { wait: waitFor })
     try Console.log(`[points] imported ${imported.revisions} revisions as batch ${imported.digest} on attempt ${imported.attempt}`)
   }

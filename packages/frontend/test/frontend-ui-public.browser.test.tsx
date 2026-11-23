@@ -9,12 +9,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pausedNotice } from "../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../gen/backend__mergeActivity.ts";
 import { promiseNoticeText } from "../gen/frontend__projections.ts";
+import { contributorPullSearchUrl, type RegisteredRepository } from "@repo/points/client";
+import { formatDateTime } from "../src/app/format.ts";
+import { formatRewardMinor } from "../src/kernels/assetText.ts";
 import { loginPath } from "../src/platform/environment.ts";
+import { paidCycle } from "../src/screens/cycles/fixtures.ts";
+import { pointsText } from "../src/screens/cycles/labels.ts";
 import { FeeSetup, type FeePay, type PayAddress, openPayPage } from "../src/screens/fee/payFlow.vibe";
+import { formatMonth } from "../src/screens/projects/summary.ts";
 import { WalletChoice, walletChoiceServices } from "../src/wallets/core/discovery.vibe";
 import { sessionSlots } from "../src/wallets/core/slots.ts";
 import { depositedKey, feeDepositKey, publishedTerms } from "../src/wallets/fee/feeCalls.ts";
-import type { Target } from "./support/ui/protocol.ts";
+import type { LeaderboardTransport, PublishedActor, Target } from "./support/ui/protocol.ts";
 import { accessible, at, named, shown, signIn, site } from "./support/ui/browser.ts";
 
 const journeyMs = 30_000;
@@ -112,6 +118,35 @@ async function opened(path: string, title: string) {
   await at(path);
 }
 
+const readingHeight = 560;
+const paymentStages = named("heading", "Payment stages", { level: 2 });
+
+async function paymentsTop() {
+  return (await site.box(paymentStages))?.top ?? Number.POSITIVE_INFINITY;
+}
+
+async function scrollSettled() {
+  let previous = Number.NaN;
+  let steady = 0;
+  await expect
+    .poll(async () => {
+      const current = await site.scrollY();
+      steady = current === previous ? steady + 1 : 0;
+      previous = current;
+      return steady;
+    }, { timeout: journeyMs })
+    .toBeGreaterThanOrEqual(3);
+  return previous;
+}
+
+async function openPayments() {
+  await site.view(1280, readingHeight, false);
+  await opened("/how-it-works", "How Slop works");
+  await site.click(named("link", "monthly cutoff"));
+  await at("/how-it-works#payments");
+  await expect.poll(async () => Math.abs(await paymentsTop()), { timeout: journeyMs }).toBeLessThan(1);
+}
+
 async function copyOutcome(): Promise<"Ready" | "Copied" | "CopyFailed"> {
   if ((await site.read(copied)).count > 0) return "Copied";
   if ((await site.read(copyFailed)).count > 0) return "CopyFailed";
@@ -186,6 +221,69 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     await shown(heading("Project not found")).toMatchObject({ visible: true });
     expect((await site.layout()).mains).toBe(1);
   });
+
+  it('a fragment link aligns its section to the top, a wheel hands the page back to the reader, and a fragment opened while the page renders is aligned once it appears (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")', async () => {
+    await openPayments();
+
+    const aligned = await scrollSettled();
+    await site.wheel(0, -300);
+    await expect.poll(() => site.scrollY(), { timeout: journeyMs }).toBeLessThan(aligned);
+    const reading = await scrollSettled();
+    expect(await paymentsTop()).toBeGreaterThan(100);
+    expect(await site.scrollY()).toBe(reading);
+    await at("/how-it-works#payments");
+
+    expect((await site.open("/how-it-works#payments")).status).toBe(200);
+    await expect.poll(async () => Math.abs(await paymentsTop()), { timeout: journeyMs }).toBeLessThan(1);
+    await accessible();
+  });
+
+  for (const late of [false, true])
+    it(`Back and Forward restore the fragment reading position after ${late ? "a destination that renders late" : "immediate navigation"} (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")`, async () => {
+      const sessionRead = "/api/v1/project-session";
+      const sessionReads = async () => (await site.sent()).filter((sent) => sent.method === "GET" && sent.path === sessionRead).length;
+      const near = (position: number) => async () => Math.abs((await site.scrollY()) - position);
+      await site.allow("^failed GET /\\S+ net::ERR_ABORTED$");
+      await openPayments();
+
+      const fromBottom = async () => Math.abs((await site.scrollY()) - (await site.scrollEnd()));
+      while ((await fromBottom()) >= 2) {
+        const before = await site.scrollY();
+        await site.wheel(0, Math.min(readingHeight, await fromBottom()));
+        await expect.poll(() => site.scrollY(), { timeout: journeyMs }).not.toBe(before);
+        await scrollSettled();
+      }
+      const destination = named("link", "Payouts", { within: { text: "Track it in" } });
+      await site.reveal(destination);
+      const reading = await scrollSettled();
+      expect(await paymentsTop()).toBeLessThan(-100);
+      await site.stamp("retained");
+
+      const asked = await sessionReads();
+      if (late) await site.hold("GET", sessionRead);
+      await site.click(destination);
+      await at("/earnings");
+      if (late) await expect.poll(sessionReads, { timeout: journeyMs }).toBeGreaterThan(asked);
+      await site.back();
+      await site.release("GET", sessionRead);
+      await at("/how-it-works#payments");
+      await shown(paymentStages).toMatchObject({ count: 1 });
+      await expect.poll(near(reading), { timeout: journeyMs }).toBeLessThan(2);
+      expect(Math.abs((await scrollSettled()) - reading)).toBeLessThan(2);
+      expect(await site.stamped()).toBe("retained");
+
+      await site.wheel(0, -120);
+      await expect.poll(() => site.scrollY(), { timeout: journeyMs }).not.toBe(reading);
+      const continued = await scrollSettled();
+      await site.back();
+      await at("/how-it-works");
+      await site.forward();
+      await at("/how-it-works#payments");
+      await shown(paymentStages).toMatchObject({ count: 1 });
+      await expect.poll(near(continued), { timeout: journeyMs }).toBeLessThan(2);
+      expect(Math.abs((await scrollSettled()) - continued)).toBeLessThan(2);
+      await accessible();
+    });
 
   it('an address that names no route kind, or does not decode, is the not-found page (spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown")', async () => {
     await site.allow("^404 GET /nope$");
@@ -314,6 +412,27 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
     await accessible();
   });
+
+  it('with motion the campaign deletes its action and types the next one without changing its accessible name or height, and reduced motion puts the whole heading back (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion")', async () => {
+    await site.view(1280, 900, false);
+    expect((await site.open("/")).status).toBe(200);
+    const visible = async () => (await textOf(contributorHeading)).replace(/\s+/gu, " ");
+    const height = async () => {
+      const box = await site.box(contributorHeading);
+      return box === null ? 0 : box.bottom - box.top;
+    };
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    const before = await height();
+    expect(before).toBeGreaterThan(0);
+    await expect.poll(visible, { timeout: journeyMs }).toBe("MAKE MONEY SECURING THE WEB.");
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    expect(await height()).toBe(before);
+
+    await site.view(1280, 900, true);
+    await expect.poll(visible, { timeout: journeyMs }).toBe("MAKE MONEY SHIPPING OPEN SOURCE.");
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    expect(await height()).toBe(before);
+  });
 });
 
 const directory = Array.from({ length: 26 }, (_, index) => {
@@ -359,6 +478,175 @@ describe('Find a contributor in the public directory (spec/backend/accounts.md, 
   });
 });
 
+function pointsManifest(projectId: string, repositories: ReadonlyArray<RegisteredRepository>) {
+  const manifest = manifestOf({ id: projectId, tier: "community", repositoryId: 0 });
+  return {
+    ...manifest,
+    authority: { ...manifest.authority, repositoryNodeId: repositories[0]?.nodeId ?? "" },
+    repositories: repositories.map(({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId }) => ({ id, aliases, displayName, githubUrl, description, integrationBranch, nodeId })),
+  };
+}
+
+const censusCounts = { merged: 17, open: 3, closed: 2 } as const;
+const profileOnly = { id: "MDQ6VXNlcjEyMzQ1Njc=", login: "profile-only-contributor", avatarUrl: "https://avatars.githubusercontent.com/u/1234567", counts: { merged: 0, open: 3, closed: 2 } } as const;
+const pullRequestLinks = [["Merged", "is:merged", "merged"], ["Open", "is:open", "open"], ["Closed", "is:closed is:unmerged", "closed"]] as const;
+
+async function publishPoints(leaderboard: LeaderboardTransport = "whole") {
+  const published = await site.published(leaderboard);
+  const { registered } = published.registry;
+  const projectIds = [...new Set(registered.map((repository) => repository.projectId))];
+  await site.serve("/api/v1/projects", 200, { schemaVersion: "1", projects: projectIds.map((id) => pointsManifest(id, registered.filter((repository) => repository.projectId === id))) });
+  const [leader] = published.leaders;
+  const [primary] = registered;
+  if (leader === undefined || primary === undefined) throw new Error("the published Points fixture has no leader or repository");
+  const now = new Date().toISOString();
+  await site.serve("/data/profiles.json", 200, {
+    schemaVersion: "1",
+    startedAt: now,
+    generatedAt: now,
+    repositories: registered.map((repository) => ({ repository: repository.id, count: repository.id === primary.id ? [censusCounts, profileOnly.counts].reduce((sum, counts) => sum + counts.merged + counts.open + counts.closed, 0) : 0, excluded: 0 })),
+    people: [
+      { id: leader.id, login: leader.login, avatarUrl: leader.avatarUrl, repositories: [{ repository: primary.id, ...censusCounts }] },
+      { id: profileOnly.id, login: profileOnly.login, avatarUrl: profileOnly.avatarUrl, repositories: [{ repository: primary.id, ...profileOnly.counts }] },
+    ],
+  });
+  return { ...published, leader, primary };
+}
+
+const slopPoints = named("region", "Slop Points");
+const contributorProfile = named("region", "Contributor profile");
+const pointsIndexPath = "/data/points.json";
+const shardPathPattern = /^\/data\/points\/[0-9a-f]\.json$/u;
+
+async function readsOf(matches: (path: string) => boolean) {
+  return (await site.sent()).filter((sent) => sent.method === "GET" && matches(sent.path)).length;
+}
+
+async function profileOf(leader: PublishedActor) {
+  await site.open(`/contributors/${leader.login}`);
+  await shown(heading(leader.login)).toMatchObject({ visible: true });
+}
+
+describe('Read a contributor\'s profile over the published Points record (spec/frontend/views.md, "Story: Read a contributor\'s profile"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal")', () => {
+  it('a contributor\'s address shows who they are and their pull requests from the published snapshot, census and journal without a Points figure, a contributor only the census names keeps the same record at 320 px with 200% text, and a login no record names is not found (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+    const { leader } = await publishPoints();
+    await profileOf(leader);
+    await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true, href: `https://github.com/${leader.login}` });
+    await shown(contributorProfile).toMatchObject({ visible: true });
+    for (const [label, query, key] of pullRequestLinks)
+      await shown(named("link", `${censusCounts[key]} ${label}`, { within: contributorProfile })).toMatchObject({ visible: true, href: contributorPullSearchUrl(leader.login, query) });
+    await expect.poll(() => readsOf((path) => shardPathPattern.test(path)), { timeout: journeyMs }).toBeGreaterThanOrEqual(16);
+    expect(await readsOf((path) => path === pointsIndexPath)).toBeGreaterThanOrEqual(1);
+    await shown(named("button", "Retry points", { within: slopPoints })).toMatchObject({ count: 0 });
+    expect(await textOf(slopPoints)).not.toMatch(/\bpts\b|\bTotal\b/u);
+    await accessible();
+
+    expect((await site.open("/contributors/no-such-slop-login-zz9")).status).toBe(200);
+    await shown(named("heading", "@no-such-slop-login-zz9 not found")).toMatchObject({ visible: true });
+    await shown(named("link", "Find a contributor")).toMatchObject({ visible: true, href: "/points" });
+    await shown(named("link", "GitHub · @no-such-slop-login-zz9")).toMatchObject({ count: 0 });
+
+    await profileOf(profileOnly);
+    await shown(named("link", `GitHub · @${profileOnly.login}`)).toMatchObject({ visible: true, href: `https://github.com/${profileOnly.login}` });
+    for (const [label, query, key] of pullRequestLinks)
+      await shown(named("link", `${profileOnly.counts[key]} ${label}`, { within: contributorProfile })).toMatchObject({ visible: true, href: contributorPullSearchUrl(profileOnly.login, query) });
+    await shown({ text: "Total", exact: true }).toMatchObject({ count: 0 });
+    await shown({ text: "Penalty history" }).toMatchObject({ count: 0 });
+    await accessible();
+    await site.view(320, 640, false);
+    await site.enlarge(named("main"));
+    await accessible();
+    await site.restore();
+  });
+
+  it('a Points journal that cannot load keeps the confirmed contributor and offers Retry points without a stale notice, and Retry reads the journal once more and clears the notice (spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times")', async () => {
+    const { leader } = await publishPoints();
+    await site.allow(`^503 GET ${pointsIndexPath}$`, "^console Failed to load resource: the server responded with a status of 503");
+    await site.fail("GET", pointsIndexPath, 503, "Points temporarily unavailable");
+    await profileOf(leader);
+    const retry = named("button", "Retry points", { within: slopPoints });
+    await shown(retry).toMatchObject({ visible: true });
+    await shown({ text: "Could not load", within: slopPoints }).toMatchObject({ visible: true });
+    await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
+    await shown({ text: "Data last updated", within: slopPoints }).toMatchObject({ count: 0 });
+    expect(await readsOf((path) => shardPathPattern.test(path))).toBe(0);
+
+    const before = await readsOf((path) => path === pointsIndexPath);
+    expect(before).toBe(1);
+    await site.unfail("GET", pointsIndexPath);
+    await site.click(retry);
+    await expect.poll(() => readsOf((path) => shardPathPattern.test(path)), { timeout: journeyMs }).toBe(16);
+    await shown(retry).toMatchObject({ count: 0 });
+    expect(await readsOf((path) => path === pointsIndexPath)).toBe(before + 1);
+    await shown({ text: "Data last updated", within: slopPoints }).toMatchObject({ count: 0 });
+  });
+
+  for (const corrupted of [false, true])
+    it(`a profile reads a leaderboard published in parts ${corrupted ? "and refuses the generation when a part does not match its digest, showing no record until Retry reads matching parts" : "as one generation"} (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted")`, async () => {
+      const { leader, parts } = await publishPoints("parts");
+      const [first] = parts;
+      expect(first).toBeDefined();
+      if (corrupted && first !== undefined) await site.serveBytes(first, 200, new TextEncoder().encode("changed"), "text/plain; charset=utf-8");
+      await profileOf(leader);
+      if (!corrupted) {
+        await shown(contributorProfile).toMatchObject({ visible: true });
+        await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
+        expect(await readsOf((path) => path === "/data/leaderboard.json")).toBeGreaterThanOrEqual(1);
+        expect(await readsOf((path) => parts.includes(path))).toBeGreaterThanOrEqual(parts.length);
+        return;
+      }
+      await shown(named("button", "Retry")).toMatchObject({ visible: true });
+      await shown({ text: "Could not load" }).toMatchObject({ visible: true });
+      await shown(contributorProfile).toMatchObject({ count: 0 });
+      await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ count: 0 });
+      expect(await readsOf((path) => path === first)).toBeGreaterThanOrEqual(1);
+
+      await site.published("parts");
+      await site.click(named("button", "Retry"));
+      await shown(contributorProfile).toMatchObject({ visible: true });
+      await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
+    });
+
+  it('a contributor renamed since an archived cycle keeps that cycle on the current profile, which opens the cycle and shows the same record again on Back (spec/frontend/views.md, "A profile login resolves through membership, current actors, directory and journal in that order, and any current source vetoes a stale login")', async () => {
+    const { leader, primary } = await publishPoints();
+    const [paid] = paidCycle.contributors;
+    expect(paid).toBeDefined();
+    if (paid === undefined) return;
+    const archived = {
+      ...paidCycle,
+      projectId: primary.projectId,
+      cycleId: "2026-07",
+      generatedAt: "2026-08-10T00:00:00.000Z",
+      contributionWindow: { from: "2026-07-01T00:00:00.000Z", to: "2026-08-01T00:00:00.000Z" },
+      reviewEndsAt: "2026-08-15T00:00:00.000Z",
+      approvedAt: "2026-08-05T00:00:00.000Z",
+      settledAt: "2026-08-08T00:00:00.000Z",
+      contributors: [{ ...paid, actor: { id: leader.id, login: `${leader.login}-old` }, score: 70 }],
+    };
+    await site.serve("/data/cycles/index.json", 200, { schemaVersion: "1", generatedAt: archived.generatedAt, cycles: [archived] });
+    const payments = named("region", "Awards and payments");
+    const pastCycle = named("link", `Project ${primary.projectId} · ${formatMonth("2026-07")}`, { within: payments });
+
+    await profileOf(leader);
+    await shown(pastCycle).toMatchObject({ visible: true, href: `/cycles/${primary.projectId}/2026-07` });
+    await expect.poll(() => textOf(payments), { timeout: journeyMs }).toContain(`${pointsText(210)} pts`);
+    expect(await textOf(payments)).toContain(`${formatRewardMinor(BigInt(paid.paidMinor))} USDC`);
+    await shown(named("link", `GitHub · @${leader.login}`)).toMatchObject({ visible: true });
+    await expect.poll(() => readsOf((path) => shardPathPattern.test(path)), { timeout: journeyMs }).toBeGreaterThanOrEqual(16);
+    await shown({ text: "Loading", exact: true, within: slopPoints }).toMatchObject({ count: 0 });
+
+    await site.click(pastCycle);
+    await at(`/cycles/${primary.projectId}/2026-07`);
+    await shown(heading(`Project ${primary.projectId} · ${formatMonth("2026-07")}`)).toMatchObject({ visible: true });
+    await site.back();
+    await at(`/contributors/${leader.login}`);
+    await shown(pastCycle).toMatchObject({ visible: true });
+    await profileOf(leader);
+    await shown(pastCycle).toMatchObject({ visible: true });
+    await accessible();
+  });
+});
+
 const configuredPool = pool("j4-pool-set", 1440, "500000000", "$500");
 const promisedPool = pool("j4-pool-promise", 1441, "250000000", "$250", { reward: { honorSystem: true } });
 
@@ -390,6 +678,31 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
     expect((await site.open(`/projects/${configuredPool.id}`)).status).toBe(200);
     await shown({ text: "Points only", exact: true }).toMatchObject({ visible: true });
     await shown({ text: promiseNoticeText, exact: true }).toMatchObject({ count: 0 });
+  });
+
+  it('a pool whose registered vault held this month\'s amount at the month start and still holds it is tagged Vaulted on Home and in the vault on /sponsors, never Not vaulted (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', async () => {
+    const funded = pool("j4-pool-vaulted", 1444, "50000000", "$50", { reward: { chain: "base" } });
+    await list(funded);
+    const deployed = await site.vault({ projectId: funded.id });
+    const now = new Date().toISOString();
+    await site.sql("UPDATE vault_snapshots SET total_deposited = '60000000', free_balance = '60000000', observed_at = ? WHERE project_id = ?", now, funded.id);
+    await site.sql(
+      "INSERT OR IGNORE INTO vault_month_starts(project_id,network,vault,period,free_balance,total_gross_withdrawn,block_number,block_time,observed_at) VALUES(?,'base-mainnet',?,?,'60000000','0','1',?,?)",
+      funded.id,
+      deployed.vault,
+      now.slice(0, 7),
+      now,
+      now,
+    );
+
+    expect((await site.open("/")).status).toBe(200);
+    const card = named("link", nameOf(funded), { exact: false, within: projects });
+    await shown(card).toMatchObject({ count: 1, visible: true, href: `/projects/${funded.id}` });
+    const text = await textOf(card);
+    expect(["$50", "Vaulted", "Not vaulted", "Configured", "Promised", "Points only"].filter((part) => text.includes(part))).toEqual(["$50", "Vaulted"]);
+
+    await opened("/sponsors", "Fund a project");
+    await shown({ text: "$50 monthly · in the vault" }).toMatchObject({ visible: true });
   });
 });
 
@@ -455,6 +768,45 @@ describe('Keep browsing on the last published registry when the live read fails 
     await shown({ text: "Projects unavailable" }).toMatchObject({ count: 0 });
     await at("/sponsors");
   });
+
+  it('a failed live registry read lists the last published projects under a stale label with their sync time, a project page keeps the label, the manage page asks for current data, an account page shows no label, and Try again clears it once the live read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+    const cached = pool("j4-cached", 1445, "75000000", "$75");
+    await list(cached);
+    const syncedAt = "2026-10-16T12:00:00.000Z";
+    const notice = { label: "Project data status" } satisfies Target;
+    const listedCard = named("link", nameOf(cached), { exact: false, within: projects });
+    await site.allow("^503 GET /api/v1/projects$", "^console Failed to load resource: the server responded with a status of 503");
+    await site.fail("GET", "/api/v1/projects", 503, { error: "unavailable", message: "The project registry is unavailable." });
+    await site.serve("/data/project-registry.json", 200, { schemaVersion: "1", syncedAt, projects: [manifestOf(cached)] });
+
+    expect((await site.open("/")).status).toBe(200);
+    await shown(notice).toMatchObject({ visible: true, text: expect.stringContaining(`Projects stale · ${formatDateTime(syncedAt)}`) });
+    await shown(named("button", "Try again", { within: notice })).toMatchObject({ visible: true });
+    await shown(listedCard).toMatchObject({ count: 1, visible: true, href: `/projects/${cached.id}` });
+    await shown(heading("Projects are unavailable")).toMatchObject({ count: 0 });
+    await accessible();
+
+    expect((await site.open(`/projects/${cached.id}`)).status).toBe(200);
+    await shown(named("heading", nameOf(cached), { level: 1, exact: false })).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ visible: true });
+
+    expect((await site.open(`/projects/${cached.id}/manage`)).status).toBe(200);
+    await shown(heading("Projects are unavailable")).toMatchObject({ visible: true });
+    await shown({ text: "This page needs current project data." }).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ count: 0 });
+
+    expect((await site.open("/account")).status).toBe(200);
+    await shown(heading("Settings")).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ count: 0 });
+
+    expect((await site.open("/")).status).toBe(200);
+    await shown(notice).toMatchObject({ visible: true });
+    await site.unfail("GET", "/api/v1/projects");
+    await site.click(named("button", "Try again", { within: notice }));
+    await shown(notice).toMatchObject({ count: 0 });
+    await shown(listedCard).toMatchObject({ count: 1, visible: true });
+    await site.unserve("/data/project-registry.json");
+  });
 });
 
 describe('Every part reads the same published fee terms (spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
@@ -487,7 +839,8 @@ const allocation = named("region", "Contributor allocation");
 const allocationPath = "/contributor-allocation.json";
 
 describe('See my contributor allocation on Payouts (spec/frontend/projections.md, "Story: See my contributor allocation on Payouts")', () => {
-  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it, and from the deadline the same row is Unclaimed with no wallet link (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+    await site.clock(new Date().toISOString());
     await site.user(recipient.id, recipient.login);
     await site.allow(`^failed GET ${allocationPath} `);
     await site.hold("GET", allocationPath);
@@ -502,6 +855,15 @@ describe('See my contributor allocation on Payouts (spec/frontend/projections.md
     const row = await textOf(allocation);
     expect(["1,536", "SLOP", "Awaiting wallet", "9,753", "Scheduled", "Sent"].filter((part) => row.includes(part))).toEqual(["1,536", "SLOP", "Awaiting wallet"]);
     await shown(named("link", "Add Robinhood Chain wallet", { within: allocation })).toMatchObject({ visible: true, href: "/account#wallets" });
+
+    await site.clock("2027-02-08T16:59:45.000Z");
+    expect((await site.open("/earnings")).status).toBe(200);
+    await shown({ text: "Awaiting wallet", within: allocation }).toMatchObject({ visible: true });
+    await shown({ text: "Unclaimed", exact: true, within: allocation }).toMatchObject({ visible: true });
+    await shown({ text: "Awaiting wallet", within: allocation }).toMatchObject({ count: 0 });
+    await shown(named("link", "Add Robinhood Chain wallet", { within: allocation })).toMatchObject({ count: 0 });
+    const missed = await textOf(allocation);
+    expect(["1,536", "SLOP", "Unclaimed", "Scheduled", "Sent"].filter((part) => missed.includes(part))).toEqual(["1,536", "SLOP", "Unclaimed"]);
   });
 });
 

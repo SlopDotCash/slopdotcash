@@ -1,14 +1,15 @@
-// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
 import { webCrypto } from "@repo/platform/crypto"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
 import { Socket } from "effect/socket"
 import { collect } from "./collect.vibe"
-import { collectCorrections } from "./collectCorrections.vibe"
+import { correctionsCommand } from "./corrections.vibe"
 import { inspectValueIntakeCommand } from "./inspectValueIntake.vibe"
 import { inspectValueIntakeHistoryCommand } from "./inspectValueIntakeHistory.vibe"
 import { qualifyValueModelsCommand } from "./qualify.vibe"
 import { reviewedReplay } from "./replay.vibe"
+import { valueSettingsCommand } from "./valueSettings.vibe"
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run
@@ -21,7 +22,8 @@ program({
     "inspect-value-intake": command(inspectValueIntakeCommand),
     "inspect-value-intake-history": command(inspectValueIntakeHistoryCommand),
     collect: command(collect),
-    "collect-corrections": command(collectCorrections),
     "reviewed-replay": command(reviewedReplay),
+    "value-settings": command(valueSettingsCommand),
+    corrections: command(correctionsCommand),
   },
 }).runMain()

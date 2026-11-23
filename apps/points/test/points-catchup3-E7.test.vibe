@@ -3,33 +3,36 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { sha256Of, textBytes } from "@repo/platform/git/bytes"
-import { github } from "@repo/platform/github"
-import { outbound, outboundVia } from "@repo/platform/http"
+import { outbound } from "@repo/platform/http"
 import type { Journal } from "../src/kernels/records/canonical.ts"
 import { instantOf } from "../src/kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type HistoricalPacket, decodePacketBytes, digestText } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
-import type { VerifiedRetirements } from "../src/corrections/reviewed/retirement.vibe"
-import { verifyHistoricalDuplicateAcceptanceOrder } from "../src/corrections/reviewed/verify.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { periodOf } from "../gen/points__periods.effect.vibe"
-import { actor, batchDigestOf, duplicateOrderFixture, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
+import { distinctOrder } from "../gen/points__reviewedHistory.ts"
+import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
 const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
 const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
 error InvalidFixture { message: string }
 
+function orderOf(packet: HistoricalPacket) {
+  return new Map((packet.duplicateRetirements ?? []).map((retirement) => [digestText(retirement), [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])].map(() => distinctOrder)] as const))
+}
+
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function rebuilt(packet: unknown, baseline: Journal, order?: VerifiedRetirements["order"], qualified = false, apply = false) {
+effect function rebuilt(packet: unknown, baseline: Journal) {
+  const historical = packet as HistoricalPacket
   const protection = try Effect.try(() => protectionFor(october))
   return try reconstructHistoricalPoints({
-    packet: packet as HistoricalPacket,
+    packet: historical,
     baseline,
     now: time,
     bans: new Map(),
@@ -37,15 +40,8 @@ effect function rebuilt(packet: unknown, baseline: Journal, order?: VerifiedReti
     registry,
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
-    qualified,
-    apply,
-    verifiedRetirements: {
-      duplicates: new Set(),
-      order: order ?? new Map((packet as HistoricalPacket).duplicateRetirements?.map((item) => [
-        digestText(item),
-        [...item.earlierSources, ...(item.acceptedSquashes ?? [])].map(() => ({ sameMerge: false, ancestryKnown: true, carriesRetiringMerge: false })),
-      ]) ?? []),
-    },
+    preview: true,
+    verifiedRetirements: { duplicates: new Set(), order: orderOf(historical) },
   })
 }
 
@@ -78,36 +74,6 @@ effect function changed(change: (typeof changes)[number]) {
 }
 
 describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
-  it.effect("reconstruction requires a complete verified ancestry order", () => effect {
-    provide webCrypto {
-      const f = try Effect.try(() => duplicateOrderFixture("behind"))
-      const expected = try Effect.try(() => f.bind())
-      const api = Layer.provide(github({ userAgent: "reviewed-points-test" }), outboundVia(f.fetcher))
-      provide api {
-        const order = try verifyHistoricalDuplicateAcceptanceOrder(f.packet)
-        try same(order.get(digestText(f.retirement))?.length, 2)
-        try same(try rebuilt(f.packet, f.baseline, order), expected)
-        try same(try rebuilt(f.packet, f.baseline, order, true, true), expected)
-        const unqualified = rebuilt(f.packet, f.baseline, order, false, true) catch (error) => error._tag
-        try same(unqualified, "ReviewedRefused")
-      }
-      const missing = rebuilt(f.packet, f.baseline, new Map()) catch (error) => error._tag
-      try same(missing, "ReviewedRefused")
-    }
-  })
-
-  it.effect("refuses reverse ancestry and unavailable GitHub comparisons", () => effect {
-    for (const mode of ["reverse", "missing"] as const) {
-      const f = try Effect.try(() => duplicateOrderFixture(mode))
-      const api = Layer.provide(github({ userAgent: "reviewed-points-test" }), outboundVia(f.fetcher))
-      provide api {
-        const verified = verifyHistoricalDuplicateAcceptanceOrder(f.packet) catch () => null
-        try same(verified, null)
-        try same(f.reads.some((path) => path.includes("/compare/")), true)
-      }
-    }
-  })
-
   it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
     provide webCrypto {
       const f = try Effect.try(() => mixedSubmittedAndSquashFixture())

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import { ChildProcessSpawner } from "effect/process"
 import { webCrypto } from "@repo/platform/crypto"
 import { Git, gitBytes, systemGit } from "@repo/platform/git"
 import { gitObjectId, lossyText, textBytes } from "@repo/platform/git/bytes"
@@ -13,6 +14,7 @@ import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/colle
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { assembleSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
 
 const codeDigest = "a".repeat(64)
@@ -34,29 +36,30 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-function squashed(world: Seeded): Squashes {
+effect function squashed(world: Seeded) {
   const fake = world.fake.world
-  const main = fake.repo(repository).defaultBranch
-  const base = fake.repo(repository).branches.get(main) ?? ""
+  const listed = try Effect.try(() => fake.repo(repository))
+  const main = listed.defaultBranch
+  const base = listed.branches.get(main) ?? ""
   const change = { "src/same.ts": "same\n" }
   const files = [{ path: "src/same.ts", additions: 1, deletions: 0, status: "added" as const }]
   const iso = (millis: number) => new Date(millis).toISOString()
-  const other = fake.addCommit(repository, { branch: main, parents: [base], author: "ada", files: { "docs/other.md": "other\n" } })
-  const firstHead = fake.addCommit(repository, { branch: "first", parents: [base], author: "grace", files: change })
-  const firstMerge = fake.addCommit(repository, { branch: main, parents: [other], author: "grace", files: change })
-  const reverted = fake.addCommit(repository, { branch: main, parents: [firstMerge], author: "ada", files: { "src/same.ts": null } })
-  const secondHead = fake.addCommit(repository, { branch: "second", parents: [reverted], author: "linus", files: change })
-  const secondMerge = fake.addCommit(repository, { branch: main, parents: [reverted], author: "linus", files: change })
-  const first = fake.addPull({ repo: repository, author: "grace", title: "Add the shared file", mergedAt: iso(start - 5 * day), commits: [firstHead], headSha: firstHead, headRef: "first", mergeCommit: firstMerge, files })
-  const second = fake.addPull({ repo: repository, author: "linus", title: "Add the shared file again", mergedAt: iso(start - 4 * day), commits: [secondHead], headSha: secondHead, headRef: "second", mergeCommit: secondMerge, files })
+  const other = try Effect.try(() => fake.addCommit(repository, { branch: main, parents: [base], author: "ada", files: { "docs/other.md": "other\n" } }))
+  const firstHead = try Effect.try(() => fake.addCommit(repository, { branch: "first", parents: [base], author: "grace", files: change }))
+  const firstMerge = try Effect.try(() => fake.addCommit(repository, { branch: main, parents: [other], author: "grace", files: change }))
+  const reverted = try Effect.try(() => fake.addCommit(repository, { branch: main, parents: [firstMerge], author: "ada", files: { "src/same.ts": null } }))
+  const secondHead = try Effect.try(() => fake.addCommit(repository, { branch: "second", parents: [reverted], author: "linus", files: change }))
+  const secondMerge = try Effect.try(() => fake.addCommit(repository, { branch: main, parents: [reverted], author: "linus", files: change }))
+  const first = try Effect.try(() => fake.addPull({ repo: repository, author: "grace", title: "Add the shared file", mergedAt: iso(start - 5 * day), commits: [firstHead], headSha: firstHead, headRef: "first", mergeCommit: firstMerge, files }))
+  const second = try Effect.try(() => fake.addPull({ repo: repository, author: "linus", title: "Add the shared file again", mergedAt: iso(start - 4 * day), commits: [secondHead], headSha: secondHead, headRef: "second", mergeCommit: secondMerge, files }))
   return {
-    first: fake.pull(repository, first).nodeId,
-    second: fake.pull(repository, second).nodeId,
+    first: (try Effect.try(() => fake.pull(repository, first))).nodeId,
+    second: (try Effect.try(() => fake.pull(repository, second))).nodeId,
     firstMerge,
     secondMerge,
     secondHead,
     commits: [base, other, firstHead, firstMerge, reverted, secondHead, secondMerge],
-  }
+  } satisfies Squashes
 }
 
 effect function stored(directory: string, args: ReadonlyArray<string>, input: string) {
@@ -67,8 +70,9 @@ effect function bareRepository(world: Seeded, commits: ReadonlyArray<string>) {
   const fs = try FileSystem.FileSystem
   const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-k3-native-" })
   try gitBytes({ args: ["-C", directory, "init", "--bare", "--quiet"], limit: 1024 * 1024, seconds: 60 }, "fixture repository")
+  const listed = try Effect.try(() => world.fake.world.repo(repository))
   for (const sha of commits) {
-    const commit = world.fake.world.repo(repository).commits.get(sha)
+    const commit = listed.commits.get(sha)
     if (commit === undefined) throw new Error(`no fixture commit ${sha}`)
     const directories = new Set<string>([""])
     for (const path of commit.files.keys()) {
@@ -91,7 +95,7 @@ effect function bareRepository(world: Seeded, commits: ReadonlyArray<string>) {
 }
 
 effect function localProofs(directory: string, calls: { count: number }) {
-  const services = try Effect.context<Git | Experimental.Crypto.Crypto>()
+  const services = try Effect.context<Git | ChildProcessSpawner.ChildProcessSpawner | Experimental.Crypto.Crypto>()
   const reader: ProofReader = (_repository, sources) => effect {
     calls.count += 1
     provide services {
@@ -146,8 +150,8 @@ effect function collected(world: Seeded, proofs: ProofReader, memo: Implementati
 
 it.live('An identical earlier single-commit acceptance holds the later one, and a missing native object leaves it unresolved (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
   const world = try Effect.try(() => seeded())
-  const squashes = try Effect.try(() => squashed(world))
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  const squashes = try squashed(world)
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
   try scoped(effect {
     const complete = try bareRepository(world, squashes.commits)
     const { collection, implementation } = try collected(world, try localProofs(complete, { count: 0 }), undefined)
@@ -181,8 +185,8 @@ it.live('An identical earlier single-commit acceptance holds the later one, and 
 
 it.live('A written implementation memo is reused on the next pass, and a stale or tampered one is refused and read live (spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => effect {
   const world = try Effect.try(() => seeded())
-  const squashes = try Effect.try(() => squashed(world))
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  const squashes = try squashed(world)
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
   try scoped(effect {
     const fs = try FileSystem.FileSystem
     const repositoryDirectory = try bareRepository(world, squashes.commits)
