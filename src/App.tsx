@@ -34,6 +34,12 @@ import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
+import {
+  backlogJudged,
+  backlogNotice,
+  backlogRuleStarted,
+  backlogState,
+} from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
@@ -970,12 +976,17 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  // A project over its owner's intake cap has paused new contributors and
-  // is left out. The counts are read only when a project has a cap; while
-  // they load, and when they cannot be read, every project is listed.
+  // A project over its owner's intake cap has paused new contributors, and
+  // a project the backlog rule takes out of rotation is left out too. The
+  // counts are read only when a project can be left out; while they load,
+  // and when they cannot be read, every project is listed.
   const open = homeProjects(now);
   const [merge] = usePublicResource(
-    open.some((project) => intakeCap(project) !== null),
+    open.some(
+      (project) =>
+        intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(now)),
+    ),
     loadMergeActivity,
     "Merge activity unavailable",
   );
@@ -986,7 +997,9 @@ function HomePage() {
       .filter(
         (project) =>
           !fundingPending &&
-          !intakePaused(project, mergeIndex?.get(project.id), now),
+          !intakePaused(project, mergeIndex?.get(project.id), now) &&
+          !backlogState(project, mergeIndex?.get(project.id), now)
+            .outOfRotation,
       )
       .map((project) => {
         const {
@@ -1276,13 +1289,19 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
   const unlisted = !listedThisMonth(project, new Date());
   const [merge] = usePublicResource(
-    project.status === "active" && intakeCap(project) !== null,
+    project.status === "active" &&
+      (intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(new Date()))),
     loadMergeActivity,
     "Merge activity unavailable",
   );
   const paused =
     merge.status === "ready" &&
     intakePaused(project, merge.index.get(project.id), new Date());
+  const outOfRotation =
+    merge.status === "ready" &&
+    backlogState(project, merge.index.get(project.id), new Date())
+      .outOfRotation;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1327,6 +1346,8 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
             <Spinner label="Checking project clearance" />
           ) : eligibility === "blocked" && paused ? (
             "This project has paused new contributors. The prompt below picks only listed projects."
+          ) : eligibility === "blocked" && outOfRotation ? (
+            "This project is out of rotation. The prompt below picks only listed projects."
           ) : eligibility === "blocked" && unlisted ? (
             <StatusBadge tone="warning">Not listed this month</StatusBadge>
           ) : eligibility === "blocked" ? (
@@ -1692,11 +1713,13 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
   const rows = state.index.get(project.id);
   const now = new Date();
   const line = mergeActivityLine(rows, now);
+  const backlog = backlogNotice(backlogState(project, rows, now));
   return (
     <>
       {intakePaused(project, rows, now) ? (
         <p className="project-reward-status">{INTAKE_PAUSED_NOTICE}</p>
       ) : null}
+      {backlog ? <p className="project-reward-status">{backlog}</p> : null}
       {line ? <p className="project-merge-activity">{line}</p> : null}
     </>
   );

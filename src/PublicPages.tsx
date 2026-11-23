@@ -17,6 +17,7 @@ import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
+import { backlogOutOfRotation } from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { intakePaused } from "./lib/intake-cap.mjs";
 import {
@@ -665,19 +666,20 @@ export function SponsorsPage({
           project owner can withdraw free funds, less a 2% fee.
         </p>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.filter(
-            (project) =>
+          {PROJECTS.filter((project) => {
+            // A project over its owner's intake cap has paused new
+            // contributors, and the backlog rule takes a project out of
+            // rotation; a failed or pending read leaves out nothing.
+            const rows =
+              merge.status === "ready"
+                ? merge.index.get(project.id)
+                : undefined;
+            return (
               listedThisMonth(project, now) &&
-              // A project over its owner's intake cap has paused new
-              // contributors; a failed or pending read pauses nothing.
-              !intakePaused(
-                project,
-                merge.status === "ready"
-                  ? merge.index.get(project.id)
-                  : undefined,
-                now,
-              ),
-          ).map((project) => {
+              !intakePaused(project, rows, now) &&
+              !backlogOutOfRotation(project, rows, now)
+            );
+          }).map((project) => {
             const covered = monthsCovered(
               project,
               fundingIndex?.get(project.id),

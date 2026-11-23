@@ -1,5 +1,6 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { applyCatchUpChange } from "../../src/lib/backlog-rule.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { prospectiveMaintainerShare } from "../../src/lib/maintainer-share.mjs";
 import {
@@ -304,6 +305,14 @@ function assertNewProjectManifest(
       // names, and no owner revision can change it afterwards.
       reward.maintainerShareHistory === undefined,
       "A new project has no maintainer share history; set only the maintainer share",
+    ],
+    [
+      // Catching up on reviews is a pause of the backlog rule for a listed
+      // project; only an owner revision starts it, and only the server
+      // writes its history.
+      manifest.slopbot?.catchUpUntil === undefined &&
+        manifest.slopbot?.catchUpHistory === undefined,
+      "A new project is not catching up on reviews; start it from the project's settings once it is listed",
     ],
     [
       (manifest.funding.addresses ?? []).length === 0 &&
@@ -658,6 +667,35 @@ function prospectiveFinancialChange(
       ),
     }),
   };
+}
+
+/**
+ * The catch-up pause of the backlog rule (operator decision, 23 November
+ * 2026; PRD section 5). The owner sets or clears `slopbot.catchUpUntil`; the
+ * server checks the end and the once-per-month start, and alone appends the
+ * start to `slopbot.catchUpHistory`.
+ */
+function withCatchUpChange(
+  previous: ProjectDefinition,
+  next: ProjectDefinition,
+  now: Date,
+): ProjectDefinition {
+  if (
+    sameValue(previous.slopbot?.catchUpUntil, next.slopbot?.catchUpUntil) &&
+    sameValue(previous.slopbot?.catchUpHistory, next.slopbot?.catchUpHistory)
+  )
+    return next;
+  let slopbot: ProjectDefinition["slopbot"];
+  try {
+    slopbot = applyCatchUpChange(previous.slopbot, next.slopbot, now);
+  } catch (error) {
+    fail(
+      422,
+      "catch_up_refused",
+      error instanceof Error ? error.message : "Catching up was refused",
+    );
+  }
+  return slopbot === next.slopbot ? next : { ...next, slopbot };
 }
 
 /**
@@ -2028,10 +2066,13 @@ async function publishOwnerRevision(
   const added = appendedRepositories(current.manifest, submitted) ?? [];
   if (added.length > 0)
     await verifyAppendedRepositories(deps, actor, added, deps.now());
-  let manifest =
+  let manifest = withCatchUpChange(
+    current.manifest,
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
-      : submitted;
+      : submitted,
+    deps.now(),
+  );
   const clearance =
     changes.executable.length > 0
       ? await deps.vettingClearance(projectId, manifest, current.revision)

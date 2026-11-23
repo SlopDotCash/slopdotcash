@@ -15,12 +15,14 @@ import {
   readRecord as record,
   timestamp,
 } from "./record-validation.mjs";
+
 /**
  * Validates untrusted project folders before they enter discovery, ingestion,
  * skills, or money-shaped views. The schema is intentionally narrow so a pull
  * request cannot smuggle executable configuration or ambiguous reward terms.
  */
 
+import { assertCatchUpHistory, assertCatchUpUntil } from "./backlog-rule.mjs";
 import {
   assertFundingAddresses,
   fundingAssetForNetwork,
@@ -1310,6 +1312,8 @@ function validateProjectDefinition(
       slopbot,
       [
         "automaticClosure",
+        ...(slopbot.catchUpUntil === undefined ? [] : ["catchUpUntil"]),
+        ...(slopbot.catchUpHistory === undefined ? [] : ["catchUpHistory"]),
         ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
         ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
         ...(slopbot.submissionFee === undefined ? [] : ["submissionFee"]),
@@ -1326,6 +1330,13 @@ function validateProjectDefinition(
       );
     if (slopbot.intakeCap !== undefined)
       assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
+    if (slopbot.catchUpUntil !== undefined)
+      assertCatchUpUntil(slopbot.catchUpUntil, "project.slopbot.catchUpUntil");
+    if (slopbot.catchUpHistory !== undefined)
+      assertCatchUpHistory(
+        slopbot.catchUpHistory,
+        "project.slopbot.catchUpHistory",
+      );
     if (slopbot.submissionFee !== undefined)
       assertSubmissionFeeSetting(
         slopbot.submissionFee,
