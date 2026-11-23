@@ -1,4 +1,5 @@
 // @source migrations/0148_trace_licensing.sql
+// @source migrations/0149_trace_terms_v3.sql
 // @source backend/trace-licensing/handler.ts
 // @source src/lib/trace-licensing.ts
 // @source src/TraceLicensing.tsx
@@ -13,12 +14,18 @@
 // @evidence backend/trace-licensing/migration.test.ts
 // @evidence tests/e2e/trace-licensing.spec.ts
 // Consent records for licensing one member's uploaded traces (private trace
-// contract v2; operator decision of 22 November 2026).
-// finalize: a run finalizes once; a missing client version reads as v1. Only a
-// v2 run finalized while the setting is on, and the account is not banned,
-// gets a licence with basis upload, written together with its granted event.
-// enable: refused when closed or banned; a toggle to the state in force is a
-// no-op that writes nothing. disable: allowed for a banned account; withdraws
+// contract v2; operator decision of 22 November 2026; contract v3, operator
+// decision of 23 November 2026).
+// finalize: a run finalizes once; a missing client version reads as v1. A v2
+// run finalized while the setting is on, and the account is not banned, gets a
+// licence with basis upload, written together with its granted event. A v3
+// run needs the same and the setting's latest confirmation (enabled event)
+// given under v3. conf is the terms version of that latest confirmation.
+// enable: refused when closed or banned; confirms under v3. enableUnderV2: an
+// enable recorded by the v2 handler before v3 shipped. reconfirm: a setting
+// that is on and confirmed under v2 is confirmed again under v3, writing one
+// account event and changing no licence; refused when closed or banned. A
+// toggle to the state in force is a no-op that writes nothing. disable: allowed for a banned account; withdraws
 // every licensed trace (reason setting_off). optIn / optInAll: only while the
 // setting is on and the account is neither closed nor banned; a bulk opt-in
 // whose expected count differs from the eligible count (finalized, not
@@ -35,9 +42,10 @@
 // code.
 module api_trace_licensing {
   // ev: 0 none, 1 granted, 2 withdrawn. lic: 0 none, 1 licensed, 2 withdrawn.
-  // basis: 0 none, 1 upload, 2 opt_in. v: 1 or 2.
+  // basis: 0 none, 1 upload, 2 opt_in. v: 1, 2 or 3. conf: 0 never, 2 or 3.
   type Trace = { final: bool, v: int, lic: int, ev: int, basis: int }
   var on: bool
+  var conf: int
   var closed: bool
   var banned: bool
   var traces: int -> Trace
@@ -54,23 +62,42 @@ module api_trace_licensing {
   action init = all {
     on' = false, closed' = false, banned' = false,
     traces' = Map(1 -> empty, 2 -> empty),
+    conf' = 0,
     wrote' = false,
   }
 
   action finalize(i: int, v: int): bool = all {
-    v == 1 or v == 2,
+    v == 1 or v == 2 or v == 3,
     not(traces.get(i).final),
     traces' = traces.set(i,
-      if (v == 2 and on and not(banned))
+      if (on and not(banned) and (v == 2 or (v == 3 and conf == 3)))
         { final: true, v: v, lic: 1, ev: 1, basis: 1 }
       else traces.get(i).with("final", true).with("v", v)),
     on' = on, closed' = closed, banned' = banned,
+    conf' = conf,
     wrote' = false,
   }
 
   action enable = all {
     not(closed), not(banned), not(on),
     on' = true, closed' = closed, banned' = banned, traces' = traces,
+    conf' = 3,
+    wrote' = true,
+  }
+
+  // The v2 handler recorded its enables under v2; it ran only before any v3
+  // confirmation existed.
+  action enableUnderV2 = all {
+    not(closed), not(banned), not(on), conf != 3,
+    on' = true, closed' = closed, banned' = banned, traces' = traces,
+    conf' = 2,
+    wrote' = true,
+  }
+
+  action reconfirm = all {
+    on, not(closed), not(banned), conf != 3,
+    on' = on, closed' = closed, banned' = banned, traces' = traces,
+    conf' = 3,
     wrote' = true,
   }
 
@@ -78,12 +105,14 @@ module api_trace_licensing {
   action noopToggle = all {
     not(closed),
     on' = on, closed' = closed, banned' = banned, traces' = traces,
+    conf' = conf,
     wrote' = false,
   }
 
   action disable = all {
     not(closed), on,
     on' = false, closed' = closed, banned' = banned, traces' = withdrawAll(traces),
+    conf' = conf,
     wrote' = true,
   }
 
@@ -93,6 +122,7 @@ module api_trace_licensing {
     traces' = traces.set(i, traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2)),
     on' = on, closed' = closed, banned' = banned,
     // The opt-in writes an opted_in account event with the grant.
+    conf' = conf,
     wrote' = true,
   }
 
@@ -107,6 +137,7 @@ module api_trace_licensing {
         traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2)
       else traces.get(i)),
     on' = on, closed' = closed, banned' = banned,
+    conf' = conf,
     wrote' = true,
   }
 
@@ -115,6 +146,7 @@ module api_trace_licensing {
   action optInRefused(expected: int): bool = all {
     expected != eligibleCount(traces) or not(on) or closed or banned,
     on' = on, closed' = closed, banned' = banned, traces' = traces,
+    conf' = conf,
     wrote' = false,
   }
 
@@ -124,23 +156,27 @@ module api_trace_licensing {
     on' = false,
     traces' = withdrawAll(traces),
     banned' = banned,
+    conf' = conf,
     wrote' = (on or licensedCount(traces) > 0),
   }
 
   action reopen = all {
     closed,
     closed' = false, on' = on, banned' = banned, traces' = traces,
+    conf' = conf,
     wrote' = false,
   }
 
   action ban = all {
     banned' = true, on' = on, closed' = closed, traces' = traces,
+    conf' = conf,
     wrote' = false,
   }
 
   action step = any {
-    finalize(1, 1), finalize(1, 2), finalize(2, 1), finalize(2, 2),
-    enable, noopToggle, disable,
+    finalize(1, 1), finalize(1, 2), finalize(1, 3),
+    finalize(2, 1), finalize(2, 2), finalize(2, 3),
+    enable, enableUnderV2, reconfirm, noopToggle, disable,
     optIn(1), optIn(2), optInAll(1), optInAll(2), optInRefused(0), optInRefused(1),
     close, reopen, ban,
   }
@@ -151,12 +187,14 @@ module api_trace_licensing {
     traces.get(i).ev == 1 implies traces.get(i).lic == 1)
   val licensedNeedsConsent = Set(1, 2).forall(i =>
     traces.get(i).lic == 1 implies (on and not(closed)))
-  val uploadBasisIsV2 = Set(1, 2).forall(i =>
-    traces.get(i).basis == 1 implies traces.get(i).v == 2)
+  val uploadBasisIsV2OrV3 = Set(1, 2).forall(i =>
+    traces.get(i).basis == 1 implies (traces.get(i).v == 2 or traces.get(i).v == 3))
+  val v3UploadNeedsV3Confirmation = Set(1, 2).forall(i =>
+    (traces.get(i).basis == 1 and traces.get(i).v == 3) implies conf == 3)
   val closedHoldsNothing = closed implies (not(on) and licensedCount(traces) == 0)
   val invariant = all {
-    licenceBacked, grantBacked, licensedNeedsConsent, uploadBasisIsV2,
-    closedHoldsNothing,
+    licenceBacked, grantBacked, licensedNeedsConsent, uploadBasisIsV2OrV3,
+    v3UploadNeedsV3Confirmation, closedHoldsNothing,
   }
 
   run uploadWhileOnTest = init.then(enable).then(finalize(1, 2)).then(finalize(2, 1))
@@ -175,6 +213,14 @@ module api_trace_licensing {
   run noopWritesNothingTest = init.then(enable).then(noopToggle).expect(not(wrote) and on)
   run closeNothingToWithdrawTest = init.then(close).expect(not(wrote) and closed)
   run closeWithLicenceWritesTest = init.then(enable).then(close).expect(wrote and not(on))
+  run v3UploadUnderV3EnableTest = init.then(enable).then(finalize(1, 3))
+    .expect(traces.get(1).lic == 1 and traces.get(1).basis == 1 and conf == 3)
+  run v2EnableDoesNotLicenseV3Test = init.then(enableUnderV2).then(finalize(1, 3))
+    .then(finalize(2, 2))
+    .expect(traces.get(1).lic == 0 and traces.get(2).lic == 1)
+  run reconfirmLicensesLaterV3Test = init.then(enableUnderV2).then(finalize(1, 3))
+    .then(reconfirm).expect(wrote and on and traces.get(1).lic == 0)
+    .then(finalize(2, 3)).expect(traces.get(2).lic == 1 and traces.get(2).basis == 1)
   run optInWritesTest = init.then(enable).then(finalize(1, 1)).then(optIn(1))
     .expect(wrote and traces.get(1).lic == 1 and traces.get(1).basis == 2)
 }

@@ -740,12 +740,23 @@ export class CloudflareTracePersistence implements TracePersistence {
     finalizedAt: string,
   ): Promise<TraceRun | null> {
     // A licence is granted only by the call that finalized the run (its
-    // finalized_at), only for v2 with the owner's setting on and no ban, and
-    // at most once. The event is written first, while no licence exists, so
-    // both inserts see the same state and a repeat writes neither.
+    // finalized_at), only for v2 or v3 with the owner's setting on and no ban,
+    // and at most once. A v3 run also needs the setting's latest 'enabled'
+    // event to be a v3 confirmation: v3 keeps project code, which a v2
+    // confirmation never described. The event is written first, while no
+    // licence exists, so both inserts see the same state and a repeat writes
+    // neither.
     const uploadLicenceEligible = `run.id = ? AND run.github_user_id = ?
       AND run.state = 'finalized' AND run.finalized_at = ?
-      AND run.terms_version = 'private-trace-v2'
+      AND (
+        run.terms_version = 'private-trace-v2'
+        OR (
+          run.terms_version = 'private-trace-v3'
+          AND (SELECT event.terms_version FROM trace_licensing_events event
+            WHERE event.github_id = run.github_user_id AND event.kind = 'enabled'
+            ORDER BY event.id DESC LIMIT 1) = 'private-trace-v3'
+        )
+      )
       AND EXISTS (
         SELECT 1 FROM trace_licensing_settings setting
         WHERE setting.github_id = run.github_user_id AND setting.enabled = 1
