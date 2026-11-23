@@ -25,7 +25,7 @@ type Trace = {
   provider: string;
   model: string;
   client: string;
-  termsVersion: "private-trace-v1" | "private-trace-v2";
+  termsVersion: "private-trace-v1" | "private-trace-v2" | "private-trace-v3";
   licence: "none" | "licensed" | "withdrawn";
   pullRequestUrl: string | null;
 };
@@ -46,7 +46,13 @@ function run(index: number, licence: Trace["licence"] = "none"): Trace {
 }
 
 /** The account's server state, which each test changes as the routes would. */
-type Server = { enabled: boolean; traces: Trace[]; pageSize: number };
+type Server = {
+  enabled: boolean;
+  traces: Trace[];
+  pageSize: number;
+  /** The terms version of the latest enabled event; defaults to v3 when on. */
+  confirmed?: "private-trace-v2" | "private-trace-v3";
+};
 
 type Write = { body: unknown; githubId: string | null };
 
@@ -60,6 +66,9 @@ function listing(server: Server, cursor: string | null) {
       enabled: server.enabled,
       since: server.enabled ? ON_SINCE : null,
       providerTermsConfirmed: server.enabled,
+      confirmedTermsVersion: server.enabled
+        ? (server.confirmed ?? "private-trace-v3")
+        : null,
     },
     totals: {
       traces: server.traces.length,
@@ -168,6 +177,7 @@ async function openSettings(
     if (routes.setting) return route.fulfill(routes.setting(body));
     const wasEnabled = server.enabled;
     server.enabled = body.enabled === true;
+    if (server.enabled) server.confirmed = "private-trace-v3";
     let withdrawn = 0;
     if (wasEnabled && !server.enabled)
       for (const t of server.traces)
@@ -216,7 +226,7 @@ test("turn on requires the tick", async ({ page, diagnostics }) => {
   ).toBeVisible();
   await expect(section.getByRole("link", { name: "Terms" })).toHaveAttribute(
     "href",
-    "/protocol/private-trace-v2.md",
+    "/protocol/private-trace-v3.md",
   );
   await expect(
     section.getByText("No traces yet", { exact: true }),
@@ -227,7 +237,7 @@ test("turn on requires the tick", async ({ page, diagnostics }) => {
   await expect(turnOn).toBeDisabled();
   await section
     .getByRole("checkbox", {
-      name: "My model provider's terms let me license these runs' output.",
+      name: "My model provider's terms let me license these runs' output, including the code they contain.",
     })
     .check();
   await turnOn.click();
@@ -244,6 +254,59 @@ test("turn on requires the tick", async ({ page, diagnostics }) => {
       githubId: GITHUB_ID,
     },
   ]);
+});
+
+test("v2-confirmed account is asked to confirm again for v3", async ({
+  page,
+  diagnostics,
+}) => {
+  const server: Server = {
+    enabled: true,
+    confirmed: "private-trace-v2",
+    traces: [],
+    pageSize: 100,
+  };
+  const { section, settings } = await openSettings(page, diagnostics, server);
+  await expect(
+    section.getByText(
+      "Sessions uploaded under v3 include your project's code. Confirm again to license them.",
+    ),
+  ).toBeVisible();
+  const confirm = section.getByRole("button", {
+    name: "Confirm for v3",
+    exact: true,
+  });
+  await expect(confirm).toBeDisabled();
+  await section
+    .getByRole("checkbox", {
+      name: "My model provider's terms let me license these runs' output, including the code they contain.",
+    })
+    .check();
+  await confirm.click();
+  await expect(section.getByRole("checkbox")).toHaveCount(0);
+  await expect(section.getByText(/Confirm again to license them/u)).toHaveCount(
+    0,
+  );
+  expect(settings).toEqual([
+    {
+      body: { enabled: true, providerTermsConfirmed: true },
+      githubId: GITHUB_ID,
+    },
+  ]);
+});
+
+test("v3 rows are labelled v3", async ({ page, diagnostics }) => {
+  const rows = [
+    { ...run(1), termsVersion: "private-trace-v3" as const },
+    { ...run(2), termsVersion: "private-trace-v2" as const },
+    { ...run(3), termsVersion: "private-trace-v1" as const },
+  ];
+  const server: Server = { enabled: true, traces: rows, pageSize: 100 };
+  const { section } = await openSettings(page, diagnostics, server);
+  const items = section.getByRole("listitem");
+  await expect(items.nth(0)).toContainText(" · v3 · ");
+  await expect(items.nth(1)).toContainText(" · v2 · ");
+  await expect(items.nth(2)).toContainText(" · v1 · ");
 });
 
 test("bulk confirm shows the count and posts expectedCount", async ({
