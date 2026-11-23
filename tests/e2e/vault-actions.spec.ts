@@ -2070,12 +2070,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .getByRole("button", { name: "Connect MetaMask" })
       .click();
     await monthlyControls
-      .getByRole("button", {
+      .getByRole("button", { name: "Review", exact: true })
+      .click();
+    await expect(
+      monthlyControls.getByRole("region", {
         name: "Review monthly payment setting",
         exact: true,
-      })
-      .click();
-    await expect(monthlyControls.getByText(/^On, up to 2,000 /)).toBeVisible();
+      }),
+    ).toContainText("On · 2,000");
     expect(sends).toHaveLength(1);
     const funding = page.getByRole("region", { name: /Fund or withdraw/ });
     await funding.getByRole("button", { name: "Connect MetaMask" }).click();
