@@ -43,6 +43,9 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     environment: slop-production
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.operation == 'replay-assessments' && 360 || 90 }}
     steps:
