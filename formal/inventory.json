@@ -969,6 +969,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/referrals/repo-requests.ts",
+      "sha256": "57377b0ca6e669eaa0b4aeef61364635fcc265125818e11ac9ff9bae5f62fd6d",
+      "models": ["formal/models/referrals/repo_request.qnt"],
+      "candidateLines": [221, 225, 231, 278],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/security/advisories.ts",
       "sha256": "edc9f61fbf4fb818fa52b8878af836bb49e54c085a3eab82da96d1b045733a7b",
       "models": ["formal/models/api/api_advisory_census.qnt"],
@@ -2363,7 +2370,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "015a289e1f2798b8ba152745161c2020c258ed515a6bb969816a858c29e69437",
+      "sha256": "6b673588e71045f751322a35153d66b317c3b686b7d617535067753df89db1e3",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
@@ -2374,7 +2381,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [566, 567, 603, 616],
+      "candidateLines": [576, 577, 613, 626],
       "review": "mapped-abstraction"
     },
     {
@@ -3823,6 +3830,13 @@
       "sha256": "7536791052306fb43a08b638ca49cc9890cddf21c3cf5358bf4344c2ee7db9f8",
       "models": ["formal/models/api/identity_browser_binding.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0147_repo_requests.sql",
+      "sha256": "a8f34d2c22532ee8c14f94302fd562261cb2bb716d4505f33a0bc09e18124fcb",
+      "models": ["formal/models/referrals/repo_request.qnt"],
+      "candidateLines": [7, 33, 34, 40, 41],
       "review": "mapped-abstraction"
     },
     {
@@ -5830,7 +5844,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "7d2ed49440809fac1a36581514d996e4c0c82746b4778caa78f0bc5c00f73137",
+      "sha256": "50e4ce1f7107e0d0deaa0a3618df341d7bfb085c6e2aec8417a768e57415945f",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5851,14 +5865,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 345, 355, 365, 376, 385, 386, 387, 388, 389, 391, 392, 459, 530,
-        531, 532, 535, 557, 636, 667, 704, 810, 878, 956, 957, 966, 976, 977,
-        1200, 1215, 1233, 1273, 1278, 1280, 1283, 1350, 1353, 1355, 1359, 1360,
-        1365, 1382, 1386, 1394, 1395, 1398, 1400, 1408, 1439, 1485, 1488, 1503,
-        1504, 1554, 1557, 1561, 1562, 1563, 1564, 1568, 1588, 1590, 1607, 1612,
-        1674, 1675, 1680, 1681, 1686, 1692, 1733, 1734, 1737, 1738, 1741, 1742,
-        1763, 1764, 1770, 1775, 1777, 1781, 1782, 1821, 1844, 1854, 1885, 1887,
-        1912, 1913, 1929, 1930, 1941, 1943, 1967, 1970
+        21, 23, 350, 360, 370, 381, 390, 391, 392, 393, 394, 396, 397, 464, 536,
+        537, 538, 541, 563, 642, 673, 710, 816, 884, 962, 963, 972, 982, 983,
+        1206, 1221, 1239, 1279, 1284, 1286, 1289, 1356, 1359, 1361, 1365, 1366,
+        1371, 1388, 1392, 1400, 1401, 1404, 1406, 1414, 1445, 1491, 1494, 1509,
+        1510, 1560, 1563, 1567, 1568, 1569, 1570, 1574, 1594, 1596, 1613, 1618,
+        1680, 1681, 1686, 1687, 1692, 1698, 1739, 1740, 1743, 1744, 1747, 1748,
+        1769, 1770, 1776, 1781, 1783, 1787, 1788, 1827, 1850, 1860, 1891, 1893,
+        1918, 1919, 1935, 1936, 1947, 1949, 1974, 1977
       ],
       "review": "mapped-abstraction"
     },
@@ -6229,7 +6243,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "f2611be86e5e7fa19048783839aea2fc0312c9ea588018014589df14c3b76e2c",
+      "sha256": "8182a4cfa2a5e1cb75443ef64445d7e687382acb274d2bf9f44de639e600a6f4",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -6249,11 +6263,11 @@
         614, 618, 619, 629, 630, 641, 643, 650, 651, 670, 676, 702, 703, 704,
         705, 708, 718, 743, 792, 805, 810, 819, 885, 905, 911, 920, 926, 931,
         933, 936, 942, 943, 954, 963, 971, 973, 982, 985, 986, 987, 988, 990,
-        991, 994, 995, 1006, 1039, 1043, 1086, 1087, 1157, 1167, 1172, 1190,
-        1192, 1194, 1197, 1198, 1199, 1201, 1269, 1273, 1375, 1376, 1377, 1407,
-        1408, 1449, 1450, 1451, 1453, 1460, 1462, 1466, 1468, 1470, 1479, 1480,
-        1486, 1492, 1497, 1506, 1507, 1508, 1509, 1512, 1513, 1515, 1520, 1521,
-        1524, 1525, 1527, 1533, 1539, 1540, 1541, 1542, 1545, 1546, 1554, 1566
+        991, 994, 995, 1006, 1039, 1043, 1090, 1091, 1161, 1171, 1176, 1194,
+        1196, 1198, 1201, 1202, 1203, 1205, 1273, 1277, 1379, 1380, 1381, 1411,
+        1412, 1453, 1454, 1455, 1457, 1464, 1466, 1470, 1472, 1474, 1483, 1484,
+        1490, 1496, 1501, 1510, 1511, 1512, 1513, 1516, 1517, 1519, 1524, 1525,
+        1528, 1529, 1531, 1537, 1543, 1544, 1545, 1546, 1549, 1550, 1558, 1570
       ],
       "review": "mapped-abstraction"
     },
@@ -6528,6 +6542,16 @@
       "sha256": "c83eaef4185934ca4e77280cbafdb6fd31c282c3f72324ccb55263696253cb23",
       "models": ["formal/models/ui/ui_private_intake.qnt"],
       "candidateLines": [2, 87, 134, 216],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/RequestedRepos.tsx",
+      "sha256": "6de1e61598f0be1138c032e9fecf0595cc438de12239297aa38c4f2ea25d3679",
+      "models": ["formal/models/ui/ui_requested_repos.qnt"],
+      "candidateLines": [
+        8, 36, 37, 38, 77, 95, 119, 120, 121, 124, 130, 133, 137, 143, 169, 188,
+        191, 194, 223, 226, 228, 239, 254, 276
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -7703,6 +7727,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/repo-requests.ts",
+      "sha256": "8df991643d4d0b38cfddb2abc96491209913cb2600e641639e0546aed2bc5972",
+      "models": ["formal/models/referrals/repo_request.qnt"],
+      "candidateLines": [63, 69, 75, 81, 91, 103, 110],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/report-deposit-page.ts",
       "sha256": "63b8b92240c245d4ed6feff4658fa4997a59c098905211f87fb81c301a547300",
       "models": ["formal/models/ui/ui_report_deposit.qnt"],
@@ -7885,7 +7916,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "79ea1f21c2f2b4a2c3dc00f44dbd378ff174ac4a37d515923bac1e9796c4cd03",
+      "sha256": "199302d2f7791a4a1b4fdad0b6c4dcec504ac3f4cafddbcddbfb14bb47bf8fda",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -16426,6 +16457,28 @@
       ]
     },
     {
+      "path": "formal/models/referrals/repo_request.qnt",
+      "sha256": "89616be061dd6f92bd1322ea56e3d512d7b4b810d1781692d2743c62278107f3",
+      "sources": [
+        "backend/referrals/repo-requests.ts",
+        "migrations/0147_repo_requests.sql",
+        "src/lib/repo-requests.ts"
+      ],
+      "scenarios": [
+        "flagCountsAndExpiresTest",
+        "githubDownStoresNothingTest",
+        "limitRefusesASecondRepoTest",
+        "limitStillAllowsARenewalTest",
+        "listedRepoRefusedAndLeavesTheBoardTest",
+        "noMergedWorkRefusedTest",
+        "ownRepoRefusedTest",
+        "renewMovesTheExpiryTest",
+        "teamAccountRefusedTest",
+        "withdrawnFlagCanReturnTest",
+        "withdrawnFlagCannotBeWithdrawnAgainTest"
+      ]
+    },
+    {
       "path": "formal/models/release/ci_browser_evidence.qnt",
       "sha256": "fa93a73cafaa81af86c27fba5a7ac667f93f21065bb526a4c478b10eeeaa5107",
       "sources": [
@@ -20864,6 +20917,19 @@
         "restoredValidBranchIsPreservedTest",
         "suggestedTextTracksChangedRepositoryTest",
         "typedDescriptionSurvivesTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_requested_repos.qnt",
+      "sha256": "e5a7423356d20767b6bca33109d2b837f539a95bf406d9576d35d570bb358514",
+      "sources": ["src/RequestedRepos.tsx"],
+      "scenarios": [
+        "accountChangeDropsAnEarlierRequestTest",
+        "earlierRequestCannotAnswerAfterAccountChangeTest",
+        "failedBoardRetriesTest",
+        "flagReloadsTheBoardTest",
+        "refusalKeepsTheBoardTest",
+        "secondRequestWaitsForTheFirstTest"
       ]
     },
     {
