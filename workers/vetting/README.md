@@ -42,6 +42,17 @@ not depend on interpreting Ruby or Make expressions. Previously unrecognized
 text remains in full model review even under generated or vendor directories.
 Unknown undecodable bytes retain their digest as quarantined binary artifacts
 and make source coverage incomplete; an extension never proves they are safe.
+An unclassified file whose extension and complete byte structure agree on PNG,
+JPEG, GIF or WebP (`wellFormedImage`: valid chunks or segments, nothing before
+the signature or after the end marker) is listed by digest under `media` in
+the inventory instead. Fonts are treated the same way (operator decision,
+23 November 2026): TrueType and OpenType need a table directory whose tables
+lie inside the file without a repeated tag, a `head` or `bhed` table and
+nothing after the last table but its padding (the recorded checksum is not
+required, since font tools often leave it stale); WOFF needs its recorded
+length, tables and metadata and private blocks inside the file; WOFF2 needs
+its signature and a recorded length equal to the file length. Appended bytes,
+a corrupt chunk or a binary under an image or font name stay quarantined.
 Unknown-format compressed payloads remain quarantined under the existing gzip
 policy even when their decoded bytes are UTF-8; this fallback does not release
 them or claim that the model reviewed those payloads.
@@ -90,11 +101,17 @@ file invocations. Referenced files become install content, so their literal
 download URLs remain unretrieved artifacts. Shell helpers and named package
 scripts are followed with
 their invoking working directory; repeated references and cycles are
-deduplicated. Straight-line literal `cd` changes resolve locally. Missing,
-escaping or dynamic paths, substitutions, grouped commands, conditional
-directory changes, unsupported control flow, `eval` and unresolved dispatcher
-options keep install coverage
-partial. Sourced helpers are read, but their effect on the invoking directory
+deduplicated. Straight-line literal `cd` changes resolve locally, and
+`cd "$(dirname "$0")"` in a script file resolves to that file's directory.
+Ordinary shell syntax does not hide a helper (operator decision, 23 November
+2026): the commands inside `$(...)`, backticks, `( ... )`, `if`, `while`,
+`until`, `for` and `{ }` bodies are read as if they run, so a helper they
+launch is followed; `command -v` only prints. A `cd` that may not run (after
+`&&` or `||`, in a pipeline, inside a subshell or a conditional, loop or brace
+body) leaves the directory unknown, so a later local launch is a gap. Missing,
+escaping or dynamic paths, an unclosed substitution, arithmetic holding a
+command, `case` and `select`, `eval` and unresolved dispatcher options keep
+install coverage partial. Sourced helpers are read, but their effect on the invoking directory
 is left unresolved. Quoted here-document bodies are data, not commands. This
 is literal shell-command coverage,
 not a complete language call graph: no target code, substitution or variable
@@ -195,10 +212,28 @@ not a full runtime audit. Reviewers must preserve concrete visibility gaps and
 findings. Missing runtime execution alone does not make a completed static
 review partial. The primary and synthesis prompt revisions record this scope.
 Findings must identify a concrete defined threat or missing required evidence,
-not merely describe a permitted feature. The prompts supply the approved
-canonical-template commit policy as trusted context; they do not grant trust
-to template contents or excuse hidden behavior, consent bypasses, wrong
-origins, or byte mismatches.
+not merely describe a permitted feature.
+
+The queued canonical skill template is read by every deterministic check and
+listed by digest as deterministic-only `template` content; it is not sent to
+the models (operator decision, 19 November 2026). Only `run.ts` marks a file
+as template input, from the queued inputs it reread by digest. A repository
+path under `slop-skill-template/` is a scanner gap, never template.
+
+Every non-complete coverage area must carry a reason (`gaps` in the
+`slop-scan-review-4` contract). `review-coverage.ts` sorts each reason by what
+the scanner supplied: content supplied to that call and unreviewed, a partial
+area without a reason, and any missing area stay `<reviewer>:<threat>:partial`
+or `:missing` gaps and keep the result incomplete; content another completed
+batch reviewed, deterministic-only content, images and recorded artifacts
+resolve the reason; content outside the acquired revision becomes the
+advisory `<reviewer>:<threat>:outside-revision`. Info, low and medium findings
+are advisory; a high or critical finding from either review, suspected malice
+or a review that did not complete keeps the result incomplete
+(`scanProblems`). Qualify changes with real provider calls:
+`SURPLUS_API_KEY=... VETTING_RATE_CARDS=... bun scripts/qualify-vetting-review.ts`
+(three synthetic cases), or `--repository owner/name --commit <sha>` to rescan
+one public repository without publishing anything.
 
 A completed incomplete assessment is not pending work. After correcting its
 cause, an administrator can queue a fresh scan from the project's security
@@ -254,7 +289,13 @@ is reported for that assessment alone, as `retry` at step `assessment` with
 the error name and never its message; the assessment stays pending and the
 pass continues with the next queued assessment (each repository of a project is
 queued as its own assessment), so one repository cannot hold
-back every project queued behind it. It
+back every project queued behind it. A retry names its step and a safe
+label only: a failed acquisition read gives the read and its HTTP status or
+error class (for example `github-identity-http-403`), one of the scanner's
+own fixed failure sentences gives its slug, and any other error gives only its
+class. The scan step reads GitHub with the scan dispatch App's token when that
+token can read a public repository outside this one, else with
+`GITHUB_TOKEN`, and logs how many shared `GITHUB_TOKEN` requests were left. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.
 

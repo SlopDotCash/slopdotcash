@@ -22,12 +22,17 @@ export function penaltyDebit(category: string): number {
   //@ verify
   //@ ensures category === "spam" ==> \result === 3
   //@ ensures category === "scam" ==> \result === 24
-  //@ ensures category === "busywork" || category === "gaming" ==> \result === 1
-  //@ ensures category !== "spam" && category !== "scam" && category !== "busywork" && category !== "gaming" ==> \result === 0
+  //@ ensures category === "busywork" || category === "gaming" || category === "missing_evidence" ==> \result === 1
+  //@ ensures category !== "spam" && category !== "scam" && category !== "busywork" && category !== "gaming" && category !== "missing_evidence" ==> \result === 0
   //@ ensures \result >= 0 && \result <= 24
   if (category === "spam") return 3;
   if (category === "scam") return 24;
-  if (category === "busywork" || category === "gaming") return 1;
+  if (
+    category === "busywork" ||
+    category === "gaming" ||
+    category === "missing_evidence"
+  )
+    return 1;
   return 0;
 }
 

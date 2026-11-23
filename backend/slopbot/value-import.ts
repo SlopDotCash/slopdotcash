@@ -1,4 +1,10 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import {
+  type HistoricalIntakeTerminalFailure,
+  INTAKE_DIAGNOSTIC_HEADER,
+  INTAKE_TERMINAL_V1,
+  projectTerminalIntakeFailure,
+} from "../../workers/slopbot/value-import-diagnostics";
 import { isSameOriginJsonWrite } from "../http";
 import {
   INTAKE_CORRELATION_HEADER,
@@ -7,15 +13,27 @@ import {
   pagesIntakeObserver,
 } from "./value-import-observation";
 
+type HistoricalValueReceipt = { recordDigest: string; sequence: number };
+
+export type HistoricalValueDiagnosticReply =
+  | { status: 200; receipt: HistoricalValueReceipt }
+  | {
+      status: 409;
+      correlation: string;
+      diagnostic: HistoricalIntakeTerminalFailure | null;
+    };
+
 /** This binding targets a named Worker RPC entrypoint, never a public URL. */
 export interface HistoricalValueBinding {
   publishSubscription(
     input: unknown,
     bundle?: ReadableStream<Uint8Array>,
-  ): Promise<{
-    recordDigest: string;
-    sequence: number;
-  }>;
+  ): Promise<HistoricalValueReceipt>;
+  publishSubscriptionDiagnosed?(
+    input: unknown,
+    correlation: string,
+    bundle?: ReadableStream<Uint8Array>,
+  ): Promise<HistoricalValueDiagnosticReply>;
 }
 
 export async function handleHistoricalValueImport(
@@ -127,10 +145,39 @@ export async function handleHistoricalValueImport(
   }
   observe?.("parsed");
   const publisher = deps.publisher;
+  const diagnosticOptIn =
+    isIntakeCorrelation(correlation) &&
+    request.headers.get(INTAKE_DIAGNOSTIC_HEADER) === INTAKE_TERMINAL_V1;
   const publish = async () => {
     try {
       const objects = bundle?.stream();
       observe?.("rpc-dispatch");
+      if (diagnosticOptIn && publisher.publishSubscriptionDiagnosed) {
+        const result = await publisher.publishSubscriptionDiagnosed(
+          input,
+          correlation,
+          objects,
+        );
+        if (result.status === 200) {
+          observe?.("terminal", { terminalStatus: 200 });
+          return { status: 200, body: result.receipt };
+        }
+        if (result.status === 409) {
+          const failure =
+            result.correlation === correlation
+              ? projectTerminalIntakeFailure(result.diagnostic)
+              : null;
+          observe?.("terminal", { terminalStatus: 409 });
+          return {
+            status: 409,
+            body: {
+              error: "assessment_not_published",
+              ...(failure ? { diagnostic: { correlation, failure } } : {}),
+            },
+          };
+        }
+        throw new Error("Invalid historical publisher response");
+      }
       const receipt = await publisher.publishSubscription(input, objects);
       observe?.("terminal", { terminalStatus: 200 });
       return { status: 200, body: receipt };

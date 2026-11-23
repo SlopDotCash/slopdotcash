@@ -12,11 +12,12 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
+import { backlogOutOfRotation } from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { intakePaused } from "./lib/intake-cap.mjs";
 import {
@@ -27,17 +28,28 @@ import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
-  asShown,
   listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthsCovered,
   monthsCoveredLabel,
   type PoolFundingIndex,
 } from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { REPORT_DEPOSIT_USD_TEXT } from "./lib/report-deposit-page";
 import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import {
+  REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS,
+  REPORT_DEPOSIT_REFUND_SILENT_DAYS,
+} from "./lib/security-report-deposit.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import {
+  SUBMISSION_FEE_DEFAULT_MINOR,
+  SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS,
+  SUBMISSION_FEE_REFUND_UNDECIDED_DAYS,
+} from "./lib/submission-fee.mjs";
+import { reportDepositSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
@@ -59,6 +71,9 @@ import {
 } from "./Presentation";
 
 export function HowItWorksPage() {
+  // Whether Slop asks reporters for the refundable deposit (PRD section 8).
+  const [{ switchedOn: reportDeposit }] = useState(reportDepositSetup);
+  const depositSize = `a refundable deposit of about ${REPORT_DEPOSIT_USD_TEXT} US dollars of SLOP on Robinhood Chain`;
   return (
     <main className="shell evidence-page how-it-works route-guide">
       <RoutePageHeader title="How Slop works" icon={<BookOpen />} />
@@ -264,6 +279,54 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>Is there a fee to open a pull request?</h3>
+            <div>
+              <p>
+                Only on a project whose owner turned on the refundable
+                submission fee. There, Slopbot comments once on a pull request
+                from an outside contributor with a link to its pay page on
+                slop.cash, and holds its review until the fee is recorded. The
+                fee is {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000} USDC
+                on Base or {Number(SUBMISSION_FEE_DEFAULT_MINOR) / 1_000_000}{" "}
+                USDG on Robinhood Chain unless the owner set another amount, or
+                the same fee in SLOP on Robinhood Chain at half the price. It is
+                a deposit: a merge sends it back, and so do{" "}
+                {SUBMISSION_FEE_REFUND_UNDECIDED_DAYS} days without a maintainer
+                decision. A pull request closed without a merge for{" "}
+                {SUBMISSION_FEE_KEPT_AFTER_CLOSED_DAYS} days keeps it: a
+                stablecoin fee goes to Slop and a SLOP fee is burned. A pull
+                request for an issue labelled slop-wanted is the exception: it
+                is sent back unless a maintainer marks it with slop-keep-fee. An
+                unpaid pull request is never closed for that reason, the fee
+                does not buy a merge and scoring does not read it. Pay only
+                through the page linked in Slopbot&apos;s own comment.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Is there a deposit to file a security report?</h3>
+            <div>
+              <p>
+                {reportDeposit
+                  ? `Yes, unless the project's owner turned it off. A private report filed through Slop needs ${depositSize}.`
+                  : `Not yet. Slop has not switched the deposit on. Once it is on, a private report filed through Slop needs ${depositSize}, unless the project's owner turned it off.`}{" "}
+                The report is stored at once and screened once the deposit is
+                recorded; your Inbox shows the exact amount and links its pay
+                page. The deposit is kept only if the report is closed as spam,
+                as a duplicate or as out of scope and that close stands for{" "}
+                {REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS} days with no open
+                appeal: it is then sent to the burn address, so neither Slop nor
+                the project receives it. It is sent back to the wallet that paid
+                when the report gets its first response that is not one of those
+                closes, or after {REPORT_DEPOSIT_REFUND_SILENT_DAYS} days with
+                no response, or when the owner turns the deposit off. A report
+                is never closed or deleted for an unpaid deposit. The deposit is
+                public on chain and shows the wallet that paid, not the project
+                or the report. Pay only through the page linked in your Inbox.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>GitHub flagged my account. What happens to my work?</h3>
             <div>
               <p>
@@ -346,10 +409,10 @@ export function HowItWorksPage() {
   );
 }
 
-/** Only money in a vault is shown (operator decision, 15 November 2026). */
 function sponsorPoolLabel(
   registered: ProjectDefinition,
   index: PoolFundingIndex | null,
+  now: Date,
 ): ReactNode {
   const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
@@ -359,9 +422,17 @@ function sponsorPoolLabel(
       </StatusBadge>
     );
   }
-  const project = asShown(registered, index, new Date());
-  if (project.reward.monthlyCapMinor === "0") return "points only";
-  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
+  const { project, fundingTag, warning } = listingPoolReward(
+    registered,
+    index,
+    now,
+  );
+  if (fundingTag === null) return "Security bounty";
+  const amount = formatRewardCapDisplay(
+    project.reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  return `${amount} monthly · ${warning ? `${fundingTag} · ${warning}` : "in the vault"}`;
 }
 
 function WhoBuildsOnSlop({
@@ -590,24 +661,25 @@ export function SponsorsPage({
           </Link>
         </div>
         <p>
-          Anyone can fund any project listed here: open it and deposit from your
-          own wallet. Deposits are public. Depositors have no refund right, and
-          the project owner can withdraw free funds, less a 2% fee.
+          Anyone can deposit from their own wallet into a project's registered
+          vault. Deposits are public. Depositors have no refund right, and the
+          project owner can withdraw free funds, less a 2% fee.
         </p>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.filter(
-            (project) =>
-              listedThisMonth(project, fundingIndex, now) &&
-              // A project over its owner's intake cap has paused new
-              // contributors; a failed or pending read pauses nothing.
-              !intakePaused(
-                project,
-                merge.status === "ready"
-                  ? merge.index.get(project.id)
-                  : undefined,
-                now,
-              ),
-          ).map((project) => {
+          {PROJECTS.filter((project) => {
+            // A project over its owner's intake cap has paused new
+            // contributors, and the backlog rule takes a project out of
+            // rotation; a failed or pending read leaves out nothing.
+            const rows =
+              merge.status === "ready"
+                ? merge.index.get(project.id)
+                : undefined;
+            return (
+              listedThisMonth(project, now) &&
+              !intakePaused(project, rows, now) &&
+              !backlogOutOfRotation(project, rows, now)
+            );
+          }).map((project) => {
             const covered = monthsCovered(
               project,
               fundingIndex?.get(project.id),
@@ -622,7 +694,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex, now)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}

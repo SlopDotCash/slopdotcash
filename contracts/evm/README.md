@@ -648,11 +648,16 @@ it is not an audit.
 
 `src/SubmissionDeposits.sol` is a separate, non-upgradeable contract that holds
 refundable submission deposits, built for the platform submission fee (operator
-decision, 18 November 2026). **It is not deployed on any chain, and no Slop
-service reads or calls it.** The PRD does not yet describe a platform fee: PRD
-section 4 still covers only fees a repository runs itself. The product rule, the
-Worker that settles deposits, the Slopbot gate and the service key they need are
-separate changes. It is separate from the escrow: it has no factory, no proxy, no
+decision, 18 November 2026). **It was deployed on Base and Robinhood Chain on
+19 November 2026 at `0xDe40B32A4156ABC2A05987367966d994BcFbf8D8` (the same
+address on both). The owner named the submission-fee Worker's resolver,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, the same day. The
+submission-fee Worker reads it in record-only mode and nothing calls it yet:**
+the fee switch is `dry_run`. The transactions, blocks and
+read-back values are in
+[the deployment record](../DEPLOY-MAINNET.md#submission-fee-deposit-contracts-19-november-2026).
+The product rule is in PRD sections 5 and 6; the Worker that settles deposits
+is `workers/submission-fee`. It is separate from the escrow: it has no factory, no proxy, no
 project id and no vault role, and the escrow never calls it.
 
 - Anyone calls `deposit(item, token, amount, keptTo)`. `item` names what the
@@ -709,8 +714,7 @@ call succeeded. These suites are regression evidence, not a security review.
 `SUBMISSION_DEPOSITS_OWNER` and `SUBMISSION_DEPOSITS_RESOLVER` from the
 environment, fixes the 30-day reclaim delay, and reads the deployed values back
 before it reports. They move no tokens; `test/SubmissionDepositsDeploy.t.sol`
-covers their refusals. Neither has been run against a real chain. The steps for
-the owner are in
+covers their refusals. The owner ran both on 19 November 2026. The steps are in
 [`docs/submission-deposits-deploy-runbook.md`](../../docs/submission-deposits-deploy-runbook.md).
 On 18 November 2026 both scripts and the full deposit, refund, kept, batch and
 reclaim sequence were rehearsed on local forks of Base (USDC) and Robinhood

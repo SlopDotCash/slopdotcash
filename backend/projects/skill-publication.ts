@@ -7,11 +7,9 @@
  * reinstatement path; ordinary publication does not request reinstatement.
  */
 
+import { backlogOutOfRotation } from "../../src/lib/backlog-rule.mjs";
 import { type IntakeCount, intakePaused } from "../../src/lib/intake-cap.mjs";
-import {
-  listedThisMonth,
-  type PoolFundingIndex,
-} from "../../src/lib/pool-funding";
+import { listedThisMonth } from "../../src/lib/pool-funding";
 import type {
   ProjectEnforcement,
   ProjectRecord,
@@ -104,17 +102,12 @@ export type SkillPublicationDependencies = {
     templateSha256: string,
   ): Promise<VettingClearance>;
   /**
-   * The cached vault rows behind `GET /api/v1/pool-funding`. Discovery lists
-   * an active monthly pool only when it is funded this month
-   * (`listedThisMonth`). Null or a failed read lists every cleared project
-   * as before, so a funding outage never empties discovery.
-   */
-  poolFunding(): Promise<PoolFundingIndex | null>;
-  /**
    * The stored open pull request counts behind `GET /api/v1/merge-activity`.
    * Discovery leaves out an active project whose owner set an intake cap
-   * while a recent count is at or above it (`intakePaused`). Absent, null or
-   * a failed read pauses nothing, so an outage never empties discovery.
+   * while a recent count is at or above it (`intakePaused`), and a project
+   * the backlog rule takes out of rotation (`backlogOutOfRotation`). Absent,
+   * null or a failed read leaves out nothing, so an outage never empties
+   * discovery.
    */
   intakeCounts?(): Promise<Map<string, IntakeCount[]> | null>;
   now?: () => Date;
@@ -198,19 +191,7 @@ function listed(
   );
 }
 
-/** Null when the funding cannot be read: discovery then lists as before. */
-async function readPoolFunding(
-  deps: SkillPublicationDependencies,
-): Promise<PoolFundingIndex | null> {
-  try {
-    return await deps.poolFunding();
-  } catch {
-    console.error("project discovery pool funding unavailable");
-    return null;
-  }
-}
-
-/** Null when the counts cannot be read: no project is paused by its cap. */
+/** Null when the counts cannot be read: no project is left out by them. */
 async function readIntakeCounts(
   deps: SkillPublicationDependencies,
 ): Promise<Map<string, IntakeCount[]> | null> {
@@ -226,10 +207,9 @@ async function readIntakeCounts(
 async function discovery(
   deps: SkillPublicationDependencies,
 ): Promise<Response> {
-  const [all, records, funding, intake] = await Promise.all([
+  const [all, records, intake] = await Promise.all([
     deps.listProjects(),
     deps.listEnforcements(),
-    readPoolFunding(deps),
     readIntakeCounts(deps),
   ]);
   const now = deps.now?.() ?? new Date();
@@ -237,16 +217,13 @@ async function discovery(
   // Paused projects may still be cleared (legacy exemption) and may serve
   // skill bytes for inspection, but the bootstrap skill and installer only
   // accept active projects. Keep the discovery index identical to that gate.
-  // An unfunded monthly pool is not listed this month (operator decision,
-  // 16 November 2026); its skills still serve by direct link. Neither is a
-  // project that paused new contributors at its intake cap (operator
-  // decision, 17 November 2026).
   const candidates = all.filter(
     (project) =>
       project.status === "active" &&
       listed(project, records) &&
-      listedThisMonth(project.manifest, funding, now) &&
+      listedThisMonth(project.manifest, now) &&
       !intakePaused(project.manifest, intake?.get(project.id), now) &&
+      !backlogOutOfRotation(project.manifest, intake?.get(project.id), now) &&
       publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(

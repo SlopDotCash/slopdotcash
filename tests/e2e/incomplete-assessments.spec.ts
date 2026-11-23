@@ -19,6 +19,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   });
   let role = "maintainer";
   let unavailable = false;
+  let failNextNotificationRead = false;
   let holdQueue = false;
   let swapOnNextQueue = false;
   let notificationReads = 0;
@@ -74,6 +75,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   diagnostics.allowCanceledBackgroundReads();
   // The deliberate account swap can also reject the parent Inbox refresh.
   diagnostics.allowResponse(403, "GET", "/api/v1/notifications");
+  diagnostics.allowResponse(503, "GET", "/api/v1/notifications");
   diagnostics.allowResponse(
     403,
     "GET",
@@ -89,12 +91,18 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/notifications") {
+      notificationReads++;
+      if (failNextNotificationRead) {
+        failNextNotificationRead = false;
+        return route.fulfill({ status: 503 });
+      }
+    }
     if (
       path === "/api/v1/notifications" ||
       path === "/api/v1/notifications/incomplete-assessments" ||
       path === "/api/v1/project-session"
     ) {
-      if (path === "/api/v1/notifications") notificationReads++;
       if (path.endsWith("/incomplete-assessments")) paginationReads++;
       const response = await api.fetch(
         new Request(request.url(), {
@@ -168,10 +176,9 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       { exact: true },
     );
     await expect(privateNotice).toBeVisible();
-    // Hold the child's decoded B session, then refresh the still-live A
-    // parent. Removing the old child in that commit must retire its callback.
-    // The child's own heading is absent while its page loads. The parent's
-    // notification list is removed in the same commit that unmounts the child.
+    // Hold the child's decoded B session while the parent refreshes as A.
+    // A failed background refresh removes the old child and notification list
+    // together when the error state commits. The stale callback must retire.
     await page.waitForLoadState("networkidle");
     await holdProjectSessionUntilUnmount(
       page,
@@ -189,6 +196,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     );
     role = "maintainer";
     const readsBeforeRefresh = notificationReads;
+    failNextNotificationRead = true;
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.waitForFunction(() => {
       const value = (
@@ -198,8 +206,10 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       ).heldEditorSession;
       return value.removed && value.released;
     });
-    await expect(privateNotice).toBeVisible();
-    await expect(queue.getByRole("link")).toHaveCount(25);
+    await expect(
+      page.getByText("Inbox unavailable", { exact: true }),
+    ).toBeVisible();
+    await expect(privateNotice).toHaveCount(0);
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
@@ -207,6 +217,9 @@ test("maintainers review incomplete assessments in private Inbox", async ({
         }),
     );
     expect(notificationReads).toBe(readsBeforeRefresh + 1);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(privateNotice).toBeVisible();
+    await expect(queue.getByRole("link")).toHaveCount(25);
     // A's accepted page response arrives after the cookie belongs to B.
     // This child must invalidate the parent, including A's other notices.
     holdQueue = true;

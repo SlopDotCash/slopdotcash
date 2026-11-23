@@ -1,0 +1,44 @@
+/* The submission fee pay page: one readable column, addresses wrap at 320px. */
+.fee-page {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  justify-items: start;
+  max-width: 760px;
+}
+
+.fee-page > *,
+.fee-section > * {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+.fee-page code {
+  overflow-wrap: anywhere;
+}
+
+.fee-section {
+  display: grid;
+  gap: 10px;
+}
+
+.fee-section ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 1.2em;
+}
+
+.fee-page h2 {
+  font-size: 1.15rem;
+}
+
+.fee-page > .vault-actions {
+  justify-self: stretch;
+}
+
+.fee-off {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}

@@ -506,7 +506,12 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await expectAccessible(owner);
   const listed = await listedProject(owner, project.id);
   expect(listed).toMatchObject({ status: "paused" });
-  expect(listed.slopbot).toBeUndefined();
+  // Closure consent was unticked; the submission fee the form starts with stayed on.
+  expect(listed.slopbot).toEqual({
+    automaticClosure: false,
+    submissionFee: { enabled: true },
+    wantedIssues: true,
+  });
   await owner
     .getByRole("link", { name: "Manage project", exact: true })
     .click();
@@ -675,7 +680,12 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   const revoked = await (
     await returningOwner.request.get(`/api/v1/projects/${project.id}`)
   ).json();
-  expect(revoked.project.slopbot).toEqual({ automaticClosure: false });
+  // The submission fee the new project form started with is kept unchanged.
+  expect(revoked.project.slopbot).toEqual({
+    automaticClosure: false,
+    submissionFee: { enabled: true },
+    wantedIssues: true,
+  });
   expect(revoked.project.reward).not.toHaveProperty("honorSystem");
   const consentHistory = await (
     await returningOwner.request.get(
@@ -684,6 +694,8 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   ).json();
   expect(JSON.parse(consentHistory.manifestText).slopbot).toEqual({
     automaticClosure: true,
+    submissionFee: { enabled: true },
+    wantedIssues: true,
   });
   expect(JSON.parse(consentHistory.manifestText).reward.honorSystem).toBe(true);
   await returningOwner.reload({ waitUntil: "networkidle" });

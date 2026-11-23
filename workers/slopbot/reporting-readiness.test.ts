@@ -6,8 +6,11 @@ import type {
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { findProject } from "../../src/lib/projects.mjs";
 import {
+  ensureWantedLabel,
   type ReportingRefreshEnv,
   refreshRegisteredReporting,
+  WANTED_LABEL_COLOR,
+  WANTED_LABEL_DESCRIPTION,
 } from "./reporting-readiness";
 
 function registered(status: "active" | "paused") {
@@ -78,5 +81,66 @@ describe("refreshRegisteredReporting", () => {
       reader([{ kind: "app-not-installed" }, { kind: "unavailable" }]),
     );
     expect(result).toEqual({ checked: 2, failed: 2 });
+  });
+});
+
+describe("wanted label creation", () => {
+  function fake(statuses: { get: number; post?: number }) {
+    const calls: Array<{ method: string; url: string; body?: unknown }> = [];
+    const fetcher = async (url: string, init: RequestInit) => {
+      const method = init.method ?? "GET";
+      calls.push({
+        method,
+        url,
+        ...(init.body ? { body: JSON.parse(String(init.body)) } : {}),
+      });
+      return new Response(null, {
+        status: method === "GET" ? statuses.get : (statuses.post ?? 500),
+      });
+    };
+    return { calls, fetcher };
+  }
+
+  test("an existing label is left alone", async () => {
+    const { calls, fetcher } = fake({ get: 200 });
+    expect(await ensureWantedLabel(fetcher, "t", "o/r", "slop-wanted")).toBe(
+      true,
+    );
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  test("a missing label is created once with the published look", async () => {
+    const { calls, fetcher } = fake({ get: 404, post: 201 });
+    expect(await ensureWantedLabel(fetcher, "t", "o/r", "slop-wanted")).toBe(
+      true,
+    );
+    expect(calls[1]).toEqual({
+      method: "POST",
+      url: "https://api.github.com/repos/o/r/labels",
+      body: {
+        name: "slop-wanted",
+        color: WANTED_LABEL_COLOR,
+        description: WANTED_LABEL_DESCRIPTION,
+      },
+    });
+  });
+
+  test("a label created by someone else in between counts as present", async () => {
+    const { fetcher } = fake({ get: 404, post: 422 });
+    expect(await ensureWantedLabel(fetcher, "t", "o/r", "slop-wanted")).toBe(
+      true,
+    );
+  });
+
+  test("a refused read or create reports false and creates nothing else", async () => {
+    const refusedRead = fake({ get: 403 });
+    expect(
+      await ensureWantedLabel(refusedRead.fetcher, "t", "o/r", "slop-wanted"),
+    ).toBe(false);
+    expect(refusedRead.calls).toHaveLength(1);
+    const refusedCreate = fake({ get: 404, post: 403 });
+    expect(
+      await ensureWantedLabel(refusedCreate.fetcher, "t", "o/r", "slop-wanted"),
+    ).toBe(false);
   });
 });

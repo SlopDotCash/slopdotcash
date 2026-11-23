@@ -2,8 +2,9 @@
  * Classifies the fields an owner revision changes (PRD section 4, owner
  * decisions of 22 October 2026). One table decides what each change needs:
  *
- * - presentation: listing text, links and explicit Slopbot consent. Publishes
- *   at once; consent is authorization, not executable skill content.
+ * - presentation: listing text, links, explicit Slopbot consent and the
+ *   report deposit setting. Publishes at once; consent is authorization, not
+ *   executable skill content.
  * - executable: the repository source and the maintainer-authored rules that
  *   generate the contributor and reviewer skills. Changes the recorded content
  *   digest; routine updates retain same-repository admission clearance.
@@ -24,6 +25,7 @@ const PRESENTATION_FIELDS = [
   "image",
   "description",
   "links",
+  "security",
   "slopbot",
 ] as const;
 

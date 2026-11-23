@@ -2,10 +2,8 @@ import { enlargeText } from "../text-size";
 
 /**
  * First-visit discovery waits only for the project registry, which the site
- * reads from D1 at runtime, and the pool funding read, which decides which
- * monthly pools are listed (operator decision, 18 November 2026). No other API
- * or public data response may block it; an unreadable funding read lists every
- * project.
+ * reads from D1 at runtime, and the pool funding read, which labels each
+ * monthly amount. No other API or public data response may block discovery.
  */
 
 import type { Page } from "@playwright/test";
@@ -74,7 +72,7 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
     },
   );
   await page.route(/https:\/\/[^/]*github[^/]*\//, (route) => route.abort());
-  // Answered, not held: an unreadable funding read lists every project.
+  // Answered, not held: an unreadable funding read still lists eligible projects.
   await failPoolFundingRead(page, diagnostics);
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });

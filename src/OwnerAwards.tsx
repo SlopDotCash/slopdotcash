@@ -22,6 +22,7 @@ import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
+import { ASI_NOVEMBER_CLOSEOUT } from "./lib/payments/asi-november-closeout";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
 import {
   PRD_MONTHLY_SCHEDULE,
@@ -127,7 +128,15 @@ export default function OwnerAwards({
   // (or the earliest public cycle, when one is older) to the last closed
   // month. The server still authorizes every month read.
   const monthlyProject = project.reward.kind === "monthly-pool";
-  const lastClosedMonth = shiftPeriod(utcPeriodOf(new Date()), -1);
+  const now = new Date();
+  const lastClosedMonth = shiftPeriod(utcPeriodOf(now), -1);
+  const closeout = ASI_NOVEMBER_CLOSEOUT;
+  const lastAvailableMonth =
+    project.id === closeout.projectId &&
+    now.getTime() >= Date.parse(closeout.cutoff) &&
+    lastClosedMonth < closeout.period
+      ? closeout.period
+      : lastClosedMonth;
   const firstMonth =
     months.length && months[0] < PRD_MONTHLY_SCHEDULE.firstPeriod
       ? months[0]
@@ -148,9 +157,9 @@ export default function OwnerAwards({
   const [opened, setOpened] = useState(() => hasSubmittedRelease(project.id));
   const [monthRequest, setMonthRequest] = useState(() => ({
     period:
-      latestPublicMonth && latestPublicMonth > lastClosedMonth
+      latestPublicMonth && latestPublicMonth > lastAvailableMonth
         ? latestPublicMonth
-        : lastClosedMonth,
+        : lastAvailableMonth,
     revision: 0,
   }));
   const { period } = monthRequest;
@@ -388,7 +397,7 @@ export default function OwnerAwards({
   }
   const save = (githubUserId: string) =>
     run(async (owns) => {
-      if (!view?.proposal) return;
+      if (!view?.proposal || view.proposal.earlyCloseAt) return;
       const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
       const grossBase = baseUnitsOf(draft.value, decimals);
@@ -563,7 +572,7 @@ export default function OwnerAwards({
                 type="button"
                 className="button secondary-button icon-button"
                 aria-label="Next award month"
-                disabled={busy || period >= lastClosedMonth}
+                disabled={busy || period >= lastAvailableMonth}
                 onClick={() => selectMonth(shiftPeriod(period, 1))}
               >
                 <ChevronRight aria-hidden="true" />
@@ -674,6 +683,15 @@ export default function OwnerAwards({
                 <p>No proposal yet</p>
               ) : !view.run ? (
                 <>
+                  {view.proposal.earlyCloseAt && (
+                    <p>
+                      Contributions before{" "}
+                      <time dateTime={view.proposal.earlyCloseAt}>
+                        {formatDateTime(view.proposal.earlyCloseAt)}
+                      </time>
+                      .
+                    </p>
+                  )}
                   <MetricGrid>
                     <MetricTile
                       label="Allocated"
@@ -685,7 +703,11 @@ export default function OwnerAwards({
                       tone="info"
                     />
                     <MetricTile
-                      label="Monthly cap"
+                      label={
+                        view.proposal.earlyCloseAt
+                          ? "Prorated cap"
+                          : "Monthly cap"
+                      }
                       value={amount(view.proposal.capBase)}
                     />
                   </MetricGrid>
@@ -721,7 +743,7 @@ export default function OwnerAwards({
                               )}
                               fee={amount(fee.toString())}
                             />
-                            {view.canManage && (
+                            {view.canManage && !view.proposal?.earlyCloseAt && (
                               <div className="owner-award-edit">
                                 <label htmlFor={id}>
                                   {drafts[view.period]?.[row.githubUserId] ===

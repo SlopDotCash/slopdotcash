@@ -5,6 +5,7 @@ import { readBoundedJson, readBoundedText } from "../src/lib/browser-json";
 import { loadEvaluatorAwardEvents } from "../src/lib/evaluator-awards";
 import {
   assertLeaderboardSnapshot,
+  type LeaderboardSnapshot,
   ledgerWorkUnitId,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
@@ -18,9 +19,11 @@ import {
   awardForScore,
   latestPoints,
   type PointAward,
+  type PointRevision,
   type PointsIndex,
   type PointsJournal,
   type PointsMember,
+  pointKey,
   pointMembers,
   pointRevisionId,
   reconcilePointPenalties,
@@ -29,6 +32,11 @@ import {
 import type { PointsSummary } from "../src/lib/points-summary";
 import { findHistoricalRepository, findProject } from "../src/lib/projects.mjs";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
+import {
+  type PointProtectionEnvironment,
+  type ProtectedPointMonth,
+  resolvePointProtection,
+} from "./points-protection-read";
 import { protectedPointAwardSql } from "./points-protection-sql";
 import { syncCycleIndex } from "./sync-cycle-index";
 import { loadVaultPayouts } from "./vault-payout-points";
@@ -88,20 +96,24 @@ async function loadPublishedProjection(
     if (identity === previousIndex) throw mismatch;
     if (!Array.isArray(index.shards) || index.shards.length !== 16)
       throw new Error("Invalid published points index");
-    const parts = await Promise.all(
-      index.shards.map(async (shard, i) => {
-        if (shard.path !== `/data/points/${i.toString(16)}.json`)
-          throw new Error("Invalid published points shard path");
-        return retryPointsTransport(async () => {
-          const response = await fetch(`${origin}${shard.path}`, {
-            signal: AbortSignal.timeout(30000),
-            cache: "no-store",
-          });
-          if (!response.ok)
-            throw new Error("Published points history unavailable");
-          return readBoundedText(response, 8 * 1024 * 1024, "points shard");
-        }, wait);
-      }),
+    const pendingShards = index.shards.map(async (shard, i) => {
+      if (shard.path !== `/data/points/${i.toString(16)}.json`)
+        throw new Error("Invalid published points shard path");
+      return retryPointsTransport(async () => {
+        const response = await fetch(`${origin}${shard.path}`, {
+          signal: AbortSignal.timeout(30000),
+          cache: "no-store",
+        });
+        if (!response.ok)
+          throw new Error("Published points history unavailable");
+        return readBoundedText(response, 8 * 1024 * 1024, "points shard");
+      }, wait);
+    });
+    const parts = await Promise.all(pendingShards).catch(
+      async (error: unknown) => {
+        await Promise.allSettled(pendingShards);
+        throw error;
+      },
     );
     try {
       return assemblePoints(index, parts);
@@ -120,11 +132,23 @@ async function loadPublishedProjection(
 }
 
 export async function loadPublishedPoints(
+  bootstrap?: boolean,
+  wait?: (milliseconds: number) => Promise<void>,
+  origin?: PointsOrigin,
+): Promise<PointsJournal | null> {
+  return (await loadPublishedPointsWithCheckpoint(bootstrap, wait, origin))
+    .published;
+}
+
+async function loadPublishedPointsWithCheckpoint(
   bootstrap = false,
   wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
   origin: PointsOrigin = "https://slop.cash",
-): Promise<PointsJournal | null> {
+): Promise<{
+  published: PointsJournal | null;
+  checkpoint: PointsJournal | null;
+}> {
   let cursor: number | null = 0;
   let batch: string | undefined;
   let journal: PointsJournal | undefined;
@@ -169,9 +193,12 @@ export async function loadPublishedPoints(
       });
       if (bootstrap && existing.status === 404) {
         await existing.body?.cancel();
-        return null;
+        return { published: null, checkpoint: null };
       }
-      return loadPublishedProjection(origin, wait, existing);
+      return {
+        published: await loadPublishedProjection(origin, wait, existing),
+        checkpoint: null,
+      };
     }
     if (
       bootstrap &&
@@ -188,7 +215,7 @@ export async function loadPublishedPoints(
         throw new Error(
           "Refusing bootstrap: published points may already exist",
         );
-      return null;
+      return { published: null, checkpoint: null };
     }
     if (!response.ok)
       throw new Error(
@@ -228,10 +255,13 @@ export async function loadPublishedPoints(
     throw new Error("Points batch digest mismatch");
   // Scheduled refreshes have Pages-only authority. Retain their published journal
   // as well as the latest protected-release D1 checkpoint; neither may fork history.
-  return retainPublishedHistory(
-    journal,
-    await loadPublishedProjection(origin, wait),
-  );
+  return {
+    published: retainPublishedHistory(
+      journal,
+      await loadPublishedProjection(origin, wait),
+    ),
+    checkpoint: journal,
+  };
 }
 export function retainPublishedHistory(
   checkpoint: PointsJournal,
@@ -267,7 +297,25 @@ export function retainPublishedHistory(
     ],
   };
 }
-export function pointsSql(journal: PointsJournal): string {
+export function finalizePointsJournal(
+  journal: PointsJournal,
+  checkpoint: PointsJournal | null,
+  generatedAt: string,
+): PointsJournal {
+  // The combined Pages and D1 history can include coverage absent from D1.
+  // Keep the old timestamp only for the exact verified D1 checkpoint.
+  if (
+    checkpoint &&
+    JSON.stringify({ ...journal, generatedAt: checkpoint.generatedAt }) ===
+      JSON.stringify(checkpoint)
+  )
+    return checkpoint;
+  return { ...journal, generatedAt };
+}
+export function pointsSql(
+  journal: PointsJournal,
+  recordingConditions: readonly string[] = [],
+): string {
   assertPointsJournal(journal);
   const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
   const digest = hash(JSON.stringify(journal));
@@ -311,12 +359,17 @@ export function pointsSql(journal: PointsJournal): string {
     statements.push(
       `INSERT INTO points_coverage_staging(batch_id,sequence,entry) VALUES(${quote(digest)},${sequence},${quote(JSON.stringify(entry))}) ON CONFLICT(batch_id,sequence) DO NOTHING;`,
     );
+  const completeAndAllowed = [
+    `COUNT(*)=${journal.coverage.length}`,
+    `NOT ${changesProtectedAwards}`,
+    ...recordingConditions.map((condition) => `(${condition})`),
+  ].join(" AND ");
   statements.push(
     // Skip the insert before its BEFORE trigger runs. A known older batch is
     // an idempotent replay, not a new candidate with a shorter history.
-    // Missing coverage or a protected award change yields NULL. The NOT NULL
-    // constraint refuses the entire import before any Points become public.
-    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} AND NOT ${changesProtectedAwards} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
+    // A failed condition yields NULL. The NOT NULL constraint refuses the
+    // final insert before any Points become public.
+    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN ${completeAndAllowed} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     // Replayed batches skip the AFTER INSERT triggers that normally clear staging.
     `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     `DELETE FROM points_coverage_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
@@ -583,11 +636,235 @@ export function pointsSummary(
   };
 }
 
+export type { ProtectedPointMonth };
+
+function mergeCoverageKey(
+  snapshotDigest: string,
+  projectId: string,
+  sourceId: string,
+) {
+  return JSON.stringify([snapshotDigest, projectId, sourceId]);
+}
+
+interface ReviewedMergeGroup {
+  key: string;
+  valueSourceId: string;
+  workUnitId: string;
+}
+
+type ReviewedMergeGroups = ReadonlyMap<string, readonly ReviewedMergeGroup[]>;
+
+export function reviewedMergeGroups(
+  snapshots: ReadonlyArray<{
+    snapshot: Pick<LeaderboardSnapshot, "reviewedImplementationUnits">;
+    digest: string;
+  }>,
+): ReviewedMergeGroups {
+  const groups = new Map<string, ReviewedMergeGroup[]>();
+  for (const { snapshot, digest } of snapshots) {
+    for (const row of snapshot.reviewedImplementationUnits ?? []) {
+      const projectId = findHistoricalRepository(row.repository)?.projectId;
+      if (!projectId) continue;
+      groups.set(
+        mergeCoverageKey(digest, projectId, row.pullRequestId),
+        row.units.map(({ recordDigest, workUnitId, groupId }) => ({
+          key: JSON.stringify(["coverage", digest, projectId, groupId]),
+          valueSourceId: `value:${recordDigest}`,
+          workUnitId,
+        })),
+      );
+    }
+  }
+  return groups;
+}
+
+function protectedMergePoolKeys(
+  revision: PointRevision,
+  snapshotDigest: string,
+  reviewedGroups: ReviewedMergeGroups,
+): string[] {
+  const { award, decision } = revision;
+  if (award.category !== "merged-pull-request") return [];
+  const keys: string[] = [];
+  if (award.sourceId)
+    keys.push(JSON.stringify([award.projectId, "pull", award.sourceId]));
+  if (award.workUnitId)
+    keys.push(JSON.stringify([award.projectId, "work-unit", award.workUnitId]));
+  const memberships = reviewedGroups.get(
+    mergeCoverageKey(snapshotDigest, award.projectId, award.sourceId),
+  );
+  // Older snapshots lack exact work-unit membership. Keep the decision bound
+  // to this snapshot and use precise membership when it is available.
+  if (
+    !memberships &&
+    decision &&
+    /^value:[a-f0-9]{64}$/u.test(decision.sourceId)
+  )
+    keys.push(
+      JSON.stringify([
+        award.projectId,
+        "decision",
+        snapshotDigest,
+        decision.sourceId,
+      ]),
+    );
+  if (memberships) {
+    const standalone =
+      award.key ===
+      pointKey(award.projectId, award.actor.id, award.category, award.sourceId);
+    for (const member of memberships) {
+      if (
+        standalone ||
+        (award.workUnitId === member.workUnitId &&
+          decision?.sourceId === member.valueSourceId)
+      ) {
+        keys.push(member.key);
+      }
+    }
+  }
+  return keys;
+}
+/**
+ * Operator decision, 20 November 2026 (PRD section 7): the Points of a project
+ * month that has a recorded payment are frozen. The atomic import in
+ * pointsSql refuses a whole batch that changes one of them, which stopped
+ * every fresh collection after the first monthly payments. Keep the complete
+ * correction on hold if it would change a protected award.
+ * `data/points/protected-months.json` mirrors the private
+ * settlement tables; a month missing from it still fails closed at import.
+ * Operator decision, 21 November 2026: a trusted release also reads the
+ * protected months from the site's private route (points-protection-read.ts).
+ * That route can name a project that is protected in every month; `projects`
+ * holds every candidate revision of such a project.
+ */
+export function holdProtectedPointAwards(
+  journal: PointsJournal,
+  known: ReadonlySet<string>,
+  months: readonly ProtectedPointMonth[],
+  projects: readonly string[] = [],
+  reviewedGroups: ReviewedMergeGroups = new Map(),
+): { journal: PointsJournal; held: number } {
+  if (months.length === 0 && projects.length === 0) return { journal, held: 0 };
+  const scopes = new Set(months.map((m) => `${m.projectId}\0${m.period}`));
+  const wholeProjects = new Set(projects);
+  const isProtected = (award: PointAward) =>
+    wholeProjects.has(award.projectId) ||
+    scopes.has(`${award.projectId}\0${award.occurredAt.slice(0, 7)}`);
+  // The same identity pointsSql freezes: economic and source fields, never
+  // GitHub presentation.
+  const economic = (award: PointAward) =>
+    JSON.stringify([
+      award.key,
+      award.actor.id,
+      award.projectId,
+      award.category,
+      award.amount,
+      award.occurredAt,
+      award.sourceId,
+      award.workUnitId,
+      award.category === "substantive-review" ? award.provisional : null,
+      award.category === "substantive-review" ||
+      award.category === "evaluated-contribution"
+        ? award.sourceUrl
+        : null,
+    ]);
+  const byId = new Map(journal.revisions.map((r) => [r.id, r]));
+  const successors = new Map<string, string>();
+  const poolKeysByRevision = new Map<string, string[]>();
+  const revisionsByPool = new Map<string, string[]>();
+  const blocked: string[] = [];
+  for (const revision of journal.revisions) {
+    if (known.has(revision.id)) continue;
+    const previous = revision.previous
+      ? byId.get(revision.previous)
+      : undefined;
+    if (previous) successors.set(previous.id, revision.id);
+    if (revision.award.category === "payout-received") continue;
+    const prior = previous && known.has(previous.id) ? previous : undefined;
+    if (prior && economic(prior.award) === economic(revision.award)) continue;
+
+    const keys = [
+      ...protectedMergePoolKeys(
+        revision,
+        revision.sourceDigest,
+        reviewedGroups,
+      ),
+      ...(previous
+        ? protectedMergePoolKeys(
+            previous,
+            revision.sourceDigest,
+            reviewedGroups,
+          )
+        : []),
+    ];
+    poolKeysByRevision.set(revision.id, keys);
+    for (const key of keys) {
+      const members = revisionsByPool.get(key);
+      if (members) members.push(revision.id);
+      else revisionsByPool.set(key, [revision.id]);
+    }
+    if (
+      isProtected(revision.award) ||
+      (prior !== undefined && isProtected(prior.award))
+    ) {
+      blocked.push(revision.id);
+    }
+  }
+
+  // A replacement and its retirement must stay together even when the
+  // accepted work spans months or its source or work-unit identity changes.
+  const held = new Set<string>();
+  const visitedPools = new Set<string>();
+  for (let i = 0; i < blocked.length; i++) {
+    const id = blocked[i];
+    if (held.has(id)) continue;
+    held.add(id);
+    const successor = successors.get(id);
+    if (successor) blocked.push(successor);
+    for (const key of poolKeysByRevision.get(id) ?? []) {
+      if (visitedPools.has(key)) continue;
+      visitedPools.add(key);
+      const members = revisionsByPool.get(key);
+      if (members) for (const member of members) blocked.push(member);
+    }
+  }
+  if (held.size === 0) return { journal, held: 0 };
+  return {
+    journal: {
+      ...journal,
+      revisions: journal.revisions.filter((r) => !held.has(r.id)),
+    },
+    held: held.size,
+  };
+}
+
+async function loadProtectedPointMonths(): Promise<ProtectedPointMonth[]> {
+  const months: unknown = JSON.parse(
+    await readFile("data/points/protected-months.json", "utf8"),
+  );
+  if (
+    !Array.isArray(months) ||
+    months.some(
+      (m) =>
+        typeof m !== "object" ||
+        m === null ||
+        typeof m.projectId !== "string" ||
+        !m.projectId ||
+        typeof m.period !== "string" ||
+        !/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(m.period) ||
+        Object.keys(m).length !== 2,
+    )
+  )
+    throw new Error("Invalid protected Points months");
+  return months as ProtectedPointMonth[];
+}
 export async function generatePoints(
   options: {
     online?: boolean;
     bootstrap?: boolean;
     origin?: PointsOrigin;
+    /** The private protected-months read; absent means the file only. */
+    protection?: PointProtectionEnvironment;
   } = {},
 ) {
   const history: unknown = JSON.parse(
@@ -595,9 +872,13 @@ export async function generatePoints(
   );
   assertPointsJournal(history);
   let journal: PointsJournal = history;
-  const published = options.online
-    ? await loadPublishedPoints(options.bootstrap, undefined, options.origin)
-    : null;
+  const { published, checkpoint } = options.online
+    ? await loadPublishedPointsWithCheckpoint(
+        options.bootstrap,
+        undefined,
+        options.origin,
+      )
+    : { published: null, checkpoint: null };
   if (published) {
     // The checked-in history is an ancestor, never a second award source.
     const ids = new Set(published.revisions.map((r) => r.id));
@@ -624,11 +905,41 @@ export async function generatePoints(
     a.snapshot.generatedAt.localeCompare(b.snapshot.generatedAt),
   );
   // Replaying an older archive after a newer batch must not roll back corrections.
+  // Only a release that loaded the published history can tell a candidate
+  // revision from a known one.
+  const knownRevisions = published
+    ? new Set(published.revisions.map((r) => r.id))
+    : null;
+  const protection = knownRevisions
+    ? await resolvePointProtection(
+        await loadProtectedPointMonths(),
+        options.protection ?? {},
+        options.origin ?? "https://slop.cash",
+      )
+    : { months: [], projects: [] };
+  const reviewedGroups =
+    protection.months.length || protection.projects.length
+      ? reviewedMergeGroups(snapshots)
+      : new Map();
+  let heldRevisions = 0;
+  const holdProtected = () => {
+    if (!knownRevisions) return;
+    const result = holdProtectedPointAwards(
+      journal,
+      knownRevisions,
+      protection.months,
+      protection.projects,
+      reviewedGroups,
+    );
+    journal = result.journal;
+    heldRevisions += result.held;
+  };
   const applied = new Set(journal.coverage.map((c) => c.digest));
   for (const { snapshot, digest } of snapshots) {
     if (!applied.has(digest))
       journal = applyPointsSnapshot(journal, snapshot, digest, now);
   }
+  holdProtected();
   const cycles = await syncCycleIndex({
     checkOnly: true,
     generatedAt: now,
@@ -676,7 +987,12 @@ export async function generatePoints(
     hash(JSON.stringify(reviewed)),
     now,
   );
-  journal.generatedAt = now;
+  holdProtected();
+  if (heldRevisions > 0)
+    console.log(
+      `[points] held ${heldRevisions} candidate revisions in months with a recorded payment`,
+    );
+  journal = finalizePointsJournal(journal, checkpoint, now);
   assertPointsJournal(journal);
   await mkdir("public/data", { recursive: true });
   await mkdir("public/data/points", { recursive: true });
@@ -722,7 +1038,7 @@ export async function generatePoints(
     ".points-build/report.json",
     JSON.stringify(
       {
-        generatedAt: now,
+        generatedAt: journal.generatedAt,
         revisionCount: journal.revisions.length,
         contributors: members.length,
         points: members.reduce((sum, m) => sum + m.total, 0),
@@ -749,5 +1065,9 @@ if (import.meta.main) {
       process.env.VITE_SLOP_ENVIRONMENT === "staging"
         ? "https://staging.slop.cash"
         : "https://slop.cash",
+    protection: {
+      POINTS_PROTECTION_URL: process.env.POINTS_PROTECTION_URL,
+      POINTS_PROTECTION_TOKEN: process.env.POINTS_PROTECTION_TOKEN,
+    },
   });
 }

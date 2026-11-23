@@ -1,7 +1,10 @@
 # Submission deposits: mainnet deployment runbook
 
-Prepare only. Nothing here has been deployed. The repository owner signs every
-transaction in this runbook; no agent and no Slop service does. The contract is
+The owner ran these steps on 19 November 2026; the result is in
+[`contracts/DEPLOY-MAINNET.md`](../contracts/DEPLOY-MAINNET.md#submission-fee-deposit-contracts-19-november-2026).
+The owner named the Worker's resolver with `setResolver` on both chains the
+same day; the steps are kept for the record. The repository owner signs every transaction in this runbook; no agent
+and no Slop service does. The contract is
 `contracts/evm/src/SubmissionDeposits.sol`; see the
 [contract section](../contracts/evm/README.md#submission-deposits) and the
 [AI-assisted review note](submission-deposits-ai-review-2026-11-18.md).

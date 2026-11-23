@@ -21,6 +21,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { EscrowFunding } from "./EscrowFunding";
 import { Link, useHashScroll } from "./Link";
@@ -33,6 +34,12 @@ import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
 import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
+import {
+  backlogJudged,
+  backlogNotice,
+  backlogRuleStarted,
+  backlogState,
+} from "./lib/backlog-rule.mjs";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
@@ -54,11 +61,10 @@ import {
 } from "./lib/maintainer-share.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
-  homePoolReward,
   listedThisMonth,
+  listingPoolReward,
   loadPoolFunding,
   monthName,
-  NOT_LISTED_NOTICE,
   poolFundingStatus,
   publicPoolReward,
 } from "./lib/pool-funding";
@@ -148,6 +154,9 @@ const SecurityProgramPage = lazy(() =>
     default: module.SecurityProgramPage,
   })),
 );
+const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
+const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
+const RequestedReposPage = lazy(() => import("./RequestedRepos"));
 const ProjectUpdatePage = lazy(() =>
   import("./ProjectProposalPage").then((module) => ({
     default: module.ProjectUpdatePage,
@@ -205,12 +214,15 @@ type PageRouteKind =
   | "admin"
   | "new-project"
   | "vetting-evidence"
-  | "security-cases";
+  | "security-cases"
+  | "requested";
 type Route =
   | { kind: PageRouteKind }
   | { kind: ProjectRouteKind; projectId: string }
   | { kind: "cycle"; projectId: string; cycleId: string }
-  | { kind: "profile"; login: string };
+  | { kind: "profile"; login: string }
+  | { kind: "fee"; owner: string; repo: string; number: string }
+  | { kind: "report-deposit"; caseId: string };
 
 /**
  * Each page's data needs. `snapshot` loads the public snapshot. `registry`
@@ -261,6 +273,12 @@ const ROUTES: Record<
   "security-program": { snapshot: false, registry: "current" },
   cycle: { snapshot: true, registry: "cached" },
   profile: { snapshot: true, registry: "cached" },
+  // The registry names the repository; its numeric id never changes.
+  fee: { snapshot: false, registry: "cached" },
+  // The record names no project, so the page needs no registry.
+  "report-deposit": { snapshot: false, registry: "independent" },
+  // Repositories not on Slop: the page reads no project registry.
+  requested: { snapshot: false, registry: "independent" },
 };
 
 /** Pages whose whole path is one fixed segment. */
@@ -275,6 +293,7 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["how-it-works", "how-it-works"],
   ["sponsors", "sponsors"],
   ["cycles", "cycle-archive"],
+  ["requested", "requested"],
 ]);
 
 /** Project pages at /projects/<id>/<section>. */
@@ -316,6 +335,12 @@ function internalRoute(pathname: string): Route {
     return { kind: "profile", login: second };
   if (first === "cycles" && segments.length === 3)
     return { kind: "cycle", projectId: second, cycleId: third };
+  // The Inbox links a report's deposit at /fee/report/<caseId>.
+  if (first === "fee" && second === "report" && segments.length === 3)
+    return { kind: "report-deposit", caseId: third };
+  // Slopbot's fee comment links /fee/<owner>/<repo>/<number>.
+  if (first === "fee" && segments.length === 4)
+    return { kind: "fee", owner: second, repo: third, number: segments[3] };
   return { kind: "unknown" };
 }
 
@@ -391,6 +416,12 @@ function routeHead(route: Route): { title: string; path: string | null } {
       path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
     };
   }
+  // One page per pull request: titled, never indexed.
+  if (route.kind === "fee")
+    return { title: pageTitle("Submission fee"), path: null };
+  // One page per report: titled, never indexed.
+  if (route.kind === "report-deposit")
+    return { title: pageTitle("Report deposit"), path: null };
   if (route.kind === "profile") {
     return {
       title: pageTitle(route.login),
@@ -484,22 +515,37 @@ function Footer({ marketing }: { marketing: boolean }) {
             LinkedIn
           </ExternalLinkAnchor>
           <a href={CONTACT_MAILTO}>{CONTACT_EMAIL}</a>
+          <Link href="/requested">Requested repos</Link>
         </nav>
       </div>
     </footer>
   );
 }
 
-function HeroHeading({ audience }: { audience: HomeAudience }) {
-  const campaign = HOME_AUDIENCES[audience];
+const HERO_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeToHeroMotion(onChange: () => void) {
+  const media = window.matchMedia(HERO_MOTION_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getHeroReducedMotion() {
+  return window.matchMedia(HERO_MOTION_QUERY).matches;
+}
+
+function HeroTypewriter({
+  actions,
+}: {
+  actions: readonly [string, ...string[]];
+}) {
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(campaign.actions[0].length);
+  const [characters, setCharacters] = useState(actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = campaign.actions[index];
+    const target = actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -511,7 +557,7 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % campaign.actions.length);
+        setIndex((value) => (value + 1) % actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -522,8 +568,17 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [campaign.actions, characters, index, phase]);
-  const action = campaign.actions[index];
+  }, [actions, characters, index, phase]);
+  return actions[index].slice(0, characters);
+}
+
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
+  // Unmounting the typewriter cancels its timer and discards any partial phrase.
+  const reducedMotion = useSyncExternalStore(
+    subscribeToHeroMotion,
+    getHeroReducedMotion,
+  );
   return (
     <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
@@ -536,7 +591,11 @@ function HeroHeading({ audience }: { audience: HomeAudience }) {
             </span>
           ))}
           <span className="hero-typewriter">
-            {action.slice(0, characters)}
+            {reducedMotion ? (
+              campaign.actions[0]
+            ) : (
+              <HeroTypewriter actions={campaign.actions} />
+            )}
             <span className="hero-typewriter-caret" />
           </span>
         </span>
@@ -658,7 +717,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
 }
 
 type HomeProject = ProjectDefinition &
-  Pick<ReturnType<typeof homePoolReward>, "fundingTag" | "warning">;
+  Pick<ReturnType<typeof listingPoolReward>, "fundingTag" | "warning">;
 
 const fundingTagTone = {
   Vaulted: "success",
@@ -935,10 +994,6 @@ function HomeHero() {
 }
 
 function HomePage() {
-  // An active monthly pool not funded this month is left off the homepage,
-  // as on /sponsors (operator decision, 18 November 2026). The list waits
-  // for the funding read so unfunded cards never flash in; a failed read
-  // lists every project as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -946,12 +1001,17 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  // A project over its owner's intake cap has paused new contributors and
-  // is left out. The counts are read only when a project has a cap; while
-  // they load, and when they cannot be read, every project is listed.
-  const open = homeProjects();
+  // A project over its owner's intake cap has paused new contributors, and
+  // a project the backlog rule takes out of rotation is left out too. The
+  // counts are read only when a project can be left out; while they load,
+  // and when they cannot be read, every project is listed.
+  const open = homeProjects(now);
   const [merge] = usePublicResource(
-    open.some((project) => intakeCap(project) !== null),
+    open.some(
+      (project) =>
+        intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(now)),
+    ),
     loadMergeActivity,
     "Merge activity unavailable",
   );
@@ -962,15 +1022,16 @@ function HomePage() {
       .filter(
         (project) =>
           !fundingPending &&
-          listedThisMonth(project, fundingIndex, now) &&
-          !intakePaused(project, mergeIndex?.get(project.id), now),
+          !intakePaused(project, mergeIndex?.get(project.id), now) &&
+          !backlogState(project, mergeIndex?.get(project.id), now)
+            .outOfRotation,
       )
       .map((project) => {
         const {
           project: shown,
           fundingTag,
           warning,
-        } = homePoolReward(project, fundingIndex, now);
+        } = listingPoolReward(project, fundingIndex, now);
         return { ...shown, fundingTag, warning };
       }),
   );
@@ -1232,25 +1293,21 @@ function InstallPanel({ audience }: { audience: HomeAudience }) {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
-  // Discovery leaves out an unfunded monthly pool this month; that is not a
-  // clearance problem, so the owner setup link does not apply.
-  const [funding] = usePublicResource(
-    project.reward.kind === "monthly-pool",
-    loadPoolFunding,
-    "Pool funding unavailable",
-  );
-  const unlisted =
-    funding.status === "ready" &&
-    !listedThisMonth(project, funding.index, new Date());
-  // Neither is a pause at the owner's intake cap.
+  const unlisted = !listedThisMonth(project, new Date());
   const [merge] = usePublicResource(
-    project.status === "active" && intakeCap(project) !== null,
+    project.status === "active" &&
+      (intakeCap(project) !== null ||
+        (backlogJudged(project) && backlogRuleStarted(new Date()))),
     loadMergeActivity,
     "Merge activity unavailable",
   );
   const paused =
     merge.status === "ready" &&
     intakePaused(project, merge.index.get(project.id), new Date());
+  const outOfRotation =
+    merge.status === "ready" &&
+    backlogState(project, merge.index.get(project.id), new Date())
+      .outOfRotation;
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1295,6 +1352,8 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
             <Spinner label="Checking project clearance" />
           ) : eligibility === "blocked" && paused ? (
             "This project has paused new contributors. The prompt below picks only listed projects."
+          ) : eligibility === "blocked" && outOfRotation ? (
+            "This project is out of rotation. The prompt below picks only listed projects."
           ) : eligibility === "blocked" && unlisted ? (
             <StatusBadge tone="warning">Not listed this month</StatusBadge>
           ) : eligibility === "blocked" ? (
@@ -1538,11 +1597,6 @@ function ProjectRewardSummary({
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
         ) : null}
-        {!promise &&
-        index !== null &&
-        !listedThisMonth(registered, index, now) ? (
-          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
-        ) : null}
         {projectRewardSummaries(project, promise !== null).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1665,11 +1719,13 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
   const rows = state.index.get(project.id);
   const now = new Date();
   const line = mergeActivityLine(rows, now);
+  const backlog = backlogNotice(backlogState(project, rows, now));
   return (
     <>
       {intakePaused(project, rows, now) ? (
         <p className="project-reward-status">{INTAKE_PAUSED_NOTICE}</p>
       ) : null}
+      {backlog ? <p className="project-reward-status">{backlog}</p> : null}
       {line ? <p className="project-merge-activity">{line}</p> : null}
     </>
   );
@@ -1944,7 +2000,19 @@ function AppContent({ route }: { route: Route }) {
     ) : (
       <NotFound title="Project not found" />
     );
-  } else content = <NotFound />;
+  } else if (route.kind === "fee")
+    content = (
+      <SubmissionFeePage
+        key={`${route.owner}/${route.repo}/${route.number}`.toLowerCase()}
+        owner={route.owner}
+        repo={route.repo}
+        number={route.number}
+      />
+    );
+  else if (route.kind === "requested") content = <RequestedReposPage />;
+  else if (route.kind === "report-deposit")
+    content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
+  else content = <NotFound />;
   return (
     <>
       <Header />

@@ -10,11 +10,15 @@
  *   the repository, and not a bot,
  * - was merged, or last closed, by a GitHub user other than its author.
  *
- * GitHub lets only an account with maintainer rights merge or close another
- * person's pull request, so the deciding account needs no separate permission
- * read. A close by the author, by a bot (Slopbot included) or by an actor
- * GitHub no longer names is not a decision. A pull request reopened and
- * closed again counts once, for its last close.
+ * GitHub lets only an account with maintainer rights merge another person's
+ * pull request. A close is different: deleting the head branch or the fork
+ * closes the pull request, and GitHub records the deleting account as the
+ * closer. So a close does not count when the closer owns the fork the pull
+ * request came from, when that fork no longer exists, or when the closer
+ * deleted the head branch within a minute of the close. A close by the author,
+ * by a bot (Slopbot included) or by an actor GitHub no longer names is not a
+ * decision either. A pull request reopened and closed again counts once, for
+ * its last close.
  *
  * Everything read is public GitHub data. Any failed or incomplete read
  * throws: a month's split is never computed from a partial record.
@@ -55,8 +59,14 @@ export const DECISIONS_QUERY = `query($owner: String!, $name: String!, $first: I
         authorAssociation
         author { __typename login }
         mergedBy { __typename login ... on User { id databaseId } }
+        isCrossRepository
+        headRepository { id }
+        headRepositoryOwner { login }
         timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {
           nodes { ... on ClosedEvent { createdAt actor { __typename login ... on User { id databaseId } } } }
+        }
+        refDeletions: timelineItems(last: 10, itemTypes: [HEAD_REF_DELETED_EVENT]) {
+          nodes { ... on HeadRefDeletedEvent { createdAt actor { login } } }
         }
       }
     }
@@ -83,21 +93,75 @@ function instant(value: unknown, field: string): number {
   return parsed;
 }
 
+/** How close in time a branch deletion by the closer ties it to the close. */
+const DELETION_WINDOW_MS = 60_000;
+
+/**
+ * Whether a close came from deleting the pull request's head branch or fork
+ * rather than from a maintainer.
+ */
+function closedByHeadDeletion(
+  node: Record<string, unknown>,
+  closer: string,
+  closedAt: number,
+): boolean {
+  if (typeof node.isCrossRepository !== "boolean")
+    throw new TypeError("GitHub returned no head repository state");
+  if (node.isCrossRepository) {
+    if (node.headRepository === null || node.headRepository === undefined)
+      return true;
+    const owner = (node.headRepositoryOwner ?? null) as {
+      login?: unknown;
+    } | null;
+    if (
+      typeof owner?.login !== "string" ||
+      owner.login.toLowerCase() === closer.toLowerCase()
+    )
+      return true;
+  }
+  const deletions = object(node.refDeletions, "branch deletions").nodes;
+  if (!Array.isArray(deletions))
+    throw new TypeError("GitHub returned no branch deletions");
+  return deletions.some((entry) => {
+    const event = (entry ?? {}) as {
+      createdAt?: unknown;
+      actor?: { login?: unknown } | null;
+    };
+    const login = event.actor?.login;
+    return (
+      typeof login === "string" &&
+      login.toLowerCase() === closer.toLowerCase() &&
+      Math.abs(instant(event.createdAt, "branch deletion time") - closedAt) <=
+        DELETION_WINDOW_MS
+    );
+  });
+}
+
 /** The deciding user of one closed pull request node, or null. */
 function decider(
   node: Record<string, unknown>,
   merged: boolean,
 ): { githubUserId: string; nodeId: string; login: string } | null {
   let actor: Actor;
+  let closedAt = 0;
   if (merged) actor = (node.mergedBy ?? null) as Actor;
   else {
     const events = object(node.timelineItems, "close events").nodes;
     if (!Array.isArray(events))
       throw new TypeError("GitHub returned no close events");
-    actor = ((events.at(-1) as { actor?: Actor } | undefined)?.actor ??
-      null) as Actor;
+    const close = events.at(-1) as
+      | { actor?: Actor; createdAt?: unknown }
+      | undefined;
+    actor = (close?.actor ?? null) as Actor;
+    if (actor !== null) closedAt = instant(close?.createdAt, "close time");
   }
   if (actor === null || actor.__typename !== "User") return null;
+  if (
+    !merged &&
+    typeof actor.login === "string" &&
+    closedByHeadDeletion(node, actor.login, closedAt)
+  )
+    return null;
   if (
     typeof actor.login !== "string" ||
     typeof actor.id !== "string" ||

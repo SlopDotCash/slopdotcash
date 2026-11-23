@@ -95,6 +95,61 @@ that check was not completed (PRD section 11). These records do not prove
 project activation, wallet binding or a first payment; continue those under
 #904 without repeating the program upgrade.
 
+### Submission fee deposit contracts (19 November 2026)
+
+`SubmissionDeposits` (`contracts/evm/src/SubmissionDeposits.sol`, not
+upgradeable, separate from the escrow) was deployed on Base and Robinhood Chain
+on 19 November 2026 by the steps in
+[`docs/submission-deposits-deploy-runbook.md`](../docs/submission-deposits-deploy-runbook.md),
+from `main` at `3e42b20a` (contract source unchanged since `839399ad`). The
+deployer sent each from the same nonce, so both chains use one address:
+`0xDe40B32A4156ABC2A05987367966d994BcFbf8D8`.
+
+| Network                | Deployment transaction                                               | Block     | Block time (UTC)     |
+| ---------------------- | -------------------------------------------------------------------- | --------- | -------------------- |
+| Base (8453)            | `0x6bff20e1262df06beb043345004a58b3076210653d0d7431a53dc3a2e342a211` | 59572869  | 2026-11-19T16:15:49Z |
+| Robinhood Chain (4663) | `0x1b6e2e97b92c58935d952dc4cffea679ca5df7dcf1d5ac0a75c76c8c37f01020` | 118349901 | 2026-11-19T16:15:03Z |
+
+Read back on both chains the same day: owner
+`0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7` (the S.P. operating wallet), no
+pending owner, reclaim delay 2,592,000 seconds (30 days), no deposits, deposits
+not paused, and runtime code hash (keccak-256)
+`0xe4c13bf58d547617ad10f4ee7bf4a43fb47ab68a4f6e841f5c22acd3874c55ef`, the hash
+a local build with the pinned `foundry.toml` settings gives. The deployer
+`0x5d9823205961809c02ddeb9e736254367706eEDe` paid gas and holds no role.
+Sourcify has a match for the contract on each chain. The Etherscan-family
+explorers are not verified.
+
+Both were deployed with the unusable address
+`0x000000000000000000000000000000000000dEaD` as resolver. On 19 November 2026
+the owner named the submission-fee Worker's resolver,
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, with `setResolver` on each
+chain. Its key exists only as the Worker secret `SUBMISSION_FEE_RESOLVER_KEY`
+and was never shown or stored anywhere else. It can only mark an open deposit
+refunded to its payer or kept at the destination fixed at deposit time.
+
+| Network                | `setResolver` transaction                                            | Block     | Block time (UTC)     |
+| ---------------------- | -------------------------------------------------------------------- | --------- | -------------------- |
+| Base (8453)            | `0xa02965d3ba5720b9eb8553bc644045651d1fa9af00171a1c13f75f288194c250` | 59589931  | 2026-11-19T17:12:41Z |
+| Robinhood Chain (4663) | `0x3eb5b206e41934f482542ac3d0d03775cb057b78c421201a766008ee3cf7e220` | 118384715 | 2026-11-19T17:13:23Z |
+
+Read back on both chains afterwards: resolver
+`0xB3a6E36f23B74C870b56fE3CCE425a78a0a8f525`, owner unchanged, no pending
+owner, no deposits, deposits not paused. The resolver address holds a little
+ETH for gas on each chain and has sent no transaction.
+
+A deployment collects no fee. Both addresses and start blocks are in
+`src/lib/submission-fee.mjs`. From 19 November 2026 `SUBMISSION_FEE_MODE` was
+`dry_run` in Slopbot, which recorded what it would ask and wrote nothing to
+GitHub, and in the submission-fee Worker, which read the contracts and
+recorded what it would send, loaded no key and signed nothing
+(`workers/submission-fee/README.md`). Since 21 November 2026 both are `live`
+(operator decision; PRD section 6, FEE-06): Slopbot asks for the fee on a
+project whose owner turned it on, and the Worker signs the resolver's refunds
+and kept fees. On that day no project had the setting on, the record-only
+period had recorded no deposit and no fee row, and the first SLOP rate had
+been published (effective 20 November 2026 23:00 UTC).
+
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
 The owner approved this exact program upgrade.
@@ -444,6 +499,17 @@ initial deployment and upgrade.
 Use the owner-controlled operator process described above. The application
 services do not receive the payer or upgrade key. The plan builders in
 `contracts/solana/scripts/` read chain state and produce unsigned transactions.
+
+Since 20 November 2026 the same Cargo workspace also holds
+`slop-submission-deposits`, a separate program that is not deployed and has its
+own runbook (`docs/submission-deposits-solana-deploy-runbook.md`). This section
+concerns `slop-escrow` only. `anchor build --verifiable` without a program name
+builds every program of the workspace; the reviewed file is still
+`target/verifiable/slop_escrow.so`. The step 2 command has not been rerun since
+the second program was added; the `solana-verifiable` job, which names
+`programs/slop-escrow/Cargo.toml`, is unchanged for the escrow, and a local build
+of the escrow gives the same bytes with and without the second program
+(SHA-256 compared on 20 November 2026).
 
 Placeholders:
 

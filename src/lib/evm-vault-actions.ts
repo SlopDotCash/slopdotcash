@@ -32,10 +32,12 @@ const tokenAbi = parseAbi([
  * EIP-5792 and provider codes a wallet returns when it refuses a batch before
  * sending anything: unsupported method, capability, chain, size or atomicity.
  */
-const BATCH_REFUSED = new Set([4200, -32601, 5700, 5710, 5740, 5750, 5760]);
+export const BATCH_REFUSED = new Set([
+  4200, -32601, 5700, 5710, 5740, 5750, 5760,
+]);
 /** The wallet cannot send the approval and deposit as one request; nothing was sent. */
 export class VaultBatchUnavailable extends Error {}
-const hexQuantity = (value: bigint) => `0x${value.toString(16)}`;
+export const hexQuantity = (value: bigint) => `0x${value.toString(16)}`;
 const approveCall = (deployment: EscrowDeployment, value: bigint) => ({
   to: deployment.asset,
   data: encodeFunctionData({
@@ -49,7 +51,7 @@ const approveCall = (deployment: EscrowDeployment, value: bigint) => ({
  * True only when the wallet already executes batches atomically on this chain.
  * A wallet that would first have to upgrade the account ("ready") is not asked to.
  */
-async function atomicBatchSupported(
+export async function atomicBatchSupported(
   wallet: VaultConnection,
   chainId: bigint,
 ): Promise<boolean> {
@@ -73,7 +75,7 @@ async function atomicBatchSupported(
     return false;
   }
 }
-const word = (value: unknown): bigint => {
+export const word = (value: unknown): bigint => {
   if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value))
     throw new Error("The wallet returned an invalid token amount.");
   return BigInt(value);
@@ -106,7 +108,7 @@ export function walletVaultConfig(
 }
 export async function assertVaultWalletAccount(
   wallet: VaultConnection,
-  config: EvmEscrowConfig & Pick<EscrowDeployment, "network">,
+  config: { chainId: bigint; network: string },
 ) {
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -326,6 +328,7 @@ export async function sendVaultBatch(
       "Your wallet cannot send this as one request. Approve, then deposit.",
     );
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
+  const native = deployment.asset.toLowerCase() === EVM_NATIVE_ASSET;
   const calls = [
     ...(review.resetAllowance ? [approveCall(deployment, 0n)] : []),
     ...(review.approvalNeeded
@@ -334,7 +337,8 @@ export async function sendVaultBatch(
     {
       to: deployment.vault,
       data: buildDepositCalldata(review.gross),
-      value: "0x0",
+      // A native vault's deposit must carry exactly the deposited ETH.
+      value: native ? hexQuantity(BigInt(review.gross)) : "0x0",
     },
     ...extraCalls,
   ];
@@ -622,15 +626,20 @@ async function vaultAbsentAt(
   );
 }
 
-type WalletReceipt = {
+export type WalletReceipt = {
   status: string;
   transactionHash: string;
   blockNumber: string;
   blockHash: string;
-  logs: { address: string; topics: string[]; logIndex: string }[];
+  logs: {
+    address: string;
+    topics: string[];
+    logIndex: string;
+    data?: string;
+  }[];
 };
 /** Canonical block, required evidence level and execution status of one receipt. */
-async function settleWalletReceipt(
+export async function settleWalletReceipt(
   request: NonNullable<VaultConnection["evmRequest"]>,
   receipt: WalletReceipt,
   transactionId: string,

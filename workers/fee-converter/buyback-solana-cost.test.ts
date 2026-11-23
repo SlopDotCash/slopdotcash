@@ -5,17 +5,195 @@ import {
   solanaBase58,
   solanaBase64,
 } from "../../contracts/solana/adapter";
+import { CLASSIC_TOKEN_PROGRAM } from "../../contracts/solana/token";
 import { ata } from "../../contracts/solana/transactions";
+import { sanitizeFeeTail } from "../../scripts/inspect-fee-worker-operations";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import orders from "../../tests/fixtures/dln-orders.json";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { type BuybackLimits, DLN, ROBINHOOD_USDG } from "./buyback-config";
+import { createBuyback } from "./buyback";
+import {
+  type BuybackLimits,
+  DLN,
+  parseBuybackConfig,
+  ROBINHOOD_USDG,
+} from "./buyback-config";
+import { D1BuybackStore } from "./buyback-store";
 import { parseConfig } from "./config";
 import type { ConversionRow } from "./core";
 import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient } from "./solana";
 import { D1ConversionStore } from "./store";
+
+test("Solana bridge reports the provider and method of a response failure without signing", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    const { wallet, mint, receiver, orderId, data, takeAmount } = orders.solana;
+    const { vars } = Bun.TOML.parse(
+      await Bun.file(new URL("./wrangler.toml", import.meta.url)).text(),
+    ) as { vars: Record<string, string> };
+    const config = parseConfig({
+      ...vars,
+      FEE_CONVERTER_MODE: "dry_run",
+      FEE_CONVERTER_NETWORKS: "solana",
+      FEE_WALLET_SOLANA: wallet,
+      RPC_URL_SOLANA: "https://rpc.invalid",
+    });
+    const { limits } = parseBuybackConfig(
+      { ...vars, BUYBACK_MODE: "dry_run" },
+      config.mode,
+    );
+    if (!limits) throw new Error("Bridge fixture needs buyback limits");
+    const buybackStore = new D1BuybackStore(db);
+    buybackStore.feeIncome = async () => 1_000_000_000n;
+    const buyback = createBuyback({
+      mode: "dry_run",
+      store: buybackStore,
+      receiver,
+      limits,
+    });
+    const tokenData = (bytes: Uint8Array) => ({
+      owner: CLASSIC_TOKEN_PROGRAM,
+      executable: false,
+      data: [solanaBase64(bytes), "base64"],
+    });
+    const mintData = new Uint8Array(82);
+    mintData.set([6, 1], 44);
+    const tokenAccount = (amount: bigint) => {
+      const bytes = new Uint8Array(165);
+      bytes.set(decodeBase58Bytes(mint), 0);
+      bytes.set(decodeBase58Bytes(wallet), 32);
+      new DataView(bytes.buffer).setBigUint64(64, amount, true);
+      bytes[108] = 1;
+      return tokenData(bytes);
+    };
+    const held = tokenAccount(1_000_000_000n);
+    const blockhash = solanaBase58(new Uint8Array(32).fill(11));
+    const fixtureBody = "fixture-body-must-not-be-retained";
+    for (const [failedMethod, provider, httpStatus] of [
+      ["getTokenAccountsByOwner", "solana-rpc", 403],
+      ["getLatestBlockhash", "solana-rpc", 502],
+      ["simulateTransaction", "solana-rpc", 502],
+      ["quote", "jupiter", 200],
+      ["create-tx", undefined, 503],
+    ] as const) {
+      const malformed = () => new Response(fixtureBody, { status: httpStatus });
+      const fetchFixture = (async (url, init) => {
+        const request = new URL(String(url));
+        if (request.origin === new URL(DLN.api).origin)
+          return failedMethod === "create-tx"
+            ? malformed()
+            : Response.json({
+                orderId,
+                tx: { data },
+                estimation: { dstChainTokenOut: { amount: takeAmount } },
+              });
+        if (request.hostname === "jupiter.invalid" && failedMethod === "quote")
+          return malformed();
+        if (request.hostname !== "rpc.invalid")
+          throw new Error("Unexpected bridge provider in fixture");
+        const { method, params, id } = JSON.parse(String(init?.body));
+        if (method === failedMethod) return malformed();
+        const results = {
+          getAccountInfo: {
+            value: params[0] === mint ? tokenData(mintData) : held,
+          },
+          getTokenAccountsByOwner: {
+            value: [{ pubkey: ata(mint, wallet), account: held }],
+          },
+          getLatestBlockhash: {
+            value: { blockhash, lastValidBlockHeight: 1000 },
+          },
+          getBalance: { value: 1_000_000_000 },
+          getFeeForMessage: { value: 5000 },
+          simulateTransaction: {
+            value: {
+              err: null,
+              accounts: [{ lamports: 980_000_000 }, tokenAccount(500_000_000n)],
+            },
+          },
+        };
+        if (!Object.hasOwn(results, method))
+          throw new Error("Unexpected bridge RPC method in fixture");
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: results[method as keyof typeof results],
+        });
+      }) as typeof fetch;
+      const client = createSolanaClient({
+        config: config.networks[0],
+        limits: config.limits,
+        jupiterApiUrl: "https://jupiter.invalid",
+        jupiterApiKey: null,
+        fetch: fetchFixture,
+        buyback: {
+          limits,
+          receiver,
+          robinhoodRpcUrl: "https://robinhood.invalid",
+        },
+      });
+      const events: Record<string, unknown>[] = [];
+      const summary = await buyback.run({
+        config: config.networks[0],
+        client,
+        deps: {
+          mode: "dry_run",
+          limits: config.limits,
+          store: new D1ConversionStore(db),
+          now: () => new Date("2026-11-21T00:00:00.000Z"),
+          randomId: () => "bridge-diagnostic",
+          projectTokens: async () => [],
+          client: () => client,
+          log: (event) => events.push(event),
+        },
+        runId: "bridge-diagnostic-run",
+        blocked: new Set(),
+        leased: async () => true,
+        assertLease: async () => {},
+      });
+      const event = {
+        event: "fee_buyback_error",
+        network: "solana",
+        leg: "bridge",
+      };
+      const details = provider
+        ? {
+            providerFailure: {
+              provider,
+              stage: "response-json",
+              method: failedMethod,
+              httpStatus,
+            },
+          }
+        : {};
+      expect(summary).toMatchObject({ errors: 1, records: {}, inTransit: 0 });
+      expect(events).toEqual([
+        {
+          ...event,
+          error: provider ? "unparseable response" : "DLN returned HTTP 503",
+          ...details,
+        },
+      ]);
+      const inspected = sanitizeFeeTail({
+        scriptName: "slop-fee-converter",
+        logs: [{ message: events }],
+      });
+      expect(inspected?.records).toEqual([
+        {
+          ...event,
+          errorCategory: provider ? "response-json" : "rpc-unavailable",
+          ...details,
+        },
+      ]);
+    }
+    expect(sqlite.query("SELECT * FROM fee_conversions").all()).toEqual([]);
+    expect(sqlite.query("SELECT * FROM fee_native_gas").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});
 
 test("a failed Solana bridge's paid fee remains in the next order's final cost cap", async () => {
   const { db, sqlite } = sqliteD1();

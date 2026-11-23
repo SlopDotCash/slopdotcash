@@ -2,6 +2,11 @@
 // @source src/lib/intake-drafts.ts
 // @source src/SecurityBounty.tsx
 // @source backend/security/report-intake.ts
+// @source src/ReportProofFields.tsx
+// @source src/lib/report-proof.ts
+// The optional proof-of-concept file and a description loaded from a file are
+// draft fields read in the browser; they are part of `payload` and are saved,
+// restored and resubmitted with it, so they add no state of their own.
 // Two form lifetimes, two request lifetimes, two actors, two payload/key classes.
 // Storage values: 0 absent, 1 original draft, 2 original attempted record,
 // 3 a replacement's different exact bytes, 4 the owned corrected draft after

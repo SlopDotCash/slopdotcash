@@ -184,7 +184,14 @@ export function notificationTitle(n: Notification): string {
     case "project_installation_lost":
       return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      return `${n.subject} settings changed`;
+      // The backlog rule reuses this kind (PRD section 5).
+      return n.eventKey.startsWith("backlog-rule:")
+        ? n.eventKey.includes(":out:")
+          ? `${n.subject} is out of rotation`
+          : n.eventKey.includes(":warn:")
+            ? `${n.subject} needs a merge`
+            : `${n.subject} review backlog`
+        : `${n.subject} settings changed`;
     case "award_reserved":
       return `${n.subject} award reserved`;
     case "payment_paid":
@@ -235,8 +242,11 @@ export function notificationAction(n: Notification): string {
     case "project_quarantined":
       // Moderators get the same event with an admin link (contributor flags).
       return n.actionPath === "/admin" ? "Open admin" : "Open project";
-    case "application_approved":
     case "project_revision":
+      return n.eventKey.startsWith("backlog-rule:")
+        ? "Open settings"
+        : "Open project";
+    case "application_approved":
     case "reinstatement_requested":
     case "project_reinstated":
     case "reinstatement_denied":

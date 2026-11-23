@@ -25,6 +25,8 @@ function context() {
       githubNodeId: "U_tester",
     }),
   };
+  // The starting browser's binding cookie, sent with every later request.
+  const browser = { cookie: "" };
   const post = (path: string, body: unknown) =>
     handleIdentityRequest(
       new Request(`https://identity.slop.cash${path}`, {
@@ -32,6 +34,7 @@ function context() {
         headers: {
           origin: "https://slop.cash",
           "content-type": "application/json",
+          cookie: browser.cookie,
         },
         body: JSON.stringify(body),
       }),
@@ -39,6 +42,7 @@ function context() {
     );
   return {
     deps,
+    browser,
     post,
     persistence,
     sqlite,
@@ -56,6 +60,8 @@ async function start(ctx: ReturnType<typeof context>) {
     audience: "slop-points-web",
   });
   expect(response.status).toBe(201);
+  ctx.browser.cookie =
+    (response.headers.getSetCookie()[0] ?? "").split(";")[0] ?? "";
   const flow = (await response.json()) as {
     flowId: string;
     pollCapability: string;
@@ -67,7 +73,9 @@ async function start(ctx: ReturnType<typeof context>) {
       new Request(
         `https://identity.slop.cash/v1/oauth/callback?state=${state}&code=fixturecode1`,
         {
-          headers: { cookie: `__Host-slop_oauth_state=${state}` },
+          headers: {
+            cookie: `__Host-slop_oauth_state=${state}; ${ctx.browser.cookie}`,
+          },
         },
       ),
       ctx.deps,

@@ -80,6 +80,7 @@ import type {
   SendStatus,
   VaultFeeClient,
 } from "./core";
+import { noteProviderFailure } from "./core";
 import { DLN_DESTINATION_ABI, proposeDlnOrder, TAKE_STATUS } from "./debridge";
 import {
   type CheckedSolanaDlnOrder,
@@ -344,7 +345,14 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     });
     const body = (await (method === "getMultipleAccounts"
       ? readBoundedJson(response, 8 * 1024 * 1024, "Solana route accounts")
-      : response.json())) as {
+      : response.json().catch((error: unknown) => {
+          throw noteProviderFailure(error, {
+            provider: "solana-rpc",
+            stage: "response-json",
+            method,
+            httpStatus: response.status,
+          });
+        }))) as {
       result?: T;
       error?: { message?: string };
     };
@@ -373,7 +381,15 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     } catch {
       // A refusal may carry plain text; an accepted reply must be JSON.
       if (response.ok)
-        throw new Error(`Jupiter ${path.split("?")[0]}: unparseable response`);
+        throw noteProviderFailure(
+          new Error(`Jupiter ${path.split("?")[0]}: unparseable response`),
+          {
+            provider: "jupiter",
+            stage: "response-json",
+            method: path.split("?")[0],
+            httpStatus: response.status,
+          },
+        );
     }
     if (!response.ok) {
       const detail = body as { error?: string; errorCode?: string } | null;

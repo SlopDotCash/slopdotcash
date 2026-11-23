@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { handleProtectedPointMonths } from "../../../backend/payments/protected-point-months";
 import { handleReservedAwardsFeed } from "../../../backend/payments/reserved-awards-feed";
 import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
@@ -46,6 +47,7 @@ import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
+import { handleRepoRequests } from "../../../backend/referrals/repo-requests";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import { defaultDirectPaymentConfiguration } from "../../../backend/security/direct-payments";
@@ -63,9 +65,11 @@ import {
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
+import { reportDepositMode } from "../../../backend/security/report-deposit";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
+import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
   CloudflareTracePersistence,
   privateIntakeStatus,
@@ -408,6 +412,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       mode: routineMode(env.SECURITY_ROUTINE_DECISIONS),
       adminGithubIds,
     },
+    reportDeposit: {
+      mode: reportDepositMode(env.SECURITY_REPORT_DEPOSIT),
+      adminGithubIds,
+    },
   });
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(request);
@@ -491,10 +499,21 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralCode !== null) return referralCode;
+  const repoRequests = await handleRepoRequests(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    projects: projectPersistence,
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (repoRequests !== null) return repoRequests;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });
   if (mergeActivity !== null) return mergeActivity;
+  const submissionFee = await handleSubmissionFeeApi(request, { db, now });
+  if (submissionFee !== null) return submissionFee;
   const poolFunding = await handlePoolFundingApi(request, { db, tier });
   if (poolFunding !== null) return poolFunding;
   // Null without the exact operator token: the request then falls through
@@ -507,6 +526,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (reservedAwards !== null) return reservedAwards;
+  // The same rule, with its own secret, for the points generator's read.
+  const protectedPointMonths = await handleProtectedPointMonths(request, {
+    db,
+    token: env.POINTS_PROTECTION_TOKEN,
+    now,
+  });
+  if (protectedPointMonths !== null) return protectedPointMonths;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,

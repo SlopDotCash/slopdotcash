@@ -2,8 +2,10 @@
 // @source scripts/github-discussion-cache.ts
 // @source scripts/restore-leaderboard-discussions.py
 // @source workers/slopbot/github.ts
+// @source .github/workflows/deploy.yml
 // @evidence scripts/github-ingestion-read.test.ts
 // @evidence scripts/github-discussion-cache.test.ts
+// @evidence scripts/release-snapshot-download.test.ts
 // Reads may wait for an observed rate limit: an exhausted primary window,
 // Retry-After, a 429, or a 403 whose GitHub message names a secondary limit or
 // abuse detection. Writes and authorization failures return immediately, and
@@ -13,6 +15,15 @@
 // preserve the quota retry count. Tests cover URLs, delays, and caller signals.
 module github_ingestion_read {
   pure val limitSignals = Set("primary","retryAfter","status429","secondaryMessage")
+  // The hosted main release reserves time for bundle checks under its
+  // six-hour job limit. The dedicated collector and staging use their
+  // existing budgets.
+  pure def collectionDeadline(setupSeconds: int): int =
+    if (setupSeconds + 19200 < 20820) setupSeconds + 19200 else 20820
+  pure def quotaResetFits(setupSeconds: int, resetSeconds: int): bool =
+    setupSeconds < collectionDeadline(setupSeconds) and resetSeconds < collectionDeadline(setupSeconds)
+  pure def hardStop(setupSeconds: int, attemptSeconds: int): int =
+    attemptSeconds + (collectionDeadline(setupSeconds) - attemptSeconds) + 110
   var s: {phase:str,read:bool,attempt:int,limited:bool,success:bool,
     cache:bool,conditional:bool,confirmed:bool,replayed:bool,signal:str,
     filePage:str,fileRetries:int,gatewayRetries:int}
@@ -130,4 +141,13 @@ module github_ingestion_read {
     .then(validatorMismatch).then(revalidate.fail())
   run timedOutCheckpointCannotPublishTest = init.then(restore).then(request).then(limit)
     .then(checkpoint).expect(not(s.success) and invariant).then(request.fail())
+  run additionalQuotaResetLeavesBundleTimeTest = init
+    .expect(quotaResetFits(2700, 20184) and 21600 - collectionDeadline(2700) - 110 == 670)
+  run hostedCollectionCapAppliesAfterQuickSetupTest = init
+    .expect(collectionDeadline(157) == 19357 and not(quotaResetFits(157, 19357)))
+  run quotaWaitAtAbsoluteDeadlineRefusesTest = init
+    .expect(not(quotaResetFits(2700, 20820)) and not(quotaResetFits(20820, 20819)))
+  run feedRetryDoesNotExtendPreparationWindowTest = init
+    .expect(hardStop(2700, 2700) == 20930 and hardStop(2700, 2760) == 20930
+      and not(quotaResetFits(2700, 20760 + 60)))
 }

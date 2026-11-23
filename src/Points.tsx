@@ -150,6 +150,10 @@ class PointsRequestError extends Error {
  * one-minute rate limit, and anything else means the service is unavailable.
  */
 function identityFailure(status: number, code?: unknown): string {
+  // A sign-in is bound to the browser that started it by a cookie on the
+  // identity service; without that cookie the poll is refused.
+  if (status === 403 && code === "browser_mismatch")
+    return "Sign-in could not be confirmed in this browser. Allow cookies for slop.cash, then start again.";
   if (status === 410 && code === "callback_failed")
     return "Sign-in failed. Please start again.";
   if (status === 410) return "Sign-in expired. Please start again.";
@@ -777,7 +781,9 @@ function JoinPoints({
           const response = await fetchWithDeadline(url, {
             ...init,
             signal: c.signal,
-            credentials: "omit",
+            // Start sets, and poll presents, the cookie that binds the sign-in
+            // to this browser on the identity service.
+            credentials: "include",
             redirect: "error",
             cache: "no-store",
             referrerPolicy: "no-referrer",
@@ -796,7 +802,7 @@ function JoinPoints({
               );
             }
             const refusal =
-              response.status === 410
+              response.status === 410 || response.status === 403
                 ? ((await readBoundedJson(response, 16384, "sign-in").catch(
                     () => null,
                   )) as { error?: unknown } | null)
@@ -1060,6 +1066,10 @@ export function AccountPage() {
             code={me.referralCode ?? null}
             onSaved={(referralCode) => setMe({ ...me, referralCode })}
           />
+          <p>
+            <Link href="/requested">Requested repos</Link> lists repos Slop
+            contributors want to work on, with a pitch that carries your link.
+          </p>
         </section>
       ) : null}
     </main>
