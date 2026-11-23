@@ -22,7 +22,10 @@ import {
 import {
   assertHistoricalMergedCensus,
   generateHistoricalLeaderboardFromGitHub,
+  hydrateHistoricalClosedPullRequests,
+  type NodeReference,
 } from "./generate-leaderboard";
+import { HistoricalClosedOutcomeError } from "./historical-merged-replay";
 import { HISTORICAL_POINTS_AUDIT_WINDOW } from "./reviewed-historical-points";
 
 afterEach(() => setSystemTime());
@@ -67,6 +70,94 @@ test("historical collection checks merge identity, head, and time before replay"
       ),
     ).toThrow("differ from the source audit");
   expect(() => assertHistoricalMergedCensus([auditedSource], [])).toThrow();
+});
+
+function closedFixture(id: string, number: number) {
+  const pull = {
+    ...penaltyScoreInput([], GENERATED_AT).mergedPullRequests[0],
+    id,
+    number,
+    url: `https://github.com/${repository}/pull/${number}`,
+    headRefOid: "c".repeat(40),
+    mergedAt: null,
+    closedAt: "2026-10-17T12:30:00Z",
+  };
+  return {
+    pull,
+    reference: {
+      id,
+      kind: "PullRequest",
+      outcome: null,
+      openVersion: null,
+    } satisfies NodeReference,
+    binding: {
+      number,
+      headSha: pull.headRefOid,
+      occurredAt: "2026-10-17T12:30:00.000Z",
+      digest: "d".repeat(64),
+    },
+  };
+}
+
+test("historical closed search hydrates omitted authenticated IDs and keeps the search census", async () => {
+  const found = closedFixture("PR_found", 11);
+  const context = closedFixture("PR_context", 12);
+  const empty = closedFixture("PR_empty", 13);
+  const unrelated = closedFixture("PR_search_only", 14);
+  const retainedContext = {
+    ...context.binding,
+    retainedMergeHold: true as const,
+  };
+  const result = await hydrateHistoricalClosedPullRequests(
+    [unrelated.reference, found.reference],
+    {
+      audit: { repository, ...HISTORICAL_POINTS_AUDIT_WINDOW },
+      closedContexts: new Map([
+        [found.pull.id, found.binding],
+        [context.pull.id, retainedContext],
+      ]),
+      emptyLegacyClosures: new Map([[empty.pull.id, empty.binding]]),
+    },
+    async (references) => {
+      expect(references).toEqual([
+        unrelated.reference,
+        found.reference,
+        context.reference,
+        empty.reference,
+      ]);
+      return [unrelated.pull, found.pull, context.pull, empty.pull];
+    },
+  );
+  expect(result.map(({ id }) => id)).toEqual([
+    unrelated.pull.id,
+    found.pull.id,
+    context.pull.id,
+    empty.pull.id,
+  ]);
+});
+
+test("historical closed hydration refuses unavailable or changed bound lifecycle", async () => {
+  const { pull, binding } = closedFixture("PR_context", 12);
+  for (const observed of [
+    [],
+    [{ ...pull, id: "PR_substitute" }],
+    [{ ...pull, number: 13 }],
+    [{ ...pull, headRefOid: "e".repeat(40) }],
+    [{ ...pull, url: "https://github.com/another/project/pull/12" }],
+    [{ ...pull, mergedAt: pull.closedAt }],
+    [{ ...pull, closedAt: "2026-11-01T00:00:00Z" }],
+  ]) {
+    await expect(
+      hydrateHistoricalClosedPullRequests(
+        [],
+        {
+          audit: { repository, ...HISTORICAL_POINTS_AUDIT_WINDOW },
+          closedContexts: new Map([[pull.id, binding]]),
+        },
+        async () => observed,
+      ),
+    ).rejects.toEqual(new HistoricalClosedOutcomeError("lifecycle"));
+  }
 });
 
 test("historical replay refuses a changed Points checkpoint before collection", async () => {
