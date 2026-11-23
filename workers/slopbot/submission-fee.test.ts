@@ -2215,3 +2215,33 @@ test("standing deposit: a failed GitHub read decides nothing", async () => {
     w.close();
   }
 });
+
+test("standing deposit: a payment the Worker withdraws covers nothing new and decides nothing", async () => {
+  const w = world();
+  try {
+    w.standingDeposit({ withdrawRequestedAt: "2026-11-11T00:00:00.000Z" });
+    await w.review();
+    expect(w.cover()).toMatchObject({ state: "watch" });
+    // A reorganisation removed the deposit before finality.
+    w.sqlite.run(
+      "UPDATE standing_deposits SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL WHERE id = 'sd_localtest_1'",
+    );
+    // The cover already written stays and is still read; nothing is decided.
+    w.coverDue();
+    expect(await w.standing(new Date(WINDOW_ENDS + 30 * DAY))).toEqual({
+      read: 1,
+      decided: 0,
+    });
+    expect(w.cover()).toMatchObject({ state: "clear" });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    // A new pull request is not covered: with no paid deposit it is asked.
+    w.sqlite.run("DELETE FROM standing_deposit_covers");
+    w.sqlite.run("DELETE FROM slopbot_fee_gates");
+    w.sqlite.run("DELETE FROM slopbot_reviews");
+    w.github.labels = [];
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.cover()).toBeNull();
+  } finally {
+    w.close();
+  }
+});

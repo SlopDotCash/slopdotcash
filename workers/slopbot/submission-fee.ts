@@ -794,7 +794,8 @@ async function coverByStandingDeposit(
     },
     accepted: standingDepositsAccepted(project),
     openCovered: open?.n ?? Number.NaN,
-    openedAt: input.openedAt ?? null,
+    // Unknown opening time: the rule reads an empty string as no cover.
+    openedAt: input.openedAt ?? "",
   };
   // Every other fact first, so a search is spent only when it decides.
   if (!standingDepositCovers({ ...facts, mergedOnProject: true })) return false;
