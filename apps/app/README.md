@@ -1,9 +1,10 @@
 # @repo/app
 
 The Slop application: the route shell every page renders in. It reads the address the browser loaded, opens the one
-page that address names (or the unknown page), and renders the header, that page's heading and the footer on
-`@repo/ui` and the design tokens. The pages themselves, their reads and their actions are the
-[frontend specs](../../spec/frontend/index.md) and arrive in the business-logic phase.
+page that address names (or the unknown page), and renders the header, that page and the footer on `@repo/ui` and the
+design tokens. The pages themselves, their reads and their actions are the [frontend specs](../../spec/frontend/index.md),
+mounted from `@repo/frontend`. It also builds the two Workers that serve it: the Pages `_worker.js`, which mounts every
+area's API beside the site, and the `notify.js` mail Worker.
 
 Its requirements are [`spec/app/`](../../spec/app/index.md), in the one spec tree at the repository root.
 `pnpm check` there generates `gen/app.ts`, `gen/app.effect.vibe` and `gen/app.react.ts` here, and checks this
@@ -14,15 +15,22 @@ package's types, tests and traces (SPEC.md, "One spec tree").
 | `spec/app/index.md` | the route kinds of development's `ROUTES`, the parser from an address to one of them, the legacy addresses, and the laws that each address names exactly one kind | `model`, `always`, `sometimes`, `replay`, `proof` |
 | `src/routes.vibe` | the VibeLang shell: the route in memory (`machine()`), opened from an untrusted event | `types`, `traces`, `tests` |
 | `src/address.ts`, `address.contract.ts` | the address as the opening event, and the contract that a path made from segments opens those segments | the property test `pnpm test` derives from the contract |
-| `src/App.tsx` | React over the generated `useMachine`: the header, the page the route names and the footer; an empty busy `main` until the opening, dispatched in the first render's effects, has been applied, so the home page it starts on never shows first | `types`, lint, `test:browser` |
-| `src/head.ts` | each route's document title and canonical link, or `noindex` for a missing page, as development's `routeHead`; a project's pages name it by its id until the registry read arrives | `test:browser` |
+| `src/main.tsx` | the entry: replaces an old address with its canonical one, opens the route with top-level `await` before the first render (no effect hook), and mounts `App` with the frontend's pages, account and registry | `types`, `explore` |
+| `src/App.tsx` | React over the generated `useMachine`: the head, the header, the page the route names and the footer | `types`, lint, `test:browser` |
+| `src/head.ts` | each route's document title and canonical link, or `noindex` for a missing page, as development's `routeHead`; a project's head waits for the registry that names it | `test:browser` |
+| `src/worker/pages.vibe` | the Pages `_worker.js`: every area's routes and services in one closed composition, the GitHub App, payment rails and reserve release bindings, the saved vault creation sweep behind project requests, and the site documents for everything else | `types` |
+| `src/worker/document.vibe`, `html.ts` | the served HTML: the per-host wordmark and the production-only beacon, with no-transform caching | `types` |
+| `src/worker/edgeCaches.ts` | the Worker's edge cache storage | `types` |
+| `src/worker/notify.vibe`, `envelope.ts` | the `notify.js` mail Worker over the operations notifier, and the Cloudflare email envelope it sends | `types` |
+| `vite.config.ts` | the client build, then the contributor site files from `.cache/contributor-site`, then the `_worker` and `notify` Worker builds, all into `dist/` | `pnpm build` |
+| `wrangler/` | the Pages project's production and staging bindings and variables | the release |
 | `test/drivers/app.ts` | the conformance driver: the shell against the spec, by journeys, malformed inputs and random walks | `traces` |
 | `test/traces/app.jsonl` | a trace of openings through the shell's generated machine, replayed against the spec | `traces` |
 | `test/app.test.vibe` | what the driver cannot see: paths and queries turned into openings | `tests` |
-| `test/app.browser.test.tsx` | what only a browser shows: each page's one heading and head, the unknown page, the served domain and keyboard order | `pnpm test:browser` |
+| `test/app.browser.test.tsx` | what only a browser shows: each page's one heading and head, the unknown and not-found pages, the served domain and keyboard order | `pnpm test:browser` |
 
 | Command | Does |
 |---|---|
 | `pnpm dev` | the app, with Vite |
-| `pnpm typecheck`, `pnpm build` | `vibelang --noEmit`; `vite build` to `dist/` |
+| `pnpm typecheck`, `pnpm build` | `vibelang --noEmit`; the contributor site program to `.cache/contributor-site`, then `vite build` to `dist/` |
 | `pnpm test`, `pnpm test:browser` | the tests in Node, with the derived property tests; the browser tests in Chromium |

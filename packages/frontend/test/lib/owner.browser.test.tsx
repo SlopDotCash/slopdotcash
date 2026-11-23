@@ -18,13 +18,15 @@ import { type Hex, decodeFunctionData, encodeAbiParameters, encodeFunctionData, 
 import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { editorOpen } from "../../gen/frontend__ownerMonthly.ts";
-import { type PoolFacts, fundersView, publicFunding } from "../../gen/frontend__projections.ts";
+import type { Route } from "../../gen/app.ts";
+import { type PoolFacts, fundersView, lessThanOneMonthText, noFundersText, noRefundDisclosure, publicFunding } from "../../gen/frontend__projections.ts";
 import { Machine as MonthlyMachine } from "../../gen/frontend__ownerMonthly.effect.vibe";
 import { Machine as ReadMachine } from "../../gen/frontend__requests.effect.vibe";
 import { lockedFundsText } from "../../gen/frontend__vaultLocks.ts";
 import { type FundingVault, unreadLocks } from "../../src/kernels/poolFunding.ts";
 import { monthBounds } from "../../src/screens/funding/awards/month.ts";
-import { publicCoverage } from "../../src/screens/funding/vault/EscrowFunding.tsx";
+import { type PageRuntime, pageRuntime } from "../../src/app/runtime.vibe";
+import { EscrowFunding, publicCoverage } from "../../src/screens/funding/vault/EscrowFunding.tsx";
 import { lockProject, usdcSnapshot } from "../../src/screens/funding/vault/fixtures.ts";
 import { confirmTransferUnsent, connectWallet, followVault, fundersServicesOf, fundingMessages, reviewAction, savedAction, savedFundingOf, savedRequestHeld, showFunders, vaultServices } from "../../src/screens/funding/vault/funding.vibe";
 import type { FundingDeployment, FundingProject } from "../../src/screens/funding/vault/project.schema.ts";
@@ -77,6 +79,14 @@ afterAll(() => {
 });
 
 const cleanups: Array<() => void> = [];
+const networkFetch = globalThis.fetch.bind(globalThis);
+let answering: ((path: string) => Response | undefined) | undefined;
+const answeredFetch: typeof globalThis.fetch = (input, init) => {
+  const path = new URL(input instanceof Request ? input.url : String(input), location.origin).pathname;
+  const answer = answering?.(path);
+  return answer === undefined ? networkFetch(input, init) : Promise.resolve(answer);
+};
+globalThis.fetch = answeredFetch;
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   sessionStorage.clear();
@@ -919,6 +929,40 @@ describe('Let anyone fund a project from its public page and see who funded (spe
       views: [["FundersError", undefined], ["FundersError", undefined], ["FundersListed", 3]],
       asked: Array.from({ length: 3 }, () => "/api/v1/payments/projects/slop/deposits"),
     });
+  });
+
+  it("a paused project shows its funders and no deposit control", async () => {
+    const { stale: _stale, ...snapshot } = usdcSnapshot;
+    const servedAt = new Date().toISOString();
+    const asked: string[] = [];
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    answering = (path) => {
+      asked.push(path);
+      if (path === "/api/v1/project-session") return json({ session: null });
+      if (path === `/api/v1/payments/projects/${lockProject.id}/vault`) return json({ projectId: lockProject.id, snapshots: [{ ...snapshot, freeBalance: "249999999", observedAt: servedAt }], staleAfterMs: 600_000, servedAt });
+      if (path === `/api/v1/payments/projects/${lockProject.id}/deposits`) return json({ projectId: lockProject.id, deposits: [], total: 0, servedAt });
+      return new Response(JSON.stringify({ error: "not_found", message: "Not found" }), { status: 404, headers: { "content-type": "application/json" } });
+    };
+    cleanups.push(() => {
+      answering = undefined;
+    });
+    const route: Route = { kind: "Project", projectId: lockProject.id, cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" };
+    const runtime: PageRuntime = pageRuntime(route);
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    cleanups.push(() => {
+      root.unmount();
+      void runtime.dispose();
+    });
+    await act(() => Promise.resolve(root.render(<EscrowFunding runtime={runtime} project={lockProject} listing={{ active: false, networkPays: () => true }} />)));
+    const funders = () => document.querySelector<HTMLElement>('[aria-label="Funded by"]')?.textContent ?? "";
+    await expect.poll(funders).toContain(noFundersText);
+    await expect.poll(() => document.body.textContent ?? "").toContain(lessThanOneMonthText);
+    expect({
+      fund: [...document.querySelectorAll("button")].filter((button) => (button.textContent ?? "").startsWith("Fund this project")).length,
+      disclosure: (document.body.textContent ?? "").includes(noRefundDisclosure),
+      form: document.querySelector('[aria-label^="Fund this project"]'),
+      deposits: asked.filter((path) => path === `/api/v1/payments/projects/${lockProject.id}/deposits`).length > 0,
+    }).toEqual({ fund: 0, disclosure: false, form: null, deposits: true });
   });
 
   it(`a batched deposit and lock into a native-ETH vault sends the deposit with a value equal to its gross amount (spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path")`, async () => {

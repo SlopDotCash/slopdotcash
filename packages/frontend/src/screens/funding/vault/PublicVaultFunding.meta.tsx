@@ -4,7 +4,7 @@ import { lockDeployment, lockProject } from "./fixtures.ts";
 import type { PublicVaultFundingProps } from "./PublicVaultFunding.tsx";
 
 export const meta: ComponentMeta<PublicVaultFundingProps> = {
-  args: { project: lockProject, deployment: lockDeployment, period: "2026-11", account: 0, loginHref: "/login", showNetwork: false, onFinalized: fn() },
+  args: { project: lockProject, deployment: lockDeployment, period: "2026-11", account: 0, showNetwork: false, onFinalized: fn() },
   examples: { TwoVaults: { showNetwork: true } },
   play: {
     // spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"

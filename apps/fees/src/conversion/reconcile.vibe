@@ -102,7 +102,7 @@ function settling(accepted: boolean): Settling {
 }
 
 function openSend(row: Row, token: string, txs: ReadonlyArray<string>, bytes: ReadonlyMap<string, string>): OpenSend {
-  return { kind: row.kind, token, nonce: row.nonce, deadline: row.deadline, attempts: txs.map((txId, attempt) => ({ txId, rawTx: bytes.get(txId), attempt })) }
+  return { kind: row.kind, token, nonce: row.nonce, deadline: row.deadline, valueMicro: row.valueMicro, attempts: txs.map((txId, attempt) => ({ txId, rawTx: bytes.get(txId), attempt })) }
 }
 
 effect function settled(session: Session, book: Journal, bytes: ReadonlyMap<string, string>, row: Row) {

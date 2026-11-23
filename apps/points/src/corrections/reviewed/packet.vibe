@@ -1,4 +1,4 @@
-// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"
 import { parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
 import { CorrectionActor, CorrectionCommit, CorrectionManifest, CorrectionSource, ExpectedPredecessor } from "../apply/manifest.vibe"
 import { base64Bytes, inflated } from "./bytes.ts"
@@ -41,6 +41,7 @@ export schema PromotionMerge { readonly sha: string; readonly parents: ReadonlyA
 export schema TreeCommit { readonly sha: string; readonly tree: ShaRef; readonly parents: ReadonlyArray<ShaRef> }
 export schema PacketUnchangedPromotion { readonly sourceDigest: string; readonly pull: PromotionPull; readonly merge: PromotionMerge; readonly commits: ReadonlyArray<TreeCommit> }
 export schema AcceptedCommit { readonly sha: string; readonly sourceId: string }
+export schema AcceptedMergeEdge { readonly sha: string; readonly earlierSourceId: string }
 export schema RetainedObject { readonly sha: string; readonly raw: string }
 export schema AutomaticMerge { readonly baseParentSha: string; readonly gitVersion: "git version 2.56.0"; readonly automaticTree: string }
 export schema ContextSource {
@@ -56,6 +57,7 @@ export schema ContextSource {
 }
 export schema EarlierAcceptanceProof {
   readonly commits: ReadonlyArray<AcceptedCommit>
+  readonly acceptedMergeEdges?: ReadonlyArray<AcceptedMergeEdge>
   readonly sourceBaseSha: string
   readonly objects: ReadonlyArray<RetainedObject>
   readonly contextSources: ReadonlyArray<ContextSource>
@@ -72,6 +74,15 @@ export schema PacketSquash {
   readonly acceptedCommit: string
 }
 export schema PacketPromotion { readonly headCommit: string; readonly mergeCommit: string; readonly mergeSha: string }
+export schema IdenticalAcceptedChange {
+  readonly earlierSourceId: string
+  readonly earlierMergeSha: string
+  readonly mergeSha: string
+  readonly diffSha256: string
+  readonly carriedAcceptance?: boolean
+  readonly emptySquash?: boolean
+  readonly survivingCarrier?: boolean
+}
 export schema RewardedUnit { readonly recordDigest: string; readonly recordJson: string; readonly claimId: string; readonly workUnitId: string; readonly awardSourceId: string }
 export schema PathCoverage { readonly commitSha: string; readonly path: string; readonly sourceId: string; readonly rewardedUnit?: RewardedUnit }
 export schema PacketRetirement {
@@ -80,6 +91,7 @@ export schema PacketRetirement {
   readonly source: CorrectionSource
   readonly unchangedPromotion?: PacketUnchangedPromotion
   readonly earlierSources: ReadonlyArray<CorrectionSource>
+  readonly identicalAcceptedChange?: IdenticalAcceptedChange
   readonly earlierAcceptanceProof?: EarlierAcceptanceProof
   readonly acceptedSquashes?: ReadonlyArray<PacketSquash>
   readonly acceptedPromotion?: PacketPromotion
@@ -88,6 +100,7 @@ export schema PacketRetirement {
   readonly evidenceSha256: string
   readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
 }
+export schema ReplayQualification { readonly runId: number; readonly attempt: number; readonly artifactId: number; readonly qualificationSha256: string }
 export schema HistoricalPacket {
   readonly schemaVersion: "1"
   readonly projectId: string
@@ -102,6 +115,7 @@ export schema HistoricalPacket {
   readonly sourceAudit: SourceAudit
   readonly valueSnapshot: Schema.Unknown
   readonly valueKeys: ReadonlyArray<string>
+  readonly replayQualification?: ReplayQualification
   readonly corrections: CorrectionManifest
   readonly recipientCorrections: ReadonlyArray<PacketRecipientCorrection>
   readonly duplicateRetirements?: ReadonlyArray<PacketRetirement>
@@ -144,6 +158,17 @@ export function pullUrl(repository: string, number: number) {
   return `https://github.com/${repository}/pull/${number}`
 }
 
+export function identicalKeys(proof: IdenticalAcceptedChange) {
+  return Object.keys(proof).sort().join()
+}
+
+export function matchesCarriedAcceptance(source: CorrectionSource, earlier: CorrectionSource, mergeSha: string) {
+  const members = new Set(source.commits.map(({ sha }) => sha))
+  return source.headSha === mergeSha && source.commits.length === earlier.commits.length + 1 && members.size === source.commits.length &&
+    !earlier.commits.some(({ sha }) => sha === mergeSha) && earlier.commits.every(({ sha }) => members.has(sha)) &&
+    source.commits.some(({ sha, parentCount, parentShas }) => sha === mergeSha && parentCount === 2 && parentShas?.[1] === earlier.headSha)
+}
+
 function objectKeys(value: unknown) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.keys(value) : []
 }
@@ -153,7 +178,7 @@ export effect function decodePacketBytes(bytes: Uint8Array, digest: string) {
   try require(sha256Of(bytes) === digest, "Reviewed packet changed")
   const text = utf8Text(bytes)
   const raw = text === undefined ? undefined : parsedJson(text)?.value
-  try require(objectKeys(raw).filter((key) => key !== "duplicateRetirements").sort().join(",") === packetFields, "Unexpected reviewed packet fields")
+  try require(objectKeys(raw).filter((key) => key !== "duplicateRetirements" && key !== "replayQualification").sort().join(",") === packetFields, "Unexpected reviewed packet fields")
   try require(isPacket(raw), "Unexpected reviewed packet fields")
   const packet = raw as HistoricalPacket
   try require(packet.schemaVersion === "1" && historicalProjects.includes(packet.projectId), "Invalid historical project")
@@ -162,6 +187,12 @@ export effect function decodePacketBytes(bytes: Uint8Array, digest: string) {
   try require([packet.baselineDigest, packet.candidateDigest, packet.manifestSha256].every((id) => digestPattern.test(id)), "Invalid input binding")
   try require(Number.isSafeInteger(packet.revision) && packet.revision > 0, "Invalid project revision")
   try require(Number.isSafeInteger(packet.baselineRevisionCount) && packet.baselineRevisionCount >= 0, "Invalid baseline count")
+  const replay = packet.replayQualification
+  if (replay !== undefined) {
+    try require(objectKeys(replay).sort().join(",") === "artifactId,attempt,qualificationSha256,runId" &&
+      [replay.runId, replay.attempt, replay.artifactId].every((value) => Number.isSafeInteger(value) && value > 0) && digestPattern.test(replay.qualificationSha256),
+      "Invalid reviewed replay qualification")
+  }
   const audit = packet.sourceAudit
   try require(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(audit.repository) && audit.repositoryNodeId.length > 3, "Invalid audit repository")
   try require(audit.from === historicalFrom && audit.through === historicalThrough, "Incomplete historical window")

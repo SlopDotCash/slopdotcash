@@ -1,0 +1,360 @@
+// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
+import type { D1Database, ScheduledController } from "@repo/platform/bindings"
+import type { Address } from "@repo/platform/chain/evm"
+import { isoAt } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { randomId, webCrypto } from "@repo/platform/crypto"
+import { d1, rows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { buybackStart } from "../../gen/fees__buyback.effect.vibe"
+import { type FeeFlow, type KeptFee, type Machine, canAdvanceBuybackClock, initial as flowStart, machineOver } from "../../gen/fees__composition.effect.vibe"
+import { type RowState, type Trigger, isOpen } from "../../gen/fees__conversion.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import { incomeEvidence } from "../buyback/income.vibe"
+import type { Leg } from "../buyback/codec.vibe"
+import { arrivals, bridgeLeg } from "../buyback/leg.vibe"
+import { poolInstance } from "../buybackPool/evidence.vibe"
+import { robinhoodPool } from "../buybackPool/run.vibe"
+import { vaultCounters, ownClaims } from "../claims/accrual.vibe"
+import { evmVaultDeployments, solanaVaultDeployments } from "../claims/deployments.vibe"
+import { claimsIn, evmVaultClaims, solanaVaultClaims } from "../claims/run.vibe"
+import { feeConverterAnyAny } from "../client/refusals.vibe"
+import { ChainUnavailable, ConversionChain } from "../conversion/chain.vibe"
+import { evmConversionChain } from "../conversion/chainEvm.vibe"
+import { solanaConversionChain } from "../conversion/chainSolana.vibe"
+import { type NetworkRun, type RunResult, type RunStatus, RunIdentityTaken, runNetwork } from "../conversion/run.vibe"
+import { type Session, released, step } from "../conversion/session.vibe"
+import { triggerAt } from "../conversion/trigger.vibe"
+import { exactNumber } from "../evm/abi.ts"
+import { feeChain } from "../evm/client.vibe"
+import { ExpiryOperators, expiryOperators } from "../expiry/operators.vibe"
+import { type Instance, type Names, ledger, networkNames, runText, stateName } from "../journal/codec.vibe"
+import { journal } from "../journal/store.vibe"
+import type { JupiterSettings } from "../jupiter/quote.vibe"
+import type { KyberSettings } from "../kyber/route.vibe"
+import { type Income, candidateTokens, reviewedVaults } from "../receipts/discover.vibe"
+import { type BuybackLimits, type ConverterLimits, type Derived, type EnabledNetwork, type Endpoints, type FeeConfig, type NativeLimits, decodeEndpoints, isolateRuntime, presentSecrets } from "../runtime/config.vibe"
+import type { FeeSecrets, FeeVars } from "../runtime/networks.vibe"
+import { circleUsdc, solanaGenesis } from "../runtime/pins.ts"
+import { type ReviewedFacts, decodeReviewed, reviewedFacts } from "../runtime/reviewed.vibe"
+import { evmFeeWallet } from "../signer/feeWallet.vibe"
+import type { EvmNetwork } from "../signer/intents.ts"
+import { solanaFeeWallet } from "../signer/solana.vibe"
+import { feeSolana } from "../solana/client.vibe"
+import { type KeptSubmissionFee, keptFees } from "../submissionFee/income.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+}
+import { errorText } from verified
+
+export interface Env extends FeeVars, FeeSecrets {
+  readonly FEE_DB: D1Database
+}
+
+export service FeeConverterEnvironment { readonly env: Env }
+
+export error FeeConverterRefused { message: string }
+export error FeeConverterRunFailed { message: string }
+
+interface Run {
+  readonly trigger: Trigger
+  readonly env: Env
+  readonly derived: Derived
+  readonly endpoints: Endpoints
+  readonly converter: ConverterLimits
+  readonly buyback: BuybackLimits | undefined
+  readonly receiver: string | undefined
+  readonly kyber: KyberSettings
+  readonly jupiter: JupiterSettings
+}
+
+schema AssetRow { asset: Schema.Unknown }
+schema VaultRow { project_id: string; scope: string; deployment: string }
+
+const bountyDeployments = "$.securityBounty.settlement.deployments"
+const noBudget: NativeLimits = { perTransaction: 0n, perDay: 0n, additionalFeeReserve: 0n }
+const noExpiry = { genesis: solanaGenesis, providers: [] }
+const idle = "this network neither converts nor buys back"
+const statusNames: Readonly<Record<RunStatus, string>> = { off: "off", locked: "locked", ran: "ran", notConverted: "not_converted" }
+
+function reasonOf(error: unknown) {
+  if (typeof error !== "object" || error === null) return errorText(String(error))
+  const fields = error as { readonly _tag?: unknown; readonly name?: unknown; readonly issue?: unknown; readonly message?: unknown; readonly detail?: unknown }
+  if (fields._tag === "ConfigInvalid") return errorText(`${String(fields.name)} ${String(fields.issue)}`)
+  const tag = typeof fields._tag === "string" ? fields._tag : "Error"
+  const text = [fields.issue, fields.message, fields.detail].find((part) => typeof part === "string")
+  return errorText(text === undefined ? tag : `${tag}: ${String(text)}`)
+}
+
+function reported(result: RunResult) {
+  const records: Record<string, number> = {}
+  for (const [state, count] of Object.entries(result.records) as ReadonlyArray<readonly [RowState, number]>) records[stateName[state]] = (records[stateName[state]] ?? 0) + count
+  return { network: result.network, status: statusNames[result.status], reconciled: result.reconciled, records, claimed: result.claimed }
+}
+
+function buybackReceiver(config: FeeConfig) {
+  if (config.buybackMode === "Off") return undefined
+  return config.networks.find((entry) => entry.network === "Robinhood")?.feeWallet
+}
+
+effect function rewardTokens(network: EnabledNetwork) {
+  const name = network.definition.name
+  const escrows = JSON.stringify(network.definition.escrowNetworks)
+  const rewards = try rows(AssetRow, sql`SELECT DISTINCT json_extract(manifest, '$.rewardAsset.address') AS asset FROM projects WHERE json_extract(manifest, '$.rewardAsset.network') = ${name} AND json_extract(manifest, '$.rewardAsset.kind') IN ('token', 'native')`)
+  const deployed = try rows(AssetRow, sql`SELECT DISTINCT json_extract(d.value, '$.asset') AS asset FROM projects, json_each('["$.escrow.deployments","$.securityBounty.settlement.deployments"]') AS scope, json_each(projects.manifest, scope.value) AS d WHERE json_extract(d.value, '$.network') IN (SELECT value FROM json_each(${escrows}))`)
+  const bounties = try rows(AssetRow, sql`SELECT DISTINCT json_extract(manifest, '$.securityBounty.amount.asset.address') AS asset FROM projects WHERE json_extract(manifest, '$.securityBounty.amount.asset.network') = ${name}`)
+  const direct = try rows(AssetRow, sql`SELECT DISTINCT json_extract(p.intent, '$.asset.address') AS asset FROM security_direct_payments p JOIN security_direct_payment_receipts r ON r.case_id = p.case_id WHERE json_extract(p.intent, '$.chain') = ${name} AND json_extract(p.intent, '$.feeBase') <> '0'`)
+  const assets = [...rewards, ...deployed, ...bounties, ...direct].map((row) => row.asset)
+  return [...new Set(assets)].filter((asset): asset is string => typeof asset === "string")
+}
+
+effect function projectVaults(network: EnabledNetwork) {
+  const escrows = JSON.stringify(network.definition.escrowNetworks)
+  const found = try rows(VaultRow, sql`SELECT projects.id AS project_id, scope.value AS scope, d.value AS deployment FROM projects, json_each('["$.escrow.deployments","$.securityBounty.settlement.deployments"]') AS scope, json_each(projects.manifest, scope.value) AS d WHERE json_extract(d.value, '$.network') IN (SELECT value FROM json_each(${escrows})) AND json_type(d.value, '$.vault') = 'text' ORDER BY projects.id, scope.value`)
+  const vaults: Array<unknown> = []
+  for (const row of found) {
+    const deployment: unknown = try Effect.try({ try: () => JSON.parse(row.deployment), catch: () => new ConfigInvalid({ name: "reviewed snapshot", issue: "a deployment record is not JSON" }) })
+    const fields = typeof deployment === "object" && deployment !== null ? deployment as Readonly<Record<string, unknown>> : {}
+    vaults.push({ vault: fields.vault, projectId: row.project_id, payoutPolicy: row.scope === bountyDeployments ? "security-bounty" : "ordinary", asset: fields.asset, deployment })
+  }
+  return vaults
+}
+
+effect function reviewedOf(network: EnabledNetwork) {
+  const snapshot = try decodeReviewed({ [network.definition.name]: { tokens: try rewardTokens(network), vaults: try projectVaults(network) } })
+  return try reviewedFacts(snapshot, network)
+}
+
+effect function signingKey(run: Run, network: EnabledNetwork) {
+  const config = run.derived.config
+  const signs = config.converterMode === "Live" && (network.definition.target.kind === "usdc" || (config.buybackMode === "Live" && network.network === "Robinhood"))
+  if (!signs) return undefined
+  if (network.nativeLimits === undefined) throw new FeeConverterRefused({ message: "Live fee signing needs native limits and the durable budget journal" })
+  const secret = (run.env[network.definition.keySecret] ?? "").trim()
+  if (secret === "") throw new FeeConverterRefused({ message: `live mode needs ${network.definition.keySecret}` })
+  return Redacted.make(secret)
+}
+
+effect function rpcOf(run: Run, network: EnabledNetwork) {
+  const found = run.endpoints.rpc.find((entry) => entry.network === network.network)
+  if (found === undefined) throw new FeeConverterRefused({ message: `${network.definition.rpcSecret} is not configured` })
+  return found.url
+}
+
+function urlsOf(url: Redacted.Redacted<string>) {
+  return Redacted.make([Redacted.value(url)])
+}
+
+effect function keptOf(escrows: ReadonlyArray<string>) {
+  const since = try isoAt(buybackStart)
+  const found: Array<KeptSubmissionFee> = []
+  for (const network of escrows) found.push(...(try keptFees({ network, since })))
+  return found
+}
+
+effect function creditKept(flow: Machine.Shape, keptFee: KeptFee) {
+  const observed = flow.send({ type: "observeKeptFee", keptFee }, "Worker") catch () => undefined
+  if (observed === undefined) return false
+  const credited = flow.send({ type: "creditKeptFee", deposit: keptFee.deposit, chainTime: keptFee.chainTime }, "Worker") catch () => undefined
+  return credited !== undefined
+}
+
+effect function creditedKept(network: Network, names: Names, usdc: string, wallet: string, fees: ReadonlyArray<KeptSubmissionFee>) {
+  const start: FeeFlow = { ...flowStart, fee: { ...flowStart.fee, network }, buyback: { ...flowStart.buyback, source: network } }
+  const held = try Ref.make(start)
+  const flow = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  try flow.send({ type: "addToken", asset: "TargetStable" }, "Worker")
+  const now = try Clock.currentTimeMillis
+  if (canAdvanceBuybackClock(try flow.get(), now, "Worker")) try flow.send({ type: "advanceBuybackClock", now }, "Worker")
+  const credited: Array<KeptSubmissionFee> = []
+  for (const fee of fees) {
+    if (fee.token.toLowerCase() !== usdc.toLowerCase() || fee.keptTo.toLowerCase() !== wallet.toLowerCase()) continue
+    const amount = exactNumber(fee.amount)
+    const keptFee: KeptFee = { deposit: names.number("receipt", `KeptSubmissionFee:${fee.deposit}`), token: 1, amount: amount ?? 0, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: fee.chainTime }
+    if (amount === undefined || !(try creditKept(flow, keptFee))) {
+      try Effect.logWarning("fee_buyback_income_refused", { network: networkNames[network], deposit: fee.deposit })
+      continue
+    }
+    credited.push(fee)
+  }
+  return credited
+}
+
+effect function sourceLeg(run: Run, network: EnabledNetwork, usdc: string, names: Names, journaled: Instance | undefined) {
+  const kept = try creditedKept(network.network, names, usdc, network.feeWallet, try keptOf(network.definition.escrowNetworks))
+  const evidence = try incomeEvidence({ network: network.network, wallet: network.feeWallet, usdc, scope: "", offset: 0 }, [], kept)
+  const leg: Leg = { network: network.network, scope: "", offset: 0, held: run.derived.held, names, evidence, income: evidence, cancelling: [], reported: [] }
+  return journaled === undefined ? leg : { ...leg, journal: journaled } satisfies Leg
+}
+
+effect function leased<E, R>(base: Instance, names: Names, program: (instance: Instance, runId: string) => void!E!R) {
+  const loaded = try journal(base, names)
+  const runId = names.number("run", try randomId())
+  if (runId !== loaded.state.nextRun) throw new RunIdentityTaken({ network: networkNames[base.network], expected: loaded.state.nextRun, named: runId })
+  const session: Session = { instance: base, state: loaded.state, names, runId, renewedAt: try Clock.currentTimeMillis, leased: false }
+  if ((try step(session, { type: "acquireLease", runId, trigger: "Recovery" })) === undefined) return try Effect.logInfo("fee_buyback_locked", { network: networkNames[base.network] })
+  session.leased = true
+  try Effect.ensuring(program(session.instance, runText(base.scope, names.text("run", runId) ?? "", "Recovery")), released(session))
+}
+
+effect function bridged(run: Run, network: EnabledNetwork, usdc: string, limits: BuybackLimits, receiver: string, names: Names, instance: Instance, runId: string) {
+  const leg = try sourceLeg(run, network, usdc, names, instance)
+  const result = try bridgeLeg(leg, { runId, wallet: network.feeWallet, limits, native: network.nativeLimits ?? noBudget, receiver: receiver as Address, kyber: run.kyber })
+  try Effect.logInfo("fee_buyback_leg", { network: network.definition.name, records: result.records })
+}
+
+effect function pooled(run: Run, network: EnabledNetwork, facts: ReviewedFacts, limits: BuybackLimits, names: Names, instance: Instance, runId: string) {
+  const legs: Array<Leg> = []
+  for (const source of run.derived.config.networks) {
+    if (source.definition.family !== "evm" || source.definition.target.kind !== "usdc") continue
+    legs.push(try sourceLeg(run, source, source.definition.target.address, ledger(), undefined))
+  }
+  try arrivals(legs, { runId, wallet: network.feeWallet })
+  const pool = try poolInstance({
+    scope: "",
+    offset: 0,
+    held: run.derived.held,
+    names,
+    wallet: network.feeWallet,
+    journal: instance,
+    assets: facts.tokens.map((token) => ({ token: token.address, booked: [] })),
+    bookedSlop: [],
+    kept: try keptOf(network.definition.escrowNetworks),
+  })
+  const result = try robinhoodPool(pool, { runId, wallet: network.feeWallet, limits, native: network.nativeLimits ?? noBudget, kyber: run.kyber })
+  try Effect.logInfo("fee_buyback_pool", { network: network.definition.name, records: result.records })
+}
+
+effect function buybackStep(run: Run, network: EnabledNetwork, facts: ReviewedFacts, base: Instance) {
+  const { buyback: limits, receiver } = run
+  if (run.trigger !== "Recovery" || limits === undefined || receiver === undefined) return
+  const names = ledger()
+  const target = network.definition.target
+  if (target.kind === "usdc") return try leased(base, names, (instance, runId) => bridged(run, network, target.address, limits, receiver, names, instance, runId))
+  if (network.network === "Robinhood") try leased(base, names, (instance, runId) => pooled(run, network, facts, limits, names, instance, runId))
+}
+
+effect function evmClaimed(run: Run, network: EnabledNetwork, facts: ReviewedFacts, input: NetworkRun) {
+  const claims = try claimsIn(evmVaultClaims({ vaults: facts.vaults, kyber: run.kyber }))
+  const result = try runNetwork(input, claims)
+  buybackStep(run, network, facts, input.base) catch effect (error) => {
+    try Effect.logWarning("fee_buyback_error", { network: network.definition.name, leg: "run", error: reasonOf(error) })
+  }
+  return result
+}
+
+effect function evmRun(run: Run, network: EnabledNetwork, name: EvmNetwork, facts: ReviewedFacts, input: NetworkRun) {
+  const key = try signingKey(run, network)
+  const chain = feeChain({ network: name, wallet: network.feeWallet, urls: urlsOf(try rpcOf(run, network)) })
+  const wallet = Layer.provideMerge(evmFeeWallet({ network: name, wallet: network.feeWallet, key, runtime: run.derived.held.runtime, limits: network.nativeLimits ?? noBudget, gasMultiple: run.converter.gasMultiple, kyber: run.kyber }), chain)
+  const deployments = Layer.provideMerge(evmVaultDeployments, wallet)
+  const conversion = Layer.provideMerge(evmConversionChain({ epoch: input.base.epoch, limits: network.nativeLimits, maxSlippageBps: run.converter.maxSlippageBps, kyber: run.kyber, vaults: facts.vaults }), deployments)
+  return try Effect.provide(evmClaimed(run, network, facts, input), Layer.mergeAll(conversion, Layer.succeed(ExpiryOperators, noExpiry)))
+}
+
+effect function solanaClaimed(run: Run, facts: ReviewedFacts, input: NetworkRun) {
+  const claims = try claimsIn(solanaVaultClaims({ vaults: facts.vaults, jupiter: run.jupiter }))
+  return try runNetwork(input, claims)
+}
+
+effect function solanaRun(run: Run, network: EnabledNetwork, facts: ReviewedFacts, input: NetworkRun) {
+  const key = try signingKey(run, network)
+  const url = try rpcOf(run, network)
+  const limits = network.nativeLimits ?? noBudget
+  const solana = feeSolana({ wallet: network.feeWallet, urls: urlsOf(url), genesis: solanaGenesis })
+  const wallet = Layer.provideMerge(solanaFeeWallet({ key, runtime: run.derived.held.runtime, limits, gasMultiple: run.converter.gasMultiple, maxSlippageBps: run.converter.maxSlippageBps, jupiter: run.jupiter }), solana)
+  const deployments = Layer.provideMerge(solanaVaultDeployments, wallet)
+  const conversion = Layer.provideMerge(solanaConversionChain({ jupiter: run.jupiter, maxSlippageBps: run.converter.maxSlippageBps, limits }), deployments)
+  const expiry = expiryOperators({ primary: url, recovery: run.endpoints.solanaRecovery, genesis: solanaGenesis })
+  return try Effect.provide(solanaClaimed(run, facts, input), Layer.mergeAll(conversion, expiry))
+}
+
+function unreachable(operation: string) {
+  return Effect.fail(new ChainUnavailable({ operation, detail: idle }))
+}
+
+const idleChain = Layer.mergeAll(
+  Layer.succeed(ConversionChain, {
+    balance: () => unreachable("balance"),
+    quote: () => unreachable("quote"),
+    reserve: () => unreachable("reserve"),
+    sign: () => unreachable("sign"),
+    broadcast: () => unreachable("broadcast"),
+    status: () => unreachable("status"),
+    replacement: () => unreachable("replacement"),
+  }),
+  Layer.succeed(ExpiryOperators, noExpiry),
+)
+
+effect function chainless(run: Run, network: EnabledNetwork, base: Instance) {
+  const definition = network.definition
+  if (definition.target.kind === "usdc" || (definition.stable !== undefined && run.derived.config.buybackMode !== "Off")) return false
+  return !(try journal(base, ledger())).state.rows.some(isOpen)
+}
+
+effect function networkRun(run: Run, network: EnabledNetwork) {
+  const facts = try reviewedOf(network)
+  const base: Instance = { network: network.network, scope: "", epoch: 0, held: run.derived.held, tokens: [], receipts: [], vaults: reviewedVaults(facts.vaults) }
+  const income: Income = { transfers: [], topUps: [], counters: vaultCounters(network, facts.vaults, try ownClaims(network, base.scope)) }
+  const input: NetworkRun = { network, base, trigger: run.trigger, tokens: try candidateTokens(network, facts.tokens, base.scope), income }
+  if (try chainless(run, network, base)) return reported(try Effect.provide(runNetwork(input), idleChain))
+  const name = network.network
+  if (name === "Solana") return reported(try solanaRun(run, network, facts, input))
+  return reported(try evmRun(run, network, name, facts, input))
+}
+
+effect function converted(trigger: Trigger) {
+  const { env } = try FeeConverterEnvironment
+  if ((env.FEE_CONVERTER_MODE ?? "off").trim() === "off") return []
+  const derived = try isolateRuntime(env, presentSecrets(env))
+  const { config } = derived
+  const converter = config.converter
+  if (converter === undefined) return []
+  const receiver = buybackReceiver(config)
+  if (config.buybackMode !== "Off" && receiver === undefined) throw new FeeConverterRefused({ message: "The buyback needs robinhood in FEE_CONVERTER_NETWORKS" })
+  const endpoints = try decodeEndpoints(config, env)
+  const run: Run = {
+    trigger,
+    env,
+    derived,
+    endpoints,
+    converter,
+    buyback: config.buyback,
+    receiver,
+    kyber: { clientId: config.kyberClientId, buyback: receiver === undefined || config.buyback === undefined ? undefined : { receiver: receiver as Address, maxBridgeCostBps: config.buyback.maxBridgeCostBps } },
+    jupiter: { apiUrl: config.jupiterApiUrl, apiKey: endpoints.jupiterApiKey, usdc: circleUsdc.solana, feeMicro: converter.solanaFeeMicro },
+  }
+  const results: Array<ReturnType<typeof reported>> = []
+  const failures: Array<string> = []
+  for (const network of config.networks) {
+    const outcome = try Effect.exit(networkRun(run, network))
+    if (Exit.isSuccess(outcome)) {
+      results.push(outcome.value)
+      continue
+    }
+    failures.push(network.definition.name)
+    try Console.error(JSON.stringify({ event: "fee_converter_network_error", network: network.definition.name, error: reasonOf(Cause.squash(outcome.cause)) }))
+  }
+  if (failures.length > 0) throw new FeeConverterRunFailed({ message: `fee conversion failed on ${failures.length} networks` })
+  return results
+}
+
+effect function scheduled(controller: ScheduledController) {
+  const trigger = triggerAt(controller.scheduledTime)
+  const results = try converted(trigger)
+  try Console.log(JSON.stringify({ event: "fee_converter_run", trigger: trigger === "Recovery" ? "recovery" : "receipts", results }))
+}
+
+function services(env: Env) {
+  return Layer.mergeAll(d1(env.FEE_DB), webCrypto, outbound, Layer.succeed(FeeConverterEnvironment, { env }))
+}
+
+export default worker({
+  services,
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text(feeConverterAnyAny.notFound.text, { status: feeConverterAnyAny.notFound.status, contentType: feeConverterAnyAny.notFound.headers["content-type"] })),
+  scheduled,
+})

@@ -32,7 +32,7 @@ found.`. Both are decided before anything else is read.
 import listing as L from "../backend/listing"
 import projections as F from "../frontend/projections"
 type HttpMethod = GetMethod | HeadMethod | OtherMethod
-type RouteKind = DiscoveryRoute | TermsRoute | SkillArtifactRoute | NotArtifactRoute
+type ArtifactRouteKind = DiscoveryRoute | TermsRoute | SkillArtifactRoute | NotArtifactRoute
 type ClearanceRead = ClearanceCleared | ClearanceUnverified | ClearanceRefused
 type Answer = Served | GoneRestricted | ProjectNotFound | SkillsNotPublished | NoUsableClearance
   | ArtifactNotFound | RetryLater | PassThrough
@@ -46,10 +46,10 @@ pure def answerStatus(answer: Answer): int =
   else if (answer == PassThrough) 0 else 404
 pure def projectGate(known: ArtifactFacts): Answer =
   if (known.read == L::Gone) GoneRestricted else if (known.read == L::NotFound) ProjectNotFound else Served
-pure def lawRestrictedIsGone(known: ArtifactFacts, route: RouteKind): bool =
+pure def lawRestrictedIsGone(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   (known.read == L::Gone and not(known.readFailed) and (route == TermsRoute or route == SkillArtifactRoute))
     implies artifactAnswer(route, known) == GoneRestricted
-pure def lawUnlistedIsNotFound(known: ArtifactFacts, route: RouteKind): bool =
+pure def lawUnlistedIsNotFound(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   (known.read == L::NotFound and not(known.readFailed) and (route == TermsRoute or route == SkillArtifactRoute))
     implies artifactAnswer(route, known) == ProjectNotFound
 pure def lawAliasesNameTheSkill(artifactName: str): bool =
@@ -95,7 +95,7 @@ its artifacts for inspection, while discovery and the installer refuse it:
 this asymmetry is the legacy behaviour, kept on purpose.
 
 ```quint
-pure def artifactAnswer(route: RouteKind, known: ArtifactFacts): Answer =
+pure def artifactAnswer(route: ArtifactRouteKind, known: ArtifactFacts): Answer =
   if (route == NotArtifactRoute) PassThrough
   else if (known.readFailed) RetryLater
   else if (route == DiscoveryRoute) Served
@@ -204,7 +204,7 @@ pure def lawUnreadCountsPauseNothing(cap: int, projectActive: bool, now: int, co
 pure def lawRecentCountAtCapPauses(cap: int, now: int, counts: List[IC::StoredCount]): bool =
   (cap >= IC::minCap and counts.some(c => IC::countAtCap(cap, c, now)))
     implies intakeListingOf(true, cap, true, now, counts) == IntakePaused
-pure def lawListingGatesServeByDirectLink(known: ArtifactFacts, route: RouteKind): bool =
+pure def lawListingGatesServeByDirectLink(known: ArtifactFacts, route: ArtifactRouteKind): bool =
   route != DiscoveryRoute implies
     artifactAnswer(route, { ...known, monthListing: NotListedThisMonth, intake: IntakePaused })
       == artifactAnswer(route, { ...known, monthListing: ListedThisMonth, intake: IntakeOpen })
@@ -230,17 +230,17 @@ while reading answers 503 `Project artifacts are unavailable. Try again.`.
 
 ```quint
 type ArtifactResponse = { status: int, noStore: bool, anyOrigin: bool, frameAncestorsNone: bool, withBody: bool }
-pure def handled(method: HttpMethod, route: RouteKind): bool =
+pure def handled(method: HttpMethod, route: ArtifactRouteKind): bool =
   (method == GetMethod or method == HeadMethod) and route != NotArtifactRoute
-pure def respond(method: HttpMethod, route: RouteKind, answer: Answer): ArtifactResponse =
+pure def respond(method: HttpMethod, route: ArtifactRouteKind, answer: Answer): ArtifactResponse =
   if (not(handled(method, route))) { status: 0, noStore: false, anyOrigin: false, frameAncestorsNone: false, withBody: false }
   else { status: answerStatus(answer), noStore: true, anyOrigin: true, frameAncestorsNone: true, withBody: method == GetMethod }
-pure def lawHandledResponsesAreUncachedAndUnframed(method: HttpMethod, route: RouteKind, answer: Answer): bool =
+pure def lawHandledResponsesAreUncachedAndUnframed(method: HttpMethod, route: ArtifactRouteKind, answer: Answer): bool =
   handled(method, route) implies
     respond(method, route, answer).noStore and respond(method, route, answer).anyOrigin
     and respond(method, route, answer).frameAncestorsNone
-pure def lawHeadHasNoBody(route: RouteKind, answer: Answer): bool = not(respond(HeadMethod, route, answer).withBody)
-pure def lawOtherMethodsPassThrough(route: RouteKind): bool = not(handled(OtherMethod, route))
+pure def lawHeadHasNoBody(route: ArtifactRouteKind, answer: Answer): bool = not(respond(HeadMethod, route, answer).withBody)
+pure def lawOtherMethodsPassThrough(route: ArtifactRouteKind): bool = not(handled(OtherMethod, route))
   and not(handled(GetMethod, NotArtifactRoute))
 ```
 
@@ -585,4 +585,68 @@ pure val sourcesValues = Set(List(entrySource, contributorSource, maintainerSour
   List(entrySource, maintainerSource, contributorSource), List())
 pure val filesValues = Set(List({ indexed: "a", servedSha256: "a", size: 1, present: true }),
   List({ indexed: "a", servedSha256: "b", size: 1, present: true }))
+```
+
+## Story: Publish the sitemap from the route list, the registry and the cycle index
+
+The site build writes `/sitemap.xml` (development
+`scripts/generate-sitemap.ts`, `src/lib/site-routes.ts` `sitemapPaths`): a
+`urlset` of the sitemaps.org 0.9 schema with one `url` whose `loc` is
+`https://slop.cash` followed by the path, for each indexable page and no
+other. The build reads the published cycle index and refuses one that does
+not validate, so it never writes a sitemap from a malformed index.
+
+### The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route
+
+The sitemap lists, in this order, the six fixed indexed pages `/`,
+`/how-it-works`, `/sponsors`, `/cycles`, `/points` and `/projects/new`
+(development's `STATIC_PAGE_TITLES` order); then `/projects/<slug>` for each
+listed registry project (registered, neither retired nor legacy), in registry
+order, paused or flagged ones included; then `/cycles/<projectId>/<cycleId>`
+for each entry of the published cycle index, in the index's order. Each entry
+is the [app shell](../app/index.md)'s route, and its path is
+[routes](../frontend/routes.md) `canonicalPath` of its kind with `:project`
+and `:cycle` filled in: the six fixed pages are exactly the route kinds with a
+static title, and their paths equal `canonicalPath` of `Home`, `HowItWorks`,
+`Sponsors`, `CycleArchive`, `Points` and `NewProject`. The rule lives here,
+in the contributor spec that builds the site files, because `@repo/frontend`
+depends on `@repo/contributor`, so the contributor site program reads these
+routes from its own generated copy. A retired or legacy project is never
+listed. No private page (account, login, earnings, inbox, admin, private
+vetting evidence, `/security` cases), no fee or report-deposit page, no
+project management or security-program page, no contributor profile and no
+unknown path is ever listed.
+
+```quint
+import app as A from "../app"
+import routes as RT from "../frontend/routes"
+type SitemapProject = { slug: str, view: F::ProjectView }
+type PublishedCycle = { projectId: str, cycleId: str }
+pure val sitemapFixedKinds = List(A::Home, A::HowItWorks, A::Sponsors, A::CycleArchive, A::Points, A::NewProject)
+pure val sitemapFixedPaths = List("/", "/how-it-works", "/sponsors", "/cycles", "/points", "/projects/new")
+pure def sitemapRoutes(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): List[A::Route] =
+  sitemapFixedKinds.listMap(k => A::page(k))
+    .concat(sitemapProjects.select(x => F::listed(x.view)).listMap(x => { ...A::page(A::Project), projectId: x.slug }))
+    .concat(publishedCycles.listMap(x => { ...A::page(A::Cycle), projectId: x.projectId, cycleId: x.cycleId }))
+pure def sitemapIndexable(r: A::Route): bool =
+  RT::privateTitle(r.kind) == "" and RT::payTitle(r.kind) == ""
+  and (sitemapFixedKinds.includes(r.kind) or r.kind == A::Project or r.kind == A::Cycle)
+pure def lawSitemapFixedPagesAreTheStaticPages(routeKind: A::RouteKind): bool =
+  ((RT::staticTitle(routeKind) != "") iff sitemapFixedKinds.includes(routeKind))
+  and sitemapFixedKinds.listMap(k => RT::canonicalPath(k)) == sitemapFixedPaths
+pure def lawSitemapStartsWithTheFixedPages(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): bool =
+  List(0, 1, 2, 3, 4, 5).every(i => sitemapRoutes(sitemapProjects, publishedCycles).nthOr(i, A::page(A::Unknown))
+    == A::page(sitemapFixedKinds.nthOr(i, A::Unknown)))
+pure def lawSitemapListsListedProjectsAndPublishedCycles(sitemapProjects: List[SitemapProject],
+  publishedCycles: List[PublishedCycle]): bool =
+  val listedRoutes = sitemapRoutes(sitemapProjects, publishedCycles)
+  sitemapProjects.every(x => F::listed(x.view) implies listedRoutes.includes({ ...A::page(A::Project), projectId: x.slug }))
+  and publishedCycles.every(x => listedRoutes.includes({ ...A::page(A::Cycle), projectId: x.projectId, cycleId: x.cycleId }))
+  and listedRoutes.every(r => (r.kind == A::Project) implies sitemapProjects.some(x => F::listed(x.view) and x.slug == r.projectId))
+pure def lawSitemapHasNoPrivateRoute(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): bool =
+  sitemapRoutes(sitemapProjects, publishedCycles).every(r => sitemapIndexable(r))
+pure val routeValues = Set(DiscoveryRoute, TermsRoute, SkillArtifactRoute, NotArtifactRoute)
+pure val sitemapProjectsValues = Set(List(), List({ slug: "eliza", view: openProjectView },
+  { slug: "old", view: { ...openProjectView, retired: true } }, { slug: "quiet", view: { ...openProjectView, paused: true } }))
+pure val publishedCyclesValues = Set(List(), List({ projectId: "eliza", cycleId: "2026-11" }, { projectId: "eliza", cycleId: "2026-10" }))
 ```

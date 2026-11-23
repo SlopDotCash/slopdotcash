@@ -25,7 +25,9 @@ schema JointSources {
 }
 
 const attributionCoverage = { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 }
-const evidenceVerification = { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 0, maxArtifacts: 0 }
+const maxEvidenceSources = 64
+const maxEvidenceArtifacts = 64
+const evidenceVerification = { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: maxEvidenceSources, maxArtifacts: maxEvidenceArtifacts }
 const inputOutside = "Historical leaderboard input is outside the pinned repository"
 const jointOutside = "Historical joint assessment is outside the pinned repository"
 
@@ -139,6 +141,10 @@ effect function refusedAs<A, E extends { readonly _tag: string }>(run: A!E) {
 export const snapshotAssembly = Layer.effect(SnapshotAssembly, effect {
   const services = try Effect.context<Experimental.Crypto.Crypto>()
   return {
-    assemble: (collection: Collection) => refusedAs(Effect.provideContext(assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection) }), services)),
+    assemble: (collection: Collection) => effect {
+      provide services {
+        return try refusedAs(assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection) }))
+      }
+    },
   }
 })

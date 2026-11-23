@@ -73,7 +73,7 @@ function settlementOf(script: Script) {
         if (outcome.kind === "refused") throw new DirectRefused({ reason: outcome.reason })
         if (outcome.kind === "payer") throw new SolanaPayerRefused({ message: outcome.message })
         if (outcome.kind === "moved") try db.run(sql`UPDATE security_cases SET revision = revision + 1 WHERE id = ${context.caseId}`)
-        try db.batch(alongside)
+        try db.batch(alongside(outcome.kind === "commit" ? outcome.answer : {}))
         return outcome.kind === "commit" ? outcome.answer : {}
       },
       view: (context) => effect {
@@ -196,7 +196,7 @@ effect function paymentJourney(payments: Payments.Shape) {
     refusal: [409, "payment_consent_required"],
     payer: [409, "payer_refused"],
     recovery: "done",
-    recovered: [{ role: "security-maintainer", detail: { rail: "direct" } }],
+    recovered: [{ role: "security-maintainer", detail: { generation: 1, targetId: "intent-1", state: "signature-required" } }],
     settling: { payments: [], rail: "escrow", state: "needs-wallet", settlement: { state: "needs-wallet" }, networks: ["base-mainnet"] },
   })
 }

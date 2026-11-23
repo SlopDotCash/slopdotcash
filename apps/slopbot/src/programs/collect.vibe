@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, fetchRegistry, graphqlClient, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, openMemoFromEnv, writeMemo } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, fetchRegistry, graphqlClient, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, openMemoFromEnv, snapshotAssembly, writeMemo } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
 import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
@@ -97,7 +97,7 @@ effect function written(args: ReadonlyArray<string>) {
       }), reads)
       const collected = effect {
         provide collectorRenewal() {
-          provide Layer.mergeAll(rest, graph, inputs) {
+          provide Layer.mergeAll(rest, graph, inputs, snapshotAssembly) {
             return try collectSnapshot({
               ...options,
               cutoffMs,

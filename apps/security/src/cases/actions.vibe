@@ -7,7 +7,6 @@ import type { Json } from "@repo/ports/backend"
 import type { Decision, Event, PrivateCase, ProjectClearance, Receipt } from "../../gen/security__cases.ts"
 import { Rejected, apply, committed as holdsAward, reporterRelated, routineAppealable, routineReturned } from "../../gen/security__cases.effect.vibe"
 import { postSecurityCasesByIdActions as rows } from "../client/refusals.vibe"
-import { depositRefusals as spamRows } from "../deposit/refusals.ts"
 import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
@@ -33,7 +32,7 @@ export interface Planned {
   readonly next: PrivateCase
 }
 
-const common = ["action", "expectedRevision", "idempotencyKey"]
+export const common = ["action", "expectedRevision", "idempotencyKey"]
 export const githubIdPattern = /^[1-9]\d{0,19}$/u
 export const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
 const rootCausePattern = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u
@@ -219,9 +218,9 @@ effect function decide(plan: Plan) {
   if (typeof body.inScope !== "boolean") throw refused(rows.invalidRequestInvalidInScope)
   if (typeof body.relatedParty !== "boolean") throw refused(rows.invalidRequestInvalidRelatedParty)
   const inScope = body.inScope
-  if (body.spam !== undefined && typeof body.spam !== "boolean") throw refused(spamRows.invalidSpam)
+  if (body.spam !== undefined && typeof body.spam !== "boolean") throw refused(rows.invalidRequestInvalidSpam)
   const spam = body.spam === true
-  if (spam && outcome !== "rejected") throw refused(spamRows.onlyRejectedSpam)
+  if (spam && outcome !== "rejected") throw refused(rows.invalidRequestOnlyARejectedReportCanBeMarkedSpam)
   const relatedParty = body.relatedParty || reporterRelated(observed.model)
   const text = try reason(body)
   const evidenceReference = try optionalText(body, "evidenceReference", 500, rows.invalidRequestInvalidEvidenceReference, rows.invalidRequestEvidenceReferenceMustBe1)

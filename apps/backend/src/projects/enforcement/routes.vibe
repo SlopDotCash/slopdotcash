@@ -13,7 +13,7 @@ import { postAdminProjectsByIdEnforcement, postProjectAppeals } from "../../clie
 import { AdminRoutes } from "../admin/routes.vibe"
 import { lookupActor } from "../github/lookup.vibe"
 import { manifestOf } from "../store/rows.vibe"
-import { loadProject, send } from "../store/store.vibe"
+import { type Observation, loadProject, send } from "../store/store.vibe"
 import { type ProjectRow, type Row, boundedText, positiveInteger, projectIdPattern, projectRow, refused, requireModerator } from "./admission.vibe"
 import { recordView } from "./views.vibe"
 
@@ -33,7 +33,7 @@ interface Request {
   readonly scope: "account" | "any"
 }
 
-type Sent = Parameters<typeof send>[0] & { readonly observations: ReadonlyArray<Event>; readonly recordId: string }
+type Sent = Parameters<typeof send>[0] & { readonly recordId: string }
 
 type Plan =
   | { readonly kind: "composition"; readonly preview: Preview; readonly action: Sent; readonly record: RecordDetails }
@@ -265,7 +265,7 @@ function decisionRole(request: Request, registry: Registry): DecisionRole {
   return by === registry.project.steward ? "project-steward" : by === registry.project.creator ? "project-applicant" : "project-moderator"
 }
 
-effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>, observations: ReadonlyArray<Event> = []) {
+effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>, observations: ReadonlyArray<Observation> = []) {
   const by = Number(request.actor.githubId)
   const after = try applied(registry, event, by)
   const alongside = event.type === "decideMalice" ? (try maliceDecision(access, by, request.projectId, registry.security.journal.length + 1, malice)).writes : []
@@ -281,12 +281,12 @@ effect function commit(plan: Plan) {
   provide EnforcementRecord = { details: plan.record } {
     try send(plan.action)
   }
-  return undefined
+  return plan.action.recordId
 }
 
-function observationsOf(read: ReinstatementRead): ReadonlyArray<Event> {
+function observationsOf(read: ReinstatementRead): ReadonlyArray<Observation> {
   return [
-    ...read.evidence.map((entry): Event => ({ type: "observeEvidence", repository: Number(entry.repository), evidenceRead: { assessment: Number(entry.evidenceRead.assessment), present: entry.evidenceRead.present } })),
+    ...read.evidence.map((entry): Observation => ({ type: "observeEvidence", repository: Number(entry.repository), evidenceRead: { assessment: Number(entry.evidenceRead.assessment), present: entry.evidenceRead.present } })),
     { type: "observePins", pins: read.pins.map((entry) => ({ repository: Number(entry.repository), assessment: Number(entry.assessment), pin: entry.pin })) },
   ]
 }
@@ -367,7 +367,7 @@ effect function decided(request: Request, preview: boolean) {
     default: throw error;
   }
   const settled = try loadAccess()
-  const record = settled.journal.find((entry) => recordId === undefined ? entry.project_id === request.projectId && entry.sequence === plan.preview.sequence : entry.id === recordId)
+  const record = settled.journal.find((entry) => entry.id === recordId)
   if (record === undefined) throw refused(decisionRows.staleEnforcement)
   return json({ preview: plan.preview, record: try recordView(settled, record, "decided") }, 200, projectContract)
 }

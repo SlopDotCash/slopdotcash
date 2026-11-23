@@ -1,0 +1,46 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1 } from "@repo/platform/d1"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { worker } from "@repo/platform/worker"
+import { type BackupEnv, FixtureRefused, RecoveryAccess, RecoveryFixture, backupQueue, backupSettings, evidenceBuckets, recoveryMessage } from "@repo/operations/recoveryFixture"
+import { qualifyAccess } from "../qualification/access/access.vibe"
+
+export interface Env extends BackupEnv {
+  readonly RESTORED: RetentionR2Bucket
+  readonly RESTORED_DB: D1Database
+  readonly QUALIFICATION_RUN: string
+}
+
+effect function qualified(env: Env) {
+  return qualifyAccess(env) catch effect (error) => {
+    throw new FixtureRefused({ issue: error._tag === "FixtureRefused" ? error.issue : error._tag })
+  }
+}
+
+function recoveryAccess(env: Env) {
+  return Layer.effect(RecoveryAccess, effect {
+    const db = try D1
+    const crypto = try Experimental.Crypto.Crypto
+    return {
+      qualify: () => provideService(provideService(qualified(env), D1, db), Experimental.Crypto.Crypto, crypto),
+    } satisfies RecoveryAccess.Shape
+  })
+}
+
+export default worker({
+  services: (env: Env) => {
+    const base = Layer.mergeAll(d1(env.EVIDENCE_DATABASE), webCrypto)
+    return Layer.mergeAll(
+      base,
+      Layer.provide(recoveryAccess(env), base),
+      evidenceBuckets(env.EVIDENCE_SOURCE, env.EVIDENCE_BACKUPS),
+      backupQueue(env.EVIDENCE_BACKUP_QUEUE),
+      backupSettings(env),
+      Layer.succeed(RecoveryFixture, { run: env.QUALIFICATION_RUN, restored: env.RESTORED, restoredDatabase: env.RESTORED_DB }),
+    )
+  },
+  routes: Layer.empty,
+  queue: (message) => recoveryMessage(message),
+})

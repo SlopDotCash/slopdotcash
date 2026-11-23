@@ -217,7 +217,6 @@ export function EscrowFunding({ runtime, project, listing, pool, vaults, reloadP
               deployment={deployment}
               period={period}
               account={account}
-              loginHref={loginHref}
               showNetwork={fundable.length > 1}
               onFinalized={deposited}
             />

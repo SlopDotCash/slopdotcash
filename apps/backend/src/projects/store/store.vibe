@@ -1,4 +1,4 @@
-// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"
+// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"
 import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type ConstraintViolation, type Statement, sql } from "@repo/platform/d1"
@@ -6,8 +6,9 @@ import { Roles } from "@repo/platform/roles"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Notices } from "@repo/ports/operations"
 import { type Event, type Registry, type RegistryRead, apply, decodeEvent, decodeState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { platform } from "../../../gen/security__enforcement.effect.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
-import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, fieldsCompleteOf, fundedOf, idOf, licenseOf, mismatchOf, monthOf, networkOf, participationOf, projectState, repositoryIdsOf, repositoryKeysOf, rewardPromiseOf, sameExclusions, statusOf, statusText, tierOf, tierText, vaultsOf } from "./codec.vibe"
+import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, fieldsCompleteOf, fundedOf, idOf, licenseOf, mismatchOf, monthOf, networkOf, participationOf, projectState, repositoryIdsOf, repositoryKeysOf, rewardPromiseOf, sameExclusions, shareHistoryOf, statusOf, statusText, tierOf, tierText, vaultsOf } from "./codec.vibe"
 import { EnforcementRows, type EnforcementScope, type RegistryMirror } from "@repo/ports/security"
 import { accountStanding } from "./facts.vibe"
 import { type ApplicationRow, type Manifest, type ProjectRows, manifestOf, projectReads, projectRows, projectVersion } from "./rows.vibe"
@@ -31,7 +32,11 @@ export interface Action {
   readonly referrer?: Actor
   readonly alongside?: ReadonlyArray<Statement>
   readonly basedOn?: number
+  readonly recordId?: string
+  readonly observations?: ReadonlyArray<Observation>
 }
+
+export type Observation = Extract<Event, { type: "observeEvidence" | "observePins" }>
 
 export interface Prospect {
   readonly repository: number
@@ -121,6 +126,7 @@ export function exceptionFacts(manifest: Manifest, rows: ProjectRows) {
     vaults: vaultsOf(manifest),
     reward: rewardPromiseOf(reward),
     license: licenseOf(manifest),
+    shareHistory: shareHistoryOf(reward),
   }
 }
 
@@ -132,7 +138,7 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     if (prospect === undefined) return event
     return {
       ...event,
-      creation: { ...event.creation, reward: rewardPromiseOf(prospect.manifest.reward) },
+      creation: { ...event.creation, reward: rewardPromiseOf(prospect.manifest.reward), shareHistory: shareHistoryOf(prospect.manifest.reward) },
       account: try accountStanding({ actor: by, steward: event.creation.facts.owner }),
       registry: try registryRead(projectId, prospect.repository, repositoryKeysOf(prospect.manifest)),
       exclusions: [...exclusionsOf(prospect.manifest)],
@@ -148,7 +154,7 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     const change = { ...event.change, network: networkOf(manifest), asset, exclusionsChanged: !sameExclusions(exclusions, state.exclusions), reward: rewardPromiseOf(manifest.reward) }
     return { ...event, change, account: try accountStanding({ actor: by, steward }), exclusions, appendReads } satisfies Event
   }
-  if (event.type === "activate") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
+  if (event.type === "activate" || event.type === "moveBranch") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
   if (event.type === "registerVault") return { ...event, account: try accountStanding({ actor: event.registration.authority.actor, steward }) } satisfies Event
   if (event.type === "adminRevise") {
     const manifest = try submittedOf(projectId, action.revision, event.type)
@@ -199,7 +205,7 @@ export interface Written {
 
 function factsOf(after: Registry): ProjectFacts {
   const project = after.project
-  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, network: project.network, asset: project.asset, exclusions: after.exclusions, branch: project.branch, license: project.license, honorSystem: project.honorSystem, vaults: project.vaults }
+  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, network: project.network, asset: project.asset, exclusions: after.exclusions, branch: project.branch, license: project.license, honorSystem: project.honorSystem, vaults: project.vaults, share: project.share, shareHistory: project.shareHistory }
 }
 
 function checked(manifest: Manifest, projectId: string, after: Registry, rows: ProjectRows) {
@@ -339,7 +345,12 @@ effect function backendWrites(current: Loaded, after: Registry, action: Action, 
 effect function decide(current: Loaded, action: Action) {
   if (action.basedOn !== undefined && current.state.project.revision !== action.basedOn) throw new RevisionMismatch({ projectId: action.projectId, field: "revision" })
   const event = current.event ?? action.event
-  const after = try apply(current.state, event, action.by)
+  let observed = current.state
+  for (const observation of action.observations ?? []) {
+    const next = try apply(observed, observation, platform)
+    observed = next
+  }
+  const after = try apply(observed, event, action.by)
   const at = try isoNow()
   const backend = try backendWrites(current, after, { ...action, event }, at)
   const registryAfter: RegistryMirror = backend.stamped === undefined
@@ -349,11 +360,12 @@ effect function decide(current: Loaded, action: Action) {
     projectId: action.projectId,
     event,
     by: action.by,
-    before: current.state.security,
+    before: observed.security,
     after: after.security,
     registryBefore: mirrorOf(current.rows),
     registryAfter,
     at,
+    ...(action.recordId === undefined ? {} : { recordId: action.recordId }),
   })
   return { value: { before: current.state, after, rows: current.rows, stamped: backend.stamped }, writes: [...backend.writes, ...security, ...(action.alongside ?? [])] } satisfies Decision<Committed>
 }

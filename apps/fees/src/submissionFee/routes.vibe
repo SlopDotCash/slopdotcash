@@ -7,7 +7,8 @@ import { cacheControl } from "@repo/platform/route"
 import { SubmissionFeeRates } from "@repo/ports/backend"
 import { ReportDeposits } from "@repo/ports/security"
 import { SubmissionFeeItems } from "@repo/ports/slopbot"
-import { type ReportDepositAnswer, type ReportDepositWay, type SubmissionFeeItemAnswer, type SubmissionFeePaid, type SubmissionFeeRateAnswer, pullIdPattern, reportCasePattern, reportDepositRead, submissionFeePath, submissionFeeRate, submissionFeeRefusals } from "../client/submissionFee.vibe"
+import { anySubmissionFee } from "../client/refusals.vibe"
+import { type ReportDepositAnswer, type ReportDepositWay, type SubmissionFeeItemAnswer, type SubmissionFeePaid, type SubmissionFeeRateAnswer, pullIdPattern, reportCasePattern, reportDepositRead, submissionFeePath, submissionFeeRate } from "../client/submissionFee.vibe"
 import { reportNetwork } from "./judge.vibe"
 
 schema PaidDepositRow { token: string; amount: string; tx_hash: string; finalized_at: string | null; resolve_tx: string | null }
@@ -26,7 +27,8 @@ interface Answer {
 
 const servedCache = cacheControl(submissionFeeRate.cache)
 const reportCache = cacheControl(reportDepositRead.cache)
-const notFound = { error: submissionFeeRefusals.notFound.error }
+
+type NotFound = typeof anySubmissionFee.notFound | typeof anySubmissionFee.reportNotFound
 
 effect function rates() {
   return try (try SubmissionFeeRates).all()
@@ -126,21 +128,22 @@ effect function reportAnswer(caseId: string) {
   } satisfies ReportDepositAnswer
 }
 
-function found(body: unknown, cache: string): Answer {
-  return body === null ? { status: submissionFeeRefusals.notFound.status, body: notFound, cache } : { status: 200, body, cache }
+function found(body: unknown, cache: string, refusal: NotFound = anySubmissionFee.notFound): Answer {
+  return body === null ? { status: refusal.status, body: { error: refusal.error }, cache: refusal.headers["cache-control"] } : { status: 200, body, cache }
 }
 
 effect function read(parts: ReadonlyArray<string>) {
   if (parts.length === 1 && parts[0] === "rate") return found(try rateAnswer(), servedCache)
   if (parts.length === 3 && parts[0] === "items") return found(try itemAnswer(parts[1], parts[2]), servedCache)
-  if (parts.length === 2 && parts[0] === "reports") return found(try reportAnswer(parts[1]), reportCache)
+  if (parts.length === 2 && parts[0] === "reports") return found(try reportAnswer(parts[1]), reportCache, anySubmissionFee.reportNotFound)
   return found(null, servedCache)
 }
 
 effect function answer() {
   const request = try HttpServerRequest.HttpServerRequest
   const method = request.method
-  if (method !== "GET" && method !== "HEAD") return json({ error: submissionFeeRefusals.methodNotAllowed.error }, submissionFeeRefusals.methodNotAllowed.status, { "cache-control": servedCache })
+  const refused = anySubmissionFee.methodNotAllowed
+  if (method !== "GET" && method !== "HEAD") return json({ error: refused.error }, refused.status, { "cache-control": refused.headers["cache-control"] })
   const parts = new URL(request.originalUrl).pathname.slice(submissionFeePath.length).replace(/\/$/u, "").split("/").slice(1)
   const served = try read(parts)
   if (method === "HEAD") return HttpServerResponse.empty({ status: served.status, headers: { ...fixedHeaders, "cache-control": served.cache, "content-type": "application/json; charset=utf-8" } })

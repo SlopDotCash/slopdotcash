@@ -1,4 +1,5 @@
 // spec/app/index.md, "Story: Open a page by its address"; spec/frontend/routes.md, "Each route has one title, canonical and index policy, and private routes never name a private identifier"; spec/frontend/presentation.md, "The wordmark and footer domain follow the serving host"
+import { useNotFoundMounted } from "@repo/frontend/app";
 import { CONTACT_EMAIL, CONTACT_MAILTO, SOURCE_REPOSITORY } from "@repo/frontend/platform/site";
 import type { RegistryBoot } from "@repo/frontend/reads/registry";
 import { Alert, Button, cn, ExternalLink, focusRing, Logo, NotFound, PageHeader, shell, SiteFooter, SiteHeader } from "@repo/ui";
@@ -52,11 +53,12 @@ const framing = (heading?: string) => (children?: ReactNode, title = heading) =>
 const headingOnly: NonNullable<AppProps["content"]> = (_route, frame) => frame();
 
 function Head({ head }: { head: DocumentHead | undefined }) {
+  const notFound = useNotFoundMounted();
   if (head === undefined) return null;
   return (
     <>
       <title>{head.title}</title>
-      {head.canonical === undefined ? <meta name="robots" content="noindex" /> : (
+      {notFound ? null : head.canonical === undefined ? <meta name="robots" content="noindex" /> : (
         <>
           <link rel="canonical" href={head.canonical} />
           <meta property="og:url" content={head.canonical} />

@@ -985,11 +985,11 @@ effect function globalOutputs() {
   return outputs
 }
 
-effect function runSite() {
+effect function runSite(extra: ReadonlyArray<string> = []) {
   const { program, repository, out } = try SiteProgram
   return try scoped(effect {
     const spawner = try ChildProcessSpawner.ChildProcessSpawner
-    const handle = try spawner.spawn(ChildProcess.make("node", [program, "site", "--out", out], { cwd: repository }))
+    const handle = try spawner.spawn(ChildProcess.make("node", [program, "site", "--out", out, ...extra], { cwd: repository }))
     const [, stderr, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr)), handle.exitCode]
     const status = Number(code)
     return { code: status, refusal: status === 0 ? undefined : stderr.trim().split("\n").at(-1) } satisfies Ran
@@ -1058,6 +1058,54 @@ effect function appended(file: string) {
   try edited(file, new Uint8Array([...before, 10]))
 }
 
+function sitemapManifest(id: string, committedMinor: string, listingTier: string, publishAtRoot: boolean) {
+  return { id, slug: `${id}-site`, status: listingTier === "retired" ? "paused" : "active", listingTier, reward: { committedMinor, monthlyCapMinor: "0" }, skill: { publishAtRoot } }
+}
+
+const sitemapRegistry = {
+  schemaVersion: 1,
+  syncedAt: fixedGeneratedAt,
+  projects: [sitemapManifest("eliza", "100", "featured", false), sitemapManifest("gone", "900", "retired", false), sitemapManifest("beam", "500", "community", true)],
+}
+
+const cycleFile = { sha256: "0".repeat(64), url: "https://slop.cash/data/cycles/beam/2026-10/source-snapshot.json" }
+
+const sitemapCycle = {
+  projectId: "beam",
+  cycleId: "2026-10",
+  kind: "monthly-pool",
+  state: "review",
+  generatedAt: "2026-11-01T00:00:00.000Z",
+  contributionWindow: { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z" },
+  reviewEndsAt: null,
+  approvedAt: null,
+  settledAt: null,
+  reward: { currency: "USDC", capMinor: "0", suggestedMinor: "0", approvedMinor: "0", paidMinor: "0", feeMinor: "0", sharePartsPerMillion: null },
+  contributors: [],
+  files: { sourceSnapshot: cycleFile, proposal: cycleFile, allocation: null, executionPlan: null, settlement: null, windup: null },
+}
+
+const expectedSitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${["/", "/how-it-works", "/sponsors", "/cycles", "/points", "/projects/new", "/projects/beam-site", "/projects/eliza-site", "/cycles/beam/2026-10"].map((path) => `  <url>\n    <loc>https://slop.cash${path}</loc>\n  </url>`).join("\n")}\n</urlset>\n`
+
+effect function sitemapRun(index: unknown) {
+  const { out } = try SiteProgram
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const registry = path.join(path.dirname(out), "registry-snapshot.json")
+  try fs.writeFileString(registry, JSON.stringify(sitemapRegistry))
+  try fs.makeDirectory(path.join(out, "data/cycles"), { recursive: true })
+  try fs.writeFileString(path.join(out, "data/cycles/index.json"), JSON.stringify(index))
+  const ran = try runSite(["--registry", registry])
+  if (!(try fs.exists(path.join(out, "sitemap.xml")))) return { ran, sitemap: undefined }
+  return { ran, sitemap: try outputText("sitemap.xml") }
+}
+
+effect function sitemapRemoved() {
+  const { out } = try SiteProgram
+  const ran = try runSite()
+  return { ran, sitemap: try (try FileSystem.FileSystem).exists((try Path.Path).join(out, "sitemap.xml")) }
+}
+
 effect function restored() {
   const { repository } = try SiteProgram
   try git(repository, ["checkout", "-q", "--", "."])
@@ -1065,7 +1113,7 @@ effect function restored() {
 }
 
 layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('The site program publishes the three global skills with their discovery copies, index, llms.txt and manifest, the template trees and protocol documents, labels working-tree edits per skill, and a refused role publishes nothing (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"; spec/contributor/maintainerWorkflow.md, "Story: The entry skill routes by the requested task")', () => effect {
+  it.effect('The site program publishes the three global skills with their discovery copies, index, llms.txt and manifest, the template trees and protocol documents, labels working-tree edits per skill, a refused role publishes nothing, and with a registry snapshot writes the sitemap and refuses a malformed cycle index (spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"; spec/contributor/maintainerWorkflow.md, "Story: The entry skill routes by the requested task"; spec/contributor/publication.md, "The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route")', () => effect {
     const expected = try globalOutputs()
     const committedRun = try runSite()
     const committedOutputs = try published()
@@ -1100,9 +1148,15 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
     const afterRefusals = try published()
     try restored()
 
+    const sitemapIndex = { schemaVersion: "1", generatedAt: fixedGeneratedAt, cycles: [sitemapCycle] }
+    const sitemapWritten = try sitemapRun(sitemapIndex)
+    const repeatedCycleRun = (try sitemapRun({ ...sitemapIndex, cycles: [sitemapCycle, sitemapCycle] })).ran
+    const unexpectedFieldRun = (try sitemapRun({ ...sitemapIndex, cycles: [{ ...sitemapCycle, extra: true }] })).ran
+    const withoutRegistry = try sitemapRemoved()
+
     const committed = ["committed", "committed", "committed"]
     try Effect.try(() => assert.deepStrictEqual(
-      { committedRun, committedOutputs, committedStatuses, committedContracts, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs) },
+      { committedRun, committedOutputs, committedStatuses, committedContracts, editedRun, editedStatuses, untrackedRun, invalidEntryRun, invalidMaintainerRun, missingVersionTwoRun, twoFileRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs), sitemapWritten, repeatedCycleRun, unexpectedFieldRun, withoutRegistry },
       {
         committedRun: { code: 0, refusal: undefined },
         committedOutputs: expected,
@@ -1116,6 +1170,10 @@ layer(Layer.mergeAll(Layer.provide(SiteBuilt, NodeServices.layer), NodeServices.
         missingVersionTwoRun: { code: 1, refusal: "SiteRefused: [Slop] required document section is missing: ## Private trace privacy contract v2" },
         twoFileRun: { code: 1, refusal: "SiteRefused: [Slop] slop-contributor must remain one reviewable SKILL.md" },
         refusalsWroteNothing: true,
+        sitemapWritten: { ran: { code: 0, refusal: undefined }, sitemap: expectedSitemap },
+        repeatedCycleRun: { code: 1, refusal: "SiteRefused: [Slop] cycle index repeats a project cycle" },
+        unexpectedFieldRun: { code: 1, refusal: "SiteRefused: [Slop] the cycle index has unexpected or missing fields" },
+        withoutRegistry: { ran: { code: 0, refusal: undefined }, sitemap: false },
       },
     ))
   })

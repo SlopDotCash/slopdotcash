@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
+// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
 import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
@@ -12,16 +12,16 @@ import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { json, outbound } from "@repo/platform/http"
 import { type RoleVars, rolesFrom } from "@repo/platform/roles"
-import { type Area, type Execution, area, pages } from "@repo/platform/worker"
+import { type Area, type Execution, area, later, pages } from "@repo/platform/worker"
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
-import { DirectPaymentsLive, DirectRoutesLive, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, paymentNetworks, reservedAwardFeedAccess, settlement, solanaDirectRails } from "@repo/settlement/live"
-import { githubApp } from "@repo/platform/github/app"
+import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
+import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, reservedAwardFeedAccess, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
 import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
 import { documents } from "./document.vibe"
 import { workerCaches } from "./edgeCaches.ts"
 
-export interface PagesEnv extends BackendVars, SecurityEnv, RoleVars, PaymentNetworkVars, RecoveryBindings, ReservedAwardFeedVars, ProtectedMonthsVars {
+export interface PagesEnv extends BackendVars, SecurityEnv, RoleVars, PaymentNetworkVars, RecoveryBindings, ReservedAwardFeedVars, ProtectedMonthsVars, MonthlyReleaseBindings {
   readonly SLOP_DB: D1Database
   readonly GITHUB_INTAKE_APP_ID?: string
   readonly GITHUB_INTAKE_APP_PRIVATE_KEY?: string
@@ -35,7 +35,7 @@ interface Served extends PagesEnv {
   readonly DOCUMENTS: Fetcher
 }
 
-type Needs<A> = A extends Area<infer _P, infer R> ? (R extends HttpRouter.Request<"Requires", infer S> ? S : never) : never
+type Needs<A> = A extends Area<infer _P, infer R> ? (R extends HttpRouter.Request<"Requires" | "GlobalRequires", infer S> ? S : never) : never
 type Gives<A> = A extends Area<infer P, infer _R> ? P : never
 
 function platform(env: PagesEnv) {
@@ -45,7 +45,7 @@ function platform(env: PagesEnv) {
 function intakeGitHubApp(env: PagesEnv) {
   const appId = env.GITHUB_INTAKE_APP_ID ?? ""
   const privateKey = env.GITHUB_INTAKE_APP_PRIVATE_KEY ?? ""
-  return appId === "" || privateKey === "" ? Layer.empty : Layer.provide(githubApp({ appId, privateKey: Redacted.make(privateKey), userAgent: "slop.cash" }), outbound)
+  return appId === "" || privateKey === "" ? unconfiguredGitHubApp : Layer.provide(githubApp({ appId, privateKey: Redacted.make(privateKey), userAgent: "slop.cash" }), outbound)
 }
 
 function bindings(env: PagesEnv) {
@@ -61,6 +61,7 @@ function bindings(env: PagesEnv) {
     disputeTriage(env.SLOPBOT),
     paymentNetworks(env),
     bindingRecovery(env),
+    monthlyReleases(env),
     intakeGitHubApp(env),
     evmDirectRails(env.PAYMENT_RPC_URLS),
     solanaDirectRails({ paymentRpcUrls: env.PAYMENT_RPC_URLS, localSolanaGenesis: env.SLOP_LOCAL_SOLANA_GENESIS, recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL }),
@@ -101,6 +102,29 @@ const unmatchedApi = area({
   provides: Layer.empty,
 })
 
+const projectSections = new Set(["project-vaults", "project-github", "project-revisions", "project-session", "project-setup", "project-applications", "project-appeals"])
+
+function projectRoute(url: string) {
+  const path = URL.parse(url)?.pathname ?? ""
+  if (!path.startsWith("/api/v1/")) return false
+  const parts = path.slice("/api/v1/".length).split("/").filter((part) => part !== "")
+  const [first = "", second] = parts
+  return (first === "projects" && (parts.length <= 2 || (parts.length === 3 && parts[2] === "remove")))
+    || projectSections.has(first)
+    || (first === "project-account-bans" && parts.length === 1)
+    || (first === "admin" && second === "projects")
+}
+
+const savedCreations = area({
+  name: "savedCreations",
+  api: [],
+  routes: HttpRouter.middleware((app) => effect {
+    if (projectRoute((try HttpServerRequest.HttpServerRequest).originalUrl)) try later(sweepSavedVaultCreations())
+    return try app
+  }, { global: true }),
+  provides: Layer.empty,
+})
+
 const payments = area({
   name: "payments",
   api: [],
@@ -108,7 +132,7 @@ const payments = area({
   provides: Layer.mergeAll(DirectRoutesLive, DirectPaymentsLive),
 })
 
-const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, fees, unmatchedApi], "closed")
+const composition = closed([backend, operations, slopbot, security, contributor, points, settlement, payments, savedCreations, fees, unmatchedApi], "closed")
 
 const site = pages({ areas: composition.areas, services, assets: "DOCUMENTS" })
 

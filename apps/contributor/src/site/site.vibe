@@ -1,16 +1,26 @@
-// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+// spec/contributor/publication.md, "Each global skill, its discovery copy, its index entry and llms.txt carry the same digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/contributor/publication.md, "The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route"
 import { removedTrees } from "../../gen/contributor__publication.effect.vibe"
 import { bootstrapFiles } from "./bootstrap.vibe"
 import { protocolFiles } from "./protocol.vibe"
+import { sitemapFile } from "./sitemap.vibe"
 import { type SiteFile, buildCommit, refused, repositoryRoot } from "./sources.vibe"
 import { templateFiles } from "./templates.vibe"
 
-const ownedPaths = ["SKILL.md", "llms.txt", "skill-manifest.json", ...removedTrees, "skill-templates", "protocol"]
+const ownedPaths = ["SKILL.md", "llms.txt", "skill-manifest.json", ...removedTrees, "skill-templates", "protocol", "sitemap.xml"]
 
-effect function outDirectory(args: ReadonlyArray<string>) {
-  const [flag, out = "", ...rest] = args
-  if (flag !== "--out" || out === "" || rest.length > 0) throw refused("usage: site --out <dir>")
-  return (try Path.Path).resolve(out)
+const usage = "usage: site --out <dir> [--registry <snapshot.json>]"
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  const values = new Map<string, string>()
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index] ?? ""
+    const value = args[index + 1] ?? ""
+    if ((flag !== "--out" && flag !== "--registry") || value === "" || values.has(flag)) throw refused(usage)
+    values.set(flag, value)
+  }
+  const out = values.get("--out")
+  if (out === undefined) throw refused(usage)
+  return { out: (try Path.Path).resolve(out), registry: values.get("--registry") }
 }
 
 export effect function siteFiles(root: string) {
@@ -40,8 +50,9 @@ effect function written(out: string, files: ReadonlyArray<SiteFile>) {
 }
 
 export effect function site(args: ReadonlyArray<string>) {
-  const out = try outDirectory(args)
+  const { out, registry } = try optionsOf(args)
   const { commit, files } = try siteFiles(try repositoryRoot())
-  try written(out, files)
+  const sitemap = registry === undefined ? [] : [try sitemapFile(registry, out)]
+  try written(out, [...files, ...sitemap])
   try Console.log(`[Slop] prepared the project skill templates from ${commit.slice(0, 12)}`)
 }

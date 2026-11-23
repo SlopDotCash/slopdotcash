@@ -19,7 +19,8 @@ not force.
   height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, `text-control`
   (15px, tight) a header control, `text-prompt` (17px) the agent prompt, `text-wordmark` (22px, 19px under `md`
   as `text-wordmark-sm`) the header's wordmark, and `xs` to `4xl` keep Tailwind's steps, `3xl` (32px) and
-  `4xl` (40px) being a project card's name and amount; `leading-summary` (1.45) is a card's description. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
+  `4xl` (40px) being a project card's name and amount; `5xl` (48px) to `9xl` (128px) are the home page's display
+  sizes, each with a line height of 1, as a section title and the hero; `leading-summary` (1.45) is a card's description. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
   the large headings, `label` for small capitals. Development's headings are 800 (12 rules), `font-extrabold`;
   `font-strong` (650) and `font-heavy` (750) sit between Tailwind's weights.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from

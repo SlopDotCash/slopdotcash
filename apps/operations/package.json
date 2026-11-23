@@ -9,6 +9,8 @@
     "./evidence/records": "./src/release/evidence/records.schema.vibe",
     "./live": "./src/live.vibe",
     "./notify": "./src/workers/notify.vibe",
+    "./recoveryFixture": "./src/qualification/recovery/fixture.vibe",
+    "./recoveryPlan": "./src/qualification/recovery/plan.vibe",
     "./rpc": "./src/release/rpc/command.vibe",
     "./wrangler": "./src/release/wrangler/cloudflare.vibe"
   },

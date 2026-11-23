@@ -16,8 +16,12 @@ export type FileFieldProps = Omit<ComponentProps<"input">, "type" | "children" |
   onRemove?: () => void;
   /** The text of the picker. */
   chooseLabel?: string;
-  /** The accessible name of the remove action. */
+  /** The picker's mark before its text; an image by default. */
+  icon?: ReactNode;
+  /** The accessible name of the remove action, and its visible text when `removeVisible`. */
   removeLabel?: string;
+  /** Shows the remove action as an outlined button with its label, rather than an icon alone. */
+  removeVisible?: boolean;
   /** Shows a spinner and refuses another choice while the file is sent; the picker keeps its focus. */
   loading?: boolean;
   /** Marks the file as refused, visibly and through `aria-invalid`. */
@@ -27,7 +31,7 @@ export type FileFieldProps = Omit<ComponentProps<"input">, "type" | "children" |
 /**
  * A file picker with the chosen file's preview and a remove action. Name it with a `Field`, a `Label` or `aria-label`.
  */
-export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Choose file", removeLabel = "Remove", loading = false, invalid = false, disabled = false, className, ...props }: FileFieldProps) {
+export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Choose file", icon = <ImageUp aria-hidden className="size-4" />, removeLabel = "Remove", removeVisible = false, loading = false, invalid = false, disabled = false, className, ...props }: FileFieldProps) {
   return (
     <div className={cn("flex flex-wrap items-center gap-4", className)}>
       {preview ? <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted *:size-full *:object-cover">{preview}</div> : null}
@@ -46,15 +50,22 @@ export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Cho
           {...props}
           {...controlState(disabled, loading)}
         />
-        {loading ? <StatusIcon icon="Spinner" /> : <ImageUp aria-hidden className="size-4" />}
+        {loading ? <StatusIcon icon="Spinner" /> : icon}
         {chooseLabel}
       </label>
       <span role="status" className="min-w-0 text-sm break-all text-foreground">
         {file}
       </span>
       {file && onRemove ? (
-        <Button variant="ghost" size="icon" aria-label={removeLabel} disabled={disabled || loading} onClick={onRemove}>
+        <Button
+          variant={removeVisible ? "outline" : "ghost"}
+          size={removeVisible ? "md" : "icon"}
+          aria-label={removeVisible ? undefined : removeLabel}
+          disabled={disabled || loading}
+          onClick={onRemove}
+        >
           <X aria-hidden className="size-4" />
+          {removeVisible ? removeLabel : null}
         </Button>
       ) : null}
     </div>

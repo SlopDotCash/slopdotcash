@@ -10,7 +10,8 @@ import { applyRetainedReviews } from "../journal/retained.vibe"
 import { applySnapshots } from "../journal/snapshot.vibe"
 import { recognizePayouts } from "../payoutRecognition/awards.vibe"
 import { loadVaultPayouts } from "../payoutRecognition/vault.vibe"
-import { admittedFrom, databases, evaluationInputs } from "../evaluations/check.vibe"
+import { databases, evaluationInputs } from "../evaluations/check.vibe"
+import { admittedOffline } from "../evaluations/offline.vibe"
 import { applyEvaluations } from "../evaluations/journal.vibe"
 import { evaluationEvents } from "../evaluations/manifests.vibe"
 import { readRegistry } from "../snapshot/adaptPr.vibe"
@@ -191,7 +192,7 @@ effect function build(args: ReadonlyArray<string>) {
   const vaults = parsed.online ? try loadVaultPayouts(store.revisions.map((row) => row.award.actor), origin) : []
   const recognizedAt = try isoNow()
   try recognizePayouts(store, try textFile(files.join(parsed.directory, "cycles", "index.json"), maxCycleIndexBytes), recognizedAt, vaults)
-  const admitted = try admittedFrom(try evaluationInputs(files.resolve(".")), repositories, parsed.environment === "Production" ? "production" : "staging")
+  const admitted = try admittedOffline(try evaluationInputs(files.resolve(".")), repositories, parsed.snapshot)
   const reviewed: ReadonlyArray<unknown> = [...(try acceptedReviewEvents()), ...evaluationEvents(admitted)]
   const digest = try applyRetainedReviews(store, repositories, reviewed, recognizedAt)
   try applyEvaluations(store, repositories, admitted, digest, recognizedAt)

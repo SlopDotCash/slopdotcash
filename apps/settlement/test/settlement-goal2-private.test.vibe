@@ -6,7 +6,7 @@ import { type Statement, d1, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { type EffectiveWallet, type Json, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
 import { type CaseContext, type DirectPaymentView, DirectPayments, DirectRefused, RecoveryRefused } from "@repo/ports/settlement"
 import { evmDirectRails } from "../src/direct/evm.vibe"
@@ -83,11 +83,13 @@ function approved(caseId: string, projectId: string, input: { readonly gross: st
 
 effect function event(caseId: string, revision: number, kind: string, actor: string, role: string) {
   const at = try isoNow()
-  return [
+  return (detail: Json) => [
     sql`UPDATE security_cases SET revision = ${revision} WHERE id = ${caseId} AND revision = ${revision - 1}`,
-    sql`INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, detail, at) VALUES (${caseId}, ${revision}, ${kind}, ${actor}, ${role}, ${`journey-${kind}-${revision}-key`}, '{}', ${at})`,
+    sql`INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, detail, at) VALUES (${caseId}, ${revision}, ${kind}, ${actor}, ${role}, ${`journey-${kind}-${revision}-key`}, ${JSON.stringify(detail)}, ${at})`,
   ] satisfies ReadonlyArray<Statement>
 }
+
+const nothing = (): ReadonlyArray<Statement> => []
 
 function body(action: string, fields: Readonly<Record<string, unknown>>) {
   return { action, expectedRevision: 0, idempotencyKey: `journey-${action}-idempotency`, ...fields }
@@ -132,16 +134,17 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it)
       const viewer = { payer: true, reporter: false }
       const before = try payments.view({ caseContext: payer, viewer })
       const refusals = [
-        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true, extra: 1 }), [])),
-        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: false }), [])),
+        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true, extra: 1 }), nothing)),
+        try reasonOf(payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: false }), nothing)),
         try reasonOf(payments.act("prepare-payment", payer, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 4, "prepare-payment", payerId, "financial"))),
-        try reasonOf(payments.act("prepare-payment", { ...payer, caseId: fullCase }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), [])),
+        try reasonOf(payments.act("prepare-payment", { ...payer, caseId: fullCase }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), nothing)),
       ]
       const consent = try payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 4, "consent-payment", reporterId, "reporter"))
       const prepare = try payments.act("prepare-payment", { ...payer, revision: 4 }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 5, "prepare-payment", payerId, "financial"))
       const again = try reasonOf(payments.act("prepare-payment", { ...payer, revision: 5 }, body("prepare-payment", { network: "base-mainnet", confirmation: true }), try event(caseId, 6, "prepare-payment", payerId, "financial")))
       const after = try payments.view({ caseContext: { ...payer, revision: 5 }, viewer })
       const settled = try rowsOf(db, "SELECT network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, case_revision, json_extract(deployment, '$.payoutPolicy') AS policy, json_extract(deployment, '$.projectId') AS project, json_extract(deployment, '$.chainId') AS chain_id, length(source_digest) AS source_length FROM security_settlements WHERE case_id = ?", caseId)
+      const events = try rowsOf(db, "SELECT case_revision, kind, detail FROM security_case_events WHERE case_id = ? AND case_revision >= 4 ORDER BY case_revision", caseId)
       const settlement = after.settlement !== null && typeof after.settlement === "object" && !Array.isArray(after.settlement) ? after.settlement : {}
       const request = settlement.ownerRequest !== null && typeof settlement.ownerRequest === "object" && !Array.isArray(settlement.ownerRequest) ? settlement.ownerRequest : {}
       try same({
@@ -153,6 +156,7 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it)
         after: { ...shape(after), paymentRail: after.paymentRail, settlement: { state: settlement.state, grossBase: settlement.grossBase, feeBase: settlement.feeBase, netBase: settlement.netBase, transactionId: settlement.transactionId } },
         request: { from: request.from, to: request.to, value: request.value, encoded: typeof request.data === "string" && request.data.length === 266 },
         settled,
+        events,
       }, {
         before: { railAvailable: true, settlementState: null, escrowOffered: true, actions: ["consent-payment", "prepare-payment"] },
         refusals: ["invalidRequestRequestBodyHasUnexpected", "confirmationRequiredAcceptPublicChainVisibility", "paymentConsentRequiredTheReporterMustAccept", "railUnavailableTheBountyVaultPays"],
@@ -162,6 +166,10 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it)
         after: { paymentRail: "escrow", railAvailable: true, settlementState: "awaiting-owner-commitment", actions: [], escrowOffered: true, settlement: { state: "awaiting-owner-commitment", grossBase: "4000000", feeBase: "1000000", netBase: "3000000", transactionId: null } },
         request: { from: owner, to: vault, value: "0x0", encoded: true },
         settled: [{ network: "base-mainnet", vault, asset: usdc, asset_decimals: 6, gross_base: "4000000", fee_base: "1000000", reporter_github_id: reporterId, approved_by: payerId, case_revision: 5, policy: "security-bounty", project: projectId, chain_id: "8453", source_length: 64 }],
+        events: [
+          { case_revision: 4, kind: "consent-payment", detail: JSON.stringify({ network: "base-mainnet", publicChainVisibilityAccepted: true }) },
+          { case_revision: 5, kind: "prepare-payment", detail: JSON.stringify({ network: "base-mainnet", publicChainVisibilityAccepted: true }) },
+        ],
       })
     }
   })
@@ -178,12 +186,12 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "120 seconds" })((it)
     provide Layer.provide(DirectPaymentsLive, Layer.mergeAll(d1(db), rails)) {
       const payments = try DirectPayments
       const refusals = [
-        try reasonOf(payments.act("verify-payment", payer, body("verify-payment", { transactionIds: ["0x1", "0x2", "0x3"], confirmation: true }), [])),
-        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: false }), [])),
-        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, signatures: [{ messageId: "m", signature: "s", extra: true }] }), [])),
-        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, cancellationTransactionId: 7 }), [])),
+        try reasonOf(payments.act("verify-payment", payer, body("verify-payment", { transactionIds: ["0x1", "0x2", "0x3"], confirmation: true }), nothing)),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: false }), nothing)),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, signatures: [{ messageId: "m", signature: "s", extra: true }] }), nothing)),
+        try reasonOf(payments.act("recover-payment", payer, body("recover-payment", { confirmation: true, cancellationTransactionId: 7 }), nothing)),
       ]
-      const consent = try payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true }), [])
+      const consent = try payments.act("consent-payment", reporter, body("consent-payment", { network: "base-mainnet", confirmation: true }), nothing)
       const consents = try rowsOf(db, "SELECT json_extract(deployment, '$.rail') AS rail, json_extract(deployment, '$.network') AS network, reporter_github_id FROM security_payment_consents WHERE case_id = ?", caseId)
       const view = try payments.view({ caseContext: payer, viewer: { payer: true, reporter: false } })
       try same({ refusals, consent, consents, view: { paymentRail: view.paymentRail, settlementState: view.settlementState, settlement: view.settlement } }, {

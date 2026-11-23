@@ -1,4 +1,4 @@
-// spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+// spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/cases.md, "A report that waits for its deposit is its reporter's alone"
 import { first, rows, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Award, AppealState, PrivateCase, Receipt, RelatedReview, Submission } from "../../gen/security__cases.ts"
@@ -7,6 +7,7 @@ import type { Phase, Review, Screening } from "../../gen/security__screening.ts"
 import { qualified, recoverable, revisionPermitted } from "../../gen/security__screening.effect.vibe"
 import { noExclusions } from "../../gen/security__terms.effect.vibe"
 import { type CaseAuthority } from "../caseAuthority/snapshot.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 import { githubNumber } from "../privacy/reads.vibe"
 import { revisionEvidence } from "./revision.vibe"
 
@@ -57,6 +58,7 @@ export schema CaseStanding {
   reporter_github_id: string
   appeal_state: "none" | "open" | "upheld" | "returned"
   related_party_review: "not-applicable" | "pending" | "approved" | "refused"
+  deposit_held: number
 }
 
 const submissions: Readonly<Record<CaseStanding["submission_state"], Submission>> = { claimed: "Claimed", verified: "Verified", "link-rejected": "LinkRejected" }
@@ -79,6 +81,7 @@ export function caseOf(record: CaseStanding, reportVersion: number, roles?: Case
     award: awards[record.award_state],
     appeal: appeals[record.appeal_state],
     relatedReview: reviews[record.related_party_review],
+    depositHeld: record.deposit_held === 1,
     ...roles === undefined ? {} : { authority: roles.authority, triagers: [...roles.triagers], triagerEpoch: roles.authority.epoch },
   }
 }
@@ -86,6 +89,7 @@ export function caseOf(record: CaseStanding, reportVersion: number, roles?: Case
 export schema ReportVersion { version: number; content_sha256: string }
 
 const columns = sql`id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at`
+export const standingColumns = sql`id, revision, submission_state, receipt_state, award_state, project_id, reporter_github_id, appeal_state, related_party_review, ${depositHeldOn("security_cases.id")} AS deposit_held`
 const intakeColumns = sql`submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision`
 
 const submissionId = /^ss_[A-Za-z0-9_-]{8,72}$/u
@@ -105,7 +109,7 @@ export effect function storedIntake(id: string) {
 }
 
 export effect function caseStanding(caseId: string) {
-  return try first(CaseStanding, sql`SELECT id, revision, submission_state, receipt_state, award_state, project_id, reporter_github_id, appeal_state, related_party_review FROM security_cases WHERE id = ${caseId}`)
+  return try first(CaseStanding, sql`SELECT ${standingColumns} FROM security_cases WHERE id = ${caseId}`)
 }
 
 export effect function reportVersions(id: string) {
@@ -136,6 +140,7 @@ export function screeningOf(stored: StoredIntake, reporter: number, digests: Rea
     noticeVersions: [],
     reportDigests: [...digests],
     exclusions: noExclusions,
+    depositHeld: false,
   }
 }
 
@@ -173,7 +178,8 @@ export function submissionView(row: SubmissionRow) {
 
 export function reporterView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding, nowMs: number) {
   const ready = intakeQualified(stored)
-  const revisable = revisionPermitted(screeningOf(stored, githubNumber(row.reporter_github_id), []), revisionEvidence(row, caseOf(record, stored.report_version), row.reporter_github_id, { object: true, admitted: true }))
+  const held = record.deposit_held === 1
+  const revisable = revisionPermitted({ ...screeningOf(stored, githubNumber(row.reporter_github_id), []), depositHeld: held }, revisionEvidence(row, caseOf(record, stored.report_version), row.reporter_github_id, { object: true, admitted: true }))
   return {
     ...submissionView(row),
     intake: {
@@ -186,7 +192,7 @@ export function reporterView(row: SubmissionRow, stored: StoredIntake, record: C
       reviewedAt: stored.reviewed_at,
       canReview: false,
       canForward: ready,
-      canRetryScreening: ready ? stored.routed_at === null : stored.review_decision === null && retryable(stored, nowMs),
+      canRetryScreening: !held && (ready ? stored.routed_at === null : stored.review_decision === null && retryable(stored, nowMs)),
       canAuthorize: ready && row.advisory_ghsa === null,
       canRevise: revisable,
     },

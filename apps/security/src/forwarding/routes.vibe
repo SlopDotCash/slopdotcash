@@ -14,7 +14,6 @@ import { scheduleReceiptAnalysis } from "../assessment/routes.vibe"
 import { caseNotices } from "../cases/store.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
 import { depositHeld } from "../deposit/held.vibe"
-import { depositRefusals } from "../deposit/refusals.ts"
 import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding, verifyForwarding } from "../client/forwarding.vibe"
 import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissions as createRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows, postSecuritySubmissionsByIdVerify as verifyRows } from "../client/refusals.vibe"
 import { type ReportingCache, projectId as projectPattern, reportingCache } from "../intake/availability.vibe"
@@ -320,7 +319,7 @@ effect function sendSubmission(actor: Actor, id: string) {
   if (failureClosed(forwarding, row)) throw refused(sendRows.submissionClosedThisSubmissionCannotBe)
   const stored = try storedIntake(row.id)
   if (stored === undefined || forwarding === undefined) throw refused(sendRows.screeningRequiredThisDraftNeedsMore)
-  if (try depositHeld(stored.case_id)) throw refused(depositRefusals.depositRequired)
+  if (try depositHeld(stored.case_id)) throw refused(sendRows.depositRequired)
   const digests = (try reportVersions(row.id)).map((version) => version.content_sha256)
   const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
   if (!qualified(screening)) throw refused(sendRows.screeningRequired)
@@ -397,7 +396,7 @@ effect function authorizeSubmission(actor: Actor, id: string) {
   if (row.state === "receipt-verified" || row.state === "abandoned") throw refused(authorizeRows.submissionClosed)
   if (row.state !== "submitting" && row.state !== "uncertain" && row.state !== "submitted") {
     const stored = try storedIntake(row.id)
-    if (stored !== undefined && (try depositHeld(stored.case_id))) throw refused(depositRefusals.depositRequired)
+    if (stored !== undefined && (try depositHeld(stored.case_id))) throw refused(authorizeRows.depositRequired)
     if (stored !== undefined && !qualified(screeningOf(stored, githubNumber(row.reporter_github_id), []))) throw refused(authorizeRows.screeningRequired)
   }
   const flow = try beginAuthorization(app, { submissionId: row.id, githubId: actor.githubId, githubLogin: actor.login })

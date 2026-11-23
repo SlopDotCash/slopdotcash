@@ -1,0 +1,92 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import { parsedJson, sha256Of, textBytes, utf8Text } from "@repo/platform/git/bytes"
+import { type SourceAudit, digestPattern, digestText, require } from "../packet.vibe"
+import { type PacketManifest, type PacketStorage, parsePacketManifest, previewStorage, readPacket, stageChunk } from "../transport.vibe"
+import { base64Text, brotliBytes } from "./archive.ts"
+import { type HistoricalReplayReceipt, replayReceipt } from "./receipt.vibe"
+
+export interface HistoricalReplayReview {
+  readonly sourceAudit: SourceAudit
+  readonly valueSnapshot: unknown
+  readonly valueKeys: ReadonlyArray<string>
+  readonly qualificationSha256: string
+}
+
+export error ReplayReviewUnavailable { message: string }
+
+const reviewVersion = "slop-historical-replay-review-v1"
+const chunkBytes = 393_216
+const maximumRawBytes = 128 * 1024 * 1024
+const maximumChunks = 64
+const bundleFields = "qualificationSha256,schemaVersion,sourceAudit,valueKeys,valueSnapshot"
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function reviewStorage() {
+  return try previewStorage(try environment("CLOUDFLARE_ACCOUNT_ID"), try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make("")),
+    try Config.withDefault(Config.Redacted("PRIVATE_PACKET_ENCRYPTION_KEY"), Redacted.make("")))
+}
+
+export effect function stageHistoricalReplayReview<E, R>(review: HistoricalReplayReview, storage: PacketStorage<E, R>) {
+  const raw = textBytes(JSON.stringify({ schemaVersion: reviewVersion, ...review }))
+  try require(raw.length <= maximumRawBytes, "Historical replay review exceeds the private size bound")
+  const compressed = brotliBytes(raw)
+  const chunks: Uint8Array[] = []
+  for (let offset = 0; offset < compressed.length; offset += chunkBytes) chunks.push(compressed.subarray(offset, offset + chunkBytes))
+  try require(chunks.length <= maximumChunks, "Historical replay review exceeds the private chunk bound")
+  const manifest: PacketManifest = {
+    schemaVersion: "1",
+    compression: "br",
+    rawSha256: sha256Of(raw),
+    rawBytes: raw.length,
+    compressedSha256: sha256Of(compressed),
+    compressedBytes: compressed.length,
+    chunks: chunks.map((chunk) => ({ sha256: sha256Of(chunk), bytes: chunk.length })),
+  }
+  const text = JSON.stringify(manifest)
+  for (const [index, chunk] of chunks.entries()) try stageChunk(storage, text, index, base64Text(chunk))
+  const stored = try readPacket(storage, text)
+  try require(stored.length === raw.length && sha256Of(stored) === sha256Of(raw), "Stored historical replay review differs from producer bytes")
+  return text
+}
+
+export effect function readHistoricalReplayReview<E, R>(receipt: HistoricalReplayReceipt, storage: PacketStorage<E, R>) {
+  const text = receipt.replay.privateReviewManifest
+  try require(receipt.schemaVersion === "1" && receipt.mode === "assessment-replay" && typeof text === "string" && text.length <= 8192 &&
+    digestPattern.test(receipt.replay.qualificationSha256 ?? ""), "Historical replay receipt has no private review manifest")
+  const manifest = try parsePacketManifest(text ?? "")
+  try require(manifest.compression === "br" && manifest.chunks.length <= maximumChunks && manifest.rawBytes <= maximumRawBytes, "Historical replay review exceeds its transport contract")
+  const bytes = try readPacket(storage, text ?? "")
+  const decoded = utf8Text(bytes)
+  const bundle = decoded === undefined ? undefined : parsedJson(decoded)?.value as (HistoricalReplayReview & { readonly schemaVersion?: unknown }) | undefined
+  const audit = bundle?.sourceAudit
+  try require(bundle !== undefined && typeof bundle === "object" && bundle !== null && bundle.schemaVersion === reviewVersion && Object.keys(bundle).sort().join(",") === bundleFields &&
+    bundle.qualificationSha256 === receipt.replay.qualificationSha256 && audit !== undefined && digestText(audit) === receipt.sourceDigest &&
+    audit.repositoryNodeId === receipt.sourceRepositoryNodeId && audit.from === receipt.sourceFrom && audit.through === receipt.sourceThrough &&
+    audit.sources.length === receipt.sourceCount && Array.isArray(bundle.valueKeys) && new Set(bundle.valueKeys).size === bundle.valueKeys.length &&
+    bundle.valueKeys.every((key) => typeof key === "string" && digestPattern.test(key)) &&
+    (receipt.replay.snapshotSha256 === null ? bundle.valueSnapshot === null && bundle.valueKeys.length === 0 : digestText(bundle.valueSnapshot) === receipt.replay.snapshotSha256),
+    "Historical replay review differs from the trusted receipt")
+  return bytes
+}
+
+effect function retrieved(args: ReadonlyArray<string>) {
+  const [receiptPath, outputPath, ...extra] = args
+  try require(receiptPath !== undefined && outputPath !== undefined && extra.length === 0, "Historical replay review requires an exact receipt and output")
+  const fs = try FileSystem.FileSystem
+  const data = try fs.readFile(receiptPath ?? "")
+  const receipt = try replayReceipt(data, String(fields(parsedJson(utf8Text(data) ?? "")?.value).sourceCommit ?? ""))
+  const bytes = try readHistoricalReplayReview(receipt, try reviewStorage())
+  try fs.writeFile(outputPath ?? "", bytes, { flag: "wx", mode: 0o600 })
+}
+
+function fields(value: unknown): Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
+}
+
+export effect function replayReview(args: ReadonlyArray<string>) {
+  const refused = () => Effect.fail(new ReplayReviewUnavailable({ message: "Could not read the private historical replay review." }))
+  try Effect.catchDefect(Effect.catch(retrieved(args), refused), refused)
+}

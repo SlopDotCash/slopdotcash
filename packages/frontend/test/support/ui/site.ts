@@ -1,16 +1,22 @@
 // spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Handler, bundle, migrate, startWorker } from "@repo/platform/testing";
+import { type Handler, type WorkerOptions, bundle, migrate, startWorker, workerOptions } from "@repo/platform/testing";
+import { type Anvil, anvil } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
 import { internet } from "@repo/platform/testing/internet";
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths";
+import { evmAddress } from "@repo/settlement/chain/evm/abi";
 import type {} from "@vitest/browser-playwright";
 import { Request, Response } from "miniflare";
-import type { Browser, BrowserContext, Locator, Page, Route } from "playwright";
+import type { Browser, BrowserContext, Download, Locator, Page, Route } from "playwright";
+import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
-import type { Diagnostics, Layout, Op, Result, Row, Sent, Shown, Target, Verification } from "./protocol.ts";
+import { escrowStack, word } from "../../../../../apps/settlement/test/support/evm/deploy.ts";
+import type { Answered, Bucket, Deployed, Diagnostics, Downloaded, Layout, Method, Op, Result, Roles, Row, Sent, Shown, Target, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
 import { type Wallets, injectWallets } from "./wallets.ts";
 
@@ -18,7 +24,12 @@ const site = "https://slop.cash";
 const identityOrigin = "https://identity.slop.cash";
 const appRoot = join(repoRoot, "apps/app");
 const backendRoot = join(repoRoot, "apps/backend");
-const roles = { ADMIN_GITHUB_IDS: "9001,18633264", PROJECT_MODERATOR_GITHUB_IDS: "9001,18633264", OPERATOR_GITHUB_IDS: "9001" };
+const slopbotRoot = join(repoRoot, "apps/slopbot");
+const defaultRoles: Roles = { ADMIN_GITHUB_IDS: "9001,18633264", PROJECT_MODERATOR_GITHUB_IDS: "9001,18633264", OPERATOR_GITHUB_IDS: "9001" };
+const reader = { id: 4_000_001, login: "slop-reader" };
+const vaultNetwork = "base-mainnet";
+const depositorFunds = 1_000_000_000n;
+const mintAbi = parseAbi(["function mint(address to, uint256 amount)"]);
 const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#777"/></svg>')}`;
 
 interface Fetching {
@@ -31,6 +42,9 @@ interface Started {
   readonly github: ReturnType<typeof githubFake>;
   readonly rows: (text: string, params: ReadonlyArray<string | number | null>) => Promise<ReadonlyArray<Row>>;
   readonly verifications: Verification[];
+  readonly deploy: (roles: Roles) => Promise<void>;
+  readonly scanner: (method: Method, path: string, body: string) => Promise<Answered>;
+  readonly replace: (bucket: Bucket, key: string, text: string) => Promise<void>;
 }
 
 interface Held {
@@ -51,9 +65,27 @@ interface Session {
   cookiesBlocked: boolean;
   restore: (() => Promise<void>) | undefined;
   wallets: Wallets | undefined;
+  chain: Promise<Anvil> | undefined;
+  downloaded: Promise<Downloaded> | undefined;
 }
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+const sameRoles = (left: Roles, right: Roles) => left.ADMIN_GITHUB_IDS === right.ADMIN_GITHUB_IDS && left.PROJECT_MODERATOR_GITHUB_IDS === right.PROJECT_MODERATOR_GITHUB_IDS && left.OPERATOR_GITHUB_IDS === right.OPERATOR_GITHUB_IDS;
+
+function scannerKey() {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const raw = Buffer.from(publicKey.export({ format: "jwk" }).x ?? "", "base64url");
+  return { privateKey, configured: raw.toString("base64"), id: sha256(raw) };
+}
+
+async function answered(response: Response): Promise<Answered> {
+  const text = await response.text();
+  const body: unknown = text === "" ? null : (response.headers.get("content-type") ?? "").startsWith("application/json") ? JSON.parse(text) : text;
+  return { status: response.status, body };
+}
 
 function notifyOf(verifications: Verification[]): Handler {
   return async (request) => {
@@ -82,10 +114,14 @@ async function start(): Promise<Started> {
   const assets = await builtSite();
   const script = await bundle(appRoot, { entry: "_worker" });
   const identityScript = await bundle(backendRoot, { entry: "identity" });
+  const slopbotScript = await bundle(slopbotRoot, { entry: "repositoryAccess" });
   const github = githubFake();
+  github.world.addUser(reader);
   const net = internet({ github: github.handler });
   const verifications: Verification[] = [];
-  const mf = startWorker({
+  const signer = scannerKey();
+  const readToken = github.tokens.user(reader.login);
+  const options = (roles: Roles): WorkerOptions => ({
     script,
     assets,
     d1: { SLOP_DB: "slop-private" },
@@ -98,10 +134,18 @@ async function start(): Promise<Started> {
       MONTHLY_PAYMENT_SCHEDULE: '{"firstPeriod":"2026-11","cutoffSecondsAfterPeriodEnd":259200}',
       SLOP_PRIVATE_INTAKE_MODE: "on",
       TRACE_AUTH_SECRET: "trace-auth-secret-for-the-browser-journeys-0001",
+      SLOP_GITHUB_READ_TOKEN: readToken,
+      VETTING_RESULT_PUBLIC_KEYS: signer.configured,
     },
     services: { SLOP_NOTIFY: notifyOf(verifications) },
     outbound: net.handler,
     workers: {
+      SLOPBOT: {
+        name: "slopbot",
+        script: slopbotScript,
+        d1: { SLOPBOT_DB: "slop-private" },
+        vars: { SLOPBOT_APP_ID: github.app.id, SLOPBOT_APP_PRIVATE_KEY: github.app.privateKeyPem },
+      },
       SLOP_IDENTITY: {
         name: "identity",
         script: identityScript,
@@ -117,16 +161,35 @@ async function start(): Promise<Started> {
       },
     },
   });
+  let deployed = defaultRoles;
+  const mf = startWorker(options(deployed));
   await mf.ready;
   const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((file) => file.error !== undefined);
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
-  const identity = (await mf.getWorker("identity")) as unknown as Fetching;
   return {
     site: (request) => mf.dispatchFetch(request),
-    identity: (request) => identity.fetch(request),
+    identity: async (request) => ((await mf.getWorker("identity")) as unknown as Fetching).fetch(request),
     github,
     rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
     verifications,
+    deploy: async (roles) => {
+      if (sameRoles(roles, deployed)) return;
+      deployed = roles;
+      await mf.setOptions(workerOptions(options(roles), []));
+    },
+    scanner: async (method, path, body) => {
+      const bytes = new TextEncoder().encode(body);
+      const timestamp = new Date().toISOString();
+      const signature = sign(null, Buffer.from(["slop-vetting:v1", method, path, timestamp, sha256(bytes)].join("\n")), signer.privateKey).toString("base64");
+      const headers = { "x-slop-vetting-key": signer.id, "x-slop-vetting-timestamp": timestamp, "x-slop-vetting-signature": signature, "content-type": method === "PUT" ? "application/octet-stream" : "application/json" };
+      return answered(await mf.dispatchFetch(`${site}${path}`, { method, headers, redirect: "manual", ...(method === "GET" ? {} : { body: bytes }) }));
+    },
+    replace: async (bucket, key, text) => {
+      const objects = await mf.getR2Bucket(bucket);
+      const found = await objects.head(key);
+      if (found === null) throw new Error(`site: no ${bucket} object ${key}`);
+      await objects.put(key, text, { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
+    },
   };
 }
 
@@ -185,7 +248,16 @@ async function routed(route: Route) {
   return route.abort("blockedbyclient");
 }
 
+async function downloadedOf(download: Download): Promise<Downloaded> {
+  return { name: download.suggestedFilename(), sha256: sha256(await readFile(await download.path())) };
+}
+
 function watch(opened: BrowserContext, into: Session) {
+  opened.on("page", (added) => {
+    added.on("download", (download) => {
+      into.downloaded = downloadedOf(download);
+    });
+  });
   opened.on("console", (message) => {
     if (message.type() === "error") into.console.push(`console ${message.text()}`);
   });
@@ -202,15 +274,15 @@ async function reset(context: BrowserCommandContext) {
   const previous = session;
   session = undefined;
   if (previous !== undefined) {
-    await previous.wallets?.close();
     for (const held of previous.holds.values()) held.release();
     await previous.context.close();
+    if (previous.chain !== undefined) await (await previous.chain).close();
   }
-  await backend();
+  await (await backend()).deploy(defaultRoles);
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined };
+  const made: Session = { context: opened, tabs: new Map(), holds: new Map(), sent: [], console: [], failed: [], allowed: [], current: "main", consenting: "", cookiesBlocked: false, restore: undefined, wallets: undefined, chain: undefined, downloaded: undefined };
   session = made;
   watch(opened, made);
   await opened.route("**/*", routed);
@@ -237,6 +309,51 @@ function locate(scope: Page | Locator, target: Target): Locator {
   if (target.label !== undefined) return within.getByLabel(target.label, { exact });
   if (target.text !== undefined) return within.getByText(target.text, { exact: target.exact ?? false });
   return within.locator("body");
+}
+
+function walletChain(into: Session): Promise<Anvil> {
+  into.chain ??= anvil({ chainId: 8453 });
+  return into.chain;
+}
+
+async function vault(projectId: string): Promise<Deployed> {
+  const started = await backend();
+  const chain = await walletChain(current());
+  const [depositor, owner] = [chain.accounts[0], chain.accounts[6]];
+  const ownerAddress = owner === undefined ? undefined : evmAddress(owner.address);
+  if (depositor === undefined || ownerAddress === undefined) throw new Error("site: the wallet anvil has no accounts 0 and 6");
+  const stack = await escrowStack(chain);
+  try {
+    const created = await stack.createVault({ owner: ownerAddress, projectId: word(BigInt(`0x${sha256(`slop-project:${projectId}`)}`)), asset: stack.dollar, purpose: "OrdinaryPurpose", monthlyCap: 0n, monthlyEnabled: false });
+    await stack.send(depositor.address, stack.dollar, encodeFunctionData({ abi: mintAbi, functionName: "mint", args: [depositor.address, depositorFunds] }));
+    const block = await stack.head();
+    const [record] = await started.rows("SELECT revision, manifest FROM projects WHERE id = ?", [projectId]);
+    const [author] = await started.rows("SELECT actor_github_id, actor_github_login FROM project_revisions WHERE project_id = ? ORDER BY revision LIMIT 1", [projectId]);
+    if (record === undefined || author === undefined) throw new Error(`site: no project ${projectId}`);
+    const recorded = JSON.parse(String(record.manifest)) as Readonly<Record<string, unknown>>;
+    const deployment = { network: vaultNetwork, vault: created, asset: stack.dollar, owner: ownerAddress };
+    const active = { ...recorded, status: "active" };
+    const revisions = [
+      { kind: "Activated", reason: `Activated automatically after setup checks for @${String(author.actor_github_login)}.`, manifest: active },
+      { kind: "VaultRegistered", reason: "Owner registered a finalized vault verified against the reviewed factory and project policy.", manifest: { ...active, escrow: { chain: "base", deployments: [deployment] } } },
+    ];
+    const now = new Date().toISOString();
+    for (const [index, appended] of revisions.entries()) {
+      const revision = Number(record.revision) + index + 1;
+      const manifest = JSON.stringify(appended.manifest);
+      const digest = sha256(manifest);
+      await started.rows("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, revision, manifest, digest, appended.reason, String(author.actor_github_id), String(author.actor_github_login), now]);
+      await started.rows("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", [projectId, revision, appended.kind]);
+      await started.rows("UPDATE projects SET status = 'active', revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", [revision, manifest, digest, now, projectId]);
+    }
+    await started.rows(
+      "INSERT INTO vault_snapshots(project_id,network,chain,vault,asset_address,asset_decimals,total_deposited,total_paid,total_payout_fees,total_gross_withdrawn,total_withdrawal_fees,total_service_fees,free_balance,reserved_principal,reserved_fees,accrued_fees,reserved,block_number,block_time,observed_at) VALUES(?,?,'base',?,?,6,'0','0','0','0','0','0','0','0','0','0','0',?,?,?)",
+      [projectId, vaultNetwork, created, stack.dollar, block.toString(), now, now],
+    );
+    return { vault: created, asset: stack.dollar };
+  } finally {
+    await stack.close();
+  }
 }
 
 const absent: Shown = { count: 0, visible: false, text: "", value: null, disabled: false, checked: null, focused: false, href: null };
@@ -310,9 +427,35 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     case "start":
       await reset(context);
       return null;
-    case "user":
-      (await backend()).github.world.addUser({ id: op.id, login: op.login, nodeId: `U_${op.login}` });
+    case "user": {
+      const { world } = (await backend()).github;
+      if (world.accountById(op.id) === undefined) world.addUser({ id: op.id, login: op.login, nodeId: `U_${op.login}` });
       return null;
+    }
+    case "deploy":
+      await (await backend()).deploy(op.roles);
+      return null;
+    case "repository": {
+      const { id, owner, name, fork, archived, license, files } = op.setup;
+      (await backend()).github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
+      return null;
+    }
+    case "permission":
+      (await backend()).github.world.setPermission(op.repository, op.login, op.level);
+      return null;
+    case "installation":
+      (await backend()).github.world.addInstallation({ ...op.setup, permissions: { contents: "read", issues: "write", pull_requests: "write" } });
+      return null;
+    case "githubFail":
+      (await backend()).github.failNext(op.path, { status: op.status });
+      return null;
+    case "scanner":
+      return (await backend()).scanner(op.method, op.path, op.body);
+    case "object":
+      await (await backend()).replace(op.bucket, op.key, op.text);
+      return null;
+    case "vault":
+      return vault(op.projectId);
     case "github":
       current().consenting = op.login;
       return null;
@@ -331,6 +474,9 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     case "fill":
       await locate(page(), op.target).first().fill(op.value);
+      return null;
+    case "select":
+      await locate(page(), op.target).first().selectOption({ label: op.label });
       return null;
     case "press":
       await page().keyboard.press(op.keys);
@@ -360,6 +506,8 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
         const text = await response.text();
         return { status: response.status, body: text === "" ? null : (JSON.parse(text) as unknown) };
       }, { method: op.method, path: op.path, body: op.body });
+    case "download":
+      return (await current().downloaded) ?? null;
     case "leaks":
       return leaks(op.text);
     case "hold": {
@@ -404,7 +552,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     case "diagnostics":
       return diagnostics();
     case "wallets":
-      current().wallets = await injectWallets(current().context, op.setup);
+      current().wallets = await injectWallets(current().context, op.setup, op.setup.evm === undefined ? undefined : await walletChain(current()));
       return null;
     case "walletAccount":
       wallets().useAccount(op.index);

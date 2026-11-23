@@ -1,0 +1,245 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type D1, first, sql } from "@repo/platform/d1"
+import { type RpcFailure, RpcRefused } from "@repo/platform/chain/rpc"
+import { SolanaRpc, base64Decode } from "@repo/platform/chain/solana"
+import { maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import type { VaultDeployments } from "../claims/deployments.vibe"
+import { failedClaim } from "../claims/evm.vibe"
+import { solanaClaimEvidence, solanaVault } from "../claims/solana.vibe"
+import { amountOf, weiAmount } from "../journal/codec.vibe"
+import { type JupiterSettings, quoteRead } from "../jupiter/quote.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import { FeeWallet, type Prepared, SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
+import type { JupiterSwap } from "../signer/intents.ts"
+import { jsonValue } from "../solana/bytes.ts"
+import { FeeSolana, broadcastSolana, signatureStatus, walletBalance } from "../solana/client.vibe"
+import { type SolanaSend, nativeReceipt, routeStatus } from "../solana/receipt.vibe"
+import { refuse } from "../solana/wire.vibe"
+import { ChainUnavailable, ConversionChain, type OpenSend, type Replacement, type Reservable, SendRefused, type SendIntent, type SendStatus, type Signed } from "./chain.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+}
+import { errorText } from verified
+
+export interface SolanaChainOptions {
+  readonly jupiter: JupiterSettings
+  readonly maxSlippageBps: number
+  readonly limits: NativeLimits
+}
+
+type ChainServices = FeeSolana | SolanaRpc | D1 | VaultDeployments | HttpClient.HttpClient | Experimental.Crypto.Crypto
+
+interface Pending {
+  readonly intentHash: string
+  readonly go: Deferred.Deferred<void>
+  readonly fiber: Fiber.Fiber<WalletSigned, SignRefused>
+}
+
+interface Desk { pending: Pending | undefined }
+
+schema SendRow {
+  token: string; target_token: string; amount_in: string; min_amount_out: string | null; expires_at: number | null
+  quote: string | null; raw_tx: string | null; solana_account_proof: string | null
+}
+
+schema ClaimRecord { vault: string; projectId: string; payoutPolicy: "ordinary" | "security-bounty"; deployment: Schema.Unknown }
+
+const neverReplaced: Replacement = { kind: "wait", reason: "a Solana send is never replaced; only proven expiry retires it" }
+
+function textOf(error: unknown): string {
+  if (typeof error !== "object" || error === null) return errorText(String(error))
+  const fields = error as { readonly issue?: unknown; readonly detail?: unknown; readonly message?: unknown; readonly _tag?: unknown }
+  const text = [fields.issue, fields.detail, fields.message].find((value): value is string => typeof value === "string" && value.length > 0)
+  return errorText(text ?? String(fields._tag ?? "unknown"))
+}
+
+function unavailable(operation: string) {
+  return (error: unknown) => new ChainUnavailable({ operation, detail: textOf(error) })
+}
+
+function refusalOf(error: SignRefused): ChainUnavailable | SendRefused {
+  return error.step === "chain" ? new ChainUnavailable({ operation: "prepare", detail: error.issue }) : new SendRefused({ operation: error.step, detail: error.issue })
+}
+
+function broadcastFailure(error: RpcFailure): ChainUnavailable | SendRefused {
+  return error instanceof RpcRefused ? new SendRefused({ operation: "broadcast", detail: errorText(error.message) }) : new ChainUnavailable({ operation: "broadcast", detail: textOf(error) })
+}
+
+function swapOf(intent: SendIntent, options: SolanaChainOptions): JupiterSwap {
+  return {
+    kind: "JupiterSwap",
+    network: "Solana",
+    inputMint: intent.token,
+    outputMint: options.jupiter.usdc,
+    amountIn: intent.quote.amountIn,
+    minimumOutput: intent.quote.minimumOutput,
+    slippageBps: options.maxSlippageBps,
+    valueMicro: intent.quote.output,
+  }
+}
+
+effect function abandoned(desk: Desk) {
+  const current = desk.pending
+  desk.pending = undefined
+  if (current !== undefined) try Fiber.interrupt(current.fiber)
+}
+
+effect function held(slot: Deferred.Deferred<Prepared>, go: Deferred.Deferred<void>, ready: Prepared) {
+  try Deferred.succeed(slot, ready)
+  try Deferred.await(go)
+}
+
+effect function ended(fiber: Fiber.Fiber<WalletSigned, SignRefused>) {
+  try Effect.mapError(Fiber.join(fiber), refusalOf)
+  throw new SendRefused({ operation: "prepare", detail: "the fee wallet finished without reserving its send" })
+}
+
+effect function reserved(desk: Desk, wallet: FeeWallet.Shape, scope: Scope.Scope, options: SolanaChainOptions, intent: SendIntent) {
+  try abandoned(desk)
+  if (intent.quote.route !== "jupiter") throw new SendRefused({ operation: "prepare", detail: "a Solana conversion is signed only on its Jupiter route" })
+  const slot = try Deferred.make<Prepared>()
+  const go = try Deferred.make<void>()
+  const fiber = try Effect.forkIn(wallet.sign(swapOf(intent, options), (ready) => held(slot, go, ready)), scope)
+  const ready = try Effect.onInterrupt(Effect.raceAllFirst([Deferred.await(slot), ended(fiber)]), () => Fiber.interrupt(fiber))
+  if (ready.family !== "solana") {
+    try Fiber.interrupt(fiber)
+    throw new SendRefused({ operation: "prepare", detail: "a Solana conversion was not prepared as a Solana send" })
+  }
+  desk.pending = { intentHash: ready.intentHash, go, fiber }
+  return {
+    nonce: intent.nonceFloor,
+    maximumWei: (try weiAmount(ready.maximumUnits, "Solana")).toString(),
+    intentHash: ready.intentHash,
+    blockhashSlot: ready.blockhashSlot,
+    ...ready.accountProof === undefined ? {} : { accountProof: ready.accountProof },
+  } satisfies Reservable
+}
+
+effect function signed(desk: Desk, reservation: Reservable) {
+  const current = desk.pending
+  if (current === undefined || current.intentHash !== reservation.intentHash) {
+    try abandoned(desk)
+    throw new SendRefused({ operation: "sign", detail: "the signed send is not the reserved intent" })
+  }
+  desk.pending = undefined
+  try Deferred.succeed(current.go, undefined)
+  const sent = try Effect.mapError(Fiber.join(current.fiber), refusalOf)
+  if (sent.family !== "solana") throw new SendRefused({ operation: "sign", detail: "a Solana conversion was not signed as a Solana send" })
+  const ready = sent.prepared
+  return {
+    kind: "Conversion",
+    txId: sent.txId,
+    rawTx: sent.rawTx,
+    gasLimit: 1,
+    fees: { maxFee: ready.maximumUnits, priority: 0 },
+    inspection: "Inspected",
+    outputToFeeWallet: true,
+    minimumOutput: ready.minimumOutput,
+    deadline: maximumSafeValue,
+    blockhashSlot: ready.blockhashSlot,
+    toPinnedRouter: true,
+    approvedAmount: 0n,
+    allowance: 0n,
+    pricedFeeMicro: ready.pricedFeeMicro,
+    expiresAt: ready.expiresAt,
+  } satisfies Signed
+}
+
+effect function broadcastRaw(rawTx: string) {
+  const raw = base64Decode(rawTx)
+  if (raw === undefined) throw new SendRefused({ operation: "broadcast", detail: "the signed bytes are not base64" })
+  try Effect.mapError(broadcastSolana(raw), broadcastFailure)
+}
+
+effect function recordOf(txId: string) {
+  const row = try first(SendRow, sql`SELECT c.token, c.target_token, c.amount_in, c.min_amount_out, c.expires_at, c.quote, c.raw_tx, (SELECT g.solana_account_proof FROM fee_native_gas g WHERE g.network = c.network AND g.tx_id = c.tx_id ORDER BY g.rowid DESC LIMIT 1) AS solana_account_proof FROM fee_conversions c WHERE c.network = 'solana' AND c.mode = 'live' AND c.tx_id = ${txId} ORDER BY c.rowid DESC LIMIT 1`)
+  if (row === undefined) return try refuse("the journal holds no Solana send for this signature")
+  return row
+}
+
+effect function claimFact(row: typeof SendRow.Type) {
+  const parsed = row.quote === null ? undefined : jsonValue(row.quote)
+  const record = Schema.decodeUnknownEffect(ClaimRecord)(parsed) catch () => undefined
+  if (record === undefined) return try refuse("Recorded claim names no reviewed vault")
+  return { vault: record.vault, projectId: record.projectId, payoutPolicy: record.payoutPolicy, token: row.token, deployment: record.deployment } satisfies VaultFact
+}
+
+effect function claimStatus(send: SolanaSend, expiresAt: number | undefined, fact: VaultFact) {
+  const status = try signatureStatus(send.txId)
+  if (status === undefined) {
+    const height = try (try SolanaRpc).blockHeight("finalized")
+    if (expiresAt !== undefined && height > expiresAt) return { kind: "pending", mined: false } satisfies SendStatus
+    if ((try solanaVault(fact, "finalized")) === undefined) return try refuse("Recorded claim pays another fee wallet")
+    return { kind: "unseen" } satisfies SendStatus
+  }
+  if (status.confirmationStatus !== "finalized") return { kind: "pending", mined: true } satisfies SendStatus
+  const receipt = try nativeReceipt(send)
+  if (receipt.kind === "unseen") return { kind: "pending", mined: true } satisfies SendStatus
+  const evidence = receipt.succeeded ? try solanaClaimEvidence(fact, send.txId) : failedClaim
+  return {
+    kind: "landed",
+    txId: send.txId,
+    succeeded: receipt.succeeded && evidence.succeeded,
+    output: evidence.feesClaimed,
+    actualWei: receipt.actualWei,
+    blockHash: receipt.blockHash,
+    allowance: 0n,
+    feesClaimed: evidence.feesClaimed,
+    vaultDebit: evidence.vaultDebit,
+    walletCredit: evidence.walletCredit,
+    roleFree: evidence.roleFree,
+  } satisfies SendStatus
+}
+
+effect function statusOf(send: OpenSend) {
+  const latest = send.attempts[send.attempts.length - 1]
+  if (latest === undefined) return try refuse("the send has no signed attempt")
+  const { wallet } = try FeeSolana
+  const row = try recordOf(latest.txId)
+  const rawTx = latest.rawTx ?? row.raw_tx
+  if (rawTx === null) return try refuse("Solana native journal lacks its reviewed signed bytes")
+  const signedSend: SolanaSend = { txId: latest.txId, rawTx, wallet, accountProof: row.solana_account_proof ?? undefined }
+  const expiresAt = row.expires_at ?? undefined
+  switch (send.kind) {
+    case "Conversion":
+      return try routeStatus({
+        ...signedSend,
+        token: send.token,
+        targetToken: row.target_token,
+        amountIn: try amountOf(row.amount_in, "the recorded Solana swap input"),
+        minimumOutput: try amountOf(row.min_amount_out ?? "", "the recorded Solana swap minimum"),
+        expiresAt,
+      })
+    case "Claim":
+      return try claimStatus(signedSend, expiresAt, try claimFact(row))
+    case "Approval":
+      return try refuse("a Solana send is never an approval")
+    default: {
+      const _exhaustive: never = send.kind
+      return _exhaustive
+    }
+  }
+}
+
+export function solanaConversionChain(options: SolanaChainOptions) {
+  return Layer.effect(ConversionChain, effect {
+    const wallet = try FeeWallet
+    const services = try Effect.context<ChainServices>()
+    const scope = try Effect.scope
+    const desk: Desk = { pending: undefined }
+    const shape: ConversionChain.Shape = {
+      balance: (token) => Effect.provideContext(Effect.mapError(walletBalance(token, options.limits.perTransaction), unavailable("balance")), services),
+      quote: (token, amount) => Effect.provideContext(Effect.mapError(quoteRead(options.jupiter, token, amount, options.maxSlippageBps), unavailable("quote")), services),
+      reserve: (intent) => reserved(desk, wallet, scope, options, intent),
+      sign: (_intent, reservation) => signed(desk, reservation),
+      broadcast: (rawTx) => Effect.provideContext(broadcastRaw(rawTx), services),
+      status: (send) => Effect.provideContext(Effect.mapError(statusOf(send), unavailable("status")), services),
+      replacement: () => Effect.succeed(neverReplaced),
+    }
+    return shape
+  })
+}

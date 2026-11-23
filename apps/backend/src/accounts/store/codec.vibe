@@ -151,7 +151,7 @@ function emptyIdentity(now: number): Identity {
 function assertedIdentity(now: number, github: GitHubIdentity): Identity {
   return {
     now,
-    flows: [{ id: 1, oauthState: 1, capability: 1, audience: "PointsWeb", mode: "Production", status: "AssertionIssued", pkceStored: false, github, createdAt: now, expiresAt: now + 300 }],
+    flows: [{ id: 1, oauthState: 1, capability: 1, audience: "PointsWeb", mode: "Production", status: "AssertionIssued", pkceStored: false, github, createdAt: now, expiresAt: now + 300, bound: true }],
     assertions: [{ token: 1, audience: "PointsWeb", github, createdAt: now, expiresAt: now + 90, consumed: false, consumedAt: 0 }],
     windows: [],
     lastFlow: 1,

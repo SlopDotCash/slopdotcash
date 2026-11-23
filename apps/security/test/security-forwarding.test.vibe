@@ -11,10 +11,12 @@ import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { Execution } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
 import { Request as WorkerRequest } from "miniflare"
 import { privateRoute } from "../src/analysis/route.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { IntakeApp } from "../src/forwarding/grant.vibe"
 import { forwardingRoutes } from "../src/forwarding/routes.vibe"
 import { intakeSettings } from "../src/intake/availability.vibe"
@@ -114,10 +116,11 @@ function shellOf(world: World, fake: GitHubFake, clock: SettableClock, pending: 
     Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), webOrigin: fake.webAuthority, apiOrigin: fake.authority } }),
     ports(clock),
     receiptNotices,
+    reportDepositSettings("off"),
     Layer.succeed(Execution, { context: { waitUntil: (work) => { pending.push(work) } } satisfies ExecutionContext }),
   )
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outboundVia(viaFake), webCrypto))
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github, route), base)
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, github, route, SubmissionFeeRatesLive, ProjectParticipationLive), base)
 }
 
 const Started = Layer.effect(Forwarding, effect {

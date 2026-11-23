@@ -2,7 +2,7 @@
 import { switchedOn as submissionFeeSwitchedOn } from "@repo/backend/client"
 import { reportDepositPath, submissionFeePath } from "@repo/fees/client"
 import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client"
-import { type ChainResult, type FreshRead, Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
+import { type ChainResult, type FreshRead, Machine, type PayFlow, adapter, autoAskDelay, bundle, canAnswer, canAsk, canConfirmDue, canConfirmUnsent, canConnectWallet, canDisconnectWallet, canEnterHash, canObserveClock, canObserveNoRecord, canObserveRecord, canOpenPage, canReadFails, canReview, canSetTabHidden, canWalletReply, chainReader, clock, depositedWithinHour, initial, machineOver, payer, reader, recordRefreshDue, recordRefreshSeconds, recordShown, recordValid, tab, timer } from "../../../gen/frontend__feePages.effect.vibe"
 import type { Attempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { networkLabel } from "../../kernels/assetText.ts"
 import { fetchBounded } from "../../platform/bounded.vibe"
@@ -82,6 +82,7 @@ export const payMessages = {
   declined: "You declined the wallet request. Nothing was sent.",
   unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
   unreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new payment.",
+  cleared: "Local request cleared. Review again before sending.",
   failed: "The transaction failed and no tokens moved. Review the payment, then retry.",
   notSent: "Your wallet reports that this request was not sent. Review the payment, then retry.",
   approval: "Token approval confirmed. Review the deposit to continue; nothing has been deposited yet.",
@@ -135,6 +136,8 @@ export interface FeePay {
   check(candidate: string): PayFlow!!Needs
   tabHidden(hidden: boolean): PayFlow!!
   clearUnreadable(): boolean!!
+  clearUnsent(): PayFlow!PayRefused!
+  disconnect(): FeeShown!!
   follow(): void!!Needs
 }
 
@@ -475,6 +478,16 @@ export effect function feeDesk(address: PayAddress, storage: SlotStorage | undef
       keeper.read("deposit")
       if (cleared) try update((current) => ({ ...current, unreadable: false, saved: undefined }))
       return cleared
+    },
+    clearUnsent: effect () => {
+      if (!canConfirmUnsent(try machine.get(), payer) || !(try sent({ type: "confirmUnsent" }, payer)) || (try machine.get()).phase !== "Idle") throw new PayRefused({ message: slotChangedMessage })
+      try update((current) => ({ ...current, reviewed: undefined, saved: undefined, notice: payMessages.cleared, error: "" }))
+      return try machine.get()
+    },
+    disconnect: effect () => {
+      if (canDisconnectWallet(try machine.get(), payer)) try sent({ type: "disconnectWallet" }, payer)
+      if ((try machine.get()).connected) return try shown()
+      return try update((current) => ({ ...current, wallet: undefined, reviewed: undefined }))
     },
     follow: effect () => {
       try Effect.all([autoChecks(), refreshes()], { concurrency: "unbounded", discard: true })

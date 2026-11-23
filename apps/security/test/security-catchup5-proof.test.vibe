@@ -12,6 +12,7 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Execution } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { noticePorts } from "@repo/operations/live"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
@@ -19,6 +20,7 @@ import { Request as WorkerRequest } from "miniflare"
 import { analysisPrompt, jsonValue, screeningPrompt } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { FORWARDED_TOO_LONG, forwardedDescription, proofFileNameProblem, proofPatchProblem } from "../src/client/proof.ts"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { IntakeApp } from "../src/forwarding/grant.vibe"
 import { forwardingRoutes } from "../src/forwarding/routes.vibe"
 import { intakeSettings } from "../src/intake/availability.vibe"
@@ -115,10 +117,11 @@ function shellOf(world: World, github: GitHubFake, provider: ProviderFake, clock
     outboundVia(viaFakes),
     Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: github.app.clientId, clientSecret: Redacted.make(github.app.clientSecret), webOrigin: github.webAuthority, apiOrigin: github.authority } }),
     ports(clock),
+    reportDepositSettings("off"),
     Layer.succeed(Execution, { context: { waitUntil: (work) => { pending.push(work) } } satisfies ExecutionContext }),
   )
   const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFakes), webCrypto))
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, noticePorts, app, route), base)
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, CallerLive, noticePorts, app, route, SubmissionFeeRatesLive, ProjectParticipationLive), base)
 }
 
 const Started = Layer.effect(Proofs, effect {

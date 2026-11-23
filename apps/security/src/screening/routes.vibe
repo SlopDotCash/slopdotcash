@@ -1,4 +1,4 @@
-// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"
 import { randomId } from "@repo/platform/crypto"
 import { type Actor, Refused, handleRaw, json, jsonBody, sameOriginWrite } from "@repo/platform/http"
 import { Conflict } from "@repo/platform/stored"
@@ -7,6 +7,7 @@ import type { Review, Screening } from "../../gen/security__screening.ts"
 import { mayReadBody, technicalNow } from "../../gen/security__cases.effect.vibe"
 import { Rejected, qualified, recoverable } from "../../gen/security__screening.effect.vibe"
 import { assessQualified } from "../assessment/routes.vibe"
+import { depositView } from "../deposit/view.vibe"
 import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
 import { retryScreening, reviewRouting } from "../client/screening.vibe"
 import { postSecuritySubmissionsByIdReview as reviewRows, postSecuritySubmissionsByIdScreen as screenRows } from "../client/refusals.vibe"
@@ -27,6 +28,7 @@ interface Row {
 
 interface Located {
   readonly row: SubmissionRow
+  readonly caseId: string
   readonly reporter: boolean
   readonly maintainer: boolean
 }
@@ -60,7 +62,7 @@ effect function located(actor: Actor, id: string) {
   const viewer = githubNumber(actor.githubId)
   const reporter = row.reporter_github_id === actor.githubId
   if (!reporter && !mayReadBody(current, viewer, viewerEpoch)) throw refused(notFound)
-  return { row, reporter, maintainer: technicalNow(current, viewer, viewerEpoch) } satisfies Located
+  return { row, caseId: record.id, reporter, maintainer: technicalNow(current, viewer, viewerEpoch) } satisfies Located
 }
 
 effect function requestBody() {
@@ -75,7 +77,8 @@ effect function viewed(found: Located) {
     default: throw error;
   }
   const intake = view.intake === null ? null : { ...view.intake, canReview: found.maintainer, canAuthorize: found.reporter && view.intake.canAuthorize, canRevise: found.reporter && view.intake.canRevise }
-  return json({ submission: { ...view, intake } }, 200, privateHeaders)
+  const deposit = found.reporter ? { deposit: try depositView(found.caseId) } : {}
+  return json({ submission: { ...view, intake, ...deposit } }, 200, privateHeaders)
 }
 
 function waiting(screening: Screening) {
@@ -88,6 +91,7 @@ effect function retry(actor: Actor, id: string) {
   const { screening } = try screeningAt(id)
   if (body.expectedRevision !== screening.revision) throw refused(screenRows.staleRevisionTheReportChangedReload)
   if (!exactKeys(body, ["expectedRevision"])) throw refused(screenRows.invalidRequestRequestBodyHasUnexpected)
+  if (screening.depositHeld) throw refused(screenRows.depositRequired)
   const ready = qualified(screening)
   if (!ready && !waiting(screening)) throw refused(screenRows.screeningNotRetryable)
   const nowMs = try Clock.currentTimeMillis

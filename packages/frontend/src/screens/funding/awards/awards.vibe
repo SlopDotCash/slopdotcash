@@ -14,7 +14,7 @@ import { type Deployment, deploymentOf } from "../../../wallets/owner/commitment
 import { type ChainStatus, type SolanaCommitmentReview, type VerifiedCommitment, checkEvmCommitment, checkSolanaCommitment, commitmentMessages, evmVaultOf, familyOf, requestCommitment, reviewSolanaCommitment, sendEvmCommitment, sendSolanaCommitment } from "../../../wallets/owner/commitments.vibe"
 import { type EvmVault, readVault, requireVaultWallet } from "../../../wallets/owner/evmVault.vibe"
 import { readText, slotOfText } from "../../../wallets/owner/flowSlots.ts"
-import { monthlyNotice, ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
+import { type MonthlySlotKeys, monthlyNotice, ownerMonthlyPage } from "../../../wallets/owner/ownerMonthly.vibe"
 import { type ReleaseMonth, type ReleaseReady, type ReleaseStatus, checkRelease, heldMessage, releaseMessages, requestRelease, sendEvmRelease } from "../../../wallets/owner/reserveRelease.vibe"
 import type { SolanaVaultTerms } from "../../../wallets/owner/solanaPlans.ts"
 import { type FundingProject, deploymentsOf } from "../vault/project.schema.ts"
@@ -53,6 +53,11 @@ export interface ReleaseChecked {
   readonly hash: string
 }
 
+export interface ReleaseSent {
+  readonly hash: string
+  readonly kept: boolean
+}
+
 interface Shown {
   readonly view: MonthlyOwnerView | undefined
   readonly actor: string
@@ -87,25 +92,31 @@ export service AwardsDesk {
   readonly project: FundingProject
   readonly period: string
   readonly monthly: MonthlyPage
+  readonly keys: MonthlySlotKeys
+  readonly released: { network: string }
   readonly shown: SubscriptionRef.SubscriptionRef<Shown>
 }
 
 const shared = Layer.provideMerge(walletChoiceServices, browserServices)
 const memo = Layer.makeMemoMapUnsafe()
 
-function slotKeys(projectId: string, period: string) {
+function slotKeys(projectId: string, period: string, released: { readonly network: string }): MonthlySlotKeys {
   return {
     commitment: commitmentKey(projectId, period),
     setting: `${storageKeys.vaultMonthly.key}${projectId}:${period}`,
-    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+    get release() {
+      return `${storageKeys.monthlyRelease.key}${projectId}:${period}:${released.network}`
+    },
   }
 }
 
 function deskOf(project: FundingProject, period: string) {
   return Layer.effect(AwardsDesk, effect {
-    const monthly = try ownerMonthlyPage(sessionSlots(), slotKeys(project.id, period), project.id, period)
+    const released = { network: "" }
+    const keys = slotKeys(project.id, period, released)
+    const monthly = try ownerMonthlyPage(sessionSlots(), keys, project.id, period)
     const shown = try SubscriptionRef.make<Shown>({ view: undefined, actor: "" })
-    return { project, period, monthly, shown }
+    return { project, period, monthly, keys, released, shown }
   })
 }
 
@@ -133,8 +144,9 @@ function stopped(message: string) {
 }
 
 effect function accept(view: MonthlyOwnerView) {
-  const { project, period, shown } = try AwardsDesk
+  const { project, period, released, shown } = try AwardsDesk
   if (view.projectId !== project.id || view.period !== period) throw stopped(awardMessages.unverified)
+  released.network = deploymentOf(view.deployment)?.network ?? ""
   try SubscriptionRef.update(shown, (current) => ({ ...current, view }))
   return view
 }
@@ -393,7 +405,11 @@ export effect function sendRelease(connection: Connection, ready: ReleaseReady) 
   const { vault, wallet } = try releaseVault(target, connection)
   const fresh = try requestRelease(target.month, vault.vault, try actorOf())
   if (fresh.status !== "ready" || fresh.planId !== ready.planId || JSON.stringify(fresh.transaction) !== JSON.stringify(ready.transaction)) throw stopped(releaseMessages.changed)
-  return try monthly.submit("Release", (before) => sendEvmRelease(wallet, vault, fresh, before))
+  const sent: ReleaseSent = Effect.map(monthly.submit("Release", (before) => sendEvmRelease(wallet, vault, fresh, before)), (hash) => ({ hash, kept: true })) catch effect (error) => {
+    if (error._tag === "HashNotKept") return { hash: error.hash, kept: false }
+    throw error
+  }
+  return sent
 }
 
 function releaseResultOf(status: ReleaseStatus): ChainResult {
@@ -422,8 +438,7 @@ export effect function confirmReleaseUnsent() {
 }
 
 export effect function unreadableRelease() {
-  const { project, period } = try AwardsDesk
-  return slotOfText(readText(sessionSlots(), slotKeys(project.id, period).release)).kind === "unreadable"
+  return slotOfText(readText(sessionSlots(), (try AwardsDesk).keys.release)).kind === "unreadable"
 }
 
 export effect function clearUnreadableRelease() {
@@ -431,6 +446,5 @@ export effect function clearUnreadableRelease() {
 }
 
 export effect function savedReleaseHeld() {
-  const { project, period } = try AwardsDesk
-  return slotOfText(readText(sessionSlots(), slotKeys(project.id, period).release)).kind !== "empty"
+  return slotOfText(readText(sessionSlots(), (try AwardsDesk).keys.release)).kind !== "empty"
 }

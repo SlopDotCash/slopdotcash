@@ -88,7 +88,7 @@ function attemptFor(solana: Partition, attempts: ReadonlyArray<AttemptRow>) {
 }
 
 function generationOf(evidence: PaymentEvidence): SolanaGeneration {
-  return { obligation: modelObligation, generation: 1, claim: evidence.attemptClaim, transaction: 1, status: "SolanaPrepared", expiryHeight: blockhashValidity, privateCase: evidence.privateCase }
+  return { obligation: modelObligation, generation: 1, claim: evidence.attemptClaim, transaction: 1, status: "SolanaPrepared", expiryHeight: blockhashValidity, privateCase: evidence.privateCase, failedFinalized: false }
 }
 
 export function caseOf(ledger: Ledger): string | undefined {

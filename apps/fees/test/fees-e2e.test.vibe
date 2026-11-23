@@ -1,15 +1,51 @@
 import { assert, layer } from "@effect/vitest"
 import { database, bundle, migrate, scheduled, workerOptions } from "@repo/platform/testing"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type Anvil, anvil, forward } from "@repo/platform/testing/chains"
+import { type Internet, internet } from "@repo/platform/testing/internet"
 import { migrationsDir } from "@repo/platform/testing/paths"
+import { type QuotesFake, quotesFake } from "@repo/platform/testing/quotes"
 import { Miniflare, Response } from "miniflare"
+import type { Address, Hex } from "viem"
+import { feeWalletEvmMarker } from "../src/signer/evmKey.ts"
+import { feeWalletSolanaMarker } from "../src/signer/solanaKey.ts"
+import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
+import { feeConversionsPath } from "../src/client/report.vibe"
+import { type FeeTokens, allowanceOf, balanceOf, feeTokens, finalize, fixtureBuild, kyberRoutes, landed, mint, nonceOf, router, simpleModeRouter, unit, zeroFeeSource } from "./support/chains/evm.ts"
+import { type Converter, type JournalRow, answered, buybackLimits, bundledText, converterBinding, converterDatabase, converterLimits, execute, heldLocks, journal, redeploy, runAt, sessionHash, settledEvents, signedWithoutReservation, signerMarkers, stagingVars, startConverter } from "./support/scenarios/feeConverter.ts"
 
-service Bundled { readonly script: string }
+service Bundled { readonly submissionFee: string; readonly converter: string }
+
+service FeeWorld {
+  readonly base: FeeTokens
+  readonly robinhood: Anvil
+  readonly quotes: QuotesFake
+  readonly net: Internet
+}
 
 error MigrationFailed { file: string }
 
+const root = new URL("..", import.meta.url).pathname
+
 const BundledLive = Layer.effect(Bundled, effect {
-  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "submissionFee" }))
-  return { script }
+  const submissionFee = try promise(() => bundle(root, { entry: "submissionFee" }))
+  const converter = try promise(() => bundle(root, { entry: "feeConverter" }))
+  return { submissionFee, converter }
+})
+
+const FeeWorldLive = Layer.effect(FeeWorld, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663 })), (started) => promise(() => started.close()))
+  const built = try acquireRelease(promise(() => fixtureBuild()), (output) => promise(() => output.close()))
+  const base = try promise(() => feeTokens(chain, built.out, circleUsdc.base as Address))
+  const quotes = quotesFake()
+  kyberRoutes(quotes, base)
+  const net = internet({
+    quotes: simpleModeRouter(quotes.handler),
+    rpc: { [chain.url]: forward(chain.url), [robinhood.url]: forward(robinhood.url) },
+    hosts: { "ethereum.rpc.test": () => new Response("unavailable", { status: 503 }) },
+  })
+  return { base, robinhood, quotes, net }
 })
 
 interface Started {
@@ -19,21 +55,35 @@ interface Started {
   readonly outboundErrors: ReadonlyArray<string>
 }
 
+interface Wallet { readonly address: Address; readonly key: Hex }
+
 const limits = { SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "200000000000000", SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "2000000000000000" }
 
 const unavailableRpc = { RPC_URL_SUBMISSION_FEE_BASE: "https://base.rpc.test", RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://robinhood.rpc.test" }
+
+const at = {
+  recovery: "2026-11-23T12:00:00.000Z",
+  receipts: "2026-11-23T12:01:00.000Z",
+  second: "2026-11-23T12:15:00.000Z",
+  third: "2026-11-23T12:30:00.000Z",
+  fourth: "2026-11-23T12:45:00.000Z",
+}
+
+const dust = 4_000_000_000_000_000n
+const quotable = 6_000_000_000_000_000n
+const received = 2_000n * unit
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function started(vars: Readonly<Record<string, string>>) {
-  const { script } = try Bundled
+  const { submissionFee } = try Bundled
   const logs: string[] = []
   const hosts: string[] = []
   const outboundErrors: string[] = []
   const mf = try acquireRelease(sync(() => new Miniflare({ ...workerOptions({
-    script,
+    script: submissionFee,
     d1: { SUBMISSION_FEE_DB: "slop-private" },
     vars,
     outbound: (request) => {
@@ -56,8 +106,8 @@ effect function page(worker: Started, path: string) {
 
 effect function sends(worker: Started) {
   const db = try promise(() => database(worker.mf, "SUBMISSION_FEE_DB"))
-  const found = try promise(() => db.prepare("SELECT count(*) AS count FROM submission_fee_sends").first<{ readonly count: number }>())
-  return found?.count ?? 0
+  const found = try promise(() => db.prepare("SELECT count(*) AS count FROM submission_fee_sends").all())
+  return found.results[0]?.count ?? 0
 }
 
 function events(worker: Started) {
@@ -69,7 +119,70 @@ effect function logged(worker: Started, expected: number) {
   return events(worker)
 }
 
-layer(BundledLive, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+effect function walletAt(index: number) {
+  const { base } = try FeeWorld
+  const found = base.chain.accounts[index]
+  if (found === undefined) return try die(new Error("anvil has too few accounts"))
+  return { address: found.address.toLowerCase() as Address, key: found.privateKey } satisfies Wallet
+}
+
+function baseVars(wallet: Address, rpc: string, tokens: ReadonlyArray<Address>, extra: Readonly<Record<string, string>>) {
+  return {
+    SLOP_ENVIRONMENT: "production",
+    FEE_CONVERTER_NETWORKS: "base",
+    FEE_WALLET_BASE: wallet,
+    RPC_URL_BASE: rpc,
+    FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: tokens }),
+    BUYBACK_MODE: "off",
+    ...converterLimits,
+    ...extra,
+  }
+}
+
+effect function converter(vars: Readonly<Record<string, string>>) {
+  const { converter: script } = try Bundled
+  const { net } = try FeeWorld
+  return try acquireRelease(promise(() => startConverter({ script, d1: { [converterBinding]: converterDatabase }, vars, outbound: net.handler })), (running) => promise(() => running.mf.dispose()))
+}
+
+effect function ran(running: Converter, time: string) {
+  return try promise(() => runAt(running, time))
+}
+
+effect function rerun(running: Converter, vars: Readonly<Record<string, string>>, removed: ReadonlyArray<string>, time: string) {
+  try promise(() => redeploy(running, vars, removed))
+  return try ran(running, time)
+}
+
+effect function rowsOf(running: Converter) {
+  return try promise(() => journal(running))
+}
+
+function outline(row: JournalRow) {
+  return [row.kind, row.network, row.mode, row.state, row.amount_in]
+}
+
+effect function chainFacts(wallet: Address, token: Address) {
+  const { base } = try FeeWorld
+  return {
+    token: try promise(() => balanceOf(base.chain, token, wallet)),
+    usdc: try promise(() => balanceOf(base.chain, base.usdc, wallet)),
+    allowance: try promise(() => allowanceOf(base.chain, token, wallet, router)),
+    nonce: try promise(() => nonceOf(base.chain, wallet)),
+  }
+}
+
+effect function minted(token: Address, wallet: Address, amount: bigint) {
+  const { base } = try FeeWorld
+  try promise(() => mint(base.chain, token, wallet, amount))
+}
+
+effect function finalized() {
+  const { base } = try FeeWorld
+  try promise(() => finalize(base.chain))
+}
+
+layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('The submission fee Worker answers its two schedules, refuses any other, and fails a run whose network failed (spec/fees/submissionFeeSends.md, "Off is inert, dry_run signs nothing, live needs the key"; spec/fees/submissionFeeSends.md, "A signed send is recorded before broadcast and one send per network is in flight"; spec/fees/submissionFeeDeposits.md, "Slopbot asks and decides; the Worker marks paid and judges")', () => Effect.scoped(effect {
     const off = try started({ SUBMISSION_FEE_MODE: "off", SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "not a number" })
     const offPage = try page(off, "/api/v1/submission-fee/rate")
@@ -96,4 +209,326 @@ layer(BundledLive, { excludeTestServices: true, timeout: "300 seconds" })((it) =
       unexpected: [[], []],
     })
   }))
+
+  it.effect('The fee converter bundle carries the two fee wallet signer markers and no other signer, and the submission fee bundle carries neither (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet")', () => effect {
+    const bundled = try Bundled
+    const converterText = try orDie(Effect.try(() => bundledText(bundled.converter)))
+    const submissionText = try orDie(Effect.try(() => bundledText(bundled.submissionFee)))
+    try same({
+      converter: signerMarkers(converterText),
+      submissionFee: signerMarkers(submissionText).filter((marker) => marker === feeWalletEvmMarker || marker === feeWalletSolanaMarker),
+    }, {
+      converter: [feeWalletEvmMarker, feeWalletSolanaMarker],
+      submissionFee: [],
+    })
+  })
+
+  it.effect('J20: off starts nothing even half configured, dry_run records the quote without loading the key, and the staging file never signs (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet")', () => Effect.scoped(effect {
+    const { base, net } = try FeeWorld
+    const requested = net.requests.length
+    const unset = try converter({ SLOP_ENVIRONMENT: "production", FEE_CONVERTER_NETWORKS: "base" })
+    const offOutcomes = [try ran(unset, at.recovery), try rerun(unset, { FEE_CONVERTER_MODE: "off" }, [], at.receipts)]
+    const offEvents = try promise(() => settledEvents(unset, 2))
+    const offRequests = net.requests.length - requested
+    const offRows = try rowsOf(unset)
+    const offLocks = try promise(() => heldLocks(unset))
+
+    const dryWallet = try walletAt(2)
+    try minted(base.dustToken, dryWallet.address, quotable)
+    const dry = try converter(baseVars(dryWallet.address, base.chain.url, [base.dustToken], { FEE_CONVERTER_MODE: "dry_run", FEE_WALLET_KEY_BASE: "not a key", FEE_READY: `base:${dryWallet.address}` }))
+    const dryOutcome = try ran(dry, at.recovery)
+    const dryRows = (try rowsOf(dry)).map((row) => [...outline(row), row.raw_tx, row.tx_id])
+    const dryChain = try chainFacts(dryWallet.address, base.dustToken)
+
+    const staging = try orDie(Effect.try(() => stagingVars()))
+    const stagingWallet = (staging.FEE_WALLET_BASE ?? "") as Address
+    const stagingKey = try walletAt(7)
+    try minted(base.dustToken, stagingWallet, quotable)
+    const staged = try converter({
+      ...staging,
+      FEE_CONVERTER_NETWORKS: "base",
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [base.dustToken] }),
+      RPC_URL_BASE: base.chain.url,
+      FEE_WALLET_KEY_BASE: stagingKey.key,
+      FEE_READY: `base:${stagingWallet}`,
+    })
+    const stagedOutcome = try ran(staged, at.recovery)
+    const stagedRows = (try rowsOf(staged)).map((row) => [...outline(row), row.raw_tx])
+    const stagedChain = try chainFacts(stagingWallet, base.dustToken)
+
+    try same({
+      off: [offOutcomes, offEvents.map((event) => [event.event, event.trigger, event.results]), offRequests, offRows, offLocks],
+      dry: [dryOutcome, dryRows, dryChain.nonce, dryChain.allowance],
+      staging: [staging.FEE_CONVERTER_MODE, stagedOutcome, stagedRows, stagedChain.nonce],
+    }, {
+      off: [["ok", "ok"], [["fee_converter_run", "recovery", []], ["fee_converter_run", "receipts", []]], 0, [], 0],
+      dry: ["ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null, null]], 0n, 0n],
+      staging: ["dry_run", "ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], 0n],
+    })
+  }))
+
+  it.effect('A run whose network fails keeps the other network work, holds no lease, and a later off run reads nothing (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => Effect.scoped(effect {
+    const { base, net } = try FeeWorld
+    const wallet = try walletAt(6)
+    try minted(base.dustToken, wallet.address, dust)
+    const running = try converter({
+      ...baseVars(wallet.address, base.chain.url, [base.dustToken], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address},ethereum:${wallet.address}` }),
+      FEE_CONVERTER_NETWORKS: "ethereum,base",
+      FEE_WALLET_ETHEREUM: wallet.address,
+      FEE_WALLET_KEY_ETHEREUM: wallet.key,
+      RPC_URL_ETHEREUM: "https://ethereum.rpc.test",
+    })
+    const failed = try ran(running, at.recovery)
+    const errors = (try promise(() => settledEvents(running, 1))).map((event) => [event.event, event.network])
+    const kept = (try rowsOf(running)).map(outline)
+    const locks = try promise(() => heldLocks(running))
+    const requested = net.requests.length
+    const offOutcomes = [try rerun(running, {}, ["FEE_CONVERTER_MODE"], at.second), try rerun(running, { FEE_CONVERTER_MODE: "off" }, [], at.third)]
+    try same({
+      failed,
+      errors,
+      kept,
+      locks,
+      off: [offOutcomes, net.requests.length - requested, (try rowsOf(running)).map(outline)],
+      nonce: (try chainFacts(wallet.address, base.dustToken)).nonce,
+    }, {
+      failed: "exception",
+      errors: [["fee_converter_network_error", "ethereum"]],
+      kept: [["conversion", "base", "live", "pending", dust.toString()]],
+      locks: 0,
+      off: [["ok", "ok"], 0, [["conversion", "base", "live", "pending", dust.toString()]]],
+      nonce: 0n,
+    })
+  }))
+
+  it.effect('Robinhood Chain keeps what it received through receipts and recovery runs in both modes, with no quote, key or chain read (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet")', () => Effect.scoped(effect {
+    const { base, robinhood, quotes, net } = try FeeWorld
+    const wallet = try walletAt(4)
+    const retained = try converter({
+      SLOP_ENVIRONMENT: "production",
+      FEE_CONVERTER_MODE: "dry_run",
+      FEE_CONVERTER_NETWORKS: "robinhood",
+      FEE_WALLET_ROBINHOOD: wallet.address,
+      RPC_URL_ROBINHOOD: robinhood.url,
+      FEE_CONVERTER_ALLOWLIST: JSON.stringify({ robinhood: [base.dustToken, robinhoodUsdg] }),
+      BUYBACK_MODE: "off",
+      ...converterLimits,
+    })
+    const requested = net.requests.length
+    const quoted = quotes.calls.length
+    const outcomes: string[] = []
+    for (const mode of ["dry_run", "live"]) {
+      try promise(() => redeploy(retained, { FEE_CONVERTER_MODE: mode }))
+      for (const time of [at.receipts, at.recovery]) outcomes.push(try ran(retained, time))
+    }
+    const runs = try promise(() => settledEvents(retained, 4))
+    try same({
+      outcomes,
+      results: runs.map((event) => (event.results as ReadonlyArray<{ readonly network: string; readonly status: string; readonly claimed: number }>).map((result) => [result.network, result.status, result.claimed])),
+      retainedLogged: retained.logs.some((line) => line.includes("fee_conversion_not_converted")),
+      requests: net.requests.length - requested,
+      quotes: quotes.calls.length - quoted,
+      rows: try rowsOf(retained),
+      locks: try promise(() => heldLocks(retained)),
+    }, {
+      outcomes: ["ok", "ok", "ok", "ok"],
+      results: [[["robinhood", "not_converted", 0]], [["robinhood", "not_converted", 0]], [["robinhood", "not_converted", 0]], [["robinhood", "not_converted", 0]]],
+      retainedLogged: true,
+      requests: 0,
+      quotes: 0,
+      rows: [],
+      locks: 0,
+    })
+  }))
+
+  it.effect('J1: a received fee on Base converts end to end through the scheduled Worker: exact approval, reserved and journaled swap, finalized USDC credit, nothing twice (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/composition.md, "The conversion run is the journal\'s, and a finalized conversion output is retained once")', () => Effect.scoped(effect {
+    const { base } = try FeeWorld
+    const wallet = try walletAt(1)
+    try minted(base.feeToken, wallet.address, received)
+    const live = try converter(baseVars(wallet.address, base.chain.url, [base.feeToken], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address}` }))
+    const outcomes = [try ran(live, at.recovery)]
+    const approved = try chainFacts(wallet.address, base.feeToken)
+    try finalized()
+    outcomes.push(try ran(live, at.second))
+    const swapped = try chainFacts(wallet.address, base.feeToken)
+    try finalized()
+    outcomes.push(try ran(live, at.third))
+    outcomes.push(try ran(live, at.fourth))
+    const rows = try rowsOf(live)
+    const settled = rows.filter((row) => row.state === "finalized")
+    const proofs: boolean[] = []
+    for (const row of settled) {
+      const onChain = try promise(() => row.tx_id === null ? Promise.resolve(false) : landed(base.chain, row.tx_id))
+      proofs.push(onChain && row.landed_tx_id === row.tx_id)
+    }
+    const runs = try promise(() => settledEvents(live, 4))
+    try same({
+      outcomes,
+      approved: [approved.allowance, approved.token, approved.nonce],
+      swapped: [swapped.token, swapped.usdc, swapped.nonce],
+      settled: settled.map((row) => [row.kind, row.mode, row.amount_in, row.amount_out]),
+      proofs,
+      open: rows.filter((row) => row.state === "submitted" || row.state === "unknown").length,
+      unreserved: try promise(() => signedWithoutReservation(live)),
+      after: try chainFacts(wallet.address, base.feeToken),
+      runs: runs.map((event) => [event.event, event.trigger]),
+    }, {
+      outcomes: ["ok", "ok", "ok", "ok"],
+      approved: [received, received, 1n],
+      swapped: [0n, 1_000_000_000n, 2n],
+      settled: [["approval", "live", received.toString(), "0"], ["conversion", "live", received.toString(), "1000000000"]],
+      proofs: [true, true],
+      open: 0,
+      unreserved: [],
+      after: { token: 0n, usdc: 1_000_000_000n, allowance: 0n, nonce: 2n },
+      runs: [["fee_converter_run", "recovery"], ["fee_converter_run", "recovery"], ["fee_converter_run", "recovery"], ["fee_converter_run", "recovery"]],
+    })
+  }))
+
+  it.effect('J19: a request cannot assert a fact to the Worker, and a redeploy that withdraws readiness or binds it to another wallet stops signing while recorded sends still settle (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => Effect.scoped(effect {
+    const { base } = try FeeWorld
+    const wallet = try walletAt(5)
+    const other = try walletAt(8)
+    try minted(base.dustToken, wallet.address, quotable)
+    const signer = try converter(baseVars(wallet.address, base.chain.url, [base.dustToken], { FEE_CONVERTER_MODE: "live", FEE_WALLET_KEY_BASE: wallet.key, FEE_READY: `base:${wallet.address}` }))
+    const forged = { finalized: true, network: "base", txId: `0x${"f".repeat(64)}`, amountOut: "1000000000", owner: wallet.address }
+    const answers = [
+      try promise(() => answered(signer, "/", forged)),
+      try promise(() => answered(signer, feeConversionsPath, forged)),
+      try promise(() => answered(signer, feeConversionsPath)),
+    ]
+    const afterForged = try rowsOf(signer)
+    const outcomes = [try ran(signer, at.recovery)]
+    const ready = try chainFacts(wallet.address, base.dustToken)
+    try finalized()
+    outcomes.push(try rerun(signer, {}, ["FEE_READY"], at.second))
+    const withdrawn = try chainFacts(wallet.address, base.dustToken)
+    outcomes.push(try rerun(signer, { FEE_READY: `base:${other.address}` }, [], at.third))
+    const rebound = try chainFacts(wallet.address, base.dustToken)
+    const rows = try rowsOf(signer)
+    try same({
+      answers,
+      afterForged,
+      outcomes,
+      nonces: [ready.nonce, withdrawn.nonce, rebound.nonce],
+      allowance: ready.allowance,
+      balance: rebound.token,
+      signed: rows.filter((row) => row.raw_tx !== null).map((row) => [row.kind, row.state]),
+      unreserved: try promise(() => signedWithoutReservation(signer)),
+    }, {
+      answers: [[404, "Not found"], [404, "Not found"], [404, "Not found"]],
+      afterForged: [],
+      outcomes: ["ok", "ok", "ok"],
+      nonces: [1n, 1n, 1n],
+      allowance: quotable,
+      balance: quotable,
+      signed: [["approval", "finalized"]],
+      unreserved: [],
+    })
+  }))
+
+  it.effect('A kept stablecoin submission fee raises the Base buyback budget once: the dry-run bridge quotes its share after the deposit is kept and records it once (spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee"; spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once")', () => Effect.scoped(effect {
+    const { base, robinhood, quotes } = try FeeWorld
+    const wallet = try walletAt(3)
+    try minted(base.usdc, wallet.address, 100_000_000n)
+    try promise(() => zeroFeeSource(base.chain, dln.source as Address))
+    try finalized()
+    try orDie(Effect.try(() => quotes.dln.order({
+      family: "evm", srcChainId: 8453n, source: dln.source as Hex, giveToken: circleUsdc.base, giveAmount: 30_000_000n, takeChainId: 4663n,
+      takeToken: robinhoodUsdg as Hex, takeAmount: 29_900_000n, orderId: `0x${"ab".repeat(32)}` as Hex, salt: 7n, nativeFee: 0n,
+    })))
+    const running = try converter({
+      SLOP_ENVIRONMENT: "production",
+      FEE_CONVERTER_MODE: "dry_run",
+      FEE_CONVERTER_NETWORKS: "base,robinhood",
+      FEE_WALLET_BASE: wallet.address,
+      FEE_WALLET_ROBINHOOD: wallet.address,
+      RPC_URL_BASE: base.chain.url,
+      RPC_URL_ROBINHOOD: robinhood.url,
+      BUYBACK_MODE: "dry_run",
+      ...converterLimits,
+      ...buybackLimits,
+    })
+    const bridges = effect {
+      return (try rowsOf(running)).filter((row) => row.kind === "bridge").map(outline)
+    }
+    try ran(running, at.recovery)
+    const before = try bridges
+    try promise(() => execute(running,
+      "INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, accepted, state, resolve_tx, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "base-mainnet", 1, `0x${"1".repeat(64)}`, `0x${"a".repeat(40)}`, circleUsdc.base, "60000000", wallet.address, `0x${"2".repeat(64)}`, 101,
+      "2026-11-19T00:00:00.000Z", "2026-11-19T00:20:00.000Z", 1, "kept", `0x${"3".repeat(64)}`, "2026-11-20T00:00:00.000Z"))
+    try ran(running, at.second)
+    try ran(running, at.third)
+    try same({ before, after: try bridges }, { before: [], after: [["bridge", "base", "dry_run", "quoted", "30000000"]] })
+  }))
+})
+
+const administrator = "7"
+const appRoot = new URL("../../app", import.meta.url).pathname
+const reportWallet = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+const reportToken = "0x1111111111111111111111111111111111111111"
+const signedBytes = `0x02${"ee".repeat(120)}`
+
+const SiteLive = Layer.unwrap(effect {
+  const script = try promise(() => bundle(appRoot, { entry: "_worker" }))
+  return areaLayer({
+    script,
+    origin: "https://slop.test",
+    d1: { SLOP_DB: "slop-private" },
+    r2: ["PRIVATE_TRACES", "VETTING_EVIDENCE"],
+    vars: { ADMIN_GITHUB_IDS: administrator, PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "staging", PUBLIC_SITE_URL: "https://slop.cash", PAYMENT_NETWORKS: "[]" },
+    services: Object.fromEntries(["ASSETS", "SLOP_IDENTITY", "SLOP_NOTIFY", "SLOPBOT", "VETTING_SANDBOX"].map((binding) => [binding, () => new Response(null, { status: 404 })])),
+  })
+})
+
+effect function session(githubId: string) {
+  const area = try Area
+  const token = `fees-e2e-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", sessionHash(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+function refusal(answer: Answer) {
+  const body = answer.body as { readonly error?: string } | string
+  return [answer.status, typeof body === "string" ? body : body.error ?? null]
+}
+
+layer(SiteLive, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The fee report is reachable through the fees area of the composed site: an administrator reads it without signed bytes, a member and a visitor are refused (spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/feeReport.md, "The report shows the latest 100 rows, finalized live totals per token as decimal strings, 24-hour state counts and each network\'s target")', () => effect {
+    const area = try Area
+    const now = new Date().toISOString()
+    try area.sql(`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, tx_id, raw_tx, evm_nonce, expires_at, amount_out, landed_tx_id, state, created_at, updated_at, submitted_at, finalized_at)
+      VALUES ('conversion', 'conversion-e2e-0001', 'run-e2e-00000001', 'base', 'live', ?, ?, ?, '2000000000000000000000', 'kyberswap', '1000000000', '990000000', 1000000000, 10, ?, ?, 0, 4102444800, '1000000000', ?, 'finalized', ?, ?, ?, ?)`,
+      reportWallet, reportToken, circleUsdc.base, `0x${"4".repeat(64)}`, signedBytes, `0x${"4".repeat(64)}`, now, now, now, now)
+    const admin = try session(administrator)
+    const member = try session("42")
+    const report = try area.get(feeConversionsPath, { as: admin })
+    const body = report.body as {
+      readonly schemaVersion: string
+      readonly recent: ReadonlyArray<{ readonly id: string; readonly state: string; readonly amountOut: string | null }>
+      readonly routes: ReadonlyArray<{ readonly network: string; readonly targetToken: string | null; readonly status: string }>
+      readonly totals: ReadonlyArray<unknown>
+    }
+    try same({
+      report: [report.status, report.headers["cache-control"], body.schemaVersion],
+      recent: body.recent.map((line) => [line.id, line.state, line.amountOut]),
+      robinhood: body.routes.find((route) => route.network === "robinhood"),
+      totals: body.totals,
+      signedBytes: JSON.stringify(body).includes(signedBytes.slice(2)),
+      member: refusal(try area.get(feeConversionsPath, { as: member })),
+      visitor: refusal(try area.get(feeConversionsPath)),
+      posted: refusal(try area.request(feeConversionsPath, { method: "POST", body: "{}", as: admin })),
+    }, {
+      report: [200, "private, no-store", "1"],
+      recent: [["conversion-e2e-0001", "finalized", "1000000000"]],
+      robinhood: { network: "robinhood", targetToken: null, status: "not_converted" },
+      totals: [{ network: "base", token: reportToken, targetToken: circleUsdc.base, conversions: 1, amountIn: "2000000000000000000000", amountOut: "1000000000" }],
+      signedBytes: false,
+      member: [403, "forbidden"],
+      visitor: [401, "unauthorized"],
+      posted: [405, "method_not_allowed"],
+    })
+  })
 })

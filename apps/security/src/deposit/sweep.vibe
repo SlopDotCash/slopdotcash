@@ -69,14 +69,14 @@ function factsOf(row: OutcomeRow, mode: ReportDepositMode): DepositFacts {
   }
 }
 
-effect function releaseUnpaid(mode: ReportDepositMode, at: string) {
+export effect function releaseUnpaid(mode: ReportDepositMode, at: string) {
   return try (try D1).run(sql`UPDATE security_report_deposits
       SET mode = 'recorded', outcome_reason = 'turned-off', outcome_at = ${at}
     WHERE mode = 'asked' AND paid_at IS NULL AND outcome IS NULL
       AND (${mode} <> 'live' OR project_id IN (SELECT p.id FROM projects p WHERE json_extract(p.manifest, '$.security.reportDeposit') = 0))`)
 }
 
-effect function decideOutcomes(mode: ReportDepositMode, nowMs: number, at: string) {
+export effect function decideOutcomes(mode: ReportDepositMode, nowMs: number, at: string) {
   const found = try rows(OutcomeRow, sql`SELECT d.case_id, d.paid_at, c.receipt_state, c.appeal_state, c.next_action, c.revision AS case_revision,
       (SELECT json_extract(p.manifest, '$.security.reportDeposit') = 0 FROM projects p WHERE p.id = d.project_id) AS project_off,
       (SELECT i.review_decision FROM security_submission_intake i WHERE i.case_id = d.case_id) AS review_decision,

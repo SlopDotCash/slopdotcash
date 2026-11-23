@@ -73,9 +73,21 @@ async function manage(id: string, tab?: string) {
   await shown(settings).toMatchObject({ visible: true });
 }
 
+const shareField = field("Maintainer share (%, 0 to 30, optional)");
+const capField = field("Pause new contributors when this many outside pull requests are open (optional)");
+const groupProbes: Readonly<Record<string, Target>> = { "Project listing": field("Short description"), "Contribution rules": field("Acceptance criteria"), Repositories: field("GitHub repository"), "Monthly rewards": shareField };
+
 async function openGroup(summary: string) {
-  if ((await site.read(field(summary === "Project listing" ? "Short description" : summary === "Contribution rules" ? "Acceptance criteria" : "GitHub repository"))).count === 0) await site.click(text(summary, true));
+  if ((await site.read(groupProbes[summary] ?? field(summary))).count === 0) await site.click(text(summary, true));
 }
+
+const cycleOf = (monthsAhead: number) => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthsAhead, 1));
+};
+const cycleText = (monthsAhead: number) => cycleOf(monthsAhead).toISOString().slice(0, 7);
+const monthName = (monthsAhead: number) => new Intl.DateTimeFormat("en", { month: "long", timeZone: "UTC" }).format(cycleOf(monthsAhead));
+const deciders = "split among the maintainers who merge or close outside pull requests";
 
 const revisions = (id: string) =>
   site.sql(
@@ -85,6 +97,7 @@ const revisions = (id: string) =>
 
 const lastRevision = async (id: string) => (await revisions(id)).at(-1);
 const parsed = (value: unknown): unknown => (typeof value === "string" ? JSON.parse(value) : value);
+const rewardOf = async (id: string) => parsed((await site.sql("SELECT json_extract(manifest, '$.reward') AS reward FROM projects WHERE id = ?", id))[0]?.reward) as Readonly<Record<string, unknown>>;
 const closes = (row: Readonly<Record<string, unknown>> | undefined) => (parsed(row?.slopbot) as { readonly automaticClosure?: boolean } | null)?.automaticClosure === true;
 const writes = async (id: string) => (await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.startsWith(`/api/v1/projects/${id}`));
 
@@ -289,7 +302,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     expect(await lastRevision(id)).toMatchObject({ headline: "A draft from the older revision." });
   });
 
-  it('adding a repository refuses a fork, an archived and a listed repository with their reasons, and the added one pauses the project and counts from next month (spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month")', async () => {
+  it('adding a repository refuses a fork, an archived and a listed repository with their reasons, a repository with only its integration branch offers no other branch, and the added one pauses the project and counts from next month (spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration")', async () => {
     await site.allow(refusedLoads);
     const fullName = await repository(users.tia, "core");
     const fork = await repository(users.tia, "core-fork", { fork: true });
@@ -297,6 +310,9 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     const extra = await repository(users.tia, "extras");
     const id = await createProject(users.tia, fullName, "Core");
     await openGroup("Repositories");
+    await site.click(named("button", "Change integration branch"));
+    await shown(named("status")).toMatchObject({ text: expect.stringContaining("No other branch head is available.") });
+    await shown(field("New integration branch")).toMatchObject({ count: 0 });
 
     const add = async (name: string) => {
       await site.fill(named("textbox", "GitHub repository"), name);
@@ -350,6 +366,37 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     await shown(text("Maintainers only", true)).toMatchObject({ visible: true });
     expect((await site.fetch("POST", `/api/v1/projects/${encodeURIComponent(id)}/remove`, { expectedRevision: 1 })).status).toBeGreaterThanOrEqual(400);
     expect(await site.sql("SELECT status FROM projects WHERE id = ?", id)).toEqual([{ status: "paused" }]);
+  });
+
+  it('the owner sets, changes and clears the intake cap: 0 is refused and nothing is published, 20 is reviewed as live now and published, and an empty field turns it off (spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/intakeCap.md, "Story: Pause new contributors while the review queue is full")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.pia, "intake");
+    const id = await createProject(users.pia, fullName, "Intake");
+    await openGroup("Contribution rules");
+    await shown(capField).toMatchObject({ value: "" });
+
+    const mark = (await writes(id)).length;
+    await site.fill(capField, "0");
+    await site.click(publish);
+    await shown(text("Enter a whole number from 1 to 500, or leave it empty.", true)).toMatchObject({ visible: true });
+    expect((await writes(id)).length).toBe(mark);
+    expect((await revisions(id)).length).toBe(1);
+
+    await site.fill(capField, "20");
+    const changes = named("region", "Changes");
+    await shown({ text: "At 20 open outside pull requests", within: changes }).toMatchObject({ visible: true });
+    await shown({ text: "Live now", exact: true, within: changes }).toMatchObject({ visible: true });
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(2);
+    expect(parsed((await lastRevision(id))?.slopbot)).toMatchObject({ automaticClosure: false, intakeCap: 20 });
+
+    await manage(id);
+    await openGroup("Contribution rules");
+    await shown(capField).toMatchObject({ value: "20" });
+    await site.fill(capField, "");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    expect((parsed((await lastRevision(id))?.slopbot) as { readonly intakeCap?: unknown }).intakeCap).toBeUndefined();
   });
 
   it('removal is asked once, a stale revision keeps the dialog open with Reload, and only the confirm removes the project (spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/ui/confirmation.md, "Only an explicit confirm starts the work")', async () => {
@@ -546,20 +593,33 @@ const awardPeriod = () => {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
 };
 
-async function monthlyPool(id: string, owner: User) {
-  const [current] = await site.sql("SELECT revision, manifest FROM projects WHERE id = ?", id);
+type Manifest = Readonly<Record<string, unknown>>;
+type RevisionKind = "OwnerUpdate" | "AdminHold";
+
+async function revise(id: string, actor: User, kind: RevisionKind, reason: string, change: (manifest: Manifest) => Manifest) {
+  const [current] = await site.sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id);
   const revision = Number(current?.revision) + 1;
-  const manifest = {
-    ...(parsed(current?.manifest) as Readonly<Record<string, unknown>>),
-    rewardAsset: { network: "base", kind: "stablecoin", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
-    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
-    escrow: { chain: "base", deployments: [] },
-  };
+  const manifest = change(parsed(current?.manifest) as Manifest);
+  const status = typeof manifest.status === "string" ? manifest.status : String(current?.status);
   const text = JSON.stringify(manifest);
   const digest = await sha256(text);
   const now = new Date().toISOString();
-  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, text, digest, "Monthly awards", String(owner.id), owner.login, now);
-  await site.sql("UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", revision, text, digest, now, id);
+  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, text, digest, reason, String(actor.id), actor.login, now);
+  await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, revision, kind);
+  await site.sql("UPDATE projects SET status = ?, revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", status, revision, text, digest, now, id);
+}
+
+async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly reward?: Manifest } = {}) {
+  await revise(id, owner, "OwnerUpdate", "Monthly awards", (manifest) => {
+    const escrow = manifest.escrow as { readonly deployments?: ReadonlyArray<{ readonly asset?: string }> } | undefined;
+    return {
+      ...manifest,
+      ...(more.active === true ? { status: "active" } : {}),
+      rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
+      reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
+      escrow: escrow ?? { chain: "base", deployments: [] },
+    };
+  });
 }
 
 async function proposeMonth(id: string, rows: ReadonlyArray<readonly [User, string]>) {
@@ -626,6 +686,133 @@ describe('Edit the month\'s awards with public, noticed cuts (spec/frontend/owne
   });
 });
 
+async function autoFinalizeOff(awards: Target, id: string) {
+  const automatic = named("switch", "Auto-finalize", { within: awards });
+  await shown(automatic).toMatchObject({ checked: true });
+  await site.click(automatic);
+  await shown(automatic).toMatchObject({ checked: false });
+  await expect.poll(() => site.sql("SELECT automatic FROM monthly_payment_settings WHERE project_id = ? ORDER BY sequence DESC LIMIT 1", id), { timeout: 30_000 }).toEqual([{ automatic: 0 }]);
+}
+
+describe('Freeze exactly one execution snapshot (spec/settlement/monthly.md, "Story: Freeze exactly one execution snapshot"; spec/settlement/monthlySettings.md, "Story: Change the automatic default with current authority")', () => {
+  it('the owner turns Auto-finalize off, finalizes the ended month once, and the frozen awards replace the editor as final by the owner (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.ron, "finals");
+    const id = await createProject(users.ron, fullName, "Finals");
+    await site.vault({ projectId: id });
+    await monthlyPool(id, users.ron);
+    await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
+
+    const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
+    const finalize = named("button", "Finalize awards", { within: awards });
+    await shown(finalize).toMatchObject({ disabled: false });
+    await site.click(finalize);
+    await shown({ text: "Final · you", within: awards }).toMatchObject({ visible: true });
+    await shown(finalize).toMatchObject({ count: 0 });
+    await shown(named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards })).toMatchObject({ count: 0 });
+    for (const user of [users.pia, users.eli]) await shown({ text: user.login, exact: true, within: awards }).toMatchObject({ visible: true });
+    expect(await site.sql("SELECT trigger, actor_id, allocation_sequence FROM monthly_payment_runs WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ trigger: "owner", actor_id: String(users.ron.id), allocation_sequence: 0 }]);
+
+    await openAwards(id);
+    await shown({ text: "Final · you", within: awards }).toMatchObject({ visible: true });
+    expect((await site.sql("SELECT count(*) AS runs FROM monthly_payment_runs WHERE project_id = ?", id))).toEqual([{ runs: 1 }]);
+  });
+});
+
+describe('Edit the month\'s awards after leaving the page (spec/frontend/ownerMonthly.md, "Story: Edit the month\'s awards with public, noticed cuts"; spec/frontend/requests.md, "Only the current request may publish its validated result")', () => {
+  it('a cut saved while the owner leaves for Home is kept by the server, and the page the owner moved to shows no Saved status and stays put (spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice")', async () => {
+    await site.allow(refusedLoads, "^404 GET /data/");
+    const fullName = await repository(users.sam, "departed");
+    const id = await createProject(users.sam, fullName, "Departed");
+    await monthlyPool(id, users.sam);
+    await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
+
+    const awards = await openAwards(id);
+    await autoFinalizeOff(awards, id);
+    const path = `/api/v1/payments/projects/${id}/monthly/${awardPeriod()}/allocations`;
+    const why = "The second half of the change duplicated work already merged earlier.";
+    await site.fill(named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards }), "1");
+    await site.fill(field("Reason (shown publicly and sent to the contributor)"), why);
+    await site.hold("POST", path);
+    await site.click(named("button", `Save ${users.pia.login}`, { within: awards }));
+    await expect.poll(() => site.sql("SELECT reason FROM monthly_allocation_cut_reasons WHERE project_id = ? AND period = ?", id, awardPeriod()), { timeout: 30_000 }).toEqual([{ reason: why }]);
+
+    await site.click(named("link", "Slop home"));
+    await at("/");
+    await site.release("POST", path);
+    await expect.poll(async () => (await site.sent()).filter((sent) => sent.method === "POST" && sent.path === path).length, { timeout: 30_000 }).toBe(1);
+    await shown({ text: "Saved", exact: true }).toMatchObject({ count: 0 });
+    await at("/");
+    expect(await site.sql("SELECT count(*) AS changes FROM monthly_allocation_changes WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ changes: 1 }]);
+  });
+});
+
+describe('Take the maintainer share out of the monthly amount (spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/frontend/views.md, "Story: Read a project\'s rewards and activity at a glance")', () => {
+  it('the owner sets, changes and clears the maintainer share: 31 is refused, 20 is reviewed and published from next month with the open month kept at none, the project page, Home card and /sponsors say so, and clearing it keeps the history the server wrote (spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/settlement/maintainerShare.md, "A change starts with the next UTC month, and a month is proposed only from a complete read"; spec/frontend/views.md, "A published maintainer share shows this month\'s share, and next month\'s while a change waits")', async () => {
+    await site.allow(refusedLoads, "^404 GET /data/");
+    const fullName = await repository(users.eli, "sharecrop");
+    const id = await createProject(users.eli, fullName, "Sharecrop");
+    await monthlyPool(id, users.eli, { active: true });
+
+    await manage(id);
+    await openGroup("Monthly rewards");
+    await shown(shareField).toMatchObject({ value: "" });
+    expect((await rewardOf(id)).maintainerShare).toBeUndefined();
+
+    const mark = (await writes(id)).length;
+    await site.fill(shareField, "31");
+    await site.click(publish);
+    await shown(text("Enter a whole number from 0 to 30, or leave it empty.", true)).toMatchObject({ visible: true });
+    expect((await writes(id)).length).toBe(mark);
+    expect((await revisions(id)).length).toBe(2);
+
+    await site.fill(shareField, "20");
+    const changes = named("region", "Changes");
+    await shown({ text: "20%", exact: true, within: changes }).toMatchObject({ visible: true });
+    await shown({ text: `From ${cycleText(1)}`, within: changes }).toMatchObject({ visible: true });
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
+    expect(await rewardOf(id)).toMatchObject({ maintainerShare: 2000, maintainerShareHistory: [{ throughCycle: cycleText(0), basisPoints: 0 }] });
+
+    const changing = `Maintainer share: none of the monthly amount this month, 20% from ${monthName(1)}, ${deciders}.`;
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(text(changing, true)).toMatchObject({ visible: true });
+    expect((await site.open("/")).status).toBe(200);
+    await shown(named("link", "Sharecrop", { exact: false, within: named("region", "Projects") })).toMatchObject({ text: expect.stringContaining(`Maintainer share 20% from ${monthName(1)}`) });
+    expect((await site.open("/sponsors")).status).toBe(200);
+    await shown(text(`Maintainer share 20% from ${monthName(1)}`, true)).toMatchObject({ visible: true });
+
+    await manage(id);
+    await openGroup("Monthly rewards");
+    await shown(shareField).toMatchObject({ value: "20" });
+    await site.fill(shareField, "");
+    await site.click(publish);
+    await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(4);
+    const cleared = await rewardOf(id);
+    expect(cleared.maintainerShare).toBeUndefined();
+    expect(cleared.maintainerShareHistory).toEqual([{ throughCycle: cycleText(0), basisPoints: 0 }]);
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(named("heading", "Sharecrop", { level: 1, exact: false })).toMatchObject({ visible: true });
+    await shown(text("Maintainer share")).toMatchObject({ count: 0 });
+  });
+
+  it('a share in force this month reads as the same share on the project page and the Home card (spec/frontend/views.md, "A published maintainer share shows this month\'s share, and next month\'s while a change waits"; spec/settlement/maintainerShare.md, "The share is a floor of the monthly amount and is split by decisions with ties to the lower account")', async () => {
+    await site.allow(refusedLoads, "^404 GET /data/");
+    const fullName = await repository(users.uma, "shared-now");
+    const id = await createProject(users.uma, fullName, "Shared now");
+    await monthlyPool(id, users.uma, { active: true, reward: { maintainerShare: 2000 } });
+    await signOut(users.uma.login);
+
+    expect((await site.open(`/projects/${encodeURIComponent(id)}`)).status).toBe(200);
+    await shown(text(`Maintainer share: 20% of the monthly amount, ${deciders}.`, true)).toMatchObject({ visible: true });
+    expect((await site.open("/")).status).toBe(200);
+    const card = named("link", "Shared now", { exact: false, within: named("region", "Projects") });
+    await shown(card).toMatchObject({ text: expect.stringContaining("Maintainer share 20%") });
+    expect((await site.read(card)).text).not.toContain("Maintainer share 20% from");
+  });
+});
+
 describe('Fund, reserve and pay one month through its own vault (spec/settlement/monthlySettlement.md, "Story: Fund, reserve and pay one month through its own vault"; spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once")', () => {
   it('any wallet deposits into the registered vault from the public project page after reviewing the exact amount, and is never offered a withdrawal (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event")', async () => {
     const fullName = await repository(users.tia, "vaulted");
@@ -660,6 +847,68 @@ describe('Fund, reserve and pay one month through its own vault (spec/settlement
     await site.click(named("button", "in wallet", { exact: false, within: review }));
     await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
     await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+  });
+
+  it('a signed-out visitor deposits from the public project page without signing in, after the no-refund disclosure and a review of the exact amount, and is never offered a withdrawal (spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot")', async () => {
+    const fullName = await repository(users.pia, "open-vault");
+    const id = await createProject(users.pia, fullName, "Open vault");
+    const deployed = await site.vault({ projectId: id });
+    await signOut(users.pia.login);
+    await site.wallets({ evm: { name: "Anvil Wallet" } });
+    expect((await site.open(`/projects/${encodeURIComponent(id)}/funding`)).status).toBe(200);
+    await shown(named("link", "Log in")).toMatchObject({ visible: true });
+
+    const escrow = named("region", "Project escrow");
+    const card: Target = { label: "Fund this project ·", exact: false };
+    await shown({ text: "Depositors have no refund right.", within: escrow }).toMatchObject({ visible: true });
+    await shown(card).toMatchObject({ count: 0 });
+    await site.click(named("button", "Fund this project", { exact: false, within: escrow }));
+    await shown(card).toMatchObject({ visible: true });
+    await shown({ text: deployed.vault, within: card }).toMatchObject({ count: 1 });
+    await shown(named("link", "Sign in with GitHub", { within: card })).toMatchObject({ count: 0 });
+    await site.click(named("button", "Connect Anvil Wallet", { within: card }));
+    await shown(field("Deposit tokens")).toMatchObject({ checked: true });
+    await shown(field("Withdraw free funds")).toMatchObject({ count: 0 });
+
+    await site.fill(field("Token amount"), "5");
+    await site.click(named("button", "Review deposit", { within: card }));
+    const review = named("region", "Review vault action", { within: card });
+    await shown({ text: "Depositors have no refund right.", within: review }).toMatchObject({ visible: true });
+    expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
+    await site.click(named("button", "in wallet", { exact: false, within: review }));
+    await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
+    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    expect((await site.sent()).filter((sent) => sent.method !== "GET" && sent.path.startsWith(`/api/v1/projects/${id}`))).toEqual([]);
+  });
+});
+
+describe('Deposit and withdraw only free funds (spec/settlement/escrow.md, "Story: Deposit and withdraw only free funds")', () => {
+  it('on the manage page only the vault owner\'s wallet is offered a withdrawal, one above the free balance is refused before the wallet is asked, and another wallet may only deposit (spec/settlement/escrow.md, "Only the owner withdraws unused free funds, to itself, less a 2% fee rounded up"; spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt")', async () => {
+    await site.allow(refusedLoads);
+    const fullName = await repository(users.oli, "withdrawn");
+    const id = await createProject(users.oli, fullName, "Withdrawn");
+    await site.vault({ projectId: id });
+    await site.wallets({ evm: { name: "Anvil Wallet" } });
+    await site.walletAccount(6);
+    await manage(id);
+
+    const card: Target = { label: "Fund or withdraw ·", exact: false };
+    await shown(card).toMatchObject({ visible: true });
+    await site.click(named("button", "Connect Anvil Wallet", { within: card }));
+    await shown(field("Withdraw free funds")).toMatchObject({ visible: true });
+    await site.click(field("Withdraw free funds"));
+    await site.fill(field("Token amount"), "1");
+    await site.click(named("button", "Review withdrawal", { within: card }));
+    await shown({ text: "The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.", within: card }).toMatchObject({ visible: true });
+    await shown(named("region", "Review vault action", { within: card })).toMatchObject({ count: 0 });
+    expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
+
+    await site.click(named("button", "Choose another wallet", { within: card }));
+    await site.walletAccount(0);
+    await site.click(named("button", "Connect Anvil Wallet", { within: card }));
+    await shown(field("Deposit tokens")).toMatchObject({ checked: true });
+    await shown(field("Withdraw free funds")).toMatchObject({ count: 0 });
+    await shown({ text: "Only the vault owner's wallet can withdraw free funds.", within: card }).toMatchObject({ visible: true });
   });
 });
 

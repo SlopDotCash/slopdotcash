@@ -1,0 +1,108 @@
+// spec/contributor/publication.md, "The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route"
+import { CycleIndex } from "@repo/ports/settlement"
+import type { Route } from "../../gen/app.effect.vibe"
+import { type PublishedCycle, type SitemapProject, sitemapRoutes } from "../../gen/contributor__publication.effect.vibe"
+import { canonicalPath } from "../../gen/frontend__routes.effect.vibe"
+import { publicSiteOrigin } from "../render/fields.ts"
+import { type SiteFile, refused, textFile, utf8Text } from "./sources.vibe"
+
+schema SitemapManifest {
+  readonly id: string
+  readonly slug: string
+  readonly status: string
+  readonly listingTier?: string
+  readonly reward: { readonly committedMinor: string; readonly monthlyCapMinor: string }
+  readonly skill: { readonly publishAtRoot?: boolean }
+}
+
+schema SitemapRegistry {
+  readonly projects: ReadonlyArray<SitemapManifest>
+}
+
+const inputBytesLimit = 8 * 1024 * 1024
+const minorUnits = /^(?:0|[1-9][0-9]*)$/u
+const cycleIndexPath = "data/cycles/index.json"
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+
+effect function jsonFile(location: string, what: string) {
+  const bytes = (try FileSystem.FileSystem).readFile(location) catch effect () => {
+    throw refused(`${what} is unreadable: ${location}`)
+  }
+  if (bytes.length > inputBytesLimit) throw refused(`${what} exceeds the size limit: ${location}`)
+  const text = try utf8Text(bytes, what)
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused(`${what} is not JSON: ${location}`) })
+}
+
+function minorDescending(left: string, right: string) {
+  if (left.length !== right.length) return left.length > right.length ? -1 : 1
+  return left === right ? 0 : left > right ? -1 : 1
+}
+
+function registryOrder(left: SitemapManifest, right: SitemapManifest) {
+  return minorDescending(left.reward.committedMinor, right.reward.committedMinor)
+    || minorDescending(left.reward.monthlyCapMinor, right.reward.monthlyCapMinor)
+    || Number(right.skill.publishAtRoot === true) - Number(left.skill.publishAtRoot === true)
+    || left.id.localeCompare(right.id)
+}
+
+effect function sitemapProjects(location: string) {
+  const registry = Schema.decodeUnknownEffect(SitemapRegistry)(try jsonFile(location, "the registry snapshot")) catch effect () => {
+    throw refused("the registry snapshot has an unexpected shape")
+  }
+  for (const project of registry.projects) {
+    if (!minorUnits.test(project.reward.committedMinor) || !minorUnits.test(project.reward.monthlyCapMinor)) {
+      throw refused(`Project ${project.id} reward amounts are not minor units`)
+    }
+  }
+  return [...registry.projects].sort(registryOrder).map((project) => ({
+    slug: project.slug,
+    view: {
+      registered: true,
+      retired: project.listingTier === "retired",
+      legacy: false,
+      paused: project.status !== "active",
+      flagged: false,
+      quarantined: false,
+      cleared: false,
+      skillFields: false,
+    },
+  }) satisfies SitemapProject)
+}
+
+effect function publishedCycles(location: string) {
+  const index = Schema.decodeUnknownEffect(CycleIndex)(try jsonFile(location, "the cycle index"), { onExcessProperty: "error" }) catch effect () => {
+    throw refused("the cycle index has unexpected or missing fields")
+  }
+  if (!exactUtc.test(index.generatedAt) || !Number.isFinite(Date.parse(index.generatedAt)) || new Date(index.generatedAt).toISOString() !== index.generatedAt) {
+    throw refused("cycle index.generatedAt is not a UTC timestamp")
+  }
+  if (index.cycles.some((entry) => Date.parse(entry.generatedAt) > Date.parse(index.generatedAt))) throw refused("cycle index predates one of its cycle entries")
+  const keys = index.cycles.map((entry) => `${entry.projectId}\u0000${entry.cycleId}`)
+  if (new Set(keys).size !== keys.length) throw refused("cycle index repeats a project cycle")
+  const misordered = index.cycles.some((current, position) => {
+    const previous = index.cycles[position - 1]
+    return previous !== undefined && (previous.cycleId < current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) > 0))
+  })
+  if (misordered) throw refused("cycle index is not canonically ordered")
+  return index.cycles.map((entry) => ({ projectId: entry.projectId, cycleId: entry.cycleId }) satisfies PublishedCycle)
+}
+
+function escaped(text: string) {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+}
+
+function pathOf(route: Route) {
+  return canonicalPath(route.kind).replace(":project", () => route.projectId).replace(":cycle", () => route.cycleId)
+}
+
+function sitemapText(routes: ReadonlyArray<Route>) {
+  const urls = routes.map((route) => `  <url>\n    <loc>${escaped(`${publicSiteOrigin}${pathOf(route)}`)}</loc>\n  </url>`).join("\n")
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`
+}
+
+export effect function sitemapFile(registry: string, out: string) {
+  const path = try Path.Path
+  const projects = try sitemapProjects(path.resolve(registry))
+  const cycles = try publishedCycles(path.join(out, cycleIndexPath))
+  return textFile("sitemap.xml", sitemapText(sitemapRoutes(projects, cycles))) satisfies SiteFile
+}

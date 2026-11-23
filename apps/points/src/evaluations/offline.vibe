@@ -1,0 +1,54 @@
+// spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type RegistryManifest, RegistryManifests } from "@repo/ports/backend"
+import { maxRegistryBytes } from "../census/projects.vibe"
+import type { Repositories } from "../journal/ledger.vibe"
+import { checkedSnapshot } from "../programs/registry.vibe"
+import { boundedFile } from "../snapshot/files.vibe"
+import { type ManifestInput, admitManifests } from "./manifests.vibe"
+
+export error OfflineRegistryInvalid { path: string; message: string }
+
+schema SnapshotRevisionOwner { readonly projectId: string }
+schema SnapshotManifests { readonly syncedAt: string; readonly projects: ReadonlyArray<Schema.Unknown>; readonly revisions: ReadonlyArray<SnapshotRevisionOwner> }
+
+effect function snapshotManifests(path: string) {
+  const checked = try checkedSnapshot(path)
+  const bytes = try boundedFile(path, maxRegistryBytes)
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new OfflineRegistryInvalid({ path, message: "The registry snapshot is not UTF-8 JSON" })
+  }
+  const snapshot = Schema.decodeUnknownEffect(SnapshotManifests)(value) catch effect () => {
+    throw new OfflineRegistryInvalid({ path, message: "The registry snapshot has an unexpected shape" })
+  }
+  if (snapshot.projects.length !== checked.length) throw new OfflineRegistryInvalid({ path, message: "The registry snapshot changed while it was read" })
+  const manifests: RegistryManifest[] = []
+  for (const [index, project] of checked.entries()) {
+    const raw = snapshot.projects[index]
+    if (typeof raw !== "object" || raw === null || !("id" in raw) || raw.id !== project.id) throw new OfflineRegistryInvalid({ path, message: "The registry snapshot changed while it was read" })
+    const manifest = JSON.stringify(raw)
+    manifests.push({
+      projectId: project.id,
+      active: project.status === "active",
+      revision: snapshot.revisions.filter((revision) => revision.projectId === project.id).length,
+      manifest,
+      manifestSha256: try sha256Hex(manifest),
+      updatedAt: snapshot.syncedAt,
+    })
+  }
+  return manifests
+}
+
+function snapshotRegistry(manifests: ReadonlyArray<RegistryManifest>) {
+  return Layer.succeed(RegistryManifests, {
+    current: () => effect { return manifests },
+    project: (projectId) => effect { return manifests.find((manifest) => manifest.projectId === projectId) },
+  } satisfies RegistryManifests.Shape)
+}
+
+export effect function admittedOffline(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, snapshotPath: string) {
+  const manifests = try snapshotManifests(snapshotPath)
+  provide snapshotRegistry(manifests) {
+    return try admitManifests(inputs, repositories)
+  }
+}

@@ -12,7 +12,7 @@ import { dataDirectory, privateDirectory } from "./paths.vibe"
 import { type AssertionStore, type Deployable, type LocalWorkers, forward, startLocal, stopLocal } from "./workers.ts"
 
 export const deployables: readonly [Deployable, ...Deployable[]] = [
-  { name: "site", config: "apps/app/wrangler/site.staging.jsonc", script: "packages/frontend/dist/_worker.js", assets: "packages/frontend/dist/site" },
+  { name: "site", config: "apps/app/wrangler/pages.staging.jsonc", script: "apps/app/dist/_worker.js" },
   { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/app/dist/notify.js" },
   { name: "identity", config: "apps/backend/wrangler/identity.staging.jsonc", script: "apps/backend/dist/identity.js" },
 ]
@@ -117,12 +117,7 @@ effect function built(root: string) {
       if (!(try fs.exists(path.join(root, file)))) throw new LocalUnavailable({ reason: `${deployable.name} is not built: ${file} is missing` })
     }
   }
-  const resolved = (deployable: Deployable): Deployable => ({
-    ...deployable,
-    config: path.join(root, deployable.config),
-    script: path.join(root, deployable.script),
-    ...deployable.assets === undefined ? {} : { assets: path.join(root, deployable.assets) },
-  })
+  const resolved = (deployable: Deployable): Deployable => ({ ...deployable, config: path.join(root, deployable.config), script: path.join(root, deployable.script) })
   const [site, ...others] = deployables
   const sources: readonly [Deployable, ...Deployable[]] = [resolved(site), ...others.map(resolved)]
   return sources

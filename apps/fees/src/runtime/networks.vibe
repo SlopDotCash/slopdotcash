@@ -1,4 +1,4 @@
-// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"
 import type { Environment, Network } from "../../gen/fees__runtime.ts"
 import { chainIds, circleUsdc, kyberswap, robinhoodUsdg } from "./pins.ts"
 
@@ -36,6 +36,8 @@ export const varNames = [
   "BUYBACK_RUN_CAP_MICRO",
   "BUYBACK_DAILY_CAP_MICRO",
   "BUYBACK_UNFILLED_ALERT_SECONDS",
+  "FEE_READY",
+  "FEE_REPLACEMENT_ACTIVE",
 ] as const
 
 export type VarName = typeof varNames[number]

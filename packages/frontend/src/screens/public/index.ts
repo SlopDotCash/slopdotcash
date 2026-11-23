@@ -1,6 +1,6 @@
 // spec/app/index.md, "Story: Open a page by its address"
 export { FundingStatus, type FundingStatusProps } from "./FundingStatus.tsx";
-export { type NetworkPays, paymentsOn, sponsorPoolLabel, vaultStateLabel } from "./funding.ts";
+export { type NetworkPays, paymentsOn, vaultStateLabel } from "./funding.ts";
 export { HowItWorksPage } from "./HowItWorksPage.tsx";
 export { Milestones, PaymentLifecycle } from "./PaymentLifecycle.tsx";
 export { ContributionPointTiers, PenaltyPointTable, pointsNotice } from "./PointsRules.tsx";

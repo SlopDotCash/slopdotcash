@@ -1,5 +1,5 @@
 import { type ComponentProps, type RefObject, useEffect, useReducer, useRef } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { type Event, type Pages, enabled, initial, step } from "../../gen/ui__pagination.ts";
 import { cn } from "../lib/cn.ts";
 import { Button } from "./Button.tsx";
@@ -58,18 +58,18 @@ export function Pagination({
     onSend(event);
   };
   return (
-    <nav aria-label={label} className={cn("flex items-center justify-center gap-2", className)} {...props}>
-      <Button variant="ghost" size="icon" aria-label={backLabel} ref={backRef} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, forwardRef)}>
-        <ChevronLeft aria-hidden className="size-4" />
+    <nav aria-label={label} className={cn("flex items-center justify-center gap-4", className)} {...props}>
+      <Button variant="outline" size="icon" aria-label={backLabel} ref={backRef} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" }, forwardRef)}>
+        <ArrowLeft aria-hidden />
       </Button>
-      <span role="status" className="font-mono text-sm tabular-nums">
+      <span role="status" className="font-mono text-sm text-muted-foreground tabular-nums">
         <span className="sr-only">{pageLabel(state.page, state.pages)}</span>
         <span aria-hidden>
           {state.page} / {state.pages}
         </span>
       </span>
-      <Button variant="ghost" size="icon" aria-label={forwardLabel} ref={forwardRef} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, backRef)}>
-        <ChevronRight aria-hidden className="size-4" />
+      <Button variant="outline" size="icon" aria-label={forwardLabel} ref={forwardRef} disabled={!enabled(state, { type: "forward" })} onClick={() => move({ type: "forward" }, backRef)}>
+        <ArrowRight aria-hidden />
       </Button>
     </nav>
   );

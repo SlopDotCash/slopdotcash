@@ -32,6 +32,8 @@ export function StatusIcon({ icon, className, ...props }: StatusIconProps) {
 export type StatusProps = Omit<ComponentProps<"span">, "children"> & {
   /** The state as its owning spec presents it: `readPresentation(…)` and the others of `gen/ui__status.ts`, or `paymentPresentation(…)` of the projections. */
   presentation: Presentation;
+  /** A bordered pill in the tone's color, as a card's funding tag, rather than the bare icon and word. */
+  badge?: boolean;
 };
 
 /**
@@ -39,10 +41,18 @@ export type StatusProps = Omit<ComponentProps<"span">, "children"> & {
  * @design design.md#design-system
  */
 // spec/ui/status.md, "A presentation is a tone, an icon and a word"
-export function Status({ presentation: { tone, icon, label }, className, ...props }: StatusProps) {
+export function Status({ presentation: { tone, icon, label }, badge = false, className, ...props }: StatusProps) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-sm font-medium", tones[tone].text, className)} {...props}>
-      <StatusIcon icon={icon} />
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5",
+        badge ? "rounded-md border border-current/25 bg-current/7 px-2 py-1 align-middle text-xs leading-snug font-bold wrap-anywhere" : "text-sm font-medium",
+        tones[tone].text,
+        className,
+      )}
+      {...props}
+    >
+      <StatusIcon icon={icon} className={badge ? "size-3.5" : undefined} />
       {label}
     </span>
   );

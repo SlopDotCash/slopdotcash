@@ -8,6 +8,7 @@ import { NETWORKS } from "../kernels/networks.ts"
 import { consentEscrow, escrowProgram, prepareEscrow, securitySettlementView } from "../securityScope/settlement.vibe"
 import { awardAsset } from "../securityScope/programFunds.vibe"
 import { EvmDirectRails } from "./evm.vibe"
+import type { Alongside } from "./journal.vibe"
 import { type RecoveryView, directActions, recoveryView } from "./recovery.vibe"
 import { settlementView } from "./routes.vibe"
 import { SolanaDirectRails, isSolanaNetwork } from "./solana.vibe"
@@ -57,7 +58,7 @@ effect function answer(value: unknown) {
   return try orDie(Effect.try(() => jsonOf(value)))
 }
 
-effect function consented(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+effect function consented(context: CaseContext, body: Fields, alongside: Alongside) {
   if (!exactKeys(body, ["network", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
   const request = { network: String(body.network), confirmation: body.confirmation === true }
   if (!request.confirmation) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
@@ -68,7 +69,7 @@ effect function consented(context: CaseContext, body: Fields, alongside: Readonl
   return try answer(try consentEscrow(context, deployment, alongside))
 }
 
-effect function prepared(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+effect function prepared(context: CaseContext, body: Fields, alongside: Alongside) {
   if (!exactKeys(body, ["network", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
   const request = { network: String(body.network), confirmation: body.confirmation === true }
   if (!request.confirmation) return try refuse("confirmationRequiredConfirmTheExact75")
@@ -77,14 +78,14 @@ effect function prepared(context: CaseContext, body: Fields, alongside: Readonly
   return try answer(try prepareEscrow(context, request.network, award, try escrowProgram(context.caseId), alongside))
 }
 
-effect function verified(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+effect function verified(context: CaseContext, body: Fields, alongside: Alongside) {
   if (!exactKeys(body, ["transactionIds", "confirmation"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
   const ids = body.transactionIds
   if (body.confirmation !== true || !Array.isArray(ids) || ids.length < 1 || ids.length > 2 || !ids.every(isText)) return try refuse("invalidRequestConfirmOneOrTwo")
   return try answer(try directActions["verify-payment"](context, { transactionIds: ids.filter(isText), confirmation: true }, alongside))
 }
 
-effect function recovered(context: CaseContext, body: Fields, alongside: ReadonlyArray<Statement>) {
+effect function recovered(context: CaseContext, body: Fields, alongside: Alongside) {
   if (!exactKeys(body, ["confirmation"], ["cancellationTransactionId", "signatures"])) return try refuse("invalidRequestRequestBodyHasUnexpected")
   if (body.confirmation !== true) return try refuseRecovery("confirmationRequiredConfirmTheReviewedPayment")
   const cancellation = body.cancellationTransactionId
@@ -98,12 +99,19 @@ effect function recovered(context: CaseContext, body: Fields, alongside: Readonl
   }, alongside))
 }
 
-export effect function paymentAction(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: ReadonlyArray<Statement>) {
+function decidedWith(alongside: (detail: Json) => ReadonlyArray<Statement>): Alongside {
+  return (detail) => effect {
+    return alongside(try answer(detail))
+  }
+}
+
+export effect function paymentAction(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: (detail: Json) => ReadonlyArray<Statement>) {
   const fields = fieldsOf(body)
-  if (action === "consent-payment") return try consented(context, fields, alongside)
-  if (action === "prepare-payment") return try prepared(context, fields, alongside)
-  if (action === "verify-payment") return try verified(context, fields, alongside)
-  return try recovered(context, fields, alongside)
+  const decided = decidedWith(alongside)
+  if (action === "consent-payment") return try consented(context, fields, decided)
+  if (action === "prepare-payment") return try prepared(context, fields, decided)
+  if (action === "verify-payment") return try verified(context, fields, decided)
+  return try recovered(context, fields, decided)
 }
 
 effect function directNetworks(terms: AwardAssetTerms | undefined) {

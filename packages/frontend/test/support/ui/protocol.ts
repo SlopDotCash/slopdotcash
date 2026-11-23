@@ -102,22 +102,70 @@ export interface Addresses {
 
 export type Row = Readonly<Record<string, unknown>>;
 
+export type Method = "GET" | "POST" | "PUT";
+
+export type Permission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
+
+export type Bucket = "VETTING_EVIDENCE" | "PRIVATE_TRACES";
+
+export interface Roles {
+  readonly ADMIN_GITHUB_IDS: string;
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string;
+  readonly OPERATOR_GITHUB_IDS: string;
+}
+
+export interface RepositorySetup {
+  readonly id: number;
+  readonly owner: string;
+  readonly name: string;
+  readonly fork: boolean;
+  readonly archived: boolean;
+  readonly license: string;
+  readonly files: Readonly<Record<string, string>>;
+}
+
+export interface InstallationSetup {
+  readonly id: number;
+  readonly account: string;
+  readonly repositories: ReadonlyArray<string>;
+}
+
+export interface Downloaded {
+  readonly name: string;
+  readonly sha256: string;
+}
+
+export interface Deployed {
+  readonly vault: string;
+  readonly asset: string;
+}
+
 export type Op =
   | { readonly kind: "start" }
   | { readonly kind: "user"; readonly id: number; readonly login: string }
+  | { readonly kind: "deploy"; readonly roles: Roles }
+  | { readonly kind: "repository"; readonly setup: RepositorySetup }
+  | { readonly kind: "permission"; readonly repository: string; readonly login: string; readonly level: Permission }
+  | { readonly kind: "installation"; readonly setup: InstallationSetup }
+  | { readonly kind: "githubFail"; readonly path: string; readonly status: number }
+  | { readonly kind: "scanner"; readonly method: Method; readonly path: string; readonly body: string }
+  | { readonly kind: "object"; readonly bucket: Bucket; readonly key: string; readonly text: string }
+  | { readonly kind: "vault"; readonly projectId: string }
   | { readonly kind: "github"; readonly login: string }
   | { readonly kind: "open"; readonly path: string; readonly tab?: string }
   | { readonly kind: "tab"; readonly tab: string }
   | { readonly kind: "where" }
   | { readonly kind: "click"; readonly target: Target }
   | { readonly kind: "fill"; readonly target: Target; readonly value: string }
+  | { readonly kind: "select"; readonly target: Target; readonly label: string }
   | { readonly kind: "press"; readonly keys: string }
   | { readonly kind: "read"; readonly target: Target }
   | { readonly kind: "focused" }
   | { readonly kind: "refocus" }
   | { readonly kind: "blockCookies" }
   | { readonly kind: "upload"; readonly target: Target; readonly file: Upload }
-  | { readonly kind: "fetch"; readonly method: "GET" | "POST"; readonly path: string; readonly body?: unknown }
+  | { readonly kind: "fetch"; readonly method: Method; readonly path: string; readonly body?: unknown }
+  | { readonly kind: "download" }
   | { readonly kind: "leaks"; readonly text: string }
   | { readonly kind: "hold"; readonly method: string; readonly path: string }
   | { readonly kind: "release"; readonly method: string; readonly path: string }
@@ -140,12 +188,21 @@ export type Op =
 export interface Results {
   readonly start: null;
   readonly user: null;
+  readonly deploy: null;
+  readonly repository: null;
+  readonly permission: null;
+  readonly installation: null;
+  readonly githubFail: null;
+  readonly scanner: Answered;
+  readonly object: null;
+  readonly vault: Deployed;
   readonly github: null;
   readonly open: Loaded;
   readonly tab: null;
   readonly where: string;
   readonly click: null;
   readonly fill: null;
+  readonly select: null;
   readonly press: null;
   readonly read: Shown;
   readonly focused: Focused;
@@ -153,6 +210,7 @@ export interface Results {
   readonly blockCookies: null;
   readonly upload: null;
   readonly fetch: Answered;
+  readonly download: Downloaded | null;
   readonly leaks: boolean;
   readonly hold: null;
   readonly release: null;

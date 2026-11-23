@@ -17,7 +17,7 @@ import { normalizedNativeDelta } from "../kernels/budget.ts"
 import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey, SOLANA_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
 import { type Mint, TOKEN_PROGRAM, readMint, readRefusalMessage, readTokenAccount } from "../kernels/token2022.ts"
-import { type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, intentModel, journalFor, snapshotOf, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
+import { type Alongside, type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, intentModel, journalFor, snapshotOf, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
 import { type CaseContext, DirectRefused, receiptEvent } from "./routes.vibe"
 
 module limbs {
@@ -530,7 +530,7 @@ function solanaFacts(award: ApprovedAward, rail: SolanaDirectRail, context: Case
   return { approval: award, network: "Solana", rail, caseRevision: context.revision, reporterGithubId: context.reporterGithubId, payerGithubId, payerWallet, reporterWallet, otherUses }
 }
 
-export effect function consentSolanaPayment(context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function consentSolanaPayment(context: CaseContext, body: ConsentPaymentBody, alongside: Alongside) {
   if (body.confirmation !== true) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
   const award = try directAward(context.caseId)
   const prepared = currentIntent(try journalFor(context.caseId))
@@ -581,7 +581,7 @@ effect function blockhashStillValid(rail: SolanaDirectRail, blockhash: Blockhash
   }
 }
 
-effect function refreshSolana(context: CaseContext, award: ApprovedAward, network: string, alongside: ReadonlyArray<Statement>) {
+effect function refreshSolana(context: CaseContext, award: ApprovedAward, network: string, alongside: Alongside) {
   const existing = try journalFor(context.caseId)
   const intent = currentIntent(existing)
   if (intent === undefined || existing.paid) return try refuse("paymentNotPending")
@@ -601,7 +601,7 @@ effect function refreshSolana(context: CaseContext, award: ApprovedAward, networ
   }, alongside)
 }
 
-export effect function prepareSolanaPayment(context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function prepareSolanaPayment(context: CaseContext, body: PreparePaymentBody, alongside: Alongside) {
   if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheExact75")
   const award = try directAward(context.caseId)
   const existing = try journalFor(context.caseId)
@@ -654,7 +654,7 @@ export effect function prepareSolanaPayment(context: CaseContext, body: PrepareP
   }, alongside)
 }
 
-export effect function verifySolanaPayment(context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function verifySolanaPayment(context: CaseContext, body: VerifyPaymentBody, alongside: Alongside) {
   if (body.confirmation !== true || body.transactionIds.length < 1 || body.transactionIds.length > 2) return try refuse("invalidRequestConfirmOneOrTwo")
   const existing = try journalFor(context.caseId)
   const prepared = currentIntent(existing)

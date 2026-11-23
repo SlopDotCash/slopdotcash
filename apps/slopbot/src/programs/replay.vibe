@@ -1,0 +1,22 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
+import { systemGit } from "@repo/platform/git"
+import { actionsToken, collectedTargets, fetchRegistry, graphqlClient, replayAssessments, type HistoryTransport } from "@repo/points/collect"
+import { collectValueInputs } from "../value/collect/inputs.vibe"
+import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
+import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
+import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
+
+function replayValueInputs(history: HistoryTransport) {
+  return Layer.unwrap(effect {
+    const feedConcurrency = try valueFeedConcurrency()
+    const repositories = try collectedTargets(try fetchRegistry())
+    return Layer.provide(collectValueInputs({ repositories, feedConcurrency }), Layer.mergeAll(history, acceptanceWith(collectRetainedMergeReferences)))
+  })
+}
+
+export effect function reviewedReplay(args: ReadonlyArray<string>) {
+  const token = try actionsToken()
+  provide systemGit, graphqlClient({ token }) {
+    try replayAssessments(args, replayValueInputs)
+  }
+}

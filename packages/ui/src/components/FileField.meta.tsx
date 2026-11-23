@@ -1,3 +1,4 @@
+import { FileUp } from "lucide-react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import type { FileFieldProps } from "./FileField.tsx";
@@ -12,6 +13,7 @@ export const meta: ComponentMeta<FileFieldProps> = {
   examples: {
     Choose: { onFiles: chosen },
     Chosen: { file: "logo.png", preview: <img src={pixel} alt="" />, onRemove: removed },
+    Proof: { "aria-label": "Proof of concept", accept: ".patch,.diff,.sol", chooseLabel: "Replace file", icon: <FileUp aria-hidden className="size-4" />, file: "exploit.patch", onRemove: removed, removeVisible: true },
   },
   play: {
     // spec/ui/controls.md, "Story: Act only when an action is available"
@@ -26,6 +28,13 @@ export const meta: ComponentMeta<FileFieldProps> = {
       removed.mockClear();
       await userEvent.click(within(canvasElement).getByRole("button", { name: "Remove" }));
       await expect(removed).toHaveBeenCalledOnce();
+    },
+    // spec/ui/controls.md, "Story: Act only when an action is available"
+    Proof: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      removed.mockClear();
+      const remove = within(canvasElement).getByRole("button", { name: "Remove" });
+      await userEvent.click(remove);
+      await expect([remove.textContent, remove.getAttribute("aria-label"), removed.mock.calls.length]).toEqual(["Remove", null, 1]);
     },
     // spec/ui/controls.md, "A disabled or busy control refuses activation and stays named"
     Loading: async ({ canvasElement }: { canvasElement: HTMLElement }) => {

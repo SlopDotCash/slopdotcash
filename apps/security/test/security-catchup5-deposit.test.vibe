@@ -1,25 +1,35 @@
 import { assert, layer } from "@effect/vitest"
-import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
 import { outboundVia } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import type { Handler } from "@repo/platform/testing"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
-import { type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Execution } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { noticePorts } from "@repo/operations/live"
 import { Request as WorkerRequest } from "miniflare"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { screeningPrompt } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { caseRoutes } from "../src/cases/routes.vibe"
 import { markPaid } from "../src/deposit/port.vibe"
 import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { runDepositSweep } from "../src/deposit/sweep.vibe"
+import { IntakeApp } from "../src/forwarding/grant.vibe"
+import { forwardingRoutes } from "../src/forwarding/routes.vibe"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../src/intake/list.vibe"
+import { intakeRoutes } from "../src/intake/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { screeningRoutes } from "../src/screening/routes.vibe"
 import { type World, digest, maintainer, origin, rows, started as startedWorld } from "./support/intake/harness.ts"
 
 type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
@@ -32,6 +42,7 @@ interface Answer {
 service Deposits {
   readonly world: World
   readonly fake: ProviderFake
+  readonly github: GitHubFake
   readonly clock: SettableClock
   readonly pending: Array<Promise<unknown>>
   readonly live: WebHandler
@@ -44,6 +55,8 @@ const steward = "900"
 const hour = 3_600_000
 const day = 24 * hour
 const slop = 10n ** 18n
+const importedReporter = "53204"
+const grantKey = `${"D".repeat(42)}A`
 
 function fixture(projectId: string): ProjectView {
   return {
@@ -62,37 +75,67 @@ function fixture(projectId: string): ProjectView {
   }
 }
 
-const ports = Layer.mergeAll(
-  Layer.succeed(Registry, {
-    project: (projectId) => succeed(projectId === "intake-fixture" || projectId === "intake-full" ? fixture(projectId) : undefined),
-    byRepository: () => succeed(undefined),
-    byPath: () => succeed(undefined),
-    active: () => succeed([fixture("intake-fixture"), fixture("intake-full")]),
-    pausedProjects: () => Effect.succeed([]),
-    appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
-    fence: () => succeed(sql`1`),
-  } satisfies Registry.Shape),
-  Layer.succeed(Authority, {
-    repository: (read) => succeed({ ...read, permission: read.actorGithubId === "53990" ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }),
-  } satisfies Authority.Shape),
-  Layer.succeed(Restrictions, {
-    account: () => succeed({ banned: false }),
-    project: () => succeed({ restricted: false }),
-    fence: () => succeed(sql`SELECT 1`),
-    unbanned: () => succeed(sql`1`),
-  } satisfies Restrictions.Shape),
-)
-
-function shellOf(world: World, fake: ProviderFake, clock: SettableClock, mode: string) {
-  const viaFake: Fetcher = { fetch: (sent) => fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]> }
-  const base = Layer.mergeAll(d1(world.db), webCrypto, clock.layer, reportBucket(world.reports), rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: admin }), ports, reportDepositSettings(mode))
-  const route = Layer.provide(privateRoute({ apiKey: "surplus-deposit-key" }), Layer.merge(outboundVia(viaFake), webCrypto))
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, noticePorts, CallerLive, SubmissionFeeRatesLive, ProjectParticipationLive), base)
+function portsOf(clock: SettableClock) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projectId === "intake-fixture" || projectId === "intake-full" ? fixture(projectId) : undefined),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture("intake-fixture"), fixture("intake-full")]),
+      pausedProjects: () => Effect.succeed([]),
+      appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: read.actorGithubId === "53990" ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
+    } satisfies Restrictions.Shape),
+    Layer.succeed(ReportingReadiness, {
+      current: () => sync(() => {
+        const verifiedAt = new Date(clock.now()).toISOString()
+        return {
+          target: { revision: 1, repositoryKey: "slop-test/intake", repositoryId: "1001", repositoryNodeId: "R_intake" },
+          observation: { repositoryId: "1001", repositoryNodeId: "R_intake", enabled: true, verifiedAt, attemptedAt: verifiedAt, failure: "NoFailure" as const },
+        }
+      }),
+    } satisfies ReportingReadiness.Shape),
+  )
 }
 
-effect function webHandler(world: World, fake: ProviderFake, clock: SettableClock, mode: string) {
-  const routes = caseRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>
-  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, clock, mode)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+function shellOf(world: World, fake: ProviderFake, github: GitHubFake, clock: SettableClock, mode: string, db: D1Database = world.db) {
+  const viaFakes: Fetcher = {
+    fetch: (sent) => {
+      const outbound = sent as unknown as Parameters<Handler>[0]
+      const target = new URL(outbound.url).origin
+      const answering = target === new URL(github.authority).origin || target === new URL(github.webAuthority).origin ? github : fake
+      return Promise.resolve(answering.handler(outbound)) as unknown as ReturnType<Fetcher["fetch"]>
+    },
+  }
+  const app = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaFakes), webCrypto, clock.layer))
+  const base = Layer.mergeAll(
+    d1(db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: admin, PROJECT_MODERATOR_GITHUB_IDS: admin }),
+    portsOf(clock),
+    reportDepositSettings(mode),
+    intakeSettings({ mode: "on", automatic: true }),
+    outboundVia(viaFakes),
+    Layer.succeed(IntakeApp, { app: { grantKey: Redacted.make(grantKey), clientId: github.app.clientId, clientSecret: Redacted.make(github.app.clientSecret), webOrigin: github.webAuthority, apiOrigin: github.authority } }),
+  )
+  const route = Layer.provide(privateRoute({ apiKey: "surplus-deposit-key" }), Layer.merge(outboundVia(viaFakes), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, app, noticePorts, CallerLive, SubmissionFeeRatesLive, ProjectParticipationLive), base)
+}
+
+effect function webHandler(world: World, fake: ProviderFake, github: GitHubFake, clock: SettableClock, mode: string) {
+  const routes = Layer.mergeAll(caseRoutes, intakeRoutes, submissionReadRoutes, screeningRoutes, forwardingRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, shellOf(world, fake, github, clock, mode)), { disableLogger: true })), (made) => promise(() => made.dispose()))
   return web.handler as WebHandler
 }
 
@@ -100,16 +143,24 @@ const Started = Layer.effect(Deposits, effect {
   const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
   const fake = providerFake({ holdMs: 10 })
   const clock = settableClock(Date.now())
+  const github = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try orDie(Effect.try(() => {
+    github.world.addOrg({ id: 5000, login: "slop-test" })
+    github.world.addUser({ id: Number(importedReporter), login: `member-${importedReporter}` })
+    github.world.addRepo({ id: 1001, owner: "slop-test", name: "intake" })
+    github.world.addInstallation({ id: 4403, account: "slop-test", repositories: ["intake"], permissions: { repository_advisories: "read" } })
+  }))
   const rateHour = new Date(Math.floor(Date.now() / hour) * hour - hour).toISOString()
   try promise(() => world.db.prepare("INSERT INTO submission_fee_rates(effective_at, slop_per_usd, source, created_at) VALUES(?, '395', 'test', ?)").bind(rateHour, rateHour).run())
   return {
     world,
     fake,
+    github,
     clock,
     pending: [],
-    live: try webHandler(world, fake, clock, "live"),
-    dryRun: try webHandler(world, fake, clock, "dry_run"),
-    off: try webHandler(world, fake, clock, "off"),
+    live: try webHandler(world, fake, github, clock, "live"),
+    dryRun: try webHandler(world, fake, github, clock, "dry_run"),
+    off: try webHandler(world, fake, github, clock, "off"),
   }
 })
 
@@ -171,9 +222,78 @@ effect function listedIds(deposits: Deposits.Shape, as: string) {
   return ((listed.body as { readonly cases: ReadonlyArray<{ readonly id: string }> }).cases).map((entry) => entry.id)
 }
 
-effect function swept(deposits: Deposits.Shape, mode: string) {
-  const background: ExecutionContext = { waitUntil: () => undefined }
-  return try Effect.provide(provideService(runDepositSweep(), Execution, { context: background }), shellOf(deposits.world, deposits.fake, deposits.clock, mode))
+effect function settled(deposits: Deposits.Shape) {
+  try promise(async () => {
+    while (deposits.pending.length > 0) await Promise.allSettled(deposits.pending.splice(0))
+  })
+}
+
+effect function swept(deposits: Deposits.Shape, mode: string, db: D1Database = deposits.world.db) {
+  const background: ExecutionContext = { waitUntil: (work) => { deposits.pending.push(work) } }
+  const sweep = try Effect.provide(provideService(runDepositSweep(), Execution, { context: background }), shellOf(deposits.world, deposits.fake, deposits.github, deposits.clock, mode, db))
+  try settled(deposits)
+  return sweep
+}
+
+function appealBeforeWrite(db: D1Database, caseId: string, appeal: () => Promise<void>): D1Database {
+  const race = { open: true }
+  return {
+    prepare: (text) => {
+      const statement = db.prepare(text)
+      if (!text.includes("SET outcome =")) return statement
+      return {
+        bind: (...values) => {
+          const bound = statement.bind(...values)
+          if (!(race.open && values[0] === "kept_due" && values[3] === caseId)) return bound
+          return {
+            bind: (...more) => bound.bind(...more),
+            all: () => bound.all(),
+            run: async () => {
+              race.open = false
+              await appeal()
+              return bound.run()
+            },
+          }
+        },
+        all: () => statement.all(),
+        run: () => statement.run(),
+      }
+    },
+    batch: (statements) => db.batch(statements),
+    exec: (query) => db.exec(query),
+  }
+}
+
+function said(call: ProviderCall) {
+  return call.messages[0]?.content ?? ""
+}
+
+function screenedCalls(fake: ProviderFake, summary: string) {
+  return fake.calls.filter((call) => call.system === screeningPrompt && said(call).includes(summary)).length
+}
+
+function refusal(answer: Answer) {
+  return [answer.status, (answer.body as { readonly error?: unknown }).error ?? null]
+}
+
+effect function save(deposits: Deposits.Shape, as: string, key: string, summary: string, description: string) {
+  const answer = try exchanged(deposits, deposits.live, "/api/v1/security-submissions", as, { projectId: "intake-fixture", idempotencyKey: key, origin: "slop", report: { summary, description, severity: "high" } })
+  if (answer.status !== 201) return try die(new Error(`report not saved: ${answer.status} ${JSON.stringify(answer.body)}`))
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string; readonly deposit: unknown } }).submission
+}
+
+effect function intakeOf(world: World, submissionId: string) {
+  const [found] = try promise(() => rows(world, "SELECT report_version AS version, screening_state AS state, revision FROM security_submission_intake WHERE submission_id=?", submissionId))
+  return found
+}
+
+effect function routeNotices(world: World, submissionId: string) {
+  return (try promise(() => rows(world, "SELECT recipient_github_id AS recipient FROM notifications WHERE instr(event_key, ?) > 0 ORDER BY recipient_github_id", `security-route:${submissionId}:`))).map((row) => row.recipient)
+}
+
+effect function submissionIds(deposits: Deposits.Shape, as: string) {
+  const listed = try exchanged(deposits, deposits.live, "/api/v1/security-submissions", as)
+  return ((listed.body as { readonly submissions?: ReadonlyArray<{ readonly id: string }> }).submissions ?? []).map((entry) => entry.id)
 }
 
 effect function paid(world: World, caseId: string, depositId: number, at: string) {
@@ -226,6 +346,66 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       { released: released.status, unpaid: try depositRow(world, unpaid), stillPaid: (try depositRow(world, held))?.mode, sweep: sweep.released },
       { released: 200, unpaid: { mode: "recorded", amount: (1975n * slop).toString(), itemLength: 66, paid: 0, outcome: null, reason: "turned-off" }, stillPaid: "asked", sweep: 1 },
     )
+
+    const { fake, github } = deposits
+    const saver = "53201"
+    const thin = "Share rounding drains the vault through previewShares"
+    const fuller = "Share rounding drains the vault, with a runnable proof"
+    const saved = try save(deposits, saver, "deposit-saved-0000001", thin, "previewShares() rounds in the depositor's favour, so repeated small deposits drain the vault.")
+    const waiting = try intakeOf(world, saved.id)
+    const ownerSaved = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}`, maintainer)
+    const ownerListed = try submissionIds(deposits, maintainer)
+    const retried = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/screen`, saver, { expectedRevision: waiting?.revision })
+    const forwarded = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/authorize`, saver, {})
+    const revised = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}/report`, saver, { expectedRevision: waiting?.revision, report: { summary: fuller, description: "previewShares() rounds in the depositor's favour. The attached test deposits 1 wei 1,000 times at commit abc with synthetic funds and withdraws more than it paid.", severity: "high" } })
+    const revisedIntake = try intakeOf(world, saved.id)
+    const asks = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_report_deposits WHERE case_id=?", saved.caseId))
+    try same(
+      {
+        deposit: try depositRow(world, saved.caseId),
+        shown: saved.deposit,
+        waiting: waiting?.state,
+        owner: [ownerSaved.status, ownerListed.includes(saved.id)],
+        notices: try routeNotices(world, saved.id),
+        screened: screenedCalls(fake, thin) + screenedCalls(fake, fuller),
+        retried: refusal(retried),
+        forwarded: refusal(forwarded),
+        revised: [revised.status, revisedIntake?.version, revisedIntake?.state, asks[0]?.count],
+      },
+      {
+        deposit: { mode: "asked", amount: (1975n * slop).toString(), itemLength: 66, paid: 0, outcome: null, reason: null },
+        shown: { state: "needed", amount: (1975n * slop).toString(), payPath: `/fee/report/${saved.caseId}` },
+        waiting: "queued",
+        owner: [404, false],
+        notices: [],
+        screened: 0,
+        retried: [409, "deposit_required"],
+        forwarded: [409, "deposit_required"],
+        revised: [200, 2, "queued", 1],
+      },
+    )
+
+    fake.reply((call) => call.system === screeningPrompt && said(call).includes(fuller), { text: JSON.stringify({ decision: "legitimate", reason: "The report names previewShares() and carries a runnable proof.", duplicateCaseIds: [] }) })
+    try paid(world, saved.caseId, 50, new Date(clock.now()).toISOString())
+    const started = try swept(deposits, "live")
+    const screenedIntake = try intakeOf(world, saved.id)
+    const ownerAfter = try exchanged(deposits, deposits.live, `/api/v1/security-submissions/${saved.id}`, maintainer)
+    const ownerListedAfter = try submissionIds(deposits, maintainer)
+    const notified = try routeNotices(world, saved.id)
+    const repeated = try swept(deposits, "live")
+    try same(
+      { started, screened: [screenedCalls(fake, thin), screenedCalls(fake, fuller)], state: screenedIntake?.state, owner: [ownerAfter.status, ownerListedAfter.includes(saved.id)], notified: notified.includes(maintainer), repeated: repeated.started },
+      { started: { released: 0, decided: 0, started: 1 }, screened: [0, 1], state: "legitimate", owner: [200, true], notified: true, repeated: 0 },
+    )
+
+    try orDie(Effect.try(() => github.world.addAdvisory("slop-test/intake", { author: `member-${importedReporter}`, summary: "Permit signature replays on another chain", description: "The permit signature has no domain separator, so it replays on another deployment." })))
+    const imported = try promise(() => sent(deposits, deposits.live, "/api/v1/security-cases", maintainer, { mode: "import", projectId: "intake-fixture" }))
+    try settled(deposits)
+    const [importedCase] = try promise(() => rows(world, "SELECT id, submission_state AS state, received_at_source AS source FROM security_cases WHERE reporter_github_id=?", importedReporter))
+    try same(
+      { imported: [imported.status, imported.body], importedCase: [importedCase?.state, importedCase?.source], deposit: try depositRow(world, String(importedCase?.id ?? "")) },
+      { imported: [200, { state: "ok", received: 1 }], importedCase: ["verified", "github-verified"], deposit: null },
+    )
   })
 
   it.effect('A paid deposit is sent back on a first response and kept only after a keeping close stood seven days (spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness")', () => effect {
@@ -253,8 +433,14 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same(early, { [acknowledged]: "refund_due", [silent]: null, [noProof]: "refund_due", [spam]: null, [appealed]: null, [racing]: null })
 
     clock.set(start + 7 * day + hour)
-    try promise(() => world.db.prepare("UPDATE security_cases SET appeal_state='open', receipt_state='disputed', revision=revision+1 WHERE id=?").bind(racing).run())
-    try swept(deposits, "live")
+    const landed: Array<number> = []
+    const appealLands = async () => {
+      const [current] = await rows(world, "SELECT revision FROM security_cases WHERE id=?", racing)
+      const answer = await sent(deposits, deposits.live, `/api/v1/security-cases/${racing}/actions`, "53106", { action: "appeal", expectedRevision: current?.revision, idempotencyKey: "deposit-race-appeal-00001", reason: "This is a different root cause from the closed report." })
+      landed.push(answer.status)
+    }
+    try swept(deposits, "live", appealBeforeWrite(world.db, racing, appealLands))
+    const [raced] = try promise(() => rows(world, "SELECT appeal_state AS appeal FROM security_cases WHERE id=?", racing))
     clock.set(start + 14 * day + hour)
     try swept(deposits, "live")
     const late: Record<string, unknown> = {}
@@ -263,8 +449,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       late[caseId] = row === null ? null : [row.outcome, row.reason]
     }
     try same(
-      { decidedFirst: first.decided, late },
-      { decidedFirst: 2, late: { [acknowledged]: ["refund_due", "responded"], [silent]: ["refund_due", "silent"], [noProof]: ["refund_due", "responded"], [spam]: ["kept_due", "spam"], [appealed]: [null, null], [racing]: [null, null] } },
+      { decidedFirst: first.decided, landed, racedAppeal: raced?.appeal, late },
+      { decidedFirst: 2, landed: [200], racedAppeal: "open", late: { [acknowledged]: ["refund_due", "responded"], [silent]: ["refund_due", "silent"], [noProof]: ["refund_due", "responded"], [spam]: ["kept_due", "spam"], [appealed]: [null, null], [racing]: [null, null] } },
     )
   })
 })

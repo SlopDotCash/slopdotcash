@@ -1,6 +1,6 @@
 // spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"
 import { type HistoryPage, type HistorySource, type JointPage, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
-import { canBegin, canTakeWarmed, initial, machineOver, workerFree } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
+import { canBegin, canTakeWarmed, initial, machineOver, validConcurrency, workerFree } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
 
 export const invalidConcurrency = "SLOP_VALUE_FEED_CONCURRENCY is invalid"
 
@@ -15,7 +15,7 @@ export interface WarmTarget {
 export effect function valueFeedConcurrency() {
   const raw = (try Config.withDefault(Config.String("SLOP_VALUE_FEED_CONCURRENCY"), "")).trim()
   if (raw === "") return 1
-  if (!/^[0-9]{1,2}$/u.test(raw)) throw new FeedConcurrencyInvalid({ message: invalidConcurrency })
+  if (!/^[0-9]{1,2}$/u.test(raw) || !validConcurrency(Number(raw))) throw new FeedConcurrencyInvalid({ message: invalidConcurrency })
   return Number(raw)
 }
 
