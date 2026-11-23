@@ -22,7 +22,7 @@ export interface PenaltyState {
   readonly history: ReadonlyArray<PenaltyHistoryRecord> | null
 }
 
-const categories: Readonly<Record<string, Category>> = {
+export const categories: Readonly<Record<string, Category>> = {
   none: "NoFinding",
   spam: "Spam",
   scam: "Scam",

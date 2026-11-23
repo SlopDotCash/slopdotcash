@@ -12,7 +12,7 @@ import { publishedJournal, publishedRegistry } from "../corrections/collect/publ
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
 import { type BeforeImportCheck, verifyHistoricalNetOutcomes } from "../corrections/reviewed/netOutcome.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
-import { exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
+import { type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
 import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
 import type { HistoricalAssessmentReceipt } from "../corrections/reviewed/audit/reconcile.vibe"
@@ -97,7 +97,7 @@ effect function privatePacket() {
     return { encoded: parts.join(""), bytes: null as Uint8Array | null }
   }
   const storage = try reviewedStorage(try environment("CLOUDFLARE_ACCOUNT_ID"), try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make("")))
-  const bytes: Uint8Array | null = try readPacket(storage, manifest)
+  const bytes: Uint8Array | null = try readPacket<ReviewedStorageError, ReviewedStorageServices>(storage, manifest)
   return { encoded: "", bytes }
 }
 

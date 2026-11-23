@@ -1,5 +1,5 @@
 // spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
-import { sha256Of } from "@repo/platform/git/bytes"
+import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
 import { type Journal, journalText } from "../../../kernels/records/canonical.ts"
 import { registryOf, repositoryIdFromUrl } from "../../../client/snapshot/checks.vibe"
 import type { LeaderboardSnapshot, ScoreEvent } from "../../../client/snapshot/schema.vibe"
@@ -41,7 +41,7 @@ effect function holds(condition: boolean, reason: HistoricalClosedOutcomeRefused
 }
 
 function same(left: unknown, right: unknown) {
-  const wire = (value: unknown) => canonicalJson(JSON.parse(JSON.stringify(value ?? null)))
+  const wire = (value: unknown) => canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value ?? null)
   return wire(left) === wire(right)
 }
 

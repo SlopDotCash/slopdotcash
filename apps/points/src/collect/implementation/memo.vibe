@@ -264,7 +264,7 @@ effect function digestOfFile(path: string) {
 export effect function implementationCodeDigest() {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
-  const program = decodeURIComponent(new URL(import.meta.url).pathname)
+  const program = try files.fromFileUrl(new URL(import.meta.url))
   const directory = files.dirname(program)
   const sources = (try fs.readDirectory(directory)).filter((name) => name.endsWith(".vibe")).sort(compare)
   const digests: string[] = [try digestOfFile(program)]

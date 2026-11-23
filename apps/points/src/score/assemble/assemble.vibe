@@ -133,7 +133,7 @@ function messageOf(error: { readonly _tag: string }) {
   return error._tag
 }
 
-effect function refusedAs<A, E extends { readonly _tag: string }>(run: A!E) {
+effect function refusedAs<A, E extends { readonly _tag: string }, R>(run: A!E!R) {
   const value: A = run catch effect (error) => {
     throw new AssemblyRefused({ message: messageOf(error) })
   }

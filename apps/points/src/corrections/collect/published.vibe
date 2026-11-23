@@ -1,8 +1,8 @@
 // spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"
 import { boundedBytes } from "@repo/platform/browser"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
-import type { Journal } from "../../kernels/records/canonical.ts"
 import { journalFile } from "../../kernels/records/ids.vibe"
+import type { PointsJournal } from "../../kernels/records/records.schema.ts"
 import { encoded } from "./inventory.vibe"
 
 export const publishedOrigin = "https://slop.cash"
@@ -200,7 +200,7 @@ effect function publishedProjection(origin: string) {
   }
 }
 
-export effect function retainedHistory(checkpoint: Journal, published: Journal) {
+export effect function retainedHistory(checkpoint: PointsJournal, published: PointsJournal) {
   const [earlier, later] = checkpoint.revisions.length > published.revisions.length ? [published, checkpoint] : [checkpoint, published]
   if (earlier.revisions.some((revision, position) => later.revisions[position]?.id !== revision.id)) throw unavailable("Published points history diverged from its checkpoint")
   const covered = new Set(later.coverage.map((entry) => encoded(entry)))
@@ -208,7 +208,7 @@ export effect function retainedHistory(checkpoint: Journal, published: Journal) 
     ...later,
     generatedAt: checkpoint.generatedAt > published.generatedAt ? checkpoint.generatedAt : published.generatedAt,
     coverage: [...later.coverage, ...earlier.coverage.filter((entry) => !covered.has(encoded(entry)))],
-  } satisfies Journal
+  } satisfies PointsJournal
 }
 
 export effect function publishedJournal(origin: string = publishedOrigin) {
