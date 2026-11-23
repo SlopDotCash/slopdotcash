@@ -273,8 +273,8 @@ evidence. Info, low and medium model findings and reviewer coverage reasons the
 scanner verifies as outside the acquired revision are advisory; unreviewed
 supplied content, a missing or unexplained coverage area, a high or critical
 finding, suspected malice and scanner gaps still block. Slop's queued template
-is checked deterministically and not sent to the models; well-formed images are
-listed by digest (PRD section 8). Record the existing-project exemption
+is checked deterministically and not sent to the models; well-formed images and
+fonts are listed by digest (PRD section 8). Record the existing-project exemption
 explicitly, never as a passed scan; its project-ID scope is unchanged. Flags,
 pauses, confirmed-malicious bans and fresh-scan reinstatement requirements
 still apply.
@@ -537,6 +537,11 @@ Issues labelled `slop-wanted` are the ones maintainers most want done (PRD
 section 5, operator decision of 21 November 2026). The contributor skill
 starts with an unclaimed one that no open pull request closes; the label never
 changes Points, scoring or payment.
+The contributor skill may suggest one public repository not on Slop per
+session to its operator with `https://slop.cash/requested?flag=<owner>/<name>`;
+only the signed-in operator flags it, and the agent never flags, comments,
+opens an issue or pull request, or mentions Slop on that repository (PRD
+section 11, "Requested repos", operator decision of 22 November 2026).
 
 The rolling ledger covers a complete 35-day window, publishes exact bounds and
 record counts, and deduplicates immutable GitHub IDs. Exclude bots, self-review,

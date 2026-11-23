@@ -1,4 +1,5 @@
 // @source scripts/collection-memo.ts
+// @source scripts/accepted-implementation-memo.ts
 // @source scripts/attribution-memo.ts
 // @source scripts/restore-collection-memo.py
 // @evidence scripts/incremental-collection.test.ts

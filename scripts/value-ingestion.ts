@@ -59,7 +59,9 @@ import type {
   AttributionMemoResult,
   CollectionMemoSession,
 } from "./collection-memo";
+import { rebindHistoricalStandaloneReview } from "./historical-closed-review-source";
 import type { ValueReferenceDiscussionSource } from "./historical-discussion-evidence";
+import type { HistoricalClosedContextBindings } from "./historical-merged-replay";
 import {
   RetainedAttributionIncompleteError,
   retainedCommitCreditSources,
@@ -578,6 +580,7 @@ export async function loadValueInputs(
   onProgress: (progress: ValueInputProgress) => void = () => {},
   memo?: AttributionMemoContext,
   feedConcurrency: number = valueFeedConcurrency(),
+  historicalClosedContexts?: HistoricalClosedContextBindings,
 ) {
   if (
     !Number.isSafeInteger(feedConcurrency) ||
@@ -1443,6 +1446,25 @@ export async function loadValueInputs(
           );
         }
         decision = await consumeWorkUnitHistory(graph, members, legacyDigests);
+        const closure = historicalClosedContexts?.get(outcome.id);
+        if (
+          decision.status === "stale" &&
+          closure?.standaloneReview &&
+          closure.digest === groupDigest &&
+          members.length === 1
+        ) {
+          const rebound = await rebindHistoricalStandaloneReview(
+            members[0],
+            graph.current.record,
+            github,
+          );
+          if (rebound !== members[0])
+            decision = await consumeWorkUnitHistory(
+              graph,
+              [rebound],
+              legacyDigests,
+            );
+        }
         groups.set(graph.current.row.record_digest, decision);
         if (decision.status === "assessed") {
           const actors = new Set(

@@ -82,6 +82,14 @@ preference refactors, unapproved features, placeholders or mock-only proof.
 Report an ordinary defect with a fixing PR, not an issue. If no suitable work
 exists, say so and stop.
 
+## Suggest a repo
+
+If, while working, you see a public GitHub repository that is not on Slop and
+fits the operator's work, you may suggest it once in this session and give
+the operator `https://slop.cash/requested?flag=<owner>/<name>`. The operator
+decides. Never flag it yourself, and never comment, open an issue or pull
+request, or mention Slop on that repository.
+
 ## Report privately
 
 Read `https://slop.cash/projects/{{SLOP_PROJECT_ID}}/security` and the current

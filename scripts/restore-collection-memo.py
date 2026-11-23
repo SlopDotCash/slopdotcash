@@ -31,11 +31,13 @@ from pathlib import Path
 
 
 MEMO_NAME = "collection-memo.json"
+IMPLEMENTATION_MEMO_NAME = "accepted-implementation-memo.json"
 MAX_MEMO_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_MEMO_BYTES + 1024 * 1024
 MAX_AGE = timedelta(days=7)
 MAX_RUNS = 40
 MEMO_ARTIFACT = re.compile(r"collection-memo-([1-9][0-9]{0,5})")
+IMPLEMENTATION_MEMO_ARTIFACT = re.compile(r"accepted-implementation-memo-([1-9][0-9]{0,5})")
 
 _spec = importlib.util.spec_from_file_location(
     "restore_discussions",
@@ -65,11 +67,11 @@ def trusted_run(run, repo):
     )
 
 
-def select_memo(artifacts, run, now):
+def select_memo(artifacts, run, now, pattern=MEMO_ARTIFACT, expected_attempt=None):
     """The newest unexpired memo of any attempt of this run, or None."""
     best = None
     for artifact in artifacts:
-        match = MEMO_ARTIFACT.fullmatch(artifact["name"])
+        match = pattern.fullmatch(artifact["name"])
         if not match or artifact["expired"]:
             continue
         created = datetime.fromisoformat(artifact["created_at"])
@@ -84,6 +86,8 @@ def select_memo(artifacts, run, now):
         ):
             continue
         attempt = int(match.group(1))
+        if expected_attempt is not None and attempt != expected_attempt:
+            continue
         if best is None or attempt > best[0]:
             best = (attempt, artifact)
     return best[1] if best else None
@@ -116,12 +120,12 @@ def download(repo, artifact, archive):
     )
 
 
-def extract_memo(archive, destination):
+def extract_memo(archive, destination, member=MEMO_NAME):
     with zipfile.ZipFile(archive) as package:
         entries = package.infolist()
         require(
             len(entries) == 1
-            and entries[0].filename == MEMO_NAME
+            and entries[0].filename == member
             and stat.S_IFMT(entries[0].external_attr >> 16) in (0, stat.S_IFREG)
             and 0 < entries[0].file_size <= MAX_MEMO_BYTES,
             "Memo archive must hold exactly one bounded memo file",
@@ -178,6 +182,26 @@ def main():
                 extract_memo(archive, output / MEMO_NAME)
             restored["memo"] = "true"
             print(f'Restored collection memo from trusted run {run["id"]}')
+            # Keep the legacy memo zip unchanged. The optional sidecar comes
+            # from the same trusted run attempt and uses the same digest check.
+            destination = output / IMPLEMENTATION_MEMO_NAME
+            try:
+                attempt = int(MEMO_ARTIFACT.fullmatch(memo["name"]).group(1))
+                implementation_memo = select_memo(
+                    artifacts, run, now, IMPLEMENTATION_MEMO_ARTIFACT, attempt
+                )
+                if implementation_memo is not None:
+                    with tempfile.TemporaryDirectory(
+                        dir=os.environ["RUNNER_TEMP"]
+                    ) as tmp:
+                        archive = Path(tmp) / "implementation-memo.zip"
+                        download(repo, implementation_memo, archive)
+                        extract_memo(archive, destination, IMPLEMENTATION_MEMO_NAME)
+                    print("Restored accepted implementation evidence")
+            except (ValueError, KeyError, OSError, zipfile.BadZipFile, subprocess.SubprocessError):
+                destination.unlink(missing_ok=True)
+                # error-policy:J2 the base collection memo remains usable.
+                print("::notice::Accepted implementation memo unavailable; reading source evidence live")
             if want_discussions:
                 try:
                     checkpoint = discussions.select_artifact(

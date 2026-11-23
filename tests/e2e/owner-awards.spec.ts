@@ -523,8 +523,19 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
 });
 
 test("owner reserve repair keeps healthy and unknown states held and restores a submitted transaction after reload", async ({
+  baseURL,
+  diagnostics,
   page,
 }, info) => {
+  // Leaving the project intentionally cancels its in-flight standings reads.
+  if (!baseURL) throw new Error("Browser fixture has no base URL");
+  const origin = escapeRegExp(new URL(baseURL).origin);
+  diagnostics.allow(
+    new RegExp(
+      `^net::ERR_ABORTED GET ${origin}/data/(?:leaderboard\\.json\\?[^ ]+|points/[0-9a-f]\\.json)$`,
+      "u",
+    ),
+  );
   const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-10-02T12:00:00Z"));
   await page.route(
@@ -649,7 +660,8 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect.poll(() => checkStarted).toBe(true);
-  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await page.getByRole("link", { name: "How it works", exact: true }).click();
+  await expect(page).toHaveURL(/\/how-it-works$/u);
   await expect(details).toHaveCount(0);
   await page.goBack();
   await details.locator("summary").click();

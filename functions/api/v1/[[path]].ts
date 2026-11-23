@@ -47,6 +47,7 @@ import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
 import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
+import { handleRepoRequests } from "../../../backend/referrals/repo-requests";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
 import { defaultDirectPaymentConfiguration } from "../../../backend/security/direct-payments";
@@ -505,6 +506,15 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (traceLicensing !== null) return traceLicensing;
+  const repoRequests = await handleRepoRequests(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    projects: projectPersistence,
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (repoRequests !== null) return repoRequests;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
   const mergeActivity = await handleMergeActivityApi(request, { db });

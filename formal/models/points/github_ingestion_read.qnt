@@ -4,6 +4,7 @@
 // @source workers/slopbot/github.ts
 // @evidence scripts/github-ingestion-read.test.ts
 // @evidence scripts/github-discussion-cache.test.ts
+// @evidence scripts/release-snapshot-download.test.ts
 // Reads may wait for an observed rate limit: an exhausted primary window,
 // Retry-After, a 429, or a 403 whose GitHub message names a secondary limit or
 // abuse detection. Writes and authorization failures return immediately, and
