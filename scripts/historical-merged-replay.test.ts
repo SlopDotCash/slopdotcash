@@ -3,7 +3,13 @@ import {
   createHistoricalLeaderboardSnapshot,
   type LeaderboardInput,
 } from "../src/lib/leaderboard";
-import { emptyPointsJournal } from "../src/lib/points";
+import {
+  appendPointAwards,
+  applyPointsSnapshot,
+  emptyPointsJournal,
+  latestPoints,
+  pointKey,
+} from "../src/lib/points";
 import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { findIngestedProjectByRepositoryId } from "../src/lib/projects.mjs";
 import {
@@ -122,6 +128,158 @@ test("omits an audited ordinary unassessed closure with no Points or linkage eff
   expect(input.closedUnmergedPullRequests?.map((row) => row.id)).toEqual([
     closed.id,
   ]);
+});
+
+function emptyLegacyClosureFixture(status: "assessed" | "unresolved") {
+  const { input, closed, pull, baseline, review } = fixture();
+  input.closedUnmergedPullRequests = [{ ...closed, reviews: [] }];
+  const binding = {
+    digest: "a".repeat(64),
+    number: closed.number,
+    headSha: closed.headRefOid,
+    occurredAt: closed.closedAt,
+  };
+  const assessment = { status, tier: null, reviews: [] };
+  const decision = {
+    status,
+    latestDigest: binding.digest,
+    history: [{ recorded_at: GENERATED_AT }],
+    implementationActorNodeIds: [],
+    record: { headSha: closed.headRefOid, assessment },
+    assessment,
+  };
+  input.valueDecisions = new Map([[closed.id, decision as never]]);
+  return { input, closed, pull, baseline, review, binding, decision };
+}
+
+test("verified empty legacy closures produce no historical review or award, even if unresolved", () => {
+  for (const status of ["assessed", "unresolved"] as const) {
+    const { input, closed, pull, baseline, binding } =
+      emptyLegacyClosureFixture(status);
+    const full = createHistoricalLeaderboardSnapshot(input, scope);
+    expect(
+      full.valueAssessmentCoverage?.find(
+        ({ pullRequestId }) => pullRequestId === closed.id,
+      ),
+    ).toMatchObject({ status, recordDigest: binding.digest });
+    expect(() =>
+      createMergedHistoricalReplaySnapshot(input, scope, baseline),
+    ).toThrow("closed-unmerged assessment");
+    const result = createMergedHistoricalReplaySnapshot(
+      input,
+      scope,
+      baseline,
+      undefined,
+      new Map([[closed.id, binding]]),
+    );
+    expect(result.source.counts.closedUnmergedPullRequests).toBe(0);
+    expect(
+      result.valueAssessmentCoverage?.map((row) => row.pullRequestId),
+    ).toEqual([pull.id]);
+    expect(result.ledger).toEqual(full.ledger);
+    expect(result.paymentReviewBasis).toEqual(full.paymentReviewBasis);
+  }
+});
+
+test("empty legacy closure evidence refuses changed source identity, coverage, or economic terms", () => {
+  const { input, closed, baseline, review, binding, decision } =
+    emptyLegacyClosureFixture("assessed");
+  const project = () =>
+    createMergedHistoricalReplaySnapshot(
+      input,
+      scope,
+      baseline,
+      undefined,
+      new Map([[closed.id, binding]]),
+    );
+  const census = input.closedUnmergedPullRequests;
+  input.closedUnmergedPullRequests = [
+    { ...closed, headRefOid: "f".repeat(40), reviews: [] },
+  ];
+  expect(project).toThrow("closed-unmerged lifecycle");
+  input.closedUnmergedPullRequests = census;
+  for (const changed of [
+    { ...decision, latestDigest: "b".repeat(64) },
+    { ...decision, assessment: { ...decision.assessment, tier: "small" } },
+    { ...decision, assessment: { ...decision.assessment, reviews: [review] } },
+  ]) {
+    input.valueDecisions = new Map([[closed.id, changed as never]]);
+    expect(project).toThrow("closed-unmerged assessment");
+  }
+  input.valueDecisions = new Map([[closed.id, decision as never]]);
+  input.closedUnmergedPullRequests = [{ ...closed, reviews: [review] }];
+  expect(project).toThrow("closed-unmerged assessment");
+  input.closedUnmergedPullRequests = census;
+  input.jointValueDecisions = new Map([
+    [
+      closed.id,
+      {
+        status: "unresolved",
+        sourceUnavailable: true,
+        history: [],
+        throughSequence: 1,
+        latestDigest: "c".repeat(64),
+      },
+    ],
+  ]);
+  expect(project).toThrow("closed-unmerged assessment");
+  input.jointValueDecisions = undefined;
+  input.penalties = [
+    {
+      itemNodeId: closed.id,
+      authorGithubId: "42",
+      category: "spam",
+      tableVersion: "slopbot-penalties-v1",
+      debitThirds: 1,
+      period: "2026-10",
+      recordedAt: closedAt,
+    },
+  ];
+  expect(project).toThrow("closed-unmerged scored-work");
+});
+
+test("empty legacy closure projection preserves an existing review award", () => {
+  const { input, closed, baseline, review, binding } =
+    emptyLegacyClosureFixture("assessed");
+  const category = "substantive-review";
+  const key = pointKey(scope.projectId, review.author.id, category, review.id);
+  const existing = appendPointAwards(
+    baseline,
+    [
+      {
+        key,
+        actor: { id: review.author.id, login: review.author.login },
+        projectId: scope.projectId,
+        category,
+        amount: 10,
+        occurredAt: reviewedAt,
+        sourceId: review.id,
+        sourceUrl: review.url,
+        workUnitId: review.id,
+        provisional: true,
+      },
+    ],
+    "b".repeat(64),
+    "slop-score-v2",
+    GENERATED_AT,
+  );
+  const projected = createMergedHistoricalReplaySnapshot(
+    input,
+    scope,
+    existing,
+    undefined,
+    new Map([[closed.id, binding]]),
+  );
+  const result = applyPointsSnapshot(
+    existing,
+    projected,
+    sha256Hex(JSON.stringify(projected)),
+    GENERATED_AT,
+    { preserveHeldImplementation: true },
+  );
+  expect(latestPoints(result).get(key)).toEqual(
+    latestPoints(existing).get(key),
+  );
 });
 
 test("a scored closed-unmerged review requires expanded lifecycle authority", () => {
