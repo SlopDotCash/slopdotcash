@@ -11,6 +11,7 @@ import { createHistoricalSnapshot } from "../../../score/assemble/assemble.vibe"
 import type { ImplementationHistory } from "../../../score/facts.vibe"
 import { canonicalJson } from "../audit/reconcile.vibe"
 import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
+import { projectClosedSources } from "./closedProjection.vibe"
 
 export error HistoricalClosedOutcomeRefused { reason: "lifecycle" | "assessment" | "scored-work" | "projection"; message: string }
 
@@ -122,8 +123,10 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
     return valid
   }
   try holds([...complete.ledger, ...completePayment].every(scored) && !(complete.penalties ?? []).some((row) => closedIds.has(row.source.id)), "scored-work")
-  const projectedCollection: Collection = { ...collection, work: { ...collection.work, closedUnmergedPullRequests: closed.filter((pull) => reviewSources.has(pull.id)) } }
-  const projected = try createHistoricalSnapshot(projectedCollection, pin, project, request.history)
+  const contexts = new Set([...approved.keys()].filter((id) => decisions.get(id)?.status === "assessed"))
+  const { closedContexts, ...scoredWork } = projectClosedSources(closed, collection.work.collections, reviewSources, contexts)
+  const projectedCollection: Collection = { ...collection, work: { ...collection.work, ...scoredWork } }
+  const projected = try createHistoricalSnapshot(projectedCollection, pin, project, request.history, closedContexts)
   const retainedProvenance = (snapshot: LeaderboardSnapshot) => ({
     coverage: (snapshot.valueAssessmentCoverage ?? []).filter((row) => !closedIds.has(row.pullRequestId) || reviewSources.has(row.pullRequestId)),
     units: (snapshot.reviewedImplementationUnits ?? []).filter((row) => !approved.has(row.pullRequestId) || reviewSources.has(row.pullRequestId)),

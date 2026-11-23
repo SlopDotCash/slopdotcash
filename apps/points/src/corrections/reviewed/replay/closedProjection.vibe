@@ -1,0 +1,18 @@
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+interface ClosedSource {
+  readonly id: string
+}
+
+export function projectClosedSources<T extends ClosedSource, R extends { readonly closedUnmerged: ReadonlyArray<T> }>(
+  closed: ReadonlyArray<T>,
+  repositories: ReadonlyArray<R>,
+  reviews: ReadonlySet<string>,
+  contexts: ReadonlySet<string>,
+) {
+  const scoresReview = (pull: T) => reviews.has(pull.id)
+  return {
+    closedUnmergedPullRequests: closed.filter(scoresReview),
+    collections: repositories.map((repository) => ({ ...repository, closedUnmerged: repository.closedUnmerged.filter(scoresReview) })),
+    closedContexts: closed.filter((pull) => !scoresReview(pull) && contexts.has(pull.id)),
+  }
+}

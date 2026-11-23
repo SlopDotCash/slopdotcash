@@ -8,6 +8,8 @@ import { outboundVia } from "@repo/platform/http"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
 import type { HistoricalPin } from "../src/client/snapshot/validate.vibe"
 import { type HistoricalRequest, approvedHistoryFrom, assertMergedCensus, collectHistorical } from "../src/collect/run/historical.vibe"
+import { mergedHistoricalReplaySnapshot } from "../src/corrections/reviewed/replay/merged.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
 import { PointsJournal } from "../src/kernels/records/records.schema.ts"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { windowBounds } from "../src/window/window.vibe"
@@ -140,6 +142,27 @@ it.live('A historical collection reads only the pinned repository after its merg
       closed: { standaloneReview: true, digest: "d".repeat(64) },
       contexts: 1,
       implementation: undefined,
+    })
+    const replay = try mergedHistoricalReplaySnapshot({
+      collection,
+      pin: base.pin,
+      project: base.project,
+      baseline: base.baseline,
+      repositories: repositoriesOf(collection.registry, {}),
+      approved: new Map(),
+    })
+    try same({
+      originalClosedCount: snapshot.source.counts.closedUnmergedPullRequests,
+      originalClosure: snapshot.valueAssessmentCoverage?.find((source) => source.pullRequestId === world.ids.closed)?.status,
+      projectedClosedCount: replay.source.counts.closedUnmergedPullRequests,
+      projectedCoverage: replay.valueAssessmentCoverage?.map((source) => source.pullRequestId),
+      projectedLedger: replay.ledger,
+    }, {
+      originalClosedCount: 1,
+      originalClosure: "missing",
+      projectedClosedCount: 0,
+      projectedCoverage: snapshot.valueAssessmentCoverage?.filter((source) => source.pullRequestId !== world.ids.closed).map((source) => source.pullRequestId),
+      projectedLedger: snapshot.ledger,
     })
     const changed: Array<unknown> = []
     for (const change of [{ id: "PR_different" }, { number: row.number + 1 }, { headRefOid: "b".repeat(40) }, { mergedAt: try isoAt(Date.parse(row.mergedAt) + 1000) }]) {

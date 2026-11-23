@@ -235,7 +235,7 @@ export interface ScoringFacts extends Partial<ImplementationHistory> {
   readonly windowTo: string
   readonly merged: ReadonlyArray<MergedPull>
   readonly closedUnmerged: ReadonlyArray<ClosedPull>
-  readonly contexts: ReadonlyArray<MergedPull>
+  readonly contexts: ReadonlyArray<MergedPull | ClosedPull>
   readonly joint: ReadonlyArray<JointDecision>
   readonly attributionHolds: ReadonlySet<string>
   readonly heldUnits: ReadonlyArray<HeldUnit>

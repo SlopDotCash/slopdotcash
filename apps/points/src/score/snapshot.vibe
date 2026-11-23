@@ -160,8 +160,12 @@ effect function admitted(facts: ScoringFacts, windowFrom: number, windowTo: numb
     if (at < scoreV2EffectiveAt) throw new FactsRefused({ reason: "work accepted before Score v2 is replayed by the frozen v2 scorer, never rescored", sourceId: pull.id })
     if (at < windowFrom || at >= windowTo) throw new FactsRefused({ reason: `Detailed pull request ${pull.id} falls outside the verification window`, sourceId: pull.id })
   }
-  for (const pull of facts.contexts) if (mergedIds.has(pull.id)) throw new FactsRefused({ reason: "Joint human context must be an assessed member outside the census", sourceId: pull.id })
   const closed = firstById(facts.closedUnmerged)
+  const censusIds = new Set([...mergedIds, ...closed.map((pull) => pull.id)])
+  for (const pull of facts.contexts) {
+    if (censusIds.has(pull.id)) throw new FactsRefused({ reason: "Joint human context must be an assessed member outside the census", sourceId: pull.id })
+    censusIds.add(pull.id)
+  }
   for (const pull of closed) {
     if (facts.projects.get(pull.repository) !== pull.project) throw new FactsRefused({ reason: "score repository is not registered to the source's project", sourceId: pull.id })
     const at = try millisAt(pull.closedAt, pull.id)

@@ -5,6 +5,7 @@ import { leaderboardMethodology } from "../../client/snapshot/methodology.vibe"
 import type { LeaderboardSnapshot, PublishedRepository, RegisteredRepository } from "../../client/snapshot/schema.vibe"
 import { ruleVersion, schemaVersion, scoreWindowDays } from "../../client/snapshot/schema.vibe"
 import { type HistoricalPin, type HistoricalProject, historicalRepository, validateHistoricalSnapshot } from "../../client/snapshot/validate.vibe"
+import type { PullRequestRecord } from "../../collect/merged/hydrate.vibe"
 import { AssemblyRefused, type Collection, SnapshotAssembly } from "../../collect/run/pipeline.vibe"
 import type { ImplementationHistory, ScoringMode } from "../facts.vibe"
 import { scoreSnapshot } from "../snapshot.vibe"
@@ -17,6 +18,7 @@ export interface AssemblyScope {
   readonly mode: ScoringMode
   readonly repositories: ReadonlyArray<PublishedRepository>
   readonly history?: Partial<ImplementationHistory>
+  readonly closedContexts?: ReadonlyArray<PullRequestRecord>
 }
 
 schema JointSources {
@@ -40,7 +42,7 @@ export function rollingRepositories(collection: Collection) {
 }
 
 export effect function assembleSnapshot(collection: Collection, scope: AssemblyScope) {
-  const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {})
+  const inputs = try assemblyInputs(collection, scope.mode, scope.history ?? {}, scope.closedContexts)
   const scored = try scoreSnapshot(inputs.facts)
   const coverage = try valueCoverage(inputs, scored)
   const reviewed = reviewedImplementationUnits(coverage, collection.source.repositories, try reviewedUnitsBySource(inputs.joint, collection.registry))
@@ -102,7 +104,7 @@ effect function jointInside(collection: Collection, pin: HistoricalPin, reposito
   return true
 }
 
-export effect function createHistoricalSnapshot(collection: Collection, pin: HistoricalPin, project: HistoricalProject, history: Partial<ImplementationHistory> = {}) {
+export effect function createHistoricalSnapshot(collection: Collection, pin: HistoricalPin, project: HistoricalProject, history: Partial<ImplementationHistory> = {}, closedContexts: ReadonlyArray<PullRequestRecord> = []) {
   const repository = try historicalRepository(collection.registry, pin, project)
   const registry = registryOf(collection.registry)
   const inside = (url: string) => repositoryIdFromUrl(registry, url) === repository.id
@@ -112,13 +114,13 @@ export effect function createHistoricalSnapshot(collection: Collection, pin: His
   const input = {
     censusRepository: source.repositoryId === pin.repositoryNodeId && listed !== undefined && listed.id === repository.id && listed.repositoryId === pin.repositoryNodeId,
     listedRepositories: source.repositories.length,
-    sourcesInside: [...work.outcomes, ...work.mergedPullRequests, ...work.reviewedMergedPullRequests, ...work.closedUnmergedPullRequests, ...work.closedIssues, ...collection.openIssues, ...collection.openPullRequests].every((record) => inside(record.url)),
+    sourcesInside: [...work.outcomes, ...work.mergedPullRequests, ...work.reviewedMergedPullRequests, ...work.closedUnmergedPullRequests, ...closedContexts, ...work.closedIssues, ...collection.openIssues, ...collection.openPullRequests].every((record) => inside(record.url)),
     eventsInside: retained.events.every((event) => event.repository === repository.id) && retained.attributions.every((attribution) => inside(attribution.sourceUrl)),
     penaltiesInside: (collection.penaltyHistory ?? []).every((penalty) => penalty.projectId === pin.projectId),
     jointInside: try jointInside(collection, pin, repository),
   }
   if (!historicalInputAdmitted(pinnedScope, input)) throw new AssemblyRefused({ message: historicalInputAdmitted(pinnedScope, { ...input, jointInside: true }) ? jointOutside : inputOutside })
-  const raw = try assembleSnapshot(collection, { mode: "historical", repositories: [published(repository, "primary")], history })
+  const raw = try assembleSnapshot(collection, { mode: "historical", repositories: [published(repository, "primary")], history, closedContexts })
   return try validateHistoricalSnapshot(raw, collection.registry, pin, project, try Clock.currentTimeMillis)
 }
 

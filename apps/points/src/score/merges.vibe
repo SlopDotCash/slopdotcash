@@ -32,7 +32,7 @@ export interface Merges {
 export interface MergeInput {
   readonly pulls: ReadonlyArray<MergedPull>
   readonly closed: ReadonlyArray<ClosedPull>
-  readonly contexts: ReadonlyArray<MergedPull>
+  readonly contexts: ReadonlyArray<Source>
   readonly decisions: ReadonlyArray<JointDecision>
   readonly attributionHolds: ReadonlySet<string>
   readonly windowFrom: number
@@ -426,6 +426,7 @@ export effect function mergedCredit(input: MergeInput, actors: ActorIndex) {
     outcomeActors.set(pull.id, actorIds(recipientsOf(observations, eligibleAuthor(pull.author, actors)), actors) ?? new Set())
   }
   for (const pull of [...input.pulls, ...input.contexts]) {
+    if (!("mergedAt" in pull)) continue
     const shared = outcomeActors.get(pull.id) ?? new Set<string>()
     try checkedRatification(pull, (who) => sameActor(who, pull.author) || shared.has(who.id))
   }
