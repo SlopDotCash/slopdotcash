@@ -57,9 +57,8 @@ export effect function fundMonth(key: MonthKey) {
   if (state.month.phase !== "Frozen") return "NotFrozen" satisfies Funding
   const earlierUnreserved = amountOf(settlement.earlierUnreserved)
   const bans = [...settlement.bans]
-  const { otherOpenPledges } = settlement
-  if (canCreateObligations(state, earlierUnreserved, otherOpenPledges, bans)) {
-    const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, otherOpenPledges, bans }, coordinator) catch effect (error) => match (error) {
+  if (canCreateObligations(state, earlierUnreserved, bans)) {
+    const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, bans }, coordinator) catch effect (error) => match (error) {
       when FundingStale: "StaleFunding" satisfies Funding;
       when Conflict: "StaleFunding" satisfies Funding;
       when Rejected: "StaleFunding" satisfies Funding;
@@ -68,9 +67,9 @@ export effect function fundMonth(key: MonthKey) {
     }
     return typeof outcome === "string" ? outcome : "Created" satisfies Funding
   }
-  if (!canNoteUnderfunded(state, earlierUnreserved, otherOpenPledges, bans)) return "StaleFunding" satisfies Funding
+  if (!canNoteUnderfunded(state, earlierUnreserved, bans)) return "StaleFunding" satisfies Funding
   const notices = try underfundedNotice(settlement)
-  settle(settlement, { type: "noteUnderfunded", earlierUnreserved, otherOpenPledges, bans }, coordinator, { alongside: notices }) catch effect (error) => match (error) {
+  settle(settlement, { type: "noteUnderfunded", earlierUnreserved, bans }, coordinator, { alongside: notices }) catch effect (error) => match (error) {
     when Conflict: undefined;
     when Rejected: undefined;
     when MonthRejected: undefined;

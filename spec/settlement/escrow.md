@@ -20,7 +20,12 @@ handlers `deposit`, `commit`, `pledge_month`, `expire_pledge`, `commit_monthly`,
 [EVM escrow](../contracts/evmEscrow.md) and [Solana escrow](../contracts/solanaEscrow.md)
 state the same pledge, cap and release rules per network.
 It started from the EVM monthly reserve draft, retired from `formal/drafts/`
-once its rules were stated here and in the contract units (git history keeps it).
+(git history keeps it). Its rules are stated here and in the contract units,
+except two: its goal of more than one admitted month while pool gross is
+pending, and the half of its compatible-rows rule that allows one award per
+monthly leaf position. Unique periods and unique sources are `alwaysMonths`
+and `alwaysAwards`; `leafUnused` refuses a used leaf position, but no rule
+here states it.
 The legacy V1 `commitMonthly` path, which commits every leaf in one call, is
 still callable on deployed EVM vaults; an independently signed V1
 transaction can win after V2 publication, so this unit applies it. The
@@ -786,6 +791,9 @@ base unit reaches the twelve-period bound (November 2026 to October 2027)
 within two deposits, while thirteen is refused; amounts of five and eight
 reach a pledge above the monthly cap, which raises it, and a pledge as large
 as the free balance, which blocks other spending.
+Discovered by proof: a deposit parameter named `deposit` shadowed the
+`deposit` transition in the generated Dafny, so it is named `funds` and its
+samples `fundsValues`; the samples themselves are unchanged.
 
 ```quint
 pure val evValues = Set(
