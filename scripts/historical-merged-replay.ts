@@ -21,6 +21,11 @@ export type HistoricalClosedContextBindings = ReadonlyMap<
   }
 >;
 
+export type HistoricalEmptyLegacyClosureBindings = ReadonlyMap<
+  string,
+  { digest: string; number: number; headSha: string; occurredAt: string }
+>;
+
 export class HistoricalClosedOutcomeError extends Error {
   constructor(
     readonly reason: "lifecycle" | "assessment" | "scored-work" | "projection",
@@ -68,6 +73,7 @@ export function createMergedHistoricalReplaySnapshot(
   scope: HistoricalLeaderboardScope,
   baseline: PointsJournal,
   approvedContexts: HistoricalClosedContextBindings = new Map(),
+  emptyLegacyClosures: HistoricalEmptyLegacyClosureBindings = new Map(),
 ): LeaderboardSnapshot {
   const closed = input.closedUnmergedPullRequests ?? [];
   const closedById = new Map(closed.map((pull) => [pull.id, pull]));
@@ -84,6 +90,27 @@ export function createMergedHistoricalReplaySnapshot(
     )
       throw new HistoricalClosedOutcomeError("lifecycle");
     if (binding.standaloneReview && decision.status !== "assessed")
+      throw new HistoricalClosedOutcomeError("assessment");
+  }
+  for (const [id, binding] of emptyLegacyClosures) {
+    const pull = closedById.get(id);
+    if (
+      !pull ||
+      pull.number !== binding.number ||
+      pull.headRefOid !== binding.headSha ||
+      Date.parse(pull.closedAt ?? "") !== Date.parse(binding.occurredAt)
+    )
+      throw new HistoricalClosedOutcomeError("lifecycle");
+    const decision = input.valueDecisions?.get(id);
+    if (
+      approvedContexts.has(id) ||
+      input.jointValueDecisions?.has(id) ||
+      pull.reviews.length !== 0 ||
+      decision?.latestDigest !== binding.digest ||
+      (decision.status !== "assessed" && decision.status !== "unresolved") ||
+      decision.assessment.tier !== null ||
+      decision.assessment.reviews.length !== 0
+    )
       throw new HistoricalClosedOutcomeError("assessment");
   }
   if (!closed.length) return createHistoricalLeaderboardSnapshot(input, scope);
@@ -115,17 +142,24 @@ export function createMergedHistoricalReplaySnapshot(
   );
   if (
     closedCoverage.length !== closed.length ||
-    closedCoverage.some(
-      (row) =>
-        !closedNumbers.has(row.pullRequestNumber) ||
-        (approvedContexts.has(row.pullRequestId)
-          ? row.status === "missing" ||
+    closedCoverage.some((row) => {
+      if (closedById.get(row.pullRequestId)?.number !== row.pullRequestNumber)
+        return true;
+      const empty = emptyLegacyClosures.get(row.pullRequestId);
+      if (empty)
+        return (
+          (row.status !== "assessed" && row.status !== "unresolved") ||
+          row.recordDigest !== empty.digest ||
+          row.reviewAssessmentDigest !== undefined
+        );
+      const approved = approvedContexts.get(row.pullRequestId);
+      return approved
+        ? row.status === "missing" ||
             row.status === "legacy-policy" ||
-            (row.recordDigest !==
-              approvedContexts.get(row.pullRequestId)?.digest &&
+            (row.recordDigest !== approved.digest &&
               !(row.status === "incomplete" && row.recordDigest === null))
-          : row.status !== "missing" || row.recordDigest !== null),
-    ) ||
+        : row.status !== "missing" || row.recordDigest !== null;
+    }) ||
     closed.some(
       (pull) =>
         input.jointValueDecisions?.has(pull.id) &&
@@ -165,7 +199,15 @@ export function createMergedHistoricalReplaySnapshot(
   }
   const completePayment = paymentLedger(complete);
   const reviewSources = new Set<string>();
+  const emptyLegacyDecisions = new Set(
+    [...emptyLegacyClosures.values()].map(({ digest }) => `value:${digest}`),
+  );
   for (const event of [...complete.ledger, ...completePayment]) {
+    if (
+      emptyLegacyClosures.has(event.source.id) ||
+      emptyLegacyDecisions.has(event.scoreDecisionSourceId ?? "")
+    )
+      throw new HistoricalClosedOutcomeError("scored-work");
     const pull = closedSource(event.source.url);
     if (!pull) continue;
     const binding = approvedContexts.get(pull.id);

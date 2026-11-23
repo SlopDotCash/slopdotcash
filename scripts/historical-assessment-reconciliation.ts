@@ -41,10 +41,14 @@ export function isHistoricalClosedFinding(
   );
 }
 
+type VerifiedClosure =
+  | VerifiedClosedFinding
+  | "verified-legacy-closure-without-awards";
+
 type SourceFinding =
   | "audited-head"
   | "stale-head"
-  | VerifiedClosedFinding
+  | VerifiedClosure
   | "retained-removed-merge"
   | "conflicting-audit-binding"
   | "missing-from-merged-audit"
@@ -517,6 +521,7 @@ type ClosedLifecycle = {
   mergeCommit: { oid: string } | null;
   closedAt: string | null;
   headRefOid: string;
+  reviews?: { totalCount: number };
   repository: {
     id: string;
     databaseId: number;
@@ -534,20 +539,20 @@ type RestLifecycle = {
   merge_commit_sha: string | null;
   closed_at: string | null;
   head: { sha: string };
-  base: { repo: { node_id: string; id: number; private: boolean } };
+  base: {
+    sha?: string;
+    repo: { node_id: string; id: number; private: boolean };
+  };
 };
 
 const CLOSED_CONTEXT_QUERY =
-  "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid repository{id databaseId isPrivate nameWithOwner}}}}";
+  "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid reviews(first:1){totalCount} repository{id databaseId isPrivate nameWithOwner}}}}";
 
 async function verifyClosedContexts(
-  candidates: readonly {
-    source: WorkUnitRecord["sources"][number];
-    standalone: boolean;
-  }[],
+  candidates: readonly { source: BoundSource; finding: VerifiedClosure }[],
   github: HistoricalContextGitHub,
 ) {
-  const verified = new Map<string, VerifiedClosedFinding>();
+  const verified = new Map<string, VerifiedClosure>();
   for (let offset = 0; offset < candidates.length; offset += 30) {
     const batch = candidates.slice(offset, offset + 30);
     const result = await github.graphql<{ nodes: (ClosedLifecycle | null)[] }>(
@@ -557,7 +562,8 @@ async function verifyClosedContexts(
     ensure(
       Array.isArray(result?.nodes) && result.nodes.length === batch.length,
     );
-    for (const [index, { source, standalone }] of batch.entries()) {
+    for (const [index, { source, finding }] of batch.entries()) {
+      const legacy = finding === "verified-legacy-closure-without-awards";
       const observed = result.nodes[index];
       if (
         observed?.__typename !== "PullRequest" ||
@@ -571,6 +577,7 @@ async function verifyClosedContexts(
         !time(observed.closedAt) ||
         Date.parse(observed.closedAt) !== Date.parse(source.occurredAt) ||
         observed.headRefOid !== source.headSha ||
+        (legacy && observed.reviews?.totalCount !== 0) ||
         observed.repository?.id !== source.repositoryNodeId ||
         observed.repository.databaseId !== source.repositoryDatabaseId ||
         observed.repository.isPrivate !== false ||
@@ -581,7 +588,7 @@ async function verifyClosedContexts(
       // REST can retain GitHub's test-merge identifier on an unmerged PR.
       // Keep the stored identifier and require the same immutable REST source
       // and explicit non-acceptance, alongside GraphQL's null actual merge.
-      if (standalone || source.mergeSha !== null) {
+      if (finding !== "verified-closed-context" || source.mergeSha !== null) {
         const rest = await github.get<RestLifecycle>(
           `/repos/${source.repository}/pulls/${source.pullRequestNumber}`,
         );
@@ -595,18 +602,14 @@ async function verifyClosedContexts(
           !time(rest.closed_at) ||
           Date.parse(rest.closed_at) !== Date.parse(source.occurredAt) ||
           rest.head?.sha !== source.headSha ||
+          (legacy && rest.base?.sha !== source.policySha) ||
           rest.base?.repo?.node_id !== source.repositoryNodeId ||
           rest.base.repo.id !== source.repositoryDatabaseId ||
           rest.base.repo.private !== false
         )
           continue;
       }
-      verified.set(
-        source.pullRequestNodeId,
-        standalone
-          ? "verified-standalone-closed-review"
-          : "verified-closed-context",
-      );
+      verified.set(source.pullRequestNodeId, finding);
     }
   }
   return verified;
@@ -651,7 +654,7 @@ function scopedRecord(
   audit: SourceAudit,
   byId: ReadonlyMap<string, SourceAudit["sources"][number]>,
   byNumber: ReadonlyMap<number, SourceAudit["sources"][number]>,
-  verifiedClosed?: ReadonlyMap<string, VerifiedClosedFinding>,
+  verifiedClosed?: ReadonlyMap<string, VerifiedClosure>,
   removed?: ReadonlySet<string>,
 ): ScopedRecord {
   return {
@@ -786,6 +789,7 @@ export async function classifyHistoricalAssessmentScope(
     blockers: Blocker[],
     activeLegacyCount = 0,
     activeJointCount = 0,
+    emptyLegacyClosures: ScopedRecord[] = [],
   ) {
     const result = {
       schemaVersion: "1" as const,
@@ -800,6 +804,7 @@ export async function classifyHistoricalAssessmentScope(
       },
       records,
       blockers,
+      ...(emptyLegacyClosures.length > 0 ? { emptyLegacyClosures } : {}),
     };
     return { ...result, receiptSha256: sha256Hex(canonicalJson(result)) };
   }
@@ -864,18 +869,77 @@ export async function classifyHistoricalAssessmentScope(
   const removed = github
     ? await verifyRemovedMerges(missingJointSources, github, archive, projectId)
     : undefined;
+  const legacySources = activeLegacy.map(({ row, record }) => ({
+    row,
+    record,
+    initial: scopedRecord("legacy", row, [record], audit, byId, byNumber),
+  }));
+  const existingSourceIds = new Set<string>();
+  const existingSourceUrls = new Set<string>();
+  if (archive && legacySources.length > 0) {
+    for (const { award } of latestPoints(archive.baseline).values()) {
+      if (award.projectId === projectId && award.amount > 0) {
+        existingSourceIds.add(award.sourceId);
+        const url = new URL(award.sourceUrl);
+        existingSourceUrls.add(
+          `${url.origin}${url.pathname.replace(/\/$/u, "")}`.toLowerCase(),
+        );
+      }
+    }
+  }
+  const emptyLegacyClosures = archive
+    ? legacySources.flatMap(({ record, initial }) =>
+        initial.sources[0].finding === "missing-from-merged-audit" &&
+        record.supersedes === null &&
+        record.assessment.tier === null &&
+        record.assessment.reviews.length === 0 &&
+        Date.parse(record.assessedAt) >= Date.parse(record.occurredAt) &&
+        !existingSourceIds.has(record.pullRequestNodeId) &&
+        !existingSourceUrls.has(
+          `https://github.com/${record.repository.toLowerCase()}/pull/${record.pullRequestNumber}`,
+        )
+          ? [
+              {
+                source: record,
+                finding: "verified-legacy-closure-without-awards" as const,
+              },
+            ]
+          : [],
+      )
+    : [];
   const verifiedClosed = github
     ? await verifyClosedContexts(
-        missingJointSources.filter(
-          ({ source }) => !removed?.has(source.pullRequestNodeId),
-        ),
+        [
+          ...missingJointSources
+            .filter(({ source }) => !removed?.has(source.pullRequestNodeId))
+            .map(({ source, standalone }) => ({
+              source,
+              finding: standalone
+                ? ("verified-standalone-closed-review" as const)
+                : ("verified-closed-context" as const),
+            })),
+          ...emptyLegacyClosures,
+        ],
         github,
       )
     : undefined;
+  const reconciledLegacy = legacySources.map(({ row, record, initial }) =>
+    verifiedClosed?.has(record.pullRequestNodeId)
+      ? scopedRecord(
+          "legacy",
+          row,
+          [record],
+          audit,
+          byId,
+          byNumber,
+          verifiedClosed,
+        )
+      : initial,
+  );
+  const noAwards = (entry: ScopedRecord) =>
+    entry.sources[0].finding === "verified-legacy-closure-without-awards";
   const relevant = [
-    ...activeLegacy.map(({ row, record }) =>
-      scopedRecord("legacy", row, [record], audit, byId, byNumber),
-    ),
+    ...reconciledLegacy.filter((entry) => !noAwards(entry)),
     ...jointSources.map(({ row, record, initial }) =>
       verifiedClosed?.size || removed?.size
         ? scopedRecord(
@@ -915,6 +979,20 @@ export async function classifyHistoricalAssessmentScope(
     blockers,
     activeLegacy.length,
     joint.active.length,
+    reconciledLegacy.filter(noAwards),
+  );
+}
+
+export function historicalEmptyLegacyClosureBindings(
+  receipt: Pick<HistoricalAssessmentReceipt, "emptyLegacyClosures">,
+) {
+  return new Map(
+    (receipt.emptyLegacyClosures ?? []).flatMap(({ digest, sources }) =>
+      sources.map(
+        ({ id, number, headSha, occurredAt }) =>
+          [id, { digest, number, headSha, occurredAt }] as const,
+      ),
+    ),
   );
 }
 
