@@ -2379,7 +2379,7 @@ test("owner funds a new vault before its creation is finalized", async ({
     });
     // A reload mid-flow keeps both saved requests. The form returns without a
     // click and the pending deposit needs only its wallet again.
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await expect(funding).toBeVisible({ timeout: 20_000 });
     await expect(funding).toContainText("Deposit awaiting verification");
     await funding.getByRole("button", { name: "Connect MetaMask" }).click();
@@ -2662,7 +2662,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
         failed.push(`${response.status()} ${response.url()}`);
     });
     await page.goto(`${origin}/projects/${id}/manage`, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
     });
     await openProjectSecuritySettings(page);
     const setup = page.getByRole("region", {
@@ -2702,7 +2702,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
       step: "register",
       transactionId: sends[0],
     });
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await openProjectSecuritySettings(page);
     await expect(setup).toHaveCount(0);
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
@@ -2901,7 +2901,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
       await page.unroute(privateUrl);
     }
     await page.goto(`${origin}/projects/${project.slug}/manage`, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
     });
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true, level: 1 }),
@@ -2909,7 +2909,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(bountyFunds).toHaveCount(0);
     await expect(page.getByText("10 USDC", { exact: true })).toHaveCount(0);
     await page.goto(`${origin}/projects/${id}/manage`, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
     });
     await openProjectSecuritySettings(page);
     await expect(available).toBeVisible();
