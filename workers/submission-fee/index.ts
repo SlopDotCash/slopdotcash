@@ -7,7 +7,9 @@
  * kept fee. A deposit on Robinhood Chain can instead pay the SLOP deposit of
  * a private security report (PRD section 8); the Worker marks that report's
  * row paid and sends what the row says. Once an hour it reads the SLOP price
- * and keeps the SLOP rate. It has no HTTP route.
+ * and keeps the SLOP rate. It has no HTTP route. Once the standing deposit
+ * contract is recorded, it is read as a third ledger on Robinhood Chain whose
+ * deposits pay contributors' standing rows (PRD section 5).
  *
  * `off` does nothing. `dry_run` reads and records, including the list it
  * would send, loads no key and signs nothing. `live` adds the resolver key.
@@ -17,6 +19,7 @@
 import { createEvmFeeChain, readPoolRate } from "./chain";
 import type { NetworkConfig, SubmissionFeeConfig } from "./config";
 import {
+  chainOf,
   parseConfig,
   parseMode,
   resolverKey,
@@ -122,6 +125,14 @@ export async function runDeposits(
           now,
           randomId: () => crypto.randomUUID(),
           log,
+          // The other ledgers on this chain share the resolver key and nonce.
+          siblings: config.networks
+            .filter(
+              (other) =>
+                other.network !== network.network &&
+                chainOf(other) === chainOf(network),
+            )
+            .map((other) => other.network),
         }),
       );
     } catch (error) {
