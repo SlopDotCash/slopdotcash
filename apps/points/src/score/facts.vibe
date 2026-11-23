@@ -47,7 +47,7 @@ export interface Commit {
 export interface RetainedCopyClaim {
   readonly sourceId: string
   readonly commitOid: string
-  readonly verified: boolean
+  readonly kind: "copy" | "verified-repair" | "unverified-repair"
 }
 
 export interface JointClaim {

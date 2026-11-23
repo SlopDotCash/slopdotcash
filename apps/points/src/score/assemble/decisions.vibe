@@ -315,12 +315,13 @@ effect function unitOf(unit: JointUnitWire, claims: ReadonlyMap<string, JointCla
   const claimed: JointClaim[] = []
   for (const claim of scoped) {
     const copy = claim.retainedCopy
+    const kind = copy?.repair === undefined ? "copy" : (try repairVerified(claim, retained, values)) ? "verified-repair" : "unverified-repair"
     claimed.push({
       id: claim.id,
       sourceId: claim.creditPullRequestId,
       commitOid: claim.commitSha,
       path: claim.path,
-      copy: copy === undefined ? null : { sourceId: copy.acceptancePullRequestId, commitOid: copy.acceptedCommitSha, verified: try repairVerified(claim, retained, values) },
+      copy: copy === undefined ? null : { sourceId: copy.acceptancePullRequestId, commitOid: copy.acceptedCommitSha, kind },
       carriers: claim.carrierPullRequestIds,
     })
   }
