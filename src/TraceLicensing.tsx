@@ -1,0 +1,427 @@
+/**
+ * Trace licensing on the account settings page (private trace contract
+ * version 2, design of 22 November 2026). The member turns the setting on or
+ * off and opts earlier traces in. Every server answer is checked before it is
+ * shown; an unexpected shape becomes the error state.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import {
+  isTraceTermsVersion,
+  TRACE_LICENCES_API,
+  TRACE_LICENSING_API,
+  TRACES_ME_API,
+  type TraceTermsVersion,
+} from "./lib/trace-licensing";
+import { useAction } from "./lib/use-action";
+import { EmptyState, formatDate, Spinner } from "./Presentation";
+
+type Setting = { enabled: boolean; since: string | null };
+type Licence = "none" | "licensed" | "withdrawn";
+type Trace = {
+  runId: string;
+  finalizedAt: string;
+  projectId: string;
+  provider: string;
+  model: string;
+  termsVersion: TraceTermsVersion;
+  licence: Licence;
+};
+type Listing = {
+  setting: Setting;
+  totals: { traces: number; licensed: number; eligible: number };
+  traces: Trace[];
+  nextCursor: string | null;
+};
+type View =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; listing: Listing };
+
+const INVALID = "Trace licensing returned an invalid answer.";
+const RUN_ID = /^[A-Za-z0-9_.:-]{1,128}$/u;
+const LICENCES: readonly string[] = ["none", "licensed", "withdrawn"];
+const COUNT = new Intl.NumberFormat("en-US");
+
+function record(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error(INVALID);
+  return value as Record<string, unknown>;
+}
+function count(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0)
+    throw new Error(INVALID);
+  return value as number;
+}
+function date(value: unknown): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)))
+    throw new Error(INVALID);
+  return value;
+}
+function text(value: unknown): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 300)
+    throw new Error(INVALID);
+  return value;
+}
+
+function setting(value: unknown): Setting {
+  const v = record(value);
+  if (
+    typeof v.enabled !== "boolean" ||
+    typeof v.providerTermsConfirmed !== "boolean"
+  )
+    throw new Error(INVALID);
+  if (!v.enabled && v.since !== null) throw new Error(INVALID);
+  return { enabled: v.enabled, since: v.enabled ? date(v.since) : null };
+}
+
+function trace(value: unknown): Trace {
+  const v = record(value);
+  if (
+    typeof v.runId !== "string" ||
+    !RUN_ID.test(v.runId) ||
+    !isTraceTermsVersion(v.termsVersion) ||
+    typeof v.licence !== "string" ||
+    !LICENCES.includes(v.licence) ||
+    (v.pullRequestUrl !== null && typeof v.pullRequestUrl !== "string")
+  )
+    throw new Error(INVALID);
+  text(v.repository);
+  text(v.client);
+  return {
+    runId: v.runId,
+    finalizedAt: date(v.finalizedAt),
+    projectId: text(v.projectId),
+    provider: text(v.provider),
+    model: text(v.model),
+    termsVersion: v.termsVersion,
+    licence: v.licence as Licence,
+  };
+}
+
+function listing(value: unknown): Listing {
+  const v = record(value);
+  const totals = record(v.totals);
+  const traces = count(totals.traces);
+  const licensed = count(totals.licensed);
+  const eligible = count(totals.eligible);
+  if (
+    licensed + eligible !== traces ||
+    !Array.isArray(v.traces) ||
+    (v.nextCursor !== null &&
+      (typeof v.nextCursor !== "string" || v.nextCursor.length > 300))
+  )
+    throw new Error(INVALID);
+  return {
+    setting: setting(v.setting),
+    totals: { traces, licensed, eligible },
+    traces: v.traces.map(trace),
+    nextCursor: v.nextCursor as string | null,
+  };
+}
+
+class TraceLicensingError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null,
+  ) {
+    super(message);
+  }
+}
+
+async function request(
+  url: string,
+  githubId: string | null,
+  signal: AbortSignal,
+  body?: { method: "PUT" | "POST"; json: unknown },
+): Promise<unknown> {
+  const response = await fetchWithDeadline(url, {
+    method: body?.method ?? "GET",
+    credentials: "same-origin",
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...(githubId === null ? {} : { "x-slop-expected-github-id": githubId }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body.json) }),
+    signal,
+  });
+  const answer = await readBoundedJson(
+    response,
+    1024 * 1024,
+    "Trace licensing",
+  );
+  if (!response.ok) {
+    const error =
+      typeof answer === "object" && answer !== null
+        ? (answer as { error?: unknown; message?: unknown })
+        : {};
+    throw new TraceLicensingError(
+      response.status < 500 && typeof error.message === "string"
+        ? error.message
+        : "Trace licensing is unavailable. Retry later.",
+      typeof error.error === "string" ? error.error : null,
+    );
+  }
+  return answer;
+}
+
+function traces(n: number): string {
+  return n === 1 ? "trace" : "traces";
+}
+
+const LICENCE_LABELS: Record<Licence, string> = {
+  none: "not licensed",
+  licensed: "licensed",
+  withdrawn: "withdrawn",
+};
+
+/** Keyed by the account, so an account change remounts it and drops a request in flight. */
+export function TraceLicensing({ githubId }: { githubId: string | null }) {
+  const [view, setView] = useState<View>({ status: "loading" });
+  const [ticked, setTicked] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const { busy, error, setError, run } = useAction();
+  const controller = useRef<AbortController | null>(null);
+  const loads = useRef(0);
+  const load = useCallback(async () => {
+    const signal = controller.current?.signal;
+    if (!signal || signal.aborted) return;
+    const attempt = ++loads.current;
+    try {
+      const loaded = listing(await request(TRACES_ME_API, githubId, signal));
+      if (!signal.aborted && attempt === loads.current)
+        setView({ status: "ready", listing: loaded });
+    } catch (caught) {
+      if (!signal.aborted && attempt === loads.current)
+        setView({
+          status: "error",
+          message:
+            caught instanceof Error
+              ? caught.message
+              : "Trace licensing failed.",
+        });
+    }
+  }, [githubId]);
+  useEffect(() => {
+    const current = new AbortController();
+    controller.current = current;
+    void load();
+    return () => current.abort();
+  }, [load]);
+
+  const act = (action: (signal: AbortSignal) => Promise<void>) => {
+    const signal = controller.current?.signal;
+    if (!signal || signal.aborted) return;
+    setNotice(null);
+    void run(async () => {
+      try {
+        await action(signal);
+      } catch (caught) {
+        // The eligible set moved: show the new list with the refusal.
+        if (
+          caught instanceof TraceLicensingError &&
+          caught.code === "count_changed"
+        )
+          await load();
+        throw caught;
+      }
+      await load();
+    });
+  };
+
+  if (view.status === "loading") return <Spinner label="Loading your traces" />;
+  const lead = (
+    <p>
+      Let Slop license your traces to AI model builders for pay. You get 50% of
+      each sale. <a href="/protocol/private-trace-v2.md">Terms</a>
+    </p>
+  );
+  if (view.status === "error")
+    return (
+      <div className="email-enrollment">
+        {lead}
+        <p role="alert">{view.message}</p>
+      </div>
+    );
+  const { setting: current, totals, nextCursor } = view.listing;
+  const turnOn = () =>
+    act(async (signal) => {
+      setting(
+        record(
+          await request(TRACE_LICENSING_API, githubId, signal, {
+            method: "PUT",
+            json: { enabled: true, providerTermsConfirmed: true },
+          }),
+        ).setting,
+      );
+      setTicked(false);
+    });
+  const turnOff = () => {
+    const withdrawn = totals.licensed;
+    act(async (signal) => {
+      setting(
+        record(
+          await request(TRACE_LICENSING_API, githubId, signal, {
+            method: "PUT",
+            json: { enabled: false },
+          }),
+        ).setting,
+      );
+      setNotice(
+        `Turned off. ${COUNT.format(withdrawn)} ${traces(withdrawn)} withdrawn.`,
+      );
+    });
+  };
+  const license = (json: unknown) =>
+    act(async (signal) => {
+      count(
+        record(
+          await request(TRACE_LICENCES_API, githubId, signal, {
+            method: "POST",
+            json,
+          }),
+        ).licensed,
+      );
+    });
+  const licenseAll = () => {
+    const eligible = totals.eligible;
+    if (
+      !window.confirm(
+        `License ${COUNT.format(eligible)} ${traces(eligible)}? You can turn this off any time.`,
+      )
+    )
+      return;
+    license({ all: true, expectedCount: eligible });
+  };
+  const more = () => {
+    const signal = controller.current?.signal;
+    if (!signal || signal.aborted || nextCursor === null) return;
+    setNotice(null);
+    void run(async () => {
+      const attempt = loads.current;
+      const page = listing(
+        await request(
+          `${TRACES_ME_API}?cursor=${encodeURIComponent(nextCursor)}`,
+          githubId,
+          signal,
+        ),
+      );
+      if (signal.aborted || attempt !== loads.current) return;
+      setView({
+        status: "ready",
+        listing: {
+          ...page,
+          traces: [...view.listing.traces, ...page.traces],
+        },
+      });
+    });
+  };
+
+  return (
+    <div className="email-enrollment">
+      {lead}
+      {current.enabled && current.since !== null ? (
+        <>
+          <p>On since {formatDate(current.since)}</p>
+          <div className="handoff-actions">
+            <button
+              className="button secondary-button"
+              disabled={busy}
+              type="button"
+              onClick={turnOff}
+            >
+              Turn off
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <fieldset disabled={busy}>
+            <label>
+              <input
+                type="checkbox"
+                checked={ticked}
+                onChange={(event) => {
+                  setTicked(event.target.checked);
+                  setError(null);
+                }}
+              />
+              My model provider's terms let me license these runs' output.
+            </label>
+          </fieldset>
+          <div className="handoff-actions">
+            <button
+              className="button secondary-button"
+              disabled={busy || !ticked}
+              type="button"
+              onClick={turnOn}
+            >
+              Turn on
+            </button>
+          </div>
+        </>
+      )}
+      {notice ? <p role="status">{notice}</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
+      {totals.traces === 0 ? (
+        <EmptyState text="No traces yet" />
+      ) : (
+        <>
+          <p>
+            Your traces ({COUNT.format(totals.traces)}) · licensed{" "}
+            {COUNT.format(totals.licensed)}
+          </p>
+          {current.enabled && totals.eligible > 0 ? (
+            <div className="handoff-actions">
+              <button
+                className="button secondary-button"
+                disabled={busy}
+                type="button"
+                onClick={licenseAll}
+              >
+                License all {COUNT.format(totals.eligible)} earlier{" "}
+                {traces(totals.eligible)}
+              </button>
+            </div>
+          ) : null}
+          <ul>
+            {view.listing.traces.map((row) => (
+              <li key={row.runId}>
+                {formatDate(row.finalizedAt)} · {row.projectId} · {row.provider}
+                /{row.model} ·{" "}
+                {row.termsVersion === "private-trace-v2" ? "v2" : "v1"} ·{" "}
+                {LICENCE_LABELS[row.licence]}
+                {current.enabled && row.licence !== "licensed" ? (
+                  <>
+                    {" "}
+                    <button
+                      className="button secondary-button button-small"
+                      disabled={busy}
+                      type="button"
+                      onClick={() => license({ runIds: [row.runId] })}
+                    >
+                      License
+                    </button>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          {nextCursor !== null ? (
+            <div className="handoff-actions">
+              <button
+                className="button secondary-button"
+                disabled={busy}
+                type="button"
+                onClick={more}
+              >
+                More
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
