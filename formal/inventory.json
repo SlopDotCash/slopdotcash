@@ -4585,9 +4585,9 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "sha256": "3b576c87c5a33e57a04e8fa55a177649f4d141cba15d120660b83c35df0026e5",
+      "sha256": "736d8951c2d692e741db9a0253b07e60bfc1e8c2454991deefeed89abdfae1aa",
       "models": ["formal/models/points/historical_assessment_audit.qnt"],
-      "candidateLines": [64, 92, 110, 151, 157, 158, 160, 161, 248],
+      "candidateLines": [74, 113, 141, 185, 191, 192, 194, 195, 285],
       "review": "mapped-abstraction"
     },
     {
@@ -5440,14 +5440,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "8ee35553d7f4b5929f3e80c954c198721f4e7d113ff5f031ad39e21515fb51e7",
+      "sha256": "ca6042c20b1242864719c80f9b064501079114a4edb3a91509e4478bae1aa45d",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 247, 248, 249, 250, 252, 257, 300, 315, 316, 322, 323, 458, 1182,
-        1411, 1431, 1642, 1660, 1667, 1795, 1890, 2052
+        3, 248, 249, 250, 251, 253, 258, 301, 316, 317, 323, 324, 459, 1183,
+        1412, 1432, 1646, 1664, 1671, 1803, 1898, 2060
       ],
       "review": "mapped-abstraction"
     },
@@ -16303,7 +16303,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "ec87412d80b10e289c0f8d0edec7fec411bd57327b20ca4e0d5911c613585f42",
+      "sha256": "aadaca864fad7f3bb87856ce9d26ac5154ca0718bb09bdc3cf84d02083f92ba7",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
