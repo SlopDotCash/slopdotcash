@@ -20,7 +20,7 @@ export type SiteFooterProps = ComponentProps<"footer"> & {
  */
 export function SiteFooter({ label = "Community", brand, compact = false, className, children, ...props }: SiteFooterProps) {
   return (
-    <footer className={cn(compact ? "bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
+    <footer className={cn("overflow-x-clip", compact ? "bg-card text-card-foreground" : "bg-primary text-primary-foreground", className)} {...props}>
       <div className={cn(shell, "flex flex-wrap justify-between", compact ? "items-center gap-4 py-6" : "items-end gap-8 py-12")}>
         {brand ? <div className="flex min-w-0 flex-col items-start gap-5">{brand}</div> : null}
         <nav

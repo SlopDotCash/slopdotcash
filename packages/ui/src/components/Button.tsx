@@ -7,7 +7,7 @@ import { StatusIcon } from "./Status.tsx";
 
 /** The look of a button by variant and size, for an element that acts as one without being a `Button`. */
 export const buttonVariants = cva(
-  [focusRing, inactive, target, "inline-flex items-center justify-center gap-2.5 rounded-md text-base leading-tight font-bold whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none [&_svg]:size-4.5 [&_svg]:shrink-0"],
+  [focusRing, inactive, target, "inline-flex items-center justify-center gap-2.5 rounded-md border border-transparent text-base leading-tight font-bold whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none [&_svg]:size-4.5 [&_svg]:shrink-0"],
   {
     variants: {
       variant: {
@@ -16,12 +16,12 @@ export const buttonVariants = cva(
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         outline: "border border-foreground/22 bg-transparent text-foreground hover:border-foreground hover:bg-foreground/6 active:bg-foreground/12",
-        inverse: "bg-foreground text-background hover:bg-foreground/90",
+        inverse: "border-0 bg-foreground text-background hover:bg-foreground/90",
         ghost: "hover:bg-accent hover:text-accent-foreground",
       },
       size: { sm: "h-10 px-4.5 text-control max-md:px-3 max-md:text-sm", md: "h-12 px-5.5", icon: "size-12" },
     },
-    compoundVariants: [{ variant: "link", class: "h-auto px-0 font-medium" }],
+    compoundVariants: [{ variant: "link", class: "h-auto border-0 px-0 font-medium" }],
     defaultVariants: { variant: "primary", size: "md" },
   },
 );

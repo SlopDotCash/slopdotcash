@@ -64,9 +64,12 @@ export function ProjectCard({ children, name, image, icon, lazy = false, descrip
       <div className="flex min-w-0 flex-col gap-4">
         {description ? <p className="max-w-165 text-base leading-summary text-muted-foreground max-md:text-copy xl:text-xl">{description}</p> : null}
         {amount || tags ? (
-          <p className="mt-auto flex flex-wrap items-baseline gap-2">
-            {amount ? <strong className="font-sans text-amount font-bold tracking-tight lg:text-amount-lg xl:text-4xl">{amount}</strong> : null}
-            {unit ? <span className="text-copy leading-page font-bold text-muted-foreground">{unit}</span> : null}
+          <p className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-1.5">
+            {amount || unit ? <span className="min-w-0 wrap-anywhere">
+              {amount ? <strong className="font-sans text-amount font-bold tracking-amount lg:text-amount-lg xl:text-4xl">{amount}</strong> : null}
+              {amount && unit ? " " : null}
+              {unit ? <span className="text-copy leading-page font-bold text-muted-foreground">{unit}</span> : null}
+            </span> : null}
             {tags}
           </p>
         ) : null}

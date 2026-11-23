@@ -1,5 +1,6 @@
 // spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { isoAt, millisOf } from "@repo/platform/clock"
+import type { RetainedCopy } from "../../gen/points__authorship.ts"
 import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
 import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
 import { instantOf } from "../kernels/records/instants.ts"
@@ -47,7 +48,7 @@ export interface Commit {
 export interface RetainedCopyClaim {
   readonly sourceId: string
   readonly commitOid: string
-  readonly kind: "copy" | "verified-repair" | "unverified-repair"
+  readonly kind: RetainedCopy
 }
 
 export interface JointClaim {

@@ -39,7 +39,7 @@ export function FundingTags({ reward }: { reward: CardReward }) {
   return reward.tag ? (
     <>
       <Status badge presentation={tagPresentations[reward.tag]} />
-      {reward.warning ? <span className="text-copy font-bold text-muted-foreground">{reward.warning}</span> : null}
+      {reward.warning ? <span className="font-bold text-muted-foreground">{reward.warning}</span> : null}
     </>
   ) : null;
 }

@@ -1045,7 +1045,7 @@ pure val snapshotValues = Set(supersedingSample, { ...supersedingSample, decisio
   { ...supersedingSample, coverage: CoverageMissing, ownRecordAbsorbs: true },
   { ...supersedingSample, coverage: CoverageAbsent }, { ...supersedingSample, review: OmittedOutsideWindow },
   { ...supersedingSample, windowFrom: 2432100, review: AdverseExclusion })
-pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 })
+pure val retirementValues = Set(RH::readyRetirement, { ...RH::readyRetirement, claimedPaths: 2 }, RH::nativeRetirement)
 pure val packetRunValues = Set(RH::readyRun, { ...RH::readyRun, candidateMatches: false },
   { ...RH::readyRun, preview: true, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false },
   { ...RH::readyRun, qualifiedReplay: false })

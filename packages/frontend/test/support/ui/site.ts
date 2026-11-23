@@ -260,21 +260,21 @@ function holdKey(method: string, path: string) {
   return `${method.toUpperCase()} ${path}`;
 }
 
-async function answer(route: Route, worker: (request: Request) => Promise<Response>, transform: (url: URL) => URL = (url) => url) {
+async function answer(route: Route, into: Session, worker: (request: Request) => Promise<Response>, transform: (url: URL) => URL = (url) => url) {
   const asked = route.request();
   const url = transform(new URL(asked.url()));
   const headers = Object.fromEntries(Object.entries(await asked.allHeaders()).filter(([name]) => !name.startsWith(":")));
   const body = asked.postDataBuffer();
-  if (url.origin === site) current().sent.push({ method: asked.method(), path: url.pathname, actor: headers["x-slop-expected-github-id"] ?? null });
+  if (url.origin === site) into.sent.push({ method: asked.method(), path: url.pathname, actor: headers["x-slop-expected-github-id"] ?? null });
   const response = await worker(new Request(url.toString(), { method: asked.method(), headers, redirect: "manual", ...(body === null ? {} : { body: new Uint8Array(body) }) }));
   const bytes = Buffer.from(await response.arrayBuffer());
-  const held = url.origin === site ? current().holds.get(holdKey(asked.method(), url.pathname)) : undefined;
+  const held = url.origin === site ? into.holds.get(holdKey(asked.method(), url.pathname)) : undefined;
   if (held !== undefined) await held.released;
   const shown: Record<string, string> = {};
   response.headers.forEach((value, name) => {
     if (name !== "set-cookie") shown[name] = value;
   });
-  const cookies = url.origin === identityOrigin && current().cookiesBlocked ? [] : response.headers.getSetCookie();
+  const cookies = url.origin === identityOrigin && into.cookiesBlocked ? [] : response.headers.getSetCookie();
   if (cookies.length > 0) shown["set-cookie"] = cookies.join("\n");
   const location = response.headers.get("location");
   if (asked.isNavigationRequest() && location !== null && response.status >= 300 && response.status < 400) {
@@ -285,30 +285,30 @@ async function answer(route: Route, worker: (request: Request) => Promise<Respon
   await route.fulfill({ status: response.status, headers: shown, body: bytes }).catch(() => undefined);
 }
 
-function cannedFor(method: string, path: string): Canned | undefined {
-  const { canned } = current();
+function cannedFor({ canned }: Session, method: string, path: string): Canned | undefined {
   return canned.get(holdKey(method, path)) ?? canned.get(holdKey("*", path));
 }
 
 async function routed(route: Route) {
+  const into = current();
   const backendNow = backend();
   const url = new URL(route.request().url());
-  const canned = url.origin === site ? cannedFor(route.request().method(), url.pathname) : undefined;
+  const canned = url.origin === site ? cannedFor(into, route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
-    current().sent.push({ method: route.request().method(), path: url.pathname, actor: (await route.request().allHeaders())["x-slop-expected-github-id"] ?? null });
+    into.sent.push({ method: route.request().method(), path: url.pathname, actor: (await route.request().allHeaders())["x-slop-expected-github-id"] ?? null });
     const fulfilled = canned.kind === "json" ? { contentType: "application/json", body: JSON.stringify(canned.body) } : { contentType: canned.contentType, body: Buffer.from(canned.bytes) };
     return route.fulfill({ status: canned.status, ...fulfilled }).catch(() => undefined);
   }
-  if (url.origin === site) return answer(route, backendNow.site);
-  if (url.origin === identityOrigin) return answer(route, backendNow.identity);
+  if (url.origin === site) return answer(route, into, backendNow.site);
+  if (url.origin === identityOrigin) return answer(route, into, backendNow.identity);
   if (url.origin === "https://github.com" && url.pathname === "/login/oauth/authorize")
-    return answer(route, async (request) => backendNow.github.handler(request), (next) => {
-      next.searchParams.set("login", current().consenting);
+    return answer(route, into, async (request) => backendNow.github.handler(request), (next) => {
+      next.searchParams.set("login", into.consenting);
       return next;
     });
   if (url.hostname === "avatars.githubusercontent.com") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: placeholder });
   if (url.hostname === "static.cloudflareinsights.com") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
-  current().failed.push(`unexpected ${route.request().method()} ${url.origin}${url.pathname}`);
+  into.failed.push(`unexpected ${route.request().method()} ${url.origin}${url.pathname}`);
   return route.abort("blockedbyclient");
 }
 
