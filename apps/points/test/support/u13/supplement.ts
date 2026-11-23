@@ -32,7 +32,7 @@ function omittedSearch(text: string, omitted: ReadonlySet<string>) {
 }
 
 export function supplementWorld() {
-  const clock = fastClock(start - 50 * day)
+  const clock = fastClock(start - 50 * day, 1)
   const fake = githubFake({ now: () => clock.now() })
   fake.world.addUser({ id: 101, login: "ada" })
   fake.world.addUser({ id: 102, login: "grace" })

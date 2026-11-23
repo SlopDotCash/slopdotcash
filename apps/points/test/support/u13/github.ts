@@ -60,7 +60,7 @@ function operationOf(body: string): string {
 }
 
 /** @throws {never} */
-export function fastClock(begin: number): FastClock {
+export function fastClock(begin: number, sleepScale = 1_000): FastClock {
   let now = begin;
   const slept: number[] = [];
   const nanos = () => BigInt(now) * 1_000_000n;
@@ -74,7 +74,7 @@ export function fastClock(begin: number): FastClock {
     monotonicTimeNanos: Effect.sync(nanos),
     sleep: (duration) => {
       const millis = Duration.toMillis(duration);
-      return Effect.andThen(live.sleep(Duration.millis(millis / 1000)), Effect.sync(() => {
+      return Effect.andThen(live.sleep(Duration.millis(millis / sleepScale)), Effect.sync(() => {
         now += millis;
         slept.push(millis);
       }));
