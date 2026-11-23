@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "5ce97a5f88c7c861a9be192eec1242832cbf822674a44bc61e8691354cd7d85b",
+  "inventorySha256": "88e8b900e0e58fbea4afb09efda86e966fdd255ca937a6fd09713959e0b48ad7",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2971,7 +2971,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 545,
+      "line": 586,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -3000,7 +3000,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1308,
+      "line": 1349,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],

@@ -28,7 +28,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "e07adecb17d279974035f361bd4e956137d0422ad02b2de4f31cc64241bb0e5e",
+      "sha256": "b43adc580a50aa4863c4673a3dafa2a7d1d860b904607d2a4591a20fbad1f328",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -39,10 +39,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        44, 62, 258, 393, 505, 537, 538, 623, 676, 740, 820, 825, 940, 946,
-        1014, 1017, 1043, 1044, 1065, 1077, 1109, 1147, 1377, 1405, 1497, 1510,
-        1601, 1711, 1713, 1714, 1918, 2001, 2154, 2156, 2186, 2301, 2323, 2394,
-        2405, 2430, 2501, 2514, 2527, 2536, 2537, 2538, 2555
+        44, 62, 258, 393, 505, 537, 538, 623, 676, 747, 827, 832, 947, 953,
+        1021, 1024, 1050, 1051, 1072, 1084, 1116, 1154, 1384, 1412, 1504, 1517,
+        1608, 1718, 1720, 1721, 1925, 2008, 2161, 2163, 2193, 2308, 2330, 2401,
+        2412, 2437, 2508, 2521, 2534, 2543, 2544, 2545, 2562
       ],
       "review": "mapped-abstraction"
     },
@@ -5022,8 +5022,11 @@
     },
     {
       "path": "scripts/prepare-publication.mjs",
-      "sha256": "28c774b7ebbbf289f1f19ff48c176812a2dc7a29165786367dccd6a99bee33ab",
-      "models": ["formal/models/release/release_publication.qnt"],
+      "sha256": "a488380f6933055f19cd2cd6333bd69ead07d238acd8142871c24c8a77dc83e5",
+      "models": [
+        "formal/models/release/record_publication.qnt",
+        "formal/models/release/release_publication.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5285,6 +5288,27 @@
         4, 88, 125, 126, 128, 131, 161, 163, 176, 182, 231, 246, 267, 275, 279,
         464, 486, 508, 511, 519, 547, 559, 566, 611
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/record/agg.mjs",
+      "sha256": "fe8a278ca143f3095b8cbc3da810de545c8b9befa253af55e81df514297776eb",
+      "models": ["formal/models/release/record_publication.qnt"],
+      "candidateLines": [229, 235, 258, 269, 281, 317, 325, 335, 446, 547],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/record/build-record.mjs",
+      "sha256": "9b915d7c527acb03915515c95765ad35bf93b7694f89bc7b9c5a0f1543fb1b56",
+      "models": ["formal/models/release/record_publication.qnt"],
+      "candidateLines": [17, 167, 168, 186, 206, 243],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/record/receipts.mjs",
+      "sha256": "a9571d9f8af4ebaed8c8759ceb7c405779f45b21d48ba3dc95682572a26a69c9",
+      "models": ["formal/models/release/record_publication.qnt"],
+      "candidateLines": [8, 424, 426, 427, 428, 434, 445],
       "review": "mapped-abstraction"
     },
     {
@@ -5906,7 +5930,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "2d8180e989b11a238150acbbfbaa863f9801e182aabc6a7a93209be0dd93dda2",
+      "sha256": "a76b1636b9d61e543d663d67de88e7e35c44b20575ef54782714eea41375698a",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
@@ -5928,14 +5952,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 357, 367, 377, 388, 397, 398, 399, 400, 401, 403, 404, 471, 543,
-        544, 545, 548, 570, 649, 680, 717, 823, 891, 969, 970, 979, 994, 995,
-        1221, 1236, 1254, 1294, 1301, 1304, 1307, 1310, 1379, 1382, 1384, 1388,
-        1389, 1394, 1411, 1415, 1423, 1424, 1427, 1429, 1437, 1468, 1514, 1517,
-        1532, 1533, 1583, 1586, 1590, 1591, 1592, 1593, 1597, 1617, 1619, 1636,
-        1641, 1703, 1704, 1709, 1710, 1715, 1722, 1724, 1764, 1765, 1768, 1769,
-        1772, 1773, 1794, 1795, 1801, 1806, 1808, 1812, 1813, 1852, 1875, 1885,
-        1916, 1918, 1943, 1944, 1960, 1961, 1972, 1974, 1999, 2002
+        21, 23, 395, 405, 415, 426, 435, 436, 437, 438, 439, 441, 442, 509, 584,
+        585, 586, 589, 611, 690, 721, 758, 864, 932, 1010, 1011, 1020, 1035,
+        1036, 1262, 1277, 1295, 1335, 1342, 1345, 1348, 1351, 1420, 1423, 1425,
+        1429, 1430, 1435, 1452, 1456, 1464, 1465, 1468, 1470, 1478, 1509, 1555,
+        1558, 1573, 1574, 1624, 1627, 1631, 1632, 1633, 1634, 1638, 1658, 1660,
+        1677, 1682, 1744, 1745, 1750, 1751, 1756, 1763, 1765, 1805, 1806, 1809,
+        1810, 1813, 1814, 1835, 1836, 1842, 1847, 1849, 1853, 1854, 1893, 1916,
+        1926, 1957, 1959, 1984, 1985, 2001, 2002, 2013, 2015, 2044, 2047
       ],
       "review": "mapped-abstraction"
     },
@@ -6547,7 +6571,7 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "650b31261b69e0c8a7ca0b245769940cd9d115010f5a7dc5d69bab71077c5edd",
+      "sha256": "587f6a349bb1057529d7623a7586a0b35764e152e8ffba594376212ab343295f",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
@@ -6556,8 +6580,8 @@
         "formal/models/ui/ui_report_deposit.qnt"
       ],
       "candidateLines": [
-        15, 75, 202, 398, 439, 440, 442, 443, 474, 476, 486, 634, 635, 637, 638,
-        645, 672, 674, 705, 710, 782
+        15, 75, 202, 396, 435, 436, 438, 439, 470, 472, 482, 630, 631, 633, 634,
+        641, 668, 670, 701, 706, 778
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6571,6 +6595,35 @@
         157, 161
       ],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/ReceiptsPage.tsx",
+      "sha256": "d530ef02b12a420d02183e6bad5e25b77ae2bc985c70041e07c83742b7c72986",
+      "models": ["formal/models/ui/ui_record_pages.qnt"],
+      "candidateLines": [175, 180, 181, 213],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/RecordLoad.tsx",
+      "sha256": "44d10f34803c26d12d03b81baf69574e818821e25acacd4e2331b507ed886fc9",
+      "models": ["formal/models/ui/ui_record_pages.qnt"],
+      "candidateLines": [21, 22, 27, 28, 33, 34, 41, 47],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/RecordPage.tsx",
+      "sha256": "1406ed24566ebd41b0564461ce9950cc20fde785bcd51d01624eaf0cb249377a",
+      "models": ["formal/models/ui/ui_record_pages.qnt"],
+      "candidateLines": [182, 276, 391, 447, 480, 498, 534, 556, 564],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/RecordTermsPage.tsx",
+      "sha256": "88210924bce03e8cf72dafe4636c561df028a2df0e8c554448ae43e9a2444dd2",
+      "models": [],
+      "candidateLines": [30],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure render of the fixed terms page named by the route; no state, effect, I/O, timer or transition. Routing is modeled in ui_navigation."
     },
     {
       "path": "src/ReferralClaims.tsx",
@@ -7802,6 +7855,13 @@
       "statelessReason": "Pure supplied-response shape/arithmetic validator and reviewed USD-asset predicate. No fetch, mutable cache or payment transition; actual receipt indexing and public aggregation remain payment ledger responsibilities."
     },
     {
+      "path": "src/lib/record-data.ts",
+      "sha256": "3f8bf13560a7ee9e4cb9c2a4ef19acfcc1228bfb80d0a21c27468b37469a43ac",
+      "models": ["formal/models/ui/ui_record_pages.qnt"],
+      "candidateLines": [39, 63, 123, 160],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/record-validation.mjs",
       "sha256": "986a5652c4495382f7eb93a66fd6b782109ef6ebed15a3b88c26bf3722248f9f",
       "models": [],
@@ -8013,7 +8073,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "199302d2f7791a4a1b4fdad0b6c4dcec504ac3f4cafddbcddbfb14bb47bf8fda",
+      "sha256": "dbc1806f430d8538cb08d75e4f1c6935696dbc6945933908cd1becdaba1734e0",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8520,6 +8580,54 @@
       "models": ["formal/models/ui/ui_boot.qnt"],
       "candidateLines": [10, 30, 31, 32, 35, 36, 63, 66, 73, 75, 76, 78],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/record-terms/buyback.tsx",
+      "sha256": "1455e677e0071a79baad07ddd4e51dc62b5a3d86c78a4f84acf8eac19acb0201",
+      "models": [],
+      "candidateLines": [8, 9, 12, 61],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes."
+    },
+    {
+      "path": "src/record-terms/october-allocation.tsx",
+      "sha256": "013e251550a0590f133fcd7e677868ffc7a7f9e51599feae325272b926faa2eb",
+      "models": [],
+      "candidateLines": [8, 9, 12],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes."
+    },
+    {
+      "path": "src/record-terms/privacy.tsx",
+      "sha256": "134dcc50c1d98e9c8c0ab7f90bf85be4ea6f216e70bb0e1d7099e4a0ea0bcc12",
+      "models": [],
+      "candidateLines": [64],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes."
+    },
+    {
+      "path": "src/record-terms/referrals.tsx",
+      "sha256": "4f285c6198ee200e427e74fa7ceb31e57f12daae5fff2c1906f3f8bbf73082d3",
+      "models": [],
+      "candidateLines": [8, 9, 12, 79],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes."
+    },
+    {
+      "path": "src/record-terms/sponsored-pools.tsx",
+      "sha256": "127c26f9e9a3652b934edb254ec05bb90822c2aceb295c574baf78c17ddad5bc",
+      "models": [],
+      "candidateLines": [8, 9, 13],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes."
+    },
+    {
+      "path": "src/record-terms/terms.ts",
+      "sha256": "33efb813e7e78121f9ba1988bc999e9f10e0e2e4da96acb2d5cd90dca76c6a99",
+      "models": [],
+      "candidateLines": [5, 9, 11],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Type declaration of one terms page; no runtime code or state transition."
     },
     {
       "path": "vite.config.ts",
@@ -16825,6 +16933,24 @@
       ]
     },
     {
+      "path": "formal/models/release/record_publication.qnt",
+      "sha256": "54113f94976f59fc17985dfed1682ad03889d27c1a654a5f0a7c85db7fa2e085",
+      "sources": [
+        "scripts/prepare-publication.mjs",
+        "scripts/record/agg.mjs",
+        "scripts/record/build-record.mjs",
+        "scripts/record/receipts.mjs"
+      ],
+      "scenarios": [
+        "builtKeepsEveryPublishedReceiptTest",
+        "failedReceiptsReadKeepsThePreviousReceiptsTest",
+        "failureWithoutPreviousWritesNothingTest",
+        "failureWritesThePreviousRecordTest",
+        "skippedBuildCannotWriteTest",
+        "withoutSwitchNothingRunsTest"
+      ]
+    },
+    {
       "path": "formal/models/release/registry_snapshot_publication.qnt",
       "sha256": "213e81c4944809403f10dafad434581238ba9fa1ba8efd2a9333fdcf1dc4c161",
       "sources": ["scripts/sync-project-registry.mjs"],
@@ -20976,6 +21102,23 @@
         "noPrematurePaidTest",
         "reportRevisionHistoryTest",
         "verifiedTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_record_pages.qnt",
+      "sha256": "8122dd68d1f2605f4fb841e99955ccd45778dddd938c6b74d51154fe8852248a",
+      "sources": [
+        "src/ReceiptsPage.tsx",
+        "src/RecordLoad.tsx",
+        "src/RecordPage.tsx",
+        "src/lib/record-data.ts"
+      ],
+      "scenarios": [
+        "failedReadOffersRetryTest",
+        "readyRecordCannotRetryTest",
+        "recordWithoutReceiptsShowsTheSentenceTest",
+        "remountDropsThePendingAnswerTest",
+        "validRecordShowsReceiptsTest"
       ]
     },
     {

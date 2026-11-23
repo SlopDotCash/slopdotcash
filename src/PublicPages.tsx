@@ -381,9 +381,7 @@ export function HowItWorksPage() {
                 your GitHub login. The referral is recorded when the project
                 lists. A referrer receives SLOP only after a project they
                 brought in has paid its contributors.{" "}
-                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
-                  Referral terms
-                </ExternalLinkAnchor>
+                <Link href="/referrals">Referral terms</Link>
               </p>
             </div>
           </article>
@@ -397,9 +395,7 @@ export function HowItWorksPage() {
                 allocated to burning. The first verified bridge fill, purchase
                 and burn are still pending. Funding comes from fees, not the
                 treasury, and nothing is guaranteed.{" "}
-                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
-                  How the buyback works
-                </ExternalLinkAnchor>
+                <Link href="/buyback">How the buyback works</Link>
               </p>
             </div>
           </article>
