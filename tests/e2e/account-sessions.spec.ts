@@ -2,7 +2,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site, identity: identityOrigin } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -117,6 +122,9 @@ test("Settings waits for identity and keeps current sign-out without individual 
   );
   await page.route(`${site}/api/v1/referrals/me`, (route) =>
     route.fulfill({ json: { enabled: false } }),
+  );
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
   );
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   await expect(page.locator("#wallets")).toContainText("Checking your account");
@@ -333,6 +341,9 @@ test("Settings keeps its remaining controls after in-page sign-in without recove
         availability: "unverified",
       },
     }),
+  );
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
   );
   // Explicit identity double, as in login.spec.ts.
   const expiresAt = new Date(
