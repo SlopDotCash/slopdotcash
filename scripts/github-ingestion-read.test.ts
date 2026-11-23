@@ -148,7 +148,7 @@ for (const path of [
 }
 
 for (const path of [
-  "/repos/owner/repo/pulls/7",
+  "/repos/owner/repo/pulls/7?state=all",
   "/repos/owner/repo/pulls/7/reviews/9",
   "/repos/owner/repo/issues/7",
   "/repos/owner/repo/issues/comments?per_page=100",
@@ -173,6 +173,72 @@ test("persistent PR file failures return the complete third HTTP 500 response", 
   expect(await response.json()).toEqual(finalBody);
   expect(f.calls()).toBe(3);
   expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+// A single pull request read can answer a transient 422 or 500; the same read
+// a few seconds later succeeds (23 Nov: one 422 on elizaOS/eliza#37149 ended a
+// three-hour collection, and the read answered 200 afterwards).
+const pullReadError = () =>
+  Response.json({ message: "Validation Failed" }, { status: 422 });
+for (const path of [
+  "/repos/elizaOS/eliza/pulls/37149",
+  "/repositories/42/pulls/7",
+]) {
+  test(`single pull request reads recover from two HTTP 422 responses at ${path}`, async () => {
+    const pull = { number: 7, merged: true };
+    const f = fixture([
+      pullReadError,
+      pullReadError,
+      () => Response.json(pull),
+    ]);
+    expect(await f.client.get<typeof pull>(path)).toEqual(pull);
+    expect(f.urls).toEqual(Array(3).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+  test(`single pull request reads recover from two HTTP 500 responses at ${path}`, async () => {
+    const pull = { number: 7, merged: true };
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(pull),
+    ]);
+    expect(await f.client.get<typeof pull>(path)).toEqual(pull);
+    expect(f.calls()).toBe(3);
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("persistent single pull request failures return the third HTTP 422 response", async () => {
+  const finalBody = { message: "Still unavailable" };
+  const f = fixture([
+    pullReadError,
+    pullReadError,
+    () => Response.json(finalBody, { status: 422 }),
+    () => Response.json({ number: 7 }),
+  ]);
+  const response = await f.read(
+    "https://api.github.com/repos/owner/repo/pulls/7",
+  );
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(3);
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+test("HTTP 422 retries require an exact single pull request GET", async () => {
+  const url = "https://api.github.com/repos/owner/repo/pulls/7";
+  for (const [input, init] of [
+    [`${url}?state=all`, undefined],
+    [`${url}/merge`, undefined],
+    [`${url}#fragment`, undefined],
+    ["https://api.github.com/repos/owner/repo/pulls/07", undefined],
+    [url, { method: "PATCH" }],
+  ] as const) {
+    const f = fixture([pullReadError]);
+    expect((await f.read(input, init)).status).toBe(422);
+    expect(f.urls).toEqual([input]);
+    expect(f.waits).toEqual([]);
+  }
 });
 
 const commitSha = "a".repeat(40);
