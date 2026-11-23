@@ -5,7 +5,12 @@
 import { join } from "node:path";
 import type { Page, Route } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const origins = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -187,6 +192,8 @@ async function serveAccount(page: Page) {
       return route.fulfill({ json: { appeals: [] } });
     if (path === "/api/v1/referrals/me")
       return route.fulfill({ json: { enabled: false } });
+    if (path === "/api/v1/traces/me")
+      return route.fulfill({ json: EMPTY_TRACE_LISTING });
     return route.fulfill({ status: 404, json: { error: "not_found" } });
   });
   return state;

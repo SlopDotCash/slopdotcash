@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -110,6 +115,9 @@ test("social membership preserves past points and discloses public connections w
       body: JSON.stringify(value),
     });
   });
+  await page.route(`${site}/api/v1/traces/me*`, (route) =>
+    route.fulfill({ json: EMPTY_TRACE_LISTING }),
+  );
   await page.route(
     "https://avatars.githubusercontent.com/**",
     async (route) => {
