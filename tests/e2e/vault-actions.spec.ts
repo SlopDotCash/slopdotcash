@@ -2904,7 +2904,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("heading", { name: "Manage project", exact: true }),
+      page.getByRole("heading", { name: "Settings", exact: true, level: 1 }),
     ).toBeVisible();
     await expect(bountyFunds).toHaveCount(0);
     await expect(page.getByText("10 USDC", { exact: true })).toHaveCount(0);
