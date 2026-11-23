@@ -1,0 +1,161 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { sha256Hex } from "@repo/platform/crypto"
+import { mergeRecipe } from "@repo/platform/git/evidence"
+import {
+  type CorrectionActor,
+  type CorrectionClaim,
+  type CorrectionSource,
+  type OriginalContributorFollowup,
+  type SyncMergesRequest,
+  isOriginalContributorFollowup,
+  referencesOriginalContributorSource,
+} from "@repo/points/corrections"
+import { hydrateValueMergeSource } from "../collect/recovery.vibe"
+import { collectEvidence } from "../evidence/collect.vibe"
+import type { Evidence } from "../evidence/types.vibe"
+import { retainedAcknowledgements } from "../retained/reference.vibe"
+import { mergeInputOf } from "../workUnits/merge.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import { answer } from "../workUnits/source.vibe"
+import type { Policy, WorkUnitSource } from "../workUnits/types.vibe"
+import { type NativeComparison, authenticateNativeAcceptedRange, authenticateOriginalFollowupParents, nativeSyncOriginal } from "./authenticate.vibe"
+import { refused } from "./bind.vibe"
+import { matchesRetainedProjection } from "./original.vibe"
+
+schema ShaRef { readonly sha: string }
+schema GitObject { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+schema FollowupComparison {
+  readonly status: string
+  readonly ahead_by: number
+  readonly behind_by: number
+  readonly total_commits: number
+  readonly merge_base_commit: ShaRef
+  readonly commits: ReadonlyArray<GitObject>
+}
+schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name?: string }
+
+export interface NativeAcceptance {
+  readonly merge: GitObject
+  readonly acceptedRange: ReadonlyArray<NativeComparison>
+  readonly retainedBaseRanges: ReadonlyArray<NativeComparison>
+}
+
+export interface FollowupProof {
+  readonly binding: OriginalContributorFollowup
+  readonly source: CorrectionSource
+  readonly nativeAcceptance: NativeAcceptance | undefined
+}
+
+function shas(parents: ReadonlyArray<ShaRef>) {
+  return JSON.stringify(parents.map(({ sha }) => sha))
+}
+
+export effect function nativeOriginalWithSyncMerges(request: SyncMergesRequest) {
+  const { original, maintainer, owners } = request
+  const [owner = "", name = ""] = URL.parse(original.url)?.pathname.split("/").filter((part) => part !== "") ?? []
+  const repository = `${owner}/${name}`
+  const evidence = try collectEvidence({ repository, number: original.number, policy: null })
+  const { pull } = evidence
+  if (
+    pull.node_id !== original.id || pull.user.node_id !== original.author?.id || pull.user.type !== original.author?.kind ||
+    pull.head.sha !== original.headRefOid || pull.updated_at !== original.updatedAt || pull.merged_at !== original.mergedAt ||
+    evidence.commits.length !== original.commits?.length ||
+    evidence.commits.some((commit, index) => {
+      const observed = original.commits?.[index]
+      return commit.sha !== observed?.oid || commit.parents.length !== observed.parentCount ||
+        commit.author?.node_id !== observed.author?.id || commit.author?.type !== observed.author?.kind
+    })
+  ) return false
+  const identity = try answer(`/repos/${repository}`, PublicRepository)
+  if (identity?.private !== false) return false
+  const source: WorkUnitSource = { evidence, policy: { sha: pull.base.sha, text: "" } }
+  const hydrated = try hydrateValueMergeSource(source, mergeRecipe(mergeInputOf(evidence)), identity, null)
+  return try nativeSyncOriginal(hydrated.evidence, original.author, maintainer, owners)
+}
+
+export effect function originalContributorFollowupProof(
+  accepted: CorrectionSource,
+  source: CorrectionSource,
+  evidence: Evidence,
+  policy: Policy,
+  claims?: ReadonlyArray<CorrectionClaim>,
+  scoped?: { readonly anchorSha: string; readonly origin: CorrectionActor },
+) {
+  const pullPath = `/repos/${source.repository}/pulls/${evidence.pull.number}`
+  const reference = evidence.relatedPullRequests.find((target) =>
+    target.id === accepted.sourceId && target.url === accepted.sourceUrl && target.repository.toLowerCase() === accepted.repository.toLowerCase())
+  const acknowledgement = reference === undefined ? undefined : retainedAcknowledgements(evidence).find((record) =>
+    record.user?.type === "User" && record.user.node_id === accepted.author?.id &&
+    referencesOriginalContributorSource(record.body, reference.repository, reference.number))
+  if (
+    claims === undefined && reference !== undefined &&
+    (referencesOriginalContributorSource(evidence.pull.body ?? "", reference.repository, reference.number) || acknowledgement !== undefined)
+  ) {
+    const current = try answer(pullPath, Schema.Unknown)
+    if (current === undefined || !matchesRetainedProjection(current, evidence.pull)) throw refused("Accepted follow-up statement changed during collection")
+    if (acknowledgement !== undefined) {
+      const path = "created_at" in acknowledgement
+        ? `/repos/${source.repository}/issues/comments/${acknowledgement.html_url.split("issuecomment-")[1] ?? ""}`
+        : `${pullPath}/reviews/${acknowledgement.id}`
+      const currentRecord = try answer(path, Schema.Unknown)
+      if (!matchesRetainedProjection(currentRecord, acknowledgement)) throw refused("Accepted follow-up acknowledgement changed during collection")
+    }
+    const retained = {
+      sourceDigest: try sourceDigestOf(evidence, policy),
+      pull: evidence.pull,
+      target: reference,
+      ...(acknowledgement === undefined ? {} : { acknowledgement }),
+    }
+    const binding: OriginalContributorFollowup = {
+      sourceId: source.sourceId,
+      ancestorSha: accepted.headSha,
+      commits: [],
+      reference: { ...retained, digest: try sha256Hex(JSON.stringify(retained)) },
+    }
+    const stated = try isOriginalContributorFollowup(source, accepted, binding)
+    if (!stated) throw refused("Invalid accepted follow-up statement")
+    const proof: FollowupProof = { binding, source, nativeAcceptance: undefined }
+    return proof
+  }
+  let followed = source
+  let nativeAcceptance: NativeAcceptance | undefined = undefined
+  if (claims !== undefined) {
+    const current = try answer(pullPath, Schema.Unknown)
+    if (current === undefined || !matchesRetainedProjection(current, evidence.pull)) throw refused("Selected native follow-up changed during collection")
+    const merge = evidence.mergeCommitEvidence
+    if (merge === null || merge.sha !== evidence.pull.merge_commit_sha || merge.parents.length !== 2 || merge.parents[1]?.sha !== source.headSha) {
+      throw refused("Selected follow-up lacks a pinned native merge")
+    }
+    const currentMerge = try answer(`/repos/${source.repository}/git/commits/${merge.sha}`, GitObject)
+    if (currentMerge?.sha !== merge.sha || shas(currentMerge.parents) !== shas(merge.parents)) throw refused("Selected follow-up native merge changed")
+    const acceptance = try authenticateNativeAcceptedRange(source, evidence, merge, claims.map((claim) => claim.commitSha))
+    followed = acceptance.source
+    nativeAcceptance = { merge: currentMerge, acceptedRange: acceptance.acceptedRange, retainedBaseRanges: acceptance.retainedBaseRanges }
+  } else {
+    followed = try authenticateOriginalFollowupParents(source, evidence)
+  }
+  const ancestorSha = scoped?.anchorSha ?? accepted.headSha
+  const commits: Array<{ readonly sha: string; readonly parentShas: ReadonlyArray<string> }> = []
+  let total = 0
+  for (let page = 1; page === 1 || commits.length < total; page++) {
+    const result = try answer(`/repos/${source.repository}/compare/${ancestorSha}...${source.headSha}?per_page=100&page=${page}`, FollowupComparison)
+    if (!(
+      result !== undefined && result.status === "ahead" && result.behind_by === 0 && result.merge_base_commit.sha === ancestorSha &&
+      Number.isSafeInteger(result.total_commits) && result.total_commits > 0 && result.ahead_by === result.total_commits &&
+      (page === 1 || result.total_commits === total) && result.commits.length === Math.min(100, result.total_commits - (page - 1) * 100)
+    )) throw refused("Follow-up does not descend from the complete accepted source")
+    total = result.total_commits
+    commits.push(...result.commits.map((commit) => ({ sha: commit.sha, parentShas: commit.parents.map((parent) => parent.sha) })))
+  }
+  for (const commit of commits) {
+    const immutable = try answer(`/repos/${source.repository}/git/commits/${commit.sha}`, GitObject)
+    if (immutable?.sha !== commit.sha || shas(immutable.parents) !== JSON.stringify(commit.parentShas)) {
+      throw refused("Follow-up comparison parent graph disagrees with immutable Git objects")
+    }
+  }
+  const binding: OriginalContributorFollowup = { sourceId: source.sourceId, ancestorSha, commits }
+  const descends = try isOriginalContributorFollowup(followed, accepted, binding, claims, scoped)
+  if (!descends) throw refused("Invalid accepted follow-up source")
+  const proof: FollowupProof = { binding, source: followed, nativeAcceptance }
+  return proof
+}

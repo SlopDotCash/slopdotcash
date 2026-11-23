@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { D1, rows, sql } from "@repo/platform/d1"
 import { type Network, Wallets } from "@repo/ports/backend"
 import { ApprovedAwards } from "@repo/ports/security"
-import { DirectBounty, DirectFeeAward, type DirectLeg, DirectPayments, DirectRefused, DirectRoutes, RecoveryRefused, SolanaPayerRefused } from "@repo/ports/settlement"
+import { DirectBounty, DirectFeeAward, type DirectLeg, DirectPayments, DirectRefused, DirectRoutes, RecoveryRefused } from "@repo/ports/settlement"
 import { NETWORKS } from "../kernels/networks.ts"
 import { paymentAction, paymentView } from "./caseActions.vibe"
 import { EvmDirectRails, evmModel } from "./evm.vibe"
@@ -96,9 +96,7 @@ export const DirectPaymentsLive = Layer.effect(DirectPayments, effect {
   return {
     act: (action, context, body, alongside) => effect {
       return Effect.provide(paymentAction(action, context, body, alongside), services) catch effect (error) => {
-        if (error._tag === "DirectRefused") throw new DirectRefused({ reason: error.reason })
-        if (error._tag === "RecoveryRefused") throw new RecoveryRefused({ reason: error.reason })
-        if (error._tag === "SolanaPayerRefused") throw new SolanaPayerRefused({ message: error.message })
+        if (error._tag === "DirectRefused" || error._tag === "RecoveryRefused" || error._tag === "SolanaPayerRefused") throw error
         if (error._tag === "Conflict") throw action === "recover-payment" ? new RecoveryRefused({ reason: "paymentRecoveryChanged" }) : new DirectRefused({ reason: "staleRevision" })
         if (error._tag === "DatabaseFailure" || error._tag === "ConstraintViolation" || error._tag === "RowMismatch") throw error
         return try die(error)

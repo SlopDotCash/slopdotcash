@@ -32,7 +32,9 @@ still does not wait (`candidates` and `caseChange` in
 `backend/security/routine-decisions.ts`, development commit `c04752ccf`). A
 report that waits for its deposit is never supplied as an earlier case or as
 a same-digest duplicate of another report. A report version still being
-screened is not read until 15 minutes after it was saved. Each case revision
+screened is not read until 15 minutes after the last write to its case
+(`security_cases.updated_at`): a saved version, a person's action and a live
+routine decision each restart that wait. Each case revision
 gets one final decision per mode, also under overlapping passes. A failed
 attempt waits six hours before the next one, three at most. A live decision
 applies only to the case revision it read, so a person's action that lands
@@ -58,8 +60,9 @@ pure val receivedCase: C::PrivateCase =
   { ...C::receive(C::initial, C::SlopReceived, T::standardTerms, C::NewReceipt, M::zero, 1), authority: C::staff }
 pure val initial: Routine = { mode: DryRun, privateCase: receivedCase, screening: S::initial, onGithub: false,
   nowMs: T::standardTerms.receivedAt, savedAt: T::standardTerms.receivedAt, records: List(), failures: List(), proofFile: false }
-pure def screeningSettled(r: Routine): bool = (r.screening.phase != S::Queued and r.screening.phase != S::Running)
-  or r.nowMs >= r.savedAt + screeningWaitMs
+pure def screeningSettledFor(screening: S::Screening, savedAt: int, nowMs: int): bool =
+  (screening.phase != S::Queued and screening.phase != S::Running) or nowMs >= savedAt + screeningWaitMs
+pure def screeningSettled(r: Routine): bool = screeningSettledFor(r.screening, r.savedAt, r.nowMs)
 pure def ownsRevision(r: Routine, mode: Mode, caseRevision: int): bool = mode == r.mode and caseRevision == r.privateCase.revision
 pure def failuresNow(r: Routine): int = r.failures.select(f => ownsRevision(r, f.mode, f.caseRevision)).length()
 pure def readable(r: Routine): bool = r.mode != Off and C::routineReadable(r.privateCase, r.nowMs) and screeningSettled(r)
@@ -181,7 +184,8 @@ pure def decideReport(r: Routine, found: Observation): Routine =
   val d = verdict(r, found)
   { ...r, records: r.records.append({ mode: r.mode, caseRevision: r.privateCase.revision, reportVersion: r.privateCase.reportVersion,
       at: r.nowMs, decision: d, applied: r.mode == Live }),
-    privateCase: if (r.mode == Live) C::routineDecided(d.outcome, r.privateCase, d.duplicateOf, r.nowMs) else r.privateCase }
+    privateCase: if (r.mode == Live) C::routineDecided(d.outcome, r.privateCase, d.duplicateOf, r.nowMs) else r.privateCase,
+    savedAt: if (r.mode == Live) r.nowMs else r.savedAt }
 pure def canFailCalls(r: Routine): bool = readable(r) and not(withoutCalls(r)) and failuresNow(r) < maxUnavailableAttempts
 pure def failCalls(r: Routine): Routine =
   { ...r, failures: r.failures.append({ mode: r.mode, caseRevision: r.privateCase.revision, at: r.nowMs }) }
@@ -236,17 +240,19 @@ reaches GitHub by forwarding or import ([forwarding](./forwarding.md)).
 ```quint
 pure def epoch(r: Routine): int = r.privateCase.authority.epoch
 pure def canRequestInformation(r: Routine, by: int): bool = C::canRequestInformation(r.privateCase, by, epoch(r))
-pure def requestInformation(r: Routine, by: int): Routine = { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)) }
+pure def requestInformation(r: Routine, by: int): Routine =
+  { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)), savedAt: r.nowMs }
 pure def canDecide(r: Routine, by: int, decision: C::Decision): bool =
   C::canDecide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision)
 pure def decide(r: Routine, by: int, decision: C::Decision): Routine =
-  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision) }
+  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision), savedAt: r.nowMs }
 pure def canAppeal(r: Routine, by: int): bool = C::routineAppealable(r.privateCase, by) or C::canAppeal(r.privateCase, by)
 pure def appeal(r: Routine, by: int): Routine =
-  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by) }
+  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by),
+    savedAt: r.nowMs }
 pure def canDecideAppeal(r: Routine, by: int, uphold: bool): bool = C::canDecideAppeal(r.privateCase, by, epoch(r), uphold)
 pure def decideAppeal(r: Routine, by: int, uphold: bool): Routine =
-  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold) }
+  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold), savedAt: r.nowMs }
 pure def revisionEvidence(r: Routine, by: int): S::RevisionEvidence = { isReporter: by == r.privateCase.reporter,
   draftOrFailed: not(r.onGithub), noAdvisory: not(r.onGithub), caseNeedsInformation: r.privateCase.receipt == C::NeedsInformation,
   exactCaseCas: true, allowedCaseState: C::canReviseReport(r.privateCase, by, r.screening.version + 1),

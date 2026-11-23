@@ -1,5 +1,6 @@
 // spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/security/bounty.md, "The earliest human-confirmed eligible report of a root cause qualifies first"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/bounty.md, "A finalized vault payout settles its hold and keeps the record"; spec/security/bounty.md, "One root cause holds at most one proposal or award obligation"
 import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
+import type { ExecutionContext } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
 import { D1, type Statement, d1, sql } from "@repo/platform/d1";
 import { Refused, outbound } from "@repo/platform/http";
@@ -7,6 +8,8 @@ import { Roles } from "@repo/platform/roles";
 import { database, migrate, startWorker, storage } from "@repo/platform/testing";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
+import { Execution } from "@repo/platform/worker";
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports";
 import { Authority as RepositoryAuthority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
 import type { Driver, Options } from "../../gen/security__bounty.conformance.ts";
 import type { Bounty, Event, HoldKind, RouteObservation } from "../../gen/security__bounty.ts";
@@ -18,6 +21,7 @@ import { SecurityProgramFunds } from "../../src/bounty/funds.vibe";
 import { awardClearancesLive } from "../../src/bounty/store.vibe";
 import type { ProgramFundsView } from "../../src/program/manifest.ts";
 import { caseRecord } from "../../src/cases/rows.vibe";
+import { reportDepositSettings } from "../../src/deposit/settings.vibe";
 import { performed } from "../../src/cases/routes.vibe";
 import { reportBucket } from "../../src/privacy/reads.vibe";
 import { ReportingPrograms } from "../../src/receipt/program.vibe";
@@ -102,12 +106,15 @@ await db.batch([
   db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(project, manifest, "a".repeat(64), new Date(epoch).toISOString(), new Date(epoch).toISOString()),
 ]);
 
-const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)));
-const runtime = ManagedRuntime.make(Layer.provideMerge(awardClearancesLive, services));
+const pending: Array<Promise<unknown>> = [];
+const execution: ExecutionContext = { waitUntil: (work) => { pending.push(work); } };
+const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), Layer.succeed(Execution, { context: execution }), reportDepositSettings("off"));
+const runtime = ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(awardClearancesLive, SubmissionFeeRatesLive, ProjectParticipationLive), services));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {
   const exit = await runtime.runPromiseExit(program);
+  await Promise.allSettled(pending.splice(0));
   if (Exit.isSuccess(exit)) return "accepted";
   const error = Cause.squash(exit.cause);
   if (error instanceof Refused) return "refused";

@@ -17,7 +17,7 @@ import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, p
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
 import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
-import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, paymentRpc, reservedAwardFeedAccess, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
+import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, paymentRpc, reservedAwardFeedAccess, reviewedGenesis, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
 import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
 import { documents } from "./document.vibe"
 import { workerCaches } from "./edgeCaches.ts"
@@ -49,12 +49,6 @@ function intakeGitHubApp(env: PagesEnv) {
   return appId === "" || privateKey === "" ? unconfiguredGitHubApp : Layer.provide(githubApp({ appId, privateKey: Redacted.make(privateKey), userAgent: "slop.cash" }), outbound)
 }
 
-function reviewedGenesis() {
-  const pinned: Record<string, string> = {}
-  for (const [network, definition] of Object.entries(NETWORKS)) if (definition.family === "solana") pinned[network] = definition.genesisHash
-  return JSON.stringify(pinned)
-}
-
 effect function reviewedRpcUrls(text: string | undefined) {
   const parsed = Effect.try(() => JSON.parse(text ?? "{}") as unknown) catch () => undefined
   const listed: Readonly<Record<string, unknown>> = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Readonly<Record<string, unknown>> : {}
@@ -77,7 +71,7 @@ function bindings(env: PagesEnv) {
     monthlyReleases(env),
     intakeGitHubApp(env),
     Layer.unwrap(effect {
-      return paymentRpc(try reviewedRpcUrls(env.PAYMENT_RPC_URLS), reviewedGenesis())
+      return paymentRpc(try reviewedRpcUrls(env.PAYMENT_RPC_URLS), reviewedGenesis(Object.keys(NETWORKS).filter(isNetworkKey)))
     }),
     evmDirectRails(env.PAYMENT_RPC_URLS),
     solanaDirectRails({ paymentRpcUrls: env.PAYMENT_RPC_URLS, localSolanaGenesis: env.SLOP_LOCAL_SOLANA_GENESIS, recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL }),

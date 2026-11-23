@@ -1,4 +1,4 @@
-// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"
+// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,8 +16,8 @@ import { createBuilder } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { feeNetworks } from "../../../../../apps/backend/gen/backend__submissionFeeTerms.ts";
-import { escrowStack, word } from "../../../../../apps/settlement/test/support/evm/deploy.ts";
-import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, Method, Op, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
+import { escrowStack, word } from "@repo/settlement/testing/evm";
+import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
 import { type Wallets, homeChainId, injectWallets } from "./wallets.ts";
 
@@ -64,10 +64,11 @@ interface Held {
   readonly release: () => void;
 }
 
-interface Canned {
-  readonly status: number;
-  readonly body: unknown;
-}
+type Canned =
+  | { readonly kind: "json"; readonly status: number; readonly body: unknown }
+  | { readonly kind: "bytes"; readonly status: number; readonly bytes: Uint8Array; readonly contentType: string };
+
+type PointsTesting = typeof import("@repo/points/testing");
 
 interface Session {
   readonly context: BrowserContext;
@@ -272,7 +273,8 @@ async function routed(route: Route) {
   const canned = url.origin === site ? cannedFor(route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
     current().sent.push({ method: route.request().method(), path: url.pathname, actor: (await route.request().allHeaders())["x-slop-expected-github-id"] ?? null });
-    return route.fulfill({ status: canned.status, contentType: "application/json", body: JSON.stringify(canned.body) }).catch(() => undefined);
+    const fulfilled = canned.kind === "json" ? { contentType: "application/json", body: JSON.stringify(canned.body) } : { contentType: canned.contentType, body: Buffer.from(canned.bytes) };
+    return route.fulfill({ status: canned.status, ...fulfilled }).catch(() => undefined);
   }
   if (url.origin === site) return answer(route, backendNow.site);
   if (url.origin === identityOrigin) return answer(route, backendNow.identity);
@@ -426,6 +428,19 @@ async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed
   } finally {
     await stack.close();
   }
+}
+
+async function published(context: BrowserCommandContext, leaderboard: LeaderboardTransport): Promise<Published> {
+  const { publishedFixture } = await context.project.import<PointsTesting>("@repo/points/testing");
+  const fixture = await publishedFixture();
+  const transport = [{ path: "/data/leaderboard.json", bytes: fixture.transport.root }, ...fixture.transport.parts];
+  const files = leaderboard === "whole" ? fixture.files : [...fixture.files.filter((file) => file.path !== "/data/leaderboard.json" && !file.path.startsWith("/data/leaderboard/")), ...transport];
+  for (const file of files) current().canned.set(holdKey("*", file.path), { kind: "bytes", status: 200, bytes: file.bytes, contentType: file.path.endsWith(".part") ? "text/plain; charset=utf-8" : "application/json" });
+  return {
+    registry: fixture.registry,
+    leaders: fixture.leaderboard.snapshot.leaders.map(({ actor }) => ({ id: actor.id, login: actor.login, avatarUrl: actor.avatarUrl })),
+    parts: fixture.transport.parts.map((part) => part.path),
+  };
 }
 
 const absent: Shown = { count: 0, visible: false, text: "", value: null, disabled: false, checked: null, focused: false, href: null };
@@ -617,14 +632,19 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return null;
     }
     case "fail":
-      current().canned.set(holdKey(op.method, op.path), { status: op.status, body: op.body });
+      current().canned.set(holdKey(op.method, op.path), { kind: "json", status: op.status, body: op.body });
       return null;
     case "unfail":
       current().canned.delete(holdKey(op.method, op.path));
       return null;
     case "serve":
-      current().canned.set(holdKey("*", op.path), { status: op.status, body: op.body });
+      current().canned.set(
+        holdKey("*", op.path),
+        op.bytes === undefined ? { kind: "json", status: op.status, body: op.body } : { kind: "bytes", status: op.status, bytes: new Uint8Array(Buffer.from(op.bytes, "base64")), contentType: op.contentType ?? "application/octet-stream" },
+      );
       return null;
+    case "published":
+      return published(context, op.leaderboard);
     case "unserve":
       current().canned.delete(holdKey("*", op.path));
       return null;
@@ -668,6 +688,26 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     case "wheel":
       await page().mouse.wheel(op.dx, op.dy);
       return null;
+    case "scrollEnd":
+      return page().evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+    case "reveal":
+      await locate(page(), op.target).first().scrollIntoViewIfNeeded();
+      await page().evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      return null;
+    case "back":
+      await page().goBack({ waitUntil: "load" });
+      return null;
+    case "forward":
+      await page().goForward({ waitUntil: "load" });
+      return null;
+    case "stamp":
+      await page().evaluate((value) => history.replaceState({ ...(history.state as object | null), readerState: value }, ""), op.value);
+      return null;
+    case "stamped":
+      return page().evaluate(() => {
+        const state: unknown = history.state;
+        return typeof state === "object" && state !== null && "readerState" in state && typeof state.readerState === "string" ? state.readerState : null;
+      });
     case "allow":
       current().allowed = [...current().allowed, ...op.patterns.map((pattern) => new RegExp(pattern, "u"))];
       return null;

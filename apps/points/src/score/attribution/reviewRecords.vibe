@@ -1,0 +1,215 @@
+// spec/points/modelAttribution.md, "Only same-actor text causally attached to a scored contribution is assessed"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
+import type { Parsed, ProjectRunReceipt } from "@repo/contributor/client"
+import { type Registry, isRecord, parsedUrl } from "../../client/snapshot/checks.vibe"
+import { fencedRecord, isGitSha, isWorkUnitId, tierThirds, validReason } from "../../kernels/scoring/ratification.ts"
+import type { ScoreTier } from "../../kernels/scoring/tiers.ts"
+
+module identity {
+  import { isExactClientIdentifier as client, isExactModelIdentifier as model, isExactProviderIdentifier as provider } from "@repo/contributor/client"
+  /** @throws {never} */
+  export function isExactProviderIdentifier(value: unknown): value is string { return provider(value) }
+  /** @throws {never} */
+  export function isExactModelIdentifier(value: unknown): value is string { return model(value) }
+  /** @throws {never} */
+  export function isExactClientIdentifier(value: unknown): value is string { return client(value) }
+}
+import { isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier } from identity
+
+export type FencedRecordName = "slop-score" | "slop-score-approval" | "slop-review"
+export type Risk = "none" | "suspected" | "confirmed"
+
+export interface SlopReviewRecord {
+  readonly schemaVersion: "2"
+  readonly projectId: string
+  readonly artifactUrl: string
+  readonly headSha: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly runId: string
+  readonly traceSha256: string | null
+  readonly recommendation: "accept" | "partial" | "reject" | "hold"
+  readonly reproduced: boolean
+  readonly securityRisk: Risk
+  readonly duplicateRisk: Risk
+  readonly splitRisk: Risk
+  readonly effortBand: ScoreTier
+  readonly complexity: "low" | "moderate" | "high" | "specialist"
+  readonly impact: "narrow" | "meaningful" | "broad" | "critical"
+  readonly reviewLoad: "triage" | "standard" | "deep" | "specialist"
+  readonly recommendedTier: ScoreTier
+  readonly recommendedThirds: number
+  readonly workUnitId: string
+  readonly confidenceBasisPoints: number
+  readonly valueRationale: string
+  readonly usefulArtifacts: ReadonlyArray<string>
+  readonly commands: ReadonlyArray<string>
+  readonly evidenceUrls: ReadonlyArray<string>
+  readonly summary: string
+}
+
+export interface ReviewRecordContext {
+  readonly artifactUrl: string
+  readonly headSha: string
+}
+
+const sha256Pattern = /^[0-9a-f]{64}$/u
+const runIdPattern = /^run_[0-9A-HJKMNP-TV-Z]{26}$/u
+const legacyKeys = ["artifactUrl", "commands", "duplicateRisk", "evidenceUrls", "headSha", "projectId", "recommendation", "reproduced", "schemaVersion", "securityRisk", "summary", "usefulArtifacts"].sort()
+const reviewKeys = [
+  "artifactUrl", "client", "commands", "duplicateRisk", "splitRisk", "effortBand", "complexity", "impact", "reviewLoad", "recommendedTier", "recommendedThirds", "workUnitId",
+  "confidenceBasisPoints", "valueRationale", "evidenceUrls", "headSha", "model", "projectId", "provider", "recommendation", "reproduced", "runId", "schemaVersion", "securityRisk",
+  "summary", "traceSha256", "usefulArtifacts",
+].sort()
+const recommendations: ReadonlyArray<unknown> = ["accept", "partial", "reject", "hold"]
+const risks: ReadonlyArray<unknown> = ["none", "suspected", "confirmed"]
+const tiers: ReadonlyArray<unknown> = ["micro", "small", "medium", "large", "xl", "exceptional"]
+const complexities: ReadonlyArray<unknown> = ["low", "moderate", "high", "specialist"]
+const impacts: ReadonlyArray<unknown> = ["narrow", "meaningful", "broad", "critical"]
+const reviewLoads: ReadonlyArray<unknown> = ["triage", "standard", "deep", "specialist"]
+
+function invalid(reason: string): { readonly kind: "invalid"; readonly reason: string } {
+  return { kind: "invalid", reason }
+}
+
+function valid<A>(value: A): { readonly kind: "valid"; readonly value: A } {
+  return { kind: "valid", value }
+}
+
+export function parseFencedRecord(body: string, name: FencedRecordName, malformedMessage: string = `${name} record JSON is malformed`): Parsed<unknown | null> {
+  const found = fencedRecord(body, name)
+  if (found.count > 1) return invalid(`source must contain at most one ${name} record`)
+  if (found.count === 0) return valid(null)
+  try {
+    return valid(JSON.parse(found.text) as unknown)
+  } catch {
+    return invalid(malformedMessage)
+  }
+}
+
+export function parseReviewRecordBlock(body: string): Parsed<unknown | null> {
+  return parseFencedRecord(body, "slop-review")
+}
+
+export function registeredProject(registry: Registry, value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.trim().toLowerCase()
+  return registry.projectIds.find((id) => id.toLowerCase() === normalized)
+}
+
+function projectUrls(registry: Registry, project: string): ReadonlyArray<string> {
+  return [...new Set([...registry.byId.values()].filter((repository) => repository.projectId === project).map((repository) => repository.githubUrl))]
+}
+
+function boundedStrings(value: unknown): ReadonlyArray<string> | undefined {
+  if (!Array.isArray(value) || value.length > 64) return undefined
+  const strings: string[] = []
+  for (const item of value) {
+    if (typeof item !== "string" || item.length < 1 || item.length > 2048) return undefined
+    strings.push(item)
+  }
+  return strings
+}
+
+function legacyWorkUnit(project: string, runId: unknown, pathname: string) {
+  return `wu_${project}_legacy_${String(runId ?? pathname).toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`
+}
+
+export function assertReviewRecord(value: unknown, registry: Registry): Parsed<SlopReviewRecord> {
+  if (!isRecord(value)) return invalid("review record must be an object")
+  const legacy = value.schemaVersion === "1"
+  const actualKeys = Object.keys(value).sort()
+  if ((legacy && legacyKeys.some((key) => !actualKeys.includes(key))) || (!legacy && actualKeys.join("\u0000") !== reviewKeys.join("\u0000"))) {
+    return invalid(`review record has unexpected or missing fields: ${actualKeys.join(",")}`)
+  }
+  if (value.schemaVersion !== "2" && !legacy) return invalid("review record schemaVersion is unsupported")
+  const project = registeredProject(registry, value.projectId)
+  if (project === undefined) return invalid("review record project is not registered")
+  const artifact = parsedUrl(String(value.artifactUrl))
+  if (artifact === undefined) return invalid("review record artifactUrl is invalid")
+  if (artifact.protocol !== "https:" || artifact.hostname !== "github.com" || !projectUrls(registry, project).some((githubUrl) => artifact.href.startsWith(`${githubUrl}/`))) {
+    return invalid("review record artifactUrl is outside the project")
+  }
+  const required = (field: string) => !legacy || value[field] !== undefined
+  if (required("provider") && !isExactProviderIdentifier(value.provider)) return invalid("review record provider is not exact")
+  if (required("model") && !isExactModelIdentifier(value.model)) return invalid("review record model is not exact")
+  if (required("client") && !isExactClientIdentifier(value.client)) return invalid("review record client is not exact")
+  const headSha = value.headSha
+  if (typeof headSha !== "string" || !isGitSha(headSha)) return invalid("review record headSha is invalid")
+  if (required("runId") && (typeof value.runId !== "string" || !runIdPattern.test(value.runId))) return invalid("review record runId is invalid")
+  if (value.traceSha256 !== null && required("traceSha256") && (typeof value.traceSha256 !== "string" || !sha256Pattern.test(String(value.traceSha256)))) {
+    return invalid("review record traceSha256 is invalid")
+  }
+  if (!recommendations.includes(value.recommendation)) return invalid("review record recommendation is invalid")
+  if (typeof value.reproduced !== "boolean") return invalid("review record reproduced must be boolean")
+  if (!risks.includes(value.securityRisk)) return invalid("review record securityRisk is invalid")
+  if (!risks.includes(value.duplicateRisk)) return invalid("review record duplicateRisk is invalid")
+  if (!legacy && !risks.includes(value.splitRisk)) return invalid("review record splitRisk is invalid")
+  if (!legacy && (!tiers.includes(value.effortBand) || !tiers.includes(value.recommendedTier))) return invalid("review record effort tier is invalid")
+  if (!legacy && value.recommendedThirds !== tierThirds(String(value.recommendedTier))) return invalid("review record recommendedThirds does not match its tier")
+  if (!legacy && !complexities.includes(value.complexity)) return invalid("review record complexity is invalid")
+  if (!legacy && !impacts.includes(value.impact)) return invalid("review record impact is invalid")
+  if (!legacy && !reviewLoads.includes(value.reviewLoad)) return invalid("review record reviewLoad is invalid")
+  if (!legacy && (typeof value.workUnitId !== "string" || !isWorkUnitId(value.workUnitId))) return invalid("review record workUnitId is invalid")
+  const confidence = value.confidenceBasisPoints
+  if (!legacy && (typeof confidence !== "number" || !Number.isSafeInteger(confidence) || confidence < 0 || confidence > 10_000)) return invalid("review record confidenceBasisPoints is invalid")
+  if (!legacy && (typeof value.valueRationale !== "string" || !validReason(value.valueRationale))) return invalid("review record valueRationale is invalid")
+  const summary = value.summary
+  if (typeof summary !== "string" || summary.length < 1 || summary.length > 4096) return invalid("review record summary is invalid")
+  const workUnitId = legacy ? legacyWorkUnit(project, value.runId, artifact.pathname) : String(value.workUnitId)
+  const usefulArtifacts = boundedStrings(value.usefulArtifacts)
+  if (usefulArtifacts === undefined) return invalid("usefulArtifacts must be a bounded string array")
+  const commands = boundedStrings(value.commands)
+  if (commands === undefined) return invalid("commands must be a bounded string array")
+  const evidenceUrls = boundedStrings(value.evidenceUrls)
+  if (evidenceUrls === undefined) return invalid("evidenceUrls must be a bounded string array")
+  return valid({
+    schemaVersion: "2",
+    projectId: project,
+    artifactUrl: artifact.href,
+    headSha,
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    client: typeof value.client === "string" ? value.client : "",
+    runId: typeof value.runId === "string" ? value.runId : "",
+    traceSha256: value.traceSha256 === null ? null : typeof value.traceSha256 === "string" ? value.traceSha256 : "",
+    recommendation: value.recommendation as SlopReviewRecord["recommendation"],
+    reproduced: value.reproduced,
+    securityRisk: value.securityRisk as Risk,
+    duplicateRisk: value.duplicateRisk as Risk,
+    splitRisk: legacy ? "none" : value.splitRisk as Risk,
+    effortBand: legacy ? "small" : value.effortBand as ScoreTier,
+    complexity: legacy ? "moderate" : value.complexity as SlopReviewRecord["complexity"],
+    impact: legacy ? "meaningful" : value.impact as SlopReviewRecord["impact"],
+    reviewLoad: legacy ? "standard" : value.reviewLoad as SlopReviewRecord["reviewLoad"],
+    recommendedTier: legacy ? "small" : value.recommendedTier as ScoreTier,
+    recommendedThirds: legacy ? 3 : Number(value.recommendedThirds),
+    workUnitId,
+    confidenceBasisPoints: legacy ? 5000 : Number(confidence),
+    valueRationale: legacy ? summary : String(value.valueRationale),
+    usefulArtifacts,
+    commands,
+    evidenceUrls,
+    summary,
+  } satisfies SlopReviewRecord)
+}
+
+export function assertReviewRecordReceiptJoin(value: unknown, receipt: ProjectRunReceipt | null, context: ReviewRecordContext | null, registry: Registry): Parsed<SlopReviewRecord> {
+  const asserted = assertReviewRecord(value, registry)
+  if (asserted.kind === "invalid") return asserted
+  const record = asserted.value
+  if (receipt === null) return invalid("slop-review requires a terminal signed run receipt")
+  const traceSha256 = receipt.traceUpload?.sha256
+  if (
+    record.projectId !== receipt.projectId || (record.runId !== "" && record.runId !== receipt.runId) ||
+    (record.traceSha256 !== null && record.traceSha256 !== "" && record.traceSha256 !== traceSha256) ||
+    (record.provider !== "" && record.provider !== receipt.provider) || (record.model !== "" && record.model !== receipt.model) ||
+    (record.client !== "" && record.client !== receipt.client)
+  ) {
+    return invalid("slop-review record does not match its run receipt")
+  }
+  if (context === null) return invalid("slop-review record lacks immutable artifact context")
+  const artifactUrl = parsedUrl(context.artifactUrl)?.href
+  if (record.artifactUrl !== artifactUrl || record.headSha !== context.headSha.toLowerCase()) return invalid("slop-review record does not match its artifact head")
+  return valid({ ...record, provider: receipt.provider, model: receipt.model, client: receipt.client, runId: receipt.runId, traceSha256: traceSha256 ?? "" } satisfies SlopReviewRecord)
+}

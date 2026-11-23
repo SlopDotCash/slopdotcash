@@ -100,39 +100,62 @@ it.live('Census with a count change mid-pass retries once then completes; a seco
   }
 })
 
-it.live('Paused, retired, quarantined and legacy projects are never collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
+it.live('Paused, retired, quarantined and unregistered legacy projects are never collected, while a registered legacy id is collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
   const clock = settableClock(start)
   const world = try Effect.try(() => seeded(clock.now))
-  const served = servedRegistry(registrySnapshot)
+  const eliza = {
+    id: "eliza",
+    name: "eliza",
+    status: "active",
+    listingTier: "community",
+    authority: { repositoryId: "elizaOS/eliza", repositoryNodeId: "R_eliza", role: "admin", state: "verified", proof: "github-admin", reason: "fixture" },
+    reward: { committedMinor: "400000000", monthlyCapMinor: "100000000", fundingState: "committed" },
+    skill: { publishAtRoot: false },
+    repositories: [{ id: "elizaOS/eliza", displayName: "elizaOS/eliza", githubUrl: "https://github.com/elizaOS/eliza", description: "The eliza source repository.", integrationBranch: "main", aliases: [] }],
+  }
+  const served = servedRegistry({ ...registrySnapshot, projects: [...registrySnapshot.projects, eliza] })
   const registered = try Effect.provide(fetchRegistry("https://slop.test"), outboundVia(served.fetcher))
   const targets = try collectedTargets(registered)
   const bounds = try windowBounds(start)
+  const census = { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() }
   const refusals: Array<readonly [string, unknown]> = []
   for (const project of registered) {
-    if (project.projectId === "widgets") continue
+    if (targets.some((target) => target.projectId === project.projectId)) continue
     const refused = Effect.provide(collectOpen({
         projectId: project.projectId,
         view: project.view,
         repository: { owner: "ada", name: "widgets" },
-        census: { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+        census,
         hydrate: hydration(world),
       }), githubLayer(world)) catch (error) => error._tag
     refusals.push([project.projectId, refused])
   }
+  const unregisteredLegacy = Effect.provide(collectOpen({
+      projectId: "darling-arm64",
+      view: { ...view, registered: false, legacy: true },
+      repository: { owner: "ada", name: "widgets" },
+      census,
+      hydrate: hydration(world),
+    }), githubLayer(world)) catch (error) => error._tag
   const movedBack = Effect.provide(collectOpen({
       projectId: "widgets",
       view,
       repository: { owner: "ada", name: "widgets" },
-      census: { lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+      census: { ...census, lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay },
       hydrate: hydration(world),
     }), githubLayer(world)) catch (error) => error._tag
   const unknownRestriction = registeredProjects(try registryAnswer({ ...registrySnapshot, restrictions: [{ projectId: "missing", state: "quarantined" }] })) catch (error) => error._tag
   const extraKey = registryAnswer({ ...registrySnapshot, revisions: [] }) catch (error) => error._tag
+  const target = (projectId: string, id: string, description: string, role: "primary" | "member") => {
+    const [owner, name] = id.split("/")
+    return { projectId, id, owner, name, displayName: id, githubUrl: `https://github.com/${id}`, description, integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role }
+  }
   try same({
     paths: served.paths,
     views: registered.map((project) => [project.projectId, project.view]),
     targets,
     refusals,
+    unregisteredLegacy,
     movedBack,
     githubRequests: world.fake.requests.length,
     unknownRestriction,
@@ -141,13 +164,19 @@ it.live('Paused, retired, quarantined and legacy projects are never collected (s
     paths: ["GET https://slop.test/api/v1/projects"],
     views: [
       ["paused-gadgets", { ...view, paused: true }],
-      ["asi", { ...view, legacy: true }],
+      ["asi", view],
       ["delisted", { ...view, retired: true }],
       ["held", { ...view, quarantined: true }],
       ["widgets", view],
+      ["eliza", view],
     ],
-    targets: [{ projectId: "widgets", id: repository, owner: "ada", name: "widgets", displayName: repository, githubUrl: `https://github.com/${repository}`, description: "The widgets source repository.", integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role: "primary" }],
-    refusals: [["paused-gadgets", "NotCollected"], ["asi", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
+    targets: [
+      target("asi", "elizaOS/asi", "The asi source repository.", "primary"),
+      target("widgets", repository, "The widgets source repository.", "member"),
+      target("eliza", "elizaOS/eliza", "The eliza source repository.", "member"),
+    ],
+    refusals: [["paused-gadgets", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
+    unregisteredLegacy: "NotCollected",
     movedBack: "CensusWindowBack",
     githubRequests: 0,
     unknownRestriction: "RegistryMalformed",

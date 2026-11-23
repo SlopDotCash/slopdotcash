@@ -111,10 +111,10 @@ export function fixture() {
   return { packet, baseline, award };
 }
 
-function duplicateRetirementFixture() {
+export function duplicateRetirementFixture(earlierAmount?: number) {
   const f = fixture();
   const original = f.award;
-  const earlierAward: Award = { ...original, key: keyOf("PR_earlier"), sourceId: "PR_earlier", sourceUrl: "https://github.com/feedforagents/feed/pull/2", workUnitId: "earlier", occurredAt: "2026-10-14T00:00:00.000Z" };
+  const earlierAward: Award = { ...original, amount: earlierAmount ?? original.amount, key: keyOf("PR_earlier"), sourceId: "PR_earlier", sourceUrl: "https://github.com/feedforagents/feed/pull/2", workUnitId: "earlier", occurredAt: "2026-10-14T00:00:00.000Z" };
   const baseline = appended(f.baseline, earlierAward, "e".repeat(64));
   const candidate = f.packet.corrections.candidates[0];
   if (candidate === undefined || candidate.proof.status !== "complete") throw Error("fixture");
@@ -156,7 +156,7 @@ function duplicateRetirementFixture() {
   return { ...f, baseline, retirement, original };
 }
 
-function earlierAcceptanceFixture() {
+export function earlierAcceptanceFixture() {
   const f = duplicateRetirementFixture();
   const { source } = f.retirement;
   const earlier = f.retirement.earlierSources[0];

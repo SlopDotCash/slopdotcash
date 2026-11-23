@@ -155,12 +155,12 @@ function provenanceOf(restoring: boolean): Provenance {
 
 effect function collected(world: World, restoring: boolean) {
   const options = { projects: [project], directory: world.directory, before: iso(start - 3_600_000) } satisfies CollectionOptions
-  const inputs = try inputsOf(world)
   const services = Layer.provideMerge(
     collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
     Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
   )
   provide services, world.clock.layer {
+    const inputs = try inputsOf(world)
     return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
   }
 }

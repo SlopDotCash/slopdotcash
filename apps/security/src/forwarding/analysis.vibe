@@ -1,0 +1,69 @@
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"
+export type SeverityHint = "critical" | "high" | "medium" | "low" | "unknown"
+
+export interface AutoAnalysis {
+  readonly severityHint: SeverityHint
+  readonly lossHint: "possible" | "unknown"
+  readonly priority: "urgent" | "normal"
+}
+
+export const analyzerId = "deterministic-v1"
+
+export const noAnalysis: AutoAnalysis = { severityHint: "unknown", lossHint: "unknown", priority: "normal" }
+
+const severityHints: ReadonlyArray<string> = ["critical", "high", "medium", "low"]
+const attackVector: Readonly<Record<string, number>> = { N: 0.85, A: 0.62, L: 0.55, P: 0.2 }
+const attackComplexity: Readonly<Record<string, number>> = { L: 0.77, H: 0.44 }
+const privilegesChanged: Readonly<Record<string, number>> = { N: 0.85, L: 0.68, H: 0.5 }
+const privilegesUnchanged: Readonly<Record<string, number>> = { N: 0.85, L: 0.62, H: 0.27 }
+const userInteraction: Readonly<Record<string, number>> = { N: 0.85, R: 0.62 }
+const impactWeights: Readonly<Record<string, number>> = { H: 0.56, L: 0.22, N: 0 }
+
+function cvss3BaseScore(vector: string) {
+  const match = /^CVSS:3\.[01]\/(.+)$/u.exec(vector)
+  if (match === null) return null
+  const metrics = new Map((match[1] ?? "").split("/").map((part) => {
+    const [key = "", value = ""] = part.split(":")
+    return [key, value] as const
+  }))
+  const weight = (key: string, table: Readonly<Record<string, number>>) => table[metrics.get(key) ?? ""]
+  const scope = metrics.get("S")
+  const av = weight("AV", attackVector)
+  const ac = weight("AC", attackComplexity)
+  const pr = weight("PR", scope === "C" ? privilegesChanged : privilegesUnchanged)
+  const ui = weight("UI", userInteraction)
+  const c = weight("C", impactWeights)
+  const i = weight("I", impactWeights)
+  const a = weight("A", impactWeights)
+  if ((scope !== "U" && scope !== "C") || av === undefined || ac === undefined || pr === undefined || ui === undefined || c === undefined || i === undefined || a === undefined) return null
+  const iss = 1 - (1 - c) * (1 - i) * (1 - a)
+  const impactScore = scope === "U" ? 6.42 * iss : 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
+  if (impactScore <= 0) return 0
+  const exploitability = 8.22 * av * ac * pr * ui
+  const raw = scope === "U" ? Math.min(impactScore + exploitability, 10) : Math.min(1.08 * (impactScore + exploitability), 10)
+  const scaled = Math.round(raw * 100000)
+  return scaled % 10000 === 0 ? scaled / 100000 : (Math.floor(scaled / 10000) + 1) / 10
+}
+
+function severityFromScore(score: number): SeverityHint {
+  if (score >= 9) return "critical"
+  if (score >= 7) return "high"
+  if (score >= 4) return "medium"
+  if (score > 0) return "low"
+  return "unknown"
+}
+
+function isSeverityHint(value: string | null): value is Exclude<SeverityHint, "unknown"> {
+  return value !== null && severityHints.includes(value)
+}
+
+export function analysisOf(input: { readonly severity: string | null; readonly cvss: string | null }): AutoAnalysis {
+  const score = input.cvss === null ? null : cvss3BaseScore(input.cvss)
+  const severityHint: SeverityHint = score !== null ? severityFromScore(score) : isSeverityHint(input.severity) ? input.severity : "unknown"
+  const integrityHigh = input.cvss !== null && /\/I:H(?:\/|$)/u.test(input.cvss)
+  return {
+    severityHint,
+    lossHint: severityHint === "critical" && integrityHigh ? "possible" : "unknown",
+    priority: severityHint === "critical" ? "urgent" : "normal",
+  }
+}

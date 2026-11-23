@@ -1,15 +1,22 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
-import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
+import { implementationCreditActors, isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
 import { type CensusCommit, unprovedZeroLinePromotion } from "../../../gen/points__corrections.effect.vibe"
-import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
+import { type CompleteProof, type CopiedClaim, type CorrectionActor, type CorrectionClaim, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, type OriginalContributorBinding, type OriginalContributorFollowup, type OriginalContributorRepair, type ResolutionAcceptance, CorrectionRefused } from "./manifest.vibe"
+import { isOctober, isOriginalContributorContext } from "./october.vibe"
+import { isOriginalContributorFollowup, isOriginalContributorRepair, originalContributorSource, reviewedOriginalSource, validParentShas } from "./original.vibe"
 
 export interface Scope { readonly commit: string; readonly path: string }
+
+export type ReplacementLine =
+  | { readonly kind: "original"; readonly author: string; readonly lines: number }
+  | { readonly kind: "followup"; readonly author: string; readonly origin: string; readonly lines: number }
 
 export interface DerivedProof {
   readonly actors: ReadonlyMap<string, CorrectionActor>
   readonly weights: ReadonlyMap<string, number>
   readonly scopes: ReadonlyArray<Scope>
+  readonly replacement?: ReadonlyArray<ReplacementLine>
 }
 
 export type ProjectOfRepository = (repository: string) => string | undefined
@@ -60,7 +67,7 @@ export function isNodeId(value: string) {
   return node.test(value)
 }
 
-effect function validActor(value: CorrectionActor | null) {
+export effect function validActor(value: CorrectionActor | null) {
   if (value === null) return
   try check(node.test(value.id) && (value.kind === "Bot" ? botLogin : userLogin).test(value.login) && actorKinds.includes(value.kind), "invalid GitHub actor")
 }
@@ -115,8 +122,7 @@ export function isEmptyPromotion(candidate: ManifestCandidate) {
 
 effect function validCommit(commit: CorrectionCommit) {
   const parents = commit.parentShas
-  try check(sha.test(commit.sha) && count(commit.parentCount) &&
-    (parents === undefined || (parents.length === commit.parentCount && distinct(parents) && parents.every((parent) => sha.test(parent) && parent !== commit.sha))) &&
+  try check(sha.test(commit.sha) && count(commit.parentCount) && (parents === undefined || validParentShas(commit)) &&
     (commit.additions === null || count(commit.additions)) && (commit.deletions === null || count(commit.deletions)) &&
     (commit.firstAcceptedSourceId === null || node.test(commit.firstAcceptedSourceId)), "invalid commit proof")
   try validActor(commit.author)
@@ -133,9 +139,9 @@ effect function validCommit(commit: CorrectionCommit) {
   }
 }
 
-effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository, unclaimedContext: boolean) {
+effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository, acceptedLater: boolean) {
   try check(node.test(source.sourceId) && node.test(source.repositoryNodeId) && sha.test(source.headSha) && count(source.commitCount) &&
-    (source.occurredAt === null || (isInstant(source.occurredAt) && (source.occurredAt <= candidate.occurredAt || unclaimedContext))) &&
+    (source.occurredAt === null || (isInstant(source.occurredAt) && (source.occurredAt <= candidate.occurredAt || acceptedLater))) &&
     (try sourceRepository(source.sourceUrl, candidate.projectId, projectOf)) === source.repository.toLowerCase(), "invalid source identity")
   try validActor(source.author)
   const censused = source.complete && source.commitCount === source.commits.length
@@ -145,10 +151,13 @@ effect function validSource(source: CorrectionSource, candidate: ManifestCandida
   return censused
 }
 
+interface CreditedLine { readonly recipient: string; readonly lines: number }
+
 interface Tally {
   readonly actors: Map<string, CorrectionActor>
   readonly weights: Map<string, number>
   readonly scopes: Scope[]
+  readonly work: CreditedLine[]
   incomplete: boolean
 }
 
@@ -187,6 +196,7 @@ effect function add(tally: Tally, sources: ReadonlyMap<string, CorrectionSource>
   const weight = (tally.weights.get(recipient.id) ?? 0) + lines.additions + lines.deletions
   try check(Number.isSafeInteger(weight), "implementation line weight overflows")
   tally.weights.set(recipient.id, weight)
+  tally.work.push({ recipient: recipient.id, lines: lines.additions + lines.deletions })
 }
 
 effect function addClaims(tally: Tally, sources: ReadonlyMap<string, CorrectionSource>, candidate: ManifestCandidate, proof: CompleteProof) {
@@ -207,33 +217,439 @@ effect function addClaims(tally: Tally, sources: ReadonlyMap<string, CorrectionS
   }
 }
 
-export effect function deriveProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
+function hasCopy(carrier: CorrectionSource, commit: CorrectionCommit) {
+  return carrier.commits.some((copy) => copy.sha === commit.sha && copy.parentCount === commit.parentCount &&
+    copy.author?.id === commit.author?.id && copy.author?.kind === commit.author?.kind)
+}
+
+function sameOrder(left: ReadonlyArray<string>, right: ReadonlyArray<string> | undefined) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+type GraphCommit = CorrectionCommit & { readonly parentShas: ReadonlyArray<string> }
+type Graph = ReadonlyMap<string, GraphCommit>
+
+interface BoundFollowup { readonly source: CorrectionSource; readonly binding: OriginalContributorFollowup }
+
+interface ClaimScope {
+  readonly original: CorrectionSource
+  readonly accepted: CorrectionSource
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly followups: ReadonlyArray<BoundFollowup>
+  readonly anchorSha: string
+  readonly acceptedAnchorSha: string
+  readonly repairs: ReadonlyArray<OriginalContributorRepair>
+  readonly copiedClaims: ReadonlyArray<CopiedClaim>
+  readonly resolutionAcceptance: ResolutionAcceptance | undefined
+}
+
+function claimGraph(original: CorrectionSource, accepted: CorrectionSource, followups: ReadonlyArray<BoundFollowup>) {
+  const graph = new Map<string, GraphCommit>()
+  for (const source of [accepted, ...followups.map((item) => item.source)]) {
+    for (const commit of source.commits) {
+      const previous = graph.get(commit.sha)
+      const parentShas = commit.parentShas ?? previous?.parentShas
+      if (parentShas === undefined || !validParentShas({ ...commit, parentShas })) return undefined
+      if (previous !== undefined && (!sameOrder(previous.parentShas, parentShas) || previous.author?.id !== commit.author?.id || previous.author?.kind !== commit.author?.kind)) return undefined
+      graph.set(commit.sha, { ...commit, parentShas })
+    }
+  }
+  for (const { binding } of followups) {
+    for (const commit of binding.commits) {
+      const existing = graph.get(commit.sha)
+      if (existing !== undefined && !sameOrder(existing.parentShas, commit.parentShas)) return undefined
+      if (existing === undefined) {
+        graph.set(commit.sha, { ...commit, parentCount: commit.parentShas.length, author: null, additions: null, deletions: null, firstAcceptedSourceId: null })
+      }
+    }
+  }
+  for (const commit of original.commits) {
+    const existing = graph.get(commit.sha)
+    const parentShas = commit.parentShas ?? existing?.parentShas
+    if (parentShas === undefined || !validParentShas({ ...commit, parentShas })) return undefined
+    if (existing !== undefined && (!sameOrder(existing.parentShas, parentShas) ||
+      (existing.firstAcceptedSourceId !== null && (existing.author?.id !== commit.author?.id || existing.author?.kind !== commit.author?.kind)))) return undefined
+    graph.set(commit.sha, { ...commit, parentShas })
+  }
+  return graph
+}
+
+function acyclic(graph: Graph) {
+  const remaining = new Map([...graph].map(([id, commit]) => [id, commit.parentShas.filter((parent) => graph.has(parent)).length] as const))
+  const ready = [...remaining].filter(([, waiting]) => waiting === 0).map(([id]) => id)
+  for (const id of ready) {
+    for (const [child, commit] of graph) {
+      if (!commit.parentShas.includes(id)) continue
+      const waiting = (remaining.get(child) ?? 0) - 1
+      remaining.set(child, waiting)
+      if (waiting === 0) ready.push(child)
+    }
+  }
+  return ready.length === graph.size
+}
+
+function descends(graph: Graph, child: string, ancestor: string) {
+  const pending = [child]
+  const visited = new Set<string>()
+  for (const current of pending) {
+    if (current === ancestor) return true
+    if (visited.has(current)) continue
+    visited.add(current)
+    pending.push(...(graph.get(current)?.parentShas ?? []))
+  }
+  return false
+}
+
+effect function repairAcknowledged(repair: OriginalContributorRepair, scope: ClaimScope, graph: Graph, commit: CorrectionCommit, anchorSha: string) {
+  return (try isOriginalContributorRepair(repair, scope.original, scope.accepted, commit)) &&
+    descends(graph, commit.sha, anchorSha) && descends(graph, repair.reference.headSha, commit.sha)
+}
+
+effect function originalContributorClaimScope(scope: ClaimScope) {
+  const { original, accepted, claims, followups, anchorSha, acceptedAnchorSha, repairs, copiedClaims, resolutionAcceptance } = scope
+  const origin = original.author
+  const carrier = accepted.author
+  if (!eligible(origin) || !eligible(carrier) || origin.id === carrier.id || original.repositoryNodeId !== accepted.repositoryNodeId ||
+    !original.complete || original.commitCount !== original.commits.length || !accepted.complete || accepted.commitCount !== accepted.commits.length ||
+    claims.length === 0 || !distinct(claims.map((claim) => claim.id))) return false
+  const originals = new Map(original.commits.map((commit) => [commit.sha, commit] as const))
+  const anchor = originals.get(anchorSha)
+  const copiedAnchor = copiedClaims.find((claim) => claim.originalCommitSha === anchorSha && claim.acceptedCommitSha === acceptedAnchorSha)
+  const acceptedAnchor = accepted.commits.find((commit) => commit.sha === (copiedAnchor?.acceptedCommitSha ?? anchorSha))
+  if (originals.size !== original.commits.length || !originals.has(original.headSha) || anchor === undefined || acceptedAnchor === undefined ||
+    acceptedAnchor.firstAcceptedSourceId !== accepted.sourceId || anchor.parentCount > 2 || (anchor.parentCount > 1 && !eligible(anchor.author)) ||
+    (implementationCreditActors(origin, [anchor.author])[0]?.id !== origin.id && anchor.author?.id !== carrier.id) ||
+    acceptedAnchor.author?.id !== anchor.author?.id || acceptedAnchor.author?.kind !== anchor.author?.kind) return false
+  if (!distinct(copiedClaims.map((copy) => copy.claimId)) || copiedClaims.some((copy) => {
+    const claim = claims.find((item) => item.id === copy.claimId)
+    const originalCommit = originals.get(copy.originalCommitSha)
+    const acceptedCommit = accepted.commits.find((item) => item.sha === copy.acceptedCommitSha)
+    return claim === undefined || claim.sourceId !== accepted.sourceId || claim.commitSha !== copy.acceptedCommitSha || claim.path !== copy.path ||
+      !digestPattern.test(copy.bindingDigest) || originalCommit === undefined || acceptedCommit === undefined ||
+      originalCommit.parentCount > 1 || acceptedCommit.parentCount > 1 || originalCommit.author?.id !== origin.id || acceptedCommit.author?.id !== origin.id ||
+      originalCommit.author?.kind !== acceptedCommit.author?.kind || acceptedCommit.firstAcceptedSourceId !== accepted.sourceId ||
+      !(originalCommit.files?.some((file) => file.path === copy.path) ?? false) || !(acceptedCommit.files?.some((file) => file.path === copy.path) ?? false)
+  })) return false
+  const graph = claimGraph(original, accepted, followups)
+  if (graph === undefined || !acyclic(graph) || !original.commits.every((commit) => descends(graph, original.headSha, commit.sha))) return false
+  const followupIds = new Set(followups.map(({ source }) => source.sourceId))
+  if (followupIds.size !== followups.length || followupIds.has(accepted.sourceId)) return false
+  for (const { source, binding } of followups) {
+    const scoped = claims.filter((claim) => claim.sourceId === source.sourceId)
+    if (!(try isOriginalContributorFollowup(source, accepted, binding, scoped, { anchorSha: acceptedAnchor.sha, origin }))) return false
+  }
+  if (!distinct(repairs.map((repair) => repair.commitSha))) return false
+  for (const repair of repairs) {
+    const commit = graph.get(repair.commitSha)
+    if (commit === undefined || !claims.some((claim) => claim.commitSha === repair.commitSha)) return false
+    if (!(try repairAcknowledged(repair, scope, graph, commit, acceptedAnchor.sha))) return false
+  }
+  let hasOriginal = false
+  for (const claim of claims) {
+    const source = claim.sourceId === accepted.sourceId ? accepted : followups.find((item) => item.source.sourceId === claim.sourceId)?.source
+    const commit = source?.commits.find((item) => item.sha === claim.commitSha)
+    if (source === undefined || commit === undefined || !correctionClaimCommit(commit) || commit.firstAcceptedSourceId !== source.sourceId ||
+      !(commit.files?.some((file) => file.path === claim.path) ?? false)) return false
+    const repair = repairs.find((item) => item.commitSha === commit.sha)
+    const acknowledgedRepair = repair !== undefined && (try repairAcknowledged(repair, scope, graph, commit, acceptedAnchor.sha))
+    if (copiedClaims.some((copy) => copy.claimId === claim.id)) {
+      hasOriginal = true
+      continue
+    }
+    const author = commit.author
+    if (originals.has(commit.sha)) {
+      if (author !== null && author.id !== origin.id && author.id !== carrier.id && isCreditEligibleCommitAuthor(author) && !acknowledgedRepair) return false
+      if (author?.id === carrier.id && !descends(graph, commit.sha, anchorSha)) return false
+      if (commit.parentCount <= 1 && implementationCreditActors(origin, [author])[0]?.id === origin.id) hasOriginal = true
+      continue
+    }
+    const pull = resolutionAcceptance?.pull
+    const acceptedAt = accepted.occurredAt
+    const nativeResolution = source.sourceId === accepted.sourceId && author === null && commit.parentCount > 1 && commit.mergeResolution !== undefined &&
+      resolutionAcceptance !== undefined && digestPattern.test(resolutionAcceptance.sourceDigest) && pull !== undefined &&
+      pull.node_id === accepted.sourceId && pull.html_url === accepted.sourceUrl && pull.head.sha === accepted.headSha && pull.state === "closed" &&
+      pull.merged_at !== null && acceptedAt !== null && Date.parse(pull.merged_at) === Date.parse(acceptedAt) &&
+      pull.user.node_id === carrier.id && pull.user.type === "User" && pull.merged_by?.node_id === carrier.id && pull.merged_by.type === "User"
+    if ((!eligible(author) && !nativeResolution && !acknowledgedRepair) ||
+      (author !== null && author.id !== origin.id && author.id !== carrier.id && !acknowledgedRepair) ||
+      !descends(graph, commit.sha, acceptedAnchorSha)) return false
+  }
+  return hasOriginal
+}
+
+function originalContributorPrecedesFollowups(original: CorrectionSource, carrier: CorrectionActor | null) {
+  const origin = original.author
+  if (!eligible(origin) || !eligible(carrier) || origin.id === carrier.id) return false
+  const ordinary = original.commits.filter((commit) => commit.parentCount <= 1)
+  if (!ordinary.some((commit) => commit.author?.id === origin.id) ||
+    ordinary.some((commit) => !eligible(commit.author) || (commit.author.id !== origin.id && commit.author.id !== carrier.id))) return false
+  if (ordinary.every((commit) => commit.author?.id === origin.id)) return true
+  const bySha = new Map(original.commits.map((commit) => [commit.sha, commit] as const))
+  if (bySha.size !== original.commits.length || !bySha.has(original.headSha)) return false
+  const pending = new Map<string, number>()
+  const children = new Map<string, CorrectionCommit[]>()
+  const ready: CorrectionCommit[] = []
+  for (const commit of original.commits) {
+    if (!validParentShas(commit)) return false
+    const parents = commit.parentShas.filter((parent) => bySha.has(parent))
+    pending.set(commit.sha, parents.length)
+    if (parents.length === 0) ready.push(commit)
+    for (const parent of parents) children.set(parent, [...(children.get(parent) ?? []), commit])
+  }
+  const reachable = new Set([original.headSha])
+  for (const oid of reachable) {
+    for (const parent of bySha.get(oid)?.parentShas ?? []) {
+      if (bySha.has(parent)) reachable.add(parent)
+    }
+  }
+  if (reachable.size !== bySha.size) return false
+  const afterOrigin = new Set<string>()
+  for (const commit of ready) {
+    const hasOriginalAncestor = afterOrigin.has(commit.sha)
+    const startedByOrigin = commit.parentCount <= 1 && commit.author?.id === origin.id
+    if (commit.parentCount <= 1 && commit.author?.id === carrier.id && !hasOriginalAncestor) return false
+    for (const child of children.get(commit.sha) ?? []) {
+      if (hasOriginalAncestor || startedByOrigin) afterOrigin.add(child.sha)
+      const waiting = (pending.get(child.sha) ?? 0) - 1
+      pending.set(child.sha, waiting)
+      if (waiting === 0) ready.push(child)
+    }
+  }
+  return ready.length === original.commits.length
+}
+
+effect function replacementProof(tally: Tally, origin: CorrectionActor) {
+  const replacement = tally.work.map((line): ReplacementLine => line.recipient === origin.id
+    ? { kind: "original", author: origin.id, lines: line.lines }
+    : { kind: "followup", author: line.recipient, origin: origin.id, lines: line.lines })
+  const lines = replacement.reduce((sum, line) => sum + line.lines, 0)
+  try check(Number.isSafeInteger(lines), "implementation line weight overflows")
+  return { actors: new Map([[origin.id, origin]]), weights: new Map([[origin.id, lines]]), scopes: tally.scopes, replacement } satisfies DerivedProof
+}
+
+effect function reviewedOriginal(raw: CorrectionSource | undefined, accepted: CorrectionSource, binding: OriginalContributorBinding) {
+  if (raw === undefined) return undefined
+  const current = try originalContributorSource(raw, binding.originatingActor)
+  return try reviewedOriginalSource(current, accepted, binding)
+}
+
+effect function octoberProof(candidate: ManifestCandidate, proof: CompleteProof, binding: OriginalContributorBinding, sources: ReadonlyMap<string, CorrectionSource>, accepted: CorrectionSource, tally: Tally) {
+  try check(isOctober(candidate.occurredAt) && digestPattern.test(binding.bindingDigest) && binding.boundPaths.length > 0,
+    "original-contributor proof is invalid outside the October replacement rule")
+  const copied = binding.copiedClaims
+  try check(binding.originatingActor === undefined || (candidate.kind === "work-unit" && binding.claimIds !== undefined &&
+    (binding.exactAcceptance === true || (binding.exactAcceptance === undefined && copied !== undefined && copied.length > 0))),
+    "sole primary origin requires reviewed accepted claim scope")
+  const original = try reviewedOriginal(sources.get(binding.originalSourceId), accepted, binding)
+  const originalCommit = original?.commits.find((commit) => commit.sha === binding.originalCommitSha)
+  const acceptedCommit = accepted.commits.find((commit) => commit.sha === binding.acceptedCommitSha)
+  const claims = proof.claims ?? []
+  const claimIds = binding.claimIds
+  if (claimIds !== undefined) {
+    const unbound = "original-contributor unit scope does not bind the reviewed native claims"
+    if (!(candidate.kind === "work-unit" &&
+      (copied !== undefined
+        ? binding.exactAcceptance === undefined && original?.occurredAt === null && copied.length > 0 &&
+          copied.some((copy) => copy.originalCommitSha === binding.originalCommitSha && copy.acceptedCommitSha === binding.acceptedCommitSha)
+        : binding.exactAcceptance === true) &&
+      original !== undefined && acceptedCommit !== undefined && (copied !== undefined || binding.originalCommitSha === binding.acceptedCommitSha) &&
+      sameSet(binding.boundPaths, acceptedCommit.parentCount === 2
+        ? [...new Set(claims.filter((claim) => claim.sourceId === accepted.sourceId).map((claim) => claim.path))]
+        : (acceptedCommit.files ?? []).map((file) => file.path)) &&
+      sameSet(claimIds, claims.map((claim) => claim.id)))) throw correctionFailure(unbound)
+    const followups: BoundFollowup[] = []
+    for (const followup of binding.followups ?? []) {
+      const source = sources.get(followup.sourceId)
+      if (source === undefined) throw correctionFailure("original-contributor follow-up source is missing")
+      followups.push({ source, binding: followup })
+    }
+    const scoped = try originalContributorClaimScope({
+      original, accepted, claims, followups,
+      anchorSha: binding.originalCommitSha,
+      acceptedAnchorSha: binding.acceptedCommitSha,
+      repairs: binding.repairs ?? [],
+      copiedClaims: copied ?? [],
+      resolutionAcceptance: binding.resolutionAcceptance,
+    })
+    if (!scoped) throw correctionFailure(unbound)
+    if (tally.incomplete) return null
+    const origin = original.author
+    if (!eligible(origin)) throw correctionFailure("original unit creator is unavailable")
+    return try replacementProof(tally, origin)
+  }
+  if (!(original !== undefined && original.sourceId !== accepted.sourceId &&
+    (original.occurredAt === null || (candidate.kind === "work-unit" && binding.exactAcceptance === true && original.occurredAt >= candidate.occurredAt &&
+      original.commits.every((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId && hasCopy(accepted, commit)))) &&
+    original.repositoryNodeId === accepted.repositoryNodeId && eligible(original.author) && eligible(accepted.author) && original.author.id !== accepted.author.id &&
+    originalCommit !== undefined && originalCommit.parentCount <= 1 && originalCommit.author?.id === original.author.id && originalCommit.author?.kind === original.author.kind &&
+    acceptedCommit !== undefined && acceptedCommit.parentCount <= 1 && acceptedCommit.firstAcceptedSourceId === accepted.sourceId &&
+    (acceptedCommit.author === null || (acceptedCommit.author.id === original.author.id && acceptedCommit.author.kind === original.author.kind)) &&
+    acceptedCommit.files !== undefined && sameSet(binding.boundPaths, acceptedCommit.files.map((file) => file.path)))) {
+    throw correctionFailure("original-contributor proof does not bind verified accepted work")
+  }
+  const origin = original.author
+  const carrier = accepted.author
+  if (candidate.kind === "work-unit") {
+    try check(claims.every((claim) => {
+      const commit = sources.get(claim.sourceId)?.commits.find((item) => item.sha === claim.commitSha)
+      return commit === undefined || commit.parentCount <= 1 || (eligible(commit.author) && (commit.author.id === origin.id || commit.author.id === carrier.id))
+    }), "Claimed resolution has an unrelated author")
+    const followupBindings = binding.followups ?? []
+    try check(distinct(followupBindings.map((item) => item.sourceId)), "duplicate original-contributor follow-up binding")
+    const acceptedSources = [accepted]
+    for (const item of followupBindings) {
+      const source = sources.get(item.sourceId)
+      if (source === undefined || !(try isOriginalContributorFollowup(source, accepted, item))) throw correctionFailure("invalid original-contributor follow-up ancestry")
+      acceptedSources.push(source)
+    }
+    const acceptedIds = new Set(acceptedSources.map((source) => source.sourceId))
+    try check([...sources.values()].every((source) => acceptedIds.has(source.sourceId) || source.sourceId === original.sourceId || isOriginalContributorContext(source, accepted)) &&
+      claims.every((claim) => acceptedIds.has(claim.sourceId)) &&
+      acceptedSources.every((source) => source.commits.every((commit) =>
+        commit.parentCount > 1 || commit.firstAcceptedSourceId !== source.sourceId || (commit.files !== undefined && commit.files.length > 0))) &&
+      claims.length > 0, "grouped original credit must cover one complete accepted replacement")
+  }
+  try check(binding.exactAcceptance !== true || (binding.originalCommitSha === binding.acceptedCommitSha && binding.originalCommitSha === original.headSha &&
+    accepted.commits.every((commit) => validParentShas(commit))), "exact original-contributor proof does not bind the original head")
+  if (tally.incomplete || !originalContributorPrecedesFollowups(original, carrier) ||
+    (binding.exactAcceptance === true && !originalContributorPrecedesFollowups({ ...accepted, author: origin }, carrier)) ||
+    accepted.commits.some((commit) => commit !== acceptedCommit && commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId &&
+      (!eligible(commit.author) || (commit.author.id !== origin.id && commit.author.id !== carrier.id)))) return null
+  return try replacementProof(tally, origin)
+}
+
+function partKey(part: OriginalContributorBinding) {
+  return `${part.originalSourceId}\u0000${part.originalCommitSha}`
+}
+
+function claimLines(sources: ReadonlyArray<CorrectionSource>, claim: CorrectionClaim) {
+  const file = sources.find((source) => source.sourceId === claim.sourceId)?.commits.find((commit) => commit.sha === claim.commitSha)?.files?.find((item) => item.path === claim.path)
+  return file === undefined || !count(file.additions) || !count(file.deletions) ? undefined : file.additions + file.deletions
+}
+
+effect function partsProof(candidate: ManifestCandidate, proof: CompleteProof, parts: ReadonlyArray<OriginalContributorBinding>, projectOf: ProjectOfRepository) {
+  try check(candidate.kind === "work-unit" && isOctober(candidate.occurredAt) && proof.originalContributor === undefined && parts.length >= 2 &&
+    distinct(parts.map(partKey)), "invalid multi-original native unit")
+  const claims = proof.claims ?? []
+  const claimIds = claims.map((claim) => claim.id)
+  const independentClaimIds = proof.independentClaimIds ?? []
+  try check(sameSet(proof.expectedClaimIds ?? [], claimIds) &&
+    parts.every((part) => part.exactAcceptance === true && part.claimIds !== undefined && part.claimIds.length > 0) &&
+    sameSet([...parts.flatMap((part) => part.claimIds ?? []), ...independentClaimIds], claimIds) &&
+    parts.some((part) => (part.acceptedSourceId ?? candidate.sourceId) === candidate.sourceId || part.originalSourceId === candidate.sourceId ||
+      (part.followups?.some((followup) => followup.sourceId === candidate.sourceId) ?? false)),
+    "native subproofs do not partition the complete unit")
+  const completion = proof.sources.find((source) => source.sourceId === candidate.sourceId)
+  try check(completion !== undefined && completion.sourceUrl === candidate.sourceUrl && completion.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
+  const actors = new Map<string, CorrectionActor>()
+  const weights = new Map<string, number>()
+  const scopes: Scope[] = []
+  const replacement: ReplacementLine[] = []
+  let incompleteLines = false
+  for (const part of parts) {
+    const accepted = proof.sources.find((source) => source.sourceId === (part.acceptedSourceId ?? candidate.sourceId))
+    if (accepted === undefined || accepted.occurredAt === null || accepted.occurredAt > candidate.occurredAt) throw correctionFailure("native subproof acceptance exceeds the unit completion")
+    const selected = claims.filter((claim) => part.claimIds?.includes(claim.id) ?? false)
+    const partSourceIds = new Set([accepted.sourceId, part.originalSourceId, ...(part.followups ?? []).map((followup) => followup.sourceId)])
+    const partCompletion = proof.sources
+      .filter((source) => partSourceIds.has(source.sourceId) && source.occurredAt !== null && source.occurredAt <= candidate.occurredAt)
+      .sort((left, right) => (right.occurredAt ?? "").localeCompare(left.occurredAt ?? "") || left.sourceId.localeCompare(right.sourceId))[0]
+    const partOccurredAt = partCompletion?.occurredAt
+    if (partCompletion === undefined || partOccurredAt === undefined || partOccurredAt === null || partOccurredAt === "") throw correctionFailure("native subproof lacks a verified completion source")
+    const derived = try deriveProof({
+      ...candidate,
+      sourceId: partCompletion.sourceId,
+      sourceUrl: partCompletion.sourceUrl,
+      occurredAt: partOccurredAt,
+      proof: {
+        ...proof,
+        originalContributorParts: undefined,
+        independentClaimIds: undefined,
+        originalContributor: { ...part, acceptedSourceId: partCompletion.sourceId === accepted.sourceId ? undefined : accepted.sourceId },
+        expectedClaimIds: selected.map((claim) => claim.id),
+        claims: selected,
+      },
+    }, projectOf)
+    if (derived === null) return null
+    const [origin] = [...derived.actors.values()]
+    if (derived.actors.size !== 1 || origin === undefined) throw correctionFailure("native subproof lacks one originating contributor")
+    actors.set(origin.id, origin)
+    let weight = 0
+    for (const claim of selected) {
+      const lines = claimLines(proof.sources, claim)
+      if (lines === undefined) {
+        incompleteLines = true
+        continue
+      }
+      weight += lines
+    }
+    const total = (weights.get(origin.id) ?? 0) + weight
+    try check(Number.isSafeInteger(total), "implementation line weight overflows")
+    weights.set(origin.id, total)
+    scopes.push(...derived.scopes)
+    replacement.push(...(derived.replacement ?? []))
+  }
+  if (independentClaimIds.length > 0) {
+    const independent = claims.filter((claim) => independentClaimIds.includes(claim.id))
+    const ordinary = try deriveProof({
+      ...candidate,
+      proof: { ...proof, originalContributorParts: undefined, independentClaimIds: undefined, claims: independent, expectedClaimIds: independentClaimIds },
+    }, projectOf)
+    if (ordinary === null) return null
+    for (const [id, actor] of ordinary.actors) actors.set(id, actor)
+    for (const [id, weight] of ordinary.weights) {
+      const total = (weights.get(id) ?? 0) + weight
+      try check(Number.isSafeInteger(total), "implementation line weight overflows")
+      weights.set(id, total)
+      replacement.push({ kind: "original", author: id, lines: weight })
+    }
+    scopes.push(...ordinary.scopes)
+  }
+  if (incompleteLines && actors.size > 1) return null
+  return { actors, weights, scopes, replacement } satisfies DerivedProof
+}
+
+export effect function deriveProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository): (DerivedProof | null)!CorrectionRefused!Experimental.Crypto.Crypto {
   const proof = candidate.proof
   if (proof.status === "held") return null
   try check(digestPattern.test(proof.censusDigest), "invalid ownership census digest")
-  if (proof.originalContributorParts !== undefined) return null
+  const parts = proof.originalContributorParts
+  if (parts !== undefined) return try partsProof(candidate, proof, parts, projectOf)
   try check(proof.independentClaimIds === undefined, "independent claims require a complete original partition")
-  if (proof.originalContributor !== undefined) return null
   try check(sameSet(candidate.sourceIds, proof.sources.map((source) => source.sourceId)), "incomplete or duplicate source scope")
   const sources = new Map(proof.sources.map((source) => [source.sourceId, source] as const))
   const claims = proof.claims
+  const binding = proof.originalContributor
+  const nativeCarrier = binding?.claimIds === undefined ? undefined : sources.get(binding.acceptedSourceId ?? candidate.sourceId)
   let incomplete = false
   for (const source of sources.values()) {
+    const nativeContext = nativeCarrier !== undefined && source.commits.every((commit) =>
+      commit.parentCount <= 2 && commit.firstAcceptedSourceId === nativeCarrier.sourceId && hasCopy(nativeCarrier, commit))
     const unclaimedContext = candidate.kind === "work-unit" && claims !== undefined && !claims.some((claim) => claim.sourceId === source.sourceId)
-    if (!(try validSource(source, candidate, projectOf, unclaimedContext))) incomplete = true
+    const mergedOriginal = candidate.kind === "work-unit" && binding?.exactAcceptance === true &&
+      (binding.originalSourceId === source.sourceId || nativeContext) && source.sourceId !== candidate.sourceId &&
+      source.occurredAt !== null && source.occurredAt >= candidate.occurredAt
+    if (!(try validSource(source, candidate, projectOf, unclaimedContext || mergedOriginal))) incomplete = true
   }
-  const accepted = sources.get(candidate.sourceId)
-  try check(accepted !== undefined && accepted.sourceUrl === candidate.sourceUrl && accepted.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
+  const completion = sources.get(candidate.sourceId)
+  try check(completion !== undefined && completion.sourceUrl === candidate.sourceUrl && completion.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
+  const acceptedSourceId = binding?.acceptedSourceId
+  const accepted = acceptedSourceId === undefined ? completion : sources.get(acceptedSourceId)
+  try check(accepted !== undefined && (acceptedSourceId === undefined || (isNodeId(acceptedSourceId) && candidate.kind === "work-unit" &&
+    ((binding?.originalSourceId === candidate.sourceId && binding.exactAcceptance === true) || (binding?.followups?.some((item) => item.sourceId === candidate.sourceId) ?? false)) &&
+    accepted.sourceId !== candidate.sourceId && accepted.occurredAt !== null && accepted.occurredAt <= candidate.occurredAt)),
+    "accepted carrier does not bind the recorded original completion")
   if (incomplete || accepted === undefined) return null
-  const tally: Tally = { actors: new Map(), weights: new Map(), scopes: [], incomplete: false }
+  const tally: Tally = { actors: new Map(), weights: new Map(), scopes: [], work: [], incomplete: false }
   if (candidate.kind === "pull-request") {
-    if (emptyPromotion(accepted)) return null
+    if (binding === undefined && emptyPromotion(accepted)) return null
     for (const commit of accepted.commits) try add(tally, sources, candidate, accepted, commit, { additions: commit.additions, deletions: commit.deletions, path: "*" })
   } else {
     try addClaims(tally, sources, candidate, proof)
   }
   const { actors, weights, scopes } = tally
   try check(distinct(scopes.map((scope) => `${scope.commit}\u0000${scope.path}`)), "duplicate implementation claim")
+  if (binding !== undefined) return try octoberProof(candidate, proof, binding, sources, accepted, tally)
   if (candidate.kind === "pull-request" && actors.size === 1 && tally.incomplete && scopes.length > 0) {
     let resolved = 0
     for (const commit of accepted.commits) {

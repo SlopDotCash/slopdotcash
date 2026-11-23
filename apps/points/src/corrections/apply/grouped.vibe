@@ -1,12 +1,15 @@
 // spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { type CensusOutcome, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
 import type { MergedOutcome } from "../../collect/merged/wire.vibe"
+import { mergedCensusOutcome } from "../../collect/run/pipeline.vibe"
 import { interrupted } from "../../quotaRecovery/run.vibe"
-import { type CollectedEvidence, earlierAcceptedObjectUnavailable } from "../collect/collect.vibe"
+import { type CollectedEvidence, type SourceRead, earlierAcceptedObjectUnavailable } from "../collect/collect.vibe"
 import type { CorrectionCandidate, CorrectionPool } from "../collect/inventory.vibe"
 import { correctionClaimCommit } from "./derive.vibe"
-import type { CorrectionClaim, CorrectionCommit, CorrectionSource } from "./manifest.vibe"
-import { type PullAuthor, groupedOctoberHold, isOctober } from "./october.vibe"
+import type { CorrectionClaim, CorrectionCommit, CorrectionSource, OriginalContributorBinding, OriginalContributorFollowup } from "./manifest.vibe"
+import { type PullAuthor, boundOrdinary, isMergedOriginalContributor, isOctober, isOriginalContributorContext, matchedAccepted, octoberOrdinary, ordinarySource, outcomeMissing, soleOriginalPrimary, verifiedHuman } from "./october.vibe"
+import { isOriginalContributorFollowup } from "./original.vibe"
+import type { OrdinaryProof, RetainedBinder } from "./prove.vibe"
 
 export error GroupedRefused { message: string }
 
@@ -33,6 +36,37 @@ schema AssessedJoint {
   readonly evidence: { readonly sources: ReadonlyArray<Schema.Unknown>; readonly claims: ReadonlyArray<JointClaim> }
 }
 
+interface JointRaw {
+  readonly id: string
+  readonly raw: unknown
+}
+
+interface OctoberGroup<E, R> {
+  readonly evidence: CollectedEvidence
+  readonly candidate: CorrectionCandidate
+  readonly binder: RetainedBinder<E, R>
+  readonly outcomes: ReadonlyMap<string, MergedOutcome>
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly selected: ReadonlyArray<JointClaim>
+  readonly authors: ReadonlyMap<string, PullAuthor>
+  readonly raws: ReadonlyArray<JointRaw>
+}
+
+interface GroupedCredit {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor: OriginalContributorBinding | undefined
+  readonly originalContributorParts: ReadonlyArray<OriginalContributorBinding> | undefined
+  readonly independentClaimIds: ReadonlyArray<string> | undefined
+}
+
+interface GroupedOriginal {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor: OriginalContributorBinding
+}
+
+const oneReplacement = "Grouped original credit requires one accepted replacement"
+
 function refused(message: string) {
   return new GroupedRefused({ message })
 }
@@ -47,24 +81,11 @@ function messageOf(error: unknown) {
   return "reason" in error && typeof error.reason === "string" && error.reason !== "" ? error.reason : groupedIncomplete
 }
 
-function censusOutcome(outcome: MergedOutcome): CensusOutcome {
-  return {
-    id: outcome.id,
-    url: outcome.url,
-    number: outcome.number,
-    headRefOid: outcome.headRefOid,
-    updatedAt: outcome.updatedAt,
-    mergedAt: outcome.mergedAt,
-    baseRefName: outcome.baseRefName,
-    commits: outcome.commits === null ? null : outcome.commits.map((commit) => ({ oid: commit.oid, author: commit.author, parentCount: commit.parentCount, additions: commit.additions, deletions: commit.deletions })),
-  }
-}
-
 effect function historyOf(evidence: CollectedEvidence, pools: ReadonlyArray<CorrectionPool>) {
   const outcomes = new Map<string, CensusOutcome>()
   for (const { candidate } of pools) {
     const read = evidence.reads.get(candidate.sourceId)
-    if (read !== undefined) outcomes.set(candidate.sourceId, censusOutcome(read.outcome))
+    if (read !== undefined) outcomes.set(candidate.sourceId, mergedCensusOutcome(read.outcome))
   }
   const loaded = (try ValueInputs).load({ value: [...outcomes.values()], attribution: [] }) catch effect (error) => {
     if (try interrupted()) throw error
@@ -74,7 +95,7 @@ effect function historyOf(evidence: CollectedEvidence, pools: ReadonlyArray<Corr
   return loaded
 }
 
-effect function restoreCanonicalMergeCounts(sources: ReadonlyArray<CorrectionSource>, outcomes: ReadonlyMap<string, MergedOutcome>) {
+export effect function restoreCanonicalMergeCounts(sources: ReadonlyArray<CorrectionSource>, outcomes: ReadonlyMap<string, MergedOutcome>) {
   const restored: CorrectionSource[] = []
   for (const source of sources) {
     const outcome = outcomes.get(source.sourceId)
@@ -100,7 +121,7 @@ function carries(commit: CorrectionCommit, path: string) {
   return commit.files?.some((file) => file.path === path) ?? false
 }
 
-effect function firstAcceptedCorrectionClaims(claims: ReadonlyArray<CorrectionClaim>, sources: ReadonlyArray<CorrectionSource>) {
+export effect function firstAcceptedCorrectionClaims(claims: ReadonlyArray<CorrectionClaim>, sources: ReadonlyArray<CorrectionSource>) {
   const resolved: CorrectionClaim[] = []
   for (const claim of claims) {
     const origin = sources.find((source) => source.sourceId === claim.sourceId)
@@ -121,24 +142,184 @@ effect function decodedJoint(sourceId: string, decision: unknown) {
   const malformed = refused(`Joint value decision for ${sourceId} is malformed`)
   const joint = Schema.decodeUnknownEffect(AssessedJoint)(decision) catch effect () => { throw malformed }
   const authors = new Map<string, PullAuthor>()
-  const sourceIds: string[] = []
+  const raws: JointRaw[] = []
   for (const source of joint.evidence.sources) {
     const view = Schema.decodeUnknownEffect(JointSource)(source) catch effect () => { throw malformed }
     const pull = view.evidence.pull
-    sourceIds.push(pull.node_id)
+    raws.push({ id: pull.node_id, raw: source })
     authors.set(pull.node_id, { node_id: pull.user.node_id, type: pull.user.type })
   }
-  return { joint, authors, sourceIds: sourceIds.sort() }
+  return { joint, authors, raws, sourceIds: raws.map((item) => item.id).sort() }
 }
 
-effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionPool, history: ValueInputsRead, outcomes: ReadonlyMap<string, MergedOutcome>, bind: GroupedBinding<E, R>) {
+effect function groupedOriginalContributorProof(accepted: CorrectionSource, original: OrdinaryProof, claims: ReadonlyArray<CorrectionClaim>, contextSources: ReadonlyArray<CorrectionSource>, followups: ReadonlyArray<OriginalContributorFollowup>) {
+  const originalAccepted = original.sources.find((source) => source.sourceId === accepted.sourceId)
+  try matchedAccepted(accepted, originalAccepted)
+  const binding = original.originalContributor
+  if (originalAccepted === undefined || original.sources.length !== 2 || binding === undefined || originalAccepted.sourceUrl !== accepted.sourceUrl ||
+    originalAccepted.author?.id !== accepted.author?.id || originalAccepted.author?.kind !== accepted.author?.kind ||
+    !originalAccepted.commits.every((commit, index) => {
+      const expected = accepted.commits[index]
+      return expected !== undefined && commit.author?.id === expected.author?.id && commit.author?.kind === expected.author?.kind && commit.firstAcceptedSourceId === expected.firstAcceptedSourceId
+    })) throw refused(oneReplacement)
+  for (const source of contextSources) {
+    if (isOriginalContributorContext(source, accepted)) continue
+    const followed = try isOriginalContributorFollowup(source, accepted, followups.find((item) => item.sourceId === source.sourceId))
+    if (!followed) throw refused(oneReplacement)
+  }
+  const acceptedSources = [accepted, ...contextSources.filter((source) => followups.some((item) => item.sourceId === source.sourceId))]
+  if (followups.length !== acceptedSources.length - 1 || new Set(followups.map((item) => item.sourceId)).size !== followups.length ||
+    !claims.every((claim) => acceptedSources.some((source) => source.sourceId === claim.sourceId))) {
+    throw refused("Grouped original credit requires one accepted replacement with complete follow-up scope")
+  }
+  if (claims.length === 0 || new Set(claims.map((claim) => claim.id)).size !== claims.length ||
+    !claims.every((claim) => acceptedSources.some((source) => source.sourceId === claim.sourceId && source.commits.some((commit) =>
+      commit.sha === claim.commitSha && correctionClaimCommit(commit) && commit.firstAcceptedSourceId === source.sourceId && carries(commit, claim.path)))) ||
+    !acceptedSources.every((source) => source.commits.every((commit) =>
+      commit.parentCount > 1 || commit.firstAcceptedSourceId !== source.sourceId || (commit.files !== undefined && commit.files.length > 0)))) {
+    throw refused("Grouped original credit does not cover the canonical selected claims")
+  }
+  const originals = new Map(originalAccepted.commits.map((commit) => [commit.sha, commit] as const))
+  const commits: CorrectionCommit[] = accepted.commits.map((commit) => {
+    const originalCommit = originals.get(commit.sha)
+    const parentShas = originalCommit?.parentShas
+    return {
+      ...commit,
+      ...(commit.parentCount > 1 ? { additions: originalCommit?.additions ?? null, deletions: originalCommit?.deletions ?? null } : {}),
+      ...(parentShas === undefined ? {} : { parentShas }),
+    }
+  })
+  const proved: GroupedOriginal = {
+    sources: [{ ...accepted, commits }, ...original.sources.filter((source) => source.sourceId !== accepted.sourceId), ...contextSources],
+    originalContributor: { ...binding, ...(followups.length > 0 ? { followups: [...followups] } : {}) },
+  }
+  return proved
+}
+
+effect function octoberRetained<E, R>(read: SourceRead, owners: ReadonlyMap<string, string>, binder: RetainedBinder<E, R>) {
+  const plain = try ordinarySource(read, owners)
+  if (plain === undefined) throw refused(outcomeMissing)
+  const found = try octoberOrdinary(plain, read)
+  if (found.kind === "held") throw refused(found.reason)
+  if (found.kind === "plain") {
+    const proof: OrdinaryProof = { sources: [plain] }
+    return proof
+  }
+  return try boundOrdinary(plain, found.retained, owners, binder.ordinary, found.october)
+}
+
+effect function octoberCredit<E, R>(group: OctoberGroup<E, R>) {
+  const { evidence, candidate, binder, claims, selected, raws } = group
+  let sources = group.sources
+  let originalContributor: OriginalContributorBinding | undefined = undefined
+  let originalContributorParts: ReadonlyArray<OriginalContributorBinding> | undefined = undefined
+  let independentClaimIds: ReadonlyArray<string> | undefined = undefined
+  const claimedSources = sources.filter((source) => claims.some((claim) => claim.sourceId === source.sourceId))
+    .sort((left, right) => (left.occurredAt ?? "").localeCompare(right.occurredAt ?? "") || left.sourceId.localeCompare(right.sourceId))
+  const [accepted] = claimedSources
+  const donors = accepted === undefined ? [] : sources.filter((source) => isMergedOriginalContributor(accepted, source))
+  const mergedDonor = donors.length === 1 ? donors[0] : undefined
+  const closedOriginals = sources.filter((source) => source.occurredAt === null && source.author?.id !== accepted?.author?.id)
+  const origin = mergedDonor ?? (closedOriginals.length === 1 ? closedOriginals[0] : undefined)
+  const followupSources = claimedSources.slice(1)
+  const claimed = new Set(claimedSources.map((source) => source.sourceId))
+  if (accepted !== undefined && (sources.length === 1 || origin !== undefined) &&
+    sources.every((source) => claimed.has(source.sourceId) || source.sourceId === origin?.sourceId || isOriginalContributorContext(source, accepted)) &&
+    (claimed.has(candidate.sourceId) || candidate.sourceId === mergedDonor?.sourceId)) {
+    const outcome = group.outcomes.get(accepted.sourceId)
+    const read = evidence.reads.get(accepted.sourceId) ?? (outcome === undefined ? undefined : { outcome, repositoryNodeId: accepted.repositoryNodeId })
+    if (read === undefined) throw refused("Grouped accepted source disappeared from the complete census")
+    const original = origin !== undefined && (mergedDonor !== undefined || followupSources.length > 0)
+      ? try binder.october.original({
+        accepted,
+        sources: raws.filter((item) => item.id === accepted.sourceId).concat(raws.filter((item) => item.id === origin.sourceId)).map((item) => item.raw),
+        owners: evidence.owners,
+        allowMergedOriginal: mergedDonor !== undefined,
+      })
+      : try octoberRetained(read, evidence.owners, binder)
+    if (original.originalContributor !== undefined) {
+      const followups: OriginalContributorFollowup[] = []
+      for (const followup of followupSources) {
+        const retained = raws.find((item) => item.id === followup.sourceId)
+        if (retained === undefined) throw refused("Accepted follow-up evidence disappeared")
+        followups.push(try binder.october.followup({ accepted, followup, retained: retained.raw }))
+      }
+      const grouped = try groupedOriginalContributorProof(accepted, original, claims, sources.filter((source) => !original.sources.some((item) => item.sourceId === source.sourceId)), followups)
+      sources = grouped.sources
+      originalContributor = accepted.sourceId === candidate.sourceId ? grouped.originalContributor : { ...grouped.originalContributor, acceptedSourceId: accepted.sourceId }
+    }
+  }
+  if (originalContributor === undefined && accepted !== undefined) {
+    const originalIds = new Set(selected.map((claim) => claim.creditPullRequestId))
+    for (const source of claimedSources) originalIds.delete(source.sourceId)
+    const [originalId] = originalIds
+    if (originalIds.size === 1 && originalId !== undefined) {
+      const original = raws.find((item) => item.id === originalId)
+      const integration = raws.find((item) => item.id === accepted.sourceId)
+      const originalAuthor = group.authors.get(originalId)
+      if (original === undefined || integration === undefined || originalAuthor === undefined) throw refused("Original unit evidence disappeared")
+      const verifiedOriginal = sources.find((source) => source.sourceId === originalId)
+      if (verifiedOriginal === undefined) throw refused("Verified original source disappeared")
+      const primary = soleOriginalPrimary(verifiedOriginal)
+      const current = sources
+      const alreadyCredited = primary !== undefined && claims.every((claim) => {
+        const commit = current.find((source) => source.sourceId === claim.sourceId)?.commits.find((item) => item.sha === claim.commitSha)
+        return commit !== undefined && verifiedHuman(commit.author) && commit.author.id === primary.id
+      })
+      if (!alreadyCredited && originalAuthor.type === "User" && (primary?.id ?? originalAuthor.node_id) !== accepted.author?.id) {
+        const followupIds = new Set(followupSources.map((source) => source.sourceId))
+        const proof = try binder.october.unit({
+          accepted,
+          original: original.raw,
+          integration: integration.raw,
+          owners: evidence.owners,
+          claims,
+          followups: raws.filter((item) => followupIds.has(item.id)).map((item) => item.raw),
+          sources: raws.map((item) => item.raw),
+        })
+        const authenticated = new Map(proof.sources.map((source) => [source.sourceId, source] as const))
+        sources = current.map((source) => authenticated.get(source.sourceId) ?? source)
+        const unitBinding = proof.originalContributor
+        originalContributor = unitBinding === undefined || accepted.sourceId === candidate.sourceId ? unitBinding : { ...unitBinding, acceptedSourceId: accepted.sourceId }
+        originalContributorParts = proof.originalContributorParts
+      }
+    }
+  }
+  if (originalContributor === undefined && originalContributorParts === undefined) {
+    const current = sources
+    const originating = new Map<string, ReadonlyArray<string>>()
+    for (const claim of selected) {
+      const carrierId = claims.find((item) => item.id === claim.id)?.sourceId
+      const carrier = current.find((source) => source.sourceId === carrierId)
+      if (carrier === undefined) continue
+      let verifiedOriginal = current.find((source) => source.sourceId === claim.creditPullRequestId)
+      if (verifiedOriginal === undefined || verifiedOriginal.author?.id === carrier.author?.id) {
+        const retained = current.filter((source) => source.sourceId !== carrier.sourceId && verifiedHuman(source.author) && source.author.id !== carrier.author?.id &&
+          source.commits.some((commit) => commit.sha === claim.commitSha && (commit.author === null || commit.author.id === source.author?.id)))
+        if (retained.length === 1) verifiedOriginal = retained[0]
+      }
+      if (verifiedOriginal === undefined || verifiedOriginal.author?.id === carrier.author?.id || !verifiedOriginal.commits.some((commit) => commit.sha === claim.commitSha)) continue
+      originating.set(verifiedOriginal.sourceId, [...(originating.get(verifiedOriginal.sourceId) ?? []), claim.id])
+    }
+    if (originating.size >= 2) {
+      const proof = try binder.october.parts({ sources: raws.map((item) => item.raw), owners: evidence.owners, claims, originating, candidateSourceId: candidate.sourceId })
+      sources = try restoreCanonicalMergeCounts(proof.sources, group.outcomes)
+      originalContributorParts = proof.originalContributorParts
+      independentClaimIds = proof.independentClaimIds
+    }
+  }
+  const credit: GroupedCredit = { sources, originalContributor, originalContributorParts, independentClaimIds }
+  return credit
+}
+
+effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionPool, history: ValueInputsRead, outcomes: ReadonlyMap<string, MergedOutcome>, binder: RetainedBinder<E, R>) {
   const candidate = pool.candidate
   const known = history.heldWorkUnits.find((unit) => unit.sourceNodeIds.includes(candidate.sourceId))
   const recorded = known === undefined ? candidate : { ...candidate, sourceIds: [...known.sourceNodeIds].sort() }
   const decision = history.jointValueDecisions.find((row) => row.sourceId === candidate.sourceId)?.decision
   const status = Schema.decodeUnknownEffect(JointStatus)(decision) catch () => undefined
   if (status?.status !== "assessed") return held(recorded, groupedDecisionUnavailable)
-  const { joint, authors, sourceIds } = try decodedJoint(candidate.sourceId, decision)
+  const { joint, authors, raws, sourceIds } = try decodedJoint(candidate.sourceId, decision)
   const scoped = { ...candidate, sourceIds }
   const unit = joint.record.units.find((item) => item.workUnitId === candidate.workUnitId)
   const digest = joint.latestDigest
@@ -146,7 +327,7 @@ effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionP
   const claimIds = unit.claimIds
   const proving = effect {
     if (digest === null) throw refused("Grouped decision digest unavailable")
-    const sources = try restoreCanonicalMergeCounts(try bind(joint.evidence.sources, evidence.owners), outcomes)
+    const sources = try restoreCanonicalMergeCounts(try binder.grouped(joint.evidence.sources, evidence.owners), outcomes)
     const selected = joint.evidence.claims.filter((claim) => claimIds.includes(claim.id))
     if (selected.length !== claimIds.length) throw refused("Grouped claim scope is incomplete")
     if (!selected.every((claim) => {
@@ -160,12 +341,22 @@ effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionP
       commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
       path: claim.path,
     })), sources)
-    if (evidence.options.octoberOriginalCredit === true && isOctober(candidate.occurredAt)) {
-      const hold = try groupedOctoberHold({ evidence, candidateSourceId: candidate.sourceId, sources, claims, selected, authors })
-      if (hold !== undefined) return held(scoped, hold)
+    const credit: GroupedCredit = evidence.options.octoberOriginalCredit === true && isOctober(candidate.occurredAt)
+      ? try octoberCredit({ evidence, candidate, binder, outcomes, sources, claims, selected, authors, raws })
+      : { sources, originalContributor: undefined, originalContributorParts: undefined, independentClaimIds: undefined }
+    const { originalContributor, originalContributorParts, independentClaimIds } = credit
+    const proof = {
+      status: "complete" as const,
+      censusDigest: evidence.censusDigest,
+      sources: [...credit.sources],
+      decisionDigest: digest,
+      expectedClaimIds: [...claimIds],
+      claims,
+      ...(originalContributor === undefined ? {} : { originalContributor }),
+      ...(originalContributorParts === undefined ? {} : { originalContributorParts }),
+      ...(independentClaimIds === undefined || independentClaimIds.length === 0 ? {} : { independentClaimIds }),
     }
-    const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources, decisionDigest: digest, expectedClaimIds: [...claimIds], claims }
-    const proved: GroupedProof = { kind: "complete", candidate: { ...candidate, sourceIds: sources.map((source) => source.sourceId).sort(), proof } }
+    const proved: GroupedProof = { kind: "complete", candidate: { ...candidate, sourceIds: credit.sources.map((source) => source.sourceId).sort(), proof } }
     return proved
   }
   const result = proving catch effect (error) => {
@@ -175,7 +366,7 @@ effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionP
   return result
 }
 
-export effect function proveGrouped<E, R>(evidence: CollectedEvidence, bind: GroupedBinding<E, R>) {
+export effect function proveGrouped<E, R>(evidence: CollectedEvidence, binder: RetainedBinder<E, R>) {
   const results = new Map<string, GroupedProof>()
   if (!evidence.ownershipComplete) return results
   const pools = evidence.selected.filter(({ candidate }) => candidate.kind === "work-unit" && evidence.reads.has(candidate.sourceId))
@@ -185,7 +376,7 @@ export effect function proveGrouped<E, R>(evidence: CollectedEvidence, bind: Gro
   for (const pool of pools) {
     const candidate = pool.candidate
     if (history === undefined) results.set(candidate.id, held(candidate, groupedFeedUnavailable))
-    else results.set(candidate.id, try provedGroup(evidence, pool, history, outcomes, bind))
+    else results.set(candidate.id, try provedGroup(evidence, pool, history, outcomes, binder))
   }
   return results
 }

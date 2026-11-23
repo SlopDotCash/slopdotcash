@@ -7,21 +7,24 @@ import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
-import { fileJournal } from "@repo/platform/journal"
+import { type Journal, fileJournal } from "@repo/platform/journal"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { type Account, anvil, refuseMainnet } from "@repo/platform/testing/chains"
 import { settableClock } from "@repo/platform/testing/clock"
 import { frozenCopy } from "@repo/platform/testing/frozen"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { windowOpensAt } from "../gen/settlement__monthlyCommitment.effect.vibe"
-import { Authority, type ProjectView, Registry } from "@repo/ports/backend"
+import { Authority, type ProjectView, Registry, type RegistryManifest, RegistryManifests } from "@repo/ports/backend"
 import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, awardId, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
 import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { type MonthlyReservation, type SumTree, SOURCE_SEQUENCE_CALL, commitMonthlyLeafCalldata, monthlyReleaseDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
 import { TOTALS_CALL, decodeCounters } from "../src/chain/evm/totals.ts"
+import { ReleaseReady } from "../src/client/reserveRelease.vibe"
+import { type AttesterObjectEnv, attesterRoutes } from "../src/jobs/attesterRoutes.vibe"
 import { parseBaseUnits } from "../src/kernels/amounts.ts"
 import { ordinaryFeeBase } from "../src/kernels/fees.ts"
+import { PAYOUT_FEE_BASIS_POINTS, WITHDRAWAL_FEE_BASIS_POINTS } from "../src/kernels/networks.ts"
 import { createJournal, journaled } from "../src/journal/journal.vibe"
 import { MonthlyFacts, awardSource, executionSnapshot } from "../src/monthly/store.vibe"
 import { ReleaseApprover, type OwnerReleaseRequest, checkRelease, prepareRelease } from "../src/reserveRelease/release.vibe"
@@ -29,6 +32,7 @@ import { AttesterConfig, attesterConfig, reviewedDeployment } from "../src/signe
 import { publishMonthlyAuthorizations } from "../src/signer/monthlyRoot.vibe"
 import { releaseApprover } from "../src/signer/reserveRelease.vibe"
 import { SolanaAttesterConfig, solanaAttesterConfig } from "../src/signer/solana.vibe"
+import type { EvmDeployment } from "../src/vault/policy.vibe"
 import { attestSolanaMonth } from "../src/signer/solanaMonthly.vibe"
 import { attestEvmMonth } from "../src/signer/monthlyRoot.vibe"
 import { NOVEMBER_2026, type EscrowStack, FEE_RECIPIENT, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
@@ -315,9 +319,13 @@ function viewOf(project: string): ProjectView {
   return { projectId: project, revision: 1, manifestSha256: releaseManifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${project}`, integrationBranch: "main", aliases: [] }], closureConsent: false }
 }
 
+effect function releasePins(cases: ReadonlyArray<Reserved>) {
+  return try Effect.try(() => JSON.stringify(cases.map((reserve) => reserve.pin)))
+}
+
 effect function releaseLayer(cases: ReadonlyArray<Reserved>) {
   const { escrow, db, journalPath } = try Bench
-  const pins = try Effect.try(() => JSON.stringify(cases.map((reserve) => reserve.pin)))
+  const pins = try releasePins(cases)
   const ports = Layer.mergeAll(
     Layer.succeed(Registry, {
       project: (id) => effect { return cases.some((reserve) => reserve.projectId === id) ? viewOf(id) : undefined },
@@ -347,6 +355,53 @@ effect function registered(reserve: Reserved) {
 
 effect function review(reserve: Reserved) {
   return try prepareRelease(requestOf(reserve), try registered(reserve), { githubId: steward })
+}
+
+type WebHandler = (request: globalThis.Request) => Promise<globalThis.Response>
+
+const releasePath = "/v1/monthly-reserve-release"
+
+function registryManifestOf(reserve: Reserved, deployment: EvmDeployment): RegistryManifest {
+  const { evmUpgrade } = deployment
+  const entry = {
+    network: deployment.network, vault: deployment.vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null,
+    asset: deployment.asset, owner: deployment.owner, identityAuthority: deployment.identityAuthority, feeRecipient: deployment.feeRecipient,
+    deploymentTransaction: deployment.deploymentTransaction, sourceCommit: deployment.sourceCommit, codeSha256: deployment.codeSha256,
+    bindingDelaySeconds: deployment.bindingDelaySeconds, rotationDelaySeconds: null, factory: deployment.factory, factoryCodeSha256: deployment.factoryCodeSha256, registrar: deployment.registrar,
+    ...evmUpgrade === undefined ? {} : { evmUpgrade: { authority: evmUpgrade.authority, vaultImplementation: evmUpgrade.vaultImplementation, vaultImplementationCodeSha256: evmUpgrade.vaultImplementationCodeSha256, factoryImplementation: evmUpgrade.factoryImplementation, factoryImplementationCodeSha256: evmUpgrade.factoryImplementationCodeSha256 } },
+  }
+  const manifest = JSON.stringify({ id: reserve.projectId, escrow: { schemaVersion: "1", effectiveCycle: period, chain: "base", feeBasisPoints: PAYOUT_FEE_BASIS_POINTS, withdrawalFeeBasisPoints: WITHDRAWAL_FEE_BASIS_POINTS, feeMode: "deduct-from-gross", deployments: [entry] } })
+  return { projectId: reserve.projectId, active: true, revision: 1, manifest, manifestSha256: releaseManifestSha256, updatedAt: "2026-12-04T00:00:00.000Z" }
+}
+
+effect function attesterHandler(cases: ReadonlyArray<Reserved>, served: Reserved) {
+  const { escrow, db } = try Bench
+  const env: AttesterObjectEnv = {
+    PAYMENT_NETWORK: network,
+    SIGNER_STACK: "production",
+    PAYMENT_RPC_URLS: try Effect.try(() => JSON.stringify({ [network]: escrow.chain.url })),
+    SIGNER_PRIVATE_KEY: escrow.roles.authority.privateKey,
+    PAYMENT_DEPLOYMENTS: try releasePins(cases),
+    PAYMENTS_DB: db,
+  }
+  const manifests = [registryManifestOf(served, (try reviewedDeployment(network, served.vault, "ApproveReserveRelease")).review)]
+  const shared = try Effect.context<D1 | Journal | KeyValueStore.KeyValueStore | Registry | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+  const registry = Layer.succeed(RegistryManifests, {
+    current: () => effect { return manifests },
+    project: (id) => effect { return manifests.find((manifest) => manifest.projectId === id) },
+  })
+  const routes = attesterRoutes(env) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, Layer.mergeAll(Layer.succeedContext(shared), registry)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
+effect function posted(handler: WebHandler, path: string, body: string) {
+  return try promise(async () => {
+    const response = await handler(new globalThis.Request(`https://attester.internal${path}`, { method: "POST", headers: { "content-type": "application/json" }, body }))
+    const text = await response.text()
+    const answer: unknown = (response.headers.get("content-type") ?? "").startsWith("application/json") ? JSON.parse(text) : text
+    return { status: response.status, body: answer }
+  })
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -427,8 +482,14 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
     const reservedFree = try freeOf(wrong.vault)
     provide try releaseLayer([wrong, healthy, partial, stale]) {
       try createJournal()
-      const prepared = try review(wrong)
-      if (prepared.status !== "ready") return try die(new Error(`the wrong total was held: ${prepared.reason}`))
+      const handler = try attesterHandler([wrong, healthy, partial, stale], wrong)
+      const call = try Effect.try(() => JSON.stringify({ request: requestOf(wrong), owner: { githubId: steward } }))
+      const malformed = try posted(handler, releasePath, "{\"request\":{}}")
+      const unparsable = try posted(handler, releasePath, "{\"request\":")
+      const security = try posted(handler, "/v1/security/monthly-reserve-release", call)
+      const answered = try posted(handler, releasePath, call)
+      const prepared = Schema.decodeUnknownEffect(ReleaseReady)(answered.body) catch () => undefined
+      if (prepared === undefined) return try die(new Error(`the attester route did not answer a ready plan: ${answered.status} ${JSON.stringify(answered.body)}`))
       const forged = (try ReleaseApprover).approve({ network, vault: wrong.vault, period, digest: word(0xa11ce5n), identityAuthority: authority }) catch (error) => error.reason
       const allocationDigest = bytes32(prepared.terms.allocationDigest)
       const allocationRoot = bytes32(prepared.terms.allocationRoot)
@@ -446,6 +507,7 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
       const releasedFree = try freeOf(wrong.vault)
       const owner = try lower(escrow.roles.owner)
       try Effect.try(() => assert.deepStrictEqual({
+        route: { malformed, unparsable, security, ready: [answered.status, prepared.status] },
         forged,
         signer: recoverDigest(computed, `0x${prepared.signatureHex}` as Hex)?.toLowerCase(),
         terms: [prepared.terms.expectedRemaining, prepared.terms.releasedGross],
@@ -457,6 +519,12 @@ layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "
         healthy: healthyReview,
         partial: partialReview,
       }, {
+        route: {
+          malformed: { status: 400, body: { error: "invalid_request" } },
+          unparsable: { status: 409, body: { error: "execution_pending_or_rejected" } },
+          security: { status: 404, body: "Not found" },
+          ready: [200, "ready"],
+        },
         forged: "The requested digest is not the finalized release of this reserve",
         signer: authority,
         terms: ["6000000", "6000000"],

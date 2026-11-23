@@ -1,4 +1,5 @@
-// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"
+// spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
+import type { RepositoryRegistry } from "@repo/points/client";
 
 export type Role =
   | "alert"
@@ -142,6 +143,20 @@ export interface Deployed {
 
 export type VaultPurpose = "ordinary" | "security-bounty";
 
+export type LeaderboardTransport = "whole" | "parts";
+
+export interface PublishedActor {
+  readonly id: string;
+  readonly login: string;
+  readonly avatarUrl: string;
+}
+
+export interface Published {
+  readonly registry: RepositoryRegistry;
+  readonly leaders: ReadonlyArray<PublishedActor>;
+  readonly parts: ReadonlyArray<string>;
+}
+
 export interface Box {
   readonly top: number;
   readonly bottom: number;
@@ -181,7 +196,8 @@ export type Op =
   | { readonly kind: "release"; readonly method: string; readonly path: string }
   | { readonly kind: "fail"; readonly method: string; readonly path: string; readonly status: number; readonly body: unknown }
   | { readonly kind: "unfail"; readonly method: string; readonly path: string }
-  | { readonly kind: "serve"; readonly path: string; readonly status: number; readonly body: unknown }
+  | { readonly kind: "serve"; readonly path: string; readonly status: number; readonly body: unknown; readonly bytes?: string; readonly contentType?: string }
+  | { readonly kind: "published"; readonly leaderboard: LeaderboardTransport }
   | { readonly kind: "unserve"; readonly path: string }
   | { readonly kind: "clock"; readonly iso: string }
   | { readonly kind: "sent" }
@@ -195,6 +211,12 @@ export type Op =
   | { readonly kind: "box"; readonly target: Target }
   | { readonly kind: "scrollY" }
   | { readonly kind: "wheel"; readonly dx: number; readonly dy: number }
+  | { readonly kind: "scrollEnd" }
+  | { readonly kind: "reveal"; readonly target: Target }
+  | { readonly kind: "back" }
+  | { readonly kind: "forward" }
+  | { readonly kind: "stamp"; readonly value: string }
+  | { readonly kind: "stamped" }
   | { readonly kind: "allow"; readonly patterns: ReadonlyArray<string> }
   | { readonly kind: "diagnostics" }
   | { readonly kind: "wallets"; readonly setup: WalletSetup }
@@ -239,6 +261,7 @@ export interface Results {
   readonly fail: null;
   readonly unfail: null;
   readonly serve: null;
+  readonly published: Published;
   readonly unserve: null;
   readonly clock: null;
   readonly sent: ReadonlyArray<Sent>;
@@ -252,6 +275,12 @@ export interface Results {
   readonly box: Box | null;
   readonly scrollY: number;
   readonly wheel: null;
+  readonly scrollEnd: number;
+  readonly reveal: null;
+  readonly back: null;
+  readonly forward: null;
+  readonly stamp: null;
+  readonly stamped: string | null;
   readonly allow: null;
   readonly diagnostics: Diagnostics;
   readonly wallets: null;

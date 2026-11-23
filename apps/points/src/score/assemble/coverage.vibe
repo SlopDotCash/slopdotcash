@@ -1,4 +1,4 @@
-// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import type { ValueCoverage } from "../../client/snapshot/schema.vibe"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import type { ScoreEvent, ScoredSnapshot, ScoringFacts } from "../facts.vibe"
@@ -35,6 +35,7 @@ export effect function valueCoverage(inputs: AssemblyInputs, scoring: ScoredSnap
     const implementationHeld = scoring.implementationHeld.has(source.id)
     const status = unavailable ? "unresolved"
       : attributionHeld || (!legacy && implementationHeld) ? "incomplete"
+      : inputs.ratified.has(source.id) ? "human-ratified"
       : legacy ? "legacy-policy"
       : decision?.status ?? "missing"
     const latest = decision?.latestDigest ?? null

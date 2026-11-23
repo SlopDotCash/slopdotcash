@@ -127,7 +127,7 @@ effect function liveRepository(repository: string, githubId: string, nodeId: str
 
 export effect function capturedCut(classified: ClassifiedScope, heads: HistoricalAssessmentHeads) {
   let state = try apply(initial, { type: "capture", scoped: true, applyRequested: false, jointCount: heads.jointScopedCount, legacyCount: heads.legacyRepoCount }, dispatch)
-  for (const observation of classified.observations) state = try apply(state, { type: "observe", ...observation }, dispatch)
+  for (const observation of classified.observations) state = try apply(state, observation, dispatch)
   return state
 }
 
@@ -186,7 +186,7 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
   if (!catalogsComplete(state) || classified.receipt.status === "incomplete") {
     const sealed = try apply(state, { type: "seal" }, dispatch)
     try require(sealedStatus[sealed.status] === "incomplete" && classified.receipt.status === "incomplete", "Assessment catalog could not be reconciled")
-    try Console.log(JSON.stringify(report))
+    try Console.log(JSON.stringify({ ...report, blockerCodes: classified.receipt.blockers }))
     throw refusal("Assessment catalog could not be reconciled")
   }
   return { inputs, repository: project.repository, integrationBranch: project.integrationBranch, scope, sourceAudit, catalog, baseline, classified, state, report } satisfies AuditedScope

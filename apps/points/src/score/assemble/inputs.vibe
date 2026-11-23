@@ -1,4 +1,4 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/modelAttribution.md, "Attribution never changes Points, rank, share or payment"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"
 import { millisOf } from "@repo/platform/clock"
 import { RegistryManifests } from "@repo/ports/backend"
 import type { RetainedCommitCredit } from "@repo/ports/points"
@@ -6,14 +6,19 @@ import { registryOf, repositoryIdFromUrl } from "../../client/snapshot/checks.vi
 import type { PublishedPenalty } from "../../client/snapshot/schema.vibe"
 import { valueScoringApprovedHistoryFrom } from "../../client/snapshot/schema.vibe"
 import { categories as penaltyCategories } from "../../collect/feeds/penalties.vibe"
-import type { PullRequestRecord, ReviewRecord } from "../../collect/merged/hydrate.vibe"
+import { type PullTextSource, pullRequestBodySource, pullRequestTextSources } from "../../collect/evidence/artifacts.vibe"
+import type { IssueRecord, PullRequestRecord, ReviewRecord } from "../../collect/merged/hydrate.vibe"
 import type { MergedOutcome, OutcomeCommit, Review as WireReview } from "../../collect/merged/wire.vibe"
 import { AssemblyRefused, type Collection } from "../../collect/run/pipeline.vibe"
 import { type Admitted, admitManifests } from "../../evaluations/manifests.vibe"
 import { repositoriesOf } from "../../journal/build.vibe"
-import { valuePolicyAt } from "../../kernels/scoring/legacyV2.ts"
+import { qualifiesResolvedIssue, valuePolicyAt } from "../../kernels/scoring/legacyV2.ts"
 import type { ReviewState } from "../../kernels/scoring/reviewBody.ts"
-import type { Activity, Actor, ClosedPull, Commit, ImplementationHistory, JointDecision, MergedPull, Penalty, Review, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
+import { hasConfirmationLabel } from "../../kernels/scoring/selection.ts"
+import { type AttributionContext, type AttributionOptions, assessModelAttribution, issueTextSources, receiptPolicies } from "../attribution/markers.vibe"
+import { scoreRatifications } from "../attribution/ratifications.vibe"
+import { assertReviewRecordReceiptJoin, parseReviewRecordBlock } from "../attribution/reviewRecords.vibe"
+import type { Activity, Actor, AutomatedReview, ClosedPull, Commit, ImplementationHistory, JointDecision, MergedPull, Penalty, Review, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
 import { isBot } from "../facts.vibe"
 import { type EvidenceActor, type JointCommit, type JointRead, type ValueDecision, assessmentOf, decisionsOf, jointOf } from "./decisions.vibe"
 
@@ -33,6 +38,13 @@ export interface CoverageSource {
   readonly merged: MergedPull | undefined
 }
 
+export interface AttributionSources {
+  readonly context: AttributionContext
+  readonly bodies: ReadonlyMap<string, PullTextSource>
+  readonly pullSources: ReadonlyMap<string, ReadonlyMap<string, PullTextSource>>
+  readonly evaluated: ReadonlyMap<string, PullTextSource>
+}
+
 export interface AssemblyInputs {
   readonly facts: ScoringFacts
   readonly sources: ReadonlyArray<CoverageSource>
@@ -43,6 +55,8 @@ export interface AssemblyInputs {
   readonly unavailableHeld: ReadonlySet<string>
   readonly penalties: ReadonlyArray<PublishedPenalty>
   readonly sourceUpdatedAt: string
+  readonly attribution: AttributionSources
+  readonly ratified: ReadonlySet<string>
 }
 
 schema PrizePolicy { readonly reward: { readonly kind?: string } }
@@ -54,6 +68,8 @@ const memberRefused = "Joint scoring requires current human decision and review 
 const contextRefused = "Joint human context must be an assessed member outside the census"
 const historicalOutside = "Historical leaderboard input is outside the pinned repository"
 const decodePrize = Schema.decodeUnknownEffect(Schema.fromJsonString(PrizePolicy))
+export const verifiedEverySource: AttributionOptions = { requireEverySource: true, verifyRunReceipts: true }
+const untraced: ReadonlySet<string> = new Set()
 
 function isReviewState(state: string): state is ReviewState {
   return reviewStates.includes(state)
@@ -63,10 +79,50 @@ export function underValuePolicy(acceptedAt: string | null | undefined) {
   return typeof acceptedAt === "string" && millisOf(acceptedAt) >= valuePolicyAt
 }
 
-function reviewsOf(reviews: ReadonlyArray<WireReview>): ReadonlyArray<Review> {
+function reviewsOf(reviews: ReadonlyArray<WireReview>, traced: ReadonlySet<string>): ReadonlyArray<Review> {
   return reviews.flatMap((review) => isReviewState(review.state)
-    ? [{ id: review.id, url: review.url, author: review.author, state: review.state, submittedAt: review.submittedAt, body: review.body, inlineCommentCount: review.inlineCommentCount, commitId: review.commitId, traceUpload: false }]
+    ? [{ id: review.id, url: review.url, author: review.author, state: review.state, submittedAt: review.submittedAt, body: review.body, inlineCommentCount: review.inlineCommentCount, commitId: review.commitId, traceUpload: traced.has(review.id) }]
     : [])
+}
+
+effect function tracedReviews(reviews: ReadonlyArray<WireReview>, sources: ReadonlyMap<string, PullTextSource>, context: AttributionContext) {
+  const traced = new Set<string>()
+  for (const review of reviews) {
+    const source = sources.get(review.id)
+    if (source === undefined) continue
+    const assessment = try assessModelAttribution([source], context, verifiedEverySource)
+    const run = assessment.declarations.find((declaration) => declaration.sourceId === review.id && declaration.actor?.id === review.author?.id)?.run ?? null
+    if ((run?.traceUpload ?? null) !== null) traced.add(review.id)
+  }
+  return traced
+}
+
+effect function authorTraced(outcome: MergedOutcome, body: PullTextSource, context: AttributionContext) {
+  const author = outcome.author
+  if (author === null || isBot(author)) return false
+  const assessment = try assessModelAttribution([body], context, verifiedEverySource)
+  const run = assessment.declarations.find((declaration) => declaration.actor?.id === author.id && declaration.artifactId === outcome.id)?.run ?? null
+  return (run?.traceUpload ?? null) !== null
+}
+
+function reservationKey(repository: string, number: number, actorId: string) {
+  return `${repository}\u0000${number}\u0000${actorId}`
+}
+
+effect function automatedReviewsOf(record: ReviewRecord, sources: ReadonlyArray<PullTextSource>, repository: string, reserved: ReadonlySet<string>, context: AttributionContext) {
+  const reviews: AutomatedReview[] = []
+  for (const source of sources) {
+    const block = parseReviewRecordBlock(source.body)
+    const author = source.author
+    if (block.kind === "invalid" || block.value === null || author === null || reserved.has(reservationKey(repository, record.number, author.id))) continue
+    const assessment = try assessModelAttribution([source], context, verifiedEverySource)
+    const receipt = assessment.declarations[0]?.run ?? null
+    if (receipt === null) continue
+    const joined = assertReviewRecordReceiptJoin(block.value, receipt, { artifactUrl: record.url, headSha: record.headRefOid }, context.registry)
+    if (joined.kind === "invalid") continue
+    reviews.push({ id: source.id, kind: source.kind === "review" ? "review" : "comment", url: source.url, author, createdAt: source.createdAt, reviewLoad: joined.value.reviewLoad, workUnitId: joined.value.workUnitId, traceUpload: receipt.traceUpload !== null })
+  }
+  return reviews
 }
 
 function retainedKey(pullRequestId: string, commitSha: string) {
@@ -150,32 +206,27 @@ effect function prizeProjects() {
   return projects
 }
 
-interface TextRecord {
-  readonly kind: "comment" | "review"
-  readonly url: string
-  readonly body: string
-  readonly authorId: string | undefined
-  readonly createdAt: string
+function resolvedIssueQualifies(issue: IssueRecord) {
+  return qualifiesResolvedIssue({
+    closed: issue.closedAt !== null,
+    closedByMergedPullRequest: issue.closedByPullRequests.some((pull) => pull.mergedAt !== null),
+    notPlanned: issue.stateReason === "NOT_PLANNED",
+    confirmed: hasConfirmationLabel(issue.labels.map((label) => label.name)),
+  })
 }
 
-effect function textRecords(collection: Collection, reviewed: ReadonlyArray<ReviewRecord>) {
+effect function evaluatedSources(collection: Collection, reviewed: ReadonlyArray<ReviewRecord>) {
   const registry = registryOf(collection.registry)
-  const entries: Array<readonly [string, TextRecord]> = []
+  const resolved = firstById(collection.work.closedIssues).filter(resolvedIssueQualifies)
+  const openIssues = firstById(collection.openIssues)
+  const openPullRequests = firstById(collection.openPullRequests)
   const artifacts = new Set<string>()
-  for (const pull of [...reviewed, ...collection.openPullRequests]) {
-    artifacts.add(`${repositoryIdFromUrl(registry, pull.url)}\u0000${pull.number}`)
-    for (const comment of pull.comments) entries.push([comment.id, { kind: "comment", url: comment.url, body: comment.body, authorId: comment.author?.id, createdAt: comment.createdAt }])
-    for (const review of pull.reviews) entries.push([review.id, { kind: "review", url: review.url, body: review.body, authorId: review.author?.id, createdAt: review.submittedAt ?? pull.updatedAt }])
-  }
-  for (const issue of [...collection.work.closedIssues, ...collection.openIssues]) {
-    artifacts.add(`${repositoryIdFromUrl(registry, issue.url)}\u0000${issue.number}`)
-    for (const comment of issue.comments) entries.push([comment.id, { kind: "comment", url: comment.url, body: comment.body, authorId: comment.author?.id, createdAt: comment.createdAt }])
-  }
-  const texts = new Map<string, TextRecord>()
-  for (const [id, text] of entries) {
-    const existing = texts.get(id)
-    if (existing !== undefined && (existing.url !== text.url || existing.body !== text.body || existing.authorId !== text.authorId)) throw new AssemblyRefused({ message: `Evaluated source ${id} has conflicting GitHub records` })
-    texts.set(id, text)
+  for (const artifact of [...reviewed, ...openPullRequests, ...resolved, ...openIssues]) artifacts.add(`${repositoryIdFromUrl(registry, artifact.url)}\u0000${artifact.number}`)
+  const texts = new Map<string, PullTextSource>()
+  for (const source of [...reviewed.flatMap(pullRequestTextSources), ...openPullRequests.flatMap(pullRequestTextSources), ...resolved.flatMap(issueTextSources), ...openIssues.flatMap(issueTextSources)]) {
+    const existing = texts.get(source.id)
+    if (existing !== undefined && (existing.url !== source.url || existing.body !== source.body || existing.author?.id !== source.author?.id)) throw new AssemblyRefused({ message: `Evaluated source ${source.id} has conflicting GitHub records` })
+    texts.set(source.id, source)
   }
   return { texts, artifacts }
 }
@@ -213,7 +264,7 @@ effect function evaluatedContributions(collection: Collection, reviewed: Readonl
   const observedAt = try Clock.currentTimeMillis
   if (fromMs >= toMs) throw new AssemblyRefused({ message: "evaluation window must have positive duration" })
   if (toMs > observedAt) throw new AssemblyRefused({ message: "evaluation window cannot end in the future" })
-  const { texts, artifacts } = try textRecords(collection, reviewed)
+  const { texts, artifacts } = try evaluatedSources(collection, reviewed)
   const selected: ScoreEvent[] = []
   for (const [index, item] of admitted.entries()) {
     const event = evaluatedEvent(item)
@@ -224,14 +275,25 @@ effect function evaluatedContributions(collection: Collection, reviewed: Readonl
     const kind = event.source.kind
     if (kind === "comment" || kind === "review") {
       const text = texts.get(event.source.id)
-      if ((text !== undefined && (text.kind !== kind || text.url !== event.source.url || text.authorId !== event.actor.id || millisOf(text.createdAt) !== occurredAt))
+      if ((text !== undefined && (text.kind !== kind || text.url !== event.source.url || text.author?.id !== event.actor.id || millisOf(text.createdAt) !== occurredAt))
         || (text === undefined && artifacts.has(`${event.repository}\u0000${event.source.number}`))) {
         throw new AssemblyRefused({ message: `Evaluated contribution ${event.id} does not match its exact GitHub ${kind}` })
       }
     }
     selected.push(event)
   }
-  return selected
+  const reserved = new Set<string>()
+  const sourceKeys = new Set<string>()
+  for (const event of [...selected].sort((left, right) => millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.id.localeCompare(right.id))) {
+    const sourceKey = `${event.repository}\u0000${event.source.id}`
+    if (sourceKeys.has(sourceKey)) continue
+    sourceKeys.add(sourceKey)
+    if (event.source.kind !== "review") continue
+    const key = reservationKey(event.repository, event.source.number, event.actor.id)
+    if (reserved.has(key)) throw new AssemblyRefused({ message: `Evaluated contribution ${event.id} duplicates a reviewer/pull-request award` })
+    reserved.add(key)
+  }
+  return { selected, texts, reserved }
 }
 
 function assessmentSourceAt(acceptedAt: string) {
@@ -353,22 +415,33 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
   const jointPulls = new Map(reads.flatMap((read) => read.sources.map((source) => [source.pull.node_id, source.pull] as const)))
   const prizes = try prizeProjects()
   const registry = registryOf(collection.registry)
+  const context: AttributionContext = { registry, policies: try receiptPolicies() }
   const projects = new Map(collection.registry.registered.map((repository) => [repository.id, repository.projectId] as const))
   const repositoryOf = new Map<string, string>()
   const merged: MergedPull[] = []
   const closed: ClosedPull[] = []
   const closedRecords: PullRequestRecord[] = []
-  const reviewed: ReviewRecord[] = []
+  const reviewed: ReadonlyArray<ReviewRecord> = work.collections.flatMap((repository) => [...repository.detailed, ...repository.reviewed])
+  const evaluated = try evaluatedContributions(collection, firstById(reviewed), mode)
+  const ratifications = try scoreRatifications(firstById([...reviewed, ...collection.valueContextPullRequests.filter((record) => record.mergedAt !== null)]), context, { verifyRunReceipts: true })
+  const detailed = new Set(work.plan.detailEligibleIds)
+  const bodies = new Map<string, PullTextSource>()
+  const pullSources = new Map<string, ReadonlyMap<string, PullTextSource>>()
   for (const repository of work.collections) {
     const records = new Map<string, ReviewRecord>([...repository.detailed, ...repository.reviewed].map((record) => [record.id, record] as const))
     const externalPrize = prizes.has(repository.target.projectId)
-    reviewed.push(...repository.detailed, ...repository.reviewed)
     for (const outcome of repository.outcomes) {
       if (repositoryOf.has(outcome.id)) continue
       repositoryOf.set(outcome.id, repository.target.id)
       const found = underValuePolicy(outcome.mergedAt) ? decisions.get(outcome.id) : undefined
       const { assessment, reviewValues } = try assessmentOf(found, { id: outcome.id, repository: repository.target.id, acceptedAt: outcome.mergedAt }, assessmentSourceAt(outcome.mergedAt))
       const evidence = jointCommits.get(outcome.id)
+      const record = records.get(outcome.id)
+      const textSources = record === undefined ? [] : pullRequestTextSources(record)
+      const bySource = new Map(textSources.map((source) => [source.id, source] as const))
+      const body = pullRequestBodySource(outcome)
+      bodies.set(outcome.id, body)
+      pullSources.set(outcome.id, bySource)
       merged.push({
         id: outcome.id,
         number: outcome.number,
@@ -380,13 +453,13 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
         author: outcome.author,
         headRefOid: outcome.headRefOid,
         commits: outcome.commits === null ? null : outcome.commits.map((commit) => commitOf(outcome, commit, retained, evidence?.find((candidate) => candidate.oid === commit.oid))),
-        reviews: reviewsOf(records.get(outcome.id)?.reviews ?? []),
+        reviews: reviewsOf(record?.reviews ?? [], try tracedReviews(record?.reviews ?? [], bySource, context)),
         assessment,
-        ratification: null,
+        ratification: underValuePolicy(outcome.mergedAt) || detailed.has(outcome.id) ? (ratifications.get(outcome.id) ?? null) : null,
         reviewValues,
         externalPrize,
-        traceUpload: false,
-        automatedReviews: [],
+        traceUpload: try authorTraced(outcome, body, context),
+        automatedReviews: record === undefined ? [] : try automatedReviewsOf(record, textSources, repository.target.id, evaluated.reserved, context),
         ...(collection.implementation?.markers.get(outcome.id) ?? {}),
         ...(found?.status === "assessed" ? { valueActorIds: found.implementationActorNodeIds } : {}),
       })
@@ -399,7 +472,7 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
       closedRecords.push(pull)
       const found = underValuePolicy(closedAt) ? decisions.get(pull.id) : undefined
       const { assessment, reviewValues } = try assessmentOf(found, { id: pull.id, repository: repository.target.id, acceptedAt: closedAt }, assessmentSourceAt(closedAt))
-      closed.push({ id: pull.id, number: pull.number, repository: repository.target.id, project: repository.target.projectId, url: pull.url, title: pull.title, closedAt, author: pull.author, headRefOid: pull.headRefOid, commits: evidenceCommits(jointCommits.get(pull.id), valueActors), reviews: reviewsOf(pull.reviews), assessment, reviewValues, externalPrize })
+      closed.push({ id: pull.id, number: pull.number, repository: repository.target.id, project: repository.target.projectId, url: pull.url, title: pull.title, closedAt, author: pull.author, headRefOid: pull.headRefOid, commits: evidenceCommits(jointCommits.get(pull.id), valueActors), reviews: reviewsOf(pull.reviews, untraced), assessment, reviewValues, externalPrize })
     }
   }
   const contexts: Array<MergedPull | ClosedPull> = []
@@ -410,8 +483,8 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
     const project = repository === undefined ? undefined : projects.get(repository)
     if (repository === undefined || project === undefined) throw new AssemblyRefused({ message: `Cannot derive a target repository from URL: ${record.url}` })
     if (mode === "historical" && !work.collections.some((collected) => collected.target.id === repository)) throw new AssemblyRefused({ message: historicalOutside })
-    const common = { id: record.id, number: record.number, repository, project, url: record.url, title: record.title, author: record.author, headRefOid: record.headRefOid, commits: evidenceCommits(jointCommits.get(record.id), valueActors), reviews: reviewsOf(record.reviews), assessment: null, reviewValues: [], externalPrize: prizes.has(project) }
-    if (record.mergedAt !== null) contexts.push({ ...common, mergedAt: record.mergedAt, ratification: null, traceUpload: false, automatedReviews: [] })
+    const common = { id: record.id, number: record.number, repository, project, url: record.url, title: record.title, author: record.author, headRefOid: record.headRefOid, commits: evidenceCommits(jointCommits.get(record.id), valueActors), reviews: reviewsOf(record.reviews, untraced), assessment: null, reviewValues: [], externalPrize: prizes.has(project) }
+    if (record.mergedAt !== null) contexts.push({ ...common, mergedAt: record.mergedAt, ratification: ratifications.get(record.id) ?? null, traceUpload: false, automatedReviews: [] })
     else if (pull.closed_at !== null) contexts.push({ ...common, closedAt: pull.closed_at })
     else throw new AssemblyRefused({ message: memberRefused })
   }
@@ -434,7 +507,7 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
     contexts,
     joint: reads.map((read) => read.decision),
     valueActors,
-    evaluated: try evaluatedContributions(collection, firstById(reviewed), mode),
+    evaluated: evaluated.selected,
     attributionHolds: attributionHeld,
     heldUnits: value.heldWorkUnits.map((unit) => ({ sources: unit.sourceNodeIds })),
     openReviewedAt: collection.openPullRequests.flatMap((pull) => pull.reviews.flatMap((review) => review.submittedAt === null ? [] : [review.submittedAt])),
@@ -450,5 +523,6 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
     ...collection.openIssues.map((record) => record.updatedAt),
     ...collection.openPullRequests.map((record) => record.updatedAt),
   ], collection.latestPreflightUpdate)
-  return { facts, sources, closedCount: closed.length, decisions, joint, attributionHeld, unavailableHeld, penalties: penalties.published, sourceUpdatedAt } satisfies AssemblyInputs
+  const attribution: AttributionSources = { context, bodies, pullSources, evaluated: evaluated.texts }
+  return { facts, sources, closedCount: closed.length, decisions, joint, attributionHeld, unavailableHeld, penalties: penalties.published, sourceUpdatedAt, attribution, ratified: new Set(ratifications.keys()) } satisfies AssemblyInputs
 }

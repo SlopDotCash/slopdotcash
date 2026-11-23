@@ -19,3 +19,6 @@ export { type AssemblyScope, assembleSnapshot, createHistoricalSnapshot, rolling
 export { type HistoricalPin, type HistoricalProject, validateHistoricalSnapshot } from "../../client/snapshot/validate.vibe"
 export { type HistoricalClosedBinding, type HistoricalRequest, HistoricalCollectionRefused, approvedHistoryFrom, assertCheckpoint, assertMergedCensus, collectHistorical } from "./historical.vibe"
 export { type HistoryTransport, type ReplayPhase, type ReplayValueInputs, replayAssessments, replayUsage } from "../../corrections/reviewed/replay/run.vibe"
+export { registrySnapshotManifests } from "../../evaluations/offline.vibe"
+export { reviewed } from "../../programs/reviewed.vibe"
+export { JointEvidence, type LineCounts, type RepairRequest } from "../../score/assemble/lines.vibe"

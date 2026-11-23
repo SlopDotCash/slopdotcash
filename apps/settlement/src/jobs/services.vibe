@@ -7,24 +7,15 @@ import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { EnforcementRowsLive } from "@repo/security/live"
-import { NETWORKS, type NetworkKey } from "../kernels/networks.ts"
+import type { NetworkKey } from "../kernels/networks.ts"
 import { monthlyFacts } from "../monthly/store.vibe"
 import { PaymentIndexerLive } from "../scan/index.vibe"
-import { paymentRpc } from "../vault/rpc.vibe"
+import { paymentRpc, reviewedGenesis } from "../vault/rpc.vibe"
 
 export interface LedgerVars {
   readonly PAYMENTS_DB: D1Database
   readonly PAYMENT_RPC_URLS?: string
   readonly SLOP_ENVIRONMENT?: string
-}
-
-function reviewedGenesis(networks: ReadonlyArray<NetworkKey>) {
-  const pinned: Record<string, string> = {}
-  for (const network of networks) {
-    const registry = NETWORKS[network]
-    if (registry.family === "solana") pinned[network] = registry.genesisHash
-  }
-  return JSON.stringify(pinned)
 }
 
 export function ledgerServices(vars: LedgerVars, networks: ReadonlyArray<NetworkKey>) {

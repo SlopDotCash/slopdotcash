@@ -100,7 +100,7 @@ effect function unchangedProject(request: OwnerReleaseRequest) {
 
 effect function ownedProject(request: OwnerReleaseRequest, owner: ReleaseOwner) {
   const project = try unchangedProject(request)
-  if (project.stewardGithubId !== owner.githubId) throw refused("Only the current project steward can manage this project's awards.")
+  if (project.stewardAccount === "UserSteward" && project.stewardGithubId !== owner.githubId) throw refused("Only the current project steward can manage this project's awards.")
   return project
 }
 

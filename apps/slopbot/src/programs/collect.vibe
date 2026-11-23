@@ -3,13 +3,15 @@ import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, discussionCheckpoint, fetchRegistry, graphqlClient, implementationCodeDigest, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, nativeProofReader, openImplementationMemo, openMemoFromEnv, publishedJournalReader, snapshotAssembly, writeImplementationMemo, writeMemo } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, discussionCheckpoint, fetchRegistry, graphqlClient, implementationCodeDigest, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, nativeProofReader, openImplementationMemo, openMemoFromEnv, publishedJournalReader, registrySnapshotManifests, snapshotAssembly, writeImplementationMemo, writeMemo } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
+import { jointEvidence } from "../value/collect/jointEvidence.vibe"
 import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
 
 export error DeploymentTierInvalid { message: string }
+export error RegistrySnapshotMissing { message: string }
 
 const deferredTags: ReadonlyArray<string> = ["ValueFeedUnavailable", "CollectDeferred"]
 
@@ -56,6 +58,9 @@ function messageOf(error: { readonly _tag: string }) {
 
 effect function written(args: ReadonlyArray<string>) {
   const options = try collectArguments(args)
+  const snapshotPath = try setting("SLOP_REGISTRY_SNAPSHOT")
+  if (snapshotPath === "") throw new RegistrySnapshotMissing({ message: "SLOP_REGISTRY_SNAPSHOT names no registry snapshot" })
+  const manifests = registrySnapshotManifests(snapshotPath)
   const opened = try openMemoFromEnv(try attributionCodeDigest())
   const implementationDigest = opened === undefined ? undefined : try implementationCodeDigest()
   const implementationMemo = implementationDigest === undefined ? undefined : try openImplementationMemo(implementationDigest)
@@ -93,7 +98,7 @@ effect function written(args: ReadonlyArray<string>) {
       }), reads)
       const collected = effect {
         provide collectorRenewal() {
-          provide Layer.mergeAll(rest, graph, inputs, snapshotAssembly) {
+          provide Layer.mergeAll(rest, graph, inputs, manifests, jointEvidence, Layer.provide(snapshotAssembly, Layer.mergeAll(manifests, jointEvidence))) {
             return try collectSnapshot({
               ...options,
               cutoffMs,

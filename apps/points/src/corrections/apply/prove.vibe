@@ -3,38 +3,99 @@ import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import { interrupted } from "../../quotaRecovery/run.vibe"
 import { type CollectedEvidence, type ProvedCandidates, type SourceRead } from "../collect/collect.vibe"
 import type { CorrectionCandidate } from "../collect/inventory.vibe"
-import { RetainedRefused, type RetainedOriginals } from "../collect/retained.vibe"
+import type { RetainedOriginals } from "../collect/retained.vibe"
 import { type GroupedBinding, type GroupedProof, groupedDecisionUnavailable, proveGrouped } from "./grouped.vibe"
-import type { CorrectionCommit, CorrectionSource } from "./manifest.vibe"
-import { isOctober, mirroredOctoberDonor, mirroredOctoberSources, octoberOrdinary, ordinarySource, outcomeMissing } from "./october.vibe"
+import type { CorrectionClaim, CorrectionSource, OriginalContributorBinding, OriginalContributorFollowup } from "./manifest.vibe"
+import { type OctoberAuthors, type SyncMerges, boundOrdinary, isOctober, mirroredOctoberDonor, mirroredOctoberSources, octoberOrdinary, octoberProofUnavailable, ordinarySource, outcomeMissing } from "./october.vibe"
 
 const retainedEvidenceUnavailable = "retained-source-evidence-unavailable"
 
 export interface RetainedRequest {
   readonly repository: string
   readonly repositoryNodeId: string
+  readonly plain: CorrectionSource
   readonly retained: Extract<RetainedOriginals, { readonly kind: "originals" }>
   readonly owners: ReadonlyMap<string, string>
+  readonly october: OctoberAuthors | undefined
 }
 
-export type RetainedOrdinary<E, R> = (request: RetainedRequest) => ReadonlyArray<CorrectionSource>!E!R
+export interface OrdinaryProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor?: OriginalContributorBinding
+}
+
+export type RetainedOrdinary<E, R> = (request: RetainedRequest) => OrdinaryProof!E!R
+
+export interface OctoberOriginalRequest {
+  readonly accepted: CorrectionSource
+  readonly sources: ReadonlyArray<unknown>
+  readonly owners: ReadonlyMap<string, string>
+  readonly allowMergedOriginal: boolean
+}
+
+export interface OctoberFollowupRequest {
+  readonly accepted: CorrectionSource
+  readonly followup: CorrectionSource
+  readonly retained: unknown
+}
+
+export interface OctoberUnitRequest {
+  readonly accepted: CorrectionSource
+  readonly original: unknown
+  readonly integration: unknown
+  readonly owners: ReadonlyMap<string, string>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly followups: ReadonlyArray<unknown>
+  readonly sources: ReadonlyArray<unknown>
+}
+
+export interface OctoberUnitProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor?: OriginalContributorBinding
+  readonly originalContributorParts?: ReadonlyArray<OriginalContributorBinding>
+}
+
+export interface OctoberPartsRequest {
+  readonly sources: ReadonlyArray<unknown>
+  readonly owners: ReadonlyMap<string, string>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly originating: ReadonlyMap<string, ReadonlyArray<string>>
+  readonly candidateSourceId: string
+}
+
+export interface OctoberPartsProof {
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributorParts: ReadonlyArray<OriginalContributorBinding>
+  readonly independentClaimIds: ReadonlyArray<string>
+}
+
+export type OctoberOriginal<E, R> = (request: OctoberOriginalRequest) => OrdinaryProof!E!R
+export type OctoberFollowup<E, R> = (request: OctoberFollowupRequest) => OriginalContributorFollowup!E!R
+export type OctoberUnit<E, R> = (request: OctoberUnitRequest) => OctoberUnitProof!E!R
+export type OctoberParts<E, R> = (request: OctoberPartsRequest) => OctoberPartsProof!E!R
+
+export interface OctoberBinding<E, R> {
+  readonly original: OctoberOriginal<E, R>
+  readonly followup: OctoberFollowup<E, R>
+  readonly unit: OctoberUnit<E, R>
+  readonly parts: OctoberParts<E, R>
+  readonly syncMerges: SyncMerges<E, R>
+}
 
 export interface RetainedBinder<E, R> {
   readonly ordinary: RetainedOrdinary<E, R>
   readonly grouped: GroupedBinding<E, R>
-}
-
-function refused(message: string) {
-  return new RetainedRefused({ message })
+  readonly october: OctoberBinding<E, R>
 }
 
 function held(candidate: CorrectionCandidate, reason: string): GroupedProof {
   return { kind: "held", candidate, reason }
 }
 
-function complete(evidence: CollectedEvidence, candidate: CorrectionCandidate, sources: ReadonlyArray<CorrectionSource>): GroupedProof {
-  const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [...sources] }
-  return { kind: "complete", candidate: { ...candidate, sourceIds: sources.map((source) => source.sourceId).sort(), proof } }
+function complete(evidence: CollectedEvidence, candidate: CorrectionCandidate, proved: OrdinaryProof): GroupedProof {
+  const originalContributor = proved.originalContributor
+  const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [...proved.sources], ...(originalContributor === undefined ? {} : { originalContributor }) }
+  return { kind: "complete", candidate: { ...candidate, sourceIds: proved.sources.map((source) => source.sourceId).sort(), proof } }
 }
 
 function messageOf(error: unknown) {
@@ -47,58 +108,9 @@ function unlinked(source: CorrectionSource) {
   return source.commits.some((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId && !isCreditEligibleCommitAuthor(commit.author))
 }
 
-effect function matchedAccepted(plain: CorrectionSource, accepted: CorrectionSource | undefined) {
-  if (accepted === undefined || accepted.headSha !== plain.headSha || accepted.occurredAt !== plain.occurredAt || accepted.repositoryNodeId !== plain.repositoryNodeId) {
-    throw refused("Retained accepted source identity changed")
-  }
-  if (accepted.commits.length !== plain.commits.length || !accepted.commits.every((commit, index) => {
-    const expected = plain.commits[index]
-    return expected !== undefined && commit.sha === expected.sha && commit.parentCount === expected.parentCount &&
-      (commit.parentCount > 1 || (commit.additions === expected.additions && commit.deletions === expected.deletions))
-  })) throw refused("Retained accepted commit lines differ from the canonical census")
-  return accepted
-}
-
-effect function retainedSources(plain: CorrectionSource, converted: ReadonlyArray<CorrectionSource>) {
-  if (converted.length === 0) return [plain]
-  const accepted = try matchedAccepted(plain, converted.find((source) => source.sourceId === plain.sourceId))
-  const commits: CorrectionCommit[] = []
-  for (const [index, commit] of plain.commits.entries()) {
-    const boundCommit = accepted.commits[index]
-    const author = boundCommit?.author ?? null
-    const retainedCopy = boundCommit?.retainedCopy
-    if ((author !== null || retainedCopy !== undefined) && (author?.id !== commit.author?.id || author?.kind !== commit.author?.kind)) {
-      throw refused("Retained accepted commit author differs from the canonical census")
-    }
-    commits.push(retainedCopy === undefined ? commit : { ...commit, ...(boundCommit?.files === undefined ? {} : { files: boundCommit.files }), retainedCopy })
-  }
-  const originalIds = new Set(commits.flatMap((commit) => commit.retainedCopy === undefined ? [] : [commit.retainedCopy.originalSourceId]))
-  if (originalIds.size === 0) return [plain]
-  const boundSources = converted.filter((source) => originalIds.has(source.sourceId))
-  if (boundSources.length !== originalIds.size || !boundSources.every((source) => source.commits.some((commit) => commit.sha === source.headSha))) {
-    throw refused("Retained original commit census does not reach the source head")
-  }
-  return [{ ...plain, commits }, ...boundSources]
-}
-
-effect function octoberProof(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, mirrored: ReadonlySet<string>) {
-  if (mirrored.has(candidate.sourceId)) return held(candidate, mirroredOctoberDonor)
-  const plain = try ordinarySource(read, evidence.owners)
-  if (plain === undefined) return held(candidate, outcomeMissing)
-  const ordinary = try octoberOrdinary(plain, read)
-  return ordinary.kind === "held" ? held(candidate, ordinary.reason) : complete(evidence, candidate, [plain])
-}
-
-effect function ordinaryProof<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, ordinary: RetainedOrdinary<E, R> | undefined) {
-  const plain = try ordinarySource(read, evidence.owners)
-  if (plain === undefined) return held(candidate, outcomeMissing)
-  if (!unlinked(plain)) return complete(evidence, candidate, [plain])
-  const retained = evidence.retainedOriginals.get(candidate.sourceId)
-  if (retained?.kind === "none") return complete(evidence, candidate, [plain])
-  if (retained === undefined || ordinary === undefined) return held(candidate, retainedEvidenceUnavailable)
+effect function bound<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, plain: CorrectionSource, retained: RetainedRequest["retained"], ordinary: RetainedOrdinary<E, R>, october: OctoberAuthors | undefined) {
   const proving = effect {
-    const converted = try ordinary({ repository: plain.repository, repositoryNodeId: read.repositoryNodeId, retained, owners: evidence.owners })
-    return complete(evidence, candidate, try retainedSources(plain, converted))
+    return complete(evidence, candidate, try boundOrdinary(plain, retained, evidence.owners, ordinary, october))
   }
   const result = proving catch effect (error) => {
     if (try interrupted()) throw error
@@ -107,11 +119,32 @@ effect function ordinaryProof<E, R>(evidence: CollectedEvidence, candidate: Corr
   return result
 }
 
-effect function proved<E, R>(evidence: CollectedEvidence, ordinary: RetainedOrdinary<E, R> | undefined, grouped: ReadonlyMap<string, GroupedProof> | undefined) {
+effect function octoberProof<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, mirrored: ReadonlySet<string>, ordinary: RetainedOrdinary<E, R> | undefined) {
+  if (mirrored.has(candidate.sourceId)) return held(candidate, mirroredOctoberDonor)
+  const plain = try ordinarySource(read, evidence.owners)
+  if (plain === undefined) return held(candidate, outcomeMissing)
+  const found = try octoberOrdinary(plain, read)
+  if (found.kind === "plain") return complete(evidence, candidate, { sources: [plain] })
+  if (found.kind === "held") return held(candidate, found.reason)
+  if (ordinary === undefined) return held(candidate, octoberProofUnavailable)
+  return try bound(evidence, candidate, plain, found.retained, ordinary, found.october)
+}
+
+effect function ordinaryProof<E, R>(evidence: CollectedEvidence, candidate: CorrectionCandidate, read: SourceRead, ordinary: RetainedOrdinary<E, R> | undefined) {
+  const plain = try ordinarySource(read, evidence.owners)
+  if (plain === undefined) return held(candidate, outcomeMissing)
+  if (!unlinked(plain)) return complete(evidence, candidate, { sources: [plain] })
+  const retained = evidence.retainedOriginals.get(candidate.sourceId)
+  if (retained?.kind === "none") return complete(evidence, candidate, { sources: [plain] })
+  if (retained === undefined || ordinary === undefined) return held(candidate, retainedEvidenceUnavailable)
+  return try bound(evidence, candidate, plain, retained, ordinary, undefined)
+}
+
+effect function proved<E, R>(evidence: CollectedEvidence, binder: RetainedBinder<E, R> | undefined, grouped: ReadonlyMap<string, GroupedProof> | undefined) {
   const limitations = new Map(evidence.limitations)
   const selected = new Set(evidence.selected.map((pool) => pool.candidate.id))
   const october = evidence.options.octoberOriginalCredit === true
-  const mirrored = october && evidence.ownershipComplete ? try mirroredOctoberSources(evidence.outcomes, evidence.owners) : new Set<string>()
+  const mirrored = october && evidence.ownershipComplete ? try mirroredOctoberSources(evidence.outcomes, evidence.owners, binder?.october.syncMerges) : new Set<string>()
   const candidates: CorrectionCandidate[] = []
   for (const { candidate } of evidence.pools) {
     const read = evidence.reads.get(candidate.sourceId)
@@ -121,7 +154,7 @@ effect function proved<E, R>(evidence: CollectedEvidence, ordinary: RetainedOrdi
     }
     const result = candidate.kind === "work-unit"
       ? grouped?.get(candidate.id) ?? held(candidate, groupedDecisionUnavailable)
-      : october && isOctober(candidate.occurredAt) ? try octoberProof(evidence, candidate, read, mirrored) : try ordinaryProof(evidence, candidate, read, ordinary)
+      : october && isOctober(candidate.occurredAt) ? try octoberProof(evidence, candidate, read, mirrored, binder?.ordinary) : try ordinaryProof(evidence, candidate, read, binder?.ordinary)
     if (result.kind === "held") limitations.set(candidate.id, result.reason)
     candidates.push(result.candidate)
   }
@@ -133,6 +166,6 @@ export effect function proveCandidates(evidence: CollectedEvidence) {
 }
 
 export effect function proveRetained<E, R>(evidence: CollectedEvidence, binder: RetainedBinder<E, R>) {
-  const grouped = try proveGrouped(evidence, binder.grouped)
-  return try proved(evidence, binder.ordinary, grouped)
+  const grouped = try proveGrouped(evidence, binder)
+  return try proved(evidence, binder, grouped)
 }

@@ -1,17 +1,17 @@
 // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
-import { type Allowance, type Event, type IncludedDepositEvidence, type Setup, type VaultKind, allowanceShort, approvalAttempt, approvalIdle, canCheckCreation, canCountDeposit, canFinalizeCreation, canFinalizeDeposit, canIncludeCreation, canIncludeDeposit, canObserveFailure, canOpenApproval, canOpenPrompt, canReadAllowance, canReadApproval, canReload, canReplaceCreation, canReplaceDeposit, depositAttempt, initial, machineOver } from "../../../gen/frontend__provisionalVault.effect.vibe"
+import { type Allowance, type Event, type IncludedDepositEvidence, type Setup, type VaultKind, allowanceShort, approvalAttempt, approvalIdle, canCheckCreation, canCountDeposit, canDecline, canDeclineApproval, canFinalizeCreation, canFinalizeDeposit, canIncludeCreation, canIncludeDeposit, canObserveFailure, canOpenApproval, canOpenPrompt, canReadAllowance, canReadApproval, canReload, canReplaceCreation, canReplaceDeposit, depositAttempt, initial, machineOver } from "../../../gen/frontend__provisionalVault.effect.vibe"
 import type { ApprovalEvidence } from "../../../gen/frontend__batchedDeposit.ts"
-import { noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
 import { U256_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { EVM_NATIVE_ASSET } from "@repo/settlement/kernels/networks"
 import { sha256Hex } from "@repo/platform/crypto"
+import { storageKeys } from "../../platform/storage.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { EvmConnection } from "../core/evm.vibe"
 import type { SlotStorage } from "../core/slots.ts"
 import { batchCalls, batchPlan, hexQuantity } from "./evmCalls.ts"
 import { blockIndex, expectedOf } from "./evmEvidence.ts"
 import { type EvmVault, type Evidence, type ReceiptState, type TransferReview, batchProgress, depositsBy, evmVaultMessages, plannedTransfer, readWalletTransaction, receiptState, reviewTransfer, sendBatch, sendTransfer, vaultCodeAt, verifyDeployment } from "./evmVault.vibe"
-import { compareAndWrite, textOfSlot } from "./flowSlots.ts"
+import { type SlotRead, compareAndWrite, readText, slotOfText, textOfSlot } from "./flowSlots.ts"
 import { type EvmBatchPlan, type EvmCallPlan, type EvmDepositPlan, type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
 import { keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
 
@@ -95,37 +95,61 @@ function unsentBatch(plan: EvmBatchPlan): EvmBatchPlan {
   return { ...plan, reference: "", transaction: "" }
 }
 
-export effect function provisionalVault(storage: SlotStorage | undefined, key: string, vault: EvmVault, owner: string) {
+function requestOf(read: SlotRead): SavedRequest | undefined {
+  if (read.kind !== "owned") return undefined
+  const { identity, bytesId } = read.slot.attempt
+  const plan = planOf(read.slot.plan)
+  if (identity === approvalAttempt(false).identity && plan?.kind === "evmDeposit") return { approval: true, reset: bytesId === approvalAttempt(true).bytesId, plan, hash: plan.hash }
+  if (identity !== depositAttempt.identity) return undefined
+  if (plan?.kind === "evmDeposit") return { approval: false, reset: false, plan, hash: plan.hash }
+  if (plan?.kind === "evmBatch") return { approval: false, reset: false, plan, hash: plan.transaction }
+  return undefined
+}
+
+export function provisionalSlotKey(network: string, vault: string): string {
+  return `${storageKeys.vaultAction.key}${network}:provisional:${vault.toLowerCase()}`
+}
+
+export effect function handOver(storage: SlotStorage | undefined, from: string, keys: HandOverKeys) {
+  const text = readText(storage, from)
+  const read = slotOfText(text)
+  const saved = requestOf(read)
+  if (saved === undefined || read.kind !== "owned" || read.slot.account <= 0 || readText(storage, keys.transfer) !== null || readText(storage, keys.batch) !== null) return false
+  const crypto = try Experimental.Crypto.Crypto
+  const target = saved.plan.kind === "evmBatch" ? keys.batch : keys.transfer
+  const identity = saved.plan.kind === "evmBatch" ? try sha256Hex(planText(unsentBatch(saved.plan))) : try orDie(crypto.randomUUIDv4())
+  const attempt = saved.plan.kind === "evmBatch" ? { identity, bytesId: identity, hash: "", candidate: "" } : { identity, bytesId: "transfer", hash: saved.hash, candidate: "" }
+  const plan = saved.plan.kind === "evmBatch" ? planText(saved.plan) : planText(saved.plan.call)
+  if (!compareAndWrite(storage, target, null, textOfSlot({ account: read.slot.account, attempt, plan }))) return false
+  return compareAndWrite(storage, from, text, null)
+}
+
+export effect function provisionalVault(storage: SlotStorage | undefined, key: string, vault: EvmVault, owner: string, account: number) {
   const held = try Ref.make<Setup>(initial)
   const keeper = slotKeeper(storage, { deposit: key })
   const terms = { vault: vault.vault, asset: vault.asset, native: vault.asset.toLowerCase() === EVM_NATIVE_ASSET }
   let atomicRefused = false
 
   function storedRequest(): SavedRequest | undefined {
-    const read = keeper.read("deposit")
-    if (read.kind !== "owned") return undefined
-    const { identity, bytesId } = read.slot.attempt
-    const plan = planOf(read.slot.plan)
-    if (identity === approvalAttempt(false).identity && plan?.kind === "evmDeposit") return { approval: true, reset: bytesId === approvalAttempt(true).bytesId, plan, hash: plan.hash }
-    if (identity !== depositAttempt.identity) return undefined
-    if (plan?.kind === "evmDeposit") return { approval: false, reset: false, plan, hash: plan.hash }
-    if (plan?.kind === "evmBatch") return { approval: false, reset: false, plan, hash: plan.transaction }
-    return undefined
+    return requestOf(keeper.read("deposit"))
   }
 
   effect function load() {
     const state = try Ref.get(held)
     if (state.phase !== "NoDeposit" || state.slot.identity !== "") return state
     const saved = storedRequest()
-    if (saved === undefined || !sentAlready(saved)) return state
-    if (saved.approval) return { ...state, approval: "ApprovalSubmitted", slot: approvalAttempt(saved.reset) } satisfies Setup
+    if (saved === undefined) return state
+    const sent = sentAlready(saved)
+    if (!sent && state.form === "Hidden") return state
+    if (saved.approval) return { ...state, approval: sent ? "ApprovalSubmitted" : "ApprovalPrompt", slot: approvalAttempt(saved.reset) } satisfies Setup
+    if (!sent) return { ...state, phase: "Prompt", view: "NoView", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" } satisfies Setup
     return { ...state, phase: "Submitted", transaction: signedTransaction, view: "Waiting", slot: depositAttempt, batched: saved.plan.kind === "evmBatch" } satisfies Setup
   }
 
   effect function keep(next: Setup) {
-    const before = try Ref.get(held)
-    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : 1 }
-    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : 1 }, flow)) try keeper.write("deposit", flow)
+    const before = try load()
+    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : account }
+    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : account }, flow)) try keeper.write("deposit", flow)
     try Ref.set(held, next)
   }
 
@@ -341,14 +365,26 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
       if (allowanceShort(read)) return try sendBatched(connection, amount, evidence, by)
       return try sendSingle(connection, amount, evidence, by)
     },
-    recoverHash: effect (transaction: string) => {
+    recoverHash: effect (connection: EvmConnection, transaction: string) => {
       const hash = transaction.trim().toLowerCase()
       if (!/^0x[0-9a-f]{64}$/u.test(hash)) try stopped(provisionalMessages.enterHash)
+      const by = sender(connection)
+      if (by !== "owner") try stopped(provisionalMessages.ownerOnly)
       const state = try machine.get()
       const saved = storedRequest()
-      if (state.phase !== "NoDeposit" || state.approval === "ApprovalSubmitted" || saved === undefined || sentAlready(saved)) return try stopped(provisionalMessages.occupied)
+      const prompted = state.phase === "Prompt" || state.approval === "ApprovalPrompt"
+      if ((state.phase !== "NoDeposit" && !prompted) || state.approval === "ApprovalSubmitted" || saved === undefined || sentAlready(saved)) return try stopped(provisionalMessages.occupied)
       const plan: OwnerPlan = saved.plan.kind === "evmDeposit" ? { ...saved.plan, hash } : { ...saved.plan, transaction: hash }
       if (!(try annotate(saved.approval ? approvalAttempt(false).identity : depositAttempt.identity, plan))) try stopped(provisionalMessages.changed)
+      if (state.approval === "ApprovalPrompt") try sent({ type: "signApproval" }, by)
+      else if (state.phase === "Prompt") try sent({ type: "sign", transaction: signedTransaction }, by)
+      return try machine.get()
+    },
+    clearUnsent: effect (connection: EvmConnection) => {
+      const state = try machine.get()
+      const saved = storedRequest()
+      const event: Event | undefined = canDeclineApproval(state) ? { type: "declineApproval" } : canDecline(state) ? { type: "decline" } : undefined
+      if (saved === undefined || sentAlready(saved) || event === undefined || !(try sent(event, sender(connection)))) return try stopped(provisionalMessages.changed)
       return try machine.get()
     },
     followSaved: effect (connection: EvmConnection) => {
@@ -367,17 +403,6 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
     reload: effect () => {
       const state = try machine.get()
       return try step({ type: "reload" }, canReload(state))
-    },
-    handOver: effect (account: number, keys: HandOverKeys) => {
-      const saved = storedRequest()
-      if (saved === undefined || account <= 0) return false
-      const crypto = try Experimental.Crypto.Crypto
-      const target = saved.plan.kind === "evmBatch" ? keys.batch : keys.transfer
-      const identity = saved.plan.kind === "evmBatch" ? try sha256Hex(planText(unsentBatch(saved.plan))) : try orDie(crypto.randomUUIDv4())
-      const attempt = saved.plan.kind === "evmBatch" ? { identity, bytesId: identity, hash: "", candidate: "" } : { identity, bytesId: "transfer", hash: saved.hash, candidate: "" }
-      const plan = saved.plan.kind === "evmBatch" ? planText(saved.plan) : planText(saved.plan.call)
-      if (!compareAndWrite(storage, target, null, textOfSlot({ account, attempt, plan }))) return false
-      return try keptOrChanged(keeper.write("deposit", { slot: noAttempt, slotOwner: 0 }))
     },
   }
 }

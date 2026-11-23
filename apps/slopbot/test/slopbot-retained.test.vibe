@@ -1,10 +1,14 @@
 import { assert, layer } from "@effect/vitest"
+import { isoAt, millisOf } from "@repo/platform/clock"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { parsedJson } from "@repo/platform/git/bytes"
+import type { CorrectionSource, RetainedRequest } from "@repo/points/corrections"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import type { Evidence } from "../src/value/evidence/types.vibe"
+import { retainedBinder } from "../src/programs/corrections.vibe"
+import { RetainedBindingRefused } from "../src/value/corrections/bind.vibe"
+import { type Evidence, Pull } from "../src/value/evidence/types.vibe"
 import { retainedCopyBindings } from "../src/value/retained/copy.vibe"
 import { collectRetainedMergeReferences } from "../src/value/retained/reference.vibe"
 import { metadataCompatibleDigest, metadataCompatibleEvidence, retainedRepair, retention } from "../src/value/retained/repair.vibe"
@@ -106,6 +110,17 @@ effect function refusedReason<A, E, R>(attempt: A!E!R) {
     when WorkUnitRefused: error.reason;
     default: throw error;
   }
+}
+
+effect function bindingRefusal<A, E, R>(attempt: A!E!R) {
+  return attempt catch effect (error) => match (error) {
+    when RetainedBindingRefused: error.message;
+    default: throw error;
+  }
+}
+
+function retainedPull(pull: Pull) {
+  return { nodeId: pull.node_id, number: pull.number, headSha: pull.head.sha, updatedAt: pull.updated_at }
 }
 
 function forgedAcknowledgement(evidence: Evidence): Evidence {
@@ -269,6 +284,69 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         boundStale: boundStale.sourceDigest === boundRecord.sourceDigest,
       },
       { differs: true, current: true, stripped: [true, true], stale: false, singleCurrent: true, singleStale: false, boundStale: false },
+    )
+  })
+
+  it.effect('An October replacement binds its sole verified original contributor by the accepted lines, and a second competing original is refused (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines")', () => effect {
+    const { kept } = try Journey
+    const world = kept.fake.world
+    const content = "export const o = 15;\n"
+    const file = { path: "o.ts", status: "added" as const, additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const o = 15;" }
+    const originalHead = try Effect.try(() => world.addCommit(repository, { branch: "october-original", parents: [kept.base], message: "Add o", author: "ada", date: "2026-10-01T00:00:00Z", files: { "o.ts": content } }))
+    const competingHead = try Effect.try(() => world.addCommit(repository, { branch: "october-competing", parents: [kept.base], message: "Add o again", author: "ada", date: "2026-10-02T00:00:00Z", files: { "o.ts": content } }))
+    const carried = try Effect.try(() => world.addCommit(repository, { branch: "october-carry", parents: [kept.base], message: "Add o (carried from #21)", author: "ada", date: "2026-10-06T00:00:00Z", files: { "o.ts": content } }))
+    const merge = try Effect.try(() => world.addCommit(repository, { branch: "october-merge", parents: [kept.base, carried], message: "Merge pull request #22", author: "grace", date: "2026-10-10T00:00:00Z", files: { "o.ts": content } }))
+    try Effect.try(() => world.addPull({ repo: repository, number: 21, author: "ada", title: "Add o", state: "closed", createdAt: "2026-10-01T00:00:00Z", closedAt: "2026-10-05T00:00:00Z", headSha: originalHead, commits: [originalHead], files: [file] }))
+    try Effect.try(() => world.addPull({ repo: repository, number: 22, author: "grace", title: "Carry o", createdAt: "2026-10-06T00:00:00Z", headSha: carried, commits: [carried], mergedAt: "2026-10-10T00:00:00Z", mergeCommit: merge, mergedBy: "grace", files: [file] }))
+    try Effect.try(() => world.addPull({ repo: repository, number: 23, author: "ada", title: "Add o again", state: "closed", createdAt: "2026-10-02T00:00:00Z", closedAt: "2026-10-05T00:00:00Z", headSha: competingHead, commits: [competingHead], files: [file] }))
+    try Effect.try(() => world.addComment(repository, 21, { author: "grace", body: `Merged in ${merge}, thanks for the fix.`, createdAt: "2026-10-11T00:00:00Z" }))
+    const pullOf = (number: number) => Effect.try(() => Schema.decodeUnknownSync(Pull)(kept.fake.represent.pull(repository, number)))
+    const original = try pullOf(21)
+    const accepted = try pullOf(22)
+    const competing = try pullOf(23)
+    const ada = { id: kept.ada.node_id, login: "ada", kind: "User" }
+    const plain: CorrectionSource = {
+      repository,
+      repositoryNodeId: kept.repositoryNodeId,
+      sourceId: accepted.node_id,
+      sourceUrl: accepted.html_url,
+      headSha: carried,
+      occurredAt: try isoAt(millisOf(accepted.merged_at ?? "")),
+      author: { id: kept.grace.node_id, login: "grace", kind: "User" },
+      complete: true,
+      commitCount: 1,
+      commits: [{ sha: carried, parentCount: 1, author: ada, additions: 1, deletions: 0, firstAcceptedSourceId: accepted.node_id }],
+    }
+    const request = (originals: ReadonlyArray<Pull>) => ({
+      repository,
+      repositoryNodeId: kept.repositoryNodeId,
+      plain,
+      owners: new Map([[`${repository}\u0000${carried}`, accepted.node_id]]),
+      retained: {
+        kind: "originals" as const,
+        accepted: retainedPull(accepted),
+        acceptance: { repositoryNodeId: kept.repositoryNodeId, pullRequestNodeId: accepted.node_id, headSha: carried, acceptedSha: merge, mergedAt: accepted.merged_at ?? "", baseSha: accepted.base.sha, baseRef: accepted.base.ref },
+        originals: originals.map(retainedPull),
+      },
+      october: { hasUnlinked: false, otherAuthors: [kept.ada.node_id] },
+    }) satisfies RetainedRequest
+    const binder = retainedBinder([registeredKept(kept)])
+    const proof = try binder.ordinary(request([original]))
+    const bound = proof.originalContributor
+    const refusal = try bindingRefusal(binder.ordinary(request([original, competing])))
+    try same(
+      {
+        sources: proof.sources.map((source) => source.sourceId),
+        originalAuthor: proof.sources.find((source) => source.sourceId === original.node_id)?.author?.id,
+        originalContributor: bound === undefined ? undefined : { ...bound, bindingDigest: /^[a-f0-9]{64}$/u.test(bound.bindingDigest) },
+        competing: refusal,
+      },
+      {
+        sources: [accepted.node_id, original.node_id],
+        originalAuthor: kept.ada.node_id,
+        originalContributor: { originalSourceId: original.node_id, originalCommitSha: originalHead, acceptedCommitSha: carried, boundPaths: ["o.ts"], bindingDigest: true },
+        competing: "October replacement names competing original PRs",
+      },
     )
   })
 })

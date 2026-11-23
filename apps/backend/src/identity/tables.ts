@@ -1,0 +1,2 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+export const writes = ["identity_oauth_flows", "identity_assertions", "identity_rate_limits"] as const;

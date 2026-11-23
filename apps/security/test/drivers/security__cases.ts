@@ -11,12 +11,14 @@ import { settableClock } from "@repo/platform/testing/clock";
 import { githubFake } from "@repo/platform/testing/github";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { Execution } from "@repo/platform/worker";
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports";
 import { Authority as RepositoryAuthority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend";
 import type { Driver, Options } from "../../gen/security__cases.conformance.ts";
 import type { Authority, Award, Event, PrivateCase, ProjectClearance } from "../../gen/security__cases.ts";
 import { privateRoute } from "../../src/analysis/route.vibe";
 import { AwardClearances } from "../../src/cases/clearance.vibe";
 import { caseRecord } from "../../src/cases/rows.vibe";
+import { reportDepositSettings } from "../../src/deposit/settings.vibe";
 import { claimed, performed, recorded } from "../../src/cases/routes.vibe";
 import { caseOf, caseStanding, submission } from "../../src/intake/rows.vibe";
 import { revisionEvidence } from "../../src/intake/revision.vibe";
@@ -139,7 +141,8 @@ const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(github.handler(sen
 const githubLayer = Layer.provide(githubApp({ appId: github.app.id, privateKey: Redacted.make(github.app.privateKeyPem), authority: github.authority }), Layer.mergeAll(outboundVia(viaGitHub), webCrypto, clock.layer));
 const pending: Array<Promise<unknown>> = [];
 const execution: ExecutionContext = { waitUntil: (work) => { pending.push(work); } };
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), githubLayer, outboundVia(viaGitHub), Layer.succeed(Execution, { context: execution })));
+const services = Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)), githubLayer, outboundVia(viaGitHub), Layer.succeed(Execution, { context: execution }), reportDepositSettings("off"));
+const runtime = ManagedRuntime.make(Layer.provideMerge(Layer.mergeAll(SubmissionFeeRatesLive, ProjectParticipationLive), services));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
 
 async function outcome(program: Effect.Effect<unknown, unknown, Services>): Promise<Outcome> {

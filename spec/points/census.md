@@ -22,8 +22,15 @@ the [historical import](./historicalImport.md).
 
 ### Collection starts only for a collected project and never moves its window back
 
-The project view excludes paused, retired, quarantined and legacy projects:
-the ids kept in `src/lib/legacy-projects.json` and the retired registry
+The project view excludes paused, retired, quarantined and legacy projects.
+A legacy project is a removed pre-registry project id kept in
+`src/lib/legacy-projects.json` as a history label that the current D1
+registry does not list. A project the registry lists is never legacy, even
+when its id also appears in that file: a registered project that owns a
+legacy repository keeps the legacy id (every id in that file is registered
+today, among them eliza, slopdotcash, asi, feed, thenetwork, canonry and
+delta-star) and is collected unless it is paused, retired or quarantined.
+Legacy projects and the retired registry
 listings are never collected, scored or paid.
 
 ```quint

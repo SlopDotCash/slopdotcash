@@ -12,6 +12,7 @@ import {
   checkProvisional,
   checkRegistration,
   claimFor,
+  clearProvisionalUnsent,
   clearUnreadableCreation,
   confirmCreationUnsent,
   connectProvisionalOwner,
@@ -22,7 +23,6 @@ import {
   type EvmConnection,
   enterCreationHash,
   familyOfNetwork,
-  handOverProvisional,
   includedMessage,
   loadSetup,
   openProvisional,
@@ -53,7 +53,7 @@ import {
   watchRegistration,
   watchSetupOffers,
 } from "../../../wallets/owner/vaultSetup.vibe";
-import { run, useSettled } from "./hooks.ts";
+import { run, useSettled, useTabHidden } from "./hooks.ts";
 import { pageHidden } from "./pageVisibility.ts";
 import { PendingCheck } from "./PendingCheck.tsx";
 import type { FundingProject } from "./project.schema.ts";
@@ -346,34 +346,6 @@ function useSetupOffers(runtime: SetupRuntime): ReadonlyArray<WalletOffer> {
   return useSyncExternalStore(store.subscribe, () => store.seen, () => store.seen);
 }
 
-const visibilityStores = new WeakMap<SetupRuntime, (notify: () => void) => () => void>();
-
-function useSetupTabHidden(runtime: SetupRuntime): boolean {
-  const subscribe =
-    visibilityStores.get(runtime) ??
-    (() => {
-      const listeners = new Set<() => void>();
-      const changed = () => {
-        void run(runtime, setupTabHidden(pageHidden()));
-        for (const listener of listeners) listener();
-      };
-      const made = (notify: () => void) => {
-        if (listeners.size === 0 && typeof document !== "undefined") {
-          document.addEventListener("visibilitychange", changed);
-          void run(runtime, setupTabHidden(pageHidden()));
-        }
-        listeners.add(notify);
-        return () => {
-          listeners.delete(notify);
-          if (listeners.size === 0 && typeof document !== "undefined") document.removeEventListener("visibilitychange", changed);
-        };
-      };
-      visibilityStores.set(runtime, made);
-      return made;
-    })();
-  return useSyncExternalStore(subscribe, pageHidden, () => false);
-}
-
 export type ProvisionalDepositProps = {
   /** The included vault the owner may fund before it is registered. */
   deployment: ProvisionalDeployment;
@@ -397,10 +369,12 @@ export type ProvisionalDepositProps = {
   onDeposit: () => void;
   onCheck: () => void;
   onEnterHash: (candidate: string) => void;
+  /** Clears a saved request the wallet never answered with a hash, after the owner confirmed in wallet activity that nothing was sent. */
+  onConfirmUnsent?: () => void;
 };
 
 /** The owner's deposit into a vault whose creation is included but not final: it counts only once the vault is registered and the deposit is final. */
-export function ProvisionalDeposit({ deployment, wallets, address, amount, review, pending, error, notice, busy = false, onConnect, onChooseAnother, onAmount, onReview, onDeposit, onCheck, onEnterHash }: ProvisionalDepositProps) {
+export function ProvisionalDeposit({ deployment, wallets, address, amount, review, pending, error, notice, busy = false, onConnect, onChooseAnother, onAmount, onReview, onDeposit, onCheck, onEnterHash, onConfirmUnsent }: ProvisionalDepositProps) {
   const formatted = (value: bigint) => formatAssetAmount(value, { network: deployment.network, assetAddress: deployment.asset, assetDecimals: review?.decimals ?? 0 });
   const step = review === undefined ? "send" : stepOf(review);
   const rows: ReadonlyArray<readonly [string, string]> = review
@@ -435,6 +409,7 @@ export function ProvisionalDeposit({ deployment, wallets, address, amount, revie
           busy={busy}
           onCheck={onCheck}
           onEnterHash={pending.sent ? undefined : onEnterHash}
+          onConfirmUnsent={!pending.sent && pending.hash === "" ? onConfirmUnsent : undefined}
         />
       ) : address ? (
         <>
@@ -573,6 +548,7 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
       }
       onCheck={() => wallet && act(checkProvisional(wallet), (checked) => settle(checked, wallet))}
       onEnterHash={(candidate) => wallet && act(recoverProvisionalHash(wallet, candidate), (checked) => settle(checked, wallet))}
+      onConfirmUnsent={wallet === undefined ? undefined : () => act(clearProvisionalUnsent(wallet), () => setNotice(setupMessages.cleared))}
     />
   );
 }
@@ -600,7 +576,7 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
   const runtime = setupRuntime({ projectId: project.id, purpose, rewardAsset: reward.asset?.address, rewardDecimals: reward.asset?.decimals, monthlyCapMinor: reward.monthlyCapMinor ?? "0", monthlyCapDisplay: reward.monthlyCapDisplay ?? "" });
   const vault = useVault(runtime);
   const offers = useSetupOffers(runtime);
-  useSetupTabHidden(runtime);
+  useTabHidden(runtime, setupTabHidden);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -630,7 +606,7 @@ export function OwnerVaultSetup({ project, purpose = "ordinary", account, github
     if (shown === undefined) return;
     if (shown.kind === "registered") {
       setReview(undefined);
-      void run(runtime, handOverProvisional(account)).then(() => onRegistered(shown.notice));
+      onRegistered(shown.notice);
       return;
     }
     const included = provisionalDeploymentOf(shown.provisional, plan, hash);

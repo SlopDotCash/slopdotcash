@@ -2,6 +2,7 @@
 import { isoNow, millisOf } from "@repo/platform/clock"
 import { GitHub, GitHubMalformed, decoded } from "@repo/platform/github"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { sameRepositoryCommitHints } from "@repo/points/corrections"
 import { capReached, commitFileCap, evidencePageSize, listingComplete } from "../../../gen/slopbot__valueEvidence.effect.vibe"
 import { type AcceptedPatchReplay, acceptedPatchReplay } from "../proofs/acceptedReplay.vibe"
 import { addedBinaryRecovery, binarySourceLimitations, recoverRetainedBinaryAtMerge } from "../proofs/binary.vibe"
@@ -27,7 +28,6 @@ import {
 import { fetched } from "../proofs/reads.vibe"
 import { Acceptance, type CollectedChanges, nativeMergeContext, noChangePromotionContext } from "./acceptance.vibe"
 import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "./branchPolicy.vibe"
-import { sameRepositoryCommitHints } from "./hints.vibe"
 import { type ReferenceDiscussion, relatedPullRequests } from "./references.vibe"
 import {
   type AcceptedRange,

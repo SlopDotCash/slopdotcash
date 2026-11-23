@@ -166,6 +166,36 @@ export function githubLinkDestinations(text: string) {
     .replace(/\[[^[\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)[\]]+)\)/gu, "$1")
 }
 
+function label(text: string) {
+  return text.trim().replace(/\s+/gu, " ").toLowerCase()
+}
+
+export function sameRepositoryCommitHints(repository: string, source: string) {
+  const text = source
+    .replace(/<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[\s\S]*?-->/giu, "")
+    .replace(/^\s*(?:[-*+]\s+)?(?:\*\*)?(?:Contribution skill revision|Skill revision)(?:\*\*)?\s*:[^\r\n]*/gimu, "")
+  const local = (target: string) => target.toLowerCase() === repository.toLowerCase()
+  const name = repository.split("/")[1] ?? ""
+  const definitions = new Set([...text.matchAll(/^ {0,3}\[([^[\]\n]+)\]:/gmu)].map((found) => label(found[1] ?? "")))
+  const referencesText = githubLinkDestinations(
+    text
+      .replace(/(?<![\w./-])(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)*github\.com\//giu, "https://github.com/")
+      .replace(/\]\(<(https:\/\/github\.com\/[^<>\n]*)>\)/gu, "]($1)"),
+  )
+    .replace(/\[([^[\]\n]*)\](\[[^[\]\n]*\])?/gu, (link: string, content: string, reference: string | undefined) =>
+      reference !== undefined || definitions.has(label(content)) ? " " : link)
+    .replace(/https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:[/?#][^\s<>"')]*|\b)/gu, (url: string, target: string) =>
+      local(target) ? url : " ")
+  const hints = [
+    ...referencesText.matchAll(
+      /(?:https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:commit|blob|tree|pull\/\d+\/commits)\/|(?<![\w./-])([\w./-]+)@|(?<!@))\b([a-f0-9]{7,40})\b/gu,
+    ),
+  ]
+    .filter(([, scope]) => scope === undefined || local(scope.includes("/") ? scope : `${scope}/${name}`))
+    .flatMap((found) => found[2] === undefined ? [] : [found[2]])
+  return [...new Set(hints)]
+}
+
 export function referencedNumbers(repository: string, texts: ReadonlyArray<string>) {
   const numbers = new Set<number>()
   for (const text of texts) {

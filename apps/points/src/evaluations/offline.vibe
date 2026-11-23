@@ -46,6 +46,12 @@ function snapshotRegistry(manifests: ReadonlyArray<RegistryManifest>) {
   } satisfies RegistryManifests.Shape)
 }
 
+export function registrySnapshotManifests(path: string) {
+  return Layer.unwrap(effect {
+    return snapshotRegistry(try snapshotManifests(path))
+  })
+}
+
 export effect function admittedOffline(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, snapshotPath: string) {
   const manifests = try snapshotManifests(snapshotPath)
   provide snapshotRegistry(manifests) {

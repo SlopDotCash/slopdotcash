@@ -1,233 +1,126 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"
-import { isoAt, millisOf } from "@repo/platform/clock"
-import { sha256Hex } from "@repo/platform/crypto"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
 import { systemGit } from "@repo/platform/git"
-import { mergeRecipe, mergeResolutionLineCounts, validMergeRecipe } from "@repo/platform/git/evidence"
-import { GitHub } from "@repo/platform/github"
+import { validMergeRecipe } from "@repo/platform/git/evidence"
 import { collectedTargets, fetchRegistry } from "@repo/points/collect"
-import { type CollectedEvidence, type CorrectionCommit, type CorrectionSource, type RetainedCopy, type RetainedRequest, applyCorrections, corrections, proveRetained, retainedSourceChanged } from "@repo/points/corrections"
-import { absentOn404 } from "../context/load.vibe"
-import { collectValueInputs, retainedCredit } from "../value/collect/inputs.vibe"
-import { hydrateValueMergeSource } from "../value/collect/recovery.vibe"
+import {
+  type CollectedEvidence,
+  type OctoberFollowupRequest,
+  type OctoberOriginalRequest,
+  type OctoberPartsRequest,
+  type OctoberUnitRequest,
+  type OrdinaryProof,
+  type RetainedRequest,
+  type SyncMergesRequest,
+  applyCorrections,
+  corrections,
+  proveRetained,
+} from "@repo/points/corrections"
+import { collectValueInputs } from "../value/collect/inputs.vibe"
 import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
-import { nativeMergeContext } from "../value/evidence/acceptance.vibe"
-import { type HistoricalAcceptance, collectEvidence } from "../value/evidence/collect.vibe"
-import { type Actor, Evidence, type RegisteredRepository, findRepository } from "../value/evidence/types.vibe"
-import { type FileChange, valueAdditionCount, valueDeletionCount } from "../value/proofs/changes.vibe"
-import { retainedCopyBindings } from "../value/retained/copy.vibe"
+import { bindRetained, collectedSource, refused, relevantOriginals, sourceEvidenceUnavailable } from "../value/corrections/bind.vibe"
+import { nativeOriginalWithSyncMerges, originalContributorFollowupProof } from "../value/corrections/followup.vibe"
+import { octoberOriginalContributorProof } from "../value/corrections/original.vibe"
+import { octoberOriginalContributorPartsProof, octoberOriginalContributorUnitProof } from "../value/corrections/units.vibe"
+import { Evidence, type RegisteredRepository, findRepository } from "../value/evidence/types.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
-import { mergeInputOf } from "../value/workUnits/merge.vibe"
-import { nativeMergeCarrierMatches } from "../value/workUnits/native.vibe"
 import type { WorkUnitSource } from "../value/workUnits/types.vibe"
 
-export error RetainedBindingRefused { message: string }
-
-const sourceEvidenceUnavailable = "Full retained source evidence unavailable"
-
-schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
 schema SourcePolicy { readonly sha: string; readonly text: string }
 schema RecordedSource { readonly evidence: Evidence; readonly policy: SourcePolicy; readonly mergeRecipe?: Schema.Unknown }
 
-type RetainedPull = RetainedRequest["retained"]["accepted"]
+const competingOriginals = "October replacement names competing original PRs"
 
-function refused(message: string) {
-  return new RetainedBindingRefused({ message })
+effect function recordedSource(raw: unknown) {
+  const recorded = Schema.decodeUnknownEffect(RecordedSource)(raw) catch effect () => { throw refused(sourceEvidenceUnavailable) }
+  const recipe = recorded.mergeRecipe
+  if (recipe !== undefined && !validMergeRecipe(recipe)) throw refused(sourceEvidenceUnavailable)
+  const source: WorkUnitSource = { evidence: recorded.evidence, policy: recorded.policy, ...(recipe === undefined ? {} : { mergeRecipe: recipe }) }
+  return source
 }
 
-function ownerKey(repository: string, sha: string) {
-  return `${repository.toLowerCase()}\u0000${sha}`
-}
-
-function actorOf(actor: Actor | null) {
-  return actor === null ? null : { id: actor.node_id, login: actor.login, kind: actor.type }
-}
-
-function fileNames(file: FileChange) {
-  return file.previous_filename === undefined || file.previous_filename === "" ? [file.filename] : [file.filename, file.previous_filename]
-}
-
-function pathInventory(evidence: Evidence) {
-  return [
-    ...evidence.files.flatMap(fileNames),
-    ...evidence.commitAttribution.flatMap((entry) => (entry.files ?? []).flatMap(fileNames)),
-    ...(evidence.mergeResolutions ?? []).flatMap((resolution) => resolution.paths),
-  ]
-}
-
-function completePathInventory(evidence: Evidence) {
-  return evidence.commits.length === evidence.pull.commits && new Set(evidence.commits.map((commit) => commit.sha)).size === evidence.commits.length &&
-    evidence.files.length === evidence.pull.changed_files && new Set(evidence.files.map((file) => file.filename)).size === evidence.files.length &&
-    evidence.commits.every((commit) => {
-      if (commit.parents.length > 1) {
-        const resolutions = evidence.mergeResolutions?.filter((item) => item.commitSha === commit.sha) ?? []
-        const [resolution] = resolutions
-        return resolutions.length === 1 && resolution !== undefined && mergeResolutionLineCounts(resolution, commit) !== null
-      }
-      const entries = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
-      const [entry] = entries
-      const paths = entry?.changedPaths ?? null
-      return entries.length === 1 && entry !== undefined && paths !== null && entry.files?.length === paths.length &&
-        new Set(paths).size === entry.files.length && entry.files.every((file) => paths.includes(file.filename))
-    })
-}
-
-effect function richSource(evidence: Evidence, owners: ReadonlyMap<string, string>) {
-  const { pull } = evidence
-  if (evidence.limitations.length > 0 || evidence.commits.length !== pull.commits) throw refused(sourceEvidenceUnavailable)
-  const merged = pull.merged_at
-  const firstAccepted = (sha: string) => merged === null ? null : owners.get(ownerKey(evidence.repository, sha)) ?? null
-  const commits: CorrectionCommit[] = []
-  for (const commit of evidence.commits) {
-    const author = actorOf(commit.author)
-    if (commit.parents.length > 1) {
-      const resolutions = evidence.mergeResolutions?.filter((item) => item.commitSha === commit.sha) ?? []
-      const [resolution] = resolutions
-      const files = resolutions.length === 1 && resolution !== undefined ? mergeResolutionLineCounts(resolution, commit) : null
-      commits.push({
-        sha: commit.sha,
-        parentCount: commit.parents.length,
-        author,
-        additions: null,
-        deletions: null,
-        ...(files === null || files.length === 0 || resolution === undefined ? {} : { files, mergeResolution: resolution, parentShas: commit.parents.map((parent) => parent.sha) }),
-        firstAcceptedSourceId: firstAccepted(commit.sha),
-      })
-      continue
-    }
-    if (merged !== null && !owners.has(ownerKey(evidence.repository, commit.sha))) throw refused("Grouped source is outside the complete ownership census")
-    const changes = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
-    const [entry] = changes
-    const changed = entry?.files
-    if (changes.length !== 1 || entry === undefined || entry.limitations.length > 0 || changed === undefined) throw refused("Complete commit files unavailable")
-    const files = changed.map((file) => ({ path: file.filename, additions: valueAdditionCount(file), deletions: valueDeletionCount(file) }))
-    if (!files.every((file) => Number.isSafeInteger(file.additions) && file.additions >= 0 && Number.isSafeInteger(file.deletions) && file.deletions >= 0))
-      throw refused("Invalid accepted file line counts")
-    commits.push({
-      sha: commit.sha,
-      parentCount: commit.parents.length,
-      author,
-      additions: files.reduce((sum, file) => sum + file.additions, 0),
-      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
-      files,
-      firstAcceptedSourceId: firstAccepted(commit.sha),
-    })
-  }
-  return {
-    repository: evidence.repository,
-    repositoryNodeId: evidence.repositoryNodeId,
-    sourceId: pull.node_id,
-    sourceUrl: pull.html_url,
-    headSha: pull.head.sha,
-    occurredAt: merged === null ? null : try isoAt(millisOf(merged)),
-    author: actorOf(pull.user),
-    complete: true,
-    commitCount: evidence.commits.length,
-    commits,
-  } satisfies CorrectionSource
-}
-
-effect function bindRetained(sources: ReadonlyArray<WorkUnitSource>, owners: ReadonlyMap<string, string>, acceptedSubset: boolean) {
-  const verified: WorkUnitSource[] = []
-  for (const source of sources) {
-    const native = acceptedSubset ? try nativeMergeCarrierMatches(source.evidence, sources) : false
-    verified.push(native
-      ? { ...source, evidence: { ...source.evidence, limitations: source.evidence.limitations.filter((limitation) => limitation !== nativeMergeContext) } }
-      : source)
-  }
-  const retained = retainedCopyBindings(verified, { ordinaryCommitsOnly: true, acceptedSubset })
-  if (retained.limitations.length > 0) throw refused("Retained-copy evidence is incomplete or ambiguous")
-  const converted: CorrectionSource[] = []
-  for (const source of verified) converted.push(try richSource(source.evidence, owners))
-  const copies = new Map<string, Map<string, RetainedCopy>>()
-  for (const accepted of verified) {
-    if (accepted.evidence.pull.merged_at === null) continue
-    const acceptedId = accepted.evidence.pull.node_id
-    const credit = retainedCredit(accepted, verified, acceptedSubset)
-    if (credit.kind === "incomplete") throw refused(credit.limitations.join("; "))
-    const target = converted.find((source) => source.sourceId === acceptedId)
-    const bound = copies.get(acceptedId) ?? new Map<string, RetainedCopy>()
-    for (const [sha, binding] of credit.bindings) {
-      if (target === undefined || !target.commits.some((commit) => commit.sha === sha)) throw refused("Retained binding target disappeared")
-      const paths = [...retained.bindings.values()].filter((item) => item.integration.evidence.pull.node_id === acceptedId && item.acceptedCommitSha === sha)
-      const bindingDigest = try sha256Hex(JSON.stringify(paths.map((item) => ({
-        original: item.original.evidence,
-        originalCommitSha: item.originalCommitSha,
-        accepted: item.integration.evidence,
-        acceptedCommitSha: item.acceptedCommitSha,
-        path: item.path,
-        preexistingCommitShas: item.preexistingCommitShas,
-      }))))
-      bound.set(sha, { originalSourceId: binding.originalPullRequestId, originalCommitSha: binding.originalCommitSha, boundPaths: paths.map((item) => item.path).sort(), bindingDigest })
-    }
-    copies.set(acceptedId, bound)
-  }
-  return converted.map((source) => {
-    const bound = copies.get(source.sourceId)
-    if (bound === undefined || bound.size === 0) return source
-    return { ...source, commits: source.commits.map((commit) => {
-      const copy = bound.get(commit.sha)
-      return copy === undefined ? commit : { ...commit, retainedCopy: copy }
-    }) } satisfies CorrectionSource
-  })
-}
-
-effect function collectedSource(repository: string, policy: RegisteredRepository | null, expected: RetainedPull, historicalAcceptance: HistoricalAcceptance | undefined) {
-  const evidence = try collectEvidence({ repository, number: expected.number, policy, ...(historicalAcceptance === undefined ? {} : { historicalAcceptance }) })
-  if (evidence.pull.node_id !== expected.nodeId || evidence.pull.head.sha !== expected.headSha || evidence.pull.updated_at !== expected.updatedAt) throw refused(retainedSourceChanged)
-  return { evidence, policy: { sha: evidence.pull.base.sha, text: "" } } satisfies WorkUnitSource
-}
-
-effect function relevantOriginals(repository: string, policy: RegisteredRepository | null, accepted: Evidence, originals: ReadonlyArray<WorkUnitSource>) {
-  const acceptedPaths = new Set(pathInventory(accepted))
-  const acceptedShas = new Set(accepted.commits.map((commit) => commit.sha))
-  const overlaps = (evidence: Evidence) => evidence.commits.some((commit) => acceptedShas.has(commit.sha)) || pathInventory(evidence).some((path) => acceptedPaths.has(path))
-  const relevant: WorkUnitSource[] = []
-  for (const original of originals) {
-    let source = original
-    if (!overlaps(source.evidence) && source.evidence.commits.some((commit) => commit.parents.length > 1)) {
-      const identity = try absentOn404((try GitHub).json(`/repos/${repository}`, PublicRepository))
-      if (identity === undefined) throw refused("Retained repository identity unavailable")
-      source = try hydrateValueMergeSource(source, mergeRecipe(mergeInputOf(source.evidence)), identity, policy)
-    }
-    if (!completePathInventory(source.evidence) || !completePathInventory(accepted) || overlaps(source.evidence)) relevant.push(source)
-  }
-  return relevant
+effect function recordedSources(raws: ReadonlyArray<unknown>) {
+  const decoded: WorkUnitSource[] = []
+  for (const raw of raws) decoded.push(try recordedSource(raw))
+  return decoded
 }
 
 function ordinaryBinding(repositories: ReadonlyArray<RegisteredRepository>) {
   return (request: RetainedRequest) => effect {
     const policy = findRepository(repositories, request.repository) ?? null
     const { accepted, acceptance, originals } = request.retained
+    const october = request.october
     provide acceptanceWith(collectRetainedMergeReferences) {
       const acceptedSource = try collectedSource(request.repository, policy, accepted, acceptance)
       const collected: WorkUnitSource[] = []
       for (const original of originals) collected.push(try collectedSource(request.repository, policy, original, undefined))
       const relevant = try relevantOriginals(request.repository, policy, acceptedSource.evidence, collected)
-      if (relevant.length === 0) return []
-      return try bindRetained([acceptedSource, ...relevant], request.owners, false)
+      const plainAuthor = request.plain.author?.id
+      const possibleOriginals = october === undefined ? [] : relevant.filter(({ evidence: { pull } }) =>
+        pull.user.node_id !== plainAuthor && (october.hasUnlinked || october.otherAuthors.includes(pull.user.node_id)))
+      if (possibleOriginals.length > 1) throw refused(competingOriginals)
+      const [possibleOriginal] = possibleOriginals
+      if (possibleOriginal !== undefined) return try octoberOriginalContributorProof(request.plain, [acceptedSource, possibleOriginal], request.owners)
+      const selected = october === undefined || october.hasUnlinked ? relevant : []
+      if (selected.length === 0) {
+        const plain: OrdinaryProof = { sources: [] }
+        return plain
+      }
+      const bound: OrdinaryProof = { sources: try bindRetained([acceptedSource, ...selected], request.owners, false) }
+      return bound
     }
   }
 }
 
 effect function groupedBinding(sources: ReadonlyArray<unknown>, owners: ReadonlyMap<string, string>) {
-  const decoded: WorkUnitSource[] = []
-  for (const raw of sources) {
-    const recorded = Schema.decodeUnknownEffect(RecordedSource)(raw) catch effect () => { throw refused(sourceEvidenceUnavailable) }
-    const recipe = recorded.mergeRecipe
-    if (recipe !== undefined && !validMergeRecipe(recipe)) throw refused(sourceEvidenceUnavailable)
-    decoded.push({ evidence: recorded.evidence, policy: recorded.policy, ...(recipe === undefined ? {} : { mergeRecipe: recipe }) })
-  }
+  const decoded = try recordedSources(sources)
   return try bindRetained(decoded, owners, true)
+}
+
+effect function octoberOriginal(request: OctoberOriginalRequest) {
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorProof(request.accepted, sources, request.owners, request.allowMergedOriginal)
+}
+
+effect function octoberFollowup(request: OctoberFollowupRequest) {
+  const retained = try recordedSource(request.retained)
+  const proved = try originalContributorFollowupProof(request.accepted, request.followup, retained.evidence, retained.policy)
+  return proved.binding
+}
+
+effect function octoberUnit(request: OctoberUnitRequest) {
+  const original = try recordedSource(request.original)
+  const integration = try recordedSource(request.integration)
+  const followups = try recordedSources(request.followups)
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorUnitProof(request.accepted, original, integration, request.owners, request.claims, followups, sources)
+}
+
+effect function octoberParts(request: OctoberPartsRequest) {
+  const sources = try recordedSources(request.sources)
+  return try octoberOriginalContributorPartsProof(sources, request.owners, request.claims, request.originating, request.candidateSourceId)
+}
+
+effect function syncMerges(request: SyncMergesRequest) {
+  provide acceptanceWith(collectRetainedMergeReferences) {
+    return try nativeOriginalWithSyncMerges(request)
+  }
+}
+
+export function retainedBinder(repositories: ReadonlyArray<RegisteredRepository>) {
+  return {
+    ordinary: ordinaryBinding(repositories),
+    grouped: groupedBinding,
+    october: { original: octoberOriginal, followup: octoberFollowup, unit: octoberUnit, parts: octoberParts, syncMerges },
+  }
 }
 
 effect function proveWithBinder(evidence: CollectedEvidence) {
   const repositories = try collectedTargets(try fetchRegistry())
   const feedConcurrency = try valueFeedConcurrency()
   const inputs = Layer.provide(collectValueInputs({ repositories, feedConcurrency }), acceptanceWith(collectRetainedMergeReferences))
-  const binder = { ordinary: ordinaryBinding(repositories), grouped: groupedBinding }
   provide inputs {
-    return try proveRetained(evidence, binder)
+    return try proveRetained(evidence, retainedBinder(repositories))
   }
 }
 

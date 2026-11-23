@@ -14,7 +14,7 @@ import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from 
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
-import { historicalClosedContextBindings } from "./bindings.vibe"
+import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings } from "./bindings.vibe"
 import { historicalAssessmentTransport } from "./history.vibe"
 import { mergedHistoricalReplaySnapshot } from "./merged.vibe"
 import type { ReplaySummary } from "./receipt.vibe"
@@ -106,6 +106,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     baseline: audited.baseline,
     repositories: context.repositories,
     approved,
+    emptyLegacyClosures: historicalEmptyLegacyClosureBindings(receipt),
     history: collected.collection.implementation?.history,
   })
   const raw: unknown = JSON.parse(JSON.stringify(snapshot))

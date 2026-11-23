@@ -29,7 +29,7 @@ import { ownerMonthlyPage } from "./ownerMonthly.vibe"
 import type { VaultCreationPlan } from "./ownerPlans.schema.ts"
 import { readText, slotOfText } from "./flowSlots.ts"
 import { type Saved, autoSpacingMs, ownerVaultPage } from "./ownerVault.vibe"
-import { type Setup, type VaultKind, provisionalMessages, provisionalVault } from "./provisionalVault.vibe"
+import { type Setup, type VaultKind, provisionalMessages, provisionalSlotKey, provisionalVault } from "./provisionalVault.vibe"
 import { type ReviewedWire, wireMatches } from "./solanaPlans.ts"
 import { signAndVerify } from "./solanaVault.vibe"
 
@@ -500,22 +500,18 @@ export function provisionalDeploymentOf(value: Readonly<Record<string, unknown>>
   return { network: plan.network, vault: vault.toLowerCase(), owner: owner.toLowerCase(), asset: asset.toLowerCase(), deploymentTransaction: deploymentTransaction.toLowerCase() }
 }
 
-function provisionalKey(shown: ProvisionalDeployment): string {
-  return `${storageKeys.vaultAction.key}${shown.network}:provisional:${shown.vault}`
-}
-
 function vaultKindOf(terms: SetupTerms, vault: EvmVault): VaultKind {
   if (terms.purpose === "security-bounty") return "BountyEvm"
   return vault.asset.toLowerCase() === EVM_NATIVE_ASSET ? "EvmNative" : "OrdinaryEvmToken"
 }
 
 export effect function openProvisional(shown: ProvisionalDeployment) {
-  const { terms, provisional } = try SetupDesk
+  const { terms, provisional, page: setup } = try SetupDesk
   const known = try Ref.get(provisional)
   if (known !== undefined && known.deployment.vault === shown.vault && known.deployment.deploymentTransaction === shown.deploymentTransaction) return try known.page.machine.get()
   const vault = evmVaultOf(shown, terms.purpose === "security-bounty" ? "BountyPurpose" : "OrdinaryPurpose")
   if (vault === undefined) throw stopped(setupMessages.unavailable)
-  const page = try provisionalVault(sessionSlots(), provisionalKey(shown), vault, shown.owner)
+  const page = try provisionalVault(sessionSlots(), provisionalSlotKey(shown.network, shown.vault), vault, shown.owner, (try setup.machine.get()).owner)
   try page.reviewCreation(vaultKindOf(terms, vault), true)
   try Ref.set(provisional, { deployment: shown, vault, page })
   return try page.machine.get()
@@ -574,8 +570,15 @@ export effect function checkProvisional(connection: EvmConnection) {
 
 export effect function recoverProvisionalHash(connection: EvmConnection, transaction: string) {
   const held = try heldProvisional()
-  try held.page.recoverHash(transaction)
+  try followedCreation(held, connection)
+  try held.page.recoverHash(connection, transaction)
   return try checkProvisional(connection)
+}
+
+export effect function clearProvisionalUnsent(connection: EvmConnection) {
+  const held = try heldProvisional()
+  try followedCreation(held, connection)
+  return try held.page.clearUnsent(connection)
 }
 
 export effect function watchProvisional(connection: EvmConnection, hidden: () => boolean, report: (checked: ProvisionalChecked) => void!!) {
@@ -590,17 +593,6 @@ export effect function watchProvisional(connection: EvmConnection, hidden: () =>
     if (checked.state.approval !== "ApprovalSubmitted" && (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified")) return checked
   }
   return undefined
-}
-
-export effect function handOverProvisional(account: number) {
-  const { provisional } = try SetupDesk
-  const known = try Ref.get(provisional)
-  if (known === undefined) return false
-  const { network, vault, asset } = known.deployment
-  const transfer = `${storageKeys.vaultAction.key}${network}:${vault}:${asset}`
-  const moved = try known.page.handOver(account, { transfer, batch: `${transfer}:batch` })
-  if (moved) try Ref.set(provisional, undefined)
-  return moved
 }
 
 export effect function watchSetupOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {

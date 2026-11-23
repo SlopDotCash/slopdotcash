@@ -4,12 +4,16 @@ import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { sha256Of } from "@repo/platform/git/bytes"
+import { github } from "@repo/platform/github"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
+import type { Journal, Revision } from "../src/kernels/records/canonical.ts"
+import { batchDigest, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import type { SourceAudit } from "../src/corrections/reviewed/packet.vibe"
 import { type HistoricalAssessmentCatalog, type HistoricalAssessmentJournalHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition, readHistoricalAssessmentCatalog, readHistoricalAssessmentJournalHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
 import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/audit/reconcile.vibe"
 import { capturedCut, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
+import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings, historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 
 service World {
@@ -19,6 +23,10 @@ service World {
 const recordedAt = "2026-11-19T12:00:00.000Z"
 const headSha = "c".repeat(40)
 const sourceDigest = "d".repeat(64)
+const policySha = "e".repeat(40)
+const occurredAt = "2026-10-05T00:00:00.000Z"
+const closedPull = "PR_legacy_closed"
+const closedMarker = "a".repeat(40)
 const baselineDigest = "b".repeat(64)
 const manifest = JSON.stringify({ id: "fixture", status: "active", authority: { repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] })
 const scope: HistoricalAssessmentScope = { projectId: "fixture", repositoryNodeId: "R_audit", revision: 5, manifestSha256: sha256Of(manifest), expectedPointsDigest: baselineDigest }
@@ -48,7 +56,16 @@ effect function seeded() {
   try db.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${baselineDigest}, ${recordedAt}, '[]', 0)`)
 }
 
-function legacyRecord(pull: string, options: { readonly project?: string; readonly repository?: string; readonly producerRevision?: string } = {}) {
+interface LegacyOptions {
+  readonly project?: string
+  readonly repository?: string
+  readonly producerRevision?: string
+  readonly number?: number
+  readonly mergeSha?: string | null
+  readonly assessment?: unknown
+}
+
+function legacyRecord(pull: string, options: LegacyOptions = {}) {
   return JSON.stringify({
     schemaVersion: "slop-value-record:v1",
     projectId: options.project ?? "fixture",
@@ -56,15 +73,15 @@ function legacyRecord(pull: string, options: { readonly project?: string; readon
     repositoryNodeId: options.repository ?? "R_audit",
     repositoryDatabaseId: 42,
     pullRequestNodeId: pull,
-    pullRequestNumber: 7,
+    pullRequestNumber: options.number ?? 7,
     headSha,
-    mergeSha: null,
-    policySha: "e".repeat(40),
+    mergeSha: options.mergeSha ?? null,
+    policySha,
     sourceDigest,
-    occurredAt: "2026-10-05T00:00:00.000Z",
+    occurredAt,
     supersedes: null,
     revisionReason: null,
-    assessment: { status: "assessed", reviews: [] },
+    assessment: options.assessment ?? { status: "assessed", reviews: [] },
     model: { provider: "surplus", requested: "claude-opus-5.5", reported: "claude-opus-5.5" },
     producerRevision: options.producerRevision ?? "f".repeat(40),
     assessedAt: "2026-10-06T00:00:00.000Z",
@@ -86,6 +103,85 @@ effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean)
   const classified = try classifyHistoricalAssessmentScope(catalog, audit, "fixture")
   const sealed = sealedCut(try capturedCut(classified, catalog.heads), fresh) catch (error) => error._tag
   return { receipt: classified.receipt.status, blockers: classified.receipt.blockers, sealed: typeof sealed === "string" ? sealed : sealed.status }
+}
+
+function emptyBaseline(): Journal {
+  return { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: recordedAt, coverage: [], revisions: [] }
+}
+
+effect function reviewAwarded(sourceUrl: string) {
+  const award = { key: try pointKey({ projectId: "fixture", actorId: "U_reviewer", category: "substantive-review", sourceId: "PRR_existing" }), actor: { id: "U_reviewer", login: "reviewer" }, projectId: "fixture", category: "substantive-review", amount: 10, occurredAt, sourceId: "PRR_existing", sourceUrl, workUnitId: "wu_legacy_review", provisional: true }
+  const body = { previous: null, recordedAt, sourceDigest: "1".repeat(64), sourceRule: "slop-score-v2", award }
+  const revision = { id: try pointRevisionId(body), ...body } satisfies Revision
+  return { ...emptyBaseline(), revisions: [revision] } satisfies Journal
+}
+
+effect function closedCatalog(record: string, baseline: Journal) {
+  const heads = { jointThrough: 0, legacyThrough: 1, jointScopedCount: 0, legacyRepoCount: 1, d1PointsDigest: try batchDigest(baseline), d1PointsCount: baseline.revisions.length, enforcementGeneration: 0, registryRevision: scope.revision, registryManifestSha256: scope.manifestSha256 }
+  const row = { sequence: 1, record_digest: sha256Of(record), record_json: record, recorded_at: recordedAt, repository_node_id: "R_audit", pull_request_node_id: closedPull, head_sha: headSha, source_digest: sourceDigest, supersedes: null }
+  return { heads, joint: [], legacy: [row] } satisfies HistoricalAssessmentCatalog
+}
+
+const graph = {
+  __typename: "PullRequest",
+  id: closedPull,
+  number: 10,
+  state: "CLOSED",
+  closed: true,
+  merged: false,
+  mergedAt: null,
+  mergeCommit: null,
+  closedAt: occurredAt,
+  headRefOid: headSha,
+  reviews: { totalCount: 0 },
+  repository: { id: "R_audit", databaseId: 42, isPrivate: false, nameWithOwner: "fixture/repo" },
+}
+
+function restPull(mergeCommitSha: string | null) {
+  return {
+    number: 10,
+    node_id: closedPull,
+    state: "closed",
+    merged: false,
+    merged_at: null,
+    merge_commit_sha: mergeCommitSha,
+    closed_at: occurredAt,
+    head: { sha: headSha },
+    base: { sha: policySha, repo: { node_id: "R_audit", id: 42, private: false } },
+  }
+}
+
+function answered(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
+  return HttpClientResponse.fromWeb(request, new globalThis.Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))
+}
+
+function closedContextApi(seen: string[], observed: unknown, rest: unknown) {
+  const network = HttpClient.make((request) => {
+    seen.push(`${request.method} ${request.url}`)
+    if (request.method === "POST" && request.url === "https://api.github.com/graphql") return succeed(answered(request, 200, { data: { nodes: [observed] } }))
+    if (request.method === "GET" && request.url === "https://api.github.com/repos/fixture/repo/pulls/10") return succeed(answered(request, 200, rest))
+    return succeed(answered(request, 404, { message: "Not Found" }))
+  })
+  return Layer.provide(github({ token: Redacted.make("t"), userAgent: "slopbot" }), Layer.succeed(HttpClient.HttpClient, network))
+}
+
+effect function closureConclusion(record: string, baseline: Journal, observed: unknown, rest: unknown) {
+  const seen: string[] = []
+  const catalog = try closedCatalog(record, baseline)
+  const classified = try Effect.provide(classifyHistoricalAssessmentScope(catalog, audit, "fixture", historicalEvidence({ baseline, integrationBranch: undefined }, "fixture")), closedContextApi(seen, observed, rest))
+  const sealed = sealedCut(try capturedCut(classified, catalog.heads), true) catch (error) => error._tag
+  return {
+    digest: catalog.legacy[0]?.record_digest,
+    receipt: classified.receipt,
+    closed: historicalClosedContextBindings(classified.receipt).size,
+    empty: historicalEmptyLegacyClosureBindings(classified.receipt),
+    sealed: typeof sealed === "string" ? sealed : sealed.status,
+    seen,
+  }
+}
+
+function closedRecord(status: string, mergeSha: string | null, patch: Readonly<Record<string, unknown>> = {}) {
+  return legacyRecord(closedPull, { number: 10, mergeSha, assessment: { status, tier: null, rationale: "PRIVATE RAW EXPLANATION", reviews: [], ...patch } })
 }
 
 effect function recordable(heads: HistoricalAssessmentJournalHeads) {
@@ -126,6 +222,48 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
       try same([try historicalAssessmentFreshness(scope, active.heads), try recordable(heads)], [false, false])
       try same(try conclusion(active, try historicalAssessmentFreshness(scope, active.heads)), { receipt: "requires-value-replay", blockers: [], sealed: "ReviewedRefused" })
     }
+  })
+
+  it.effect('An empty legacy closure is accounted for only with exact GitHub non-acceptance and no prior award (spec/points/assessmentAudit.md, "An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence")', () => effect {
+    const baseline = emptyBaseline()
+    for (const [status, marker] of [["assessed", null], ["unresolved", closedMarker]] as const) {
+      const verified = try closureConclusion(closedRecord(status, marker), baseline, graph, restPull(marker))
+      try same({
+        status: verified.receipt.status,
+        records: verified.receipt.records,
+        counts: [verified.receipt.counts.activeLegacyRecords, verified.receipt.counts.relevantRecords],
+        closed: verified.closed,
+        empty: verified.empty.get(closedPull),
+        leaked: JSON.stringify(verified.receipt).includes("PRIVATE RAW EXPLANATION"),
+        sealed: verified.sealed,
+        seen: verified.seen,
+      }, {
+        status: "no-scoped-active-assessments",
+        records: [],
+        counts: [1, 0],
+        closed: 0,
+        empty: { digest: verified.digest, number: 10, headSha, occurredAt },
+        leaked: false,
+        sealed: "NoScopedActiveAssessments",
+        seen: ["POST https://api.github.com/graphql", "GET https://api.github.com/repos/fixture/repo/pulls/10"],
+      })
+    }
+
+    const unresolved = closedRecord("unresolved", closedMarker)
+    const priorReview = try reviewAwarded("https://github.com/fixture/repo/pull/10#pullrequestreview-123")
+    const guarded = [
+      try closureConclusion(unresolved, baseline, { ...graph, reviews: { totalCount: 1 } }, restPull(closedMarker)),
+      try closureConclusion(unresolved, baseline, { ...graph, merged: true }, restPull(closedMarker)),
+      try closureConclusion(unresolved, baseline, graph, restPull(null)),
+      try closureConclusion(unresolved, baseline, graph, { ...restPull(closedMarker), base: { ...restPull(closedMarker).base, sha: headSha } }),
+      try closureConclusion(closedRecord("unresolved", closedMarker, { tier: "micro" }), baseline, graph, restPull(closedMarker)),
+      try closureConclusion(closedRecord("unresolved", closedMarker, { reviews: [{ sourceId: "PRR_recorded" }] }), baseline, graph, restPull(closedMarker)),
+    ]
+    const awarded = try closureConclusion(unresolved, priorReview, graph, restPull(closedMarker))
+    const outcome = (result: typeof awarded) => ({ status: result.receipt.status, blockers: result.receipt.blockers, empty: result.empty.size, sealed: result.sealed })
+    const held = { status: "incomplete", blockers: ["missing-from-merged-audit"], empty: 0, sealed: "AuditIncomplete" }
+    try same([...guarded, awarded].map(outcome), [...guarded, awarded].map(() => held))
+    try same(awarded.seen, [])
   })
 
   it.effect('An assessment audit outside the trusted main dispatch reads nothing (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {

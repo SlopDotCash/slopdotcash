@@ -1,0 +1,428 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub } from "@repo/platform/github"
+import { implementationCreditActors } from "@repo/points/client"
+import {
+  type BodyEdit,
+  type BodyReference,
+  type CorrectionClaim,
+  type CorrectionCommit,
+  type CorrectionSource,
+  type OrdinaryProof,
+  type ReviewedOriginal,
+  CreatedPull,
+  correctionClaimCommit,
+  matchedAccepted,
+  originalContributorClaimScope,
+  originalContributorPrecedesFollowups,
+  sameRepositoryCommitHints,
+  verifiedHuman,
+} from "@repo/points/corrections"
+import type { Evidence, Pull, Review } from "../evidence/types.vibe"
+import { retainedCopyBindings } from "../retained/copy.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import { answer, isOid } from "../workUnits/source.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+import { type NativeComparison, acknowledgedOriginalRepairs, authenticateNativeAcceptedRange, authenticateOriginalFollowupParents, nativeComparison } from "./authenticate.vibe"
+import { refused, richSource } from "./bind.vibe"
+
+schema ShaRef { readonly sha: string }
+schema MergeObject { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+schema CommitActorRead { readonly node_id: string; readonly type: string }
+schema CommitterRead { readonly date?: string }
+schema CommitDetailRead { readonly committer?: CommitterRead }
+schema CurrentCommit {
+  readonly sha: string
+  readonly parents: ReadonlyArray<ShaRef>
+  readonly author: CommitActorRead | null
+  readonly commit?: CommitDetailRead
+}
+schema TypedActor { readonly __typename: string; readonly id?: string }
+schema OriginalBodyPull {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string | null
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: TypedActor | null
+  readonly author: TypedActor | null
+}
+schema OriginalBodyRepository { readonly id: string; readonly pullRequest: OriginalBodyPull | null }
+schema OriginalBodyAnswer { readonly repository: OriginalBodyRepository | null }
+
+type ReviewedReference =
+  | { readonly kind: "review"; readonly head: string; readonly review: Review }
+  | { readonly kind: "body"; readonly head: string; readonly body: BodyReference }
+
+const originalBodyQuery =
+  "query SlopOriginalBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}"
+
+function shas(parents: ReadonlyArray<ShaRef>) {
+  return JSON.stringify(parents.map(({ sha }) => sha))
+}
+
+export function matchesRetainedProjection(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual) && actual.length === expected.length && expected.every((value, index) => matchesRetainedProjection(actual[index], value))
+  }
+  if (expected !== null && typeof expected === "object") {
+    return actual !== null && typeof actual === "object" && !Array.isArray(actual) &&
+      Object.entries(expected).every(([key, value]) => Object.hasOwn(actual, key) && matchesRetainedProjection(Reflect.get(actual, key), value))
+  }
+  return actual === expected
+}
+
+function references(source: Evidence, target: Pull, repository: string) {
+  return source.relatedPullRequests.some((reference) =>
+    reference.id === target.node_id && reference.number === target.number && reference.url === target.html_url &&
+    reference.repository.toLowerCase() === repository.toLowerCase())
+}
+
+function currentPull(current: CreatedPull | undefined, expected: Pull) {
+  return current !== undefined && current.node_id === expected.node_id && current.number === expected.number && current.html_url === expected.html_url &&
+    current.state === expected.state && current.head.sha === expected.head.sha && current.merge_commit_sha === expected.merge_commit_sha &&
+    current.merged_at === expected.merged_at && current.updated_at === expected.updated_at && current.user.node_id === expected.user.node_id &&
+    current.merged_by?.node_id === expected.merged_by?.node_id && current.merged_by?.type === expected.merged_by?.type &&
+    Number.isFinite(Date.parse(current.created_at))
+}
+
+export effect function exactOctoberOriginalContributorProof(
+  accepted: CorrectionSource,
+  originalSource: CorrectionSource,
+  integration: WorkUnitSource,
+  original: WorkUnitSource,
+  allowMergedOriginal = false,
+  scopedClaims?: ReadonlyArray<CorrectionClaim>,
+  reviewedOriginal?: ReviewedOriginal,
+) {
+  const scoped = scopedClaims !== undefined
+  const nativeAcceptance = (commit: CorrectionCommit) => accepted.commits.some((copy) =>
+    copy.sha === commit.sha && copy.firstAcceptedSourceId === accepted.sourceId && copy.author?.id === commit.author?.id)
+  const retainedOriginal = originalSource.commits.find((commit) => {
+    if (scopedClaims === undefined) return commit.sha === originalSource.headSha && nativeAcceptance(commit)
+    return nativeAcceptance(commit) && commit.parentCount <= 1 &&
+      implementationCreditActors(originalSource.author, [commit.author])[0]?.id === originalSource.author?.id &&
+      scopedClaims.some((claim) => claim.commitSha === commit.sha && claim.sourceId === accepted.sourceId)
+  })
+  const anchor = retainedOriginal ?? (scoped
+    ? originalSource.commits.find((commit) =>
+      commit.sha === originalSource.headSha && commit.parentCount === 2 && verifiedHuman(commit.author) &&
+      (commit.author.id === originalSource.author?.id || commit.author.id === accepted.author?.id) && nativeAcceptance(commit))
+    : undefined)
+  if (
+    anchor === undefined ||
+    (anchor.parentCount !== 1 && !(scoped && anchor.parentCount === 2)) ||
+    (anchor.parentCount === 2 && !verifiedHuman(anchor.author)) ||
+    (anchor.author?.id !== originalSource.author?.id &&
+      !(scoped && (implementationCreditActors(originalSource.author, [anchor.author])[0]?.id === originalSource.author?.id || anchor.author?.id === accepted.author?.id))) ||
+    !accepted.commits.some((commit) =>
+      (commit.parentCount <= 1 || (scoped && commit.parentCount === 2)) && commit.firstAcceptedSourceId === accepted.sourceId &&
+      commit.sha === anchor.sha && commit.author?.id === anchor.author?.id)
+  ) return undefined
+  const originalPull = original.evidence.pull
+  const acceptedPull = integration.evidence.pull
+  const acceptedAt = accepted.occurredAt
+  const originalAt = originalSource.occurredAt
+  if (!(
+    acceptedAt !== null && acceptedAt.startsWith("2026-10-") &&
+    (originalAt === null ||
+      (allowMergedOriginal && originalAt >= acceptedAt &&
+        (scoped || originalSource.commits.every((commit) =>
+          (commit.parentCount <= 1 || (scoped && commit.parentCount === 2)) && commit.firstAcceptedSourceId === accepted.sourceId &&
+          accepted.commits.some((copy) => copy.sha === commit.sha && copy.author?.id === commit.author?.id && copy.author?.kind === commit.author?.kind))))) &&
+    original.evidence.repositoryDatabaseId === integration.evidence.repositoryDatabaseId &&
+    (scoped || references(integration.evidence, originalPull, accepted.repository) || references(original.evidence, acceptedPull, accepted.repository))
+  )) throw refused("October exact source lacks a same-repository resolved PR reference")
+  const reads: Array<CreatedPull | undefined> = []
+  for (const pull of [originalPull, acceptedPull]) reads.push(try answer(`/repos/${accepted.repository}/pulls/${pull.number}`, CreatedPull))
+  const pulls: CreatedPull[] = []
+  for (const [index, expected] of [originalPull, acceptedPull].entries()) {
+    const current = reads[index]
+    if (current === undefined || !currentPull(current, expected)) throw refused("October exact source changed during collection")
+    pulls.push(current)
+  }
+  const [originalRead, acceptedRead] = pulls
+  if (
+    originalRead === undefined || acceptedRead === undefined ||
+    !(Date.parse(originalRead.created_at) < Date.parse(scoped ? (acceptedRead.merged_at ?? "") : acceptedRead.created_at))
+  ) throw refused("October exact original must precede acceptance")
+  const mergeSha = acceptedPull.merge_commit_sha
+  const merge = isOid(mergeSha) ? try answer(`/repos/${accepted.repository}/git/commits/${mergeSha}`, MergeObject) : undefined
+  const recorded = integration.evidence.mergeCommitEvidence
+  const [firstParentRef, secondParentRef] = merge?.parents ?? []
+  if (
+    merge === undefined || merge.sha !== mergeSha || merge.parents.length !== 2 || firstParentRef === undefined || secondParentRef === undefined ||
+    !merge.parents.every(({ sha }) => isOid(sha)) || firstParentRef.sha === secondParentRef.sha || secondParentRef.sha !== accepted.headSha ||
+    recorded === null || recorded.sha !== merge.sha || shas(recorded.parents) !== shas(merge.parents)
+  ) throw refused("October exact source lacks a pinned native merge")
+  const firstParent = try nativeComparison(accepted.repository, anchor.sha, firstParentRef.sha)
+  const secondParent = try nativeComparison(accepted.repository, anchor.sha, secondParentRef.sha)
+  const isAncestor = (result: NativeComparison) =>
+    ["ahead", "identical"].includes(result.status) && result.behind_by === 0 && result.merge_base_commit.sha === anchor.sha
+  if (!(!isAncestor(firstParent) && ["behind", "diverged"].includes(firstParent.status) && firstParent.behind_by > 0 && isAncestor(secondParent))) {
+    throw refused("October exact original was not newly accepted through the PR head")
+  }
+  const range = try authenticateNativeAcceptedRange(accepted, integration.evidence, merge, [anchor.sha, ...(scopedClaims ?? []).map((claim) => claim.commitSha)])
+  const { acceptedRange, retainedBaseRanges } = range
+  const acceptedSource = range.source
+  const boundOriginal = scoped && reviewedOriginal === undefined ? try authenticateOriginalFollowupParents(originalSource, original.evidence) : originalSource
+  const repairs = scopedClaims === undefined ? [] : try acknowledgedOriginalRepairs(original, integration, boundOriginal, acceptedSource, scopedClaims)
+  const resolutionCarried = scopedClaims?.some((claim) => {
+    const commit = acceptedSource.commits.find((item) => item.sha === claim.commitSha)
+    return commit !== undefined && commit.author === null && commit.parentCount > 1 && correctionClaimCommit(commit)
+  }) ?? false
+  const resolutionAcceptance = resolutionCarried ? { pull: acceptedPull, sourceDigest: try sourceDigestOf(integration.evidence, integration.policy) } : undefined
+  const verified = scopedClaims === undefined
+    ? originalContributorPrecedesFollowups({ ...acceptedSource, author: boundOriginal.author }, acceptedSource.author)
+    : try originalContributorClaimScope({
+      original: boundOriginal,
+      accepted: acceptedSource,
+      claims: scopedClaims,
+      followups: [],
+      anchorSha: anchor.sha,
+      acceptedAnchorSha: anchor.sha,
+      repairs,
+      copiedClaims: [],
+      resolutionAcceptance,
+    })
+  if (!verified) throw refused("October exact accepted source has an unverified contributor or follow-up")
+  const files = acceptedSource.commits.find((commit) => commit.sha === anchor.sha)?.files
+  const boundPaths = scopedClaims !== undefined && anchor.parentCount === 2
+    ? [...new Set(scopedClaims.map((claim) => claim.path))].sort()
+    : files?.map((file) => file.path).sort()
+  if (boundPaths === undefined || boundPaths.length === 0) throw refused("October exact original lacks complete file evidence")
+  const originalDigest = try sourceDigestOf(original.evidence, original.policy)
+  const acceptedDigest = try sourceDigestOf(integration.evidence, integration.policy)
+  const bindingDigest = try sha256Hex(JSON.stringify({
+    original: originalDigest,
+    accepted: acceptedDigest,
+    ...(scopedClaims === undefined ? {} : { claims: scopedClaims, repairs }),
+    ...(resolutionAcceptance === undefined ? {} : { resolutionAcceptance }),
+    ...(reviewedOriginal === undefined ? {} : { reviewedOriginal }),
+    pulls,
+    merge,
+    firstParent,
+    secondParent,
+    acceptedRange,
+    ...(retainedBaseRanges.length > 0 ? { retainedBaseRanges } : {}),
+  }))
+  const proof: OrdinaryProof = {
+    sources: [acceptedSource, boundOriginal],
+    originalContributor: {
+      exactAcceptance: true,
+      ...(resolutionAcceptance === undefined ? {} : { resolutionAcceptance }),
+      ...(scopedClaims === undefined ? {} : { claimIds: scopedClaims.map((claim) => claim.id), ...(repairs.length > 0 ? { repairs } : {}) }),
+      originalSourceId: boundOriginal.sourceId,
+      originalCommitSha: anchor.sha,
+      acceptedCommitSha: anchor.sha,
+      boundPaths,
+      ...(reviewedOriginal === undefined ? {} : { reviewedOriginal }),
+      bindingDigest,
+    },
+  }
+  return proof
+}
+
+function bodyEditOf(metadata: NonNullable<Evidence["repairBodyEdit"]>) {
+  const authorId = metadata.author.id
+  const editor = metadata.editor
+  const editorId = editor?.id
+  if (authorId === undefined || (editor !== null && editorId === undefined)) return undefined
+  return {
+    id: metadata.id,
+    body: metadata.body,
+    headRefOid: metadata.headRefOid,
+    mergedAt: metadata.mergedAt,
+    updatedAt: metadata.updatedAt,
+    lastEditedAt: metadata.lastEditedAt,
+    editor: editor === null || editorId === undefined ? null : { id: editorId, type: editor.type },
+    author: { id: authorId, type: metadata.author.type },
+  } satisfies BodyEdit
+}
+
+effect function bodyReferences(original: WorkUnitSource, accepted: CorrectionSource, selectedShas: ReadonlySet<string>) {
+  const evidence = original.evidence
+  const metadata = evidence.repairBodyEdit
+  const acceptedAt = accepted.occurredAt
+  if (metadata === undefined || acceptedAt === null || !(Date.parse(metadata.lastEditedAt ?? "") < Date.parse(acceptedAt))) return []
+  const actor = metadata.lastEditedAt === null ? metadata.author : metadata.editor
+  if (actor?.type !== "User" || actor.id !== evidence.pull.merged_by?.node_id) return []
+  const github = try GitHub
+  const [owner, name] = evidence.repository.split("/")
+  const data = try github.graphql(originalBodyQuery, { owner, name, number: evidence.pull.number }, OriginalBodyAnswer)
+  const current = data.repository?.pullRequest ?? undefined
+  if (
+    data.repository?.id !== evidence.repositoryNodeId || current === undefined || current.id !== metadata.id || current.body !== metadata.body ||
+    current.headRefOid !== metadata.headRefOid || current.mergedAt !== metadata.mergedAt || current.updatedAt !== metadata.updatedAt ||
+    current.lastEditedAt !== metadata.lastEditedAt || current.author === null || current.author.id !== metadata.author.id ||
+    current.author.__typename !== metadata.author.type || current.editor?.id !== metadata.editor?.id || current.editor?.__typename !== metadata.editor?.type
+  ) throw refused("Historical original body changed during collection")
+  const created = try answer(`/repos/${evidence.repository}/pulls/${evidence.pull.number}`, CreatedPull)
+  if (
+    created === undefined || created.node_id !== evidence.pull.node_id || !Number.isFinite(Date.parse(created.created_at)) ||
+    !(Date.parse(created.created_at) <= Date.parse(metadata.lastEditedAt ?? ""))
+  ) throw refused("Historical original body predates its PR")
+  const bodyEdit = bodyEditOf(metadata)
+  if (bodyEdit === undefined) return []
+  return sameRepositoryCommitHints(evidence.repository, metadata.body)
+    .filter((head) => selectedShas.has(head))
+    .map((head): ReviewedReference => ({
+      kind: "body",
+      head,
+      body: { kind: "pre-merge-body", pull: evidence.pull, metadata: bodyEdit, headSha: head, headCommittedAt: "", createdAt: created.created_at },
+    }))
+}
+
+export effect function reviewedOriginalCommit(
+  original: WorkUnitSource,
+  currentSource: CorrectionSource,
+  accepted: CorrectionSource,
+  integration: WorkUnitSource,
+  claims: ReadonlyArray<CorrectionClaim>,
+) {
+  const selectedShas = new Set(claims.filter((claim) => claim.sourceId === accepted.sourceId).map((claim) => claim.commitSha))
+  if (original.evidence.commits.some((commit) => selectedShas.has(commit.sha))) return undefined
+  const native = new Map(integration.evidence.commits.map((commit) => [commit.sha, commit]))
+  const acceptedAt = accepted.occurredAt
+  const reviewed: ReviewedReference[] = [...original.evidence.reviews]
+    .sort((left, right) => Date.parse(left.submitted_at ?? "") - Date.parse(right.submitted_at ?? "") || left.id - right.id)
+    .filter((review) =>
+      review.user?.type === "User" && review.submitted_at !== null && acceptedAt !== null &&
+      Date.parse(review.submitted_at) < Date.parse(acceptedAt) && selectedShas.has(review.commit_id))
+    .map((review): ReviewedReference => ({ kind: "review", head: review.commit_id, review }))
+  const candidates = [...reviewed, ...(try bodyReferences(original, accepted, selectedShas))]
+  for (const reference of candidates) {
+    const commits: CorrectionCommit[] = []
+    const seen = new Set<string>()
+    let current: string | undefined = reference.head
+    while (current !== undefined && current !== "" && !seen.has(current)) {
+      seen.add(current)
+      const sha = current
+      const commit = accepted.commits.find((item) => item.sha === sha)
+      const retained = native.get(sha)
+      if (
+        commit === undefined || retained === undefined || commit.parentCount !== 1 || commit.author?.kind !== "User" ||
+        commit.author.id !== currentSource.author?.id || commit.firstAcceptedSourceId !== accepted.sourceId || (commit.files?.length ?? 0) === 0
+      ) break
+      commits.unshift({ ...commit, parentShas: retained.parents.map((parent) => parent.sha) })
+      if ([...selectedShas].every((selected) => seen.has(selected))) break
+      current = retained.parents[0]?.sha
+    }
+    if (![...selectedShas].every((selected) => commits.some((commit) => commit.sha === selected))) continue
+    if (reference.kind === "review") {
+      const currentReview = try answer(`/repos/${accepted.repository}/pulls/${original.evidence.pull.number}/reviews/${reference.review.id}`, Schema.Unknown)
+      if (!matchesRetainedProjection(currentReview, reference.review)) throw refused("Historical original review changed during collection")
+    }
+    let headCommittedAt = ""
+    for (const commit of commits) {
+      const currentCommit = try answer(`/repos/${accepted.repository}/commits/${commit.sha}`, CurrentCommit)
+      if (
+        currentCommit === undefined || currentCommit.sha !== commit.sha || shas(currentCommit.parents) !== JSON.stringify(commit.parentShas) ||
+        currentCommit.author?.type !== "User" || currentCommit.author.node_id !== commit.author?.id
+      ) throw refused("Historical original commit identity changed during collection")
+      const committedAt = currentCommit.commit?.committer?.date ?? ""
+      if (reference.kind === "body" && commit.sha === reference.head) headCommittedAt = committedAt
+      if (reference.kind === "body" && !(Number.isFinite(Date.parse(committedAt)) && Date.parse(committedAt) <= Date.parse(reference.body.metadata.lastEditedAt ?? ""))) {
+        throw refused("Historical original commit postdates the authenticated body")
+      }
+    }
+    const retained = {
+      sourceDigest: try sourceDigestOf(original.evidence, original.policy),
+      currentSourceDigest: try sha256Hex(JSON.stringify(currentSource)),
+      ...(reference.kind === "review" ? { review: reference.review } : { bodyReference: { ...reference.body, headCommittedAt } }),
+      commits,
+    }
+    const result: ReviewedOriginal = { ...retained, digest: try sha256Hex(JSON.stringify(retained)) }
+    return result
+  }
+  return undefined
+}
+
+export effect function octoberOriginalContributorProof(
+  plain: CorrectionSource,
+  sources: ReadonlyArray<WorkUnitSource>,
+  owners: ReadonlyMap<string, string>,
+  allowMergedOriginal = false,
+) {
+  const [integration, original] = sources
+  if (sources.length !== 2 || integration === undefined || original === undefined) throw refused("October replacement needs one original PR")
+  const richOriginal = try richSource(original.evidence, owners)
+  const originalActor = richOriginal.author
+  const carrier = plain.author
+  const originalAt = richOriginal.occurredAt
+  const plainAt = plain.occurredAt
+  if (!(
+    original.evidence.pull.state === "closed" &&
+    (originalAt === null || (allowMergedOriginal && plainAt !== null && originalAt >= plainAt)) &&
+    richOriginal.repositoryNodeId === plain.repositoryNodeId && richOriginal.repository.toLowerCase() === plain.repository.toLowerCase() &&
+    verifiedHuman(originalActor) && verifiedHuman(carrier) && originalActor.id !== carrier.id &&
+    richOriginal.commits.some((commit) => commit.sha === richOriginal.headSha) &&
+    new Set(richOriginal.commits.map((commit) => commit.sha)).size === richOriginal.commits.length
+  )) throw refused("October replacement does not have a sole verified original contributor")
+  const originalSource = richOriginal.commits.some((commit) => commit.parentCount <= 1 && commit.author?.id === carrier.id)
+    ? try authenticateOriginalFollowupParents(richOriginal, original.evidence)
+    : richOriginal
+  if (!originalContributorPrecedesFollowups(originalSource, carrier)) {
+    throw refused("October replacement does not have a verified original contributor preceding every carrier follow-up")
+  }
+  const richAccepted = try richSource(integration.evidence, owners)
+  const accepted = try matchedAccepted(plain, richAccepted)
+  if (!(
+    accepted.author?.id === carrier.id && accepted.author.kind === carrier.kind &&
+    accepted.commits.every((commit, index) =>
+      commit.author === null || (commit.author.id === plain.commits[index]?.author?.id && commit.author.kind === plain.commits[index]?.author?.kind))
+  )) throw refused("Retained accepted commit author differs from the canonical census")
+  const exact = try exactOctoberOriginalContributorProof(accepted, originalSource, integration, original, allowMergedOriginal)
+  if (exact !== undefined) return exact
+  if (originalSource.occurredAt !== null) throw refused("Merged original requires exact first acceptance proof")
+  const canonicalCommits = new Map(plain.commits.map((commit) => [commit.sha, commit]))
+  const creditedCommits: CorrectionCommit[] = []
+  for (const commit of originalSource.commits) {
+    const canonical = canonicalCommits.get(commit.sha)
+    if (canonical === undefined || commit.parentCount <= 1) {
+      creditedCommits.push(commit)
+      continue
+    }
+    if (canonical.parentCount !== commit.parentCount || canonical.author?.id !== commit.author?.id || canonical.author?.kind !== commit.author?.kind) {
+      throw refused("Shared October merge disagrees with the canonical census")
+    }
+    creditedCommits.push({ ...commit, additions: canonical.additions, deletions: canonical.deletions })
+  }
+  const creditedOriginal = { ...originalSource, commits: creditedCommits } satisfies CorrectionSource
+  const retained = retainedCopyBindings(sources, { ordinaryCommitsOnly: true, octoberOriginalCredit: true })
+  if (retained.limitations.length > 0) throw refused("October retained-copy evidence is incomplete or ambiguous")
+  const ordinary = plain.commits.filter((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === plain.sourceId)
+  const acceptedWithFiles = new Map(accepted.commits.map((commit) => [commit.sha, commit]))
+  const candidates = [...ordinary].sort((a, b) => a.sha.localeCompare(b.sha))
+  for (const commit of candidates) {
+    if (
+      (commit.author !== null && (!verifiedHuman(commit.author) || commit.author.id !== originalActor.id)) ||
+      ordinary.some((other) => other !== commit && (!verifiedHuman(other.author) || (other.author.id !== originalActor.id && other.author.id !== carrier.id)))
+    ) continue
+    const files = acceptedWithFiles.get(commit.sha)?.files
+    const bindings = [...retained.bindings.values()].filter((binding) =>
+      binding.integration === integration && binding.original === original && binding.acceptedCommitSha === commit.sha)
+    const originalCommitSha = bindings[0]?.originalCommitSha
+    const boundPaths = bindings.map((binding) => binding.path).sort()
+    if (
+      originalCommitSha === undefined || files === undefined || files.length === 0 ||
+      bindings.some((binding) => binding.originalCommitSha !== originalCommitSha) || bindings.length !== files.length ||
+      !files.every((file) => boundPaths.includes(file.path))
+    ) continue
+    const bindingDigest = try sha256Hex(JSON.stringify(bindings.map((binding) => ({
+      original: binding.original.evidence,
+      originalCommitSha: binding.originalCommitSha,
+      accepted: binding.integration.evidence,
+      acceptedCommitSha: binding.acceptedCommitSha,
+      path: binding.path,
+      preexistingCommitShas: binding.preexistingCommitShas,
+    }))))
+    const proof: OrdinaryProof = {
+      sources: [{ ...plain, commits: plain.commits.map((other) => other === commit ? { ...commit, files } : other) }, creditedOriginal],
+      originalContributor: { originalSourceId: creditedOriginal.sourceId, originalCommitSha, acceptedCommitSha: commit.sha, boundPaths, bindingDigest },
+    }
+    return proof
+  }
+  throw refused("October replacement lacks an exact first-accepted original commit binding")
+}

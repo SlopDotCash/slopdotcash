@@ -1,8 +1,75 @@
-// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
-export { type RetainedBinder, type RetainedOrdinary, type RetainedRequest, proveRetained } from "./apply/prove.vibe"
-export { type GroupedBinding } from "./apply/grouped.vibe"
-export { type CorrectionCommit, type CorrectionSource, type RetainedCopy } from "./apply/manifest.vibe"
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+export {
+  type OctoberBinding,
+  type OctoberFollowup,
+  type OctoberFollowupRequest,
+  type OctoberOriginal,
+  type OctoberOriginalRequest,
+  type OctoberParts,
+  type OctoberPartsProof,
+  type OctoberPartsRequest,
+  type OctoberUnit,
+  type OctoberUnitProof,
+  type OctoberUnitRequest,
+  type OrdinaryProof,
+  type RetainedBinder,
+  type RetainedOrdinary,
+  type RetainedRequest,
+  proveCandidates,
+  proveRetained,
+} from "./apply/prove.vibe"
+export { type GroupedBinding, firstAcceptedCorrectionClaims, restoreCanonicalMergeCounts } from "./apply/grouped.vibe"
+export {
+  type OctoberAuthors,
+  type SyncMerges,
+  type SyncMergesRequest,
+  isMergedOriginalContributor,
+  matchedAccepted,
+  mirroredOctoberSources,
+  verifiedHuman,
+} from "./apply/october.vibe"
+export { isOriginalContributorRepair, referencesOriginalContributorSource } from "./apply/original.vibe"
+export {
+  type CompleteProof,
+  type CorrectionCommit,
+  type CorrectionFile,
+  type CorrectionSource,
+  type RetainedCopy,
+  AcceptingPull,
+  Acknowledgement,
+  AcknowledgementUser,
+  BodyEdit,
+  BodyReference,
+  CopiedClaim,
+  CorrectionActor,
+  CorrectionClaim,
+  CreatedPull,
+  EditActor,
+  ExactAcceptance,
+  FollowupCommit,
+  FollowupReference,
+  FollowupTarget,
+  GitHubActor,
+  GitHubComment,
+  GitHubPull,
+  GitHubReview,
+  HeadCommit,
+  HistoricalBodyEdit,
+  OriginalAcknowledgement,
+  OriginalContributorBinding,
+  OriginalContributorFollowup,
+  OriginalContributorRepair,
+  PullBase,
+  PullHead,
+  RepairReference,
+  ResolutionAcceptance,
+  ResolvedHead,
+  ReviewedOriginal,
+  SourceDigests,
+} from "./apply/manifest.vibe"
+export { type ReplacementLine } from "./apply/derive.vibe"
 export { applyCorrections } from "./apply/command.vibe"
-export { type CollectedEvidence } from "./collect/collect.vibe"
-export { retainedSourceChanged } from "./collect/retained.vibe"
+export { type CollectedEvidence, type SourceRead } from "./collect/collect.vibe"
+export { type CorrectionCandidate } from "./collect/inventory.vibe"
+export { githubLinkDestinations, retainedSourceChanged, sameRepositoryCommitHints, withoutClosedCodeFences, withoutClosedCodeSpans } from "./collect/retained.vibe"
 export { corrections } from "../programs/corrections.vibe"

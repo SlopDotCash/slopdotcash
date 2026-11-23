@@ -13,6 +13,7 @@ import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/colle
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { assembleSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
 
 const codeDigest = "a".repeat(64)
@@ -147,7 +148,7 @@ effect function collected(world: Seeded, proofs: ProofReader, memo: Implementati
 it.live('An identical earlier single-commit acceptance holds the later one, and a missing native object leaves it unresolved (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
   const world = try Effect.try(() => seeded())
   const squashes = try Effect.try(() => squashed(world))
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
   try scoped(effect {
     const complete = try bareRepository(world, squashes.commits)
     const { collection, implementation } = try collected(world, try localProofs(complete, { count: 0 }), undefined)
@@ -182,7 +183,7 @@ it.live('An identical earlier single-commit acceptance holds the later one, and 
 it.live('A written implementation memo is reused on the next pass, and a stale or tampered one is refused and read live (spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => effect {
   const world = try Effect.try(() => seeded())
   const squashes = try Effect.try(() => squashed(world))
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit, scoringInputs(world)) {
   try scoped(effect {
     const fs = try FileSystem.FileSystem
     const repositoryDirectory = try bareRepository(world, squashes.commits)

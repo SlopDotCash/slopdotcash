@@ -7,7 +7,8 @@
     "./client": "./src/client/index.vibe",
     "./collect": "./src/collect/run/index.vibe",
     "./corrections": "./src/corrections/index.vibe",
-    "./live": "./src/live.vibe"
+    "./live": "./src/live.vibe",
+    "./testing": "./test/support/published.ts"
   },
   "scripts": {
     "build": "vite build",

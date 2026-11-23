@@ -1,0 +1,161 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { Response as WebResponse } from "miniflare"
+import type { Fetcher } from "@repo/platform/bindings"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Handler, type Outbound, internet } from "@repo/platform/testing/internet"
+import { type Seeded, acceptedReviewHistoryJson, fetcherOf, registryAnswer, registryOrigin, repositoryRegistry, seeded, start } from "@repo/points/testing"
+import { historyOrigin, penaltiesPath, penaltiesVersion, penaltyHistoryVersion, valueHistoryPath, workUnitHistoryPath } from "@repo/ports/slopbot"
+import { enterDirectory } from "./workingDirectory.ts"
+
+export interface Feed {
+  readonly asked: string[]
+  readonly failing: Map<string, number>
+  inFlight: number
+  peak: number
+}
+
+export interface CollectWorld {
+  readonly github: Seeded
+  readonly feed: Feed
+  readonly handler: Handler
+  readonly requests: ReadonlyArray<Outbound>
+  readonly unexpected: ReadonlyArray<Outbound>
+  readonly registryPath: string
+  readonly snapshotPath: string
+  readonly outputDirectory: string
+  readonly leaderboardPath: string
+  readonly cutoffAt: string
+  readonly env: Readonly<Record<string, string>>
+}
+
+const siteHost = new URL(registryOrigin).host
+const feedHost = new URL(historyOrigin).host
+const contractHeaders = { "x-slop-project-api-contract": "1" }
+const pendingReceiptTerms = {
+  revision: "1",
+  receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+  repositoryLicense: { fileSha256: null },
+  inbound: { fileSha256: null },
+  externalPrize: null,
+}
+
+export function feedOf(): Feed {
+  return { asked: [], failing: new Map(), inFlight: 0, peak: 0 }
+}
+
+function pageKey(url: URL) {
+  return `${url.pathname === workUnitHistoryPath ? "joint" : "single"}:${url.searchParams.get("pull")}`
+}
+
+export function emptyHistory(feed: Feed): Handler {
+  return async (request) => {
+    const url = new URL(request.url)
+    const key = pageKey(url)
+    feed.asked.push(key)
+    feed.inFlight += 1
+    feed.peak = Math.max(feed.peak, feed.inFlight)
+    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve()
+    feed.inFlight -= 1
+    const failures = feed.failing.get(key) ?? 0
+    if (failures > 0) {
+      feed.failing.set(key, failures - 1)
+      return new WebResponse("missing", { status: 404 })
+    }
+    const joint = url.pathname === workUnitHistoryPath
+    return WebResponse.json({
+      schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
+      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
+      repository: url.searchParams.get("repository"),
+      pullRequestNumber: Number(url.searchParams.get("pull")),
+      records: [],
+      nextAfter: null,
+      ...(joint ? { throughSequence: 0, totalRecords: 0 } : {}),
+    })
+  }
+}
+
+function slopbotFeeds(feed: Feed): Handler {
+  const history = emptyHistory(feed)
+  return (request) => {
+    const url = new URL(request.url)
+    if (url.pathname === valueHistoryPath || url.pathname === workUnitHistoryPath) return history(request)
+    if (url.pathname !== penaltiesPath) return new WebResponse("not found", { status: 404 })
+    const version = url.searchParams.get("history") === "1" ? penaltyHistoryVersion : penaltiesVersion
+    return WebResponse.json({ schemaVersion: version, project: url.searchParams.get("project"), records: [], nextAfter: null })
+  }
+}
+
+function site(github: Seeded): Handler {
+  return (request) => {
+    const { pathname } = new URL(request.url)
+    if (pathname === "/api/v1/projects") return WebResponse.json(registryAnswer(github), { headers: contractHeaders })
+    if (pathname === "/api/v1/project-account-bans") return WebResponse.json({ schemaVersion: "slop-account-bans:v1", bans: [] })
+    if (pathname === "/api/v1/points/journal") return WebResponse.json({ error: "not_found" }, { status: 404 })
+    return new WebResponse("not found", { status: 404 })
+  }
+}
+
+function bridged(fetcher: Fetcher): Handler {
+  return async (request) => {
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer()
+    const answer = await fetcher.fetch(new Request(request.url, { method: request.method, headers: Object.fromEntries(request.headers), body }))
+    const bytes = [101, 204, 205, 304].includes(answer.status) ? null : await answer.arrayBuffer()
+    return new WebResponse(bytes, { status: answer.status, headers: Object.fromEntries(answer.headers) })
+  }
+}
+
+effect function registrySnapshot(github: Seeded) {
+  const projects = registryAnswer(github).projects.map((project) => ({
+    ...project,
+    skill: { id: `${project.id}-contributor`, sourcePath: `skills/${project.id}/SKILL.md`, publishAtRoot: false },
+    contribution: { summary: `Improve ${project.name}` },
+    terms: pendingReceiptTerms,
+  }))
+  const revisions: Array<{ projectId: string; revision: number; manifestSha256: string; manifest: (typeof projects)[number] }> = []
+  for (const project of projects) revisions.push({ projectId: project.id, revision: 1, manifestSha256: try sha256Hex(JSON.stringify(project)), manifest: project })
+  return { schemaVersion: 1, syncedAt: new Date(start).toISOString(), projects, revisions }
+}
+
+export effect function collectWorld() {
+  const fs = try FileSystem.FileSystem
+  const github = try Effect.try(() => seeded())
+  const feed = feedOf()
+  const net = internet({ github: bridged(fetcherOf(github)), hosts: { [siteHost]: site(github), [feedHost]: slopbotFeeds(feed) } })
+  const outputDirectory = try fs.makeTempDirectory()
+  try fs.makeDirectory(`${outputDirectory}/data`, { recursive: true })
+  try fs.writeFileString(`${outputDirectory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
+  const registryPath = `${outputDirectory}/registry.json`
+  try fs.writeFileString(registryPath, JSON.stringify(repositoryRegistry(github)))
+  const snapshotPath = `${outputDirectory}/registry-snapshot.json`
+  try fs.writeFileString(snapshotPath, `${JSON.stringify(try registrySnapshot(github))}\n`)
+  const env = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_EVENT_NAME: "push",
+    GITHUB_TOKEN: github.token,
+    VITE_SLOP_ENVIRONMENT: "production",
+    SLOP_POINTS_BOOTSTRAP: "1",
+    SLOP_REGISTRY_SNAPSHOT: snapshotPath,
+    SLOP_VALUE_FEED_CONCURRENCY: "2",
+  }
+  return {
+    github,
+    feed,
+    handler: net.handler,
+    requests: net.requests,
+    unexpected: net.unexpected,
+    registryPath,
+    snapshotPath,
+    outputDirectory,
+    leaderboardPath: `${outputDirectory}/public/data/leaderboard.json`,
+    cutoffAt: new Date(start).toISOString(),
+    env,
+  } satisfies CollectWorld
+}
+
+export effect function inDirectory<A, E, R>(directory: string, run: A!E!R) {
+  return try scoped(effect {
+    try acquireRelease(orDie(Effect.try(() => enterDirectory(directory))), (before) => orDie(Effect.try(() => enterDirectory(before))))
+    return try run
+  })
+}

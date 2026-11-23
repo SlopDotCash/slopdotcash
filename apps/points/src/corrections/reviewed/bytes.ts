@@ -71,3 +71,18 @@ export function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 export function hexBytes(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("hex");
 }
+
+export function previewUploadForm(worker: string, bucket: string, auth: string): FormData {
+  const form = new FormData();
+  form.set("metadata", JSON.stringify({
+    main_module: "packet.js",
+    bindings: [
+      { name: "PACKET_STORE", type: "r2_bucket", bucket_name: bucket },
+      { name: "PACKET_AUTH", type: "secret_text", text: auth },
+    ],
+    compatibility_date: "2026-10-01",
+  }));
+  form.set("packet.js", new File([worker], "packet.js", { type: "application/javascript+module" }));
+  form.set("wrangler-session-config", JSON.stringify({ workers_dev: true, minimal_mode: true }));
+  return form;
+}

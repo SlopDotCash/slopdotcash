@@ -3,6 +3,7 @@ import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { Refused, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type Json, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { type ProgramFundsView, SecurityProgramFunds } from "@repo/ports/security"
 import { type CaseContext, type DirectPaymentAction, type DirectPaymentView, DirectPayments, type DirectRefusal, DirectRefused, DirectRoutes, type PaymentViewContext, SolanaPayerRefused } from "@repo/ports/settlement"
@@ -11,6 +12,7 @@ import { awardClearancesLive } from "../src/bounty/store.vibe"
 import { caseActionHandlersLive } from "../src/cases/handlers.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
 import { acted, opened } from "../src/cases/routes.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
@@ -92,10 +94,10 @@ function shellOf(payments: Payments.Shape) {
     Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: vault(), guards: [] }) } satisfies SecurityProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(undefined) } satisfies DirectRoutes.Shape),
   )
-  const base = Layer.mergeAll(d1(payments.world.db), webCrypto, reportBucket(payments.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: "18633265", PROJECT_MODERATOR_GITHUB_IDS: "18633265" }), ports, receiptNotices)
+  const base = Layer.mergeAll(d1(payments.world.db), webCrypto, reportBucket(payments.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: "18633265", PROJECT_MODERATOR_GITHUB_IDS: "18633265" }), ports, receiptNotices, reportDepositSettings("off"))
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
   const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, settlementOf(payments.script)), base)
-  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive), programs)
+  return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive, SubmissionFeeRatesLive, ProjectParticipationLive), programs)
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -113,12 +115,12 @@ effect function submit(world: World, as: string, summary: string) {
   return (answer.body as { readonly submission: { readonly caseId: string } }).submission.caseId
 }
 
-effect function act(as: string, caseId: string, action: string, fields: Readonly<Record<string, unknown>> = {}) {
+effect function act(as: string, caseId: string, action: string, fields: Readonly<Record<string, unknown>> = {}, explained = false) {
   keys += 1
   const record = try caseRecord(caseId)
   const body = { action, expectedRevision: record?.row.revision ?? 0, idempotencyKey: `payment-action-key-${keys}`.padEnd(20, "0"), ...fields }
   return Effect.map(acted(actor(as), caseId, body), () => "done" as const) catch effect (error) => {
-    if (error instanceof Refused) return [error.status, error.code] as const
+    if (error instanceof Refused) return explained ? [error.status, error.code, error.message] as const : [error.status, error.code] as const
     throw error
   }
 }
@@ -162,7 +164,12 @@ effect function paymentJourney(payments: Payments.Shape) {
   const refusal = try act(maintainer, caseId, "prepare-payment", { network: "base-mainnet", confirmation: true })
   script.outcome = { kind: "payer", message: "The payer wallet cannot sign this request" }
   const payer = try act(maintainer, caseId, "prepare-payment", { network: "base-mainnet", confirmation: true })
-  script.outcome = { kind: "commit", answer: { generation: 1, targetId: "intent-1", state: "signature-required" } }
+  const unexpected = { confirmation: true, extra: 1 }
+  const payerExtra = try act(maintainer, caseId, "recover-payment", unexpected, true)
+  const reporterExtra = try act(reporter, caseId, "recover-payment", unexpected, true)
+  const outsiderExtra = try act(other, caseId, "recover-payment", unexpected, true)
+  const recoveryDetail = { generation: 1, targetId: "intent-1", state: "signature-required" }
+  script.outcome = { kind: "commit", answer: recoveryDetail }
   const recovery = try act(maintainer, caseId, "recover-payment", { confirmation: true })
   const recovered = try events(world, caseId, "recover-payment")
   script.view = { ...openRail, paymentRail: "escrow", settlementState: "needs-wallet", settlement: { state: "needs-wallet" }, actions: [] }
@@ -173,6 +180,7 @@ effect function paymentJourney(payments: Payments.Shape) {
     asked: script.asked.map((entry) => ({ action: entry.action, revisionFrom: entry.context.revision - before, reporter: entry.context.reporterGithubId, actor: entry.context.actorGithubId })),
     consented: consented.map((event) => ({ revision: Number(event.case_revision) - before, role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
     moved, prepared, refusal, payer,
+    unexpectedFields: [payerExtra, reporterExtra, outsiderExtra],
     recovery,
     recovered: recovered.map((event) => ({ role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
     settling,
@@ -195,8 +203,13 @@ effect function paymentJourney(payments: Payments.Shape) {
     prepared: [],
     refusal: [409, "payment_consent_required"],
     payer: [409, "payer_refused"],
+    unexpectedFields: [
+      [400, "invalid_request", "Request body has unexpected fields"],
+      [400, "invalid_request", "Request body has unexpected fields"],
+      [404, "not_found", "Case not found"],
+    ],
     recovery: "done",
-    recovered: [{ role: "security-maintainer", detail: { generation: 1, targetId: "intent-1", state: "signature-required" } }],
+    recovered: [{ role: "security-maintainer", detail: recoveryDetail }],
     settling: { payments: [], rail: "escrow", state: "needs-wallet", settlement: { state: "needs-wallet" }, networks: ["base-mainnet"] },
   })
 }

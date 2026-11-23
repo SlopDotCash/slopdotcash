@@ -10,6 +10,7 @@ const onConfirmUnsent = fn();
 const owner = "0x5e1f0000000000000000000000000000000000b0";
 const summary = { network: "base-mainnet", owner, asset: "USDC", capDisplay: "1,000 USDC", automatic: true };
 const onDeposit = fn();
+const onClearProvisional = fn();
 const included = "The vault is on Base but its creation is not finalized yet. You can fund it below now. A deposit counts once Base finalizes it.";
 const provisional: ProvisionalDepositProps = {
   deployment: { network: "base-mainnet", vault: "0x5e1f0000000000000000000000000000000000aa", owner, asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", deploymentTransaction: walletHash },
@@ -66,6 +67,7 @@ export const meta: ComponentMeta<VaultSetupProps> = {
     Unavailable: { networks: [] },
     Unreadable: { unreadable: true },
     ProvisionalDeposit: { summary, pending: { hash: walletHash, unclear: false }, notice: included, funding: <ProvisionalDeposit {...provisional} /> },
+    ProvisionalUnsent: { summary, pending: { hash: walletHash, unclear: false }, funding: <ProvisionalDeposit {...provisional} review={undefined} pending={{ action: "Deposit", hash: "", sent: false }} onConfirmUnsent={onClearProvisional} /> },
     ProvisionalApprovalPending: { summary, pending: { hash: walletHash, unclear: false }, funding: <ProvisionalDeposit {...provisional} review={undefined} pending={{ action: "Token approval", hash: walletHash, sent: true }} /> },
   },
   play: {
@@ -91,6 +93,13 @@ export const meta: ComponentMeta<VaultSetupProps> = {
       onDeposit.mockClear();
       await userEvent.click(screen.getByRole("button", { name: "Approve exact token amount in wallet" }));
       await expect([onDeposit.mock.calls.length, screen.queryByRole("button", { name: "Confirm deposit in wallet" })]).toEqual([1, null]);
+    },
+    // spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"
+    ProvisionalUnsent: async () => {
+      onClearProvisional.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Nothing was sent?" }));
+      await userEvent.click(screen.getByRole("button", { name: "Not sent — clear" }));
+      await expect(onClearProvisional).toHaveBeenCalledTimes(1);
     },
     // spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
     Unclear: async () => {

@@ -202,6 +202,33 @@ pure def inspectQueue(w: Webhook, requestId: int, registration: RS::RegistryObse
   else updateRequest({ ...r, scope: scope, completion: Queued, phase: if (job == HumanReopen) PersistReopen else SendQueue }, w)
 ```
 
+### An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on
+
+While `SLOPBOT_EVIDENCE_CLOSURE_ENABLED` is exactly `"true"`, the review job
+of a `pull_request` delivery with action `opened`, whose body is a string
+carrying the Slop participation footer, is sent to the queue with a
+60-second delay, so that its participation receipt can land before the
+review runs. Every other job is sent with no delay: an edited or reopened
+pull request, a body that is absent or has no footer, an appeal, an appeal
+command, a human reopen, and any job while the switch has any other value.
+The adapter decides the switch, the event and action, and the footer from
+the authenticated payload; the delay changes only when the job is first
+delivered, never its scope, source or retry policy.
+
+```quint
+pure val receiptDelaySeconds = 60
+pure def queueDelaySeconds(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool, carriesFooter: bool): int =
+  if (evidenceSwitch and job == Review and openedPullRequest and carriesFooter) receiptDelaySeconds else 0
+pure def lawOnlyAnOpenedFooterReviewWaits(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool,
+  carriesFooter: bool): bool =
+  (queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) > 0)
+    iff (evidenceSwitch and job == Review and openedPullRequest and carriesFooter)
+pure def lawDelayIsZeroOrOneMinute(evidenceSwitch: bool, job: JobKind, openedPullRequest: bool,
+  carriesFooter: bool): bool =
+  queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) == 0
+    or queueDelaySeconds(evidenceSwitch, job, openedPullRequest, carriesFooter) == receiptDelaySeconds
+```
+
 ## Story: Recover an uncertain queue submission without changing source authority
 
 ### An accepted reopen pins exact source before sending

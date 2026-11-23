@@ -1,6 +1,6 @@
 # Read-only historical assessment audit and replay
 
-The reviewed historical workflow of `development` (#3170, #3201, #3240) has
+The reviewed historical workflow of `development` (#3170, #3201, #3240, #3254) has
 two read-only operations beside `publish-reviewed`: `audit-assessments` and
 `replay-assessments` (`scripts/run-reviewed-historical-points.ts`,
 `historical-assessment-catalog.ts`, `historical-assessment-reconciliation.ts`,
@@ -94,6 +94,41 @@ pure val applyRequestedValues = Set(false, true)
 pure val jointCountValues = Set(0, 1)
 pure val legacyCountValues = Set(0, 1)
 pure val byValues = Set(TrustedMainDispatch, OtherDispatch)
+```
+
+### An empty legacy closure is accounted for without a value replay only from exact unmerged-closure evidence
+
+An active legacy value record for a closed-unmerged pull request in the
+audit window that the merged census does not contain is accounted for
+without a value replay award only when the original record (no
+`supersedes`) has no implementation or review credit (tier null, no
+reviews, assessed no earlier than the closure), the Points checkpoint the
+audit is bound to has no positive award for the source (neither its node id
+nor its pull request URL), and both GitHub interfaces verify the exact
+unmerged closure: GraphQL reads the same closed, unmerged pull request, head
+and public repository with no formal reviews, and REST reads the same
+closure, head, base policy commit and repository, with the archived
+test-merge SHA compared exactly as recorded (it never establishes
+acceptance). The record then stays bound to the audit receipt
+(`emptyLegacyClosures`), outside the merged census, the relevant records
+and the approved closed-review sources. Any condition that does not hold
+leaves the record missing from the merged audit, so the cut is incomplete.
+A replay that would change Points, payment basis or retained provenance by
+leaving that source out refuses (#3254).
+
+```quint
+pure def emptyLegacyClosureAccounted(exactClosure: bool, emptyAssessment: bool, noFormalReviews: bool, noPriorAward: bool): bool =
+  exactClosure and emptyAssessment and noFormalReviews and noPriorAward
+pure def canObserveEmptyLegacyClosure(a: AssessmentAudit, exactClosure: bool, emptyAssessment: bool, noFormalReviews: bool, noPriorAward: bool): bool =
+  canObserve(a, false, emptyLegacyClosureAccounted(exactClosure, emptyAssessment, noFormalReviews, noPriorAward), false)
+pure def observeEmptyLegacyClosure(a: AssessmentAudit, exactClosure: bool, emptyAssessment: bool, noFormalReviews: bool, noPriorAward: bool): AssessmentAudit =
+  observe(a, false, emptyLegacyClosureAccounted(exactClosure, emptyAssessment, noFormalReviews, noPriorAward), false)
+pure def lawFormalReviewOrPriorAwardKeepsLegacyClosureOpen(exactClosure: bool, emptyAssessment: bool, noFormalReviews: bool, noPriorAward: bool): bool =
+  (not(noFormalReviews) or not(noPriorAward)) implies not(emptyLegacyClosureAccounted(exactClosure, emptyAssessment, noFormalReviews, noPriorAward))
+pure val exactClosureValues = Set(true, false)
+pure val emptyAssessmentValues = Set(true, false)
+pure val noFormalReviewsValues = Set(true, false)
+pure val noPriorAwardValues = Set(true, false)
 ```
 
 ### A closed review and a removed accepted merge bind only from exact public evidence

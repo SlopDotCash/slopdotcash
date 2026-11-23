@@ -35,6 +35,7 @@ import {
   followVault,
   unreadableSaved,
   clearUnreadableSaved,
+  tabHidden,
 } from "./funding.vibe";
 import { type Settled, run, useAction, useSettled, useTabHidden, useWalletOffers } from "./hooks.ts";
 import { PendingCheck } from "./PendingCheck.tsx";
@@ -127,7 +128,7 @@ export function NetworkName({ network }: { network: string }) {
 export function VaultActions({ project, deployment, period, account, loginHref, payoutPolicy = "ordinary", canDeposit = true, pool, pledgeSupport = false, depositOnly = false, onWallet, onFinalized }: VaultActionsProps) {
   const runtime = vaultRuntime(project, deployment, period, payoutPolicy);
   useFollowed(runtime, `follow:${account}`, () => followVault(account));
-  useTabHidden(runtime);
+  useTabHidden(runtime, tabHidden);
   const vault = useVault(runtime);
   const batch = useBatch(runtime);
   const offers = useWalletOffers(runtime);

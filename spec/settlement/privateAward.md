@@ -318,6 +318,19 @@ change: the kind of change and the case, so two changes never share a key.
 The keys of report receipts and owner routing (codes 1 to 3, [report
 notices](../security/reportNotices.md)) never meet these (codes 4 to 7).
 
+When the payments run holds a private vault payment (the wallet authority is
+missing, the destination changed, or a different transaction is already
+recorded for the attempt), it saves one more private case notice, `held`, for
+the reporter and every current technical and financial approver: a
+SecurityCase notice on the security outbox with the case template, keyed by the
+payment obligation (`security-payment:<obligation>:held`). It carries no
+report text and no amount, and it takes the place of the ordinary payout-held
+notices, so no public payout template ever names a private obligation. It is
+keyed by the obligation, not by the case codes 4 to 7 the model below counts,
+so `AwardNotice` and `noticeCode` do not name it; its kind and template are
+the ones `alwaysAwardNoticesArePrivateCaseNotices` requires of every award
+notice.
+
 ```quint
 type AwardNotice = AwardCommitted | ResearcherLegRecorded | FeeLegRecorded | AwardPaid
 pure def noticeCode(notice: AwardNotice): int =

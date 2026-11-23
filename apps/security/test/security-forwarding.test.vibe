@@ -299,7 +299,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   })
   it.effect('A direct report verifies into a GitHub-verified case and a failed verification keeps the draft (spec/security/reportNotices.md, "A legacy direct report is received only from a checked GitHub receipt"; spec/security/forwarding.md, "A separate exact advisory read links one verified receipt to the saved case"; spec/security/forwarding.md, "Each request uses its own exact row revision and a reporter-only v1 grant")', () => effect {
     const forwarding = try Forwarding
-    const filed = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: login, summary: "Admin panel accepts a forged session", description: "A forged session cookie opens the admin panel without a password." })))
+    const filed = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: login, summary: "Admin panel accepts a forged session", description: "A forged session cookie opens the admin panel without a password.", cvssVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" })))
     const foreign = try orDie(Effect.try(() => forwarding.fake.world.addAdvisory("slop-test/intake", { author: "someone-else", summary: "Upload endpoint stores files outside the bucket", description: "A crafted file name writes outside the upload bucket." })))
     const start = effect (key: string, advisory: string) => {
       const created = try call(forwarding, "/api/v1/security-submissions", [], { projectId: project, idempotencyKey: key, origin: "direct", advisory })
@@ -314,6 +314,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const again = try call(forwarding, verify(direct.id), [grant], { expectedRevision: 2 })
     try promise(() => Promise.allSettled(forwarding.pending.splice(0)))
     const linked = try promise(() => rows(forwarding.world, "SELECT c.submission_state, c.received_at_source, c.advisory_ghsa = s.advisory_ghsa AS same_advisory, (SELECT COUNT(*) FROM notifications n WHERE n.subject = c.id AND n.recipient_github_id = s.reporter_github_id) AS receipts FROM security_submissions s JOIN security_cases c ON c.id = s.case_id WHERE s.id=?", direct.id))
+    const received = try promise(() => rows(forwarding.world, "SELECT e.detail FROM security_case_events e JOIN security_submissions s ON s.case_id = e.case_id WHERE s.id=? AND e.kind='submit-direct'", direct.id))
+    const receivedDetail = received.map((event) => JSON.parse(String(event.detail)) as Readonly<Record<string, unknown>>)
 
     const unread = try start("direct-journey-0002", filed.ghsaId)
     const unreadGrant = try consented(forwarding, unread.id)
@@ -328,6 +330,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       withSlopOrigin: refusal(withSlopOrigin),
       stale: refusal(stale),
       verified: brief(verified),
+      analysis: receivedDetail.map((detail) => [detail.autoAnalysis, Object.hasOwn(detail, "duplicateAdvisories")]),
+      reporterSeesAnalysis: JSON.stringify(verified.body).includes("autoAnalysis"),
       again: refusal(again),
       linked,
       inconclusive: brief(inconclusive),
@@ -338,6 +342,8 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       withSlopOrigin: [400, "report_required"],
       stale: [409, "stale_revision"],
       verified: [200, "receipt-verified", 2],
+      analysis: [[{ severityHint: "critical", lossHint: "possible", priority: "urgent", analyzer: "deterministic-v1" }, false]],
+      reporterSeesAnalysis: false,
       again: [409, "action_not_allowed"],
       linked: [{ submission_state: "verified", received_at_source: "github-verified", same_advisory: 1, receipts: 1 }],
       inconclusive: [202, "draft", 2],

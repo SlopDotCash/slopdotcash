@@ -3,7 +3,8 @@ import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type EvidenceCategory, type VerifiedArtifact, assessEvidence } from "../../kernels/scoring/evidence.ts"
 import { type Actor, isBot, sameActor } from "../../score/facts.vibe"
-import type { PullRequestRecord } from "../merged/hydrate.vibe"
+import type { PullRequestRecord, ReviewRecord } from "../merged/hydrate.vibe"
+import { type MergedOutcome, dedupedById } from "../merged/wire.vibe"
 import { chunkCrc } from "./crc.ts"
 import { type EvidenceRow, type TrustedArtifact, artifactCanBeEvidenceFile, evidenceFileExtensions, extractEvidenceRows, hasTrajectorySemantics, imageExtensions, ocrEvidence, surfaceOcrEvidenceRow, trustedArtifacts, videoExtensions } from "./policy.vibe"
 
@@ -453,6 +454,8 @@ export interface PullTextSource {
   readonly createdAt: string
   readonly updatedAt: string
   readonly author: Actor | null
+  readonly artifactUrl?: string
+  readonly artifactHeadSha?: string
 }
 
 export interface VerifiedEvidence extends VerifiedArtifact {
@@ -486,18 +489,15 @@ interface UnavailableEvidenceArtifact {
   readonly detail: string | null
 }
 
-export function pullRequestBodySource(pullRequest: PullRequestRecord): PullTextSource {
-  return { id: `${pullRequest.id}:body`, artifactId: pullRequest.id, kind: "body", body: pullRequest.body, url: pullRequest.url, createdAt: pullRequest.createdAt, updatedAt: pullRequest.lastEditedAt ?? pullRequest.createdAt, author: pullRequest.author }
+export function pullRequestBodySource(pullRequest: ReviewRecord | MergedOutcome): PullTextSource {
+  const updatedAt = "lastEditedAt" in pullRequest ? (pullRequest.lastEditedAt ?? pullRequest.createdAt) : pullRequest.updatedAt
+  return { id: `${pullRequest.id}:body`, artifactId: pullRequest.id, kind: "body", body: pullRequest.body, url: pullRequest.url, createdAt: pullRequest.createdAt, updatedAt, author: pullRequest.author, artifactUrl: pullRequest.url }
 }
 
-export function pullRequestTextSources(pullRequest: PullRequestRecord): ReadonlyArray<PullTextSource> {
+export function pullRequestTextSources(pullRequest: ReviewRecord): ReadonlyArray<PullTextSource> {
   const reviews = pullRequest.reviews.map((review) => ({ id: review.id, artifactId: pullRequest.id, kind: "review", body: review.body, url: review.url, createdAt: review.submittedAt ?? pullRequest.updatedAt, updatedAt: review.submittedAt ?? pullRequest.updatedAt, author: review.author }) satisfies PullTextSource)
-  const seen = new Set<string>()
-  return [pullRequestBodySource(pullRequest), ...pullRequest.comments, ...reviews].filter((source) => {
-    if (seen.has(source.id)) return false
-    seen.add(source.id)
-    return true
-  })
+  const sources: ReadonlyArray<PullTextSource> = [pullRequestBodySource(pullRequest), ...pullRequest.comments, ...reviews]
+  return dedupedById(sources).map((source) => ({ ...source, artifactUrl: pullRequest.url, artifactHeadSha: pullRequest.headRefOid.toLowerCase() }))
 }
 
 export function pullRequestEvidenceStatus(pullRequest: PullRequestRecord, verified: ReadonlyArray<VerifiedEvidence>) {

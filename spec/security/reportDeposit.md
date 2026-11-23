@@ -61,18 +61,20 @@ import money as M from "../settlement/money"
 import terms as T from "./terms"
 import screening as S from "./screening"
 import cases as C from "./cases"
+import routineDecisions as RD from "./routineDecisions"
 type DepositMode = DepositOff | DepositDryRun | DepositLive
 type DepositRow = NoRow | Asked | Recorded
 type DepositOutcome = NoOutcome | RefundDue | KeptDue | Refunded | Kept
 type DepositReason = NoReason | Responded | Silent | TurnedOff | SpamClose | DuplicateClose | OutOfScopeClose
 type Deposit = { row: DepositRow, paid: bool, paidAt: int, outcome: DepositOutcome, reason: DepositReason }
 type ReportDeposit = { mode: DepositMode, projectOn: bool, nowMs: int, privateCase: C::PrivateCase, screening: S::Screening,
-  deposit: Deposit, closedAt: int, requestedAtVersion: int }
+  deposit: Deposit, closedAt: int, requestedAtVersion: int, savedAt: int }
 pure val depositService = -3
 pure val feeRecorder = -4
 pure val noDeposit: Deposit = { row: NoRow, paid: false, paidAt: 0, outcome: NoOutcome, reason: NoReason }
 pure val initial: ReportDeposit = { mode: DepositLive, projectOn: true, nowMs: T::standardTerms.receivedAt,
-  privateCase: { ...C::initial, authority: C::staff }, screening: S::initial, deposit: noDeposit, closedAt: 0, requestedAtVersion: 0 }
+  privateCase: { ...C::initial, authority: C::staff }, screening: S::initial, deposit: noDeposit, closedAt: 0, requestedAtVersion: 0,
+  savedAt: T::standardTerms.receivedAt }
 pure def held(d: Deposit): bool = d.row == Asked and not(d.paid) and d.outcome == NoOutcome
 pure def synced(d: Deposit, r: ReportDeposit): ReportDeposit =
   { ...r, deposit: d, privateCase: C::withDepositHeld(held(d), r.privateCase), screening: S::withDepositHeld(held(d), r.screening) }
@@ -82,7 +84,7 @@ pure def canReceive(r: ReportDeposit, by: int, exempt: bool, rated: bool): bool 
 pure def receive(r: ReportDeposit, by: int, exempt: bool, rated: bool): ReportDeposit =
   val row = if (not(asks(r, exempt, rated))) NoRow else if (r.mode == DepositLive) Asked else Recorded
   synced({ ...noDeposit, row: row },
-    { ...r, privateCase: C::receive(r.privateCase, C::SlopReceived, T::standardTerms, C::NewReceipt, M::zero, 1) })
+    { ...r, privateCase: C::receive(r.privateCase, C::SlopReceived, T::standardTerms, C::NewReceipt, M::zero, 1), savedAt: r.nowMs })
 pure def canSetMode(r: ReportDeposit, by: int, mode: DepositMode): bool = by == depositService and mode != r.mode
 pure def setMode(r: ReportDeposit, by: int, mode: DepositMode): ReportDeposit = { ...r, mode: mode }
 pure def canObserveProjectSetting(r: ReportDeposit, by: int, on: bool): bool = by == depositService and on != r.projectOn
@@ -117,7 +119,10 @@ to it until the deposit is recorded."). The reporter reads it, sees
 "Deposit needed" with the pay page `/fee/report/<case>`, and may add a
 version. The fee side marks a deposit paid, and may clear the payment again
 while no outcome is set (a reorganised block); the report then waits again.
-A recorded row never holds.
+A recorded row never holds. The routine pass decides only a report it can
+read: settled screening and a routine-readable case, as in
+[routine decisions](./routineDecisions.md), where screening still queued or
+running settles 15 minutes after the last write to the case.
 
 ```quint
 pure def canPay(r: ReportDeposit, by: int): bool = by == feeRecorder and r.deposit.row == Asked and not(r.deposit.paid)
@@ -142,25 +147,29 @@ pure def canSaveVersion(r: ReportDeposit, by: int, digest: str): bool =
   S::canReplace(r.screening, r.screening.revision, digest, revisionEvidence(r, by))
 pure def saveVersion(r: ReportDeposit, by: int, digest: str): ReportDeposit =
   { ...r, screening: S::replace(r.screening, r.screening.revision, digest, revisionEvidence(r, by)),
-    privateCase: C::reviseReport(r.privateCase, by, r.screening.version + 1) }
+    privateCase: C::reviseReport(r.privateCase, by, r.screening.version + 1), savedAt: r.nowMs }
 pure def canRequestInformation(r: ReportDeposit, by: int): bool = C::canRequestInformation(r.privateCase, by, epoch(r))
 pure def requestInformation(r: ReportDeposit, by: int): ReportDeposit =
-  { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)), requestedAtVersion: r.privateCase.reportVersion }
+  { ...r, privateCase: C::requestInformation(r.privateCase, by, epoch(r)), requestedAtVersion: r.privateCase.reportVersion,
+    savedAt: r.nowMs }
 pure def canDecide(r: ReportDeposit, by: int, decision: C::Decision): bool =
   C::canDecide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision)
 pure def decide(r: ReportDeposit, by: int, decision: C::Decision): ReportDeposit =
-  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision), closedAt: r.nowMs }
+  { ...r, privateCase: C::decide(r.privateCase, by, epoch(r), r.privateCase.reportVersion, decision), closedAt: r.nowMs,
+    savedAt: r.nowMs }
 pure def canRoutineDecide(r: ReportDeposit, by: int, ruling: C::RoutineOutcome): bool = by == C::routineService
-  and C::routineOutcomeAllowed(r.privateCase, ruling, 7, r.nowMs)
+  and RD::screeningSettledFor(r.screening, r.savedAt, r.nowMs) and C::routineOutcomeAllowed(r.privateCase, ruling, 7, r.nowMs)
 pure def routineDecide(r: ReportDeposit, by: int, ruling: C::RoutineOutcome): ReportDeposit =
   { ...r, privateCase: C::routineDecided(ruling, r.privateCase, 7, r.nowMs),
-    closedAt: if (ruling == C::RoutineDuplicate or ruling == C::RoutineOutOfScope or ruling == C::RoutineNoProof) r.nowMs else r.closedAt }
+    closedAt: if (ruling == C::RoutineDuplicate or ruling == C::RoutineOutOfScope or ruling == C::RoutineNoProof) r.nowMs else r.closedAt,
+    savedAt: r.nowMs }
 pure def canAppeal(r: ReportDeposit, by: int): bool = C::routineAppealable(r.privateCase, by) or C::canAppeal(r.privateCase, by)
 pure def appeal(r: ReportDeposit, by: int): ReportDeposit =
-  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by) }
+  { ...r, privateCase: if (C::routineAppealable(r.privateCase, by)) C::routineReturned(by, r.privateCase) else C::appeal(r.privateCase, by),
+    savedAt: r.nowMs }
 pure def canDecideAppeal(r: ReportDeposit, by: int, uphold: bool): bool = C::canDecideAppeal(r.privateCase, by, epoch(r), uphold)
 pure def decideAppeal(r: ReportDeposit, by: int, uphold: bool): ReportDeposit =
-  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold), closedAt: r.nowMs }
+  { ...r, privateCase: C::decideAppeal(r.privateCase, by, epoch(r), uphold), closedAt: r.nowMs, savedAt: r.nowMs }
 pure def alwaysHeldMirrored(r: ReportDeposit): bool =
   r.privateCase.depositHeld == held(r.deposit) and r.screening.depositHeld == held(r.deposit)
 pure def alwaysRecordedNeverHolds(r: ReportDeposit): bool =
@@ -318,6 +327,7 @@ pure val digestValues = Set("revised", "again")
 pure val reviewValues = Set(S::Forward, S::RequestInformation)
 pure val upholdValues = Set(true, false)
 pure val burnedValues = Set(true, false)
+pure val modeValues = Set(DepositOff, DepositDryRun, DepositLive)
 pure val decisionValues = Set(
   { finding: C::Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: false, spam: false },
   { finding: C::Duplicate, severity: T::SeverityUnset, loss: T::LossUnset, inScope: true, rootCause: 1, duplicateOf: 9, declareRelated: false, spam: false },

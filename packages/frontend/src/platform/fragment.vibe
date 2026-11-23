@@ -1,5 +1,6 @@
 // spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over"
 import { type AlignTo, alignTo } from "../../gen/frontend__routes.effect.vibe"
+import { webStorage } from "./webStorage.ts"
 
 interface Position {
   readonly left: number
@@ -22,6 +23,7 @@ interface Alignment {
 }
 
 const readerInputs = ["keydown", "pointerdown", "touchstart", "wheel"] as const
+const positionPrefix = "slop:hash-scroll:"
 
 function targetIdOf(hash: string): string {
   try {
@@ -47,6 +49,33 @@ function entryOf(state: unknown): Entry | undefined {
   return typeof entry === "object" && entry !== null && "key" in entry && "href" in entry && typeof entry.key === "string" && typeof entry.href === "string" ? { key: entry.key, href: entry.href } : undefined
 }
 
+function positionOf(key: string): Position | undefined {
+  try {
+    const stored: unknown = JSON.parse(webStorage("session")?.getItem(positionPrefix + key) ?? "null")
+    return typeof stored === "object" && stored !== null && "left" in stored && "top" in stored && typeof stored.left === "number" && typeof stored.top === "number" ? { left: stored.left, top: stored.top } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function keepPosition(key: string, position: Position) {
+  try {
+    webStorage("session")?.setItem(positionPrefix + key, JSON.stringify(position))
+  } catch {
+    return
+  }
+}
+
+function traversedHere(): Position | undefined {
+  try {
+    const [navigation] = performance.getEntriesByType("navigation")
+    const entry = entryOf(history.state)
+    return navigation instanceof PerformanceNavigationTiming && navigation.type === "back_forward" && entry?.href === location.href ? positionOf(entry.key) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function reveal(targetId: string) {
   try {
     const target = document.getElementById(targetId)
@@ -65,7 +94,6 @@ function decided(alignment: Alignment): AlignTo {
 }
 
 function listen() {
-  const positions = new Map<string, Position>()
   let previous: Entry | undefined
   let active: Alignment | undefined
   let observer: MutationObserver | undefined
@@ -107,7 +135,7 @@ function listen() {
       const decision = decided(alignment)
       if (alignment.restore !== undefined && decision !== "NoAlignment") return align()
       if (decision === "NoAlignment") settle()
-      positions.set(alignment.entry.key, { left: scrollX, top: scrollY })
+      keepPosition(alignment.entry.key, { left: scrollX, top: scrollY })
     } catch {
       return
     }
@@ -128,7 +156,7 @@ function listen() {
       const entry = { key: earlier?.href === href ? earlier.key : crypto.randomUUID(), href }
       history.replaceState({ ...history.state, __slopHashScroll: entry }, "")
       const restore = restoring ?? (queryOnly ? { left: scrollX, top: scrollY } : undefined)
-      if (restore !== undefined) positions.set(entry.key, restore)
+      if (restore !== undefined) keepPosition(entry.key, restore)
       active = { entry, targetId, restore, restoring: restoring !== undefined, queryOnly: restoring === undefined && queryOnly, startedMs: performance.now(), readerInput: false }
       for (const type of readerInputs) addEventListener(type, takeOver, { capture: true, passive: type !== "wheel" })
       observer = new MutationObserver(align)
@@ -144,7 +172,7 @@ function listen() {
   function traversed(event: PopStateEvent) {
     try {
       const entry = entryOf(event.state)
-      open(event.isTrusted && entry?.href === location.href ? positions.get(entry.key) : undefined)
+      open(event.isTrusted && entry?.href === location.href ? positionOf(entry.key) : undefined)
     } catch {
       return
     }
@@ -154,7 +182,7 @@ function listen() {
     addEventListener("popstate", traversed)
     addEventListener("hashchange", () => open(undefined))
     addEventListener("scroll", remember, { passive: true })
-    open(undefined)
+    open(traversedHere())
   } catch {
     return
   }

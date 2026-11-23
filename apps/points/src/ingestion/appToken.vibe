@@ -113,8 +113,9 @@ export effect function collectorRun() {
 export function collectorRenewal() {
   return Layer.effect(HttpClient.HttpClient, effect {
     const base = try HttpClient.HttpClient
-    const settings = try renewalSettings()
-    if (settings === undefined) return base
+    const configured = try renewalSettings()
+    if (configured === undefined) return base
+    const settings: RenewalSettings = configured
     const ref = try trimmed("GITHUB_REF")
     const event = try trimmed("GITHUB_EVENT_NAME")
     const startedAt = try Clock.currentTimeMillis

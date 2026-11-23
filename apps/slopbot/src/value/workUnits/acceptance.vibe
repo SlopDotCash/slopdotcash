@@ -1,5 +1,6 @@
 // spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/workUnits.md, "A no-change promotion adds no unit and no value; missing trees stay unresolved"; spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
 import { millisOf } from "@repo/platform/clock"
+import { sameRepositoryCommitHints } from "@repo/points/corrections"
 import {
   Acceptance,
   type CommitReader,
@@ -9,7 +10,6 @@ import {
   type PromotionSource,
   noChangePromotionContext,
 } from "../evidence/acceptance.vibe"
-import { sameRepositoryCommitHints } from "../evidence/hints.vibe"
 import { type AcceptedRange, type Evidence, EvidenceRefused, Head, type IndirectAcceptance, type NoChangePromotion, type RangeFile } from "../evidence/types.vibe"
 import { verifiedBlobSha } from "../proofs/blob.vibe"
 import { type FileChange, hasCompleteValuePatch, hasVerifiedFullComparison, valueAdditionCount, valueDeletionCount, valuePatch } from "../proofs/changes.vibe"

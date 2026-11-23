@@ -20,6 +20,7 @@ import { type ReviewHooks, type ReviewSettings, reviewItem } from "../../src/rev
 import { routeProviders } from "../../src/route/route.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
 import { observe } from "../../src/scope/facts.vibe"
+import { reviewIntakeGate } from "./intakeGate.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -201,6 +202,7 @@ function services(env: Env) {
     Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
     Layer.provide(Layer.mergeAll(members, participants, RunEvidenceLive), base),
     activationOver(env),
+    reviewIntakeGate(() => false),
     Layer.succeed(ReleaseVars, { SLOPBOT_CLOSURE_ENABLED: env.SLOPBOT_CLOSURE_ENABLED, SLOPBOT_RELEASE: env.SLOPBOT_RELEASE }),
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: env.TEST_VERIFIER_KEY } }),
   )

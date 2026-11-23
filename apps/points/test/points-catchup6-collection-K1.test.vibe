@@ -12,6 +12,7 @@ import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/colle
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 import { type ArchivedFile, checkedOutCommit, checkpointOf } from "./support/u3/archive.ts"
 import { fetcherOf, repository, seeded as seededActions, start as actionsStart } from "./support/u3/github.ts"
 import { type Seeded, requestsMatching, seeded, start } from "./support/u5/github.ts"
@@ -60,7 +61,7 @@ function lineEvidence(collection: Collection | undefined) {
 describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
   it.live("a memo written by a full collection answers the next collection's unchanged commit statistics, a changed object id is read live and a malformed memo collects in full", () => effect {
     const world = try Effect.try(() => seeded())
-    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+    provide Layer.mergeAll(NodeServices.layer, webCrypto, scoringInputs(world)) {
       const fs = try FileSystem.FileSystem
       try scoped(effect {
         const directory = try fs.makeTempDirectoryScoped()

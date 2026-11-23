@@ -672,7 +672,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const stray = try git(root, ["commit-tree", `${initial}^{tree}`, "-m", "stray history"])
     try written(files.join(bundle, "site/index.html"), "<!doctype html><title>slop.cash</title>\n")
     try written(files.join(bundle, "site/skill-manifest.json"), "{}\n")
-    try written(files.join(bundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(bundle, "apps/app/dist/notify.js"), "export default {}\n")
     try written(files.join(bundle, "github/leaderboard.json"), "{\"records\":[]}\n")
     const snapshot = "{\"projects\":[],\"revisions\":[]}\n"
     try written(files.join(bundle, registrySnapshotPath), snapshot)
@@ -724,7 +724,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     }
 
     const siteless = files.join(directory, "siteless")
-    try written(files.join(siteless, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(siteless, "apps/app/dist/notify.js"), "export default {}\n")
     const withoutSite = try attempt(["manifest", "production", siteless])
     const retainedWithoutTime = try attempt(["collect", "production", bundle, "--retained"])
     const registryOrigin = "http://127.0.0.1:8788"
@@ -798,7 +798,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const stagingBundle = files.join(directory, "staging-bundle")
     try written(files.join(stagingBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
     try written(files.join(stagingBundle, "site/skill-manifest.json"), "{}\n")
-    try written(files.join(stagingBundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(stagingBundle, "apps/app/dist/notify.js"), "export default {}\n")
     try written(files.join(stagingBundle, "github/leaderboard.json"), "{\"records\":[]}\n")
     try written(files.join(stagingBundle, registrySnapshotPath), snapshot)
     try writeCollection(stagingBundle, {
@@ -863,7 +863,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const retainedBundle = files.join(directory, "retained-bundle")
     try written(files.join(retainedBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
     try written(files.join(retainedBundle, "site/skill-manifest.json"), "{}\n")
-    try written(files.join(retainedBundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(retainedBundle, "apps/app/dist/notify.js"), "export default {}\n")
     try written(files.join(retainedBundle, "github/leaderboard.json"), "{\"records\":[{\"login\":\"retained\"}]}\n")
     try written(files.join(retainedBundle, registrySnapshotPath), snapshot)
     try writeCollection(retainedBundle, {

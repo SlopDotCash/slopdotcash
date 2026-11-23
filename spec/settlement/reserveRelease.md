@@ -219,12 +219,18 @@ already encodes the Solana release message and instruction, but the service has
 no Solana evidence adapter and never signs an Ed25519 attestation of that
 message. A record pinned to a Solana deployment binding is therefore never
 admitted, checked or approved. Before anything is written, a Solana request
-passes the same owner checks as an EVM request: the route's owner authorization
-and manifest check, then the current steward, GitHub repository authority and
-unchanged manifest (`refuseUnsupportedNetwork` runs `ownedProject`, as
-`prepareRelease` does). The attester then records the named
-refusal `NetworkUnsupported` on it, and the request stays held; time never
-releases it (PRD section 6). The named refusal is retained in the release
+passes the same owner checks as an EVM request. The Pages route authorizes the
+owner first, as for the rule of [monthly payment](monthly.md) "Only a current
+owner, steward or repository administrator changes another recipient's
+amount" and as development's `verifyProjectAuthority` does: a User-stewarded
+project needs its steward, and an organisation-stewarded project needs the
+steward or a current repository administrator; GitHub repository authority is
+read there and only there. The attester never calls GitHub: its
+`ownedProject`, which `refuseUnsupportedNetwork` runs as `prepareRelease`
+does, re-reads the registry project, refuses a missing project or a changed
+manifest, and refuses a requester who is not the steward of a User-stewarded
+project. The attester then records the named refusal `NetworkUnsupported` on
+it, and the request stays held; time never releases it (PRD section 6). The named refusal is retained in the release
 record. The owner receives the route's existing `release_held` answer, as for
 every other held release, because the route's refusal catalog follows the
 reference parity contract (`reference/parity/routes.json`). A stored record

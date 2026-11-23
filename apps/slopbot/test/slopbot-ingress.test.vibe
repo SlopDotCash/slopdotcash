@@ -1,4 +1,4 @@
-// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/installation.md, "Story: Apply installation changes in GitHub's order"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"
+// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/installation.md, "Story: Apply installation changes in GitHub's order"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/webhookDelivery.md, "An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on"
 import { assert, layer } from "@effect/vitest"
 import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
 import { signature256 } from "@repo/platform/testing/github"
@@ -224,7 +224,7 @@ layer(ingressArea({ SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "true" }), { excludeTestSe
     })
   })
 
-  it.effect('With the evidence switch on, an opened pull request carrying the Slop participation footer waits 60 seconds in the queue for its receipt, and any other review job is sent at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+  it.effect('With the evidence switch on, an opened pull request carrying the Slop participation footer waits 60 seconds in the queue for its receipt, and any other review job is sent at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on")', () => effect {
     const area = try Area
     try prepared(area)
     const sent = [
@@ -255,7 +255,7 @@ layer(ingressArea({ SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "true" }), { excludeTestSe
 })
 
 layer(ingressArea({}), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
-  it.effect('With the evidence switch off, an opened pull request carrying the Slop participation footer is queued at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+  it.effect('With the evidence switch off, an opened pull request carrying the Slop participation footer is queued at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "An opened pull request carrying the participation footer waits 60 seconds for its receipt while the evidence switch is on")', () => effect {
     const area = try Area
     try prepared(area)
     const sent = try delivered(area, "pull_request", bodied("opened", 61, footed), { deliveryId: "e-footer-off" })

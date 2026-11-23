@@ -469,8 +469,7 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     }
     const recordValue = status?.recordDigest === null || status?.recordDigest === undefined ? undefined : `value:${status.recordDigest}`
     const provenance = {
-      recordedAt, sourceDigest: digest,
-      effectiveAt: first.event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(first.event.scoreDecisionAt)),
+      recordedAt, sourceDigest: digest, effectiveAt: try decidedAt(first.event, recordedAt),
       decisionSourceId: decisionSourceOf([first.event.scoreDecisionSourceId, recordValue, first.award.sourceId]),
     }
     const rows: Row[] = []
@@ -501,6 +500,7 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
       repositoryCountsFrom: countsFromDay(repositories, first.event.repository),
       projectCollected: snapshot.repositories.some((repository) => repository.projectId === project),
       rule: ruleOf(snapshot.ruleVersion).rule, provisional: members.some(({ award }) => award.provisional), digest,
+      decision: try scoreDecision(first.event),
     } },
   ]
   const refused = try sendAll(opened, events)
@@ -508,7 +508,10 @@ effect function creditUnitGroup(store: Store, repositories: Repositories, snapsh
     hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
     return []
   }
-  const provenance = { recordedAt, sourceDigest: digest, effectiveAt: recordedAt, decisionSourceId: decisionSourceOf([first.award.sourceId]) }
+  const provenance = {
+    recordedAt, sourceDigest: digest, effectiveAt: try decidedAt(first.event, recordedAt),
+    decisionSourceId: decisionSourceOf([first.event.scoreDecisionSourceId, first.award.sourceId]),
+  }
   const rows: Row[] = []
   for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templatesOf(store, unit, members), provenance)))
   for (const row of rows) if (store.unitOfKey.get(row.award.key) === undefined) store.unitOfKey.set(row.award.key, unit)
@@ -532,6 +535,10 @@ export effect function scoreDecision(event: ScoreEvent) {
     valued: source.startsWith("value:"),
   }
   return decision
+}
+
+effect function decidedAt(event: ScoreEvent, recordedAt: string) {
+  return event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
 }
 
 effect function decisionRecorded(prior: Row, event: ScoreEvent) {
@@ -558,7 +565,7 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
     workUnit: key.workUnit, digest,
   }
   const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
-  const effectiveAt = event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
+  const effectiveAt = try decidedAt(event, recordedAt)
   const decision = context.decided ? try scoreDecision(event) : noDecision
   const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence, decision } : { type: "rescoreSource", a: input, e: evidence, decision }])
   if (refused !== "") {

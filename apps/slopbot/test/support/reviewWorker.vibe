@@ -6,15 +6,15 @@ import { d1, sql } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
 import { answered, body, json, outbound } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
-import { IntakePause, ProjectStatus, type ProjectView, Registry, RegistryManifests, Restrictions, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
+import { ProjectStatus, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { Enforcement, Restriction } from "@repo/ports/security"
 import { initiallyUncertain } from "../../gen/slopbot__closure.effect.vibe"
 import { resumeBudgetBlocks } from "../../src/budget/store.vibe"
-import { submissionFeeMode } from "../../src/fee/store.vibe"
 import { type Job, JobQueue, ReviewJob } from "../../src/jobs/job.vibe"
 import { type ReviewHooks, type ReviewOutcome, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
 import { routeProviders } from "../../src/route/route.vibe"
 import { Participation } from "../../src/routing/facts.vibe"
+import { reviewIntakeGate } from "./intakeGate.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -141,14 +141,6 @@ const pausing = HttpRouter.add("POST", "/test/intake-pause", answered(effect {
   return json(intake.paused)
 }))
 
-const feeGate = Layer.mergeAll(
-  submissionFeeMode(undefined),
-  Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
-  Layer.succeed(SubmissionFeeRates, { all: () => effect { return [] }, newest: () => effect { return null }, append: () => Effect.die(new Error("the review journeys append no rate")) }),
-  Layer.succeed(SubmissionFeeSetting, { since: () => effect { return null } }),
-  Layer.succeed(IntakePause, { paused: () => Effect.sync(() => intake.paused) }),
-)
-
 const resumed = HttpRouter.add("POST", "/test/budget-resume", answered(effect {
   const sent = try resumeBudgetBlocks()
   return json({ sent, queued: queued.map((job) => job.deliveryId) })
@@ -163,7 +155,7 @@ function services(env: Env) {
     registryOver(env.TEST_PROJECTS),
     nobody,
     queue,
-    feeGate,
+    reviewIntakeGate(() => intake.paused),
     Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
   )
 }

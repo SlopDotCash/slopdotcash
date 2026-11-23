@@ -246,6 +246,7 @@ jobs:
       VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'staging' || 'production' }}
       SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'slop-staging' || 'slop-production' }}
       SLOP_COLLECTION_DEADLINE_S: ${{ (github.ref == 'refs/heads/main' && inputs.use_published_data != true && vars.SLOP_COLLECTOR_RUNNER != '' && inputs.parallel_collection != true) && '72000' || '19200' }}
+      SLOP_POINTS_BOOTSTRAP: "1"
     steps:
       - name: Reserve checked bundle time for hosted main collection
         if: github.ref == 'refs/heads/main' && inputs.use_published_data != true && runner.environment == 'github-hosted'
@@ -471,6 +472,7 @@ jobs:
           SLOP_COLLECTION_FULL: ${{ inputs.full_collection == true && 'true' || 'false' }}
           SLOP_VALUE_FEED_RETRY_DELAYS_MS: "2000,10000,30000,60000"
           SLOP_VALUE_FEED_CONCURRENCY: "6"
+          SLOP_REGISTRY_SNAPSHOT: ${{ runner.temp }}/slop-release/registry/snapshot.json
           SLOP_LOCAL_GIT_DIR: ${{ steps.local_git.outputs.directory }}
           SLOP_DEFER_RETAINED_ATTRIBUTION: ${{ inputs.defer_retained_attribution == true && '1' || '' }}
         run: |

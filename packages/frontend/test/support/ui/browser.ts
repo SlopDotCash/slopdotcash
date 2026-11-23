@@ -2,12 +2,18 @@
 import { expect } from "vitest";
 import { commands } from "vitest/browser";
 import { loginPath } from "../../../src/platform/environment.ts";
-import type { Bucket, Diagnostics, InstallationSetup, Method, Op, Permission, RepositorySetup, Result, Role, Roles, Target, Upload, VaultPurpose, WalletSetup } from "./protocol.ts";
+import type { Bucket, Diagnostics, InstallationSetup, LeaderboardTransport, Method, Op, Permission, RepositorySetup, Result, Role, Roles, Target, Upload, VaultPurpose, WalletSetup } from "./protocol.ts";
 
 export const origin = "https://slop.cash";
 const journeyMs = 30_000;
 
 const ask = <O extends Op>(op: O): Promise<Result<O>> => commands.site(op);
+
+function base64(bytes: Uint8Array): string {
+  let text = "";
+  for (const byte of bytes) text += String.fromCharCode(byte);
+  return btoa(text);
+}
 
 export const named = (role: Role, name?: string, more: Omit<Target, "role" | "name"> = {}): Target => ({ role, ...(name === undefined ? {} : { name }), ...more });
 
@@ -46,6 +52,8 @@ export const site = {
   fail: (method: string, path: string, status: number, body: unknown) => ask({ kind: "fail", method, path, status, body }),
   unfail: (method: string, path: string) => ask({ kind: "unfail", method, path }),
   serve: (path: string, status: number, body: unknown) => ask({ kind: "serve", path, status, body }),
+  serveBytes: (path: string, status: number, bytes: Uint8Array, contentType: string) => ask({ kind: "serve", path, status, body: null, bytes: base64(bytes), contentType }),
+  published: (leaderboard: LeaderboardTransport = "whole") => ask({ kind: "published", leaderboard }),
   unserve: (path: string) => ask({ kind: "unserve", path }),
   clock: (iso: string) => ask({ kind: "clock", iso }),
   sent: () => ask({ kind: "sent" }),
@@ -59,6 +67,12 @@ export const site = {
   box: (target: Target) => ask({ kind: "box", target }),
   scrollY: () => ask({ kind: "scrollY" }),
   wheel: (dx: number, dy: number) => ask({ kind: "wheel", dx, dy }),
+  scrollEnd: () => ask({ kind: "scrollEnd" }),
+  reveal: (target: Target) => ask({ kind: "reveal", target }),
+  back: () => ask({ kind: "back" }),
+  forward: () => ask({ kind: "forward" }),
+  stamp: (value: string) => ask({ kind: "stamp", value }),
+  stamped: () => ask({ kind: "stamped" }),
   allow: (...patterns: ReadonlyArray<string>) => ask({ kind: "allow", patterns }),
   diagnostics: (): Promise<Diagnostics> => ask({ kind: "diagnostics" }),
   wallets: (setup: WalletSetup) => ask({ kind: "wallets", setup }),

@@ -1,0 +1,42 @@
+// spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/modelAttribution.md, "The status is complete, partial, invalid or missing, in that order"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { type RegistryManifest, RegistryManifests } from "@repo/ports/backend"
+import { JointEvidence, type RepairRequest } from "../../../src/score/assemble/lines.vibe"
+import { type Seeded, start } from "../u5/github.ts"
+import { registryAnswer } from "./world.ts"
+
+const terms = {
+  revision: "fixture-terms",
+  receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+  repositoryLicense: { fileSha256: null },
+  inbound: { fileSha256: null },
+  externalPrize: null,
+}
+
+function registryManifests(world: Seeded) {
+  const manifests: ReadonlyArray<RegistryManifest> = registryAnswer(world).projects.map((project) => {
+    const manifest = JSON.stringify({ ...project, terms })
+    return { projectId: project.id, active: true, revision: 1, manifest, manifestSha256: sha256Of(manifest), updatedAt: new Date(start).toISOString() }
+  })
+  return Layer.succeed(RegistryManifests, {
+    current: () => effect { return manifests },
+    project: (projectId: string) => effect { return manifests.find((row) => row.projectId === projectId) },
+  } satisfies RegistryManifests.Shape)
+}
+
+function repairKey(commitSha: string, path: string) {
+  return `${commitSha}\u0000${path}`
+}
+
+function jointEvidence(repairs: ReadonlyMap<string, unknown>) {
+  return Layer.succeed(JointEvidence, {
+    lines: (file: unknown) => typeof file === "object" && file !== null && "additions" in file && "deletions" in file && typeof file.additions === "number" && typeof file.deletions === "number"
+      ? { additions: file.additions, deletions: file.deletions }
+      : undefined,
+    repair: (request: RepairRequest) => effect { return repairs.get(repairKey(request.commitSha, request.path)) },
+  } satisfies JointEvidence.Shape)
+}
+
+export function scoringInputs(world: Seeded, repairs: ReadonlyMap<string, unknown> = new Map()) {
+  return Layer.mergeAll(registryManifests(world), jointEvidence(repairs))
+}

@@ -104,7 +104,7 @@ function underValuePolicy(acceptedAt: string | null | undefined, fromMs: number)
   return typeof acceptedAt === "string" && millisOf(acceptedAt) >= fromMs
 }
 
-function mergedCensusOutcome(outcome: MergedOutcome): CensusOutcome {
+export function mergedCensusOutcome(outcome: MergedOutcome): CensusOutcome {
   return {
     id: outcome.id,
     url: outcome.url,

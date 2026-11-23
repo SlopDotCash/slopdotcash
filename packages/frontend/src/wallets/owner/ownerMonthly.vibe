@@ -132,9 +132,10 @@ export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: 
 
   effect function keep(next: OwnerMonthly) {
     const before = try Ref.get(held)
+    const stored = try load()
     for (const target of targets) {
       const flow = flowOf(next, target)
-      if (!sameSlot(flowOf(before, target), flow)) try keeper.write(slotTarget(target), flow)
+      if (!sameSlot(flowOf(before, target), flow) || !sameSlot(flowOf(stored, target), flow)) try keeper.write(slotTarget(target), flow)
     }
     try Ref.set(held, next)
   }

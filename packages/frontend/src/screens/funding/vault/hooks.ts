@@ -1,7 +1,7 @@
 // spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"
 import { Cause, Effect, Exit, type ManagedRuntime } from "effect";
 import { useState, useSyncExternalStore } from "react";
-import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, tabHidden, watchOffers } from "./funding.vibe";
+import { type TotalsRuntime, type VaultRuntime, type VaultServices, type VaultTotals, type WalletOffer, followTotals, reloadTotals, watchOffers } from "./funding.vibe";
 import { pageHidden } from "./pageVisibility.ts";
 
 export type Settled<A> = { readonly status: "running" } | { readonly status: "done"; readonly value: A } | { readonly status: "failed"; readonly message: string };
@@ -182,21 +182,21 @@ interface Visibility {
   readonly subscribe: (notify: () => void) => () => void;
 }
 
-const visibilityStores = new WeakMap<VaultRuntime, Visibility>();
+const visibilityStores = new WeakMap<object, Visibility>();
 
-function visibilityOf(runtime: VaultRuntime): Visibility {
+function visibilityOf<E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, tell: (hidden: boolean) => Effect.Effect<unknown, E, R>): Visibility {
   const known = visibilityStores.get(runtime);
   if (known) return known;
   const listeners = new Set<() => void>();
   const changed = () => {
-    void run(runtime, tabHidden(pageHidden()));
+    void run(runtime, tell(pageHidden()));
     for (const listener of listeners) listener();
   };
   const store: Visibility = {
     subscribe: (notify) => {
       if (listeners.size === 0 && typeof document !== "undefined") {
         document.addEventListener("visibilitychange", changed);
-        void run(runtime, tabHidden(pageHidden()));
+        void run(runtime, tell(pageHidden()));
       }
       listeners.add(notify);
       return () => {
@@ -209,8 +209,8 @@ function visibilityOf(runtime: VaultRuntime): Visibility {
   return store;
 }
 
-/** Whether the page is in a hidden tab, told to the vault's machine once per page on each change so its timer stops asking a transfer there. */
-export function useTabHidden(runtime: VaultRuntime): boolean {
-  const store = visibilityOf(runtime);
+/** Whether the page is in a hidden tab, told through `tell` once per runtime on each change so the machine's timer stops asking there. */
+export function useTabHidden<E, R>(runtime: ManagedRuntime.ManagedRuntime<R, unknown>, tell: (hidden: boolean) => Effect.Effect<unknown, E, R>): boolean {
+  const store = visibilityOf(runtime, tell);
   return useSyncExternalStore(store.subscribe, pageHidden, () => false);
 }

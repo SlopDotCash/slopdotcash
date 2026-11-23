@@ -5,7 +5,8 @@ import type { Award, Revision as Row } from "../src/kernels/records/canonical.ts
 import { pointKey } from "../src/kernels/records/ids.vibe"
 import { type Store, storeOf } from "../src/journal/ledger.vibe"
 import { recognizePayouts } from "../src/payoutRecognition/awards.vibe"
-import { type ActorVaultPayments, type PayoutActor, loadVaultPayouts } from "../src/payoutRecognition/vault.vibe"
+import { type ActorVaultPayments, type PayoutActor, loadVaultPayouts, paymentValid } from "../src/payoutRecognition/vault.vibe"
+import { page, slopCash, unavailablePaymentPage } from "./support/vaultPayments.ts"
 
 const actor: PayoutActor = { id: "MDQ6VXNlcjEyMw==", login: "contributor" }
 const currentActor: PayoutActor = { id: "U_kgDOAAAAew", login: "renamed" }
@@ -24,24 +25,6 @@ const payment: PublicVaultPayment = {
   contributionMonth: "2026-10",
   transactionId: `0x${"b".repeat(64)}`,
   indexedAt,
-}
-
-interface Page { readonly payments: ReadonlyArray<unknown>; readonly through: number; readonly total: number; readonly next: number | null }
-
-function slopCash(answer: (url: URL, call: number) => Response) {
-  const urls: string[] = []
-  let calls = 0
-  const fetch = (input: string | URL | Request) => {
-    const url = new URL(input instanceof Request ? input.url : String(input))
-    urls.push(url.href)
-    calls += 1
-    return Promise.resolve(answer(url, calls))
-  }
-  return { fetch: fetch as typeof globalThis.fetch, urls }
-}
-
-function page(body: Page) {
-  return Response.json(body)
 }
 
 effect function emptyStore(rows: ReadonlyArray<Row> = []) {
@@ -114,7 +97,7 @@ layer(Layer.mergeAll(webCrypto, FetchHttpClient.layer), { excludeTestServices: t
     const faults: string[] = []
     for (const fault of ["missing", "duplicate", "moving", "unavailable", "malformed"]) {
       faults.push(try readFailure(slopCash((_, call) => {
-        if (fault === "unavailable") return new Response("Unavailable", { status: 503 })
+        if (fault === "unavailable") return unavailablePaymentPage()
         if (fault === "malformed") return page({ payments: [{ ...payment, netBase: "-1" }], through: 1, total: 1, next: null })
         const second = call === 2
         return page({ payments: [{ ...payment, id: second && fault !== "duplicate" ? "second" : "first" }], through: second && fault === "moving" ? 3 : 2, total: 2, next: second || fault === "missing" ? null : 1 })
@@ -123,6 +106,8 @@ layer(Layer.mergeAll(webCrypto, FetchHttpClient.layer), { excludeTestServices: t
 
     try Effect.try(() => assert.deepStrictEqual({
       read: published.urls,
+      bound: ["0", "340282366920938463463374607431768211455", "340282366920938463463374607431768211456", "01"]
+        .map((netBase) => paymentValid({ ...payment, netBase })),
       first: first.rows.map((row) => [row.award.actor.id, row.award.projectId, row.award.category, row.award.amount, row.award.occurredAt, row.award.sourceId, row.award.provisional, row.sourceRule]),
       replayed: replayed.appended,
       unproven: unproven.appended,
@@ -134,6 +119,7 @@ layer(Layer.mergeAll(webCrypto, FetchHttpClient.layer), { excludeTestServices: t
       faults: { refused: faults.every((outcome) => outcome.startsWith("VaultPayoutsUnreadable")), distinct: new Set(faults).size },
     }, {
       read: [actorPayments],
+      bound: [true, true, false, false],
       first: [[actor.id, "asi", "payout-received", 25, indexedAt, `payout:2026-10:${actor.id}`, false, "verified-payout-v1"]],
       replayed: 0,
       unproven: 0,

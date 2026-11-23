@@ -1,0 +1,523 @@
+// spec/points/modelAttribution.md, "Only same-actor text causally attached to a scored contribution is assessed"; spec/points/modelAttribution.md, "The status is complete, partial, invalid or missing, in that order"; spec/points/modelAttribution.md, "Attribution never changes Points, rank, share or payment"
+import { type ProjectRunReceipt, type ReceiptPolicyProject, UNAVAILABLE_MODEL_IDENTIFIER, joinPolicy, parseRunMarker, verifyRunReceipt } from "@repo/contributor/client"
+import { RegistryManifests } from "@repo/ports/backend"
+import { type AttributionStatus, type Declaration, type TextSource, status } from "../../../gen/points__modelAttribution.effect.vibe"
+import { type Registry, exactIdentifier, isRecord, parsedUrl, repositoryIdFromUrl, uniqueSorted } from "../../client/snapshot/checks.vibe"
+import type { InvalidAttributionMarker, WorkItemModel } from "../../client/snapshot/schema.vibe"
+import { type PullTextSource, pullRequestBodySource, pullRequestTextSources } from "../../collect/evidence/artifacts.vibe"
+import type { IssueRecord } from "../../collect/merged/hydrate.vibe"
+import { dedupedById, uniqueById } from "../../collect/merged/wire.vibe"
+import { type Actor, isBot } from "../facts.vibe"
+import { assertReviewRecordReceiptJoin, parseReviewRecordBlock } from "./reviewRecords.vibe"
+
+module identity {
+  import {
+    isDeclaredModelIdentifier as declared, isExactClientIdentifier as client, isExactModelIdentifier as model, isExactProviderIdentifier as provider,
+    isExactProviderModelIdentifier as providerModel, isUnavailableModelIdentifier as unavailable,
+  } from "@repo/contributor/client"
+  /** @throws {never} */
+  export function isExactProviderIdentifier(value: unknown): value is string { return provider(value) }
+  /** @throws {never} */
+  export function isExactModelIdentifier(value: unknown): value is string { return model(value) }
+  /** @throws {never} */
+  export function isExactClientIdentifier(value: unknown): value is string { return client(value) }
+  /** @throws {never} */
+  export function isDeclaredModelIdentifier(value: unknown): value is string { return declared(value) }
+  /** @throws {never} */
+  export function isUnavailableModelIdentifier(value: unknown): value is string { return unavailable(value) }
+  /** @throws {never} */
+  export function isExactProviderModelIdentifier(value: unknown): value is string { return providerModel(value) }
+}
+import { isDeclaredModelIdentifier, isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier, isExactProviderModelIdentifier, isUnavailableModelIdentifier } from identity
+
+export { pullRequestBodySource, pullRequestTextSources }
+export type { PullTextSource }
+
+export error AttributionRefused { message: string }
+
+export type CoverageStatus = "complete" | "partial" | "missing" | "invalid"
+
+export interface AttributionDeclaration {
+  readonly id: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly artifactId: string
+  readonly actor: Actor | null
+  readonly provider: string
+  readonly model: string
+  readonly identifier: string
+  readonly client: string | null
+  readonly skillRevision: string | null
+  readonly run: ProjectRunReceipt | null
+  readonly format: "machine-marker" | "visible-declaration"
+  readonly status: "self-reported"
+}
+
+export interface AttributionCoverage {
+  readonly status: CoverageStatus
+  readonly eligibleSourceCount: number
+  readonly validSourceCount: number
+  readonly missingSourceCount: number
+  readonly invalidSourceCount: number
+  readonly humanOnlySourceCount: number
+}
+
+export interface AttributionAssessment {
+  readonly declarations: ReadonlyArray<AttributionDeclaration>
+  readonly invalidMarkers: ReadonlyArray<InvalidAttributionMarker>
+  readonly coverage: AttributionCoverage
+}
+
+export interface AttributionContext {
+  readonly registry: Registry
+  readonly policies: ReadonlyMap<string, ReceiptPolicyProject>
+}
+
+export interface AttributionOptions {
+  readonly requireEverySource?: boolean
+  readonly verifyRunReceipts?: boolean
+}
+
+interface DeclarationLine {
+  readonly end: number
+  readonly normalized: string
+  readonly raw: string
+  readonly start: number
+}
+
+interface MarkerRecord {
+  readonly end: number
+  readonly payload: string
+  readonly slop: boolean
+  readonly start: number
+  readonly version: "v1" | "v2"
+}
+
+interface Marker {
+  readonly provider: string
+  readonly model: string
+  readonly client: string | null
+  readonly skillRevision: string | null
+  readonly run: ProjectRunReceipt | null
+}
+
+type MarkerParse = { readonly kind: "marker"; readonly marker: Marker } | { readonly kind: "error"; readonly reason: string }
+
+const exactModelIdentifierPattern = /\b([a-z0-9][a-z0-9._+~-]{0,63})\/([a-z0-9][a-z0-9._:/+~-]{0,127})\b/gi
+const fullSkillRevisionPattern = /^[a-z0-9_.-]+\/[a-z0-9_.-]+@[0-9a-f]{40}:[^\s`]+$/i
+const unavailableSkillRevisionPattern = /^n\/?a\s*[-:–—]\s*(?!<[^>]+>)(?!\[[^\]]+\])\S.{2,}$/i
+const humanOnlyPattern = /^\s*(?:[-*]\s*)?(?:(?:AI assistance|Attribution)\s*:\s*)?`?(?:no\s*[-—:]\s*)?human[- ]only\s+(?:comment|contribution|epic|issue|report|request|review|work)`?\s*$/im
+const issueClaimPattern = /^CLAIMING:\s*\S/i
+const reviewClaimPattern = /^CLAIMING\s+REVIEW:\s*\S/i
+const attributionDeclarationPattern = /^(?:AI provider\/model\s*:|AI assistance\s*:\s*yes\b|Models?(?:\s+used)?\s*:|Model\(s\)\s+used\s*:|Client\s*\/\s*agent tooling\s*:|Contribution skill revision\s*:)/i
+const attributionMarkerLinePattern = /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:v[12]|slop-contribution-attribution:v1)\b[^\r\n]*-->\s*$/i
+const attributionMarkerPattern = /^<!--\s*(?:(?:elizaos-contribution|eliza-computer)-attribution:(v[12])|(slop-contribution-attribution:v1))\b([\s\S]*?)-->\s*$/i
+const attributionLabelPattern = /^(?:AI provider\/model|Client \/ agent tooling|Contribution skill revision|Skill revision|Attribution status)\s*:/i
+const lanePattern = /^(?:—|-)\s*\[([a-z0-9][a-z0-9-]{1,48})\]\s*$/i
+const providerModelLine = /^AI provider\/model\s*:\s*(.+?)\s*$/i
+const clientLine = /^Client \/ agent tooling\s*:\s*(.+?)\s*$/i
+const skillRevisionLine = /^(?:Contribution skill revision|Skill revision)\s*:\s*(.+?)\s*$/i
+const statusLine = /^Attribution status\s*:\s*(.+?)\s*$/i
+const visibleModelsLine = /^\s*(?:[-*]\s*)?(?:AI\s+)?Model(?:s|\(s\))?(?:\s+used)?\s*:\s*(.+?)\s*$/i
+const canonicalProviderModelLine = /^\s*(?:[-*]\s*)?AI\s+provider\s*\/\s*model\s*:\s*`?([^`\s]+)`?\s+\/\s+`?([^`\s]+)`?\s*$/i
+const markerKeys = ["client", "model", "provider", "skill_revision"].sort().join(",")
+const assessedActor = 1
+const coverageOf: Readonly<Record<AttributionStatus, CoverageStatus>> = { Complete: "complete", Partial: "partial", Invalid: "invalid", Missing: "missing" }
+
+function declarationLineRecords(body: string): ReadonlyArray<DeclarationLine> {
+  const records: DeclarationLine[] = []
+  let fence: { readonly character: string; readonly length: number } | null = null
+  let offset = 0
+  while (offset <= body.length) {
+    const newline = body.indexOf("\n", offset)
+    const physicalEnd = newline === -1 ? body.length : newline
+    const raw = body.slice(offset, physicalEnd)
+    const sourceLine = raw.endsWith("\r") ? raw.slice(0, -1) : raw
+    const fenceMatch = sourceLine.match(/^\s{0,3}(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1] ?? ""
+      const character = marker[0] ?? ""
+      if (fence === null) fence = { character, length: marker.length }
+      else if (character === fence.character && marker.length >= fence.length && (fenceMatch[2] ?? "").trim().length === 0) fence = null
+      if (newline === -1) break
+      offset = newline + 1
+      continue
+    }
+    if (fence !== null || /^\s{0,3}>/.test(sourceLine) || /^(?:\t| {4})/.test(sourceLine)) {
+      if (newline === -1) break
+      offset = newline + 1
+      continue
+    }
+    const line = sourceLine.trim().replace(/^(?:[-*+]|\d+[.)])\s+/, "").replaceAll("**", "").replaceAll("__", "")
+    if (!line.startsWith("`")) records.push({ end: offset + sourceLine.length, normalized: line, raw: sourceLine, start: offset })
+    if (newline === -1) break
+    offset = newline + 1
+  }
+  return records
+}
+
+function declarationLines(body: string): ReadonlyArray<string> {
+  return declarationLineRecords(body).map((record) => record.normalized)
+}
+
+function markerRecords(body: string): ReadonlyArray<MarkerRecord> {
+  return declarationLineRecords(body).flatMap((record) => {
+    const raw = record.raw.trim()
+    const marker = raw.match(attributionMarkerPattern)
+    if (!marker) return []
+    const leadingWhitespace = record.raw.length - record.raw.trimStart().length
+    const version = marker[1] === undefined ? "v1" : marker[1].toLowerCase() === "v2" ? "v2" : "v1"
+    return [{ end: record.start + leadingWhitespace + raw.length, payload: (marker[3] ?? "").trim(), slop: marker[2] !== undefined, start: record.start + leadingWhitespace, version } satisfies MarkerRecord]
+  })
+}
+
+function hasEligibilitySignal(body: string): boolean {
+  return /^ {0,3}```slop-review[\t ]*$/mu.test(body) || declarationLines(body).some((line) => attributionDeclarationPattern.test(line) || attributionMarkerLinePattern.test(line))
+}
+
+function hasMarkdownLine(body: string, pattern: RegExp): boolean {
+  return declarationLines(body).some((line) => pattern.test(line))
+}
+
+function jsonOf(value: string): { readonly json: unknown } | undefined {
+  try {
+    return { json: JSON.parse(value) as unknown }
+  } catch {
+    return undefined
+  }
+}
+
+export function isPublishableIdentity(provider: string, model: string): boolean {
+  const prefix = `${provider.toLowerCase()}/`
+  const named = model.toLowerCase().startsWith(prefix) ? model.slice(prefix.length) : model
+  return isUnavailableModelIdentifier(model) || (isExactModelIdentifier(named) && named.toLowerCase() !== provider.toLowerCase() && isExactProviderModelIdentifier(exactIdentifier(provider, model)))
+}
+
+export function declaredModel(model: string): string {
+  return isUnavailableModelIdentifier(model) ? UNAVAILABLE_MODEL_IDENTIFIER : model
+}
+
+export function exactModelIdentifiers(attributions: ReadonlyArray<Pick<AttributionDeclaration, "identifier" | "model">>): ReadonlyArray<string> {
+  return attributions.filter((attribution) => !isUnavailableModelIdentifier(attribution.model)).map((attribution) => attribution.identifier)
+}
+
+function runMarker(parsed: unknown, context: AttributionContext): MarkerParse {
+  const receipt = parseRunMarker(parsed, context.registry.receipts)
+  if (receipt.kind === "invalid") return { kind: "error", reason: receipt.reason }
+  const run = receipt.value
+  const project = context.policies.get(run.projectId.trim().toLowerCase())
+  if (project === undefined) return { kind: "error", reason: "run receipt project is not registered" }
+  const joined = joinPolicy(run, project)
+  if (joined.kind === "invalid") return { kind: "error", reason: joined.reason }
+  if (!isPublishableIdentity(run.provider, run.model)) return { kind: "error", reason: "run model must be an exact model identifier" }
+  return { kind: "marker", marker: { provider: run.provider, model: run.model, client: run.client, skillRevision: run.skillRevision, run } }
+}
+
+function parseMarker(value: string, version: "v1" | "v2", slop: boolean, context: AttributionContext): MarkerParse {
+  const payload = jsonOf(value)
+  if (payload === undefined) return { kind: "error", reason: "marker JSON is malformed" }
+  const parsed = payload.json
+  if (!isRecord(parsed)) return { kind: "error", reason: "marker payload must be an object" }
+  if (version === "v2" || (slop && Object.hasOwn(parsed, "run"))) return runMarker(parsed, context)
+  if (Object.keys(parsed).sort().join(",") !== markerKeys) return { kind: "error", reason: "marker must contain only provider, model, client, and skill_revision" }
+  const provider = parsed.provider
+  if (!isExactProviderIdentifier(provider)) return { kind: "error", reason: "provider must be an exact provider identifier" }
+  const unexact = { kind: "error", reason: `model must be an exact model identifier or ${UNAVAILABLE_MODEL_IDENTIFIER}` } as const
+  const declared = parsed.model
+  if (!isDeclaredModelIdentifier(declared)) return unexact
+  const model = declaredModel(declared)
+  if (!isPublishableIdentity(provider, model)) return unexact
+  const client = parsed.client
+  if (!isExactClientIdentifier(client)) return { kind: "error", reason: "client must name the exact client used" }
+  const skillRevision = parsed.skill_revision
+  if (typeof skillRevision !== "string" || skillRevision.length > 256 || (!fullSkillRevisionPattern.test(skillRevision) && !unavailableSkillRevisionPattern.test(skillRevision))) {
+    return { kind: "error", reason: "skill_revision must be owner/repo@full-sha:path or N/A with a reason" }
+  }
+  return { kind: "marker", marker: { provider, model, client: client.trim(), skillRevision: skillRevision.trim(), run: null } }
+}
+
+function lineValues(block: string, pattern: RegExp): ReadonlyArray<string> {
+  return declarationLines(block).flatMap((line) => {
+    const value = line.match(pattern)?.[1]?.trim()
+    return value === undefined ? [] : [value]
+  })
+}
+
+function terminalAttributionBlock(body: string, beforeMarker: ReadonlyArray<DeclarationLine>, markerRecord: MarkerRecord): string {
+  const terminalLane = beforeMarker.at(-1)
+  if (terminalLane === undefined) return ""
+  let start = terminalLane.start
+  for (let index = beforeMarker.length - 2; index >= 0; index -= 1) {
+    const record = beforeMarker[index]
+    if (record === undefined || !attributionLabelPattern.test(record.normalized)) break
+    if (body.slice(record.end, start).trim().length !== 0) break
+    start = record.start
+  }
+  return body.slice(start, markerRecord.start)
+}
+
+function markerFooterError(body: string, markerRecord: MarkerRecord, marker: Marker): string | null {
+  const beforeMarker = declarationLineRecords(body.slice(0, markerRecord.start)).filter((record) => record.normalized.length > 0)
+  const laneSignatures = beforeMarker.filter((record) => lanePattern.test(record.normalized))
+  const terminalLane = beforeMarker.at(-1)
+  if (laneSignatures.length !== 1 || terminalLane === undefined || !lanePattern.test(terminalLane.normalized) || body.slice(terminalLane.end, markerRecord.start).trim().length !== 0) {
+    return "marker requires exactly one terminal lane signature"
+  }
+  if (body.slice(markerRecord.end).trim()) return "marker must be the final source content"
+  const footerBlock = terminalAttributionBlock(body, beforeMarker, markerRecord)
+  const providerModelLines = lineValues(footerBlock, providerModelLine)
+  const clientLines = lineValues(footerBlock, clientLine)
+  const skillRevisionLines = lineValues(footerBlock, skillRevisionLine)
+  const statusLines = lineValues(footerBlock, statusLine)
+  if (providerModelLines.length !== 1 || clientLines.length !== 1 || skillRevisionLines.length !== 1 || statusLines.length !== 1) {
+    return "marker requires exactly one complete visible attribution footer"
+  }
+  const providerModel = (providerModelLines[0] ?? "").match(/^(.+?)\s+\/\s+(.+)$/)
+  if (!providerModel) return "visible provider/model row is not canonical"
+  const visibleProvider = (providerModel[1] ?? "").trim()
+  const visibleModel = (providerModel[2] ?? "").trim()
+  if (
+    marker.provider.toLowerCase() !== visibleProvider.toLowerCase() || marker.model !== visibleModel || marker.client !== clientLines[0] ||
+    marker.skillRevision !== skillRevisionLines[0] || (statusLines[0] ?? "").toLowerCase() !== "self-reported"
+  ) {
+    return "marker fields do not match the visible attribution footer"
+  }
+  return null
+}
+
+effect function artifactRepository(registry: Registry, url: string) {
+  if (parsedUrl(url) === undefined) throw new AttributionRefused({ message: `Cannot derive a target repository from URL: ${url}` })
+  const repository = repositoryIdFromUrl(registry, url)
+  if (repository === undefined) throw new AttributionRefused({ message: `URL is outside the target repository registry: ${url}` })
+  return repository
+}
+
+function coverageSources(eligible: ReadonlyArray<PullTextSource>, valid: ReadonlySet<string>, invalid: ReadonlySet<string>, humanOnly: ReadonlySet<string>): TextSource[] {
+  return eligible.flatMap((source, node) => {
+    const assessed = (declaration: Declaration): TextSource => ({ node, author: assessedActor, bot: false, attached: true, signal: true, declaration })
+    const accepted: Declaration = humanOnly.has(source.id) ? { tag: "HumanOnly" } : { tag: "ExactDeclaration" }
+    if (valid.has(source.id) && invalid.has(source.id)) return [assessed(accepted), assessed({ tag: "Malformed" })]
+    if (valid.has(source.id)) return [assessed(accepted)]
+    if (invalid.has(source.id)) return [assessed({ tag: "Malformed" })]
+    return [assessed({ tag: "NoDeclaration" })]
+  })
+}
+
+export effect function assessModelAttribution(sources: ReadonlyArray<PullTextSource>, context: AttributionContext, options: AttributionOptions = {}) {
+  const declarations: AttributionDeclaration[] = []
+  const invalidMarkers: InvalidAttributionMarker[] = []
+  const eligibleSources = (try uniqueById(sources)).filter((source) =>
+    source.author !== null && !isBot(source.author) && (
+      options.requireEverySource === true || hasEligibilitySignal(source.body) || hasMarkdownLine(source.body, humanOnlyPattern)
+      || hasMarkdownLine(source.body, issueClaimPattern) || hasMarkdownLine(source.body, reviewClaimPattern)
+    ))
+  const validSourceIds = new Set<string>()
+  const invalidSourceIds = new Set<string>()
+  const humanOnlySourceIds = new Set<string>()
+  const receiptArtifactMismatchSourceIds = new Set<string>()
+  const receiptClaims = new Map<string, string>()
+
+  for (const source of eligibleSources) {
+    const invalidate = (reason: string) => {
+      invalidSourceIds.add(source.id)
+      invalidMarkers.push({ sourceId: source.id, sourceUrl: source.url, reason })
+    }
+    if (hasMarkdownLine(source.body, humanOnlyPattern)) {
+      humanOnlySourceIds.add(source.id)
+      validSourceIds.add(source.id)
+    }
+    let markerIndex = 0
+    const markerIdentifiers = new Set<string>()
+    const reviewBlock = parseReviewRecordBlock(source.body)
+    if (reviewBlock.kind === "invalid") {
+      invalidate(reviewBlock.reason)
+      continue
+    }
+    const reviewRecord = reviewBlock.value
+    const markerMatches = markerRecords(source.body)
+    if (reviewRecord !== null && markerMatches.length !== 1) {
+      invalidate("slop-review requires exactly one terminal signed run receipt")
+      continue
+    }
+    if (markerMatches.length > 1) invalidate("source must contain at most one attribution marker")
+    for (const match of markerMatches.length === 1 ? markerMatches : []) {
+      const parsed = parseMarker(match.payload, match.version, match.slop, context)
+      if (parsed.kind === "error") {
+        invalidate(parsed.reason)
+        markerIndex += 1
+        continue
+      }
+      const marker = parsed.marker
+      const footerError = markerFooterError(source.body, match, marker)
+      if (footerError !== null) {
+        invalidate(footerError)
+        markerIndex += 1
+        continue
+      }
+      if (reviewRecord !== null) {
+        const artifact = source.artifactUrl !== undefined && source.artifactUrl !== "" && source.artifactHeadSha !== undefined && source.artifactHeadSha !== ""
+          ? { artifactUrl: source.artifactUrl, headSha: source.artifactHeadSha }
+          : null
+        const joined = assertReviewRecordReceiptJoin(reviewRecord, marker.run, artifact)
+        if (joined.kind === "invalid") {
+          invalidate(joined.reason)
+          markerIndex += 1
+          continue
+        }
+      }
+      let verifiedRun = marker.run
+      if (options.verifyRunReceipts === true && marker.run !== null) {
+        const verification = Effect.map(verifyRunReceipt(marker.run, context.registry.receipts), (receipt) => ({ kind: "valid" as const, receipt })) catch (error) => ({ kind: "invalid" as const, reason: error.reason })
+        if (verification.kind === "invalid") {
+          invalidate(`run receipt excluded: ${verification.reason}`)
+          markerIndex += 1
+          continue
+        }
+        verifiedRun = verification.receipt
+      }
+      if (verifiedRun !== null && source.artifactUrl !== undefined && verifiedRun.repositoryId !== (try artifactRepository(context.registry, source.artifactUrl))) {
+        receiptArtifactMismatchSourceIds.add(source.id)
+        invalidate("run receipt repository does not match its GitHub artifact")
+        markerIndex += 1
+        continue
+      }
+      const upload = verifiedRun?.traceUpload ?? null
+      if (verifiedRun !== null && upload !== null) {
+        const claims: ReadonlyArray<readonly [string, string]> = [["client run", verifiedRun.runId], ["server run", upload.serverRunId], ["trace object", upload.objectId]]
+        const duplicate = claims.find(([kind, value]) => receiptClaims.has(`${kind}:${value}`))
+        if (duplicate !== undefined) {
+          const [kind, value] = duplicate
+          invalidate(`run receipt excluded: ${kind} already claimed by ${receiptClaims.get(`${kind}:${value}`)}`)
+          markerIndex += 1
+          continue
+        }
+        for (const [kind, value] of claims) receiptClaims.set(`${kind}:${value}`, source.id)
+      }
+      const identifier = exactIdentifier(marker.provider, marker.model)
+      validSourceIds.add(source.id)
+      markerIdentifiers.add(identifier.toLowerCase())
+      declarations.push({
+        id: `${source.id}:machine-marker:${markerIndex}`,
+        sourceId: source.id,
+        sourceUrl: source.url,
+        artifactId: source.artifactId,
+        actor: source.author,
+        provider: marker.provider,
+        model: marker.model,
+        identifier,
+        client: marker.client,
+        skillRevision: marker.skillRevision,
+        run: verifiedRun,
+        format: "machine-marker",
+        status: "self-reported",
+      })
+      markerIndex += 1
+    }
+
+    if ((reviewRecord !== null || receiptArtifactMismatchSourceIds.has(source.id)) && invalidSourceIds.has(source.id)) continue
+
+    let visibleIndex = 0
+    for (const line of declarationLines(source.body)) {
+      const declarationLine = line.match(visibleModelsLine)
+      const canonicalLine = line.match(canonicalProviderModelLine)
+      const visibleIdentifiers: Array<{ readonly provider: string; readonly model: string }> = []
+      if (declarationLine) {
+        for (const match of (declarationLine[1] ?? "").matchAll(exactModelIdentifierPattern)) visibleIdentifiers.push({ provider: match[1] ?? "", model: match[2] ?? "" })
+      }
+      if (canonicalLine) visibleIdentifiers.push({ provider: canonicalLine[1] ?? "", model: canonicalLine[2] ?? "" })
+      for (const declaration of visibleIdentifiers) {
+        if (!isExactProviderIdentifier(declaration.provider) || !isDeclaredModelIdentifier(declaration.model)) continue
+        const model = declaredModel(declaration.model)
+        if (!isPublishableIdentity(declaration.provider, model)) continue
+        const identifier = exactIdentifier(declaration.provider, model)
+        validSourceIds.add(source.id)
+        if (markerIdentifiers.has(identifier.toLowerCase())) continue
+        declarations.push({
+          id: `${source.id}:visible-declaration:${visibleIndex}`,
+          sourceId: source.id,
+          sourceUrl: source.url,
+          artifactId: source.artifactId,
+          actor: source.author,
+          provider: declaration.provider,
+          model,
+          identifier,
+          client: null,
+          skillRevision: null,
+          run: null,
+          format: "visible-declaration",
+          status: "self-reported",
+        })
+        visibleIndex += 1
+      }
+    }
+  }
+
+  const eligibleSourceCount = eligibleSources.length
+  const validSourceCount = validSourceIds.size
+  return {
+    declarations: dedupedById(declarations),
+    invalidMarkers,
+    coverage: {
+      status: coverageOf[status(coverageSources(eligibleSources, validSourceIds, invalidSourceIds, humanOnlySourceIds), assessedActor)],
+      eligibleSourceCount,
+      validSourceCount,
+      missingSourceCount: eligibleSourceCount - validSourceCount,
+      invalidSourceCount: invalidSourceIds.size,
+      humanOnlySourceCount: humanOnlySourceIds.size,
+    },
+  } satisfies AttributionAssessment
+}
+
+export function issueTextSources(issue: IssueRecord): ReadonlyArray<PullTextSource> {
+  const body: PullTextSource = { id: `${issue.id}:body`, artifactId: issue.id, kind: "body", body: issue.body, url: issue.url, createdAt: issue.createdAt, updatedAt: issue.updatedAt, author: issue.author }
+  const sources: ReadonlyArray<PullTextSource> = [body, ...issue.comments]
+  return dedupedById(sources).map((source) => ({ ...source, artifactUrl: issue.url }))
+}
+
+export function modelStatus(assessment: AttributionAssessment): WorkItemModel {
+  return {
+    status: assessment.coverage.status,
+    identifiers: uniqueSorted(exactModelIdentifiers(assessment.declarations)),
+    machineMarkerCount: assessment.declarations.filter((declaration) => declaration.format === "machine-marker").length,
+    invalidMarkerCount: assessment.invalidMarkers.length,
+    eligibleSourceCount: assessment.coverage.eligibleSourceCount,
+    validSourceCount: assessment.coverage.validSourceCount,
+    missingSourceCount: assessment.coverage.missingSourceCount,
+    invalidSourceCount: assessment.coverage.invalidSourceCount,
+    humanOnlySourceCount: assessment.coverage.humanOnlySourceCount,
+    provenance: assessment.coverage.validSourceCount > 0 ? "self-reported" : "none",
+  }
+}
+
+const PolicyTerms = Schema.Struct({
+  terms: Schema.Struct({
+    revision: Schema.String,
+    receiptPolicy: Schema.Union([
+      Schema.Struct({ state: Schema.Literal("pending-authority-activation"), activatedAt: Schema.Null, bindings: Schema.Tuple([]) }),
+      Schema.Struct({
+        state: Schema.Literal("active"),
+        activatedAt: Schema.String,
+        bindings: Schema.Array(Schema.Struct({
+          policyRevision: Schema.String,
+          licenseSha256: Schema.String,
+          inboundTermsSha256: Schema.NullOr(Schema.String),
+          prizeRulesSha256: Schema.NullOr(Schema.String),
+          activatedAt: Schema.String,
+        })),
+      }),
+    ]),
+    repositoryLicense: Schema.Struct({ fileSha256: Schema.NullOr(Schema.String) }),
+    inbound: Schema.Struct({ fileSha256: Schema.NullOr(Schema.String) }),
+    externalPrize: Schema.NullOr(Schema.Struct({ rulesSha256: Schema.NullOr(Schema.String) })),
+  }),
+})
+const decodePolicyTerms = Schema.decodeUnknownEffect(Schema.fromJsonString(PolicyTerms))
+
+export effect function receiptPolicies() {
+  const policies = new Map<string, ReceiptPolicyProject>()
+  for (const registered of try (try RegistryManifests).current()) {
+    const decoded = decodePolicyTerms(registered.manifest) catch effect () => { throw new AttributionRefused({ message: `project ${registered.projectId} has no readable receipt policy` }) }
+    policies.set(registered.projectId.toLowerCase(), { id: registered.projectId, terms: decoded.terms })
+  }
+  return policies
+}

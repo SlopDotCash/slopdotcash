@@ -1,6 +1,6 @@
 // spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
 import { ConfigInvalid } from "@repo/platform/config"
-import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 
 export service PaymentRpc {
   readonly urls: Readonly<Partial<Record<NetworkKey, Redacted.Redacted<ReadonlyArray<string>>>>>
@@ -30,4 +30,13 @@ export effect function paymentRpcOf(urlsText: string | undefined, genesisText: s
 
 export function paymentRpc(urlsText: string | undefined, genesisText: string | undefined) {
   return Layer.effect(PaymentRpc, paymentRpcOf(urlsText, genesisText))
+}
+
+export function reviewedGenesis(networks: ReadonlyArray<NetworkKey>) {
+  const pinned: Record<string, string> = {}
+  for (const network of networks) {
+    const registry = NETWORKS[network]
+    if (registry.family === "solana") pinned[network] = registry.genesisHash
+  }
+  return JSON.stringify(pinned)
 }
