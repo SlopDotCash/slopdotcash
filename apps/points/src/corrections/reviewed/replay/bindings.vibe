@@ -167,12 +167,13 @@ export function historicalClosedContextBindings(receipt: Pick<HistoricalAssessme
   }))
 }
 
-export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAssessmentReceipt) {
+export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAssessmentReceipt, verifiedReviewParents: ReadonlySet<string>) {
   if (!catalogsComplete(state)) return state
   let bound = state
   for (const record of receipt.records) {
     for (const source of record.sources) {
       if (source.finding === "retained-removed-merge") bound = try apply(bound, { type: "bindRemovedMerge", removal: goodRemoval }, dispatch)
+      if (!verifiedReviewParents.has(source.id)) continue
       if (source.finding === "verified-closed-context") bound = try apply(bound, { type: "bindClosureReview", closure: goodClosure }, dispatch)
       if (source.finding === "verified-standalone-closed-review") {
         bound = try apply(bound, { type: "bindClosureReview", closure: { ...goodClosure, auditedMergedAnchor: false, standaloneReviewOnlyRecord: true } }, dispatch)

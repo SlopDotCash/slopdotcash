@@ -13,7 +13,7 @@ import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from 
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply } from "../../../../gen/points__assessmentAudit.effect.vibe"
-import { historicalClosedContextBindings } from "./bindings.vibe"
+import { boundCut, historicalClosedContextBindings } from "./bindings.vibe"
 import { historicalAssessmentTransport } from "./history.vibe"
 import { mergedHistoricalReplaySnapshot } from "./merged.vibe"
 import type { ReplaySummary } from "./receipt.vibe"
@@ -82,7 +82,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
   const { receipt } = audited.classified
   if (receipt.status !== "requires-value-replay") {
     const qualificationSha256 = try verifyHistoricalValueReplay(packetOf(audited, null, []), audited.baseline, receipt, null, new Map(), context)
-    return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string> }
+    return { summary: { snapshotSha256: null, valueCoverageCount: 0, closedUnmergedCoverageCount: 0, valueEventCount: 0, qualificationSha256 } satisfies ReplaySummary, valueSnapshot: null as unknown, valueKeys: [] as ReadonlyArray<string>, state: audited.state }
   }
   const approved = historicalClosedContextBindings(receipt)
   const history = historicalAssessmentTransport(audited.catalog, { projectId: audited.inputs.projectId, repository: audited.repository, repositoryNodeId: audited.scope.repositoryNodeId })
@@ -106,7 +106,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     approved,
     history: collected.collection.implementation?.history,
   })
-  const raw: unknown = JSON.parse(JSON.stringify(snapshot))
+  const raw: unknown = try Effect.try(() => JSON.parse(JSON.stringify(snapshot)))
   const closedReviews = try verifyHistoricalClosedReviews(snapshot, receipt, audited.catalog)
   const allocation = try projectHistoricalValueChanges(packetOf(audited, raw, []), audited.baseline, raw, closedReviews, context)
   const valueKeys = allocation.rows.map((row) => row.award.key)
@@ -118,7 +118,9 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     valueEventCount: snapshot.ledger.filter((row) => row.scoreDecisionSourceId?.startsWith("value:") === true).length,
     qualificationSha256,
   }
-  return { summary, valueSnapshot: raw, valueKeys }
+  const verifiedReviewParents = new Set([...closedReviews.values()].map((proof) => proof.parentId))
+  const state = try boundCut(audited.state, receipt, verifiedReviewParents)
+  return { summary, valueSnapshot: raw, valueKeys, state }
 }
 
 effect function recheckedCut(audited: AuditedScope, state: AssessmentAudit) {
@@ -136,7 +138,7 @@ effect function replayRun<E, R>(setPhase: (phase: ReplayPhase) => void, args: Re
   setPhase("historical assessment replay")
   const result = try replayed(audited, registryPath, valueInputs)
   const summary = { ...audited.report, replay: result.summary }
-  let state = audited.state
+  let state = result.state
   let output: unknown = summary
   if (audited.inputs.stageReview) {
     setPhase("assessment qualification recheck")
