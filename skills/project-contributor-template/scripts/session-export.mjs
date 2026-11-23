@@ -50,13 +50,18 @@ const SECRET_SHAPES = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g,
   /\b(?:mnemonic|seed phrase|recovery phrase)\b\s*[:=]\s*(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/gi,
-  /\b(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)\b["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi,
+  /[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi,
+  /--[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*\s+["']?[A-Za-z0-9._~+/=-]{12,}/gi,
 ];
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
 
 const SAFE_ABSOLUTE = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
 // An absolute path with at least two segments, not part of a URL or a word.
 const ABSOLUTE_PATH = /(?<![\w./:~@%-])\/(?:[\w.@+~-]+\/)+[\w.@+~-]+/g;
+const TILDE_PATH = /(?<![\w./:~@%-])~\/[\w.@+~/-]*/g;
+const WINDOWS_PATH =
+  /(?<![\w])[A-Za-z]:[\\/][^\s"'`<>|*?]*|(?<![\w\\])\\\\[\w.$-]+\\[^\s"'`<>|*?]*/g;
+const ALLOWED_FIELDS = ["t", "kind", "text", "tool", "args", "path"];
 const CONTENT_TOOL = /edit|write|patch|create|replace/i;
 const PATH_KEYS = new Set([
   "file_path",
@@ -75,6 +80,25 @@ function insideRepo(abs, repoRoot) {
   return abs === repoRoot || abs.startsWith(`${repoRoot}/`);
 }
 
+function expandTilde(p, homeDir) {
+  if (p === "~") return homeDir || p;
+  return p.startsWith("~/") && homeDir ? `${homeDir}/${p.slice(2)}` : p;
+}
+
+// Lexically normalise, expanding ~ and treating backslashes as separators.
+function normalise(p, repoRoot, homeDir) {
+  const flat = expandTilde(p, homeDir).replace(/\\/g, "/");
+  return resolve(
+    isAbsolute(flat) || /^[A-Za-z]:\//.test(flat)
+      ? flat
+      : `${repoRoot}/${flat}`,
+  );
+}
+
+function isOutside(p, repoRoot, homeDir) {
+  return !insideRepo(normalise(p, repoRoot, homeDir), repoRoot);
+}
+
 function* strings(value) {
   if (typeof value === "string") yield value;
   else if (Array.isArray(value)) for (const v of value) yield* strings(v);
@@ -82,12 +106,15 @@ function* strings(value) {
     for (const v of Object.values(value)) yield* strings(v);
 }
 
-function hasOutsidePath(value, repoRoot) {
+function hasOutsidePath(value, repoRoot, homeDir) {
   for (const s of strings(value)) {
     for (const m of s.matchAll(ABSOLUTE_PATH)) {
       if (SAFE_ABSOLUTE.has(m[0])) continue;
-      if (!insideRepo(m[0], repoRoot)) return true;
+      if (isOutside(m[0], repoRoot, homeDir)) return true;
     }
+    for (const re of [TILDE_PATH, WINDOWS_PATH])
+      for (const m of s.matchAll(re))
+        if (isOutside(m[0], repoRoot, homeDir)) return true;
   }
   return false;
 }
@@ -147,8 +174,9 @@ function makeStringCleaner(ctx, counts) {
       return `${scheme}${CREDENTIAL}@`;
     });
     s = s.replace(ABSOLUTE_PATH, (p) => {
-      if (p === repo) return ".";
-      if (p.startsWith(`${repo}/`)) return p.slice(repo.length + 1);
+      const n = normalise(p, repo, home);
+      if (n === repo) return ".";
+      if (n.startsWith(`${repo}/`)) return n.slice(repo.length + 1);
       return p;
     });
     if (home && home !== "/") {
@@ -168,13 +196,9 @@ function makeStringCleaner(ctx, counts) {
   };
 }
 
-function absoluteOf(p, repoRoot) {
-  return isAbsolute(p) ? resolve(p) : resolve(repoRoot, p);
-}
-
 function keepsSource(p, ctx) {
   if (!ctx.keepRepoFiles) return false;
-  const abs = absoluteOf(p, ctx.repoRoot);
+  const abs = normalise(p, ctx.repoRoot, ctx.homeDir);
   return insideRepo(abs, ctx.repoRoot) && ctx.isRepoFile(abs) === true;
 }
 
@@ -201,11 +225,16 @@ export function cleanEvents(events, ctx) {
   const cleanString = makeStringCleaner(ctx, counts);
   const out = [];
   for (const original of events) {
-    const e = { ...original };
-    const outside = hasOutsidePath(
-      [e.text, e.args, e.path].filter((x) => x !== undefined),
-      repo,
-    );
+    const e = {};
+    for (const k of ALLOWED_FIELDS)
+      if (original[k] !== undefined) e[k] = original[k];
+    const outside =
+      hasOutsidePath(
+        [e.text, e.args, e.path].filter((x) => x !== undefined),
+        repo,
+        ctx.homeDir,
+      ) ||
+      (typeof e.path === "string" && isOutside(e.path, repo, ctx.homeDir));
     if (outside) {
       bump(counts, "OUTSIDE_REPO");
       if (e.text !== undefined) e.text = OUTSIDE_REPO;

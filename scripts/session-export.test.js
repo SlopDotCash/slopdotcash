@@ -159,3 +159,52 @@ test("a bare home directory path counts as outside the repo", () => {
   const out = clean([ev("assistant", "cache in /home/alice and more")]);
   assert.equal(out.events[0].text, "[REDACTED:OUTSIDE_REPO]");
 });
+
+test("unknown event fields are dropped", () => {
+  const out = clean([
+    {
+      t: "t",
+      kind: "tool_result",
+      text: "ok",
+      output: `ghp_${"a1B2".repeat(9)}`,
+      error: "/home/bob/x failed",
+    },
+  ]);
+  assert.deepEqual(Object.keys(out.events[0]).sort(), ["kind", "t", "text"]);
+});
+
+test("tilde, dotdot and windows paths are outside the repo", () => {
+  const cases = [
+    ev("tool_result", "cat ~/.ssh/config"),
+    ev("tool_result", "x", { path: "~/.ssh/config" }),
+    ev("assistant", "see /home/alice/proj/../other/x.ts"),
+    ev("tool_result", "C:\\Users\\bob\\secrets\\k.txt"),
+    ev("tool_result", "read D:/data/x"),
+    ev("tool_result", "\\\\server\\share\\f.txt"),
+  ];
+  for (const c of cases) {
+    const out = clean([c]);
+    assert.equal(
+      out.events[0].text,
+      "[REDACTED:OUTSIDE_REPO]",
+      JSON.stringify(c),
+    );
+  }
+  const inside = clean([ev("assistant", "see /home/alice/proj/a/../b.ts")]);
+  assert.equal(inside.events[0].text, "see b.ts");
+});
+
+test("secret assignments with prefixed names are replaced", () => {
+  const out = clean([
+    ev("tool_result", "GITHUB_TOKEN=abcdefghijklmnop1234"),
+    ev("tool_result", "AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMIK7MDENGbPxRfiCY"),
+    ev("tool_result", '{"api_key": "zzzzzzzzzzzz1234"}'),
+  ]);
+  const joined = out.events.map((e) => e.text).join("\n");
+  for (const bad of [
+    "abcdefghijklmnop1234",
+    "wJalrXUtnFEMIK7",
+    "zzzzzzzzzzzz1234",
+  ])
+    assert.ok(!joined.includes(bad), bad);
+});
