@@ -5,12 +5,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   CLEANER_VERSION,
   cleanEvents,
@@ -256,6 +258,10 @@ test("secret words in prose are left alone", () => {
 });
 
 const MARKER = "slop-run:run-abc123";
+const RECEIPT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../skills/project-contributor-template/scripts/run-receipt.mjs",
+);
 const fixture = (name, repo) =>
   readFileSync(`tests/fixtures/sessions/${name}`, "utf8").replaceAll(
     "{{REPO}}",
@@ -274,7 +280,10 @@ function world() {
   writeFileSync(join(repoRoot, "secrets", "key"), "SECRET-BODY\n");
   writeFileSync(join(repoRoot, "k.pem"), "SECRET-BODY\n");
   writeFileSync(join(repoRoot, "list.txt"), ".env\n");
-  writeFileSync(join(repoRoot, ".env"), "PROPRIETARY-SRC=1\n");
+  writeFileSync(
+    join(repoRoot, ".env"),
+    'PROPRIETARY-SRC=1\nAPI_PASS=hunter2hunter2\nOTHER="quoted-value-12345"\n',
+  );
   writeFileSync(join(repoRoot, "untracked.txt"), "UNTRACKED-BODY\n");
   mkdirSync(join(base, "other"), { recursive: true });
   writeFileSync(join(base, "other", "config.json"), "OTHER-PROJECT-CONFIG");
@@ -519,7 +528,7 @@ test("unlicensed repo redacts every tool result except known confirmations", asy
   const { events } = await runOut(w, unlicensed);
   const r = results(events).map((e) => e.text);
   assert.ok(!JSON.stringify(events).includes("PROPRIETARY-SRC"));
-  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 3);
+  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 4); // includes the untrusted start result
   assert.ok(r.includes("File created successfully at: src/n.ts"));
   const line = (n, payload) =>
     JSON.stringify({
@@ -871,7 +880,7 @@ test("only a single receipt invocation counts as the receipt tool's own output",
       for (const command of list) call("Bash", { command }, "LEAKWORD-XYZ");
       call(
         "Bash",
-        { command: "node scripts/run-receipt.mjs status --run r1" },
+        { command: `node ${RECEIPT} status --run r1` },
         "RECEIPT-OUT",
       );
     });
@@ -909,6 +918,115 @@ test("unlicensed allowlist accepts only exact confirmations from write tools", a
   const { events } = await runOut(w, unlicensed);
   const r = results(events).map((e) => e.text);
   assert.ok(!JSON.stringify(events).includes("LEAKWORD-XYZ"));
-  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 3);
+  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 4); // includes the untrusted start result
   assert.ok(r.includes("File created successfully at: src/n.ts"));
+});
+
+// ---- fix round 3 ----
+test("known secrets from ignored files and home credential files are redacted anywhere", async () => {
+  const w = world();
+  writeFileSync(
+    join(w.homeDir, ".npmrc"),
+    "//reg/:_authToken=npmtokenvalue123\n",
+  );
+  mkdirSync(join(w.repoRoot, "scripts"), { recursive: true });
+  writeFileSync(join(w.repoRoot, "scripts", "load.js"), "console.log(1)\n");
+  execFileSync("git", ["-C", w.repoRoot, "add", "scripts/load.js"]);
+  build(w, ({ entry, call }) => {
+    call(
+      "Bash",
+      { command: "node scripts/load.js" },
+      "API_PASS=hunter2hunter2 and quoted-value-12345 and npmtokenvalue123",
+    );
+    entry("assistant", [
+      { type: "text", text: "I typed hunter2hunter2 by hand" },
+    ]);
+    call("Bash", { command: "echo hunter2hunter2", hunter2hunter2: "k" }, "ok");
+  });
+  const { header, events } = await runOut(w);
+  const text = JSON.stringify([header, events]);
+  for (const bad of [
+    "hunter2hunter2",
+    "quoted-value-12345",
+    "npmtokenvalue123",
+  ])
+    assert.ok(!text.includes(bad), bad);
+  assert.ok(header.counts.CREDENTIAL >= 5);
+  assert.equal(header.contentGuard, "on");
+});
+
+test("known secrets stay fast", () => {
+  const known = Array.from(
+    { length: 5000 },
+    (_, i) => `secret-value-${i}-${"x".repeat(i % 7)}`,
+  );
+  const big = `${"lorem ipsum dolor sit amet ".repeat(40000)} secret-value-4999-xxxxxxx tail`;
+  const start = performance.now();
+  const out = cleanEvents(
+    [{ t: "2026-11-23T10:00:00Z", kind: "tool_result", text: big }],
+    ctx({ knownSecrets: known }),
+  );
+  assert.ok(performance.now() - start < 2000);
+  assert.ok(!out.events[0].text.includes("secret-value-4999"));
+  assert.ok(out.counts.CREDENTIAL >= 1);
+});
+
+test("too many ignored files fail closed", async () => {
+  const w = world();
+  mkdirSync(join(w.repoRoot, "gen"));
+  for (let i = 0; i < 2100; i++)
+    writeFileSync(
+      join(w.repoRoot, "gen", `f${i}.txt`),
+      `line number ${i} abcdefgh\n`,
+    );
+  writeFileSync(
+    join(w.repoRoot, ".gitignore"),
+    "*.log\n.env\n*.pem\nsecrets/\ngen/\n",
+  );
+  build(w, ({ call }) => {
+    call("Bash", { command: "cat src/a.ts" }, "LEAKWORD-XYZ");
+    call(
+      "Edit",
+      { file_path: `${w.repoRoot}/src/a.ts` },
+      "edited LEAKWORD-QQQ",
+    );
+  });
+  const { header, events } = await runOut(w);
+  assert.equal(header.contentGuard, "capped");
+  const r = results(events).map((e) => e.text);
+  assert.ok(!r.includes("LEAKWORD-XYZ"));
+  assert.ok(r.includes("edited LEAKWORD-QQQ"));
+});
+
+test("directories, recursive flags, inline interpreters and symlinks are unresolvable", async () => {
+  const w = world();
+  symlinkSync(".env", join(w.repoRoot, "link"));
+  execFileSync("git", ["-C", w.repoRoot, "add", "link"]);
+  const cmds = [
+    "grep -rh KEY .",
+    "grep -rhI KEY",
+    "grep -rh . secrets",
+    "tar cf - secrets | tar xOf -",
+    "rg KEY",
+    "python3 -c 'print(open(chr(46)+chr(101)+chr(110)+chr(118)).read())'",
+    "node -e 'console.log(String.fromCharCode(46))'",
+    "node -p 1",
+    "perl -ne print",
+    "python3 -Ic 1",
+    "node --eval 1",
+    "ls secrets",
+    "cat link",
+    "node /tmp/x/run-receipt.mjs status",
+  ];
+  build(w, ({ call }) => {
+    for (const command of cmds) call("Bash", { command }, "LEAKWORD-XYZ");
+    call("Read", { file_path: `${w.repoRoot}/link` }, "LEAKWORD-XYZ");
+    call("Bash", { command: "cat src/a.ts" }, "export const a = 1;");
+  });
+  for (const over of [{}, unlicensed]) {
+    const { events } = await runOut(w, over);
+    assert.ok(!JSON.stringify(events).includes("LEAKWORD-XYZ"));
+  }
+  const { events } = await runOut(w);
+  assert.ok(results(events).some((e) => e.text === "export const a = 1;"));
 });
