@@ -165,6 +165,22 @@ test("a member flags a repo from a link, sees the count, copies a pitch with the
   await expect(flags).toContainText("You have not flagged a repo.");
   await expect(table.getByRole("row").nth(1)).toContainText("acme/widgets2");
 
+  // A pasted GitHub link in the field flags its repository.
+  await page.goto(`${site}/requested`, { waitUntil: "domcontentloaded" });
+  const field = page.getByRole("region", { name: "Flag a repo" });
+  await field
+    .getByRole("textbox", { name: "Repository" })
+    .fill("https://github.com/acme/tools/pull/3");
+  await field.getByRole("button", { name: "Flag", exact: true }).click();
+  await expect(page.getByRole("status").first()).toContainText(
+    "Flagged acme/tools until",
+  );
+  await field.getByRole("textbox", { name: "Repository" }).fill("tools");
+  await field.getByRole("button", { name: "Flag", exact: true }).click();
+  await expect(field.getByRole("alert")).toHaveText(
+    "Enter the repository as owner/name or paste its GitHub link.",
+  );
+
   // A refusal is shown and nothing changes.
   await page.goto(`${site}/requested?flag=acme/self`, {
     waitUntil: "domcontentloaded",
@@ -180,6 +196,7 @@ test("a member flags a repo from a link, sees the count, copies a pitch with the
     { repo: "acme/widgets", action: "flag" },
     { repo: "acme/widgets", action: "flag" },
     { repo: "acme/widgets", action: "withdraw" },
+    { repo: "acme/tools", action: "flag" },
     { repo: "acme/self", action: "flag" },
   ]);
   await expectAccessibleReflow(page, "requested-repos");

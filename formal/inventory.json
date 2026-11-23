@@ -6529,11 +6529,11 @@
     },
     {
       "path": "src/RequestedRepos.tsx",
-      "sha256": "6de1e61598f0be1138c032e9fecf0595cc438de12239297aa38c4f2ea25d3679",
+      "sha256": "477e26a6b2f2b5da963d475d2bdd0b423b605adb90023ca5fa190b0327d3642a",
       "models": ["formal/models/ui/ui_requested_repos.qnt"],
       "candidateLines": [
-        8, 36, 37, 38, 77, 95, 119, 120, 121, 124, 130, 133, 137, 143, 169, 188,
-        191, 194, 223, 226, 228, 239, 254, 276
+        8, 38, 39, 40, 79, 97, 118, 119, 179, 180, 181, 184, 190, 193, 197, 203,
+        229, 263, 266, 269, 298, 301, 303, 314, 329, 351
       ],
       "review": "mapped-abstraction"
     },
@@ -7711,9 +7711,9 @@
     },
     {
       "path": "src/lib/repo-requests.ts",
-      "sha256": "8df991643d4d0b38cfddb2abc96491209913cb2600e641639e0546aed2bc5972",
+      "sha256": "fc948847d7784e0b58e3cd6ab6467c73cb292773a4258965e51df21d407e35db",
       "models": ["formal/models/referrals/repo_request.qnt"],
-      "candidateLines": [63, 69, 75, 81, 91, 103, 110],
+      "candidateLines": [83, 89, 95, 101, 111, 123, 130],
       "review": "mapped-abstraction"
     },
     {
