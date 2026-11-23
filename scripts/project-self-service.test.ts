@@ -1248,6 +1248,101 @@ test("a new project cannot submit a maintainer share history", async () => {
   expect(maintainerShareBasisPoints(created.manifest, "2026-10")).toBe(2000);
 });
 
+test("an owner catches up on reviews once a month for up to 14 days; the server writes the history", async () => {
+  const { persistence, state, call } = registry();
+  const initial = applicationManifest("open-registry", "example/open-registry");
+  // A new project starts without a catch-up pause.
+  const forged = await call("POST", "projects", OWNER, {
+    manifest: {
+      ...initial,
+      slopbot: {
+        automaticClosure: false,
+        catchUpUntil: "2026-11-05T00:00:00.000Z",
+      },
+    },
+  });
+  expect(forged.status).toBe(422);
+  expect(forged.body.error).toBe("invalid_manifest");
+  expect(
+    (await call("POST", "projects", OWNER, { manifest: initial })).status,
+  ).toBe(201);
+  const created = await persistence.getProject("open-registry");
+  if (!created) throw new Error("project expected");
+  const at = new Date(state.now).getTime();
+  const iso = (days: number) => new Date(at + days * 86_400_000).toISOString();
+  const publish = (revision: number, slopbot: Record<string, unknown>) =>
+    call("PUT", "projects/open-registry", OWNER, {
+      expectedRevision: revision,
+      manifest: { ...created.manifest, slopbot },
+    });
+  // Past 14 days from now, or not after now, is refused.
+  for (const until of [iso(14.001), iso(0)]) {
+    const refused = await publish(created.revision, {
+      automaticClosure: false,
+      catchUpUntil: until,
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body.error).toBe("catch_up_refused");
+  }
+  // A submitted history is refused: only the server writes it.
+  const history = await publish(created.revision, {
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+    catchUpHistory: [{ startedAt: iso(-40) }],
+  });
+  expect(history.status).toBe(422);
+  const started = await publish(created.revision, {
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+  });
+  expect(started.status).toBe(200);
+  const running = await persistence.getProject("open-registry");
+  if (!running) throw new Error("project expected");
+  expect(running.manifest.slopbot).toEqual({
+    automaticClosure: false,
+    catchUpUntil: iso(14),
+    catchUpHistory: [{ startedAt: iso(0) }],
+  });
+  const kept = { catchUpHistory: [{ startedAt: iso(0) }] };
+  // It cannot be extended past 14 days from its start.
+  const extended = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: running.revision,
+    manifest: {
+      ...running.manifest,
+      slopbot: { automaticClosure: false, catchUpUntil: iso(15), ...kept },
+    },
+  });
+  expect(extended.status).toBe(422);
+  // Ending it early is always allowed.
+  const ended = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: running.revision,
+    manifest: {
+      ...running.manifest,
+      slopbot: { automaticClosure: false, ...kept },
+    },
+  });
+  expect(ended.status).toBe(200);
+  const stopped = await persistence.getProject("open-registry");
+  if (!stopped) throw new Error("project expected");
+  expect(stopped.manifest.slopbot).toEqual({
+    automaticClosure: false,
+    ...kept,
+  });
+  // A second start in the same UTC month is refused.
+  const again = await call("PUT", "projects/open-registry", OWNER, {
+    expectedRevision: stopped.revision,
+    manifest: {
+      ...stopped.manifest,
+      slopbot: { automaticClosure: false, catchUpUntil: iso(5), ...kept },
+    },
+  });
+  expect(again.status).toBe(422);
+  expect(again.body.error).toBe("catch_up_refused");
+  expect((await persistence.getProject("open-registry"))?.revision).toBe(
+    stopped.revision,
+  );
+});
+
 test("a stored application cannot publish a maintainer share history", async () => {
   const { persistence, sqlite, call } = registry();
   // Submission stored the verified reward asset with the manifest.

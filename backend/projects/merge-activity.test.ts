@@ -320,8 +320,14 @@ describe("merge activity", () => {
       openOutside: 3,
       openOutsideCapped: false,
     });
+    // The backlog rule reads the waiting count and the last merge too.
     expect((await readIntakeCounts(db)).get("asi")).toEqual([
-      { openOutside: 3, observedAt: NOW.toISOString() },
+      {
+        openOutside: 3,
+        waitingOutside: 1,
+        lastMergedAt: daysAgo(1),
+        observedAt: NOW.toISOString(),
+      },
     ]);
   });
 
@@ -385,7 +391,16 @@ describe("merge activity", () => {
       openOutside: null,
       openOutsideCapped: false,
     });
-    expect((await readIntakeCounts(db)).size).toBe(0);
+    // No open count pauses nothing by the intake cap; the waiting count
+    // still serves the backlog rule.
+    expect((await readIntakeCounts(db)).get("asi")).toEqual([
+      {
+        openOutside: null,
+        waitingOutside: 0,
+        lastMergedAt: null,
+        observedAt: NOW.toISOString(),
+      },
+    ]);
   });
 
   test("a project with an intake cap is read again at the next hourly run", async () => {
