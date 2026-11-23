@@ -789,6 +789,12 @@ export const TRACE_LICENSING_EVENT_KEY = "trace-licensing:available-2026-11";
 export const TRACE_LICENSING_NOTICE =
   "You can now choose to license your Slop traces for pay. You get 50% of each sale. Nothing is licensed unless you turn it on.";
 
+/** The participation-ban check for the uploader of `run`, not a bound id. */
+export const TRACE_LICENSING_BAN_QUERY = PARTICIPATION_BAN_QUERY.replace(
+  "b.github_id = ?",
+  "b.github_id = run.github_user_id",
+);
+
 // Uploaders through the CLI skill may have no points_members row; the Inbox
 // shows the notice to whoever later signs in with that GitHub id.
 const TRACE_LICENSING_AUDIENCE = `SELECT DISTINCT run.github_user_id AS recipient
@@ -798,10 +804,7 @@ const TRACE_LICENSING_AUDIENCE = `SELECT DISTINCT run.github_user_id AS recipien
        AND NOT EXISTS (SELECT 1 FROM points_members closed
                         WHERE closed.github_id = run.github_user_id
                           AND closed.closed_at IS NOT NULL)
-       AND NOT EXISTS (${PARTICIPATION_BAN_QUERY.replace(
-         "b.github_id = ?",
-         "b.github_id = run.github_user_id",
-       )})`;
+       AND NOT EXISTS (${TRACE_LICENSING_BAN_QUERY})`;
 
 /**
  * The one-time notice that licensing traces is available: every account with

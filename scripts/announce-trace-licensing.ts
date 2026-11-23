@@ -11,6 +11,7 @@
  * The database is `slop-private` (`SLOP_DB` in wrangler.toml).
  */
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import {
   TRACE_LICENSING_AVAILABLE_SQL,
   TRACE_LICENSING_EVENT_KEY,
@@ -25,23 +26,39 @@ export function withNoticeTime(sql: string, at: Date): string {
   return sql.replaceAll("?1", literal);
 }
 
+type WranglerResult = {
+  results?: Record<string, unknown>[];
+  meta?: { changes?: unknown };
+}[];
+
+/** The recipient count from wrangler's JSON answer to the count query. */
+export function recipientCount(stdout: string): number {
+  const recipients = (JSON.parse(stdout) as WranglerResult)[0]?.results?.[0]
+    ?.recipients;
+  if (!Number.isSafeInteger(recipients) || (recipients as number) < 0)
+    throw new Error("could not read the recipient count");
+  return recipients as number;
+}
+
+/** The rows the INSERT wrote, from wrangler's JSON answer. */
+export function rowsWritten(stdout: string): number {
+  const changes = (JSON.parse(stdout) as WranglerResult)[0]?.meta?.changes;
+  if (!Number.isSafeInteger(changes) || (changes as number) < 0)
+    throw new Error("could not read the rows written");
+  return changes as number;
+}
+
 function execute(sql: string): string {
   const result = spawnSync(
-    "npx",
-    [
-      "wrangler",
-      "d1",
-      "execute",
-      DATABASE,
-      "--remote",
-      "--json",
-      "--command",
-      sql,
-    ],
+    resolve("node_modules/.bin/wrangler"),
+    ["d1", "execute", DATABASE, "--remote", "--json", "--command", sql],
     { encoding: "utf8" },
   );
   if (result.status !== 0) {
-    throw new Error(`wrangler failed with status ${result.status}`);
+    const stderr = result.stderr?.trim() || result.error?.message || "";
+    throw new Error(
+      `wrangler failed with status ${result.status}${stderr ? `:\n${stderr}` : ""}`,
+    );
   }
   return result.stdout;
 }
@@ -53,19 +70,19 @@ function main(args: string[]): void {
   if (!process.env.CLOUDFLARE_ACCOUNT_ID)
     throw new Error("set CLOUDFLARE_ACCOUNT_ID");
 
-  const parsed = JSON.parse(execute(TRACE_LICENSING_RECIPIENTS_SQL)) as {
-    results?: { recipients?: number }[];
-  }[];
-  const recipients = parsed[0]?.results?.[0]?.recipients;
-  if (typeof recipients !== "number")
-    throw new Error("could not read the recipient count");
+  const recipients = recipientCount(execute(TRACE_LICENSING_RECIPIENTS_SQL));
   console.log(`${TRACE_LICENSING_EVENT_KEY}: ${recipients} recipients`);
   if (!send) {
     console.log("Dry run. Pass --send to add the notices.");
     return;
   }
-  execute(withNoticeTime(TRACE_LICENSING_AVAILABLE_SQL, new Date()));
-  console.log("Sent. A second run adds nothing.");
+  const written = rowsWritten(
+    execute(withNoticeTime(TRACE_LICENSING_AVAILABLE_SQL, new Date())),
+  );
+  console.log(`Sent. ${written} notices written.`);
+  const left = recipientCount(execute(TRACE_LICENSING_RECIPIENTS_SQL));
+  console.log(`Recipients still without the notice: ${left} (expected 0).`);
+  if (left !== 0) process.exitCode = 1;
 }
 
 if (import.meta.main) main(process.argv.slice(2));

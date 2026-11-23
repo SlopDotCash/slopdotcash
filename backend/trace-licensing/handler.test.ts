@@ -306,6 +306,7 @@ test("turning on records the setting and one account event", async () => {
     since: NOW,
     providerTermsConfirmed: true,
   });
+  expect(response.body.withdrawn).toBe(0);
   expect(
     h.sqlite
       .query(
@@ -346,6 +347,8 @@ test("turning on twice or off twice is idempotent and writes no extra history", 
   const offAgain = await h.setting(ALICE, { enabled: false });
   expect(offAgain.status).toBe(200);
   expect(offAgain.body.setting).toEqual(off.body.setting);
+  expect(off.body.withdrawn).toBe(1);
+  expect(offAgain.body.withdrawn).toBe(0);
   expect(h.history()).toEqual({ account: 3, licence: 2 });
 
   // Off on an account that never turned licensing on writes nothing.
@@ -377,6 +380,8 @@ test("turning off withdraws every licensed trace with one event each", async () 
     since: null,
     providerTermsConfirmed: true,
   });
+  // Only Alice's two licences; Bob's stays licensed.
+  expect(off.body.withdrawn).toBe(2);
   const disable = h.sqlite
     .query(
       "SELECT id, affected_count FROM trace_licensing_events WHERE kind = 'disabled'",

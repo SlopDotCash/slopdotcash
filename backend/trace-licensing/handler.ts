@@ -225,7 +225,7 @@ async function changeSetting(
   request: Request,
   deps: TraceLicensingDependencies,
   githubId: string,
-): Promise<{ setting: Setting }> {
+): Promise<{ setting: Setting; withdrawn: number }> {
   const body = await requireJsonObject(
     request,
     MAX_BODY_BYTES,
@@ -248,7 +248,7 @@ async function changeSetting(
   await refuseClosed(db, githubId);
   // A toggle to the state in force is a no-op, with or without the tick.
   const current = await readSetting(db, githubId);
-  if (current.enabled === enabled) return { setting: current };
+  if (current.enabled === enabled) return { setting: current, withdrawn: 0 };
   if (enabled && providerTermsConfirmed !== true)
     fail(
       422,
@@ -258,6 +258,8 @@ async function changeSetting(
   // A ban refuses turning on; the account can still withdraw by turning off.
   if (enabled) await refuseBanned(db, githubId);
   const now = deps.now().toISOString();
+  // Licences this request withdrew; only turning off withdraws any.
+  let withdrawn = 0;
   if (enabled) {
     const guard = `NOT ${ENABLED} AND NOT ${BANNED} AND NOT ${CLOSED}`;
     await db.batch([
@@ -278,7 +280,7 @@ async function changeSetting(
     ]);
   } else {
     const guard = `${ENABLED} AND NOT ${CLOSED}`;
-    await db.batch([
+    const results = await db.batch([
       db
         .prepare(
           `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
@@ -308,6 +310,9 @@ async function changeSetting(
         )
         .bind(now, githubId, githubId),
     ]);
+    const changes = results[2]?.meta?.changes;
+    if (typeof changes !== "number") throw new Error("D1 reported no changes");
+    withdrawn = changes;
   }
   const after = await readSetting(db, githubId);
   if (after.enabled !== enabled) {
@@ -316,7 +321,7 @@ async function changeSetting(
     if (enabled) await refuseBanned(db, githubId);
     fail(409, "setting_changed", "The setting changed. Reload and try again.");
   }
-  return { setting: after };
+  return { setting: after, withdrawn };
 }
 
 type OptInRequest =
@@ -452,6 +457,8 @@ async function optIn(
         githubId,
       ),
   ]);
+  // D1 reports changes per statement of a batch, so the first statement's
+  // count says whether the guard held when the batch ran.
   if ((written?.meta?.changes ?? 0) !== 1) {
     await refuseClosed(db, githubId);
     await refuseBanned(db, githubId);

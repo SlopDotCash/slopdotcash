@@ -7,11 +7,13 @@ import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   notifyTraceLicensingAvailable,
+  TRACE_LICENSING_BAN_QUERY,
   TRACE_LICENSING_EVENT_KEY,
   TRACE_LICENSING_NOTICE,
   TRACE_LICENSING_RECIPIENTS_SQL,
 } from "../notifications/events";
 import { handleNotificationsApi } from "../notifications/handler";
+import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 
 const NOW = "2026-11-23T12:00:00.000Z";
 
@@ -184,4 +186,34 @@ test("the notice text and event key contain no single quote", () => {
   // The script interpolates both between single quotes in literal SQL.
   expect(TRACE_LICENSING_NOTICE).not.toContain("'");
   expect(TRACE_LICENSING_EVENT_KEY).not.toContain("'");
+});
+
+test("the audience's ban check is rewritten to the uploader, with nothing left to bind", () => {
+  // If the shared ban query's text changes, the rewrite must not silently
+  // keep a bound "?" that would read NULL and let banned accounts through.
+  expect(TRACE_LICENSING_BAN_QUERY).not.toBe(PARTICIPATION_BAN_QUERY);
+  expect(TRACE_LICENSING_BAN_QUERY).toContain(
+    "b.github_id = run.github_user_id",
+  );
+  expect(TRACE_LICENSING_BAN_QUERY).not.toContain("?");
+});
+
+test("the script reads wrangler's count and rows written, and refuses anything else", async () => {
+  const { recipientCount, rowsWritten } = await import(
+    "../../scripts/announce-trace-licensing"
+  );
+  expect(
+    recipientCount(JSON.stringify([{ results: [{ recipients: 54 }] }])),
+  ).toBe(54);
+  expect(
+    rowsWritten(JSON.stringify([{ results: [], meta: { changes: 54 } }])),
+  ).toBe(54);
+  for (const bad of [
+    "[]",
+    JSON.stringify([{ results: [] }]),
+    JSON.stringify([{ results: [{ recipients: "54" }] }]),
+    JSON.stringify([{ results: [{ recipients: -1 }] }]),
+  ])
+    expect(() => recipientCount(bad)).toThrow();
+  expect(() => rowsWritten(JSON.stringify([{ results: [] }]))).toThrow();
 });
