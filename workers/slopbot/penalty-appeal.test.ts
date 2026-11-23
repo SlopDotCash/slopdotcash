@@ -142,7 +142,7 @@ type Run = {
   beforePenaltyInsert: (callback: () => Promise<void>) => void;
   currentState: () => string;
   closerEvidence: (available: boolean) => void;
-  merged: (value: boolean) => void;
+  merged: (value: boolean, at?: string) => void;
   pauseNextFindingLabel: (loseResponse?: boolean) => {
     entered: Promise<void>;
     release: () => void;
@@ -304,6 +304,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let githubCloseTime: string | null | undefined;
   let closerEvidence = true;
   let merged = false;
+  let mergedAt: string | null = null;
   let pauseClose: (() => Promise<void>) | null = null;
   let closeOptions: {
     loseResponse?: boolean;
@@ -644,6 +645,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
               : 5,
           draft: false,
           merged,
+          merged_at: mergedAt,
           head: {
             sha:
               path.endsWith("/pulls/4") && duplicateChange === "head"
@@ -1063,8 +1065,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       closerEvidence: (available) => {
         closerEvidence = available;
       },
-      merged: (value) => {
+      merged: (value, at) => {
         merged = value;
+        mergedAt = at ?? null;
       },
       beforePenaltyInsert: (callback) => {
         beforePenaltyInsert = callback;
@@ -2000,6 +2003,56 @@ const screenshotsPolicy = evidencePolicy.replace(
   "UI video:",
   "- `UI screenshots:` Show the same screen and state before and after.\nUI video:",
 );
+
+test("a maintainer reopen reverses a missing-evidence debit after a later merge", async () => {
+  setSystemTime(new Date("2026-11-23T13:50:21Z"));
+  await closedItem(async (run) => {
+    run.guidance(evidencePolicy);
+    run.targetGuidance("d".repeat(40), screenshotsPolicy);
+    run.closureEnabled(false);
+    run.evidenceClosureEnabled(true);
+    run.model("none", 0.98);
+    run.submissionBody(evidencedSubmission);
+    expect(await run.review()).toBe("closed (missing_evidence)");
+
+    const reopened = await run.reopen(MAINTAINER, "2026-11-23T13:50:37Z");
+    const authorReopen = await run.reopen(AUTHOR, "2026-11-23T13:50:38Z");
+    run.closeByMaintainer();
+    setSystemTime(new Date("2026-11-23T13:51:00Z"));
+    const before = run.writes.length;
+    run.merged(true, "2026-11-23T13:50:36Z");
+    expect(await run.deliver(reopened)).toBe(
+      "reopen source changed; no decision",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.merged(true, "2026-11-23T13:50:45Z");
+    expect(await run.deliver(authorReopen)).toBe(
+      "reopen source changed; no decision",
+    );
+    run.maintainerPermission(false);
+    expect(await run.deliver(reopened)).toBe(
+      "reopen by a non-maintainer recorded as no decision",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.maintainerPermission(true);
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "missing_evidence", reversal: "maintainer_reopen" },
+    ]);
+    const reversed = run.sql("SELECT reversed_at FROM slopbot_penalties");
+    setSystemTime(new Date("2026-11-23T13:52:00Z"));
+    expect(await run.deliver(reopened)).toBe(
+      "human_reopen; newer item state kept",
+    );
+    expect(run.sql("SELECT reversed_at FROM slopbot_penalties")).toEqual(
+      reversed,
+    );
+    expect(run.currentState()).toBe("closed");
+    expect(run.writes).toHaveLength(before);
+  });
+});
 
 test("Slop evidence closure and appeal follow the PR target guide", async () => {
   await closedItem(async (run) => {
@@ -4536,6 +4589,8 @@ test("a delayed old-head reopen never reverses a later head's close and debit", 
     setSystemTime(new Date(Date.parse(CLOSED_AT) + 60_000));
     expect(await run.review()).toBe("closed (spam)");
     expect(run.sql(PENALTY)).toMatchObject([{ reversal: null }]);
+    run.closeByMaintainer();
+    run.merged(true, new Date(Date.parse(CLOSED_AT) + 120_000).toISOString());
     const before = run.writes.length;
     expect(await run.deliver(reopened)).toBe(
       "human_reopen; newer item state kept",
