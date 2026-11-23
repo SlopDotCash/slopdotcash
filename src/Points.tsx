@@ -34,6 +34,7 @@ import {
 } from "./lib/browser-deployment";
 import {
   fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
   readBoundedJson,
   readBoundedText,
 } from "./lib/browser-json";
@@ -100,6 +101,18 @@ function AdminAccountLink({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/**
+ * Projects this account stewards, so an owner can reach a project's settings
+ * from the account menu instead of finding the project page first.
+ */
+function ownedProjects(actor: ActorRef) {
+  return PROJECTS.filter(
+    (project) =>
+      project.steward.github.nodeId === actor.id ||
+      project.steward.github.actorId === actor.id,
+  ).sort((left, right) => left.name.localeCompare(right.name));
+}
+
 interface Membership {
   actor: ActorRef;
   joinedAt: string;
@@ -161,11 +174,16 @@ function identityFailure(status: number, code?: unknown): string {
     return "Too many sign-in attempts. Wait one minute, then try again.";
   return "Sign-in is temporarily unavailable. Try again in a few minutes.";
 }
-async function requestJson(url: string, init: RequestInit = {}) {
-  const response = await fetchWithDeadline(url, {
-    ...init,
-    cache: "no-store",
-  });
+async function requestJson(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs?: number,
+) {
+  const response = await fetchWithDeadline(
+    url,
+    { ...init, cache: "no-store" },
+    timeoutMs,
+  );
   if (!response.ok) {
     let code: string | null = null;
     try {
@@ -180,16 +198,22 @@ async function requestJson(url: string, init: RequestInit = {}) {
   return readBoundedJson(response, 24 * 1024 * 1024, "points");
 }
 async function loadPoints(signal: AbortSignal) {
-  const index = (await requestJson("/data/points.json", {
-    signal,
-  })) as PointsIndex;
+  const index = (await requestJson(
+    "/data/points.json",
+    { signal },
+    PUBLISHED_DATA_DEADLINE_MS,
+  )) as PointsIndex;
   if (!Array.isArray(index.shards) || index.shards.length !== 16)
     throw new Error("Invalid points index");
   const parts = await Promise.all(
     index.shards.map(async (s, i) => {
       if (s.path !== `/data/points/${i.toString(16)}.json`)
         throw new Error("Invalid points path");
-      const r = await fetchWithDeadline(s.path, { signal, cache: "no-store" });
+      const r = await fetchWithDeadline(
+        s.path,
+        { signal, cache: "no-store" },
+        PUBLISHED_DATA_DEADLINE_MS,
+      );
       if (!r.ok) throw new Error("Points shard unavailable");
       return readBoundedText(r, 8 * 1024 * 1024, "points history");
     }),
@@ -492,6 +516,15 @@ export function PointsNav() {
           <a href="/account" onClick={navigate}>
             Settings
           </a>
+          {ownedProjects(me.actor).map((project) => (
+            <a
+              key={project.id}
+              href={`/projects/${encodeURIComponent(project.slug)}/manage`}
+              onClick={navigate}
+            >
+              {project.name} settings
+            </a>
+          ))}
           <AdminAccountLink onNavigate={navigate} />
           <button type="button" onClick={signout} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}

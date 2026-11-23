@@ -1,6 +1,17 @@
+/**
+ * Published data files (leaderboard, Points journal, profiles, cycles) are
+ * several megabytes and load together, so a slower connection needs longer
+ * than an API answer does.
+ */
+export const PUBLISHED_DATA_DEADLINE_MS = 60_000;
+
 /** Keep a request deadline when its caller also cancels on navigation or retry. */
-export function fetchWithDeadline(url: string, init: RequestInit = {}) {
-  const deadline = AbortSignal.timeout(15_000);
+export function fetchWithDeadline(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 15_000,
+) {
+  const deadline = AbortSignal.timeout(timeoutMs);
   return fetch(url, {
     ...init,
     signal: init.signal ? AbortSignal.any([init.signal, deadline]) : deadline,
