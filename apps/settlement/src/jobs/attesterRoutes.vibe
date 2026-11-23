@@ -122,7 +122,7 @@ effect function releaseRpc(config: AttesterConfig.Shape, network: NetworkKey) {
   const registry = NETWORKS[network]
   const url = Redacted.value(config.rpcUrls)[network]
   if (registry.family !== "evm" || url === undefined || url === "") throw new DeploymentRefused({ reason: "Private RPC configuration missing" })
-  return evmRpc({ urls: Redacted.make([url]), chainId: registry.chainId })
+  return evmRpc({ urls: Redacted.make([url]), chainId: try orDie(Effect.try(() => BigInt(registry.chainId))) })
 }
 
 effect function releaseAnswer(call: ReleaseCall) {
@@ -165,7 +165,9 @@ effect function served(env: AttesterObjectEnv) {
 
 export function attesterRoutes(env: AttesterObjectEnv) {
   return Layer.mergeAll(
-    HttpRouter.add("POST", "/v1/*", served(env) catch effect (error) => try rejected("/v1", error)),
+    HttpRouter.add("POST", "/v1/*", effect {
+      return served(env) catch effect (error) => try rejected("/v1", error)
+    }),
     HttpRouter.add("*", "*", notFound),
   )
 }

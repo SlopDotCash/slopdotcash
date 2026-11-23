@@ -55,10 +55,10 @@ effect function record(projectId: string, deployment: Fields, scope: Scope) {
   const network = typeof deployment.network === "string" && isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
   if (network === undefined) throw refused(`Unknown escrow network: ${String(deployment.network)}`)
   const base = { projectId, ...deployment, chain: network.chain, ...scope === "security-bounty" ? { payoutPolicy: scope } : {} }
-  if (network.family === "solana") return try Schema.decodeUnknownEffect(SolanaPin)(base, { onExcessProperty: "error" }) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
+  if (network.family === "solana") return Schema.decodeUnknownEffect(SolanaPin)(base, { onExcessProperty: "error" }) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
   const pinned = { ...base, chainId: String(network.chainId), gasCeiling: String(network.gasCeiling), scanPageBlocks: String(network.scanPageBlocks) }
   const { scanPageBlocks: _blocks, ...checked } = pinned
-  try Schema.decodeUnknownEffect(PinnedDeployment)(checked) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
+  Schema.decodeUnknownEffect(PinnedDeployment)(checked) catch effect () => { throw refused(`${projectId} ${String(deployment.network)}: deployment record is incomplete`) }
   return pinned
 }
 

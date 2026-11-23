@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { Response } from "miniflare"
-import { type Hex, decodeFunctionData, encodeErrorResult, encodeFunctionResult, keccak256, parseTransaction, toHex } from "viem"
+import { type Hex, concat, decodeFunctionData, encodeErrorResult, encodeFunctionResult, keccak256, parseTransaction, toHex } from "viem"
 import { privateKeyToAccount } from "viem/accounts"
 import { SubmissionFeeRatesLive } from "@repo/backend/live"
 import type { D1Database } from "@repo/platform/bindings"
@@ -69,11 +69,13 @@ service World {
 const none: Record = { payer: "0x0000000000000000000000000000000000000000", token: "0x0000000000000000000000000000000000000000", amount: 0n, keptTo: "0x0000000000000000000000000000000000000000", item: toHex(0n, { size: 32 }), depositedAt: 0n, state: 0 }
 
 function item(n: number) {
-  return toHex(BigInt(n), { size: 32 })
+  return toHex(n, { size: 32 })
 }
 
+const txHash = item
+
 function blockHash(n: number) {
-  return toHex((1n << 200n) + BigInt(n), { size: 32 })
+  return concat([toHex(1, { size: 7 }), toHex(n, { size: 25 })])
 }
 
 function idsOf(raw: Hex) {
@@ -173,7 +175,7 @@ effect function pass(mode = "live", keyed = true) {
 }
 
 effect function write(statement: Statement) {
-  return try provided((try D1).run(statement))
+  return try provided(effect { return try (try D1).run(statement) })
 }
 
 effect function nextDay() {
@@ -186,7 +188,7 @@ schema ParkedSeen { readonly deposit_id: number; readonly reason: string; readon
 
 effect function sends() {
   const found = try provided(rows(SendSeen, sql`SELECT deposits, mode, state, reason, raw_tx FROM submission_fee_sends ORDER BY rowid`))
-  return found.map((row) => ({ deposits: JSON.parse(row.deposits) as unknown, mode: row.mode, state: row.state, reason: row.reason, raw: row.raw_tx }))
+  return try Effect.try(() => found.map((row) => ({ deposits: JSON.parse(row.deposits) as unknown, mode: row.mode, state: row.state, reason: row.reason, raw: row.raw_tx })))
 }
 
 effect function parkedRows() {
@@ -197,12 +199,11 @@ effect function deposit(id: number, itemNumber: number, amount: bigint, options:
   const world = try World
   const at = new Date(start).toISOString()
   try write(sql`INSERT INTO submission_fee_deposits (network, deposit_id, item, payer, token, amount, kept_to, tx_hash, block_number, block_time, finalized_at, state)
-    VALUES (${network}, ${id}, ${item(itemNumber)}, ${payer}, ${usdg}, ${amount.toString()}, ${wallet}, ${toHex(BigInt(id), { size: 32 })}, ${firstBlock - 10}, ${at}, ${options.final === false ? null : at}, 'open')`)
+    VALUES (${network}, ${id}, ${item(itemNumber)}, ${payer}, ${usdg}, ${amount.toString()}, ${wallet}, ${txHash(id)}, ${firstBlock - 10}, ${at}, ${options.final === false ? null : at}, 'open')`)
   world.chain.deposits.set(id, { payer, token: usdg, amount: options.chainAmount ?? amount, keptTo: wallet, item: item(itemNumber), depositedAt: 1n, state: 1 })
 }
 
-effect function mine(ok: boolean) {
-  const { chain } = try World
+function mine(chain: Contract, ok: boolean) {
   const raw = chain.sent[chain.sent.length - 1]
   chain.latest += 1
   chain.mined.set(keccak256(raw), { block: chain.latest, ok })
@@ -233,7 +234,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try decide(1, "refund_due")
     const merged = try pass()
     const recorded = try sends()
-    try mine(true)
+    mine(chain, true)
     const confirmed = try pass()
     const finalized = try sends()
     try nextDay()
@@ -244,7 +245,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try deposit(4, 3, 2_000_000n)
     const kept = try pass()
     const keptRaw = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     try nextDay()
     try deposit(5, 1, 2_000_000n)
     chain.sendFails = true
@@ -253,28 +254,28 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     chain.sendFails = false
     const resent = try pass()
     const resentRow = (try sends()).at(-1)
-    try mine(true)
+    mine(chain, true)
     try nextDay()
     try deposit(6, 1, 2_000_000n)
     try pass()
     const firstTry = chain.sent[chain.sent.length - 1]
-    try mine(false)
+    mine(chain, false)
     const again = try pass()
     const secondTry = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     try nextDay()
     try deposit(7, 1, 2_000_000n)
     try pass()
     chain.nonce += 1
     const consumed = try pass()
-    try mine(true)
+    mine(chain, true)
     try pass()
     try nextDay()
     try deposit(8, 1, 2_000_000n)
     const before = chain.sent.length
     const racing = try Effect.all([pass(), pass()], { concurrency: 2 })
     const racedRows = (try sends()).filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 8, refund: true }]))
-    try mine(true)
+    mine(chain, true)
     const all = try sends()
     try Effect.try(() => assert.deepStrictEqual({
       undecided: [sendOf(undecided), entryOf(undecided, "base-mainnet")?.network, (entryOf(undecided, "base-mainnet") as NetworkFailure | undefined)?.reason.startsWith("chain/")],
@@ -306,12 +307,12 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const refusedRun = try pass()
     const refusedRaw = chain.sent[chain.sent.length - 1]
     const parkedFirst = try parkedRows()
-    try mine(true)
+    mine(chain, true)
     chain.refuses.clear()
     try nextDay()
     const releasedRun = try pass()
     const releasedRaw = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     try nextDay()
     try deposit(11, 1, 2_000_000n)
     chain.broken = true
@@ -324,7 +325,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try nextDay()
     const aloneRun = try pass()
     const aloneRaw = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     const parkedLast = try parkedRows()
     const robinhood = (run: DepositRun) => entryOf(run, network) as NetworkResult
     try Effect.try(() => assert.deepStrictEqual({
@@ -348,18 +349,18 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     }
     const batched = try pass()
     const batchRaw = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     chain.estimate = 200_000n
     const perTransaction = try pass()
     chain.estimate = 100_000n
     const today = try provided(isoNow())
     try write(sql`INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, reason, block_number, created_at, updated_at, finalized_at)
-      VALUES ('sfs_elsewhere_today', ${network}, 'live', ${contract}, '[{"id":99,"refund":true}]', ${resolver}, ${toHex(7n, { size: 32 })}, '0x02deadbeef', 9999, '900000000000', 'finalized', NULL, 1, ${today}, ${today}, ${today})`)
+      VALUES ('sfs_elsewhere_today', ${network}, 'live', ${contract}, '[{"id":99,"refund":true}]', ${resolver}, ${txHash(7)}, '0x02deadbeef', 9999, '900000000000', 'finalized', NULL, 1, ${today}, ${today}, ${today})`)
     const perDay = try pass()
     try nextDay()
     const nextDayRun = try pass()
     const lastRaw = chain.sent[chain.sent.length - 1]
-    try mine(true)
+    mine(chain, true)
     try nextDay()
     try deposit(34, 1, 2_000_000n, { chainAmount: 3_000_000n })
     const differing = try pass()

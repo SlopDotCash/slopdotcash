@@ -78,7 +78,7 @@ effect function ensure(holds: boolean, message: string) {
 }
 
 function wire(value: unknown) {
-  return canonicalJson(JSON.parse(JSON.stringify(value ?? null)))
+  return canonicalJson(parsedJson(JSON.stringify(value ?? null))?.value)
 }
 
 function sameJson(left: unknown, right: unknown) {
@@ -292,7 +292,7 @@ effect function verifiedLinkedScope(snapshot: LeaderboardSnapshot, receipt: Hist
       "Historical value change crosses the audited source or occurrence scope")
   }
   const unitKey = (row: Revision) => `${row.decision?.sourceId}\u0000${row.award.workUnitId}`
-  const groupsByUnit = new Map((snapshot.reviewedImplementationUnits ?? []).flatMap(({ units }) =>
+  const groupsByUnit = new Map<string, string>((snapshot.reviewedImplementationUnits ?? []).flatMap(({ units }) =>
     units.map(({ groupId, recordDigest, workUnitId }) => [`value:${recordDigest}\u0000${workUnitId}`, groupId] as const)))
   const changedUnitIds = new Set<string>()
   const changedGroups = new Set<string>()

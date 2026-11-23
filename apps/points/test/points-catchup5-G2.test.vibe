@@ -12,7 +12,9 @@ import { discussionCache } from "../src/ingestion/discussions.vibe"
 import { ingestionGitHub } from "../src/ingestion/read.vibe"
 import { collectorRenewal } from "../src/ingestion/token.vibe"
 import { restoreLocal } from "../src/snapshot/restoreLocal.vibe"
+import { etagged } from "./support/catchup5/web.ts"
 import { repository, seeded, start, statuses } from "./support/u3/github.ts"
+import { sameBytes } from "./support/u8/pages.ts"
 
 const minute = 60_000
 const api = "https://api.github.com"
@@ -32,13 +34,15 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-function collectorWorld(now: () => number) {
-  const fake = githubFake({ now })
-  fake.world.addUser({ id: 101, login: "ada" })
-  fake.world.addUser({ id: 102, login: "grace" })
-  fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
-  fake.world.addInstallation({ id: 42, account: "ada", repositories: ["widgets"], permissions: { contents: "read", issues: "read", pull_requests: "read" } })
-  return { fake, original: fake.tokens.user("ada"), other: fake.tokens.user("grace") }
+effect function collectorWorld(now: () => number) {
+  return try Effect.try(() => {
+    const fake = githubFake({ now })
+    fake.world.addUser({ id: 101, login: "ada" })
+    fake.world.addUser({ id: 102, login: "grace" })
+    fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
+    fake.world.addInstallation({ id: 42, account: "ada", repositories: ["widgets"], permissions: { contents: "read", issues: "read", pull_requests: "read" } })
+    return { fake, original: fake.tokens.user("ada"), other: fake.tokens.user("grace") }
+  })
 }
 
 function recording(fake: GitHubFake, original: string, other: string) {
@@ -84,7 +88,7 @@ function appSettings(fake: GitHubFake, ref: string) {
 
 effect function collection<A>(environment: (fake: GitHubFake) => Readonly<Record<string, string>>, run: (collector: Collector) => A!!) {
   const clock = settableClock(start)
-  const world = collectorWorld(clock.now)
+  const world = try collectorWorld(clock.now)
   const { sent, fetcher } = recording(world.fake, world.original, world.other)
   const renewed = Layer.provide(collectorRenewal(), outboundVia(fetcher))
   const config = ConfigProvider.layer(ConfigProvider.fromUnknown({ ...environment(world.fake), GITHUB_TOKEN: world.original }))
@@ -114,7 +118,7 @@ it.live('A long collection renews the App token at first use and from fifty minu
     const first = try read(0, repoUrl, "Bearer original")
     const beforeRenewal = try read(49, repoUrl, "Bearer original")
     const renewal = try read(50, repoUrl, "Bearer original")
-    fake.failNext(mintMatch, { status: 500 })
+    try orDie(Effect.try(() => fake.failNext(mintMatch, { status: 500 })))
     const before = fake.requests.length
     const failedMint = try read(100, repoUrl, "Bearer original")
     const failedStatuses = statuses(fake, before)
@@ -163,9 +167,7 @@ function exactly(method: string, path: string) {
 
 function answering(fake: GitHubFake, answers: ReadonlyMap<string, unknown>, status: 200 | 304) {
   for (const [path, body] of answers) {
-    fake.alterNext(exactly("GET", path), () => status === 304
-      ? new Response(null, { status: 304, headers: { etag } })
-      : new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", etag } }))
+    fake.alterNext(exactly("GET", path), () => etagged(status, body, etag))
   }
 }
 
@@ -211,14 +213,18 @@ it.live('A resumed collection revalidates commit-addressed pages and never keeps
         const live = Layer.provide(ingestionGitHub({ token: Redacted.make(token), discussions: cache }), outboundVia(fetcher))
         provide live {
           const github = try GitHub
-          const read = try Effect.forEach([...answers.keys()], (path) => path.includes("/compare/") ? github.json(path, Compared) : github.json(path, Commit))
+          const read = try Effect.forEach([...answers.keys()], (path) => effect {
+            if (path.includes("/compare/")) return try github.json(path, Compared)
+            return try github.json(path, Commit)
+          })
           return { read, validators: seen, entries: (try fs.readDirectory(directory)).length }
         }
       }
 
       const kept = try fs.makeTempDirectoryScoped()
       const observed = try pass(kept, immutable, 200, world.token)
-      const resumed = try pass(kept, immutable, 304, world.fake.tokens.user("grace"))
+      const grace = try Effect.try(() => world.fake.tokens.user("grace"))
+      const resumed = try pass(kept, immutable, 304, grace)
       const refused = try fs.makeTempDirectoryScoped()
       const others = try pass(refused, rejected, 200, world.token)
       return { observed, resumed, others: others.entries }
@@ -255,7 +261,7 @@ it.live('A restored data directory reassembles the exact collected ledger and re
       const split = filler("x")
       const restored = try restoredDirectory(split)
       const splitBytes = try restoreLocal(restored.directory, `${restored.directory}/out.json`)
-      const splitSame = Buffer.compare(try fs.readFile(`${restored.directory}/out.json`), split) === 0
+      const splitSame = sameBytes(try fs.readFile(`${restored.directory}/out.json`), split)
 
       const tampered = try restoredDirectory(filler("y"))
       const first = tampered.parts[0]

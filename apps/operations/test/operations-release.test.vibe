@@ -65,11 +65,22 @@ module stagedGitHub {
   }
 
   /** @throws {never} */
+  export function emptyRegistry(fake: GitHubFake, origin: string, reads: string[]): GitHubFake["fetch"] {
+    return (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input)
+      if (url.origin !== origin) return fake.fetch(input, init)
+      reads.push(url.pathname)
+      const body = url.pathname === "/api/v1/projects" ? { schemaVersion: "1", projects: [], restrictions: [] } : { schemaVersion: "1", revisions: [] }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }))
+    }
+  }
+
+  /** @throws {never} */
   export function hangNext(fake: GitHubFake, match: string): void {
     fake.alterNext(match, () => new Promise<Response>(() => undefined))
   }
 }
-module actionsWorld {
+module actionsSimulation {
   import { Clock, Duration, Effect } from "effect"
 
   export type Inputs = Readonly<Record<string, string>>
@@ -273,6 +284,7 @@ module workflowShape {
   import { tmpdir } from "node:os"
   import { join } from "node:path"
   import { parse } from "yaml"
+  import { repoRoot } from "@repo/platform/testing/paths"
 
   export interface Step { readonly name?: string; readonly if?: string; readonly run?: string; readonly env?: Readonly<Record<string, string>>; readonly with?: Readonly<Record<string, unknown>> }
   export interface Job {
@@ -300,7 +312,7 @@ module workflowShape {
 
   /** @throws {Error} */
   function workflowFile(name: string): Workflow {
-    const document: unknown = parse(readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), "utf8"))
+    const document: unknown = parse(readFileSync(join(repoRoot, ".github", "workflows", name), "utf8"))
     if (typeof document !== "object" || document === null || !("jobs" in document) || typeof document.jobs !== "object" || document.jobs === null) throw new Error(`${name} declares no jobs`)
     return document as Workflow
   }
@@ -534,8 +546,8 @@ mkdir -p "$BUNDLE/github"
   }
 }
 import { collectionWorkflows, reviewedWorkflow } from workflowShape
-import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsWorld
-import { type StagedProducer, type StagedRecord, advanceBranch, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
+import { type ActionRun, type Outcome, type Shape, type World, type WorldOptions, actionJobs, actionRun, actionsRepository, actionsWorld, checkpoint } from actionsSimulation
+import { type StagedProducer, type StagedRecord, advanceBranch, emptyRegistry, hangNext, refuseNext, stagedHistory, stagedProducer } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
@@ -729,13 +741,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const retainedWithoutTime = try attempt(["collect", "production", bundle, "--retained"])
     const registryOrigin = "http://127.0.0.1:8788"
     const registryReads: string[] = []
-    const registryFetch: GitHubFake["fetch"] = (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : input)
-      if (url.origin !== registryOrigin) return fake.fetch(input, init)
-      registryReads.push(url.pathname)
-      const body = url.pathname === "/api/v1/projects" ? { schemaVersion: "1", projects: [], restrictions: [] } : { schemaVersion: "1", revisions: [] }
-      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }))
-    }
+    const registryFetch = emptyRegistry(fake, registryOrigin, registryReads)
     const collected = files.join(directory, "collected")
     try written(files.join(collected, "github/leaderboard.json"), "{\"records\":[]}\n")
     try written(files.join(collected, publishedRegistryPath), "{\"schemaVersion\":\"1\",\"syncedAt\":\"2026-01-01T00:00:00.000Z\",\"projects\":[{\"id\":\"stale\"}]}\n")
@@ -750,7 +756,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       reads: registryReads,
       unchanged: (try fs.readFileString(files.join(collected, registrySnapshotPath))) === registryText,
       registrySha256: boundCollection.registrySha256 === (try sha256Hex(registryText)),
-      recordedAt: boundCollection.recordedAt === (JSON.parse(registryText) as { readonly syncedAt: string }).syncedAt,
+      recordedAt: boundCollection.recordedAt === (try Effect.try(() => JSON.parse(registryText) as { readonly syncedAt: string })).syncedAt,
       stalePublished,
     }
     const manifested = try attempt(["manifest", "production", bundle])

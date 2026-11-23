@@ -219,8 +219,10 @@ layer(webCrypto, { excludeTestServices: true })((it) => {
     const journal: PointsJournal = { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: after, coverage: [], revisions }
     const scope = { projectId, repository, mergedBefore, recordedThrough: through }
     const first = { id: "PR_keep", number: 10, url: url(10), mergedAt }
-    try Effect.try(() => assert.deepStrictEqual(try previousPositiveImplementationSources(journal, scope), [first, { id: "PR_later_zero", number: 11, url: url(11), mergedAt }]))
-    try Effect.try(() => assert.deepStrictEqual(try previousPositiveImplementationSources(journal, { ...scope, recordedThrough: after }), [first]))
+    const throughCutoff = try previousPositiveImplementationSources(journal, scope)
+    try Effect.try(() => assert.deepStrictEqual(throughCutoff, [first, { id: "PR_later_zero", number: 11, url: url(11), mergedAt }]))
+    const throughAfter = try previousPositiveImplementationSources(journal, { ...scope, recordedThrough: after })
+    try Effect.try(() => assert.deepStrictEqual(throughAfter, [first]))
     for (const refused of [{ ...scope, mergedBefore: "2026-11-01T00:00:00Z" }, { ...scope, recordedThrough: "2026-11-03" }, { ...scope, repository: "../slop" }, { ...scope, projectId: "" }]) {
       const failure = try Effect.flip(previousPositiveImplementationSources(journal, refused))
       try Effect.try(() => assert.strictEqual(failure._tag, "ImplementationHistoryRefused"))

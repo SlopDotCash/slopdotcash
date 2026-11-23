@@ -10,7 +10,7 @@ import { dedupedById, uniqueById } from "../../collect/merged/wire.vibe"
 import { type Actor, isBot } from "../facts.vibe"
 import { assertReviewRecordReceiptJoin, parseReviewRecordBlock } from "./reviewRecords.vibe"
 
-module identity {
+module identifiers {
   import {
     isDeclaredModelIdentifier as declared, isExactClientIdentifier as client, isExactModelIdentifier as model, isExactProviderIdentifier as provider,
     isExactProviderModelIdentifier as providerModel, isUnavailableModelIdentifier as unavailable,
@@ -28,7 +28,7 @@ module identity {
   /** @throws {never} */
   export function isExactProviderModelIdentifier(value: unknown): value is string { return providerModel(value) }
 }
-import { isDeclaredModelIdentifier, isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier, isExactProviderModelIdentifier, isUnavailableModelIdentifier } from identity
+import { isDeclaredModelIdentifier, isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier, isExactProviderModelIdentifier, isUnavailableModelIdentifier } from identifiers
 
 export { pullRequestBodySource, pullRequestTextSources }
 export type { PullTextSource }
@@ -358,7 +358,7 @@ export effect function assessModelAttribution(sources: ReadonlyArray<PullTextSou
         const artifact = source.artifactUrl !== undefined && source.artifactUrl !== "" && source.artifactHeadSha !== undefined && source.artifactHeadSha !== ""
           ? { artifactUrl: source.artifactUrl, headSha: source.artifactHeadSha }
           : null
-        const joined = assertReviewRecordReceiptJoin(reviewRecord, marker.run, artifact)
+        const joined = assertReviewRecordReceiptJoin(reviewRecord, marker.run, artifact, context.registry)
         if (joined.kind === "invalid") {
           invalidate(joined.reason)
           markerIndex += 1

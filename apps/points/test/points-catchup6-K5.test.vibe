@@ -4,7 +4,9 @@ import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { sha256Of } from "@repo/platform/git/bytes"
+import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
+import { outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import type { Journal, Revision } from "../src/kernels/records/canonical.ts"
@@ -15,6 +17,7 @@ import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/a
 import { capturedCut, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
 import { historicalClosedContextBindings, historicalEmptyLegacyClosureBindings, historicalEvidence } from "../src/corrections/reviewed/replay/bindings.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
+import { jsonReply } from "./support/catchup3-e2/replies.ts"
 
 service World {
   readonly db: D1Database
@@ -152,7 +155,7 @@ function restPull(mergeCommitSha: string | null) {
 }
 
 function answered(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(request, new globalThis.Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))
+  return HttpClientResponse.fromWeb(request, jsonReply(body, { status, headers: { "content-type": "application/json" } }))
 }
 
 function closedContextApi(seen: string[], observed: unknown, rest: unknown) {
@@ -267,7 +270,9 @@ layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServi
   })
 
   it.effect('An assessment audit outside the trusted main dispatch reads nothing (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {
-    const failure = try Effect.flip(reviewed(["--audit-assessments"]))
-    try same(failure._tag, "ReviewedPublicationRefused")
+    provide outbound, systemGit {
+      const failure = try Effect.flip(reviewed(["--audit-assessments"]))
+      try same(failure._tag, "ReviewedPublicationRefused")
+    }
   })
 })

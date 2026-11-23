@@ -185,6 +185,7 @@ export interface Extra {
   readonly funding?: FundingFacts
   readonly alongside?: ReadonlyArray<Statement>
   readonly reason?: string
+  readonly share?: StoredShare
 }
 
 const relationships: Readonly<Record<ManifestExclusion["relationship"], Relationship>> = {
@@ -315,7 +316,7 @@ export effect function awardSource(projectId: string, period: Period, actor: num
   return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, formatPeriod(period), String(actor)]))
 }
 
-export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly revision: number | null }
+export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly early_close_at: string | null; readonly revision: number | null }
 export schema ProposedRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
 export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly actor_id: string; readonly created_at: string }
 export schema CutRow { readonly sequence: number; readonly github_user_id: string; readonly proposed_gross_base: string; readonly gross_base: string; readonly reason: string; readonly created_at: string }
@@ -353,7 +354,7 @@ function scopeOf(key: MonthKey) {
 export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
   const scope = scopeOf(key)
   return [
-    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
+    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, early_close_at, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
     sql`SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE ${scope} ORDER BY rowid`,
     sql`SELECT sequence, github_user_id, gross_base, actor_id, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
     sql`SELECT sequence, github_user_id, proposed_gross_base, gross_base, reason, created_at FROM monthly_allocation_cut_reasons WHERE ${scope} ORDER BY sequence`,
@@ -474,7 +475,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     publicCuts,
     notices,
     latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
-    earlyCloseAt: try earlyCloseAt(project, period),
+    earlyCloseAt: earlyCloseAt(project, period, found),
   }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)
@@ -737,7 +738,7 @@ effect function writesFor(key: MonthKey, loaded: Loaded, next: Monthly, event: E
   if (event.type === "propose") {
     const current = loaded.facts.current
     if (current === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "the project has no current revision" })
-    return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map())), ...alongside]
+    return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map(), extra.share)), ...alongside]
   }
   if (event.type === "adjust") return [try changeWrite(key, next, event.actor, event.amount, event.fact.actor), ...alongside]
   if (event.type === "cut") return [...(try cutWrites(key, next, event, extra.reason)), ...alongside]

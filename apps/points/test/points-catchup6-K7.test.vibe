@@ -15,6 +15,7 @@ import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconst
 import { type RetirementScope, verifyCarrierTips, verifyHistoricalAcceptedSquashes, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges } from "../src/corrections/reviewed/verify.vibe"
 import { periodOf } from "../gen/points__periods.effect.vibe"
 import { distinctOrder } from "../gen/points__reviewedHistory.ts"
+import { jsonReply } from "./support/catchup3-e2/replies.ts"
 import { type Packet, type Retirement, actor, appended, baselineOf, batchDigestOf, duplicateReason, duplicateRetirementFixture, earlierAcceptanceFixture, hash, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const repository = { id: 1, node_id: "R_feed", private: false, full_name: "feedforagents/feed" }
@@ -101,7 +102,7 @@ function api(server: Remote) {
     const reads = (server.reads.get(path) ?? 0) + 1
     server.reads.set(path, reads)
     const body = server.routes.get(path)?.(reads)
-    const response = new globalThis.Response(JSON.stringify(body ?? { message: "Not Found" }), { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
+    const response = jsonReply(body ?? { message: "Not Found" }, { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
     return succeed(HttpClientResponse.fromWeb(request, response))
   })
 }
@@ -359,12 +360,13 @@ function orderOf(packet: Packet) {
 }
 
 effect function rebuilt(packet: Packet, baseline: Journal, duplicates: ReadonlySet<string> = new Set()) {
+  const protection = try Effect.try(() => protectionFor(october))
   const result = reconstructHistoricalPoints({
     packet: packet as HistoricalPacket,
     baseline,
     now: time,
     bans: new Map(),
-    protection: protectionFor(october),
+    protection,
     registry: emptyRegistry,
     repositories: repositoriesOf(emptyRegistry, {}),
     projectOf: () => "feed",
@@ -392,8 +394,8 @@ function bind(f: Duplicate) {
   return expected
 }
 
-function identicalFixture(survivingCarrier = false, earlierAmount?: number) {
-  const f = duplicateRetirementFixture(earlierAmount)
+effect function identicalFixture(survivingCarrier = false, earlierAmount?: number) {
+  const f = try Effect.try(() => duplicateRetirementFixture(earlierAmount))
   const { retirement } = f
   const [earlier] = retirement.earlierSources
   const [first] = earlier?.commits ?? []
@@ -405,11 +407,12 @@ function identicalFixture(survivingCarrier = false, earlierAmount?: number) {
   retirement.coverage = []
   retirement.identicalAcceptedChange = { earlierSourceId: earlier.sourceId, earlierMergeSha: "1".repeat(40), mergeSha: "2".repeat(40), diffSha256: "3".repeat(64), ...(survivingCarrier ? { survivingCarrier: true } : {}) }
   const expected = bind(f)
-  return { ...f, earlier, expected, verified: new Set([hash(retirement)]) }
+  const retired = try Effect.try(() => hash(retirement))
+  return { ...f, earlier, expected, verified: new Set([retired]) }
 }
 
-function carriedEdgeFixture() {
-  const f = earlierAcceptanceFixture()
+effect function carriedEdgeFixture() {
+  const f = try Effect.try(() => earlierAcceptanceFixture())
   const { retirement } = f
   const { source } = retirement
   const [earlier] = retirement.earlierSources
@@ -418,7 +421,7 @@ function carriedEdgeFixture() {
   const { sha, raw } = work
   const { sha: baseSha, raw: baseRaw } = base
   const nativeMerge = rawCommit(mergeTree, [baseSha, sha], 2, "earlier acceptance with distinct tree")
-  const nativeMergeSha = commitObjectId(nativeMerge)
+  const nativeMergeSha = try Effect.try(() => commitObjectId(nativeMerge))
   const context: Context = { id: earlier.sourceId, number: 2, headSha: sha, baseSha, mergedAt: earlier.occurredAt ?? "", mergeSha: nativeMergeSha }
   const proof: Proof = {
     commits: [{ sha, sourceId: earlier.sourceId }],
@@ -434,26 +437,27 @@ function carriedEdgeFixture() {
   const audited = f.packet.sourceAudit.sources.find((row) => row.id === source.sourceId)
   if (audited !== undefined) audited.headSha = nativeMergeSha
   const next = rawCommit(mergeTree, [baseSha, nativeMergeSha], 3, "promotion of the accepted merge")
-  retirement.acceptedPromotion = { headCommit: nativeMerge, mergeCommit: next, mergeSha: commitObjectId(next) }
+  const nextSha = try Effect.try(() => commitObjectId(next))
+  retirement.acceptedPromotion = { headCommit: nativeMerge, mergeCommit: next, mergeSha: nextSha }
   const expected = bind(f)
   return { ...f, earlier, context, proof, expected }
 }
 
 effect function groupedWitness() {
-  const f = carriedEdgeFixture()
+  const f = try carriedEdgeFixture()
   const earlier = f.baseline.revisions.find((row) => row.award.sourceId === f.earlier.sourceId)
   const candidate = f.packet.corrections.candidates.find((entry) => entry.sourceId === f.earlier.sourceId)
   if (earlier === undefined || candidate === undefined) throw Error("fixture earlier award")
   const workUnitId = `wu_${"a".repeat(64)}`
   const ordinary: Award = { ...earlier.award, workUnitId, amount: 0 }
   const grouped: Award = { ...earlier.award, workUnitId, key: sha256Of(keyText({ projectId: "feed", actorId: actor.id, category: "merged-pull-request", sourceId: f.earlier.sourceId, workUnitId })) }
-  const changed = appended(appended({ ...f.baseline, revisions: f.baseline.revisions.slice(0, 1) }, ordinary, "b".repeat(64)), grouped, "b".repeat(64))
+  const changed = try Effect.try(() => appended(appended({ ...f.baseline, revisions: f.baseline.revisions.slice(0, 1) }, ordinary, "b".repeat(64)), grouped, "b".repeat(64)))
   const prior = changed.revisions.find((row) => row.award.key === ordinary.key)
   const groupedPrior = changed.revisions.find((row) => row.award.key === grouped.key)
   if (prior === undefined || groupedPrior === undefined) throw Error("fixture pool predecessors")
-  f.packet.baselineDigest = batchDigestOf(changed)
+  f.packet.baselineDigest = try Effect.try(() => batchDigestOf(changed))
   f.packet.baselineRevisionCount = changed.revisions.length
-  f.packet.corrections.baseline = baselineOf(changed)
+  f.packet.corrections.baseline = try Effect.try(() => baselineOf(changed))
   candidate.workUnitId = workUnitId
   candidate.expectedPredecessors = [{ key: ordinary.key, revisionId: prior.id }]
   f.packet.corrections.candidates.push({ ...structuredClone(candidate), id: "earlier_grouped", kind: "work-unit", proof: { status: "held" }, expectedPredecessors: [{ key: grouped.key, revisionId: groupedPrior.id }] })
@@ -472,7 +476,7 @@ effect function carriedRange(server: Remote) {
   const headCommit = `${try fixtureGit(gitDir, ["cat-file", "commit", head])}\n`
   const mergeCommit = `${try fixtureGit(gitDir, ["cat-file", "commit", promoted])}\n`
   const verify = (declaredBase: string, changeAfterNativeRead: boolean) => effect {
-    const f = carriedEdgeFixture()
+    const f = try carriedEdgeFixture()
     const { retirement, proof, context } = f
     const { source } = retirement
     const prior = f.earlier
@@ -580,14 +584,14 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
   it.effect('An independently verified identical accepted change retires only its later ordinary award, a carried merge keeps the earlier pool and a surviving carrier keeps only an equal original-author award (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
     provide webCrypto {
       const lacking = "Identical accepted change lacks a verified earlier ordinary pool"
-      const identical = identicalFixture()
+      const identical = try identicalFixture()
       const unverified = try rebuilt(identical.packet, identical.baseline)
       const verified = try rebuilt(identical.packet, identical.baseline, identical.verified)
       const kept = typeof verified === "string" ? [] : verified.revisions.slice(0, identical.baseline.revisions.length)
       const proof = identical.retirement.identicalAcceptedChange
       if (proof !== undefined) proof.diffSha256 = "4".repeat(64)
       const changedDiff = try rebuilt(identical.packet, identical.baseline, identical.verified)
-      const carried = identicalFixture()
+      const carried = try identicalFixture()
       const carriedProof = carried.retirement.identicalAcceptedChange
       const [audited] = carried.packet.sourceAudit.sources
       const [earlierCommit] = carried.earlier.commits
@@ -598,13 +602,15 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
       carried.retirement.source.commits = [...carried.earlier.commits, { ...earlierCommit, sha: carriedProof.earlierMergeSha, parentCount: 2, parentShas: ["c".repeat(40), carried.earlier.headSha] }]
       carried.retirement.source.commitCount = carried.retirement.source.commits.length
       const carriedExpected = bind(carried)
-      const carriedKept = try rebuilt(carried.packet, carried.baseline, new Set([hash(carried.retirement)]))
+      const carriedRetired = try Effect.try(() => hash(carried.retirement))
+      const carriedKept = try rebuilt(carried.packet, carried.baseline, new Set([carriedRetired]))
       carried.retirement.source.commits.push({ ...earlierCommit, sha: "4".repeat(40) })
       carried.retirement.source.commitCount += 1
-      const carriedExtra = try rebuilt(carried.packet, carried.baseline, new Set([hash(carried.retirement)]))
-      const surviving = identicalFixture(true)
+      const extendedRetired = try Effect.try(() => hash(carried.retirement))
+      const carriedExtra = try rebuilt(carried.packet, carried.baseline, new Set([extendedRetired]))
+      const surviving = try identicalFixture(true)
       const survived = try rebuilt(surviving.packet, surviving.baseline, surviving.verified)
-      const unequal = identicalFixture(true, 29)
+      const unequal = try identicalFixture(true, 29)
       const unequalAward = try rebuilt(unequal.packet, unequal.baseline, unequal.verified)
       try same([unverified, verified, kept, changedDiff, carriedKept, carriedExtra, survived, unequalAward], [
         lacking, identical.expected, identical.baseline.revisions, lacking, carriedExpected, lacking, surviving.expected, "Surviving carrier must preserve the equal original-author award",
@@ -615,15 +621,15 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
   it.effect('A carried earlier merge counts only as the exact accepted merge edge of a retained ordinary award (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
     provide webCrypto {
       const unboundEdge = "Earlier accepted merge edge is not bound to a retained ordinary award"
-      const imported = carriedEdgeFixture()
+      const imported = try carriedEdgeFixture()
       const kept = try rebuilt(imported.packet, imported.baseline)
-      const moved = carriedEdgeFixture()
+      const moved = try carriedEdgeFixture()
       const [edge] = moved.proof.acceptedMergeEdges ?? []
       if (edge !== undefined) edge.sha = moved.context.headSha
       const notAccepted = try rebuilt(moved.packet, moved.baseline)
       delete moved.proof.acceptedMergeEdges
       const withoutEdges = try rebuilt(moved.packet, moved.baseline)
-      const alone = carriedEdgeFixture()
+      const alone = try carriedEdgeFixture()
       alone.packet.corrections.candidates = alone.packet.corrections.candidates.filter((candidate) => candidate.sourceId !== alone.earlier.sourceId)
       const positiveAlone = try rebuilt(alone.packet, alone.baseline)
       const grouped = try groupedWitness()

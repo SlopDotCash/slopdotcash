@@ -1,12 +1,8 @@
 import { assert, it, layer } from "@effect/vitest"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { outboundVia } from "@repo/platform/http"
 import { type Answer, Area, areaLayer } from "@repo/platform/testing/area"
-import { githubFake } from "@repo/platform/testing/github"
 import { proveCandidates } from "../src/corrections/apply/prove.vibe"
 import { type CollectionInputs, type CollectionOptions, type Provenance, collectCorrections } from "../src/corrections/collect/collect.vibe"
 import { lacksDirectAcceptance } from "../src/corrections/collect/retained.vibe"
@@ -16,7 +12,8 @@ import { journalFile, pointKey, pointRevisionId } from "../src/kernels/records/i
 import { collectionServices } from "../src/programs/corrections.vibe"
 import { resumeAcrossQuota } from "../src/quotaRecovery/run.vibe"
 import { absentService } from "./support/u11/pages.ts"
-import { actionsRepository, day, fastClock, mainHead, repository, start } from "./support/u13/github.ts"
+import { actionsRepository, day, mainHead, repository, start } from "./support/u13/github.ts"
+import { type World, acceptanceWorld } from "./support/catchup6-k4/world.ts"
 import { alpha, author, baseGeneratedAt, carrier, censusDigest, collectedAt, correctionRule, receiptSchema, registry, sourceOf, urlOf } from "./support/u14/fixtures.ts"
 
 type Body = Readonly<Record<string, unknown>>
@@ -181,31 +178,6 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
   })
 })
 
-function acceptanceWorld() {
-  const clock = fastClock(start - 50 * day)
-  const fake = githubFake({ now: () => clock.now() })
-  fake.world.addUser({ id: 101, login: "ada" })
-  const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
-  const base = created.branches.get(created.defaultBranch) ?? ""
-  const original = fake.world.addCommit(repository, { branch: "original", parents: [base], author: "ada", files: { "src/carried.ts": "original\n" } })
-  fake.world.addPull({ repo: repository, number: 1, author: "ada", state: "closed", commits: [original], headSha: original })
-  const carried = fake.world.addCommit(repository, { branch: "carried", parents: [base], files: { "src/carried.ts": "carried\n" } })
-  const mergedAt = start - 20 * day
-  fake.world.addPull({ repo: repository, number: 2, author: "ada", body: "Carries #1 forward.", mergedAt: iso(mergedAt), commits: [carried], headSha: carried })
-  clock.set(start)
-  return {
-    clock,
-    fetcher: { fetch: (request: Request) => fake.fetch(request) },
-    token: fake.tokens.user("ada"),
-    directory: mkdtempSync(join(tmpdir(), "slop-retained-")),
-    source: fake.world.pull(repository, 2).nodeId,
-    mergedAt,
-    ada: fake.world.account("ada").nodeId,
-  }
-}
-
-type World = ReturnType<typeof acceptanceWorld>
-
 effect function inputsOf(world: World) {
   const category = "merged-pull-request"
   const award = {
@@ -245,8 +217,8 @@ effect function collectedFrom(world: World) {
     collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
     Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
   )
-  const inputs = try inputsOf(world)
   provide services, world.clock.layer {
+    const inputs = try inputsOf(world)
     return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenance, proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
   }
 }

@@ -67,7 +67,7 @@ function sameKeys(value: Readonly<Record<string, unknown>>, keys: ReadonlyArray<
   return Object.keys(value).sort().join("\u0000") === keys.join("\u0000")
 }
 
-effect function recorded(parsed: Parsed<unknown | null>) {
+effect function recorded<A>(parsed: Parsed<A>) {
   if (parsed.kind === "invalid") throw refused(parsed.reason)
   return parsed.value
 }

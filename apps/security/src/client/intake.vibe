@@ -5,6 +5,8 @@ export schema Advisory { ghsa: string; url: string }
 
 export schema ProofOfConcept { fileName: string; patch: string }
 
+export schema ReportDeposit { state: "needed" | "paid" | "refund_due" | "refunded" | "kept_due" | "kept"; amount: string; payPath: string }
+
 export schema IntakeView {
   state: string
   receivedAt: string
@@ -37,7 +39,7 @@ export schema SubmissionView {
   createdAt: string
   updatedAt: string
   intake: IntakeView | null
-  deposit?: unknown
+  deposit?: ReportDeposit | null
 }
 
 export schema Submitted { replayed?: boolean; authorizeUrl?: string; submission: SubmissionView }

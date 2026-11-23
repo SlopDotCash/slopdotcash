@@ -6,14 +6,14 @@ import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { githubApp } from "@repo/platform/github/app"
 import { outboundVia } from "@repo/platform/http"
-import { type Applied, type Handler, bundle, database, migrate, startWorker, workerOptions } from "@repo/platform/testing"
+import { type Applied, type Handler, bundle, database, migrate, startWorker } from "@repo/platform/testing"
 import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { type GitHubFake, type GitHubRequest, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 import { migrationCount, migrationsDir } from "@repo/platform/testing/paths"
 import { IntakeCounts, IntakePause, ProjectParticipation, type SlopRate, SubmissionFeeRates, SubmissionFeeSetting } from "@repo/ports/backend"
-import { Miniflare, Request, Response } from "miniflare"
+import { Request, Response } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 import { submissionFeeOptions } from "../src/client/submissionFee.vibe"
 import { IntakePauseLive, SubmissionFeeSettingLive } from "../src/projects/feeGateReads.vibe"
@@ -738,7 +738,7 @@ const IdentityStarted = Layer.effect(Identity, effect {
   try orDie(Effect.try(() => github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })))
   const net = internet({ github: github.handler })
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
-  const mf = try acquireRelease(sync(() => new Miniflare(workerOptions({
+  const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { IDENTITY_DB: "slop-private" },
     ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
@@ -750,7 +750,7 @@ const IdentityStarted = Layer.effect(Identity, effect {
       IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
     },
     outbound: net.handler,
-  }))), (started) => promise(() => started.dispose()))
+  })), (started) => promise(() => started.dispose()))
   const applied = try promise(() => migrate(mf, "IDENTITY_DB", migrationsDir))
   const failed = applied.find((file) => file.error !== undefined)
   if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
@@ -771,6 +771,14 @@ const IdentityStarted = Layer.effect(Identity, effect {
     }),
   }
 })
+
+schema BindingHash { browser_binding_hash: string | null }
+
+effect function bindingHash(db: D1Database, flowId: string) {
+  const found = try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(flowId).all())
+  const [row] = try orDie(Schema.decodeUnknownEffect(Schema.Array(BindingHash))(found.results))
+  return row?.browser_binding_hash
+}
 
 effect function call(url: string, init: Fetching = {}) {
   return try (try Identity).fetch(url, init)
@@ -819,7 +827,7 @@ layer(Layer.merge(IdentityStarted, webCrypto), { excludeTestServices: true, time
 
     const own = try begin("slop-points-web", "198.51.100.11")
     const secret = own.binding.split("=")[1] ?? ""
-    const stored = (try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(own.flow.flowId).first<{ readonly browser_binding_hash: string | null }>()))?.browser_binding_hash
+    const stored = try bindingHash(db, own.flow.flowId)
     const waiting = try poll(own.flow, "slop-points-web", "198.51.100.11", { origin: site, cookie: own.binding })
     const strangerAuthorize = try authorize(own.flow, undefined)
     const other = try begin("slop-points-web", "198.51.100.12")
@@ -855,7 +863,7 @@ layer(Layer.merge(IdentityStarted, webCrypto), { excludeTestServices: true, time
     const terminal = try begin("private-trace-api", "198.51.100.18", undefined)
     const terminalAuthorize = try authorize(terminal.flow, undefined)
     const terminalWaiting = try poll(terminal.flow, "private-trace-api", "198.51.100.18")
-    const terminalStored = (try promise(() => db.prepare("SELECT browser_binding_hash FROM identity_oauth_flows WHERE id = ?").bind(terminal.flow.flowId).first<{ readonly browser_binding_hash: string | null }>()))?.browser_binding_hash
+    const terminalStored = try bindingHash(db, terminal.flow.flowId)
 
     const preflights = [
       try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } }),
@@ -1052,57 +1060,63 @@ function labelCalls(requests: ReadonlyArray<GitHubRequest>, method: string, path
   return requests.filter((request) => request.method === method && new URL(request.url).pathname.endsWith(path)).length
 }
 
-function people(fake: GitHubFake) {
+effect function people(fake: GitHubFake) {
   const world = fake.world
-  world.addOrg({ id: 5000, login: org })
-  world.addUser({ id: 5001, login: "maint" })
-  world.addUser({ id: 5002, login: "alice" })
-  world.addUser({ id: 5003, login: "bob" })
-  world.addUser({ id: 5004, login: "carol" })
-  world.addUser({ id: 5005, login: "helper[bot]", type: "Bot" })
-  world.addMember(org, "maint")
-  world.addInstallation({ id: 79, account: org, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
+  try orDie(Effect.try(() => {
+    world.addOrg({ id: 5000, login: org })
+    world.addUser({ id: 5001, login: "maint" })
+    world.addUser({ id: 5002, login: "alice" })
+    world.addUser({ id: 5003, login: "bob" })
+    world.addUser({ id: 5004, login: "carol" })
+    world.addUser({ id: 5005, login: "helper[bot]", type: "Bot" })
+    world.addMember(org, "maint")
+    world.addInstallation({ id: 79, account: org, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
+  }))
 }
 
-function countsWorld(fake: GitHubFake) {
+effect function countsWorld(fake: GitHubFake) {
   const world = fake.world
-  people(fake)
-  world.addRepo({ id: 7301, owner: org, name: "open1" })
-  world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-400) })
-  const answered = world.addPull({ repo: `${org}/open1`, author: "bob", createdAt: iso(-390) })
-  world.addComment(`${org}/open1`, answered, { author: "maint", body: "Looking at it.", createdAt: iso(-380) })
-  world.addPull({ repo: `${org}/open1`, author: "carol", createdAt: iso(-10) })
-  world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-300), draft: true })
-  world.addPull({ repo: `${org}/open1`, author: "maint", createdAt: iso(-300) })
-  world.addPull({ repo: `${org}/open1`, author: "helper[bot]", createdAt: iso(-300) })
-  world.addRepo({ id: 7302, owner: org, name: "count" })
-  world.addRepo({ id: 7303, owner: org, name: "floor" })
-  for (const [name, beyond] of [["count", 120], ["floor", 701]] as const) {
-    for (let index = 0; index < 49; index += 1) world.addPull({ repo: `${org}/${name}`, author: "alice", createdAt: iso(-400 + index / 10) })
-    world.addPull({ repo: `${org}/${name}`, author: "carol", createdAt: iso(-10) })
-    for (let index = 0; index < beyond; index += 1) world.addPull({ repo: `${org}/${name}`, author: "bob", createdAt: iso(-9 + index / 1000), draft: name === "count" && index === 0 })
-  }
-  world.addRepo({ id: 7304, owner: org, name: "capped" })
-  world.addPull({ repo: `${org}/capped`, author: "carol", createdAt: iso(-10) })
+  try people(fake)
+  try orDie(Effect.try(() => {
+    world.addRepo({ id: 7301, owner: org, name: "open1" })
+    world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-400) })
+    const answered = world.addPull({ repo: `${org}/open1`, author: "bob", createdAt: iso(-390) })
+    world.addComment(`${org}/open1`, answered, { author: "maint", body: "Looking at it.", createdAt: iso(-380) })
+    world.addPull({ repo: `${org}/open1`, author: "carol", createdAt: iso(-10) })
+    world.addPull({ repo: `${org}/open1`, author: "alice", createdAt: iso(-300), draft: true })
+    world.addPull({ repo: `${org}/open1`, author: "maint", createdAt: iso(-300) })
+    world.addPull({ repo: `${org}/open1`, author: "helper[bot]", createdAt: iso(-300) })
+    world.addRepo({ id: 7302, owner: org, name: "count" })
+    world.addRepo({ id: 7303, owner: org, name: "floor" })
+    for (const [name, beyond] of [["count", 120], ["floor", 701]] as const) {
+      for (let index = 0; index < 49; index += 1) world.addPull({ repo: `${org}/${name}`, author: "alice", createdAt: iso(-400 + index / 10) })
+      world.addPull({ repo: `${org}/${name}`, author: "carol", createdAt: iso(-10) })
+      for (let index = 0; index < beyond; index += 1) world.addPull({ repo: `${org}/${name}`, author: "bob", createdAt: iso(-9 + index / 1000), draft: name === "count" && index === 0 })
+    }
+    world.addRepo({ id: 7304, owner: org, name: "capped" })
+    world.addPull({ repo: `${org}/capped`, author: "carol", createdAt: iso(-10) })
+  }))
 }
 
-function wantedWorld(fake: GitHubFake) {
+effect function wantedWorld(fake: GitHubFake) {
   const world = fake.world
-  people(fake)
-  world.addRepo({ id: 7401, owner: org, name: "plain" })
-  world.addPull({ repo: `${org}/plain`, author: "carol", createdAt: iso(-10) })
-  world.addRepo({ id: 7402, owner: org, name: "wanted" })
-  world.addIssue({ repo: `${org}/wanted`, number: 7, author: "maint", title: "Port the baseline to JAX 0.6", createdAt: iso(-100), labels: ["slop-wanted"] })
-  world.addIssue({ repo: `${org}/wanted`, number: 8, author: "maint", title: "Not wanted", createdAt: iso(-90) })
-  world.addIssue({ repo: `${org}/wanted`, number: 9, author: "maint", title: "Seed-controlled comparison for PPO", createdAt: iso(-50), labels: ["slop-wanted"] })
-  world.addPull({ repo: `${org}/wanted`, number: 20, author: "alice", body: "Fixes #9", createdAt: iso(-5) })
-  world.addRepo({ id: 7403, owner: org, name: "wanted2" })
-  world.addIssue({ repo: `${org}/wanted2`, number: 3, author: "maint", title: "Write the guide", createdAt: iso(-40), labels: ["slop-wanted"] })
-  world.addRepo({ id: 7501, owner: org, name: "foreign" })
-  world.addIssue({ repo: `${org}/foreign`, number: 7, author: "maint", title: "Elsewhere", createdAt: iso(-40), labels: ["slop-wanted"] })
+  try people(fake)
+  try orDie(Effect.try(() => {
+    world.addRepo({ id: 7401, owner: org, name: "plain" })
+    world.addPull({ repo: `${org}/plain`, author: "carol", createdAt: iso(-10) })
+    world.addRepo({ id: 7402, owner: org, name: "wanted" })
+    world.addIssue({ repo: `${org}/wanted`, number: 7, author: "maint", title: "Port the baseline to JAX 0.6", createdAt: iso(-100), labels: ["slop-wanted"] })
+    world.addIssue({ repo: `${org}/wanted`, number: 8, author: "maint", title: "Not wanted", createdAt: iso(-90) })
+    world.addIssue({ repo: `${org}/wanted`, number: 9, author: "maint", title: "Seed-controlled comparison for PPO", createdAt: iso(-50), labels: ["slop-wanted"] })
+    world.addPull({ repo: `${org}/wanted`, number: 20, author: "alice", body: "Fixes #9", createdAt: iso(-5) })
+    world.addRepo({ id: 7403, owner: org, name: "wanted2" })
+    world.addIssue({ repo: `${org}/wanted2`, number: 3, author: "maint", title: "Write the guide", createdAt: iso(-40), labels: ["slop-wanted"] })
+    world.addRepo({ id: 7501, owner: org, name: "foreign" })
+    world.addIssue({ repo: `${org}/foreign`, number: 7, author: "maint", title: "Elsewhere", createdAt: iso(-40), labels: ["slop-wanted"] })
+  }))
 }
 
-function activityStarted(name: string, populate: (fake: GitHubFake) => void) {
+function activityStarted(name: string, populate: (fake: GitHubFake) => void!!) {
   const world = Layer.effect(ActivityWorld, effect {
     const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (running) => promise(() => running.dispose()))
     const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
@@ -1111,7 +1125,7 @@ function activityStarted(name: string, populate: (fake: GitHubFake) => void) {
     const db = try promise(() => database(mf, "SLOP_DB"))
     const clock = settableClock(start)
     const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
-    try orDie(Effect.try(() => populate(fake)))
+    try populate(fake)
     return { fake, clock, db }
   })
   const shell = Layer.unwrap(effect {

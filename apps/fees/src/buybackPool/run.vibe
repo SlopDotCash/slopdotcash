@@ -232,7 +232,7 @@ effect function priced(running: Running, asset: number, token: Address, amount: 
   const valued = try valueOf(running, asset, token, amount)
   if (valued.kind === "Unvalued") return { kind: "Waits", quote: { ...unquoted(asset, amountIn, 0, balance), route: "ValueUnavailable" }, facts: { detail: valued.detail } } satisfies Priced
   const spent = modelBalance(valued.value)
-  if (valued.value < BigInt(minimumPurchase)) return { kind: "Waits", quote: unquoted(asset, amountIn, spent, balance), facts: {} } satisfies Priced
+  if (valued.value < (try orDie(Effect.try(() => BigInt(minimumPurchase))))) return { kind: "Waits", quote: unquoted(asset, amountIn, spent, balance), facts: {} } satisfies Priced
   const found = try quote("Robinhood", token, amount, slop, slippageBps, running.settings.kyber)
   if (found.kind === "NoRoute") return { kind: "Waits", quote: { ...unquoted(asset, amountIn, spent, balance), route: "NoRouteResult" }, facts: { detail: found.detail } } satisfies Priced
   const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n

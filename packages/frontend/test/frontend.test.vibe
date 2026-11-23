@@ -1483,7 +1483,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           it.effect(`${surface.entry} at ${surface.origin} answers each of its ${surface.cases.length} recorded old requests byte for byte without asking another service`, () => effect {
             const differences: Array<readonly [string, ReadonlyArray<string>]> = []
             for (const replay of surface.cases) {
-              const difference = replayDifference(replay, try sent(replayRequest(replay)))
+              const difference = replayDifference(replay, try sent(try orDie(Effect.try(() => replayRequest(replay)))))
               if (difference.length > 0) differences.push([`${replay.route}: ${replay.name}`, difference])
             }
             try same({ differences, asked }, { differences: [], asked: [] })
@@ -2257,7 +2257,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     }, FetchHttpClient.Fetch, asFetch(serve)))
     it.effect(`A visitor reads a project's maintainer share from the live registry: a share set this month starts next month, and no setting shows nothing (spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits")`, () => Effect.provide(Effect.provideService(effect {
       const boot = try bootedRegistry()
-      try same(listedProjects(boot).map((project) => [project.id, publishedShare(project, new Date(generatedMs))]), [
+      try same(try orDie(Effect.try(() => listedProjects(boot).map((project) => [project.id, publishedShare(project, new Date(generatedMs))]))), [
         ["slop", { tag: "ChangingShare", thisMonth: 0, fromNext: 2000, fromPeriod: 202612 }],
         ["quiet", { tag: "NoShare" }],
       ])

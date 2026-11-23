@@ -67,7 +67,8 @@ effect function askedAgain(checked: Checked) {
     try removeLabel(scopedOf(target), feePaidLabel)
     if (pull.open) try addLabels(scopedOf(target), [feeNeededLabel])
   }
-  const commentId = try writeFeeComment(target, gate.comment_id, feeNeededComment(try commentFactsOf(checked)))
+  const commentFacts = try commentFactsOf(checked)
+  const commentId = try writeFeeComment(target, gate.comment_id, try orDie(Effect.try(() => feeNeededComment(commentFacts))))
   try stepped(model, { type: "askAgain", facts, pull, commentId })
   try keepGate(target.pull, { state: "asked", reason: `${feeNeededReason}: payment withdrawn`, commentId, nextCheckAt: null }, at)
   return done("submission fee payment withdrawn; asked again")

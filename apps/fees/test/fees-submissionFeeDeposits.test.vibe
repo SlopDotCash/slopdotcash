@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { Response } from "miniflare"
-import { type Hex, encodeAbiParameters, encodeEventTopics, erc20Abi, toHex } from "viem"
+import { type Hex, concat, encodeAbiParameters, encodeEventTopics, erc20Abi, toHex } from "viem"
 import { SubmissionFeeRatesLive } from "@repo/backend/live"
 import type { D1Database } from "@repo/platform/bindings"
 import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
@@ -37,7 +37,7 @@ const start = Date.parse("2026-11-22T00:00:00.000Z")
 const day = 24 * 60 * 60 * 1000
 
 interface Deposit {
-  readonly id: number
+  readonly id: bigint
   readonly item: Hex
   readonly token: Hex
   readonly amount: bigint
@@ -46,7 +46,7 @@ interface Deposit {
 }
 
 interface Resolution {
-  readonly id: number
+  readonly id: bigint
   readonly refunded: boolean
   readonly block: number
   readonly token: Hex
@@ -76,15 +76,15 @@ service World {
 }
 
 function item(n: number) {
-  return toHex(BigInt(n), { size: 32 })
+  return toHex(n, { size: 32 })
 }
 
 function blockHash(n: number) {
-  return toHex((1n << 200n) + BigInt(n), { size: 32 })
+  return concat([toHex(1, { size: 7 }), toHex(n, { size: 25 })])
 }
 
-function txOf(kind: number, id: number, block: number, amount: bigint) {
-  return toHex((BigInt(kind) << 160n) + (BigInt(id) << 96n) + (BigInt(block) << 64n) + (amount & 0xffffffffffffffffn), { size: 32 })
+function txOf(kind: number, id: bigint, block: number, amount: bigint) {
+  return concat([toHex(kind, { size: 12 }), toHex(id, { size: 8 }), toHex(block, { size: 4 }), toHex(amount & 0xffffffffffffffffn, { size: 8 })])
 }
 
 function wires(ledger: Ledger): ReadonlyArray<Wire> {
@@ -93,7 +93,7 @@ function wires(ledger: Ledger): ReadonlyArray<Wire> {
     tx: txOf(1, deposit.id, deposit.block, deposit.amount),
     logs: [{
       address: contract,
-      topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Deposited", args: { id: BigInt(deposit.id), item: deposit.item, payer } }) as ReadonlyArray<Hex>,
+      topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Deposited", args: { id: deposit.id, item: deposit.item, payer } }) as ReadonlyArray<Hex>,
       data: encodeAbiParameters([{ type: "address" }, { type: "uint128" }, { type: "address" }], [deposit.token, deposit.amount, deposit.keptTo]),
     }],
   }))
@@ -103,7 +103,7 @@ function wires(ledger: Ledger): ReadonlyArray<Wire> {
     logs: [
       {
         address: contract,
-        topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Resolved", args: { id: BigInt(resolution.id) } }) as ReadonlyArray<Hex>,
+        topics: encodeEventTopics({ abi: submissionDepositsAbi, eventName: "Resolved", args: { id: resolution.id } }) as ReadonlyArray<Hex>,
         data: encodeAbiParameters([{ type: "bool" }], [resolution.refunded]),
       },
       {
@@ -180,7 +180,7 @@ effect function runOnce() {
 }
 
 effect function write(statement: Statement) {
-  return try provided((try D1).run(statement))
+  return try provided(effect { return try (try D1).run(statement) })
 }
 
 schema DepositSeen { readonly deposit_id: number; readonly accepted: number | null; readonly reject_reason: string | null; readonly state: string; readonly final: number; readonly amount: string }
@@ -215,24 +215,24 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const { ledger } = try World
     try ask(1, 1)
     try ask(2, 2)
-    deposit(ledger, { id: 1, item: item(1), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 10 })
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 10 })
     heads(ledger, 13, 5)
     const confirmed = try runOnce()
     const paidBeforeFinal = try seen()
-    deposit(ledger, { id: 1, item: item(1), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 10 })
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 10 })
     try runOnce()
     const changedShort = try seen()
-    deposit(ledger, { id: 1, item: item(1), token: usdg, amount: 2_500_000n, keptTo: wallet, block: 10 })
+    deposit(ledger, { id: 1n, item: item(1), token: usdg, amount: 2_500_000n, keptTo: wallet, block: 10 })
     try runOnce()
     const changedAgain = try seen()
     heads(ledger, 22, 20)
     const finalized = try runOnce()
     const atFinality = try seen()
-    deposit(ledger, { id: 2, item: item(2), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 24 })
+    deposit(ledger, { id: 2n, item: item(2), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 24 })
     heads(ledger, 27, 20)
     try runOnce()
     const secondPaid = try seen()
-    ledger.deposits = ledger.deposits.filter((each) => each.id !== 2)
+    ledger.deposits = ledger.deposits.filter((each) => each.id !== 2n)
     heads(ledger, 28, 20)
     try runOnce()
     const reorganised = try seen()
@@ -259,18 +259,18 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     const { ledger, clock } = try World
     try ask(3, 3)
     try ask(4, 4)
-    deposit(ledger, { id: 3, item: item(3), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 30 })
-    deposit(ledger, { id: 4, item: item(3), token: foreign, amount: 5_000_000n, keptTo: wallet, block: 31 })
-    deposit(ledger, { id: 5, item: item(99), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 32 })
-    deposit(ledger, { id: 6, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
-    deposit(ledger, { id: 7, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
+    deposit(ledger, { id: 3n, item: item(3), token: usdg, amount: 1_000_000n, keptTo: wallet, block: 30 })
+    deposit(ledger, { id: 4n, item: item(3), token: foreign, amount: 5_000_000n, keptTo: wallet, block: 31 })
+    deposit(ledger, { id: 5n, item: item(99), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 32 })
+    deposit(ledger, { id: 6n, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
+    deposit(ledger, { id: 7n, item: item(4), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 33 })
     heads(ledger, 40, 36)
     const first = try runOnce()
     const judgedAtOnce = try seen()
     clock.set(start + day + 60_000)
     const later = try runOnce()
     const afterGrace = try seen()
-    ledger.resolutions = [...ledger.resolutions, { id: 3, refunded: true, block: 41, token: usdg, to: payer, amount: 1_000_000n }]
+    ledger.resolutions = [...ledger.resolutions, { id: 3n, refunded: true, block: 41, token: usdg, to: payer, amount: 1_000_000n }]
     heads(ledger, 46, 44)
     try runOnce()
     const refunded = try seen()
@@ -301,8 +301,8 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     try write(sql`INSERT INTO security_report_deposits (case_id, project_id, item, mode, slop_amount, slop_per_usd, asked_at)
       VALUES ('sc_asked', 'pr_submission_fee', ${item(50)}, 'asked', '75000000000000000000', '15', '2026-11-21T00:00:00.000Z'),
              ('sc_recorded', 'pr_submission_fee', ${item(51)}, 'recorded', '75000000000000000000', '15', '2026-11-21T00:00:00.000Z')`)
-    deposit(ledger, { id: 8, item: item(50), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 50 })
-    deposit(ledger, { id: 9, item: item(51), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 51 })
+    deposit(ledger, { id: 8n, item: item(50), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 50 })
+    deposit(ledger, { id: 9n, item: item(51), token: slop, amount: 75_000_000_000_000_000_000n, keptTo: burn, block: 51 })
     heads(ledger, 56, 54)
     const ran = try runOnce()
     clock.set(start + 3 * day)
@@ -322,12 +322,12 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
   it.effect('Only a finalized kept stablecoin deposit counts as kept fee income (spec/fees/submissionFeeDeposits.md, "Final states and fee income follow the contract\'s finalized events")', () => effect {
     const { ledger } = try World
     try ask(5, 5)
-    deposit(ledger, { id: 10, item: item(5), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 60 })
+    deposit(ledger, { id: 10n, item: item(5), token: usdg, amount: 2_000_000n, keptTo: wallet, block: 60 })
     heads(ledger, 64, 62)
     try runOnce()
     try write(dueOutcome({ repositoryId: 900, pullNumber: 5 }, "kept_due", "2026-11-25T00:00:00.000Z"))
     const due = try runOnce()
-    ledger.resolutions = [...ledger.resolutions, { id: 10, refunded: false, block: 66, token: usdg, to: wallet, amount: 2_000_000n }]
+    ledger.resolutions = [...ledger.resolutions, { id: 10n, refunded: false, block: 66, token: usdg, to: wallet, amount: 2_000_000n }]
     heads(ledger, 68, 65)
     const unfinalized = try runOnce()
     const beforeFinal = try provided(keptSubmissionFees({ networks: [network], token: usdg, feeWallet: wallet, since: "2026-01-01T00:00:00.000Z" }))

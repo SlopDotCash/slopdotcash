@@ -1,15 +1,16 @@
 // spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/historicalImport.md, "An opted-in refusal returns only its own correlation and the fixed terminal projection"
 import { assert, layer } from "@effect/vitest"
-import { Response as WebResponse } from "miniflare"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { GitHub, github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
-import { internet } from "@repo/platform/testing/internet"
-import { asFetch } from "@repo/platform/testing/quotes"
 import { diagnosedIntake, reached } from "../src/import/diagnostics.vibe"
 import { background, importServed } from "./support/catchup/importWorker.vibe"
 
 module host {
+  import { Response as WebResponse } from "miniflare"
+  import type { Fetcher } from "@repo/platform/bindings"
+  import { internet } from "@repo/platform/testing/internet"
+  import { asFetch } from "@repo/platform/testing/quotes"
   import type { HistoricalValueBinding } from "../src/import/routes.vibe"
   export type Answer = (correlation: string) => unknown
   export interface Recorder {
@@ -42,8 +43,13 @@ module host {
       body: "{\"mode\":\"single\"}",
     })
   }
+  /** @throws {never} */
+  export function answering(status: number, headers: Readonly<Record<string, string>>, message: string): Fetcher {
+    const world = internet({ github: async () => WebResponse.json({ message }, { status, headers }) })
+    return { fetch: asFetch(world.handler) }
+  }
 }
-import { type Answer, intakeRequest, recorder } from host
+import { type Answer, answering, intakeRequest, recorder } from host
 
 const correlation = "a1".repeat(32)
 const other = "b2".repeat(32)
@@ -75,8 +81,7 @@ effect function logged<A, E, R>(program: A!E!R) {
 }
 
 function githubAnswering(status: number, headers: Readonly<Record<string, string>>, message: string) {
-  const world = internet({ github: async () => WebResponse.json({ message }, { status, headers }) })
-  return Layer.provide(github({ userAgent: "slopbot" }), outboundVia({ fetch: asFetch(world.handler) }))
+  return Layer.provide(github({ userAgent: "slopbot" }), outboundVia(answering(status, headers, message)))
 }
 
 const sourceRead = effect {

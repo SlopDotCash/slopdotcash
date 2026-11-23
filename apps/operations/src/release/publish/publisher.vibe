@@ -224,8 +224,9 @@ function siteVars(project: PagesProject, site: Reviewed, scannerKey: string, env
     if (variable.value === undefined) return "the Pages plaintext configuration is invalid"
     plain[name] = variable.value
   }
-  const networks = environment === "Production" ? { PAYMENT_NETWORKS: JSON.stringify(attesters.networks) } : {}
-  return { ...plain, ...site.file.vars ?? {}, ...networks, [scannerKeyName]: scannerKey }
+  const networks: Readonly<Record<string, string>> = environment === "Production" ? { PAYMENT_NETWORKS: JSON.stringify(attesters.networks) } : {}
+  const vars: Readonly<Record<string, string>> = { ...plain, ...site.file.vars ?? {}, ...networks, [scannerKeyName]: scannerKey }
+  return vars
 }
 
 function siteServices(site: Reviewed, environment: Environment, published: Published, bound: PublishedAttesters["bound"]) {

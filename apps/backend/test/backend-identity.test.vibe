@@ -116,7 +116,7 @@ interface Begun {
   readonly binding: string
 }
 
-function cookies(...values: ReadonlyArray<string>) {
+function cookies(...values: ReadonlyArray<string>): Readonly<Record<string, string>> {
   const sent = values.filter((value) => value !== "")
   return sent.length === 0 ? {} : { cookie: sent.join("; ") }
 }

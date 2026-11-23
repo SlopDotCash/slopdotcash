@@ -190,7 +190,7 @@ async function sent(deposits: Deposits.Shape, handler: WebHandler, path: string,
 
 effect function exchanged(deposits: Deposits.Shape, handler: WebHandler, path: string, as: string, body?: unknown) {
   const answer = try promise(() => sent(deposits, handler, path, as, body))
-  for (let work = deposits.pending.shift(); work !== undefined; work = deposits.pending.shift()) try promise(() => work)
+  while (deposits.pending.length > 0) try promise(() => Promise.all(deposits.pending.splice(0)))
   return answer
 }
 

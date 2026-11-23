@@ -57,7 +57,7 @@ const outcome = (sent: Effect.Effect<unknown, { readonly _tag: string }, Managed
 ));
 
 const recorded = async (chain: Chain) => {
-  const found = await db.prepare("SELECT DISTINCT block_number FROM vault_deposits WHERE project_id = ?").bind(chain.key.projectId).all<{ block_number: string }>();
+  const found = await db.prepare("SELECT DISTINCT block_number FROM vault_deposits WHERE project_id = ?").bind(chain.key.projectId).all();
   return found.results.map((row) => Number(row.block_number)).sort((left, right) => left - right);
 };
 

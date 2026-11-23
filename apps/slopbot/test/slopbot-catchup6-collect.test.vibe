@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { GitHub } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { temporaryFailure } from "@repo/platform/program"
@@ -42,9 +43,9 @@ function widgetsReads(world: Seeded): Reads {
 
 function inputsOver(reads: Reads, feed: Feed, options: Omit<ValueInputsOptions, "repositories"> = {}) {
   const net = internet({ github: reads.fake.handler, hosts: { [feedHost]: emptyHistory(feed) } })
-  const outbound = outboundVia({ fetch: asFetch(net.handler) })
+  const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
   const services = Layer.mergeAll(reads.github, Layer.provide(graphqlClient({ token: Redacted.make(reads.token) }), outbound), acceptanceRecorder().layer)
-  return Layer.provide(collectValueInputs({ repositories: reads.repositories, ...options }), Layer.mergeAll(services, outbound, webCrypto))
+  return Layer.provide(collectValueInputs({ repositories: reads.repositories, ...options }), Layer.mergeAll(services, outbound, webCrypto, systemGit, NodeServices.layer))
 }
 
 effect function loaded(census: ValueCensus) {
@@ -245,7 +246,7 @@ interface Written {
 }
 
 effect function collected(world: CollectWorld, settings: Readonly<Record<string, string>>) {
-  provide ConfigProvider.layer(ConfigProvider.fromUnknown(settings)), outboundVia({ fetch: asFetch(world.handler) }) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown(settings)), outboundVia({ fetch: async (request) => asFetch(world.handler)(request) }) {
     const run = Effect.map(inDirectory(world.outputDirectory, collect([world.registryPath, "--cutoff", world.cutoffAt])), (code) => code === temporaryFailure ? "deferred" : "completed")
     const outcome: string = run catch (error) => error._tag
     return outcome
@@ -318,7 +319,7 @@ describe('Collect publishes a verified window (spec/points/window.md, "Publicati
 describe('Replay a historical scope only from a trusted dispatch (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => {
   it.live("reviewed-replay refuses a push run and a dispatch without its registry before any read", () => effect {
     const net = internet()
-    const outbound = outboundVia({ fetch: asFetch(net.handler) })
+    const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
     const main = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_TOKEN: "replay-token" }
     const runs: ReadonlyArray<readonly [Readonly<Record<string, string>>, ReadonlyArray<string>]> = [
       [{ ...main, GITHUB_EVENT_NAME: "push" }, ["registry.json"]],

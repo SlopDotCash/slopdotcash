@@ -87,7 +87,7 @@ export effect function closeoutPoints(key: MonthKey, snapshotSha256: string, rep
 effect function workRowOf(weight: PointWeight) {
   const actor = Number(weight.githubId)
   if (!/^[1-9][0-9]{0,19}$/u.test(weight.githubId) || !Number.isSafeInteger(actor) || !Number.isSafeInteger(weight.points) || weight.points < 0) throw refusal(coverageRefused)
-  return { actor, acceptedWork: amountOf(BigInt(weight.points)), participation: 0, recognition: 0 } satisfies WorkRow
+  return { actor, acceptedWork: amountOf(try orDie(Effect.try(() => BigInt(weight.points)))), participation: 0, recognition: 0 } satisfies WorkRow
 }
 
 export effect function proposeCloseout(key: MonthKey, snapshotSha256: string, weights: ReadonlyArray<PointWeight>, repositories: ReadonlyArray<string>) {
@@ -107,7 +107,7 @@ export effect function proposeCloseout(key: MonthKey, snapshotSha256: string, we
   const next = apply(opened, event) catch effect () => {
     throw refusal(coverageRefused)
   }
-  if (fromAmount(next.cap) !== BigInt(closeoutGross)) throw refusal("The proposal does not use the approved cap.")
+  if (fromAmount(next.cap) !== (try orDie(Effect.try(() => BigInt(closeoutGross))))) throw refusal("The proposal does not use the approved cap.")
   return { key, next, current, logins, repositories, snapshotSha256 } satisfies Proposal
 }
 

@@ -1,5 +1,5 @@
 // spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"
-import { RegistryLive, RestrictionsLive } from "@repo/backend/ports"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
 import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1Http, registryDatabases } from "@repo/platform/d1Http"
@@ -8,6 +8,7 @@ import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
 import { ClosedMonthLive } from "@repo/points/live"
 import { EnforcementRowsLive } from "@repo/security/live"
+import { configuredEnforcementPorts } from "../jobs/services.vibe"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { monthlyFacts } from "../monthly/store.vibe"
 import { asiNovemberCloseout } from "./asiCloseout.vibe"
@@ -36,8 +37,8 @@ effect function proposeMonthCommand(args: ReadonlyArray<string>) {
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
   const served = servedNetworks(tier === "staging")
   const database = Layer.provide(d1Http({ accountId, databaseId: registryDatabases[tier], token }), outbound)
-  const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, ClosedMonthLive)
-  provide Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(registry, database)) {
+  const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, Layer.provideMerge(ClosedMonthLive, RegistryManifestsLive))
+  provide Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(registry, Layer.merge(configuredEnforcementPorts, database))) {
     try proposeMonth(args)
   }
 }

@@ -4,7 +4,7 @@ import { Roles } from "@repo/platform/roles"
 import { type ProgramStatus, ProgramRefused, SecurityProgramPublication } from "@repo/ports/security"
 import type { Checked } from "../../authority/live.vibe"
 import { postProjects, putProjectsById } from "../../client/refusals.vibe"
-import { verifiedAsset } from "../tokens/metadata.vibe"
+import { type StoredAsset, verifiedAsset } from "../tokens/metadata.vibe"
 import { monthlyAmount, refusal } from "./manifest.vibe"
 import { type Json, objectOf } from "./revisionChanges.ts"
 
@@ -69,7 +69,7 @@ export effect function publishedProgram(revision: ProgramRevision) {
   return (published.securityBounty === undefined ? rest : { ...rest, securityBounty: published.securityBounty }) satisfies Json
 }
 
-function storedAsset(value: unknown) {
+function storedAsset(value: unknown): (StoredAsset & Json) | undefined {
   const asset = objectOf(value)
   if (asset === undefined || typeof asset.network !== "string" || typeof asset.address !== "string" || typeof asset.decimals !== "number") return undefined
   return { ...asset, network: asset.network, address: asset.address, decimals: asset.decimals }

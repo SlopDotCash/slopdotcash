@@ -117,14 +117,16 @@ function group(ratified: boolean, second: ReadonlyArray<Commit>) {
 
 it.effect('A maintainer ratification of one joint member leaves the other member its merge minimum, and no later assessment of its own replaces it (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it")', () => effect {
   const open = group(false, [commit("b1", bob, 10)])
-  try Effect.try(() => assert.deepStrictEqual(try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])])), {
+  const openScored = try outcome(facts([open.first, open.member], [decision([open.first, open.member], [open.pair])]))
+  try Effect.try(() => assert.deepStrictEqual(openScored, {
     merged: [["PR_502:joint:wu_slop_pair:merged:U_alice", 16], ["PR_502:joint:wu_slop_pair:merged:U_bob", 8]],
     held: [],
   }))
 
   const ratified = group(true, [commit("b1", bob, 10)])
   const assessedMember = { ...ratified.member, assessment: { tier: "large" as const, source: "PaidApiReceipt" as const, digest: "e".repeat(64), rubric: "slop-value-v1", model: "slopbot-model", head: ratified.member.headRefOid, recordedAt: "2026-11-14T02:00:00.000Z", rationale: "Superseded per-pull-request assessment." } }
-  try Effect.try(() => assert.deepStrictEqual(try outcome(facts([ratified.first, assessedMember], [decision([ratified.first, assessedMember], [ratified.pair])])), {
+  const ratifiedScored = try outcome(facts([ratified.first, assessedMember], [decision([ratified.first, assessedMember], [ratified.pair])]))
+  try Effect.try(() => assert.deepStrictEqual(ratifiedScored, {
     merged: [["PR_501:merged", 9], ["PR_502:merged", 1]],
     held: [],
   }))
@@ -132,19 +134,22 @@ it.effect('A maintainer ratification of one joint member leaves the other member
 
 it.effect('A withheld joint member without attribution proof holds its Points and the group\'s other unit still scores (spec/points/scoringPolicy.md, "A joint member that a sibling\'s ratification withholds keeps the accepted-merge minimum")', () => effect {
   const syncOnly = group(true, [{ ...commit("m1", bob, 10), parentCount: 2, attributions: [] }])
-  try Effect.try(() => assert.deepStrictEqual(try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])])), {
+  const syncOnlyScored = try outcome(facts([syncOnly.first, syncOnly.member, syncOnly.third], [decision([syncOnly.first, syncOnly.member, syncOnly.third], [syncOnly.pair, syncOnly.alone])]))
+  try Effect.try(() => assert.deepStrictEqual(syncOnlyScored, {
     merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
     held: [["PR_502", "synchronization-only"]],
   }))
 
   const twoAuthors = group(true, [commit("b1", bob, 10), commit("e1", erin, 10, { parentCount: -1 })])
-  try Effect.try(() => assert.deepStrictEqual(try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])])), {
+  const twoAuthorsScored = try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])]))
+  try Effect.try(() => assert.deepStrictEqual(twoAuthorsScored, {
     merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
     held: [["PR_502", "incomplete-lines"]],
   }))
 
   const attributionHeld = group(true, [commit("b1", bob, 10)])
-  try Effect.try(() => assert.deepStrictEqual(try outcome(facts([attributionHeld.first, attributionHeld.member, attributionHeld.third], [decision([attributionHeld.first, attributionHeld.member, attributionHeld.third], [attributionHeld.pair, attributionHeld.alone])], new Set(["PR_502"]))), {
+  const attributionHeldScored = try outcome(facts([attributionHeld.first, attributionHeld.member, attributionHeld.third], [decision([attributionHeld.first, attributionHeld.member, attributionHeld.third], [attributionHeld.pair, attributionHeld.alone])], new Set(["PR_502"])))
+  try Effect.try(() => assert.deepStrictEqual(attributionHeldScored, {
     merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],
     held: [["PR_502", "attribution-hold"]],
   }))

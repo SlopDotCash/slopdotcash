@@ -4,6 +4,7 @@ import type { PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransacti
 import { decodeProject } from "../chain/solana/accounts.ts"
 import { u64 } from "../chain/solana/bytes.ts"
 import { setMonthlyCommitment } from "../chain/solana/instructions.ts"
+import { MAX_SOLANA_BASE_UNITS, parseBaseUnits } from "../kernels/amounts.ts"
 import type { Instruction } from "../chain/solana/transactions.ts"
 import type { LockTransaction } from "./monthLock.vibe"
 import type { VerifiedDeployment } from "./solanaDeployment.vibe"
@@ -47,7 +48,8 @@ function settingFacts(capture: Capture): ReviewFacts {
 }
 
 effect function settingInstruction(verified: VerifiedDeployment, intent: MonthlyIntent) {
-  const cap = u64(BigInt(intent.cap))
+  const parsed = parseBaseUnits(intent.cap, MAX_SOLANA_BASE_UNITS)
+  const cap = parsed === undefined ? undefined : u64(parsed)
   if (cap === undefined) throw refused("The monthly cap is outside the Solana vault's supported range.")
   const built = setMonthlyCommitment({ program: verified.program, project: verified.project, owner: intent.wallet, cap, enabled: intent.enabled })
   if (built.kind === "refused") throw refused("Turning on automatic monthly payment needs a positive monthly amount.")

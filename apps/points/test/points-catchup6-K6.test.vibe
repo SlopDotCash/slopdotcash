@@ -2,6 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
+import { outbound } from "@repo/platform/http"
 import { sha256Of, textBytes } from "@repo/platform/git/bytes"
 import type { Revision } from "../src/kernels/records/canonical.ts"
 import { batchDigest } from "../src/kernels/records/ids.vibe"
@@ -16,6 +17,7 @@ import { type HistoricalReplayReceipt, readTrustedHistoricalReplay, workflowPath
 import { readHistoricalReplayReview, stageHistoricalReplayReview } from "../src/corrections/reviewed/replay/review.vibe"
 import { type ReplayContext, assertRemovedMergeGroupsPreserved, sourceAuditSha256, verifyHistoricalValueReplay } from "../src/corrections/reviewed/replay/value.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
+import { apiReply } from "./support/catchup6-k6/reply.ts"
 
 const repository = "acme/slop"
 const nodeId = "R_slop"
@@ -96,7 +98,7 @@ function receiptOf(sourceCommit: string): HistoricalReplayReceipt {
 }
 
 function json(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown, headers: Readonly<Record<string, string>> = {}) {
-  return HttpClientResponse.fromWeb(request, new globalThis.Response(body === null ? null : body instanceof Uint8Array ? body.slice() : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }))
+  return HttpClientResponse.fromWeb(request, apiReply(body, status, headers))
 }
 
 function actionsApi(sourceCommit: string, archive: Uint8Array, seen: string[], options: { readonly stepName?: string } = {}) {
@@ -223,7 +225,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, systemGit), { excludeTestSer
     const base = receiptOf("c".repeat(40))
     const receipt = { ...base, replay: { ...base.replay, snapshotSha256: digestText(review.valueSnapshot), privateReviewManifest: manifest } }
     const bytes = try readHistoricalReplayReview(receipt, storage)
-    try same(JSON.parse(new TextDecoder().decode(bytes)), { schemaVersion: "slop-historical-replay-review-v1", ...review })
+    const read: unknown = try Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown)
+    try same(read, { schemaVersion: "slop-historical-replay-review-v1", ...review })
     const otherQualification = readHistoricalReplayReview({ ...receipt, replay: { ...receipt.replay, qualificationSha256: "d".repeat(64) } }, storage) catch effect (failure) => messageOf(failure)
     const unstaged = readHistoricalReplayReview(base, storage) catch effect (failure) => messageOf(failure)
     try same([otherQualification, unstaged], ["Historical replay review differs from the trusted receipt", "Historical replay receipt has no private review manifest"])
@@ -272,8 +275,10 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, systemGit), { excludeTestSer
   })
 
   it.effect('The points publisher refuses a replay and names the slopbot entry; a review retrieval needs an exact receipt and output (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => effect {
-    const replay = try Effect.flip(reviewed(["--replay-assessments"]))
-    const retrieval = try Effect.flip(reviewed(["replay-review", "receipt.json"]))
-    try same([messageOf(replay), retrieval._tag, messageOf(retrieval)], ["Usage: slopbot reviewed-replay <repository registry.json>", "ReplayReviewUnavailable", "Could not read the private historical replay review."])
+    provide outbound {
+      const replay = try Effect.flip(reviewed(["--replay-assessments"]))
+      const retrieval = try Effect.flip(reviewed(["replay-review", "receipt.json"]))
+      try same([messageOf(replay), retrieval._tag, messageOf(retrieval)], ["Usage: slopbot reviewed-replay <repository registry.json>", "ReplayReviewUnavailable", "Could not read the private historical replay review."])
+    }
   })
 })

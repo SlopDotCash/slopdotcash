@@ -185,7 +185,7 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
       const original = { ...source, sourceId: originalId, sourceUrl: urlOf({ ...pool, number: originalNumber }), headSha: anchor,
         occurredAt: null, author, commitCount: 1, commits: [acceptedCommit] }
       const accepted = { ...source, headSha: child, commits: [acceptedCommit, followup] }
-      const binding = { exactAcceptance: true, originalSourceId: originalId, originalCommitSha: anchor, acceptedCommitSha: anchor, boundPaths: [path], bindingDigest: "b".repeat(64) }
+      const binding = { exactAcceptance: true as const, originalSourceId: originalId, originalCommitSha: anchor, acceptedCommitSha: anchor, boundPaths: [path], bindingDigest: "b".repeat(64) }
       const proof: CompleteProof = { status: "complete", censusDigest, sources: [accepted, original], originalContributor: binding }
       const base = { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: baseGeneratedAt, coverage: [],
         revisions: [try carried(pool, author, 24), try carried(pool, carrier, 6)] } satisfies Journal

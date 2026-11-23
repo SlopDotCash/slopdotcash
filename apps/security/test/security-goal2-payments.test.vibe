@@ -1,8 +1,10 @@
 import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
 import { Refused, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
+import { Execution } from "@repo/platform/worker"
 import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type Json, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { type ProgramFundsView, SecurityProgramFunds } from "@repo/ports/security"
@@ -40,6 +42,7 @@ interface Script {
 service Payments {
   readonly world: World
   readonly script: Script
+  readonly pending: Array<Promise<unknown>>
 }
 
 const paid = "intake-fixture"
@@ -50,8 +53,10 @@ let keys = 0
 const openRail: DirectPaymentView = { paymentRail: "direct", railAvailable: true, settlementState: null, settlement: null, paymentNetworks: ["base-mainnet"], actions: ["consent-payment", "prepare-payment"] }
 
 const Started = Layer.effect(Payments, effect {
-  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
-  return { world, script: { view: openRail, outcome: { kind: "commit", answer: {} }, asked: [], viewed: [] } }
+  const pending: Array<Promise<unknown>> = []
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => Promise.allSettled(pending).then(() => running.mf.dispose())))
+  const script: Script = { view: openRail, outcome: { kind: "commit", answer: {} }, asked: [], viewed: [] }
+  return { world, script, pending }
 })
 
 function fixture(projectId: string): ProjectView {
@@ -94,7 +99,7 @@ function shellOf(payments: Payments.Shape) {
     Layer.succeed(SecurityProgramFunds, { read: () => succeed({ funds: vault(), guards: [] }) } satisfies SecurityProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(undefined) } satisfies DirectRoutes.Shape),
   )
-  const base = Layer.mergeAll(d1(payments.world.db), webCrypto, reportBucket(payments.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: "18633265", PROJECT_MODERATOR_GITHUB_IDS: "18633265" }), ports, receiptNotices, reportDepositSettings("off"))
+  const base = Layer.mergeAll(d1(payments.world.db), webCrypto, reportBucket(payments.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: "18633265", PROJECT_MODERATOR_GITHUB_IDS: "18633265" }), ports, receiptNotices, reportDepositSettings("off"), Layer.succeed(Execution, { context: { waitUntil: (work) => { payments.pending.push(work) } } satisfies ExecutionContext }))
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
   const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, settlementOf(payments.script)), base)
   return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive, SubmissionFeeRatesLive, ProjectParticipationLive), programs)
@@ -178,11 +183,11 @@ effect function paymentJourney(payments: Payments.Shape) {
     reporterView, payerView, outsider, payerConsent, consent,
     viewed: script.viewed.slice(0, 2).map((entry) => entry.viewer),
     asked: script.asked.map((entry) => ({ action: entry.action, revisionFrom: entry.context.revision - before, reporter: entry.context.reporterGithubId, actor: entry.context.actorGithubId })),
-    consented: consented.map((event) => ({ revision: Number(event.case_revision) - before, role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
+    consented: try Effect.try(() => consented.map((event) => ({ revision: Number(event.case_revision) - before, role: event.actor_role, detail: JSON.parse(String(event.detail)) }))),
     moved, prepared, refusal, payer,
     unexpectedFields: [payerExtra, reporterExtra, outsiderExtra],
     recovery,
-    recovered: recovered.map((event) => ({ role: event.actor_role, detail: JSON.parse(String(event.detail)) })),
+    recovered: try Effect.try(() => recovered.map((event) => ({ role: event.actor_role, detail: JSON.parse(String(event.detail)) }))),
     settling,
   }, {
     reporterView: { payments: ["consent-payment"], rail: "direct", state: stored, settlement: null, networks: ["base-mainnet"] },

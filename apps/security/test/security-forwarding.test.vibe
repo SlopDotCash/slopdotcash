@@ -315,7 +315,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     try promise(() => Promise.allSettled(forwarding.pending.splice(0)))
     const linked = try promise(() => rows(forwarding.world, "SELECT c.submission_state, c.received_at_source, c.advisory_ghsa = s.advisory_ghsa AS same_advisory, (SELECT COUNT(*) FROM notifications n WHERE n.subject = c.id AND n.recipient_github_id = s.reporter_github_id) AS receipts FROM security_submissions s JOIN security_cases c ON c.id = s.case_id WHERE s.id=?", direct.id))
     const received = try promise(() => rows(forwarding.world, "SELECT e.detail FROM security_case_events e JOIN security_submissions s ON s.case_id = e.case_id WHERE s.id=? AND e.kind='submit-direct'", direct.id))
-    const receivedDetail = received.map((event) => JSON.parse(String(event.detail)) as Readonly<Record<string, unknown>>)
+    const receivedDetail = try Effect.try(() => received.map((event) => JSON.parse(String(event.detail)) as Readonly<Record<string, unknown>>))
 
     const unread = try start("direct-journey-0002", filed.ghsaId)
     const unreadGrant = try consented(forwarding, unread.id)

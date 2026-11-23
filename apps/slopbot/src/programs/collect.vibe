@@ -34,7 +34,7 @@ effect function fileDigest(path: string) {
 export effect function attributionCodeDigest() {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
-  const program = decodeURIComponent(new URL(import.meta.url).pathname)
+  const program = try orDie(Effect.try(() => decodeURIComponent(new URL(import.meta.url).pathname)))
   let directory = files.dirname(program)
   let lock: string | null = null
   while (true) {

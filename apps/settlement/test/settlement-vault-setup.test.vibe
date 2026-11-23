@@ -3,7 +3,7 @@ import { assert, layer } from "@effect/vitest"
 import { type ReviewedFactory } from "@repo/platform/chain/reviewed"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { Refused, outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { anvil } from "@repo/platform/testing/chains"
 import { settableClock } from "@repo/platform/testing/clock"
@@ -91,7 +91,9 @@ function deploymentsOf(manifest: Record<string, unknown>): ReadonlyArray<Record<
 function ports(projects: Map<string, Listed>, access: Map<string, AuthorityRead>, appended: Appended[]) {
   const listedOf = (listed: Listed) => effect {
     const text = JSON.stringify(listed.manifest)
-    return { projectId: listed.view.projectId, active: true, revision: listed.view.revision, manifest: text, manifestSha256: try sha256Hex(text), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
+    provide webCrypto {
+      return { projectId: listed.view.projectId, active: true, revision: listed.view.revision, manifest: text, manifestSha256: try sha256Hex(text), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
+    }
   }
   return Layer.mergeAll(
     Layer.succeed(RegistryManifests, {
@@ -192,8 +194,12 @@ effect function body(projectId: string, step: "review" | "register", transaction
   return { step, expectedRevision: try revisionOf(projectId), network: "base-mainnet", claimId: "claim-7", automatic: false, ...(transactionId === undefined ? {} : { transactionId }) } satisfies VaultSetupBody
 }
 
+function tagOf(error: Error) {
+  return "_tag" in error && typeof error._tag === "string" ? error._tag : error.name
+}
+
 effect function refusal(projectId: string, actor: VaultActor, request: VaultSetupBody) {
-  const answer = ownerVaultPost(projectId, actor, request) catch (error) => error._tag === "Refused" ? error.code : error._tag
+  const answer = ownerVaultPost(projectId, actor, request) catch (error) => error instanceof Refused ? error.code : tagOf(error)
   return typeof answer === "string" ? answer : "answered"
 }
 

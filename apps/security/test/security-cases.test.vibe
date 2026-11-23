@@ -151,8 +151,9 @@ interface Outcome<A> {
 
 effect function outcome<A, E, R>(program: A!E!R) {
   return Effect.map(program, (value): Outcome<A> => ({ value })) catch effect (error) => {
-    if (error instanceof Refused) return { refused: [error.status, error.code, error.message] } satisfies Outcome<A>
-    throw error
+    if (!(error instanceof Refused)) throw error
+    const refused: Outcome<A> = { refused: [error.status, error.code, error.message] }
+    return refused
   }
 }
 

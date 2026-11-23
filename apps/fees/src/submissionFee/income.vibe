@@ -31,7 +31,7 @@ const kept = sql`state = 'kept' AND accepted = 1 AND finalized_at IS NOT NULL AN
 
 effect function amountOf(amount: string | null) {
   if (amount === null || !wholeAmount.test(amount)) throw new RowMismatch({ text: "submission_fee_deposits", issue: "Kept submission fee has an invalid amount" })
-  return BigInt(amount)
+  return try Effect.try({ try: () => BigInt(amount), catch: () => new RowMismatch({ text: "submission_fee_deposits", issue: "Kept submission fee has an invalid amount" }) })
 }
 
 export effect function keptSubmissionFees(query: KeptFeesQuery) {

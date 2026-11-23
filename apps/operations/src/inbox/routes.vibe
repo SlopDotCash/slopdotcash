@@ -27,7 +27,7 @@ const githubOwner = /^[A-Za-z0-9_.-]{1,39}$/u
 const githubRepository = /^[A-Za-z0-9_.-]{1,100}$/u
 const storedOwnerOrRepository = /^[A-Za-z0-9_.-]+$/u
 
-const notDispute = { dispute_appellant: 0, dispute_resolved: 0, resolution_notice: 0 }
+const notDispute = { dispute_appellant: 0, dispute_resolved: 0, resolution_notice: 0, request_open: 1 }
 
 schema ScamReview { readonly penalty_author: string; readonly penalty_reversed: number }
 

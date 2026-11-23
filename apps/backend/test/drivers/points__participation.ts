@@ -68,12 +68,18 @@ async function settled(intent: Intent, sender: Sender) {
   return result.outcome === "accepted" ? result.value : undefined;
 }
 
-async function memberRow(actor: number) {
-  return await db.prepare("SELECT closed_at FROM points_members WHERE actor_id = ?").bind(actorIdOf(actor)).first<{ readonly closed_at: string | null }>() ?? undefined;
+async function firstOf(query: string, actor: number): Promise<Record<string, unknown> | undefined> {
+  return (await db.prepare(query).bind(actorIdOf(actor)).all()).results[0];
 }
 
-async function linkOf(actor: number) {
-  return await db.prepare("SELECT x_id, verified_at FROM points_x_links WHERE actor_id = ?").bind(actorIdOf(actor)).first<{ readonly x_id: string; readonly verified_at: string }>() ?? undefined;
+async function memberRow(actor: number): Promise<{ readonly closed_at: string | null } | undefined> {
+  const row = await firstOf("SELECT closed_at FROM points_members WHERE actor_id = ?", actor);
+  return row === undefined ? undefined : { closed_at: row.closed_at === null ? null : String(row.closed_at) };
+}
+
+async function linkOf(actor: number): Promise<{ readonly x_id: string; readonly verified_at: string } | undefined> {
+  const row = await firstOf("SELECT x_id, verified_at FROM points_x_links WHERE actor_id = ?", actor);
+  return row === undefined ? undefined : { x_id: String(row.x_id), verified_at: String(row.verified_at) };
 }
 
 async function signIn(actor: number, reopen: boolean): Promise<Settled | undefined> {
@@ -182,7 +188,7 @@ function canonical(state: Participation): Participation {
 }
 
 async function rows(query: string) {
-  return (await db.prepare(query).all<Record<string, string | number | null>>()).results;
+  return (await db.prepare(query).all()).results;
 }
 
 async function observe(): Promise<Participation> {
@@ -190,7 +196,7 @@ async function observe(): Promise<Participation> {
     const actor = actorFrom(String(row.actor_id));
     return actor === undefined ? [] : [{ actor, joinedAt: modelOf(String(row.joined_at)), welcome: Number(row.welcome), closed: row.closed_at !== null }];
   });
-  const mine = <T>(row: Record<string, string | number | null>, made: (actor: number, xId: number) => T) => {
+  const mine = <T>(row: Record<string, unknown>, made: (actor: number, xId: number) => T) => {
     const actor = actorFrom(String(row.actor_id));
     const xId = xFrom(String(row.x_id));
     return actor === undefined || xId === undefined ? [] : [made(actor, xId)];

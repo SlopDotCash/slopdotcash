@@ -268,14 +268,16 @@ describe('Collect a complete inventory and a decision for every item (spec/point
 
 describe('Read the published projection without mistaking a reset for a refusal (spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times")', () => {
   it.live("a refused Points projection waits for its outstanding shard retry", () => effect {
-    const journal = try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: "2026-11-02T00:00:00.000Z", coverage: [], revisions: [] })}\n`)
-    const files = try projectionFiles(journal)
-    const served = new Map<string, string>([["/data/points.json", files.index], ...files.shards.map((text, position) => [`/data/points/${position.toString(16)}.json`, text] as [string, string])])
-    const site = drainingSite(served)
-    const waits: number[] = []
-    const refused: string = Effect.as(provideService(recoverPublished({ environment: "Staging", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, site.fetch), "recovered") catch (error) => error._tag === "RecoveryRefused" ? error.outcome : error._tag
-    site.events.push("read refused")
-    try same({ refused, events: site.events, waits }, { refused: "SourceUnavailable", events: ["outstanding shard retried", "read refused"], waits: [1000] })
+    provide webCrypto, FetchHttpClient.layer {
+      const journal = try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: "2026-11-02T00:00:00.000Z", coverage: [], revisions: [] })}\n`)
+      const files = try projectionFiles(journal)
+      const served = new Map<string, string>([["/data/points.json", files.index], ...files.shards.map((text, position) => [`/data/points/${position.toString(16)}.json`, text] as [string, string])])
+      const site = drainingSite(served)
+      const waits: number[] = []
+      const refused: string = Effect.as(provideService(recoverPublished({ environment: "Staging", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, site.fetch), "recovered") catch (error) => error._tag === "RecoveryRefused" ? error.outcome : error._tag
+      site.events.push("read refused")
+      try same({ refused, events: site.events, waits }, { refused: "SourceUnavailable", events: ["outstanding shard retried", "read refused"], waits: [1000] })
+    }
   })
 })
 

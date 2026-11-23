@@ -1,8 +1,10 @@
 import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1, sql } from "@repo/platform/d1"
 import { Refused, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
+import { Execution } from "@repo/platform/worker"
 import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { privateRoute } from "../src/analysis/route.vibe"
@@ -30,6 +32,7 @@ service Program {
   readonly world: World
   readonly funds: Box<ProgramFundsView | undefined>
   readonly route: Box<DirectRoute | undefined>
+  readonly pending: Array<Promise<unknown>>
 }
 
 const administrator = "18633264"
@@ -47,7 +50,8 @@ let keys = 0
 const registryRevisions = new Map<string, number>()
 
 const Started = Layer.effect(Program, effect {
-  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const pending: Array<Promise<unknown>> = []
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => Promise.allSettled(pending).then(() => running.mf.dispose())))
   const at = new Date(Date.now() - 86_400_000).toISOString()
   const manifest = JSON.stringify({ id: "slopdotcash", status: "active", repositories: [{ id: "slop-test/intake" }] })
   const reviewed = new Date(Date.now() + 86_400_000).toISOString()
@@ -56,7 +60,7 @@ const Started = Layer.effect(Program, effect {
     world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('slopdotcash',1,?,?,'Program fixture',?)").bind(manifest, "e".repeat(64), at),
     world.db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('slopdotcash','active',1,?,?,?,?)").bind(manifest, "e".repeat(64), at, at),
   ]))
-  return { world, funds: { current: undefined }, route: { current: undefined } }
+  return { world, funds: { current: undefined }, route: { current: undefined }, pending }
 })
 
 function fixture(projectId: string): ProjectView {
@@ -74,7 +78,7 @@ function shellOf(program: Program.Shape) {
     Layer.succeed(ProgramFunds, { read: () => succeed({ funds: program.funds.current, guards: [] }) } satisfies ProgramFunds.Shape),
     Layer.succeed(DirectRoutes, { route: () => succeed(program.route.current) } satisfies DirectRoutes.Shape),
   )
-  const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: `${administrator},${configured}`, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices, reportDepositSettings("off"))
+  const base = Layer.mergeAll(d1(program.world.db), webCrypto, reportBucket(program.world.reports), rolesFrom({ ADMIN_GITHUB_IDS: `${administrator},${configured}`, PROJECT_MODERATOR_GITHUB_IDS: administrator }), ports, receiptNotices, reportDepositSettings("off"), Layer.succeed(Execution, { context: { waitUntil: (work) => { program.pending.push(work) } } satisfies ExecutionContext }))
   const route = Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))
   const programs = Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
   return Layer.provideMerge(Layer.mergeAll(awardClearancesLive, caseActionHandlersLive, SecurityProgramPublicationLive, SubmissionFeeRatesLive, ProjectParticipationLive), programs)

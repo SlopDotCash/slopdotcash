@@ -104,12 +104,12 @@ export const driver: Driver<View> & AsyncDisposable = {
   observe: async (key) => {
     const cluster = await clusterOf(key);
     const at = await runtime.runPromise(cluster.session.cursor());
-    const found = await db.prepare("SELECT DISTINCT transaction_id FROM vault_deposits WHERE project_id = ?").bind(cluster.key.projectId).all<{ transaction_id: string }>();
+    const found = await db.prepare("SELECT DISTINCT transaction_id FROM vault_deposits WHERE project_id = ?").bind(cluster.key.projectId).all();
     return {
       position: numberOf(cluster, at.position),
       pending: numberOf(cluster, at.pendingTop),
       resume: numberOf(cluster, at.resumeBefore),
-      recorded: found.results.map((row) => numberOf(cluster, row.transaction_id)).sort((left, right) => left - right),
+      recorded: found.results.map((row) => numberOf(cluster, typeof row.transaction_id === "string" ? row.transaction_id : null)).sort((left, right) => left - right),
     };
   },
   [Symbol.asyncDispose]: async () => {

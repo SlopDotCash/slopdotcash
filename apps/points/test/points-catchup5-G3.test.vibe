@@ -16,10 +16,8 @@ import { type ProtectionEnvironment, resolveProtection } from "../src/publicatio
 import { ProtectedMonthsRoutes, protectedMonthsAccess } from "../src/publication/protectedRoute.vibe"
 import { recoverPublished } from "../src/recovery/published.vibe"
 import type { Protection } from "../gen/points__protectedMonths.ts"
+import { type Answer, type WebHandler, listing, resetSite, routeRequest, routedFetch, site } from "./support/catchup5/web.ts"
 import { november2026, october2026 } from "../gen/points__periods.ts"
-
-type WebHandler = (request: globalThis.Request) => Promise<globalThis.Response>
-type Answer = (url: URL) => globalThis.Response
 
 interface Seed {
   readonly project: string
@@ -28,12 +26,6 @@ interface Seed {
   readonly occurredAt: string
   readonly previous?: Revision
   readonly category?: string
-}
-
-interface Sent {
-  readonly url: string
-  readonly authorization: string | null
-  readonly accept: string | null
 }
 
 service World {
@@ -108,20 +100,6 @@ effect function held(known: ReadonlyArray<Revision>, candidates: ReadonlyArray<R
   return { count, kept: store.revisions.map((row) => names.get(row.id) ?? row.id) }
 }
 
-function site(answer: Answer) {
-  const sent: Sent[] = []
-  const fetch = (input: string | URL | globalThis.Request, init?: RequestInit) => {
-    const request = new globalThis.Request(input, init)
-    sent.push({ url: request.url, authorization: request.headers.get("authorization"), accept: request.headers.get("accept") })
-    return Promise.resolve(answer(new URL(request.url)))
-  }
-  return { fetch: fetch as typeof globalThis.fetch, sent }
-}
-
-function listing(body: unknown, status = 200) {
-  return () => new globalThis.Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
-}
-
 function answer(months: ReadonlyArray<unknown>, everyMonthProjects: ReadonlyArray<unknown>, extra: Readonly<Record<string, unknown>> = {}) {
   return { schema: "slop-protected-point-months-v1", generatedAt: "2026-11-21T00:00:00.000Z", months, everyMonthProjects, ...extra }
 }
@@ -143,12 +121,7 @@ effect function privateRead(environment: ProtectionEnvironment, respond: Answer)
 }
 
 effect function routeAnswer(handler: WebHandler, path: string, init: RequestInit = {}) {
-  return try promise(async () => {
-    const response = await handler(new globalThis.Request(`${origin}${path}`, init))
-    const text = await response.text()
-    const body: unknown = text === "" ? null : JSON.parse(text)
-    return { status: response.status, cache: response.headers.get("cache-control"), body }
-  })
+  return try promise(() => routeRequest(handler, `${origin}${path}`, init))
 }
 
 function bearer(token: string) {
@@ -168,38 +141,12 @@ effect function resetScenario(scenario: string, journal: Journal) {
   const checkpoint = { batch: try sha256Hex(JSON.stringify(candidate)), generatedAt: journal.generatedAt, coverage: journal.coverage, revisions: journal.revisions, total: journal.revisions.length, next: null }
   const target = scenario === "index-reset" ? "/data/points.json" : "/data/points/1.json"
   const waits: number[] = []
-  let attempts = 0
-  let indexReads = 0
-  const fetch = (input: string | URL | globalThis.Request, init?: RequestInit) => {
-    const url = new URL(new globalThis.Request(input, init).url)
-    if (url.pathname === "/api/v1/points/journal") return Promise.resolve(globalThis.Response.json(checkpoint))
-    if (url.pathname === target) {
-      attempts += 1
-      if (scenario === "persistent-reset" || scenario === "other-error" || attempts <= (scenario === "shard-reset" ? 2 : 1)) {
-        const error = Object.assign(new Error("socket connection closed"), { code: scenario === "other-error" ? "OTHER_ERROR" : "ECONNRESET" })
-        if (scenario !== "body-reset") return Promise.reject(error)
-        let partial = false
-        return Promise.resolve(new globalThis.Response(new ReadableStream<Uint8Array>({
-          pull(controller) {
-            if (partial) controller.error(error)
-            else {
-              partial = true
-              controller.enqueue(new TextEncoder().encode("["))
-            }
-          },
-        })))
-      }
-    }
-    if (url.pathname === "/data/points.json") indexReads += 1
-    const file = files.get(url.pathname)
-    if (file === undefined) return Promise.resolve(new globalThis.Response(null, { status: 404 }))
-    return Promise.resolve(new globalThis.Response(scenario === "reset-then-corrupt" && url.pathname === "/data/points/1.json" ? `${file} ` : file))
-  }
-  const recovered = provideService(recoverPublished({ environment: "Production", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, fetch as typeof globalThis.fetch) catch effect (error) => {
+  const reset = resetSite({ scenario, target, checkpoint, files })
+  const recovered = provideService(recoverPublished({ environment: "Production", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, reset.fetch) catch effect (error) => {
     return error._tag === "RecoveryRefused" ? error.outcome : error._tag
   }
   const outcome = typeof recovered === "string" ? recovered : recovered !== null && journalText(recovered) === journalText(journal) ? "Recovered" : "Other"
-  return { outcome, attempts, waits, indexReads }
+  return { outcome, attempts: reset.attempts(), waits, indexReads: reset.indexReads() }
 }
 
 layer(Layer.mergeAll(Started, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -284,7 +231,7 @@ layer(Layer.mergeAll(Started, webCrypto, FetchHttpClient.layer), { excludeTestSe
     const aliceChanged = try revision({ project: "alpha", source: "issue-11", amount: 60, occurredAt: october, previous: alice })
     const aliceChained = try revision({ project: "alpha", source: "issue-11", amount: 90, occurredAt: october, previous: aliceChanged })
     const carol = try revision({ project: "gamma", source: "issue-13", amount: 20, occurredAt: october })
-    const viaRoute = ((input: string | URL | globalThis.Request, init?: RequestInit) => world.open(new globalThis.Request(input, init))) as typeof globalThis.fetch
+    const viaRoute = routedFetch(world.open)
     provide d1(world.db) {
       const published = try importJournal(try fixture("2026-11-02T00:00:00.000Z", [alice, bob]), { wait })
       try (try D1).run(sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at) VALUES ('base-mainnet', '0x01', 'alpha', '2026-10', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'base', '0x0000000000000000000000000000000000000001', '1000000', '2026-10-25T00:00:00.000Z', '1', 'direct/alpha.json', '2026-10-25T00:00:00.000Z')`)

@@ -616,7 +616,7 @@ function validateReviewBudget(value: unknown, field: string, poolPaymentMode: un
   if (BigInt(monthlyCapMinor) <= 0n || !effectiveAt.endsWith("-01T00:00:00.000Z") || budget.unusedFunds !== "rollover-without-cap-increase" || !fundingConsistent || (budget.paymentMode === "enabled" && poolPaymentMode !== "enabled") || budget.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)) fail(`${field} review budget policy is inconsistent`);
 }
 
-function shareBasisPoints(value: unknown, minimum: number): boolean {
+function shareBasisPoints(value: unknown, minimum: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maxShareBasisPoints;
 }
 
@@ -653,7 +653,7 @@ function validateReward(value: unknown, field: string, { allowLegacyExternalPriz
   }
   const monthlyCapMinor = minor(reward.monthlyCapMinor, `${field}.monthlyCapMinor`);
   const committedMinor = minor(reward.committedMinor, `${field}.committedMinor`);
-  if (Object.hasOwn(reward, "honorSystem") && !honorSystemValid({ monthlyPool: reward.kind === "monthly-pool", monthlyAmount: BigInt(monthlyCapMinor) > 0n ? 1 : 0, honor: reward.honorSystem === true ? "HonorTrue" : "HonorFalse" })) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
+  if (Object.hasOwn(reward, "honorSystem") && !honorSystemValid({ monthlyPool: reward.kind === "monthly-pool", monthlyAmount: BigInt(monthlyCapMinor) > 0n ? 1 : 0, honor: reward.honorSystem === true ? "HonorTrue" : "HonorFalse", share: shareBasisPoints(reward.maintainerShare, 1) ? reward.maintainerShare : 0 })) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
   validateMaintainerShare(reward, field);
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") fail(`${field}.paymentMode is invalid`);
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });

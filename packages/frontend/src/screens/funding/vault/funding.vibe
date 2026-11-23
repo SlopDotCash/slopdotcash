@@ -4,7 +4,8 @@ import { U128_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { staleAfterMs } from "@repo/settlement/client"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
-import { type PoolFacts, type PublicFunding, type SavedFunding, owedNow, publicSendAllowed } from "../../../../gen/frontend__projections.ts"
+import type { PoolFacts, PublicFunding, SavedFunding } from "../../../../gen/frontend__projections.ts"
+import { owedNow, publicSendAllowed } from "../../../../gen/frontend__projections.effect.vibe"
 import { type Answer, Machine as VaultMachine, actor } from "../../../../gen/frontend__ownerVault.effect.vibe"
 import { type Batch, Machine as BatchMachine, canReview as canReviewBatch } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
 import { zero } from "../../../../gen/settlement__money.ts"
@@ -315,19 +316,19 @@ effect function walletLocks(connection: EvmConnection, evm: EvmVault, cachedSupp
   return { cachedSupport, walletRead: locked !== undefined, freeKnown: true, free: try amountOf(free), locked: try amountOf(locked ?? 0n) } satisfies VaultLocks
 }
 
-function promiseRefusal(reward: FundingReward, pool: PoolFacts): string {
+effect function promiseRefusal(reward: FundingReward, pool: PoolFacts) {
   const owed = fromAmount(owedNow(pool))
   const asset = reward.asset ?? undefined
   const payment = asset === undefined ? undefined : { network: asset.network, assetAddress: asset.address, assetDecimals: asset.decimals }
   const symbol = payment === undefined ? undefined : knownAssetSymbol(payment)
-  const shown = payment === undefined ? formatRewardMinor(owed) : symbol === undefined ? formatAssetAmount(owed, payment) : formatRewardMinor(owed, { kind: "stablecoin", symbol, decimals: payment.assetDecimals })
+  const shown = try orDie(Effect.try(() => payment === undefined ? formatRewardMinor(owed) : symbol === undefined ? formatAssetAmount(owed, payment) : formatRewardMinor(owed, { kind: "stablecoin", symbol, decimals: payment.assetDecimals })))
   return `This would leave the vault below the ${shown} contributors were shown for ${monthName(pool.period)}. Withdraw only funds above that amount.`
 }
 
 effect function refusalOf(operation: "deposit" | "withdraw", pool: PoolFacts | undefined) {
   const { reward } = try VaultDesk
   if (operation !== "withdraw" || pool === undefined) return ""
-  return try orDie(Effect.try(() => promiseRefusal(reward, pool)))
+  return try promiseRefusal(reward, pool)
 }
 
 effect function guarded(operation: "deposit" | "withdraw", pool: PoolFacts | undefined, locks: VaultLocks) {

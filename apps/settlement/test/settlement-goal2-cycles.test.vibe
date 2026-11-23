@@ -6,6 +6,7 @@ import { github } from "@repo/platform/github"
 import { type ClaimWallet, type UnsafeDestinationReport, reportMessage } from "../src/cycles/reportProof.vibe"
 import { verifyTransitionAuthorities } from "../src/cycles/transitions.vibe"
 import { unsafeDestinations } from "../src/programs/unsafeDestinations.vibe"
+import { jsonResponse } from "./support/web.ts"
 
 type Files = Readonly<Record<string, string>>
 
@@ -115,7 +116,7 @@ function signingGitHub(state: string, asked: Asked[]) {
     const object = variables.oid === report.sourceCommit
       ? { oid: report.sourceCommit, message: `${reportMessage(report)}\n`, signature: { isValid: state === "VALID", state, signer: { id: "U_contributor", databaseId: 101 } } }
       : null
-    return HttpClientResponse.fromWeb(request, new globalThis.Response(JSON.stringify({ data: { repository: { object } } }), { status: 200, headers: { "content-type": "application/json" } }))
+    return HttpClientResponse.fromWeb(request, jsonResponse({ data: { repository: { object } } }))
   })))
 }
 
@@ -131,8 +132,9 @@ effect function attempt(base: Files, head: Files, checkout: "base" | "head" | un
 
 effect function outcome(base: Files, head: Files, options: { readonly state?: string; readonly checkout?: "base" | "head" } = {}) {
   const asked: Asked[] = []
-  const result = try Effect.provide(attempt(base, head, options.checkout), Layer.mergeAll(NodeServices.layer, systemGit, signingGitHub(options.state ?? "VALID", asked)))
-  return { result, asked }
+  provide NodeServices.layer, systemGit, signingGitHub(options.state ?? "VALID", asked) {
+    return { result: try attempt(base, head, options.checkout), asked }
+  }
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -180,7 +182,11 @@ it.effect('An accepted manifest is never deleted, renamed or re-identified, and 
   const misnamed = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-10", [row()]) })
   const duplicated = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: '{"kind":"reward-allocation","kind":"reward-allocation"}\n' })
   const fromHead = try outcome(acceptedFiles, { ...acceptedFiles, [nextPath]: manifest("2026-12", [row()]) }, { checkout: "head" })
-  const usage = try Effect.provide(exit(unsafeDestinations(["only-one"])), Layer.mergeAll(NodeServices.layer, offline))
+  const usage = try exit(effect {
+    provide NodeServices.layer, offline {
+      return try unsafeDestinations(["only-one"])
+    }
+  })
   try same([deleted.result, misnamed.result, duplicated.result, fromHead.result, Exit.isFailure(usage) ? String((Cause.squash(usage.cause) as { readonly _tag?: string })._tag) : "ran"], [
     `Existing cycle manifest cannot be deleted or renamed: ${acceptedPath}`,
     "Cycle manifest identity does not match its immutable path",

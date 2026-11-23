@@ -2,7 +2,7 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Handler, type WorkerOptions, bundle, migrate, startWorker, workerOptions } from "@repo/platform/testing";
+import { type Handler, type WorkerOptions, bundle, migrate, startWorker, storage, workerOptions } from "@repo/platform/testing";
 import { type Anvil, anvil, forward } from "@repo/platform/testing/chains";
 import { githubFake } from "@repo/platform/testing/github";
 import { internet } from "@repo/platform/testing/internet";
@@ -15,7 +15,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
 import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
-import { feeNetworks } from "../../../../../apps/backend/gen/backend__submissionFeeTerms.ts";
+import { feeNetworks } from "@repo/backend/client";
 import { escrowStack, word } from "@repo/settlement/testing/evm";
 import type { Answered, Box, Bucket, Deployed, Diagnostics, Downloaded, Layout, LeaderboardTransport, Method, Op, Published, Result, Roles, Row, Sent, Shown, Target, VaultPurpose, Verification } from "./protocol.ts";
 import { enlargeText } from "./textSize.ts";
@@ -209,10 +209,10 @@ async function start(): Promise<Started> {
       return answered(await mf.dispatchFetch(`${site}${path}`, { method, headers, redirect: "manual", ...(method === "GET" ? {} : { body: bytes }) }));
     },
     replace: async (bucket, key, text) => {
-      const objects = await mf.getR2Bucket(bucket);
+      const objects = await storage(mf, bucket);
       const found = await objects.head(key);
       if (found === null) throw new Error(`site: no ${bucket} object ${key}`);
-      await objects.put(key, text, { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
+      await objects.put(key, new TextEncoder().encode(text), { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
     },
   };
 }

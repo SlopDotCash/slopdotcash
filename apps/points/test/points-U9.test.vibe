@@ -134,14 +134,14 @@ effect function preserved(journal: Journal, input: Manifest, sourceId = SOURCE) 
 layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
   it.effect('October replacements apply through the correction plan exactly as development applies them: the sole original keeps the whole pool, follow-ups need authenticated ancestry, competing contributors hold, and grouped, merged-donor, later-follow-up, native and multi-original units preserve the recorded value, and an independent carrier claim keeps its changed-line credit beside the original parts (spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor")', () => effect {
     const whole = { [A.id]: 30, [C.id]: 0 }
-    const settled = { status: "applied", amounts: whole, total: true, prefix: true, replay: true, ineligible: true }
+    const settled = { status: "applied" as const, amounts: whole, total: true, prefix: true, replay: true, ineligible: true }
 
-    const sole = octoberReplacement()
+    const sole = try Effect.try(() => octoberReplacement())
     const soleResult = try preserved(sole.journal, sole.input)
-    const legacyReplay = try kept(soleResult.journal, legacyAfter(soleResult.journal), { at: laterAt })
+    const legacyReplay = try kept(soleResult.journal, (try Effect.try(() => legacyAfter(soleResult.journal))), { at: laterAt })
     const banned = try kept(sole.journal, sole.input, { bans: new Map([[A.id, "2026-10-01T00:00:00.000Z"]]) })
 
-    const correct = octoberReplacement(undefined, [poolAward(A, 30)])
+    const correct = try Effect.try(() => octoberReplacement(undefined, [poolAward(A, 30)]))
     const recorded = try corrected(correct.journal, correct.input)
     const marker = recorded.journal.revisions.at(-1)
     const recordedOnce = {
@@ -151,53 +151,53 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       replay: try kept(recorded.journal, correct.input, { at: laterAt }),
     }
 
-    const followup = octoberOriginalWithFollowup()
+    const followup = try Effect.try(() => octoberOriginalWithFollowup())
     const followed = try corrected(followup.journal, followup.input)
     const unauthenticated: unknown[] = []
     for (const mutate of unauthenticatedFollowups) {
-      const sample = octoberOriginalWithFollowup()
-      mutate(sample)
+      const sample = try Effect.try(() => octoberOriginalWithFollowup())
+      try Effect.try(() => mutate(sample))
       const planned = try corrected(sample.journal, sample.input)
       unauthenticated.push([planned.dispositions[0]?.status, journalText(planned.journal) === journalText(sample.journal)])
     }
-    const malformed = malformedFollowup()
-    const competing = competingContributor()
-    const anchored = unrelatedAnchor()
-    const september = octoberReplacement("2026-09-23T00:00:00.000Z")
+    const malformed = try Effect.try(() => malformedFollowup())
+    const competing = try Effect.try(() => competingContributor())
+    const anchored = try Effect.try(() => unrelatedAnchor())
+    const september = try Effect.try(() => octoberReplacement("2026-09-23T00:00:00.000Z"))
 
-    const grouped = octoberGroupedReplacement()
-    const exact = exactGroupedReplacement()
+    const grouped = try Effect.try(() => octoberGroupedReplacement())
+    const exact = try Effect.try(() => exactGroupedReplacement())
     const exactAmounts = amounts((try corrected(exact.journal, exact.input)).journal)
     delete exact.next.parentShas
     const groupedRefusals: unknown[] = []
     for (const [fault, mutate] of groupedFaults) {
-      const sample = octoberGroupedReplacement()
-      mutate(sample)
+      const sample = try Effect.try(() => octoberGroupedReplacement())
+      try Effect.try(() => mutate(sample))
       groupedRefusals.push([fault, try outcome(sample.journal, sample.input)])
     }
 
-    const donor = mergedDonorGroupedReplacement()
-    const later = laterAcceptedFollowup()
+    const donor = try Effect.try(() => mergedDonorGroupedReplacement())
+    const later = try Effect.try(() => laterAcceptedFollowup())
     const laterResult = try preserved(later.journal, later.input, later.followup.sourceId)
-    const native = scopedUnlinkedOriginal()
+    const native = try Effect.try(() => scopedUnlinkedOriginal())
     const nativeRefusals: unknown[] = []
     for (const [fault, mutate] of nativeUnitFaults) {
-      const sample = scopedUnlinkedOriginal()
-      mutate(sample)
+      const sample = try Effect.try(() => scopedUnlinkedOriginal())
+      try Effect.try(() => mutate(sample))
       nativeRefusals.push([fault, try outcome(sample.journal, sample.input)])
     }
-    const multi = multiOriginalPrUnit()
+    const multi = try Effect.try(() => multiOriginalPrUnit())
     const multiRefusals: unknown[] = []
     for (const [fault, mutate] of multiOriginalFaults) {
-      const sample = multiOriginalPrUnit()
-      mutate(sample)
+      const sample = try Effect.try(() => multiOriginalPrUnit())
+      try Effect.try(() => mutate(sample))
       multiRefusals.push([fault, try outcome(sample.journal, sample.input)])
     }
-    const independent = independentClaimUnit()
+    const independent = try Effect.try(() => independentClaimUnit())
     const independentResult = try corrected(independent.journal, independent.input)
     const independentSummary = { amounts: amounts(independentResult.journal), total: totalOf(independentResult.journal) === totalOf(independent.journal) }
-    overlappingIndependentClaim(independent)
-    const unpartitioned = unpartitionedIndependentClaims()
+    try Effect.try(() => overlappingIndependentClaim(independent))
+    const unpartitioned = try Effect.try(() => unpartitionedIndependentClaims())
 
     const actual = {
       sole: soleResult.summary,

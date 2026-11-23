@@ -6,21 +6,40 @@ import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { contributorAudience } from "@repo/points/live"
 import { EnforcementRowsLive } from "@repo/security/live"
 import type { NetworkKey } from "../kernels/networks.ts"
 import { monthlyFacts } from "../monthly/store.vibe"
 import { PaymentIndexerLive } from "../scan/index.vibe"
 import { paymentRpc, reviewedGenesis } from "../vault/rpc.vibe"
 
-export interface LedgerVars {
+export interface RoleIds {
+  readonly ADMIN_GITHUB_IDS?: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS?: string
+}
+
+export interface LedgerVars extends RoleIds {
   readonly PAYMENTS_DB: D1Database
   readonly PAYMENT_RPC_URLS?: string
   readonly SLOP_ENVIRONMENT?: string
 }
 
+export function enforcementPorts(ids: RoleIds) {
+  return Layer.mergeAll(noticePorts, contributorAudience, rolesFrom({ ADMIN_GITHUB_IDS: ids.ADMIN_GITHUB_IDS ?? "", PROJECT_MODERATOR_GITHUB_IDS: ids.PROJECT_MODERATOR_GITHUB_IDS ?? "" }))
+}
+
+effect function configuredIds(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export const configuredEnforcementPorts = Layer.unwrap(effect {
+  return enforcementPorts({ ADMIN_GITHUB_IDS: try configuredIds("ADMIN_GITHUB_IDS"), PROJECT_MODERATOR_GITHUB_IDS: try configuredIds("PROJECT_MODERATOR_GITHUB_IDS") })
+})
+
 export function ledgerServices(vars: LedgerVars, networks: ReadonlyArray<NetworkKey>) {
   const base = Layer.mergeAll(d1(vars.PAYMENTS_DB), webCrypto, outbound, deploymentTier(vars.SLOP_ENVIRONMENT), paymentRpc(vars.PAYMENT_RPC_URLS, reviewedGenesis(networks)))
   const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, RegistryManifestsLive, WalletsLive)
-  const ports = Layer.provideMerge(registry, Layer.provideMerge(noticePorts, base))
+  const ports = Layer.provideMerge(registry, Layer.provideMerge(enforcementPorts(vars), base))
   return Layer.provideMerge(Layer.mergeAll(monthlyFacts(new Set(networks)), PaymentIndexerLive), ports)
 }

@@ -4,7 +4,7 @@ import { type Registry, isRecord, parsedUrl } from "../../client/snapshot/checks
 import { fencedRecord, isGitSha, isWorkUnitId, tierThirds, validReason } from "../../kernels/scoring/ratification.ts"
 import type { ScoreTier } from "../../kernels/scoring/tiers.ts"
 
-module identity {
+module identifiers {
   import { isExactClientIdentifier as client, isExactModelIdentifier as model, isExactProviderIdentifier as provider } from "@repo/contributor/client"
   /** @throws {never} */
   export function isExactProviderIdentifier(value: unknown): value is string { return provider(value) }
@@ -13,7 +13,7 @@ module identity {
   /** @throws {never} */
   export function isExactClientIdentifier(value: unknown): value is string { return client(value) }
 }
-import { isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier } from identity
+import { isExactClientIdentifier, isExactModelIdentifier, isExactProviderIdentifier } from identifiers
 
 export type FencedRecordName = "slop-score" | "slop-score-approval" | "slop-review"
 export type Risk = "none" | "suspected" | "confirmed"

@@ -8,7 +8,7 @@ import { storageKeys } from "../../platform/storage.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { EvmConnection } from "../core/evm.vibe"
 import type { SlotStorage } from "../core/slots.ts"
-import { batchCalls, batchPlan, hexQuantity } from "./evmCalls.ts"
+import { batchCalls, batchPlan, hexQuantity, quantityValue } from "./evmCalls.ts"
 import { blockIndex, expectedOf } from "./evmEvidence.ts"
 import { type EvmVault, type Evidence, type ReceiptState, type TransferReview, batchProgress, depositsBy, evmVaultMessages, plannedTransfer, readWalletTransaction, receiptState, reviewTransfer, sendBatch, sendTransfer, vaultCodeAt, verifyDeployment } from "./evmVault.vibe"
 import { type SlotRead, compareAndWrite, readText, slotOfText, textOfSlot } from "./flowSlots.ts"
@@ -87,7 +87,8 @@ function sentAlready(saved: SavedRequest): boolean {
 function grossOf(plan: EvmDepositPlan | EvmBatchPlan): bigint | undefined {
   const call = plan.kind === "evmDeposit" ? plan.call : plan.calls.at(-1)
   if (call === undefined) return undefined
-  const value = BigInt(call.value)
+  const value = quantityValue(call.value)
+  if (value === undefined) return undefined
   return value > 0n ? value : decodeUint(`0x${call.data.slice(-64)}`, U256_MAX)
 }
 

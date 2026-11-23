@@ -6,7 +6,7 @@ import { type Hex, evmRpc, recoverDigest } from "@repo/platform/chain/evm"
 import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { outbound, outboundVia } from "@repo/platform/http"
 import { type Journal, fileJournal } from "@repo/platform/journal"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { type Account, anvil, refuseMainnet } from "@repo/platform/testing/chains"
@@ -396,12 +396,12 @@ effect function attesterHandler(cases: ReadonlyArray<Reserved>, served: Reserved
 }
 
 effect function posted(handler: WebHandler, path: string, body: string) {
-  return try promise(async () => {
-    const response = await handler(new globalThis.Request(`https://attester.internal${path}`, { method: "POST", headers: { "content-type": "application/json" }, body }))
-    const text = await response.text()
-    const answer: unknown = (response.headers.get("content-type") ?? "").startsWith("application/json") ? JSON.parse(text) : text
+  provide outboundVia({ fetch: handler }) {
+    const response = try (try HttpClient.HttpClient).post(`https://attester.internal${path}`, { body: HttpBody.text(body, "application/json") })
+    const text = try response.text
+    const answer: unknown = (response.headers["content-type"] ?? "").startsWith("application/json") ? try Effect.try(() => JSON.parse(text) as unknown) : text
     return { status: response.status, body: answer }
-  })
+  }
 }
 
 layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {

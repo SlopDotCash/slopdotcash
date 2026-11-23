@@ -170,7 +170,7 @@ export effect function sendEvmSetting<E>(connection: EvmConnection, vault: EvmVa
 
 export effect function checkEvmSetting(connection: EvmConnection, vault: EvmVault, target: MonthlySetting, plan: OwnerPlan | undefined, hash: string) {
   const call = { to: vault.vault, value: "0x0", data: try settingData(target) }
-  const planned = plan?.kind === "evmSetting" && BigInt(plan.cap) === target.cap && plan.enabled === target.enabled ? callPlan(plan.from, vault.chainId, call) : try plannedCall(vault, plan, call)
+  const planned = plan?.kind === "evmSetting" && baseUnits(plan.cap, false) === target.cap && plan.enabled === target.enabled ? callPlan(plan.from, vault.chainId, call) : try plannedCall(vault, plan, call)
   const read = try readWalletTransaction(connection, vault, hash, expectedOf(planned), true)
   if (read.status === "included" || read.status === "pending" || read.receipt === undefined) return "pending" satisfies ChainStatus
   if (read.status === "failed") return "failed" satisfies ChainStatus
@@ -235,7 +235,8 @@ effect function settingAction(projectId: string, body: MonthlySettingAction) {
 }
 
 function settingStateOf(state: MonthlyCommitmentState): MonthlySetting | undefined {
-  return settingCap.test(state.cap) ? { cap: BigInt(state.cap), enabled: state.enabled } : undefined
+  const cap = settingCap.test(state.cap) ? baseUnits(state.cap, false) : undefined
+  return cap === undefined ? undefined : { cap, enabled: state.enabled }
 }
 
 function settingWireOf(terms: SolanaVaultTerms, target: MonthlySetting, prepared: PreparedWire): ReviewedWire | undefined {

@@ -36,9 +36,11 @@ const CommitAnswer = Schema.Struct({
 
 type CommitAnswer = typeof CommitAnswer.Type
 
-function activePeriod(nowSeconds: number): Period {
-  const previous = shiftPeriod(periodContaining(nowSeconds), -1)
-  return nowSeconds < cutoffAt(previous) ? shiftPeriod(previous, -1) : previous
+effect function activePeriod(nowSeconds: number) {
+  return try orDie(Effect.try((): Period => {
+    const previous = shiftPeriod(periodContaining(nowSeconds), -1)
+    return nowSeconds < cutoffAt(previous) ? shiftPeriod(previous, -1) : previous
+  }))
 }
 
 function pendingStatement(period: string, networks: string) {
@@ -118,7 +120,7 @@ effect function commitOne(encoded: string, deployments: ReadonlyArray<Registered
 
 export effect function runMonthlyCommitments(networks: ReadonlyArray<NetworkKey>, deployments: ReadonlyArray<RegisteredDeployment>, bindings: ExecutorBindings) {
   const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
-  const period = formatPeriod(activePeriod(nowSeconds))
+  const period = formatPeriod(try activePeriod(nowSeconds))
   const found = try first(PendingItems, pendingStatement(period, JSON.stringify(networks)))
   const listed = try Effect.try({ try: () => JSON.parse(found?.items ?? "[]") as unknown, catch: () => refused("Monthly candidates are malformed") })
   const items = Array.isArray(listed) ? listed.filter((item): item is string => typeof item === "string") : []

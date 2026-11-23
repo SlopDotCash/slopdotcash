@@ -65,7 +65,7 @@ effect function integer(value: number, min: number) {
 }
 
 effect function actorId(value: string) {
-  if (!githubId.test(value) || BigInt(value) > (1n << 64n) - 1n) throw refusal("Record the producer and reviewer by numeric GitHub ID.")
+  if (!githubId.test(value) || (try orDie(Effect.try(() => BigInt(value)))) > (1n << 64n) - 1n) throw refusal("Record the producer and reviewer by numeric GitHub ID.")
   return value
 }
 
@@ -122,9 +122,9 @@ export effect function verifyCapture(packet: ReviewedPacket, capture: RegistryCa
   }
 }
 
-function proratedCap(manifest: MonthlyManifest, period: Period) {
-  const start = BigInt(periodStartSeconds(period))
-  return (monthlyCapOf(manifest, period) * (BigInt(closeoutCutoff) - start)) / (BigInt(periodEndSeconds(period)) - start)
+effect function proratedCap(manifest: MonthlyManifest, period: Period) {
+  const [start, cutoff, end] = try orDie(Effect.try(() => [BigInt(periodStartSeconds(period)), BigInt(closeoutCutoff), BigInt(periodEndSeconds(period))]))
+  return (monthlyCapOf(manifest, period) * (cutoff - start)) / (end - start)
 }
 
 export effect function verifyPool(manifest: MonthlyManifest, text: string, period: Period) {
@@ -135,7 +135,7 @@ export effect function verifyPool(manifest: MonthlyManifest, text: string, perio
   const network = isNetworkKey(closeoutNetwork) ? NETWORKS[closeoutNetwork] : undefined
   const reference = network === undefined ? undefined : defaultAsset(network)
   if (canonical !== text || manifest.id !== closeoutProject || manifest.status !== "active" || manifest.authority?.state !== "verified" ||
-    manifest.terms?.receiptPolicy?.state !== "active" || manifest.reward.kind !== "monthly-pool" || proratedCap(manifest, period) !== BigInt(closeoutGross) ||
+    manifest.terms?.receiptPolicy?.state !== "active" || manifest.reward.kind !== "monthly-pool" || (try proratedCap(manifest, period)) !== (try orDie(Effect.try(() => BigInt(closeoutGross)))) ||
     deployments.length !== 1 || deployment === undefined || deployment.network !== closeoutNetwork || network === undefined || reference === undefined ||
     asset === undefined || asset.network !== network.chain || asset.symbol !== closeoutAsset || reference.symbol !== closeoutAsset || asset.decimals !== closeoutDecimals ||
     asset.address !== reference.address || deployment.asset !== asset.address || manifest.escrow?.feeBasisPoints !== closeoutFeeBasisPoints) {

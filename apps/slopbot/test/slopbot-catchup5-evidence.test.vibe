@@ -184,10 +184,10 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     for (const login of authors) try eligible(area, login)
     providers.reply(about("FULL-TOKEN"), { text: noFinding })
     const edited = try itemOf("edit")
-    fake.alterNext(`POST /repositories/${consented.id}/issues/${items.edit}/labels`, (response) => {
+    try Effect.try(() => fake.alterNext(`POST /repositories/${consented.id}/issues/${items.edit}/labels`, (response) => {
       edited.body = complete("EDIT-TOKEN")
       return response
-    })
+    }))
     const results = {
       gap: try closeOf(area, "gap"),
       shot: try closeOf(area, "shot"),

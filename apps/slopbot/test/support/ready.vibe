@@ -10,6 +10,7 @@ import { worker } from "@repo/platform/worker"
 import { ProjectAudience, ProjectStatus, type ProjectView, Registry, RegistryManifests, Restrictions } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Enforcement } from "@repo/ports/security"
+import { submissionFeeMode } from "../../src/fee/store.vibe"
 import { ingressRoutes } from "../../src/ingress/routes.vibe"
 import { webhookSettings } from "../../src/ingress/webhook.vibe"
 import { type Job, JobQueue, QueueUnavailable, ReadyLabelJob, ReviewJob } from "../../src/jobs/job.vibe"
@@ -121,7 +122,10 @@ const callerFixture = Layer.succeed(Caller, { current: () => effect { throw new 
 effect function at<A, E, R>(program: A!E!R) {
   const http = try HttpServerRequest.HttpServerRequest
   const now = Number(http.headers["x-test-now"] ?? "0")
-  return try Effect.provide(program, settableClock(now).layer)
+  const clock = settableClock(now).layer
+  provide clock {
+    return try program
+  }
 }
 
 effect function refreshed() {
@@ -154,6 +158,7 @@ function services(env: Env) {
     webhookSettings(env),
     portsOver(env.TEST_PROJECTS, env.SLOPBOT_DB),
     callerFixture,
+    submissionFeeMode(undefined),
   )
 }
 

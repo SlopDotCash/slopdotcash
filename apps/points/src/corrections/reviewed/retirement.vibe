@@ -57,7 +57,7 @@ function objectOfJson(value: unknown): Json | undefined {
 }
 
 function listOf(value: unknown): ReadonlyArray<Json> {
-  return Array.isArray(value) ? value.flatMap((item) => objectOfJson(item) ?? []) : []
+  return Array.isArray(value) ? value.flatMap<Json>((item: unknown) => objectOfJson(item) ?? []) : []
 }
 
 function textOf(value: unknown): string | undefined {
@@ -650,7 +650,7 @@ export effect function checkedRetirement(input: RetirementInput) {
     earlier: native.bases,
     claims,
     mergeEdges: native.edges,
-    order: identical.kind === "NoIdenticalChange" && !net.present ? input.verified.order.get(digestText(retirement)) ?? [] : [],
+    order: identical.kind === "NoIdenticalChange" && !net.present ? [...(input.verified.order.get(digestText(retirement)) ?? [])] : [],
     identical,
     net,
   }

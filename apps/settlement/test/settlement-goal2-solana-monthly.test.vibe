@@ -37,8 +37,13 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function refusalOf<A, E extends { readonly _tag: string }, R>(run: A!E!R) {
-  return run catch (error) => "message" in error && typeof error.message === "string" && error.message !== "" ? `${error._tag}: ${error.message}` : error._tag
+function described(error: Error) {
+  const tag = "_tag" in error && typeof error._tag === "string" ? error._tag : error.name
+  return error.message !== "" ? `${tag}: ${error.message}` : tag
+}
+
+effect function refusalOf<A, E extends Error, R>(run: A!E!R) {
+  return run catch (error) => described(error)
 }
 
 effect function opened(projectId: string) {
@@ -109,7 +114,8 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const on = { wallet: owner.address, cap: "500000", enabled: true }
     const zero = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, cap: "0" }, capture }))
     const wide = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, cap: "18446744073709551616" }, capture }))
-    const stranger = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, wallet: keypair().address }, capture }))
+    const strangerWallet = try Effect.try(() => keypair())
+    const stranger = try refusalOf(reviewMonthlySetting({ verified, intent: { ...on, wallet: strangerWallet.address }, capture }))
     const plan = try reviewMonthlySetting({ verified, intent: on, capture })
     if (plan.transaction === null) return try die(new Error("turning the setting on planned no transaction"))
     const blockhash = plan.transaction.blockhash as Blockhash

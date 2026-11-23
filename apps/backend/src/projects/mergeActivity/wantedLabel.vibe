@@ -33,6 +33,7 @@ export effect function ensureWantedLabel(repository: string, label: string) {
   const installation = app.installationFor(owner, name) catch () => undefined
   if (installation === undefined) return "LabelReadFailed" satisfies LabelAttempt
   provide app.asInstallation(installation, scopeOf(name)) {
-    return ensured(repository, label) catch () => "LabelReadFailed" satisfies LabelAttempt
+    const attempt: LabelAttempt = try ensured(repository, label)
+    return attempt
   }
 }

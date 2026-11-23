@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { D1, type Statement, rows, sql } from "@repo/platform/d1"
 import { gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
 import { lossyText, parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
-import { GitHub } from "@repo/platform/github"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
 import type { Journal } from "../../kernels/records/canonical.ts"
 import { batchDigest } from "../../kernels/records/ids.vibe"
@@ -16,7 +16,7 @@ import { instantOf } from "../../kernels/records/instants.ts"
 import { numstatFiles, readPullRequestGitFiles } from "../../collect/merged/files.vibe"
 import type { CorrectionFile, CorrectionSource } from "../apply/manifest.vibe"
 import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
-import { type AuditedSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, type SourceAudit, digestPattern, digestText, githubIdPattern, historicalFrom, historicalThrough, matchesCarriedAcceptance, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
+import { type AuditedSource, type HistoricalPacket, type IdenticalAcceptedChange, type PacketRetirement, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, digestText, githubIdPattern, historicalFrom, historicalThrough, matchesCarriedAcceptance, pullUrl, refusal, require, shaPattern } from "./packet.vibe"
 import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
 
 schema CensusRepository { readonly id: string }
@@ -44,8 +44,8 @@ schema PromotionNode { readonly id: string; readonly headRefOid: string; readonl
 schema PromotionAnswer { readonly node: PromotionNode | null }
 schema SquashActor { readonly __typename: string; readonly login: string; readonly id?: string }
 schema SquashAuthor { readonly user: SquashActor | null }
-schema ParentNodes { readonly nodes: ReadonlyArray<MergeCommitOid>; readonly pageInfo: PageInfoNext }
 schema PageInfoNext { readonly hasNextPage: boolean }
+schema ParentNodes { readonly nodes: ReadonlyArray<MergeCommitOid>; readonly pageInfo: PageInfoNext }
 schema SquashMerge { readonly oid: string; readonly author: SquashAuthor; readonly parents: ParentNodes }
 schema NamedRepository { readonly id: string; readonly nameWithOwner: string }
 schema SquashNode {
@@ -145,14 +145,14 @@ effect function mergedRange(from: number, through: number) {
   return `merged:${(try isoAt(from)).replace(".000Z", "Z")}..${(try isoAt(through)).replace(".000Z", "Z")}`
 }
 
-effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[] {
+effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[]!(ReviewedRefused | GitHubFailure)!GitHub {
   const github = try GitHub
   const rowsFound: AuditedSource[] = []
   let cursor: string | null = null
   let total: number | undefined
   do {
     const query = `repo:${repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
-    const page = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
+    const page: CensusSearch = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
     try require(Number.isSafeInteger(page.issueCount) && (total === undefined || total === page.issueCount), "Historical census count changed")
     total = page.issueCount
     if (total >= 1000) {
@@ -171,7 +171,7 @@ effect function censusRange(repository: string, repositoryNodeId: string, from: 
         "Historical census source is invalid")
       rowsFound.push({ id: node.id, number: node.number, headSha: node.headRefOid, mergedAt })
     }
-    const next = page.pageInfo
+    const next: PageInfo = page.pageInfo
     try require(!next.hasNextPage || (next.endCursor !== null && next.endCursor !== cursor), "Historical census pagination failed")
     cursor = next.hasNextPage ? next.endCursor : null
   } while (cursor !== null)

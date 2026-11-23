@@ -95,10 +95,19 @@ function site(github: Seeded): Handler {
   }
 }
 
+module forward {
+  import type { Fetcher } from "@repo/platform/bindings"
+  /** @throws {TypeError} */
+  export function forwarded(fetcher: Fetcher, url: string, init: { readonly method: string; readonly headers: Record<string, string>; readonly body: ArrayBuffer | undefined }): Promise<Response> {
+    return fetcher.fetch(new Request(url, init))
+  }
+}
+import { forwarded } from forward
+
 function bridged(fetcher: Fetcher): Handler {
   return async (request) => {
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer()
-    const answer = await fetcher.fetch(new Request(request.url, { method: request.method, headers: Object.fromEntries(request.headers), body }))
+    const answer = await forwarded(fetcher, request.url, { method: request.method, headers: Object.fromEntries(request.headers), body })
     const bytes = [101, 204, 205, 304].includes(answer.status) ? null : await answer.arrayBuffer()
     return new WebResponse(bytes, { status: answer.status, headers: Object.fromEntries(answer.headers) })
   }

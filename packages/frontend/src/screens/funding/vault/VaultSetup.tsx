@@ -512,7 +512,7 @@ function OwnerProvisionalDeposit({ runtime, deployment, offers, connected, onBus
   };
   const plan = saved.status === "done" ? saved.value : undefined;
   const watchKey = wallet && plan?.sent && !busy ? `provisional-watch:${plan.action}:${plan.hash}` : "provisional-watch:idle";
-  useSettled(runtime, watchKey, () => (watchKey === "provisional-watch:idle" || wallet === undefined ? Effect.void : watchProvisional(wallet, pageHidden, (checked) => Effect.sync(() => settle(checked, wallet)))));
+  useSettled(runtime, watchKey, () => (watchKey === "provisional-watch:idle" || wallet === undefined ? Effect.void : Effect.asVoid(watchProvisional(wallet, pageHidden, (checked) => Effect.sync(() => settle(checked, wallet))))));
   return (
     <ProvisionalDeposit
       deployment={deployment}

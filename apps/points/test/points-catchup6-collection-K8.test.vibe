@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import type { Fetcher } from "@repo/platform/bindings"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { type ValueCensus, ValueInputs } from "@repo/ports/points"
@@ -12,6 +13,7 @@ import { PointsJournal } from "../src/kernels/records/records.schema.ts"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
 import { windowBounds } from "../src/window/window.vibe"
 import { type Seeded, closedAt, repository, seeded, start } from "./support/u5/github.ts"
+import { jsonAnswer } from "./support/u3/github.ts"
 import { acceptedReviewHistoryJson, registryAnswer, registryOrigin, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { scoringInputs } from "./support/catchup3-e1/scoring.vibe"
 
@@ -38,7 +40,7 @@ function withSecondProject(world: Seeded): Fetcher {
   const answer = { ...registryAnswer(world), projects: [project, gadgets] }
   return {
     fetch: (request) => new URL(request.url).href === `${registryOrigin}/api/v1/projects`
-      ? Promise.resolve(new Response(JSON.stringify(answer), { headers: { "content-type": "application/json", "x-slop-project-api-contract": "1" } }))
+      ? Promise.resolve(jsonAnswer(answer, { headers: { "content-type": "application/json", "x-slop-project-api-contract": "1" } }))
       : inner.fetch(request),
   }
 }
@@ -66,9 +68,10 @@ function layers(world: Seeded, asked: Array<ValueCensus>) {
   )
 }
 
-function auditedPull(world: Seeded, number: number) {
-  const pull = world.fake.world.pull(repository, number) as { readonly node_id: string; readonly number: number; readonly head: { readonly sha: string }; readonly merged_at: string }
-  return { id: pull.node_id, number: pull.number, headSha: pull.head.sha, mergedAt: pull.merged_at }
+effect function auditedPull(world: Seeded, number: number) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, number))
+  if (pull.mergedAt === null) throw new Error(`the reviewed pull ${number} is not merged`)
+  return { id: pull.nodeId, number: pull.number, headSha: pull.headSha, mergedAt: pull.mergedAt }
 }
 
 effect function reviewed(world: Seeded, directory: string) {
@@ -108,7 +111,7 @@ effect function reviewed(world: Seeded, directory: string) {
 
 it.live('A historical collection reads only the pinned repository after its merged census matches the reviewed scope (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, scoringInputs(world)) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
     const fs = try FileSystem.FileSystem
     const directory = try fs.makeTempDirectoryScoped()
@@ -116,7 +119,7 @@ it.live('A historical collection reads only the pinned repository after its merg
     const asked: Array<ValueCensus> = []
     const unaudited = Effect.provide(collectHistorical(base), layers(world, asked)) catch (error) => message(error)
     try same({ unaudited, asked: asked.length }, { unaudited: "Collected historical outcomes differ from the source audit", asked: 0 })
-    const audited = [world.pulls.paired, world.pulls.stacked, world.pulls.bulk].map((number) => auditedPull(world, number))
+    const audited = try Effect.forEach([world.pulls.paired, world.pulls.stacked, world.pulls.bulk], (number) => auditedPull(world, number))
     const [row] = audited
     if (row === undefined) throw new Error("the reviewed scope lists no merge")
     const moved = Effect.provide(collectHistorical({ ...base, mergedScope: { ...base.mergedScope, sources: [{ ...row, headSha: "0".repeat(40) }, ...audited.slice(1)] } }), layers(world, asked)) catch (error) => message(error)
@@ -158,7 +161,7 @@ it.live('A historical collection reads only the pinned repository after its merg
 
 it.live('A moved Points checkpoint or scoring window refuses before any collection (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, scoringInputs(world)) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   try scoped(effect {
     const fs = try FileSystem.FileSystem
     const directory = try fs.makeTempDirectoryScoped()

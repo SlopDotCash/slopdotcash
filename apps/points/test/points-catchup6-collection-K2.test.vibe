@@ -7,7 +7,7 @@ import { settableClock } from "@repo/platform/testing/clock"
 import type { GitHubFake } from "@repo/platform/testing/github"
 import { type LocalGitObjects, localGitObjects } from "../src/ingestion/localGit.vibe"
 import { Ingestion, ingestion, ingestionGitHub } from "../src/ingestion/read.vibe"
-import { fetcherOf, repository, seeded, start, statuses } from "./support/u3/github.ts"
+import { answer, fetcherOf, jsonAnswer, repository, seeded, start, statuses } from "./support/u3/github.ts"
 
 const fixtures = new URL("./fixtures/local-git-objects", import.meta.url).pathname
 const repoPath = `/repos/${repository}`
@@ -60,7 +60,7 @@ effect function served(objects: LocalGitObjects, path: string) {
 
 effect function body(objects: LocalGitObjects, path: string) {
   const text = try served(objects, path)
-  return text === null ? null : JSON.parse(text) as unknown
+  return text === null ? null : try Effect.try(() => JSON.parse(text) as unknown)
 }
 
 it.live('Read immutable Git objects without spending the GitHub allowance (spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub\'s")', () => effect {
@@ -71,7 +71,8 @@ it.live('Read immutable Git objects without spending the GitHub allowance (spec/
     const fs = try FileSystem.FileSystem
     const checked = try scoped(effect {
       const temporary = try fs.makeTempDirectoryScoped()
-      const recorded = JSON.parse(try fs.readFileString(`${fixtures}/github-responses.json`)) as { readonly responses: Readonly<Record<string, Body>> }
+      const recordedText = try fs.readFileString(`${fixtures}/github-responses.json`)
+      const recorded = try Effect.try(() => JSON.parse(recordedText) as { readonly responses: Readonly<Record<string, Body>> })
       const realRoot = `${temporary}/real`
       const realGit = try bare(realRoot, "SlopDotCash", "slopdotcash")
       try git(realGit, ["unpack-objects", "-q"], try fs.readFile(`${fixtures}/objects.pack`))
@@ -137,8 +138,8 @@ it.live('Read immutable Git objects without spending the GitHub allowance (spec/
       const restarted = try body(objects, `/repos/owner/broken/git/trees/${root}`)
       const afterKilled = try objects.stats()
 
-      answers(fake, exact("GET", `/repos/owner/repo/git/blobs/${blob}`), [() => Response.json({ sha: blob, size: 6 })])
-      answers(fake, exact("GET", `/repos/owner/repo/git/trees/${zeros}`), [() => Response.json({ sha: zeros, tree: [], truncated: false })])
+      answers(fake, exact("GET", `/repos/owner/repo/git/blobs/${blob}`), [() => jsonAnswer({ sha: blob, size: 6 })])
+      answers(fake, exact("GET", `/repos/owner/repo/git/trees/${zeros}`), [() => jsonAnswer({ sha: zeros, tree: [], truncated: false })])
       const from = fake.requests.length
       const transport = Layer.provide(ingestionGitHub({ token: Redacted.make(world.token), localGitObjects: objects }), outboundVia(fetcherOf(fake)))
       const ingested = try (effect {
@@ -209,7 +210,7 @@ it.live('Read GitHub without retrying writes or inventing success: every exact G
       clock.advance(millis)
     },
   })
-  const gateway = (status: number) => () => new Response("gateway", { status })
+  const gateway = (status: number) => () => answer("gateway", { status })
   const page = JSON.stringify([{ id: 1 }])
   const finalBody = "GitHub still cannot serve the pull request commits"
   const pull = world.pull
@@ -235,11 +236,11 @@ it.live('Read GitHub without retrying writes or inventing success: every exact G
     }
 
     const recovered = try Effect.forEach(pages, (path) => Effect.forEach(gatewayStatuses, (status) => effect {
-      answers(fake, exact("GET", path), [gateway(status), gateway(status), () => new Response(page, { status: 200, headers: { "content-type": "application/json" } })])
+      answers(fake, exact("GET", path), [gateway(status), gateway(status), () => answer(page, { status: 200, headers: { "content-type": "application/json" } })])
       return try read(`${authority}${path}`)
     }))
     const commitsPage = pages[0] ?? ""
-    answers(fake, exact("GET", commitsPage), [gateway(502), gateway(502), () => new Response(finalBody, { status: 502, statusText: "Still unavailable" })])
+    answers(fake, exact("GET", commitsPage), [gateway(502), gateway(502), () => answer(finalBody, { status: 502, statusText: "Still unavailable" })])
     const persistent = try read(`${authority}${commitsPage}`)
     const immediate = try Effect.forEach([
       { url: `${authority}${commitsPage}`, method: "POST" as const, match: exact("POST", commitsPage) },

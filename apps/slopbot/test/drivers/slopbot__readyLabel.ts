@@ -1,5 +1,5 @@
 // spec/slopbot/readyLabel.md, "Story: Label a pull request ready only while every condition holds at its head"
-import { Effect, Layer, ManagedRuntime, Redacted } from "effect";
+import { Effect, Layer, ManagedRuntime, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
 import type { D1Database } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
@@ -17,6 +17,8 @@ import { webhookSettings } from "../../src/ingress/webhook.vibe";
 import { type Job, JobQueue } from "../../src/jobs/job.vibe";
 import { refreshReadyLabel } from "../../src/ready/refresh.vibe";
 import { dispatchReadyChecks } from "../../src/ready/store.vibe";
+
+const ReadyRow = Schema.Struct({ state: Schema.String, next_check_at: Schema.NullOr(Schema.String) });
 
 type Observed = Pick<ReadyPull, "pr" | "row" | "labelled" | "line" | "nextCheckAt">;
 
@@ -81,7 +83,7 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
     const current = state();
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && path.endsWith(`/issues/comments/${current.commentId}`) && current.hiddenComment) return new Response("{\"message\":\"Not Found\"}", { status: 404 });
-    if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.handler(request);
+    if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.fetch(request);
     if (current.hidden) return new Response("{\"message\":\"Not Found\"}", { status: 404 });
     current.reads++;
     if (current.reads === 2 && current.atWrite === "UnreadableHead") return new Response("{\"message\":\"Not Found\"}", { status: 404 });
@@ -89,7 +91,7 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
       current.heads++;
       Object.assign(fake.world.pull(repo, current.number), { headSha: headOf(current) });
     }
-    const answer = await fake.handler(request);
+    const answer = await fake.fetch(request);
     if (answer.status !== 200) return answer;
     const pull = (await answer.json()) as Record<string, unknown>;
     return new Response(JSON.stringify({ ...pull, ...current.report }), { status: 200, headers: answer.headers });
@@ -262,7 +264,8 @@ function lineOf(body: string): ReadyLine {
 async function observed(key: string): Promise<Observed> {
   const state = await stateOf(key);
   const pull = pullOf(state);
-  const row = await state.db.prepare("SELECT state, next_check_at FROM slopbot_ready_labels WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).first<{ state: string; next_check_at: string | null }>();
+  const [found] = (await state.db.prepare("SELECT state, next_check_at FROM slopbot_ready_labels WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).all()).results;
+  const row = found === undefined ? null : Schema.decodeUnknownSync(ReadyRow)(found);
   const comment = pull.comments.find((entry) => entry.id === state.commentId);
   return {
     pr: pull.mergedAt !== null ? "PullMerged" : pull.state === "open" ? "PullOpen" : "PullClosed",

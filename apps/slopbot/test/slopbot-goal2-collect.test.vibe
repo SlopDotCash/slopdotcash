@@ -43,6 +43,11 @@ it.effect('A resumed discussion read takes its checkpoint only from a trusted ma
   try Effect.sync(() => assert.deepStrictEqual(outcomes, ["none", resumed, resumed, invalid, invalid, invalid, invalid, invalid, invalid]))
 })
 
+effect function bindings(vars: Readonly<Record<string, string>>) {
+  const found = valueBindings(vars) catch effect (error) => [error.message]
+  return found
+}
+
 it.effect('A collection reads the registry of the environment it publishes to (spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment")', () => effect {
   const origins = [
     try originUnder({}),
@@ -54,7 +59,6 @@ it.effect('A collection reads the registry of the environment it publishes to (s
 })
 
 it.effect('A release passes on only a valid value budget, normalised (spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key")', () => effect {
-  const bindings = (vars: Readonly<Record<string, string>>) => valueBindings(vars) catch effect (error) => [error.message]
   const outcomes = [
     try bindings({}),
     try bindings({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "", SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: "", SLOPBOT_VALUE_START_AT: "" }),

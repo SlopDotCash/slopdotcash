@@ -67,7 +67,8 @@ function where(key: DepositKey): Statement {
   return sql`project_id = ${key.projectId} AND network = ${key.network} AND vault = ${key.vault}`
 }
 
-function wellFormed(key: DepositKey, record: VaultDepositRecord): boolean {
+effect function wellFormed(key: DepositKey, record: VaultDepositRecord) {
+  const amount = try orDie(Effect.try(() => toAmount(record.amount > 0n ? record.amount : 0n)))
   const evm = chainFamily(key.chain) === "evm"
   return PROJECT.test(key.projectId)
     && (evm ? EVM_TRANSACTION.test(record.transactionId) : SOLANA_TRANSACTION.test(record.transactionId))
@@ -81,14 +82,14 @@ function wellFormed(key: DepositKey, record: VaultDepositRecord): boolean {
       transaction: record.transactionId,
       eventIndex: record.eventIndex,
       depositor: record.depositor,
-      amount: toAmount(record.amount > 0n ? record.amount : 0n),
+      amount,
       block: Number(record.blockNumber),
       blockTime: record.blockTime,
     })
 }
 
 export effect function depositInsert(key: DepositKey, record: VaultDepositRecord, recordedAt: string) {
-  if (!wellFormed(key, record)) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
+  if (!(try wellFormed(key, record))) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
   return sql`INSERT INTO vault_deposits (project_id, network, chain, vault, transaction_id, event_index, depositor, amount, block_number, block_time, recorded_at)
     VALUES (${key.projectId}, ${key.network}, ${key.chain}, ${key.vault}, ${record.transactionId}, ${record.eventIndex}, ${record.depositor}, ${record.amount.toString()}, ${record.blockNumber.toString()}, ${new Date(record.blockTime * 1000).toISOString()}, ${recordedAt})
     ON CONFLICT (network, transaction_id, event_index) DO NOTHING`
@@ -104,9 +105,10 @@ export effect function storedEvmCursor(key: DepositKey) {
 
 effect function writeEvmPage(key: DepositKey, run: Run, found: ReadonlyArray<VaultDepositRecord>) {
   const now = try isoNow()
+  const [from, to] = try orDie(Effect.try(() => [BigInt(run.fromBlock), BigInt(run.toBlock)]))
   const statements: Statement[] = []
   for (const record of found) {
-    if (record.blockNumber < BigInt(run.fromBlock) || record.blockNumber > BigInt(run.toBlock)) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
+    if (record.blockNumber < from || record.blockNumber > to) throw new InvalidDeposit({ message: "Invalid finalized vault deposit" })
     statements.push(try depositInsert(key, record, now))
   }
   statements.push(sql`INSERT INTO vault_deposit_cursors (project_id, network, vault, position, synced_at) VALUES (${key.projectId}, ${key.network}, ${key.vault}, ${String(run.toBlock)}, ${now})
@@ -227,5 +229,5 @@ export effect function touchCursor(key: DepositKey) {
 
 export effect function syncedAt() {
   const synced = try rows(SyncedRow, sql`SELECT project_id, network, vault, synced_at FROM vault_deposit_cursors`)
-  return new Map(synced.map((row) => [`${row.project_id}\n${row.network}\n${row.vault}`, row.synced_at] as const))
+  return new Map<string, string>(synced.map((row) => [`${row.project_id}\n${row.network}\n${row.vault}`, row.synced_at]))
 }

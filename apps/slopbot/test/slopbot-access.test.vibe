@@ -201,7 +201,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const renamed = try call(accessUrl(internal, { repository: "ada/charlie", repositoryId: "7003", login: "ada", githubId: "101" }))
     const beforeRefresh = slopbot.github.requests.length
     try call("https://slopbot.internal/__test/reporting-refresh", "POST")
-    const renamedReadiness = try promise(() => slopbot.db.prepare("SELECT repository_id, enabled, failure FROM repository_reporting_status WHERE project_id = 'charlie'").first())
+    const renamedReadiness = (try promise(() => slopbot.db.prepare("SELECT repository_id, enabled, failure FROM repository_reporting_status WHERE project_id = 'charlie'").all())).results[0] ?? null
     const renamedReads = requestsSince(slopbot.github, beforeRefresh).filter((line) => line.includes("/ada/charlie"))
     try same({
       refused: refused.map((answer) => [answer.status, answer.body, answer.headers["cache-control"]]),

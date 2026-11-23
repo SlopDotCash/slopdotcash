@@ -191,7 +191,7 @@ effect function judged(node: PullNode, merged: boolean, repository: string, inde
   const decision: Decision = { ...byPerson, decider: databaseId, author: sameLogin(author, login) ? databaseId : 0 }
   if (!countedDecision(decision)) return { decision, account: undefined }
   if (!Number.isSafeInteger(node.number) || node.number <= 0) throw unread("GitHub returned an invalid pull request number")
-  if (!loginPattern.test(login) || !loginPattern.test(author) || githubUserIdFromNodeId(id) !== BigInt(databaseId)) throw unread(`Maintainer decision record has an invalid decision: ${repository}#${node.number}`)
+  if (!loginPattern.test(login) || !loginPattern.test(author) || githubUserIdFromNodeId(id) !== (try orDie(Effect.try(() => BigInt(databaseId))))) throw unread(`Maintainer decision record has an invalid decision: ${repository}#${node.number}`)
   return { decision, account: { author, githubUserId: String(databaseId), nodeId: id, login } }
 }
 
@@ -216,7 +216,7 @@ effect function repositoryDecisions(github: GitHub.Shape, month: DecisionMonth, 
   let after: string | null = null
   for (let read = 0; ; read += 1) {
     if (read >= maxPages) throw unread(`Repository ${repository.id} has more closed pull requests than one read covers`)
-    const listed = (try page(github, { owner, name, first: pageSize, after })).repository
+    const listed: RepositoryPage = (try page(github, { owner, name, first: pageSize, after })).repository
     if (repository.nodeId !== undefined && listed.id !== repository.nodeId) throw unread(`Repository ${repository.id} is not the registered repository`)
     let older = false
     for (const node of listed.pullRequests.nodes) {
@@ -235,7 +235,7 @@ effect function repositoryDecisions(github: GitHub.Shape, month: DecisionMonth, 
         decision,
       })
     }
-    const info = listed.pullRequests.pageInfo
+    const info: PageInfo = listed.pullRequests.pageInfo
     if (older || !info.hasNextPage) break
     if (info.endCursor === null) throw unread("GitHub returned no next page")
     after = info.endCursor

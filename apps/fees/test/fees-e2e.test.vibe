@@ -438,7 +438,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     try finalized()
     outcomes.push(try ran(live, at.third))
     const native = (try rowsOf(live)).filter((row) => row.token === EVM_NATIVE_ASSET)
-    const sold = native.filter((row) => row.kind === "conversion" && row.state === "finalized").reduce((total, row) => total + BigInt(row.amount_in), 0n)
+    const sold = try Effect.try(() => native.filter((row) => row.kind === "conversion" && row.state === "finalized").reduce((total, row) => total + BigInt(row.amount_in), 0n))
     try same({
       outcomes,
       native: native.map((row) => [row.kind, row.mode, row.state]),

@@ -4,6 +4,7 @@ import type { SlopRate } from "@repo/ports/backend"
 import { feeSettingAmount } from "../../gen/backend__submissionFeeSettings.effect.vibe"
 import { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keepFeeLabel, keptAfterClosedDays, keptToFor, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, ratesAt, rateInForce, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { inStableLimits, lowerAmount, rateMicros, rateScale, slopFeeUnits } from "./submissionFeeKernels.ts"
+import { digitUnits, maxUnits, minUnits, slopShareUnits, stableUnit } from "./submissionFeeUnits.ts"
 
 export type { FeeNetwork, FeeToken, TokenKind } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 export { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keepFeeLabel, keptAfterClosedDays, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, unknownItemGraceMs }
@@ -41,17 +42,16 @@ const amountText = /^(0|[1-9][0-9]{0,38})$/u
 const rateText = /^(0|[1-9][0-9]{0,11})(\.[0-9]{1,18})?$/u
 const addressText = /^0x[0-9a-fA-F]{40}$/u
 const settingMinor = /^[1-9][0-9]{0,15}$/u
-const stableUnit = 10n ** BigInt(stableDecimals)
 
 function uint64(value: string | number | bigint) {
   if (typeof value === "number" && !Number.isSafeInteger(value)) return undefined
   const text = value.toString()
-  if (!positiveId.test(text) || BigInt(text) > uint64Max) return undefined
-  return BigInt(text)
+  const units = positiveId.test(text) ? digitUnits(text) : undefined
+  return units === undefined || units > uint64Max ? undefined : units
 }
 
 function baseUnits(value: string) {
-  return amountText.test(value) ? BigInt(value) : undefined
+  return amountText.test(value) ? digitUnits(value) : undefined
 }
 
 function instant(value: string) {
@@ -74,7 +74,7 @@ export function submissionFeeItem(repositoryId: string | number | bigint, pullNu
 
 export function validStableFee(stableMinor: string) {
   const value = baseUnits(stableMinor)
-  return value !== undefined && inStableLimits(value, BigInt(minMinor), BigInt(maxMinor))
+  return value !== undefined && inStableLimits(value, minUnits, maxUnits)
 }
 
 export function amountAtLeast(paid: string, due: string) {
@@ -86,7 +86,10 @@ export function amountAtLeast(paid: string, due: string) {
 export function slopRateScaled(slopPerUsd: string) {
   if (!rateText.test(slopPerUsd)) return undefined
   const [whole, fraction = ""] = slopPerUsd.split(".")
-  const scaled = BigInt(whole) * rateScale + BigInt(fraction.padEnd(18, "0"))
+  const wholeUnits = digitUnits(whole)
+  const fractionUnits = digitUnits(fraction.padEnd(18, "0"))
+  if (wholeUnits === undefined || fractionUnits === undefined) return undefined
+  const scaled = wholeUnits * rateScale + fractionUnits
   return scaled > 0n ? scaled : undefined
 }
 
@@ -99,12 +102,16 @@ export function slopRateText(scaled: bigint) {
   return rateText.test(text) ? text : undefined
 }
 
+function slopFeeAt(stable: bigint, slopPerUsd: string) {
+  const scaled = slopRateScaled(slopPerUsd)
+  if (stable <= 0n || scaled === undefined) return undefined
+  const fee = slopFeeUnits(stable, scaled, slopShareUnits, stableUnit)
+  return fee > 0n ? fee : undefined
+}
+
 export function slopFeeBase(stableMinor: string, slopPerUsd: string) {
   const stable = baseUnits(stableMinor)
-  const scaled = slopRateScaled(slopPerUsd)
-  if (stable === undefined || stable <= 0n || scaled === undefined) return undefined
-  const fee = slopFeeUnits(stable, scaled, BigInt(slopShareBps), stableUnit)
-  return fee > 0n ? fee.toString() : undefined
+  return stable === undefined ? undefined : slopFeeAt(stable, slopPerUsd)?.toString()
 }
 
 export function slopRatesAt(rates: ReadonlyArray<SlopRate>, at: string): SlopRatesInForce | undefined {
@@ -127,13 +134,14 @@ export function slopRatesAt(rates: ReadonlyArray<SlopRate>, at: string): SlopRat
 }
 
 export function slopFeeDueAt(stableMinor: string, rates: ReadonlyArray<SlopRate>, at: string) {
+  const stable = baseUnits(stableMinor)
   const inForce = slopRatesAt(rates, at)
-  if (inForce === undefined || inForce.current === null) return null
-  const now = slopFeeBase(stableMinor, inForce.current.slopPerUsd)
+  if (stable === undefined || inForce === undefined || inForce.current === null) return null
+  const now = slopFeeAt(stable, inForce.current.slopPerUsd)
   if (now === undefined) return null
-  if (inForce.previous === null) return now
-  const before = slopFeeBase(stableMinor, inForce.previous.slopPerUsd)
-  return before === undefined ? null : lowerAmount(BigInt(before), BigInt(now)).toString()
+  if (inForce.previous === null) return now.toString()
+  const before = slopFeeAt(stable, inForce.previous.slopPerUsd)
+  return before === undefined ? null : lowerAmount(before, now).toString()
 }
 
 export function submissionFeeTokenKind(network: string, token: string): FeeTokenKind | null {

@@ -229,6 +229,7 @@ function originOfUrl(url: string): string {
   return new URL(url).origin;
 }
 
+/** @throws {never} */
 export function probeOf(row: Row, origin: string): Probe {
   const method = row.method === "*" ? "GET" : row.method;
   const path = sampledPath(row.path);
@@ -271,6 +272,7 @@ function headersMatch(expected: Expected, seen: Seen): boolean {
   return Object.entries(expected.headers).every(([name, value]) => expected.dynamicHeaders.includes(name) || seen.headers[name] === value);
 }
 
+/** @throws {never} */
 export function answered(row: Row, seen: Seen): boolean {
   return row.success.includes(seen.status) || row.answers.some((expected) => expected.status === seen.status && bodyMatches(expected.body, seen) && headersMatch(expected, seen));
 }
@@ -279,6 +281,7 @@ function withoutNonces(text: string): string {
   return text.replace(/nonce-[A-Za-z0-9+/=_-]+/gu, "nonce-").replace(/nonce="[^"]*"/gu, 'nonce=""');
 }
 
+/** @throws {never} */
 export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<string> {
   const expected = replay.response;
   return [
@@ -288,6 +291,7 @@ export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<
   ];
 }
 
+/** @throws {TypeError} */
 export function replayRequest(replay: ReplayCase): Probe {
   const url = new URL(replay.request.url);
   return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body === undefined ? {} : { body: replay.request.body } };

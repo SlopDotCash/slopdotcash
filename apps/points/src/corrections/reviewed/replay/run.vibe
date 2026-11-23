@@ -2,13 +2,15 @@
 import type { ValueInputs } from "@repo/ports/points"
 import type { RepositoryRegistry } from "../../../client/snapshot/schema.vibe"
 import type { HistoricalPin, HistoricalProject } from "../../../client/snapshot/validate.vibe"
+import { parsedJson } from "@repo/platform/git/bytes"
 import { nativeProofReader } from "../../../collect/implementation/native.vibe"
 import { type HistoricalRequest, collectHistorical } from "../../../collect/run/historical.vibe"
 import { actionsToken } from "../../../ingestion/token.vibe"
 import { repositoriesOf } from "../../../journal/build.vibe"
+import { PointsJournal } from "../../../kernels/records/records.schema.ts"
 import { readRegistry } from "../../../snapshot/adaptPr.vibe"
 import { publishedRegistry } from "../../collect/published.vibe"
-import { type ReviewedRefused, digestText, require } from "../packet.vibe"
+import { type ReviewedRefused, digestText, refusal, require } from "../packet.vibe"
 import { exactMainHead, trustedMain } from "../transport.vibe"
 import { type AuditPhase, type AuditedScope, auditedScope, sealedReceipt } from "../audit/run.vibe"
 import { assertHistoricalAssessmentFreshness } from "../audit/catalog.vibe"
@@ -88,13 +90,16 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
   const approved = historicalClosedContextBindings(receipt)
   const history = historicalAssessmentTransport(audited.catalog, { projectId: audited.inputs.projectId, repository: audited.repository, repositoryNodeId: audited.scope.repositoryNodeId })
   const proofs = try nativeProofReader()
+  const baseline = Schema.decodeUnknownEffect(PointsJournal)(audited.baseline) catch effect () => {
+    throw refusal("Assessment audit Points baseline is not a valid points journal")
+  }
   const collected = try historicalCollection(valueInputs(history), {
     registryPath,
     pin: context.pin,
     project,
     mergedScope: audited.sourceAudit,
     heads: audited.catalog.heads,
-    baseline: audited.baseline,
+    baseline,
     closedContexts: approved,
     implementation: { proofs, memo: undefined },
     evidenceToken: try actionsToken(),
@@ -109,7 +114,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     emptyLegacyClosures: historicalEmptyLegacyClosureBindings(receipt),
     history: collected.collection.implementation?.history,
   })
-  const raw: unknown = JSON.parse(JSON.stringify(snapshot))
+  const raw: unknown = parsedJson(JSON.stringify(snapshot))?.value
   const closedReviews = try verifyHistoricalClosedReviews(snapshot, receipt, audited.catalog)
   const allocation = try projectHistoricalValueChanges(packetOf(audited, raw, []), audited.baseline, raw, closedReviews, context)
   const valueKeys = allocation.rows.map((row) => row.award.key)

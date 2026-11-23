@@ -33,7 +33,7 @@ function answer(reply: Reply): Promise<Response> {
   if (reply === "stall") return Promise.resolve(new Response(new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(encoder.encode('{"schemaVersion":')) })));
   const headers = new Headers(reply.headers);
   if (reply.json !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const body = reply.bytes ?? (reply.json !== undefined ? JSON.stringify(reply.json) : reply.text ?? null);
+  const body = reply.bytes !== undefined ? new Uint8Array(reply.bytes) : (reply.json !== undefined ? JSON.stringify(reply.json) : reply.text ?? null);
   return Promise.resolve(new Response(body, { status: reply.status ?? 200, headers }));
 }
 

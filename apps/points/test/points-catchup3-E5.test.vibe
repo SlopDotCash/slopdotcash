@@ -112,7 +112,8 @@ it.effect('Joint line weights: a renamed file\'s changed lines count once across
     claim("claim-old", first, "a1", "src/score/old.ts"),
     claim("claim-b", stacked, "b1", "src/b.ts"),
   ])
-  try Effect.try(() => assert.deepStrictEqual(try outcome([first, stacked], [decision("a", [first, stacked], [renamed])]), {
+  const renamedOutcome = try outcome([first, stacked], [decision("a", [first, stacked], [renamed])])
+  try Effect.try(() => assert.deepStrictEqual(renamedOutcome, {
     credited: [["PR_102:joint:wu_slop_renamed:merged:U_alice", 6], ["PR_102:joint:wu_slop_renamed:merged:U_bob", 3]],
     held: [],
   }))
@@ -120,7 +121,8 @@ it.effect('Joint line weights: a renamed file\'s changed lines count once across
   const resolved = pull(201, "2026-11-04T10:00:00Z", carol, [merge("m1", carol, [[changed("src/conflict.ts", 4, 2), changed("src/other.ts", 90, 90)]])])
   const follow = pull(202, "2026-11-06T10:00:00Z", dave, [commit("d1", dave, [changed("src/d.ts", 2, 1)])])
   const resolution = unit("wu_slop_resolution", [resolved, follow], [claim("claim-m", resolved, "m1", "src/conflict.ts"), claim("claim-d", follow, "d1", "src/d.ts")])
-  try Effect.try(() => assert.deepStrictEqual(try outcome([resolved, follow], [decision("b", [resolved, follow], [resolution])]), {
+  const resolvedOutcome = try outcome([resolved, follow], [decision("b", [resolved, follow], [resolution])])
+  try Effect.try(() => assert.deepStrictEqual(resolvedOutcome, {
     credited: [["PR_202:joint:wu_slop_resolution:merged:U_carol", 6], ["PR_202:joint:wu_slop_resolution:merged:U_dave", 3]],
     held: [],
   }))
@@ -128,7 +130,8 @@ it.effect('Joint line weights: a renamed file\'s changed lines count once across
   const limited = pull(301, "2026-11-04T10:00:00Z", erin, [commit("e1", erin, [changed("src/e.ts", 8, 0)], { attributions: [attributed([changed("src/e.ts", 8, 0)], true)] })])
   const paired = pull(302, "2026-11-06T10:00:00Z", frank, [commit("f1", frank, [changed("src/f.ts", 4, 0)])])
   const twoActors = unit("wu_slop_two_actors", [limited, paired], [claim("claim-e", limited, "e1", "src/e.ts"), claim("claim-f", paired, "f1", "src/f.ts")])
-  try Effect.try(() => assert.deepStrictEqual(try outcome([limited, paired], [decision("c", [limited, paired], [twoActors])]), {
+  const twoActorsOutcome = try outcome([limited, paired], [decision("c", [limited, paired], [twoActors])])
+  try Effect.try(() => assert.deepStrictEqual(twoActorsOutcome, {
     credited: [],
     held: [["PR_301", "incomplete-lines"], ["PR_302", "incomplete-lines"]],
   }))
@@ -136,7 +139,8 @@ it.effect('Joint line weights: a renamed file\'s changed lines count once across
   const unresolved = pull(401, "2026-11-04T10:00:00Z", carol, [merge("m2", carol, [])])
   const tail = pull(402, "2026-11-06T10:00:00Z", carol, [commit("c2", carol, [changed("src/c.ts", 3, 0)])])
   const syncOnly = unit("wu_slop_unresolved", [unresolved, tail], [claim("claim-m2", unresolved, "m2", "src/c.ts"), claim("claim-c2", tail, "c2", "src/c.ts")])
-  try Effect.try(() => assert.deepStrictEqual(try outcome([unresolved, tail], [decision("d", [unresolved, tail], [syncOnly])]), {
+  const unresolvedOutcome = try outcome([unresolved, tail], [decision("d", [unresolved, tail], [syncOnly])])
+  try Effect.try(() => assert.deepStrictEqual(unresolvedOutcome, {
     credited: [],
     held: [["PR_401", "incomplete-lines"], ["PR_402", "incomplete-lines"]],
   }))

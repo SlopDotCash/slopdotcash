@@ -86,7 +86,8 @@ effect function observeSources(audit: SourceAudit, refs: ReadonlyArray<Lifecycle
     const page = refs.slice(start, start + lifecyclePage)
     const { nodes } = try github.graphql(lifecycleQuery, { ids: page.map(({ id }) => id) }, NetOutcomeNodes)
     if (!Array.isArray(nodes) || nodes.length !== page.length) throw refusal("Net outcome lifecycle read is incomplete")
-    for (const [index, row] of nodes.entries()) {
+    const rows: ReadonlyArray<unknown> = nodes
+    for (const [index, row] of rows.entries()) {
       const ref = page[index]
       if (ref === undefined || !isPull(row) || row.id !== ref.id || row.number !== ref.number || row.url !== pullUrl(audit.repository, ref.number) || row.state !== "MERGED" ||
         isoOf(row.mergedAt) !== ref.mergedAt || row.repository.id !== audit.repositoryNodeId || row.repository.isPrivate !== false ||

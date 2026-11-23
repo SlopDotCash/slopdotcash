@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { ValueFeedUnavailable, type ValueCensus, ValueInputs } from "@repo/ports/points"
@@ -76,7 +77,7 @@ effect function collectOnce(world: Seeded, directory: string, attempt: Attempt, 
 
 it.live('Collect merged work end to end through the ValueInputs port (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
   const world = try Effect.try(() => seeded())
-  provide Layer.mergeAll(NodeServices.layer, webCrypto, scoringInputs(world)) {
+  provide Layer.mergeAll(NodeServices.layer, Layer.provide(systemGit, NodeServices.layer), webCrypto, scoringInputs(world)) {
   const fs = try FileSystem.FileSystem
   try scoped(effect {
     const directory = try fs.makeTempDirectoryScoped()

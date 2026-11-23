@@ -152,7 +152,7 @@ effect function described(decision: ClosureDecision) {
     outcome: request.closure.outcome,
     penaltyEligible: request.penaltyEligible,
     dailyCap: request.dailyCap,
-    confirmedBy: request.confirm.call === undefined ? null : request.confirm.call.gateway,
+    confirmedBy: request.confirm?.call?.gateway ?? null,
     stillAllowed: try closeStillAllowed(request),
   }
 }

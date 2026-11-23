@@ -1,7 +1,7 @@
 // spec/slopbot/submissionFeeGate.md, "Story: Ask an outside contributor's deposit before the review, and never close for it"
-import { Effect, Layer, ManagedRuntime, Redacted } from "effect";
+import { Effect, Layer, ManagedRuntime, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/http";
-import type { D1Database } from "@repo/platform/bindings";
+import type { D1Database, SqlValue } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { github } from "@repo/platform/github";
@@ -90,9 +90,9 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
     const path = new URL(request.url).pathname;
     if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 });
     if (current.unreadLink && path.endsWith("/graphql")) return new Response("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } });
-    if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.handler(request);
+    if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.fetch(request);
     if (current.hidden) return new Response("{\"message\":\"Not Found\"}", { status: 404 });
-    const answer = await fake.handler(request);
+    const answer = await fake.fetch(request);
     if (answer.status !== 200) return answer;
     const pull = (await answer.json()) as Record<string, unknown>;
     return new Response(JSON.stringify({ ...pull, ...current.report }), { status: 200, headers: answer.headers });
@@ -212,8 +212,16 @@ async function run<A>(state: Held, program: Effect.Effect<A, unknown, unknown>) 
   return state.runtime.runPromiseExit(program as Effect.Effect<A, unknown, never>);
 }
 
+const GateRow = Schema.Struct({ state: Schema.String, updated_at: Schema.String, next_check_at: Schema.NullOr(Schema.String) });
+const ItemRow = Schema.Struct({ paid_at: Schema.NullOr(Schema.String), outcome: Schema.NullOr(Schema.String) });
+
+async function firstRow<S extends Schema.ConstraintDecoder<unknown>>(rowSchema: S, state: Held, statement: string): Promise<S["Type"] | null> {
+  const [row] = (await state.db.prepare(statement).bind(repositoryId, state.number).all()).results;
+  return row === undefined ? null : Schema.decodeUnknownSync(rowSchema)(row);
+}
+
 async function gateRow(state: Held) {
-  return state.db.prepare("SELECT state, updated_at, next_check_at FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).first<{ state: string; updated_at: string; next_check_at: string | null }>();
+  return firstRow(GateRow, state, "SELECT state, updated_at, next_check_at FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?");
 }
 
 async function gated(state: Held, facts: FeeFacts) {
@@ -228,7 +236,7 @@ async function refreshed(state: Held, facts: FeeFacts, pull: PullFacts) {
   return exit._tag === "Success" ? exit.value.outcome : "failed";
 }
 
-async function worker(state: Held, statement: string, ...values: unknown[]) {
+async function worker(state: Held, statement: string, ...values: SqlValue[]) {
   const result = await state.db.prepare(statement).bind(...values).run();
   return (result.meta.changes ?? 0) === 1 ? "accepted" : "refused";
 }
@@ -308,7 +316,7 @@ async function dispatched(key: string, event: Event): Promise<"accepted" | "refu
 async function observed(key: string): Promise<Observed> {
   const state = await stateOf(key);
   const gate = await gateRow(state);
-  const item = await state.db.prepare("SELECT paid_at, outcome FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, state.number).first<{ paid_at: string | null; outcome: string | null }>();
+  const item = await firstRow(ItemRow, state, "SELECT paid_at, outcome FROM submission_fee_items WHERE repository_id = ? AND pull_number = ?");
   const labels = state.fake.world.pull(repo, state.number).labels;
   return {
     gate: gate === null ? "NoGate" : states[gate.state] ?? "NoGate",

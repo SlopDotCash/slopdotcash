@@ -6,6 +6,7 @@ import { d1, sql } from "@repo/platform/d1"
 import { Caller, Unauthenticated } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
+import { reply } from "@repo/platform/testing/github"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { worker } from "@repo/platform/worker"
 import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
@@ -100,7 +101,7 @@ function githubOf(answer: Answer) {
     const body = try orDie(Effect.try(() => JSON.parse(text) as { readonly variables?: Asked }))
     const variables = body.variables ?? {}
     asked.push(`${request.url} ${variables.name ?? ""}:${variables.after ?? ""}`)
-    return HttpClientResponse.fromWeb(request, new globalThis.Response(JSON.stringify(answer(variables)), { status: 200, headers: { "content-type": "application/json" } }))
+    return HttpClientResponse.fromWeb(request, reply(200, answer(variables)))
   }))
 }
 

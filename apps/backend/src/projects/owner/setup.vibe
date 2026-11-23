@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { type ScanQueued, ScanRequests } from "@repo/ports/security"
 import type { Registry, SetupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { InstallationRead, SetupCheck } from "../../../gen/backend__projects.effect.vibe"
-import { canActivate, observation, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { canActivate, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import { basis, clearanceState, latestOf } from "../../../gen/security__enforcement.effect.vibe"
 import { type AccessActor, type AccessCheck, type Checked, checkAuthority, currentPath, installationOf, modelRead, readAccess, scopeNote, slopbotInstallUrl } from "../../authority/live.vibe"
 import type { SetupStatus } from "../../client/projectSetup.vibe"
@@ -243,15 +243,15 @@ export effect function refreshSetup(refresh: Refresh) {
   const check = setupCheckOf(before.manifest, reads, by)
   const state = (try loadProject(refresh.projectId)).state
   const account = try accountStanding({ actor: by, steward: state.project.steward })
-  const observed = observation(state)
   const queued = try queuedScan(refresh, state, before.manifest, setupState(state, check), checked.authority)
-  if (!refresh.allowActivation || !canActivate(state, by, check, account, observed)) return setupStatusOf(before.row, before.manifest, state, reads, check, queued, null, try isoNow())
+  if (!refresh.allowActivation || !canActivate(state, by, check, account)) return setupStatusOf(before.row, before.manifest, state, reads, check, queued, null, try isoNow())
   const access = checked.access
   const installation = access.state === "read" && access.access.installation === "installed" ? access.access.installationId : 0
   const committed = try send({
     projectId: refresh.projectId,
-    event: { type: "activate", check, account, observed },
+    event: { type: "activate", check, account },
     by,
+    setupRead: state.setupRead,
     revision: {
       manifestText: JSON.stringify({ ...before.manifest, status: "active" }),
       reason: `Activated automatically after setup checks for @${refresh.actor.login}: ${checked.authority.message} Slopbot installation ${installation}. ${admissionNote(state, before.manifest)}.`,

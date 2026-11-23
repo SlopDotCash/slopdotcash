@@ -14,7 +14,8 @@ import { type Followed, linkOf, send } from "./store.vibe"
 
 schema Reservation { github_id: string }
 
-const linkPrefix = "/referral/"
+const linkRoot = "/referral"
+const linkPrefix = `${linkRoot}/` as const
 const projectForm = "/projects/new"
 const referralSettings = "/account#referral"
 
@@ -57,7 +58,7 @@ effect function chooseName(actor: string) {
 }
 
 function pathOf(pathname: string): ReferralPath {
-  if (pathname === linkPrefix || pathname === linkPrefix.slice(0, -1)) return "BareReferral"
+  if (pathname === linkPrefix || pathname === linkRoot) return "BareReferral"
   return pathname.startsWith(linkPrefix) ? "NamedReferral" : "OutsideReferral"
 }
 
@@ -138,7 +139,7 @@ const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
 export const ReferralCodeRoutes = Layer.mergeAll(
   handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
   HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
-  HttpRouter.add("*", linkPrefix.slice(0, -1), answered(followLink())),
+  HttpRouter.add("*", linkRoot, answered(followLink())),
   HttpRouter.add("*", `${linkPrefix}*`, answered(followLink())),
 )
 

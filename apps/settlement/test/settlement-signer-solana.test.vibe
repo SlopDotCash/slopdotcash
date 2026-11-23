@@ -184,17 +184,21 @@ effect function signer() {
   return Layer.mergeAll(d1(db), fileJournal(journalPath), webCrypto, outbound, Layer.succeed(SolanaAttesterConfig, config))
 }
 
+function tagOf(error: Error) {
+  return "_tag" in error && typeof error._tag === "string" ? error._tag : error.name
+}
+
 effect function prepared() {
   provide try signer() {
     try createJournal()
-    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => error._tag
+    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => tagOf(error)
   }
 }
 
 effect function refusal() {
   provide try signer() {
     try createJournal()
-    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => "reason" in error ? String(error.reason) : error._tag
+    return prepareSolanaBinding(ORDINARY_SCOPE, request) catch (error) => "reason" in error ? String(error.reason) : tagOf(error)
   }
 }
 

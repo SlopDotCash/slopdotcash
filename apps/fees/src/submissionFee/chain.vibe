@@ -216,14 +216,14 @@ function chainOver(evm: EvmRpc.Shape, network: NetworkConfig, signer: ResolverSi
     return record
   }
 
-  effect function probe(entry: SendEntry) {
+  effect function probe(entry: SendEntry): ProbeResult!ChainFailure {
     const simulated = effect {
       try simulate([entry])
-      return "ok" satisfies ProbeResult
+      return "ok" as const
     }
     return simulated catch effect (error) => {
-      if (error._tag === "PayoutFailed") return "payout_failed" satisfies ProbeResult
-      if (error._tag === "SendReverted") return "reverted" satisfies ProbeResult
+      if (error._tag === "PayoutFailed") return "payout_failed" as const
+      if (error._tag === "SendReverted") return "reverted" as const
       throw error
     }
   }

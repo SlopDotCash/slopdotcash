@@ -13,6 +13,7 @@ import { type BeforeImportCheck, assertHistoricalNetOutcome, verifyHistoricalNet
 import { type HistoricalNetOutcome, type HistoricalPacket, type NetOutcomeSource, type PacketRetirement, type SourceAudit, digestText, pullUrl } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { periodOf } from "../gen/points__periods.effect.vibe"
+import { jsonAnswer } from "./support/u3/github.ts"
 import { type Packet, type Retirement, appended, baselineOf, batchDigestOf, duplicateReason, fixture as reviewedFixture, hash, keyOf, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const repository = { id: 12, node_id: "R_test", private: false, full_name: "owner/repo" }
@@ -143,7 +144,7 @@ function api(world: Fixture) {
     const body = request.body._tag === "Uint8Array" ? parsedJson(lossyText(request.body.body))?.value : undefined
     const ids = (body as { readonly variables?: { readonly ids?: ReadonlyArray<string> } } | undefined)?.variables?.ids
     const answer = path === `/repos/${repository.full_name}` ? repository : path === "/graphql" && ids !== undefined ? { data: { nodes: ids.map((id) => world.nodes.get(id) ?? null) } } : undefined
-    const response = new globalThis.Response(JSON.stringify(answer ?? { message: "Not Found" }), { status: answer === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
+    const response = jsonAnswer(answer ?? { message: "Not Found" }, { status: answer === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
     return succeed(HttpClientResponse.fromWeb(request, response))
   })
 }
@@ -151,7 +152,7 @@ function api(world: Fixture) {
 function objectsOf(world: Fixture): typeof withPublicGitObjects {
   return (actual, objects, read) => {
     world.reads.push({ repository: actual, objects })
-    return read(world.directory)
+    return scoped(read(world.directory))
   }
 }
 
@@ -185,11 +186,17 @@ interface NetPacket {
   readonly expected: Journal
 }
 
-function netPacket(change: (retirement: Retirement) => void = () => undefined): NetPacket {
-  const f = reviewedFixture()
+type ReviewedFixture = ReturnType<typeof reviewedFixture>
+
+effect function netPacket(change: (retirement: Retirement) => void = () => undefined) {
+  const f = try Effect.try(() => reviewedFixture())
   const [candidate] = f.packet.corrections.candidates
   const [source] = candidate?.proof.status === "complete" ? candidate.proof.sources : []
-  if (candidate === undefined || source === undefined) throw Error("fixture source")
+  if (candidate === undefined || source === undefined) throw new Error("fixture source")
+  return netPacketOf(f, candidate, source, change)
+}
+
+function netPacketOf(f: ReviewedFixture, candidate: ReviewedFixture["packet"]["corrections"]["candidates"][number], source: Retirement["source"], change: (retirement: Retirement) => void): NetPacket {
   let baseline = f.baseline
   const anchors: Array<{ id: string; number: number; mergedAt: string; mergeSha: string; awardKey: string; awardRevisionId: string }> = []
   for (const [index, id] of ["PR_earlier", "PR_later"].entries()) {
@@ -235,7 +242,7 @@ effect function rebuiltNet(world: NetPacket, trusted: ReadonlyArray<Retirement>)
     baseline: world.baseline,
     now: time,
     bans: new Map(),
-    protection: protectionFor(october),
+    protection: try Effect.try(() => protectionFor(october)),
     registry,
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
@@ -299,12 +306,12 @@ layer(Layer.mergeAll(systemGit, NodeServices.layer), { excludeTestServices: true
 
   it.effect('A trusted, exclusive net outcome zeroes the October pool only while the earlier ordinary awards it names are retained (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => effect {
     provide webCrypto {
-      const accepted = netPacket()
-      const moved = netPacket((retirement) => {
+      const accepted = try netPacket()
+      const moved = try netPacket((retirement) => {
         const [first] = retirement.netOutcome?.sources ?? []
         if (first !== undefined) first.awardRevisionId = "9".repeat(64)
       })
-      const covered = netPacket((retirement) => {
+      const covered = try netPacket((retirement) => {
         retirement.coverage = [{ commitSha: "b".repeat(40), path: "a.ts", sourceId: "PR_earlier" }]
       })
       try same([

@@ -39,6 +39,7 @@ import { connectEvm } from "../../src/wallets/core/evm.vibe";
 import { connectSolana } from "../../src/wallets/core/solana.vibe";
 import { sessionSlots } from "../../src/wallets/core/slots.ts";
 import { batchFlow } from "../../src/wallets/owner/batchedDeposit.vibe";
+import { deploymentOf } from "../../src/wallets/owner/commitmentCalls.ts";
 import { type EvmVault, type VaultReview, checkTransfer, reviewTransfer, sendTransfer } from "../../src/wallets/owner/evmVault.vibe";
 import { ownerMonthlyPage } from "../../src/wallets/owner/ownerMonthly.vibe";
 import { type Answer, type OwnerVaultPage, type Saved, ownerVaultPage } from "../../src/wallets/owner/ownerVault.vibe";
@@ -1247,9 +1248,9 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
   });
 
   it('a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept (spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt")', async () => {
-    const deployment = frozenMonth.deployment;
+    const deployment = deploymentOf(frozenMonth.deployment);
     const period = parsePeriod(frozenMonth.period);
-    if (deployment === null || period === undefined) throw new Error("the frozen month names its vault and period");
+    if (deployment === undefined || period === undefined) throw new Error("the frozen month names its vault and period");
     const signatureHex = "11".repeat(65);
     const terms = { allocationDigest: hash("1"), allocationRoot: hash("2"), root: hash("3"), expectedRemaining: "0", releasedGross: "120000000" };
     const ready = {
@@ -1283,8 +1284,8 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
   });
 
   it('a reserve release and an EVM automatic-payment setting development saved before the cut-over resume as the signed-in owner\'s saved attempts and clear once their own hash is found finalized, without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', async () => {
-    const deployment = frozenMonth.deployment;
-    if (deployment === null) throw new Error("the frozen month names its vault");
+    const deployment = deploymentOf(frozenMonth.deployment);
+    if (deployment === undefined) throw new Error("the frozen month names its vault");
     const releaseKey = `slop:monthly-release:v1:${lockProject.id}:${frozenMonth.period}:${deployment.network}`;
     const planId = "d".repeat(64);
     sessionStorage.setItem(releaseKey, JSON.stringify({ attemptId: "0f8fad5b-d9cb-469f-a165-70867728950e", planId, hash: hash("e") }));

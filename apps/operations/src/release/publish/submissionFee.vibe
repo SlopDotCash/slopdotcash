@@ -30,7 +30,8 @@ function refused(message: string) {
 
 function wei(value: string | undefined, name: string) {
   const text = (value ?? "").trim()
-  return wholeWei.test(text) && BigInt(text) <= BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(text) : `${name} must be a positive whole number of wei`
+  const amount = Number(text)
+  return wholeWei.test(text) && Number.isSafeInteger(amount) ? amount : `${name} must be a positive whole number of wei`
 }
 
 function recorded(terms: (typeof feeNetworks)[number]) {

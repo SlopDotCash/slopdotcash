@@ -22,7 +22,7 @@ effect function creationBlock(deployment: EvmDepositDeployment) {
 
 effect function pageRecords(vault: EvmAddress, run: Run) {
   const rpc = try EvmRpc
-  const range = { from: BigInt(run.fromBlock), to: BigInt(run.toBlock) }
+  const range = try orDie(Effect.try(() => ({ from: BigInt(run.fromBlock), to: BigInt(run.toBlock) })))
   const logs = try rpc.logs({ address: vault, topics: [EVENT_TOPICS.Deposited], fromBlock: range.from, toBlock: range.to })
   const decoded = evmDeposits(vault, logs, range)
   if (decoded.kind === "malformed") throw new DepositReadFailed({ message: decoded.issue })
