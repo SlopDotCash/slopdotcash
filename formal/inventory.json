@@ -4981,13 +4981,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "41f7e0e8479cfc5bdc9409ab5111b9aaf3eb7d0dfc3a3693d715d30b1a1b5753",
+      "sha256": "c77f3f3f3bdbb9f60e14f41b833036466790381accc08009f1c3fce9b43b2133",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [226, 271, 337],
+      "candidateLines": [227, 272, 338],
       "review": "mapped-abstraction"
     },
     {
