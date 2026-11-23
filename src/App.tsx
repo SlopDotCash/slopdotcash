@@ -105,6 +105,7 @@ import {
   Spinner,
   StatusBadge,
 } from "./Presentation";
+import { SponsoredPoolsNotice } from "./SponsoredPoolsNotice";
 
 /**
  * Renders the GitHub-native Slop network across discovery, project,
@@ -1059,6 +1060,7 @@ function HomePage() {
   );
   return (
     <main>
+      <SponsoredPoolsNotice />
       <section className="hero shell">
         <fieldset
           aria-label="Choose your Slop journey"
