@@ -835,7 +835,7 @@ function readSmallText(path, budget) {
   }
 }
 
-export function collectKnownSecrets(index, homeDir) {
+export function collectKnownSecrets(index, homeDir, skip = new Set()) {
   const strings = new Set();
   let capped = false;
   // Home credential files first, so a cap never drops their strings.
@@ -866,6 +866,7 @@ export function collectKnownSecrets(index, homeDir) {
       const dirs = rel.split("/").slice(0, -1);
       if (dirs.some((seg) => SKIP_DIRS.has(seg))) continue;
       const abs = `${index.root}/${rel}`;
+      if (skip.has(abs)) continue;
       if (index.written.has(abs) && !ignored.has(abs)) continue;
       if (++files > MAX_GUARD_FILES) {
         capped = true;
@@ -1143,32 +1144,16 @@ function readPathFor(input) {
   return undefined;
 }
 
-export async function exportSession(opts) {
-  const fallback = {
-    path: opts.outPath,
-    source: "fallback-needed",
-    counts: {},
-    licence: null,
-  };
-  const found = findSessionFile(opts.marker, { homeDir: opts.homeDir });
-  if (!found) return fallback;
-  let lines;
-  try {
-    lines = readFileSync(found.path, "utf8")
-      .split("\n")
-      .filter((l) => l.trim() !== "");
-  } catch {
-    return fallback;
-  }
-  const read = found.client === "claude-code" ? readClaudeCode : readCodex;
-  const raw = read(lines, opts.marker);
-  if (raw.length === 0) return fallback;
+// Guards, cleans and writes one session. `raw` holds reader events in order;
+// the header records where they came from. Returns null when the result cannot
+// fit the size limit.
+async function writeCleanedSession(raw, source, opts, skip = new Set()) {
   const licence = await repoLicence(opts.repo, opts.fetchImpl);
   const keepRepoFiles = licence !== null && OSI_LICENCES.has(licence);
   const userName =
     opts.env?.USER || opts.env?.LOGNAME || basename(opts.homeDir || "");
   const index = makeRepoIndex(raw, opts.repoRoot, opts.homeDir);
-  const known = collectKnownSecrets(index, opts.homeDir);
+  const known = collectKnownSecrets(index, opts.homeDir, skip);
   const isRepoFile = keepRepoFiles ? index.isRepoFile : () => false;
   const repoRoot = index.root;
   const guarded = guardEvents(raw, {
@@ -1190,7 +1175,7 @@ export async function exportSession(opts) {
   });
   const header = {
     format: "slop-session-v1",
-    source: "client-file",
+    source,
     client: opts.client,
     clientVersion: opts.clientVersion,
     provider: opts.provider,
@@ -1209,8 +1194,87 @@ export async function exportSession(opts) {
   };
   const all = [header, ...events].map((o) => JSON.stringify(o));
   const fitted = truncateToLimit(all, LIMIT_BYTES);
-  if (fitted === null) return fallback;
+  if (fitted === null) return null;
   mkdirSync(dirname(opts.outPath), { recursive: true });
   writeFileSync(opts.outPath, `${fitted.lines.join("\n")}\n`);
-  return { path: opts.outPath, source: "client-file", counts, licence };
+  return { path: opts.outPath, source, counts, licence };
+}
+
+export async function exportSession(opts) {
+  const fallback = {
+    path: opts.outPath,
+    source: "fallback-needed",
+    counts: {},
+    licence: null,
+  };
+  const found = findSessionFile(opts.marker, { homeDir: opts.homeDir });
+  if (!found) return fallback;
+  let lines;
+  try {
+    lines = readFileSync(found.path, "utf8")
+      .split("\n")
+      .filter((l) => l.trim() !== "");
+  } catch {
+    return fallback;
+  }
+  const read = found.client === "claude-code" ? readClaudeCode : readCodex;
+  const raw = read(lines, opts.marker);
+  if (raw.length === 0) return fallback;
+  return (await writeCleanedSession(raw, "client-file", opts)) ?? fallback;
+}
+
+// ---- Fallback: a log the agent wrote itself, one JSON event per line with
+// t, kind, text, tool and args. It goes through the same allowlist, content
+// guard and cleaner as a client file. Results carry no call, so the guard
+// treats every non-empty tool result as source.
+const AGENT_LOG_MAX_BYTES = 64 * 1024 * 1024;
+const AGENT_KINDS = new Set(["user", "assistant", "tool_call", "tool_result"]);
+
+export function readAgentLog(lines) {
+  const events = [];
+  for (const r of parseLines(lines)) {
+    if (!r || Array.isArray(r) || !AGENT_KINDS.has(r.kind)) continue;
+    const e = { kind: r.kind };
+    const t = isoTime(r.t);
+    if (t !== undefined) e.t = t;
+    if (typeof r.text === "string") e.text = r.text;
+    if (r.kind === "tool_call") {
+      if (typeof r.tool !== "string" || !TOOL_NAME.test(r.tool)) continue;
+      e.tool = r.tool;
+      if (r.args !== undefined) e.args = r.args;
+    } else if (r.kind === "tool_result") {
+      if (typeof r.tool === "string" && TOOL_NAME.test(r.tool)) e.tool = r.tool;
+      if (e.text === undefined) e.text = "";
+    } else if (e.text === undefined) continue;
+    events.push(e);
+  }
+  return events;
+}
+
+export async function exportAgentLog(opts) {
+  const unavailable = {
+    path: opts.outPath,
+    source: "unavailable",
+    counts: {},
+    licence: null,
+  };
+  let text;
+  let logReal;
+  try {
+    logReal = realpathSync(resolve(opts.logPath));
+    const st = statSync(logReal);
+    if (!st.isFile() || st.size === 0 || st.size > AGENT_LOG_MAX_BYTES)
+      return unavailable;
+    text = readFileSync(logReal, "utf8");
+  } catch {
+    return unavailable;
+  }
+  const raw = readAgentLog(text.split("\n").filter((l) => l.trim() !== ""));
+  if (raw.length === 0) return unavailable;
+  // The log itself is not a secret source: a copy inside the repository
+  // would otherwise turn every line it holds into a redaction.
+  const skip = new Set([logReal, resolve(opts.logPath)]);
+  return (
+    (await writeCleanedSession(raw, "agent-written", opts, skip)) ?? unavailable
+  );
 }
