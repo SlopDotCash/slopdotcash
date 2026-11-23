@@ -25,19 +25,20 @@ target names the case's reporter as the award actor, the case as the
 obligation, this bounty vault and the case's receipt-time asset. Only a
 committed standard 75/25 case holds that obligation, and every hold keeps
 matching its case. A case's revision count never goes below zero, so a
-received case always has a positive revision. The bounty's reserved total is
-exactly what the vault holds in reserve. The vault's free and reserved
-amounts, the latest funds snapshot and the bounty's reserved total are
-always valid amounts in integer base units. A confirmed award stays pending
-without a reservation while vault funds are short. This composition holds
-one vault-backed obligation: once a case holds it, both commitment guards
-refuse a second case that the bounty routes to a vault reservation
-(`vaultCommitmentReady` needs `vaultCase` to be 0), even after the first is
-paid, so that award cannot commit while it is routed there. The bound is a
-limit of this model, not of the product, and no sometimes goal claims a
-second vault award. A case received through a reporter's claim, a technical
-approver's attestation or link verification, or the GitHub receipt service
-settling a claim enters the award the same way as one Slop received.
+received case always has a positive revision, and a finalized funds snapshot
+was observed at a positive time no later than the clock. The bounty's
+reserved total is exactly what the vault holds in reserve. The vault's free
+and reserved amounts, the latest funds snapshot and the bounty's reserved
+total are always valid amounts in integer base units. A confirmed award
+stays pending without a reservation while vault funds are short. This
+composition holds one vault-backed obligation: once a case holds it, both
+commitment guards refuse a second case that the bounty routes to a vault
+reservation (`vaultCommitmentReady` needs `vaultCase` to be 0), even after
+the first is paid, so that award cannot commit while it is routed there. The
+bound is a limit of this model, not of the product, and no sometimes goal
+claims a second vault award. A case received through a reporter's claim, a
+technical approver's attestation or link verification, or the GitHub receipt
+service settling a claim enters the award the same way as one Slop received.
 
 ```quint
 import money as M from "./money"
@@ -148,6 +149,7 @@ pure def alwaysVaultAwardReserved(s: PrivateAward): bool =
     and M::equalAmounts(p.gross, caseOf(s, s.vaultCase).grossChosen) and (SC::hasReserve(s.settlement) or p.phase == P::Paid))
 pure def alwaysHoldsKeepCaseRules(s: PrivateAward): bool = B::alwaysHoldsMatchCases(s.bounty) and B::alwaysCasesKeepAwardRules(s.bounty)
   and B::alwaysReservedIsOpenVaultHolds(s.bounty)
+pure def alwaysFundsSnapshotObserved(s: PrivateAward): bool = B::alwaysFundsObserved(s.bounty)
 pure def alwaysCaseRevisionsCounted(s: PrivateAward): bool = B::caseIds.every(id => caseOf(s, id).revision >= 0)
 pure def alwaysVaultTargetMatchesAward(s: PrivateAward): bool = s.vaultCase > 0 implies
   s.settlement.payment.target == { ...awardTarget(s, s.vaultCase), scope: D::PrivateBounty } and s.settlement.payment.obligation == s.vaultCase
@@ -197,8 +199,8 @@ case, to the case's reporter, with a payer who holds the financial role at
 that moment. Preparing or recovering a payment request needs the payer's
 financial role in the current authority snapshot, never the reporter's own
 and never a banned actor's, and the exact amounts shown to that payer, and
-records the epoch it was authorized under. Nothing is authorized before a
-direct award is admitted.
+records the epoch it was authorized under. Nothing is authorized or paid
+before a direct award is admitted.
 Recording a finalized leg authorizes nothing: an exact finalized transfer
 of the active request is credited even after its payer lost the role, so
 the obligation still reaches paid.
@@ -245,6 +247,7 @@ pure def alwaysDirectJournalBound(s: PrivateAward): bool = (s.direct.admitted if
     and s.direct.terms.reporterActor == directCaseOf(s).reporter and M::equalAmounts(s.direct.terms.gross, directCaseOf(s).grossChosen))
   and (s.direct.intent.active iff s.authorizedEpoch > 0) and s.authorizedEpoch <= directCaseOf(s).authority.epoch
 pure def alwaysNothingAuthorizedBeforeAdmission(s: PrivateAward): bool = s.directCase == 0 implies s.authorizedEpoch == 0
+  and not(DB::paid(s.direct))
 pure def stepDirectPaymentNeedsFinancialApprover(before: PrivateAward, via: str, after: PrivateAward): bool =
   (via == "prepareDirect" or via == "recoverDirect") implies
     financialNow(directCaseOf(before), before.direct.terms.payerActor, directCaseOf(before).authority.epoch)
@@ -336,7 +339,8 @@ and financial approver. Each is a case notice on the security outbox; a
 notice carries no report text and no amount. A notice's key is its source
 change: the kind of change and the case, so two changes never share a key.
 The keys of report receipts and owner routing (codes 1 to 3, [report
-notices](../security/reportNotices.md)) never meet these (codes 4 to 7).
+notices](../security/reportNotices.md)) never meet these (codes 4 to 7). A
+paid notice exists only for a case whose vault or direct obligation is paid.
 
 ```quint
 type AwardNotice = AwardCommitted | ResearcherLegRecorded | FeeLegRecorded | AwardPaid
@@ -352,6 +356,9 @@ pure def alwaysCommitmentNotified(s: PrivateAward): bool = B::caseIds.every(id =
 pure def alwaysPaidNotified(s: PrivateAward): bool =
   (s.vaultCase > 0 implies ((s.settlement.payment.phase == P::Paid) iff N::noticeExists(s.inbox, noticeKey(AwardPaid, s.vaultCase), caseOf(s, s.vaultCase).reporter)))
   and (s.directCase > 0 implies (DB::paid(s.direct) iff N::noticeExists(s.inbox, noticeKey(AwardPaid, s.directCase), directCaseOf(s).reporter)))
+pure def alwaysPaidNoticeOnlyWhenPaid(s: PrivateAward): bool = B::caseIds.every(id =>
+  N::noticeExists(s.inbox, noticeKey(AwardPaid, id), caseOf(s, id).reporter) implies
+    ((id == s.vaultCase and s.settlement.payment.phase == P::Paid) or (id == s.directCase and DB::paid(s.direct))))
 pure def stepNoticesPermanent(before: PrivateAward, after: PrivateAward): bool = N::stepNoticesPermanent(before.inbox, after.inbox)
 pure def sometimesPaidNoticeToReporterAndPayer(s: PrivateAward): bool = B::caseIds.some(id =>
   N::noticeExists(s.inbox, noticeKey(AwardPaid, id), caseOf(s, id).reporter)

@@ -3,6 +3,7 @@
 // A deposit only raises the free amount the cover is compared with.
 lemma deposit_ensures(s: PrivateAward, amount: seq<int>, asset: string, receipt: int, finalized: bool)
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysHoldsKeepCaseRules(deposit(s, amount, asset, receipt, finalized)))
+  ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysFundsSnapshotObserved(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysBountyReserveIsVaultReserve(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysBountyCoverIsVaultFree(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysCoverAmountsValid(deposit(s, amount, asset, receipt, finalized)))
@@ -16,6 +17,7 @@ lemma deposit_ensures(s: PrivateAward, amount: seq<int>, asset: string, receipt:
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysShownCaseReceived(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysAwardNoticesArePrivateCaseNotices(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysCommitmentNotified(deposit(s, amount, asset, receipt, finalized)))
+  ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysPaidNoticeOnlyWhenPaid(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysPaidNotified(deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> stepVaultReservationNeedsCommitment(s, "deposit", deposit(s, amount, asset, receipt, finalized)))
   ensures (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> stepDirectPaymentNeedsFinancialApprover(s, "deposit", deposit(s, amount, asset, receipt, finalized)))
@@ -38,6 +40,7 @@ lemma deposit_ensures(s: PrivateAward, amount: seq<int>, asset: string, receipt:
 // The snapshot is the vault's own free and reserved total, so the cover it leaves is the vault's free amount.
 lemma observeFunds_ensures(s: PrivateAward, observedAt: int)
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysHoldsKeepCaseRules(observeFunds(s, observedAt)))
+  ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysFundsSnapshotObserved(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysBountyReserveIsVaultReserve(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysBountyCoverIsVaultFree(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysCoverAmountsValid(observeFunds(s, observedAt)))
@@ -51,6 +54,7 @@ lemma observeFunds_ensures(s: PrivateAward, observedAt: int)
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysShownCaseReceived(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysAwardNoticesArePrivateCaseNotices(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysCommitmentNotified(observeFunds(s, observedAt)))
+  ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysPaidNoticeOnlyWhenPaid(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> alwaysPaidNotified(observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> stepVaultReservationNeedsCommitment(s, "observeFunds", observeFunds(s, observedAt)))
   ensures (inv(s) ==> canObserveFunds(s, observedAt) ==> stepDirectPaymentNeedsFinancialApprover(s, "observeFunds", observeFunds(s, observedAt)))
@@ -67,6 +71,7 @@ lemma observeFunds_ensures(s: PrivateAward, observedAt: int)
 // The clock and the route observation touch no hold, case or reserved total.
 lemma advanceClock_ensures(s: PrivateAward, nowMs: int)
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysHoldsKeepCaseRules(advanceClock(s, nowMs)))
+  ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysFundsSnapshotObserved(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysBountyReserveIsVaultReserve(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysBountyCoverIsVaultFree(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysCoverAmountsValid(advanceClock(s, nowMs)))
@@ -80,6 +85,7 @@ lemma advanceClock_ensures(s: PrivateAward, nowMs: int)
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysShownCaseReceived(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysAwardNoticesArePrivateCaseNotices(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysCommitmentNotified(advanceClock(s, nowMs)))
+  ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysPaidNoticeOnlyWhenPaid(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> alwaysPaidNotified(advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> stepVaultReservationNeedsCommitment(s, "advanceClock", advanceClock(s, nowMs)))
   ensures (inv(s) ==> canAdvanceClock(s, nowMs) ==> stepDirectPaymentNeedsFinancialApprover(s, "advanceClock", advanceClock(s, nowMs)))
@@ -93,6 +99,7 @@ lemma advanceClock_ensures(s: PrivateAward, nowMs: int)
 
 lemma observeRoute_ensures(s: PrivateAward, route: security__bounty_RouteObservation)
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysHoldsKeepCaseRules(observeRoute(s, route)))
+  ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysFundsSnapshotObserved(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysBountyReserveIsVaultReserve(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysBountyCoverIsVaultFree(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysCoverAmountsValid(observeRoute(s, route)))
@@ -106,6 +113,7 @@ lemma observeRoute_ensures(s: PrivateAward, route: security__bounty_RouteObserva
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysShownCaseReceived(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysAwardNoticesArePrivateCaseNotices(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysCommitmentNotified(observeRoute(s, route)))
+  ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysPaidNoticeOnlyWhenPaid(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> alwaysPaidNotified(observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> stepVaultReservationNeedsCommitment(s, "observeRoute", observeRoute(s, route)))
   ensures (inv(s) ==> canObserveRoute(s, route) ==> stepDirectPaymentNeedsFinancialApprover(s, "observeRoute", observeRoute(s, route)))
@@ -120,6 +128,7 @@ lemma observeRoute_ensures(s: PrivateAward, route: security__bounty_RouteObserva
 // A receipt, claim or link step changes only an unreceived case, which holds nothing and is never the shown case.
 lemma receive_ensures(s: PrivateAward, id: int, source: security__cases_ReceiptSource, terms: security__terms_ReceiptTerms, reportVersion: int)
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysHoldsKeepCaseRules(receive(s, id, source, terms, reportVersion)))
+  ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysFundsSnapshotObserved(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysBountyReserveIsVaultReserve(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysBountyCoverIsVaultFree(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysCoverAmountsValid(receive(s, id, source, terms, reportVersion)))
@@ -133,6 +142,7 @@ lemma receive_ensures(s: PrivateAward, id: int, source: security__cases_ReceiptS
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysShownCaseReceived(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysAwardNoticesArePrivateCaseNotices(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysCommitmentNotified(receive(s, id, source, terms, reportVersion)))
+  ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysPaidNoticeOnlyWhenPaid(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> alwaysPaidNotified(receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> stepVaultReservationNeedsCommitment(s, "receive", receive(s, id, source, terms, reportVersion)))
   ensures (inv(s) ==> canReceive(s, id, source, terms, reportVersion) ==> stepDirectPaymentNeedsFinancialApprover(s, "receive", receive(s, id, source, terms, reportVersion)))
@@ -152,6 +162,7 @@ lemma receive_ensures(s: PrivateAward, id: int, source: security__cases_ReceiptS
 
 lemma claim_ensures(s: PrivateAward, id: int, by_: int)
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysHoldsKeepCaseRules(claim(s, id, by_)))
+  ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysFundsSnapshotObserved(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysBountyReserveIsVaultReserve(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysBountyCoverIsVaultFree(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysCoverAmountsValid(claim(s, id, by_)))
@@ -165,6 +176,7 @@ lemma claim_ensures(s: PrivateAward, id: int, by_: int)
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysShownCaseReceived(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysAwardNoticesArePrivateCaseNotices(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysCommitmentNotified(claim(s, id, by_)))
+  ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysPaidNoticeOnlyWhenPaid(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> alwaysPaidNotified(claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> stepVaultReservationNeedsCommitment(s, "claim", claim(s, id, by_)))
   ensures (inv(s) ==> canClaim(s, id, by_) ==> stepDirectPaymentNeedsFinancialApprover(s, "claim", claim(s, id, by_)))
@@ -184,6 +196,7 @@ lemma claim_ensures(s: PrivateAward, id: int, by_: int)
 
 lemma verifyLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms)
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysHoldsKeepCaseRules(verifyLink(s, id, by_, checkedEpoch, terms)))
+  ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysFundsSnapshotObserved(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysBountyReserveIsVaultReserve(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysBountyCoverIsVaultFree(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysCoverAmountsValid(verifyLink(s, id, by_, checkedEpoch, terms)))
@@ -197,6 +210,7 @@ lemma verifyLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, 
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysShownCaseReceived(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysAwardNoticesArePrivateCaseNotices(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysCommitmentNotified(verifyLink(s, id, by_, checkedEpoch, terms)))
+  ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysPaidNoticeOnlyWhenPaid(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> alwaysPaidNotified(verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> stepVaultReservationNeedsCommitment(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms)))
   ensures (inv(s) ==> canVerifyLink(s, id, by_, checkedEpoch, terms) ==> stepDirectPaymentNeedsFinancialApprover(s, "verifyLink", verifyLink(s, id, by_, checkedEpoch, terms)))
@@ -216,6 +230,7 @@ lemma verifyLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, 
 
 lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysHoldsKeepCaseRules(rejectLink(s, id, by_, checkedEpoch)))
+  ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysFundsSnapshotObserved(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysBountyReserveIsVaultReserve(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysBountyCoverIsVaultFree(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysCoverAmountsValid(rejectLink(s, id, by_, checkedEpoch)))
@@ -229,6 +244,7 @@ lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysShownCaseReceived(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysAwardNoticesArePrivateCaseNotices(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysCommitmentNotified(rejectLink(s, id, by_, checkedEpoch)))
+  ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysPaidNoticeOnlyWhenPaid(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> alwaysPaidNotified(rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> stepVaultReservationNeedsCommitment(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch)))
   ensures (inv(s) ==> canRejectLink(s, id, by_, checkedEpoch) ==> stepDirectPaymentNeedsFinancialApprover(s, "rejectLink", rejectLink(s, id, by_, checkedEpoch)))
@@ -248,6 +264,7 @@ lemma rejectLink_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int)
 
 lemma recordAttested_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, terms: security__terms_ReceiptTerms, confirmed: bool)
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysHoldsKeepCaseRules(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
+  ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysFundsSnapshotObserved(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysBountyReserveIsVaultReserve(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysBountyCoverIsVaultFree(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysCoverAmountsValid(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
@@ -261,6 +278,7 @@ lemma recordAttested_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: i
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysShownCaseReceived(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysAwardNoticesArePrivateCaseNotices(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysCommitmentNotified(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
+  ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysPaidNoticeOnlyWhenPaid(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> alwaysPaidNotified(recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> stepVaultReservationNeedsCommitment(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
   ensures (inv(s) ==> canRecordAttested(s, id, by_, checkedEpoch, terms, confirmed) ==> stepDirectPaymentNeedsFinancialApprover(s, "recordAttested", recordAttested(s, id, by_, checkedEpoch, terms, confirmed)))
@@ -280,6 +298,7 @@ lemma recordAttested_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: i
 
 lemma settleClaim_ensures(s: PrivateAward, id: int, by_: int, listed: bool, terms: security__terms_ReceiptTerms)
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysHoldsKeepCaseRules(settleClaim(s, id, by_, listed, terms)))
+  ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysFundsSnapshotObserved(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysBountyReserveIsVaultReserve(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysBountyCoverIsVaultFree(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysCoverAmountsValid(settleClaim(s, id, by_, listed, terms)))
@@ -293,6 +312,7 @@ lemma settleClaim_ensures(s: PrivateAward, id: int, by_: int, listed: bool, term
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysShownCaseReceived(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysAwardNoticesArePrivateCaseNotices(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysCommitmentNotified(settleClaim(s, id, by_, listed, terms)))
+  ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysPaidNoticeOnlyWhenPaid(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> alwaysPaidNotified(settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> stepVaultReservationNeedsCommitment(s, "settleClaim", settleClaim(s, id, by_, listed, terms)))
   ensures (inv(s) ==> canSettleClaim(s, id, by_, listed, terms) ==> stepDirectPaymentNeedsFinancialApprover(s, "settleClaim", settleClaim(s, id, by_, listed, terms)))
@@ -313,6 +333,7 @@ lemma settleClaim_ensures(s: PrivateAward, id: int, by_: int, listed: bool, term
 // A new snapshot has a later epoch than every case's, so a direct authorization stays within the current epoch.
 lemma observeAuthority_ensures(s: PrivateAward, snapshot: security__cases_Authority)
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysHoldsKeepCaseRules(observeAuthority(s, snapshot)))
+  ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysFundsSnapshotObserved(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysBountyReserveIsVaultReserve(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysBountyCoverIsVaultFree(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysCoverAmountsValid(observeAuthority(s, snapshot)))
@@ -326,6 +347,7 @@ lemma observeAuthority_ensures(s: PrivateAward, snapshot: security__cases_Author
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysShownCaseReceived(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysAwardNoticesArePrivateCaseNotices(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysCommitmentNotified(observeAuthority(s, snapshot)))
+  ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysPaidNoticeOnlyWhenPaid(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> alwaysPaidNotified(observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> stepVaultReservationNeedsCommitment(s, "observeAuthority", observeAuthority(s, snapshot)))
   ensures (inv(s) ==> canObserveAuthority(s, snapshot) ==> stepDirectPaymentNeedsFinancialApprover(s, "observeAuthority", observeAuthority(s, snapshot)))
@@ -343,6 +365,7 @@ lemma observeAuthority_ensures(s: PrivateAward, snapshot: security__cases_Author
 // A finding is decided only on an open receipt, which has neither a commitment nor a pending proposal.
 lemma decide_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, version: int, decision: security__cases_Decision)
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysHoldsKeepCaseRules(decide(s, id, by_, checkedEpoch, version, decision)))
+  ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysFundsSnapshotObserved(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysBountyReserveIsVaultReserve(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysBountyCoverIsVaultFree(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysCoverAmountsValid(decide(s, id, by_, checkedEpoch, version, decision)))
@@ -356,6 +379,7 @@ lemma decide_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, vers
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysShownCaseReceived(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysAwardNoticesArePrivateCaseNotices(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysCommitmentNotified(decide(s, id, by_, checkedEpoch, version, decision)))
+  ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysPaidNoticeOnlyWhenPaid(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> alwaysPaidNotified(decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> stepVaultReservationNeedsCommitment(s, "decide", decide(s, id, by_, checkedEpoch, version, decision)))
   ensures (inv(s) ==> canDecide(s, id, by_, checkedEpoch, version, decision) ==> stepDirectPaymentNeedsFinancialApprover(s, "decide", decide(s, id, by_, checkedEpoch, version, decision)))
@@ -375,6 +399,7 @@ lemma decide_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, vers
 // A commitment adds the award to both reserved totals and takes it from the vault's free amount.
 lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, amount: seq<int>)
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysHoldsKeepCaseRules(decideAward(s, id, by_, checkedEpoch, amount)))
+  ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysFundsSnapshotObserved(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysBountyReserveIsVaultReserve(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysBountyCoverIsVaultFree(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysCoverAmountsValid(decideAward(s, id, by_, checkedEpoch, amount)))
@@ -388,6 +413,7 @@ lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysShownCaseReceived(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysAwardNoticesArePrivateCaseNotices(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysCommitmentNotified(decideAward(s, id, by_, checkedEpoch, amount)))
+  ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysPaidNoticeOnlyWhenPaid(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> alwaysPaidNotified(decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> stepVaultReservationNeedsCommitment(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount)))
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> stepDirectPaymentNeedsFinancialApprover(s, "decideAward", decideAward(s, id, by_, checkedEpoch, amount)))
@@ -395,17 +421,43 @@ lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
   ensures (inv(s) ==> canDecideAward(s, id, by_, checkedEpoch, amount) ==> stepNoticesPermanent(s, decideAward(s, id, by_, checkedEpoch, amount)))
 {
   if inv(s) && canDecideAward(s, id, by_, checkedEpoch, amount) {
+    var b := s.bounty;
+    var c := caseOf(s, id);
+    var clearance := security__bounty_clearanceFor(b, id, amount);
+    var after := security__cases_decideAward(c, by_, checkedEpoch, amount, clearance);
+    var nb := security__bounty_decideAward(b, id, by_, checkedEpoch, amount);
+    assert nb == security__bounty_withHold(id, after, amount, b);
+    assert id in security__bounty_caseIds;
+    CaseRulesOf(b, id);
+    assert c.revision >= 0;
+    assert c.receipt.Confirmed? && c.rootCause > 0 && c.commitment.NoCommitment?;
+    assert forall h :: h in b.holds ==> h.caseId != id;
+    if after.commitment.VaultReservation? {
+      assert clearance.rail.VaultRail?;
+      assert security__bounty_fundsFresh(b, c.terms.asset);
+      assert b.funds.observedAt > 0;
+    }
     assert settlement__money_validAmount(amount);
+    RecordedHoldKeepsMatch(id, after, amount, b);
+    WithHoldGross(id, after, amount, b);
+    OpenVaultGrossValid(b);
+    settlement__money_lawAddCongruence_ensures(b.reserved, security__bounty_openVaultGross(b), amount);
+    settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, amount);
     assert vaultObligation(s, id, amount).vault == s.settlement.vault;
     assert vaultObligation(s, id, amount).payment.gross == amount;
-    settlement__money_lawAdditionValid_ensures(s.bounty.reserved, amount);
+    settlement__money_lawAdditionValid_ensures(b.reserved, amount);
     settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, amount);
     settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, amount);
+    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
+    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
+    assert s.vaultCase > 0 ==> s.vaultCase != id;
+    assert s.directCase > 0 ==> s.directCase != id;
   }
 }
 
 lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, approve: bool)
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysHoldsKeepCaseRules(reviewRelated(s, id, by_, checkedEpoch, approve)))
+  ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysFundsSnapshotObserved(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysBountyReserveIsVaultReserve(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysBountyCoverIsVaultFree(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysCoverAmountsValid(reviewRelated(s, id, by_, checkedEpoch, approve)))
@@ -419,6 +471,7 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysShownCaseReceived(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysAwardNoticesArePrivateCaseNotices(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysCommitmentNotified(reviewRelated(s, id, by_, checkedEpoch, approve)))
+  ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysPaidNoticeOnlyWhenPaid(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> alwaysPaidNotified(reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> stepVaultReservationNeedsCommitment(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve)))
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> stepDirectPaymentNeedsFinancialApprover(s, "reviewRelated", reviewRelated(s, id, by_, checkedEpoch, approve)))
@@ -426,18 +479,51 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
   ensures (inv(s) ==> canReviewRelated(s, id, by_, checkedEpoch, approve) ==> stepNoticesPermanent(s, reviewRelated(s, id, by_, checkedEpoch, approve)))
 {
   if inv(s) && canReviewRelated(s, id, by_, checkedEpoch, approve) {
-    var gross := caseOf(s, id).grossChosen;
+    var b := s.bounty;
+    var c := caseOf(s, id);
+    var gross := c.grossChosen;
+    var clearance := security__bounty_clearanceFor(b, id, gross);
+    var after := security__cases_reviewRelated(c, by_, checkedEpoch, approve, clearance);
+    var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, approve);
+    assert id in security__bounty_caseIds;
+    CaseRulesOf(b, id);
+    assert c.revision >= 0;
+    assert c.receipt.Confirmed? && c.rootCause > 0 && c.commitment.NoCommitment? && !security__cases_committed(c);
+    assert security__terms_amountAllowed(c.terms, gross);
+    forall h | h in b.holds && h.caseId == id ensures !(h.kind.VaultHold? && h.settledReceipt == 0) {
+      assert security__bounty_holdMatches(b, h);
+    }
+    if approve {
+      assert nb == security__bounty_withHold(id, after, gross, b);
+      if after.commitment.VaultReservation? {
+        assert clearance.rail.VaultRail?;
+        assert security__bounty_fundsFresh(b, c.terms.asset);
+        assert b.funds.observedAt > 0;
+      }
+      RecordedHoldKeepsMatch(id, after, gross, b);
+      WithHoldGross(id, after, gross, b);
+      OpenVaultGrossValid(b);
+      settlement__money_lawAddCongruence_ensures(b.reserved, security__bounty_openVaultGross(b), gross);
+      settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, gross);
+    } else {
+      DroppedHoldKeepsRules(id, after, b);
+    }
     assert vaultObligation(s, id, gross).vault == s.settlement.vault;
     assert vaultObligation(s, id, gross).payment.gross == gross;
-    settlement__money_lawAdditionValid_ensures(s.bounty.reserved, gross);
+    settlement__money_lawAdditionValid_ensures(b.reserved, gross);
     settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, gross);
     settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, gross);
+    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
+    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
+    assert s.vaultCase > 0 ==> s.vaultCase != id;
+    assert s.directCase > 0 ==> s.directCase != id;
   }
 }
 
 // A finalized payout takes the award from both reserved totals.
 lemma reconcile_ensures(s: PrivateAward, evidence: settlement__composition_FinalizedPayment)
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysHoldsKeepCaseRules(reconcile(s, evidence)))
+  ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysFundsSnapshotObserved(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysBountyReserveIsVaultReserve(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysBountyCoverIsVaultFree(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysCoverAmountsValid(reconcile(s, evidence)))
@@ -451,6 +537,7 @@ lemma reconcile_ensures(s: PrivateAward, evidence: settlement__composition_Final
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysShownCaseReceived(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysAwardNoticesArePrivateCaseNotices(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysCommitmentNotified(reconcile(s, evidence)))
+  ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidNoticeOnlyWhenPaid(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidNotified(reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> stepVaultReservationNeedsCommitment(s, "reconcile", reconcile(s, evidence)))
   ensures (inv(s) ==> canReconcile(s, evidence) ==> stepDirectPaymentNeedsFinancialApprover(s, "reconcile", reconcile(s, evidence)))
@@ -463,12 +550,16 @@ lemma reconcile_ensures(s: PrivateAward, evidence: settlement__composition_Final
     settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, gross);
     settlement__money_lawSubtractionValid_ensures(s.settlement.vault.reserved, gross);
     settlement__money_lawSubtractionValid_ensures(s.bounty.funds.free, gross);
+    NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase));
+    PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)));
+    assert s.directCase > 0 ==> s.directCase != s.vaultCase;
   }
 }
 
 // Admission changes only the journal; its terms repeat the committed direct award, and nothing was authorized before it.
 lemma admitDirect_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, journalTerms: settlement__directBounty_Terms, qualifiedRoute: settlement__directBounty_QualifiedRoute)
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysHoldsKeepCaseRules(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
+  ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysFundsSnapshotObserved(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysBountyReserveIsVaultReserve(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysBountyCoverIsVaultFree(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysCoverAmountsValid(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
@@ -482,6 +573,7 @@ lemma admitDirect_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysShownCaseReceived(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysAwardNoticesArePrivateCaseNotices(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysCommitmentNotified(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
+  ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysPaidNoticeOnlyWhenPaid(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> alwaysPaidNotified(admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> stepVaultReservationNeedsCommitment(s, "admitDirect", admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
   ensures (inv(s) ==> canAdmitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute) ==> stepDirectPaymentNeedsFinancialApprover(s, "admitDirect", admitDirect(s, id, by_, checkedEpoch, journalTerms, qualifiedRoute)))
@@ -496,6 +588,11 @@ lemma admitDirect_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
     assert after.direct.intent == s.direct.intent && after.directCase == id;
     assert id in security__bounty_caseIds;
     CaseRulesOf(s.bounty, id);
+    var h :| h in s.bounty.holds && h.caseId == id && h.kind.DirectHold?;
+    assert security__bounty_holdMatches(s.bounty, h);
+    assert c.commitment.DirectAward?;
+    assert s.vaultCase > 0 ==> s.vaultCase != id;
+    assert !settlement__directBounty_paid(s.direct);
     settlement__money_lawEqualSymmetric_ensures(c.grossChosen, journalTerms.gross);
   }
 }
@@ -503,6 +600,7 @@ lemma admitDirect_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
 // The payer saw exactly the journal's gross amount.
 lemma prepareDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, intent: settlement__directBounty_Intent, observedRevision: int, proofAvailable: bool, nonceReserved: bool)
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysHoldsKeepCaseRules(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
+  ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysFundsSnapshotObserved(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysBountyReserveIsVaultReserve(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysBountyCoverIsVaultFree(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysCoverAmountsValid(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
@@ -516,6 +614,7 @@ lemma prepareDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, intent
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysShownCaseReceived(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysAwardNoticesArePrivateCaseNotices(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysCommitmentNotified(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
+  ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysPaidNoticeOnlyWhenPaid(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> alwaysPaidNotified(prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> stepVaultReservationNeedsCommitment(s, "prepareDirect", prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
   ensures (inv(s) ==> canPrepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved) ==> stepDirectPaymentNeedsFinancialApprover(s, "prepareDirect", prepareDirect(s, by_, checkedEpoch, intent, observedRevision, proofAvailable, nonceReserved)))
@@ -529,6 +628,7 @@ lemma prepareDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, intent
 
 lemma recoverDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, successor: settlement__directBounty_Intent, retirement: settlement__directBounty_Retirement, observedRevision: int, nonceReserved: bool)
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysHoldsKeepCaseRules(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
+  ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysFundsSnapshotObserved(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysBountyReserveIsVaultReserve(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysBountyCoverIsVaultFree(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysCoverAmountsValid(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
@@ -542,6 +642,7 @@ lemma recoverDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, succes
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysShownCaseReceived(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysAwardNoticesArePrivateCaseNotices(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysCommitmentNotified(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
+  ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysPaidNoticeOnlyWhenPaid(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> alwaysPaidNotified(recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> stepVaultReservationNeedsCommitment(s, "recoverDirect", recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
   ensures (inv(s) ==> canRecoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved) ==> stepDirectPaymentNeedsFinancialApprover(s, "recoverDirect", recoverDirect(s, by_, checkedEpoch, successor, retirement, observedRevision, nonceReserved)))
@@ -556,6 +657,7 @@ lemma recoverDirect_ensures(s: PrivateAward, by_: int, checkedEpoch: int, succes
 // Each new leg and a newly paid award save case notices under their own keys, after every earlier notice.
 lemma recordTransfer_ensures(s: PrivateAward, transfer: settlement__directBounty_Transfer, observedRevision: int, generation: int)
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysHoldsKeepCaseRules(recordTransfer(s, transfer, observedRevision, generation)))
+  ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysFundsSnapshotObserved(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysBountyReserveIsVaultReserve(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysBountyCoverIsVaultFree(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysCoverAmountsValid(recordTransfer(s, transfer, observedRevision, generation)))
@@ -569,6 +671,7 @@ lemma recordTransfer_ensures(s: PrivateAward, transfer: settlement__directBounty
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysShownCaseReceived(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysAwardNoticesArePrivateCaseNotices(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysCommitmentNotified(recordTransfer(s, transfer, observedRevision, generation)))
+  ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysPaidNoticeOnlyWhenPaid(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> alwaysPaidNotified(recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> stepVaultReservationNeedsCommitment(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation)))
   ensures (inv(s) ==> canRecordTransfer(s, transfer, observedRevision, generation) ==> stepDirectPaymentNeedsFinancialApprover(s, "recordTransfer", recordTransfer(s, transfer, observedRevision, generation)))
@@ -584,6 +687,7 @@ lemma recordTransfer_ensures(s: PrivateAward, transfer: settlement__directBounty
 
 lemma recordPair_ensures(s: PrivateAward, pair: settlement__directBounty_ReceiptPair, observedRevision: int, generation: int)
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysHoldsKeepCaseRules(recordPair(s, pair, observedRevision, generation)))
+  ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysFundsSnapshotObserved(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysBountyReserveIsVaultReserve(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysBountyCoverIsVaultFree(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysCoverAmountsValid(recordPair(s, pair, observedRevision, generation)))
@@ -597,6 +701,7 @@ lemma recordPair_ensures(s: PrivateAward, pair: settlement__directBounty_Receipt
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysShownCaseReceived(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysAwardNoticesArePrivateCaseNotices(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysCommitmentNotified(recordPair(s, pair, observedRevision, generation)))
+  ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysPaidNoticeOnlyWhenPaid(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> alwaysPaidNotified(recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> stepVaultReservationNeedsCommitment(s, "recordPair", recordPair(s, pair, observedRevision, generation)))
   ensures (inv(s) ==> canRecordPair(s, pair, observedRevision, generation) ==> stepDirectPaymentNeedsFinancialApprover(s, "recordPair", recordPair(s, pair, observedRevision, generation)))
@@ -613,6 +718,7 @@ lemma recordPair_ensures(s: PrivateAward, pair: settlement__directBounty_Receipt
 // An unreceived case has unpaid terms and no award, so no amount can be shown for it; a shown amount is one the terms allow, split exactly.
 lemma showAmounts_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int, gross: seq<int>)
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysHoldsKeepCaseRules(showAmounts(s, id, by_, checkedEpoch, gross)))
+  ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysFundsSnapshotObserved(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysBountyReserveIsVaultReserve(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysBountyCoverIsVaultFree(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysCoverAmountsValid(showAmounts(s, id, by_, checkedEpoch, gross)))
@@ -626,6 +732,7 @@ lemma showAmounts_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysShownCaseReceived(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysAwardNoticesArePrivateCaseNotices(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysCommitmentNotified(showAmounts(s, id, by_, checkedEpoch, gross)))
+  ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysPaidNoticeOnlyWhenPaid(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> alwaysPaidNotified(showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> stepVaultReservationNeedsCommitment(s, "showAmounts", showAmounts(s, id, by_, checkedEpoch, gross)))
   ensures (inv(s) ==> canShowAmounts(s, id, by_, checkedEpoch, gross) ==> stepDirectPaymentNeedsFinancialApprover(s, "showAmounts", showAmounts(s, id, by_, checkedEpoch, gross)))
@@ -869,5 +976,194 @@ lemma ObservedCoverIsVaultFree(vf: seq<int>, vr: seq<int>, r: seq<int>)
     settlement__money_lawAddCongruence_ensures(vr, r, vf);
     settlement__money_lawAddOrder_ensures(cover, vf, r);
     settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(cover, r), whole, settlement__money_addAmounts(vf, r));
+  }
+}
+
+// The open vault gross is a valid amount when every open vault hold's award is.
+lemma OpenGrossFoldValid(b: security__bounty_Bounty, hs: seq<security__bounty_Hold>, acc: seq<int>)
+  requires settlement__money_validAmount(acc)
+  requires forall h :: h in hs && h.kind.VaultHold? && h.settledReceipt == 0 ==> settlement__money_validAmount(security__bounty_caseOf(b, h.caseId).grossChosen)
+  ensures settlement__money_validAmount(Std.Collections.Seq.FoldLeft((total: settlement__money_Amount, h: security__bounty_Hold) => (if (h.kind.VaultHold? && (h.settledReceipt == 0)) then settlement__money_addAmounts(total, security__bounty_caseOf(b, h.caseId).grossChosen) else total), acc, hs))
+  decreases |hs|
+{
+  if |hs| > 0 {
+    var h := hs[0];
+    assert h in hs;
+    var next := if h.kind.VaultHold? && h.settledReceipt == 0 then settlement__money_addAmounts(acc, security__bounty_caseOf(b, h.caseId).grossChosen) else acc;
+    if h.kind.VaultHold? && h.settledReceipt == 0 {
+      settlement__money_lawAdditionValid_ensures(acc, security__bounty_caseOf(b, h.caseId).grossChosen);
+    }
+    assert forall x :: x in hs[1..] ==> x in hs;
+    OpenGrossFoldValid(b, hs[1..], next);
+  }
+}
+
+// Every open vault hold belongs to a committed case, whose award its terms allow, so the open vault gross is valid.
+lemma OpenVaultGrossValid(b: security__bounty_Bounty)
+  requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b)
+  requires forall id :: id in security__bounty_caseIds ==> security__cases_alwaysApprovedWithinTerms(security__bounty_caseOf(b, id))
+  ensures settlement__money_validAmount(security__bounty_openVaultGross(b))
+{
+  forall h | h in b.holds && h.kind.VaultHold? && h.settledReceipt == 0
+    ensures settlement__money_validAmount(security__bounty_caseOf(b, h.caseId).grossChosen)
+  {
+    assert security__bounty_holdMatches(b, h);
+    CaseRulesOf(b, h.caseId);
+    assert security__cases_alwaysApprovedWithinTerms(security__bounty_caseOf(b, h.caseId));
+  }
+  OpenGrossFoldValid(b, b.holds, settlement__money_zero);
+}
+
+// Dropping a case's holds, none of them an open vault hold, leaves the open vault gross of the other cases.
+lemma FoldWithoutCase(b: security__bounty_Bounty, nb: security__bounty_Bounty, id: int, hs: seq<security__bounty_Hold>, acc: seq<int>)
+  requires forall h :: h in hs && h.caseId == id ==> !(h.kind.VaultHold? && h.settledReceipt == 0)
+  requires forall h :: h in hs && h.caseId != id ==> security__bounty_caseOf(nb, h.caseId).grossChosen == security__bounty_caseOf(b, h.caseId).grossChosen
+  ensures Std.Collections.Seq.FoldLeft((total: settlement__money_Amount, h: security__bounty_Hold) => (if (h.kind.VaultHold? && (h.settledReceipt == 0)) then settlement__money_addAmounts(total, security__bounty_caseOf(nb, h.caseId).grossChosen) else total), acc, ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), hs))
+    == Std.Collections.Seq.FoldLeft((total: settlement__money_Amount, h: security__bounty_Hold) => (if (h.kind.VaultHold? && (h.settledReceipt == 0)) then settlement__money_addAmounts(total, security__bounty_caseOf(b, h.caseId).grossChosen) else total), acc, hs)
+  decreases |hs|
+{
+  if |hs| == 0 {
+    ProofLib.FilterNil((h: security__bounty_Hold) => (h.caseId != id), hs);
+  } else {
+    var h := hs[0];
+    assert h in hs;
+    assert forall x :: x in hs[1..] ==> x in hs;
+    ProofLib.FilterCons((h: security__bounty_Hold) => (h.caseId != id), hs);
+    var next := if h.kind.VaultHold? && h.settledReceipt == 0 then settlement__money_addAmounts(acc, security__bounty_caseOf(b, h.caseId).grossChosen) else acc;
+    FoldWithoutCase(b, nb, id, hs[1..], next);
+    var rest := ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), hs[1..]);
+    if h.caseId != id {
+      assert ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), hs) == [h] + rest;
+      assert ([h] + rest)[0] == h && ([h] + rest)[1..] == rest;
+    } else {
+      assert next == acc;
+      assert ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), hs) == rest;
+    }
+  }
+}
+
+// Recording a case's hold, where the case had no open vault hold, adds its award to the open vault gross exactly when
+// the new hold is a vault hold.
+lemma WithHoldGross(id: int, after: security__cases_PrivateCase, amount: seq<int>, b: security__bounty_Bounty)
+  requires security__bounty_alwaysHoldsMatchCases(b) && id in security__bounty_caseIds
+  requires forall h :: h in b.holds && h.caseId == id ==> !(h.kind.VaultHold? && h.settledReceipt == 0)
+  ensures security__bounty_openVaultGross(security__bounty_withHold(id, after, amount, b)) ==
+    (if after.commitment.VaultReservation? then settlement__money_addAmounts(security__bounty_openVaultGross(b), after.grossChosen) else security__bounty_openVaultGross(b))
+{
+  var nb := security__bounty_withHold(id, after, amount, b);
+  var nh := security__bounty_holdFor(b, id, after);
+  var kept := ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds);
+  assert nb.holds == kept + [nh];
+  forall h | h in b.holds && h.caseId != id
+    ensures security__bounty_caseOf(nb, h.caseId).grossChosen == security__bounty_caseOf(b, h.caseId).grossChosen
+  {
+    assert security__bounty_holdMatches(b, h);
+  }
+  FoldWithoutCase(b, nb, id, b.holds, settlement__money_zero);
+  ProofLib.FoldLeftAppend((total: settlement__money_Amount, h: security__bounty_Hold) => (if (h.kind.VaultHold? && (h.settledReceipt == 0)) then settlement__money_addAmounts(total, security__bounty_caseOf(nb, h.caseId).grossChosen) else total), settlement__money_zero, kept, nh);
+  assert security__bounty_caseOf(nb, id) == after;
+}
+
+// Recording the hold of a committed award or a pending proposal keeps every hold matching its case.
+lemma RecordedHoldKeepsMatch(id: int, after: security__cases_PrivateCase, amount: seq<int>, b: security__bounty_Bounty)
+  requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b) && id in security__bounty_caseIds
+  requires after.rootCause == security__bounty_caseOf(b, id).rootCause && after.rootCause > 0
+  requires security__cases_committed(after) || after.relatedReview.ReviewPending?
+  requires after.commitment.NoCommitment? ==> after.relatedReview.ReviewPending?
+  requires after.commitment.VaultReservation? ==> b.funds.observedAt > 0
+  requires security__cases_alwaysProposalCommitsNothing(after) && security__cases_alwaysCommitmentMatchesAward(after)
+    && security__cases_alwaysFullAwardHeld(after) && security__cases_alwaysStandardAwardRail(after)
+    && security__cases_alwaysUnpaidHasNoAward(after) && security__cases_alwaysVerifiedReceiptValid(after)
+    && security__cases_alwaysConfirmedHasRootCause(after) && security__cases_alwaysAppealState(after)
+  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_withHold(id, after, amount, b))
+  ensures security__bounty_alwaysCasesKeepAwardRules(security__bounty_withHold(id, after, amount, b))
+  ensures forall h :: h in security__bounty_withHold(id, after, amount, b).holds ==> (h in b.holds && h.caseId != id) || h == security__bounty_holdFor(b, id, after)
+{
+  var nb := security__bounty_withHold(id, after, amount, b);
+  var nh := security__bounty_holdFor(b, id, after);
+  forall x
+    ensures x in nb.holds <==> (x in b.holds && x.caseId != id) || x == nh
+  {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+  assert security__bounty_caseOf(nb, id) == after;
+  forall h | h in nb.holds ensures security__bounty_holdMatches(nb, h) {
+    if h != nh {
+      assert h in b.holds && h.caseId != id;
+      assert security__bounty_holdMatches(b, h);
+      assert security__bounty_caseOf(nb, h.caseId) == security__bounty_caseOf(b, h.caseId);
+    }
+  }
+  forall x | x in security__bounty_caseIds
+    ensures security__bounty_hasHold(nb, x) == (security__cases_committed(security__bounty_caseOf(nb, x)) || security__bounty_caseOf(nb, x).relatedReview.ReviewPending?)
+    ensures security__cases_alwaysProposalCommitsNothing(security__bounty_caseOf(nb, x)) && security__cases_alwaysCommitmentMatchesAward(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysFullAwardHeld(security__bounty_caseOf(nb, x)) && security__cases_alwaysStandardAwardRail(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysUnpaidHasNoAward(security__bounty_caseOf(nb, x)) && security__cases_alwaysVerifiedReceiptValid(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysConfirmedHasRootCause(security__bounty_caseOf(nb, x)) && security__cases_alwaysAppealState(security__bounty_caseOf(nb, x))
+  {
+    if x == id {
+      assert nh in nb.holds;
+    } else {
+      assert security__bounty_caseOf(nb, x) == security__bounty_caseOf(b, x);
+      CaseRulesOf(b, x);
+      if security__bounty_hasHold(b, x) {
+        var h :| h in b.holds && h.caseId == x;
+        assert h in nb.holds;
+      }
+      if security__bounty_hasHold(nb, x) {
+        var h :| h in nb.holds && h.caseId == x;
+        assert h in b.holds;
+      }
+    }
+  }
+}
+
+// A refused proposal drops its hold; every other hold still matches its unchanged case.
+lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: security__bounty_Bounty)
+  requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b) && security__bounty_alwaysReservedIsOpenVaultHolds(b) && id in security__bounty_caseIds
+  requires !security__cases_committed(security__bounty_caseOf(b, id))
+  requires !security__cases_committed(after) && !after.relatedReview.ReviewPending?
+  requires security__cases_alwaysProposalCommitsNothing(after) && security__cases_alwaysCommitmentMatchesAward(after)
+    && security__cases_alwaysFullAwardHeld(after) && security__cases_alwaysStandardAwardRail(after)
+    && security__cases_alwaysUnpaidHasNoAward(after) && security__cases_alwaysVerifiedReceiptValid(after)
+    && security__cases_alwaysConfirmedHasRootCause(after) && security__cases_alwaysAppealState(after)
+  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds))) && security__bounty_alwaysCasesKeepAwardRules(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds))) && security__bounty_alwaysReservedIsOpenVaultHolds(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds)))
+{
+  var nb := security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds));
+  forall x
+    ensures x in nb.holds <==> x in b.holds && x.caseId != id
+  {
+    ProofLib.FilterMember((h: security__bounty_Hold) => (h.caseId != id), b.holds, x);
+  }
+  CaseRulesOf(b, id);
+  forall h | h in b.holds && h.caseId == id ensures !(h.kind.VaultHold? && h.settledReceipt == 0) {
+    assert security__bounty_holdMatches(b, h);
+  }
+  forall h | h in b.holds && h.caseId != id
+    ensures security__bounty_caseOf(nb, h.caseId).grossChosen == security__bounty_caseOf(b, h.caseId).grossChosen
+  {
+    assert security__bounty_holdMatches(b, h);
+  }
+  FoldWithoutCase(b, nb, id, b.holds, settlement__money_zero);
+  assert security__bounty_openVaultGross(nb) == security__bounty_openVaultGross(b);
+  forall h | h in nb.holds ensures security__bounty_holdMatches(nb, h) {
+    assert h in b.holds && h.caseId != id && security__bounty_holdMatches(b, h);
+    assert security__bounty_caseOf(nb, h.caseId) == security__bounty_caseOf(b, h.caseId);
+  }
+  forall x | x in security__bounty_caseIds
+    ensures security__bounty_hasHold(nb, x) == (security__cases_committed(security__bounty_caseOf(nb, x)) || security__bounty_caseOf(nb, x).relatedReview.ReviewPending?)
+    ensures security__cases_alwaysProposalCommitsNothing(security__bounty_caseOf(nb, x)) && security__cases_alwaysCommitmentMatchesAward(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysFullAwardHeld(security__bounty_caseOf(nb, x)) && security__cases_alwaysStandardAwardRail(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysUnpaidHasNoAward(security__bounty_caseOf(nb, x)) && security__cases_alwaysVerifiedReceiptValid(security__bounty_caseOf(nb, x))
+    && security__cases_alwaysConfirmedHasRootCause(security__bounty_caseOf(nb, x)) && security__cases_alwaysAppealState(security__bounty_caseOf(nb, x))
+  {
+    if x != id {
+      assert security__bounty_caseOf(nb, x) == security__bounty_caseOf(b, x);
+      CaseRulesOf(b, x);
+      if security__bounty_hasHold(b, x) {
+        var h :| h in b.holds && h.caseId == x;
+        assert h in nb.holds;
+      }
+    }
   }
 }

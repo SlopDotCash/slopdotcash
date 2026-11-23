@@ -28410,7 +28410,7 @@
     },
     {
       "path": "spec/settlement/privateAward.md",
-      "sha256": "e66dabff978264e8b1cce717d88cc625a173fb5136ac8331b6c72b96ee4662a2",
+      "sha256": "5c68073b15333c765f09faaaada56f333ddf81a5ea0e911709d9c537f9d89255",
       "module": "settlement__privateAward",
       "stories": [
         {
@@ -28419,11 +28419,11 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority",
-          "line": 191
+          "line": 193
         },
         {
           "heading": "Story: Show exact amounts and notify every party",
-          "line": 281
+          "line": 284
         }
       ],
       "rules": [
@@ -28481,6 +28481,7 @@
             "reviewRelated",
             "alwaysVaultAwardReserved",
             "alwaysHoldsKeepCaseRules",
+            "alwaysFundsSnapshotObserved",
             "alwaysCaseRevisionsCounted",
             "alwaysVaultTargetMatchesAward",
             "alwaysBountyReserveIsVaultReserve",
@@ -28493,7 +28494,7 @@
         },
         {
           "heading": "Story: Commit a private award with its funds / A finalized vault payout records the obligation paid, settles its hold and notifies the case",
-          "line": 171,
+          "line": 173,
           "definitions": [
             "canUpdateDelivery",
             "updateDelivery",
@@ -28504,7 +28505,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Direct payment actions require a current financial approver",
-          "line": 193,
+          "line": 195,
           "definitions": [
             "financialNow",
             "directCaseOf",
@@ -28527,7 +28528,7 @@
         },
         {
           "heading": "Story: Pay a direct award only under current financial authority / Each recorded direct leg and the paid award notify the case",
-          "line": 256,
+          "line": 259,
           "definitions": [
             "withDirectLegs",
             "legKeysValid",
@@ -28539,7 +28540,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Exact amounts are shown before authorization",
-          "line": 283,
+          "line": 286,
           "definitions": [
             "amountsFor",
             "amountsShownFor",
@@ -28555,7 +28556,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Award and payment progress notify the reporter, current maintainers and financial approvers",
-          "line": 331,
+          "line": 334,
           "definitions": [
             "AwardNotice",
             "noticeCode",
@@ -28564,6 +28565,7 @@
             "alwaysAwardNoticesArePrivateCaseNotices",
             "alwaysCommitmentNotified",
             "alwaysPaidNotified",
+            "alwaysPaidNoticeOnlyWhenPaid",
             "stepNoticesPermanent",
             "sometimesPaidNoticeToReporterAndPayer",
             "sometimesDirectAwardPaid"
@@ -28571,7 +28573,7 @@
         },
         {
           "heading": "Story: Show exact amounts and notify every party / Simulation samples",
-          "line": 362,
+          "line": 369,
           "definitions": [
             "awardTerms",
             "idValues",
