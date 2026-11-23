@@ -241,6 +241,33 @@ it.effect('Merge deduplication: two PRs grouped into one work unit, and the same
   const renamed = try credited(facts([first, stacked], { joint: [decision("b", [first, stacked], [renamedUnit])] }))
   try Effect.try(() => assert.deepStrictEqual(renamed, [["PR_102:joint:wu_slop_joint_stacked:merged:U_alice", 6], ["PR_102:joint:wu_slop_joint_stacked:merged:U_bob", 3]]))
 
+  const original = closed(106, "2026-11-02T10:00:00Z", alice, [commit("original", alice, 900, 100)])
+  const copiedCommit = { ...commit("copy", bob, 15, 5), attributions: [{ limited: false, files: [changed("original", 15, 5)] }] }
+  const copiedCarrier = pull(107, "2026-11-05T10:00:00Z", bob, [copiedCommit, commit("own", bob, 8, 2)])
+  const copiedClaim = {
+    ...claim(original, "original"),
+    carriers: [original.id, copiedCarrier.id],
+    copy: { sourceId: copiedCarrier.id, commitOid: copiedCommit.oid, kind: "copy" as const },
+  }
+  const copiedUnit = {
+    ...unit("wu_slop_joint_copied", "medium", [copiedCarrier], ["own"], "Retained copy and distinct work."),
+    claims: [copiedClaim, claim(copiedCarrier, "own")],
+    carriers: copiedClaim.carriers,
+    retainedOriginal: original.id,
+  }
+  const copies = new Map([[alice.id, alice], [bob.id, bob]])
+  const copied = try credited(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [copiedUnit])] }))
+  const repaired = { ...copiedUnit, claims: [{ ...copiedClaim, copy: { ...copiedClaim.copy, kind: "verified-repair" as const } }, claim(copiedCarrier, "own")] }
+  const repairs = try credited(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [repaired])] }))
+  const unverified = { ...copiedUnit, claims: [{ ...copiedClaim, copy: { ...copiedClaim.copy, kind: "unverified-repair" as const } }, claim(copiedCarrier, "own")] }
+  const refusedCopy = try scoreSnapshot(facts([copiedCarrier], { contexts: [original], valueActors: copies, joint: [decision("a", [original, copiedCarrier], [unverified])] }))
+  try Effect.try(() => assert.deepStrictEqual({ copied, repairs, held: refusedCopy.held, creditedWhileHeld: refusedCopy.ledger.length }, {
+    copied: [["PR_107:joint:wu_slop_joint_copied:merged:U_alice", 6], ["PR_107:joint:wu_slop_joint_copied:merged:U_bob", 3]],
+    repairs: [["PR_107:joint:wu_slop_joint_copied:merged:U_bob", 9]],
+    held: [original, copiedCarrier].map((pull) => ({ sourceId: pull.id, reason: "incomplete-lines" })),
+    creditedWhileHeld: 0,
+  }))
+
   const ratified = pull(301, "2026-11-03T10:00:00Z", alice, [commit("x1", alice, 10, 0)], { ratification: ratification(mia, "head-301") })
   const carrier = pull(302, "2026-11-04T10:00:00Z", bob, [commit("y1", bob, 10, 0), commit("y2", bob, 10, 0)])
   const completion = pull(303, "2026-11-06T10:00:00Z", carol, [commit("z1", carol, 20, 0)])

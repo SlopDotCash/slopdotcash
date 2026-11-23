@@ -217,11 +217,19 @@ effect function pathClaim(claim: JointClaim, number: number, book: ClaimBook) {
   const oid = claim.copy?.commitOid ?? claim.commitOid
   const pull = book.byId.get(sourceId)
   const commits = (pull?.commits ?? []).filter((commit) => commit.oid === oid)
-  const credited = (book.byId.get(claim.sourceId)?.commits ?? []).filter((commit) => commit.oid === claim.commitOid)
-  const commit = commits[0]
-  if (pull === undefined || commit === undefined || commits.length !== 1 || credited.length !== 1 || claim.copy?.verified === false) return unknownClaim(number)
-  const key = `${book.scope}\u0000${sourceId}\u0000${oid}`
-  const state = book.states.get(key) ?? (try attributed(key, pull, commit, unitsInitial, book.actors))
+  const credited = book.byId.get(claim.sourceId)
+  const originals = (credited?.commits ?? []).filter((commit) => commit.oid === claim.commitOid)
+  const [commit] = commits
+  const [original] = originals
+  if (pull === undefined || commit === undefined || commits.length !== 1 || commit.parentCount < 0 ||
+    credited === undefined || original === undefined || originals.length !== 1 || claim.copy?.kind === "unverified-repair") return unknownClaim(number)
+  const fromCopy = claim.copy?.kind === "copy"
+  if (fromCopy && original.parentCount > 1 &&
+    (original.resolutions.length !== 1 || !original.resolutions[0]?.some((file) => file.filename === claim.path))) return unknownClaim(number)
+  const creditPull = fromCopy ? credited : pull
+  const creditCommit = fromCopy ? original : commit
+  const key = `${book.scope}\u0000${creditPull.id}\u0000${creditCommit.oid}`
+  const state = book.states.get(key) ?? (try attributed(key, creditPull, creditCommit, unitsInitial, book.actors))
   book.states.set(key, state)
   if (state.phase === "ConflictHeld" || state.acceptance.tag !== "AcceptedCommit") return unknownClaim(number)
   const actor = recipientFor(state)

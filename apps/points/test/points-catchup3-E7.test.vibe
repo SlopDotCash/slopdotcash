@@ -28,7 +28,7 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function rebuilt(packet: unknown, baseline: Journal) {
+effect function rebuilt(packet: unknown, baseline: Journal, preview = true, qualified = false) {
   const historical = packet as HistoricalPacket
   const protection = try Effect.try(() => protectionFor(october))
   return try reconstructHistoricalPoints({
@@ -40,7 +40,8 @@ effect function rebuilt(packet: unknown, baseline: Journal) {
     registry,
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
-    preview: true,
+    preview,
+    qualified,
     verifiedRetirements: { duplicates: new Set(), order: orderOf(historical) },
   })
 }
@@ -79,6 +80,9 @@ describe('Apply a reviewed historical packet only as reviewed (spec/points/revie
       const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
       const expected = try Effect.try(() => f.bind())
       try same(try rebuilt(f.packet, f.baseline), expected)
+      const unqualified = rebuilt(f.packet, f.baseline, false) catch (error) => error._tag
+      try same(unqualified, "ReviewedRefused")
+      try same(try rebuilt(f.packet, f.baseline, false, true), expected)
     }
   })
 

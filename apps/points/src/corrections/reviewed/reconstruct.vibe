@@ -166,8 +166,8 @@ function runOf(input: ReconstructInput): PacketRun {
     occurrencesKept: true,
     candidateMatches: true,
     qualifiedReplay: input.qualified === true,
-    assessmentCurrent: true,
-    baselineCurrent: true,
+    assessmentCurrent: input.qualified === true,
+    baselineCurrent: input.qualified === true,
     preview: input.preview,
   }
 }
@@ -345,6 +345,7 @@ effect function boundMixed(proofs: ReadonlyArray<MixedProof>) {
 
 export effect function reconstructHistoricalPoints(input: ReconstructInput) {
   const { packet, baseline, now } = input
+  try require(input.preview || input.qualified === true, "Applying historical Points requires a reviewed replay qualification")
   try require((try batchDigest(baseline)) === packet.baselineDigest && baseline.revisions.length === packet.baselineRevisionCount, "Published baseline changed")
   try require(now >= packet.reviewedAt && now >= baseline.generatedAt, "Historical review is stale or in the future")
   let result = try corrected(input, try valued(input))
