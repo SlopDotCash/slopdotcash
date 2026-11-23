@@ -5888,7 +5888,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "50e4ce1f7107e0d0deaa0a3618df341d7bfb085c6e2aec8417a768e57415945f",
+      "sha256": "f984bcbbec745828f8533d1ce3dba412d79cd1f87a1607d36a11d5338412c186",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
@@ -5909,14 +5909,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 350, 360, 370, 381, 390, 391, 392, 393, 394, 396, 397, 464, 536,
-        537, 538, 541, 563, 642, 673, 710, 816, 884, 962, 963, 972, 982, 983,
-        1206, 1221, 1239, 1279, 1284, 1286, 1289, 1356, 1359, 1361, 1365, 1366,
-        1371, 1388, 1392, 1400, 1401, 1404, 1406, 1414, 1445, 1491, 1494, 1509,
-        1510, 1560, 1563, 1567, 1568, 1569, 1570, 1574, 1594, 1596, 1613, 1618,
-        1680, 1681, 1686, 1687, 1692, 1698, 1739, 1740, 1743, 1744, 1747, 1748,
-        1769, 1770, 1776, 1781, 1783, 1787, 1788, 1827, 1850, 1860, 1891, 1893,
-        1918, 1919, 1935, 1936, 1947, 1949, 1974, 1977
+        21, 23, 351, 361, 371, 382, 391, 392, 393, 394, 395, 397, 398, 465, 537,
+        538, 539, 542, 564, 643, 674, 711, 817, 885, 963, 964, 973, 983, 984,
+        1208, 1223, 1241, 1281, 1286, 1288, 1291, 1358, 1361, 1363, 1367, 1368,
+        1373, 1390, 1394, 1402, 1403, 1406, 1408, 1416, 1447, 1493, 1496, 1511,
+        1512, 1562, 1565, 1569, 1570, 1571, 1572, 1576, 1596, 1598, 1615, 1620,
+        1682, 1683, 1688, 1689, 1694, 1700, 1741, 1742, 1745, 1746, 1749, 1750,
+        1771, 1772, 1778, 1783, 1785, 1789, 1790, 1829, 1852, 1862, 1893, 1895,
+        1920, 1921, 1937, 1938, 1949, 1951, 1976, 1979
       ],
       "review": "mapped-abstraction"
     },
@@ -6710,6 +6710,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [2, 56, 57, 58],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/SponsoredPoolsNotice.tsx",
+      "sha256": "430f8035c05f1276c5d115de30be743cc3af83ebf13ff6b5521845fb55f20536",
+      "models": ["formal/models/ui/ui_sponsored_pools_notice.qnt"],
+      "candidateLines": [2, 19],
       "review": "mapped-abstraction"
     },
     {
@@ -8035,6 +8042,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static canonical source repository URL; no transitions."
+    },
+    {
+      "path": "src/lib/sponsored-pools-notice.ts",
+      "sha256": "45ad480f24136a590e93a64f993400ea850a3d43a84d45b4bf5dbd1c23701d08",
+      "models": ["formal/models/ui/ui_sponsored_pools_notice.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/submission-fee-page.ts",
@@ -21353,6 +21367,20 @@
         "replacementIsNotOverwrittenTest",
         "staleCandidateCannotEraseReturnedSignatureTest",
         "untrackedWarningsLeaveOtherFieldsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_sponsored_pools_notice.qnt",
+      "sha256": "591cefcf31f623eafa57cf3f332cf14261da6dc94efc8acec77e8493a884a558",
+      "sources": [
+        "src/SponsoredPoolsNotice.tsx",
+        "src/lib/sponsored-pools-notice.ts"
+      ],
+      "scenarios": [
+        "blockedStorageShowsAgainTest",
+        "dismissalSurvivesReloadTest",
+        "goneAfterEndTest",
+        "shownBeforeEndTest"
       ]
     },
     {

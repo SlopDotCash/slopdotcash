@@ -581,6 +581,8 @@ The homepage, /sponsors and agent discovery (`/.well-known/slop/projects.json`) 
 
 A project over its owner's intake cap (section 5) is also left out of the homepage, /sponsors and agent discovery until its count falls below the cap. Operator decision, 17 November 2026.
 
+Until 8 December 2026 00:00 UTC the homepage shows a one-line notice inviting maintainers to enter a repository for the sponsored pools round, linking to https://record.slop.cash/sponsored-pools. A visitor can dismiss it; the dismissal is kept in that browser's local storage, and blocked storage closes it for the current page only. The notice stops rendering at that instant with no release, names no vote date beyond "early December" and changes no listing, Points or payment. Operator decision, 23 November 2026.
+
 A project page shows the network of each recorded vault (with its payout asset when known), the project's website and its X account, each only when present. Owners set or clear the website and X account on Add project and in project settings; they are presentation links (`links.website`, `links.x`) published as an immutable owner revision, not material terms (operator decision, 16 November 2026; #2295).
 
 A project's Payments label reads Enabled, and its Vault label Live, only when the project has a recorded vault on a network whose payout execution is on (section 11). The legacy `reward.paymentMode` field does not decide either label. An empty vault can still read Enabled: the label describes the network switch, not the balance. Operator decision, 15 November 2026.
