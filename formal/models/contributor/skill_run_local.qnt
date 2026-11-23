@@ -84,8 +84,11 @@ module skill_run_local {
   action declineSession = all { s.started, s' = s }
   // session after the upload: the event rides the measured run's credentials
   // (one sign-in) and must land before finalizeTrace closes the run.
+  // A rerun shows and confirms the recorded object, so the event is posted
+  // only when the selected bytes are the ones the server holds.
   action recordSessionPullRequest(time) = all { s.tracePhase == "uploaded",
-    s.server == "trace-uploaded", Set(1, 2).contains(time),
+    s.server == "trace-uploaded", s.selectedHash == s.serverHash,
+    Set(1, 2).contains(time),
     s' = s.with("sessionEvents", s.sessionEvents.union(Set(time))) }
   action step = {
     nondet flag = Set(false, true).oneOf()

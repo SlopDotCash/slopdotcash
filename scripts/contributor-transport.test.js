@@ -477,10 +477,15 @@ async function writeClaudeSession(runId, startOutput) {
 }
 
 // Loopback Slop and GitHub. Records every request in order.
-async function sessionServer({ failIntent = false } = {}) {
+// Keeps the server run state like the real API: an attached object moves the
+// run to trace_uploaded, an intent for a different digest is refused, and
+// finalize attaches nothing new.
+async function sessionServer({ failIntent = false, failEvents = 0 } = {}) {
   const log = [];
   let trace = null;
   let clientRunId = null;
+  let runState = "awaiting_trace";
+  let eventFailures = failEvents;
   const app = await server((request, response, body) => {
     const path = request.url;
     log.push({ path, body, headers: request.headers });
@@ -496,13 +501,20 @@ async function sessionServer({ failIntent = false } = {}) {
       };
     else if (path === "/api/v1/runs") {
       clientRunId = JSON.parse(body).clientRunId;
-      value = { clientRunId, serverRunId: "server_s", state: "awaiting_trace" };
+      value = { clientRunId, serverRunId: "server_s", state: runState };
     } else if (path === "/api/v1/runs/server_s/trace-intents") {
       if (failIntent) {
         response.writeHead(500).end("{}");
         return;
       }
       const intent = JSON.parse(body);
+      if (
+        runState === "finalized" ||
+        (trace !== null && intent.sha256 !== sha)
+      ) {
+        response.writeHead(409).end("{}");
+        return;
+      }
       value = {
         contentType: intent.contentType,
         sha256: intent.sha256,
@@ -513,6 +525,7 @@ async function sessionServer({ failIntent = false } = {}) {
       };
     } else if (path === "/trace-upload-s") {
       trace = body;
+      runState = "trace_uploaded";
       const digest = createHash("sha256").update(body).digest("hex");
       value = {
         clientRunId,
@@ -522,13 +535,19 @@ async function sessionServer({ failIntent = false } = {}) {
         traceObjectId: `sha256:${digest}`,
         traceSha256: digest,
       };
-    } else if (path === "/api/v1/runs/server_s/events")
+    } else if (path === "/api/v1/runs/server_s/events") {
+      if (eventFailures > 0) {
+        eventFailures -= 1;
+        response.writeHead(500).end("{}");
+        return;
+      }
       value = {
         eventId: "event_1",
         kind: "pull_request_opened",
         runId: "server_s",
       };
-    else if (path === "/api/v1/runs/server_s/finalize")
+    } else if (path === "/api/v1/runs/server_s/finalize") {
+      runState = "finalized";
       value = {
         clientRunId,
         serverRunId: "server_s",
@@ -536,7 +555,7 @@ async function sessionServer({ failIntent = false } = {}) {
         traceObjectId: `sha256:${sha}`,
         traceSha256: sha,
       };
-    else
+    } else
       value = {
         enabled: true,
         source: "github-public-status",
@@ -889,6 +908,144 @@ test("opened still records on its own pull request run", async () => {
       JSON.parse(created.body).clientRunId,
       "pr_opened_PR_kwDOtest0000007",
     );
+    assert.ok(!slop.log.some((row) => row.path.endsWith("/finalize")));
+  } finally {
+    await slop.close();
+  }
+});
+
+// The rerun must not re-export: the session file grows between attempts, so a
+// fresh export would differ from the object the server already holds.
+async function growSession(runId, startOutput) {
+  const path = await writeClaudeSession(runId, startOutput);
+  const rows = readFileSync(path, "utf8").trim().split("\n");
+  const extra = JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-11-23T10:00:05Z",
+    cwd: installed.repo,
+    sessionId: "test-session",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "text", text: "A later note that changes the export." },
+      ],
+    },
+  });
+  rows.splice(rows.length - 1, 0, extra);
+  await writeFile(path, `${rows.join("\n")}\n`);
+}
+
+const attachedRecord = (runId) =>
+  join(
+    process.env.XDG_CONFIG_HOME,
+    "slop",
+    "sessions",
+    `${runId}.attached.json`,
+  );
+
+test("a rerun after the event failed finalizes the bytes it first showed", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer({ failEvents: 1 });
+  try {
+    const first = [];
+    const failed = await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, first),
+      ),
+    );
+    assert.match(failed.stdout, /the pull request stands/);
+    assert.ok(!slop.log.some((row) => row.path.endsWith("/finalize")));
+    const firstSha = first.disclosed.sha256;
+    await growSession(runId, startOutput);
+    const second = [];
+    const rerun = await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, second),
+      ),
+    );
+    assert.deepEqual(second.slice(0, 2), ["disclosure", "assertion"]);
+    assert.equal(second.disclosed.sha256, firstSha);
+    assert.equal(second.disclosed.absolutePath, first.disclosed.absolutePath);
+    assert.equal(second.disclosed.alreadyUploaded, true);
+    assert.equal(
+      slop.log.filter((row) => row.path === "/trace-upload-s").length,
+      1,
+      "object not re-sent",
+    );
+    assert.equal(
+      slop.log.filter((row) => row.path.endsWith("/finalize")).length,
+      1,
+    );
+    assert.match(rerun.stdout, /Session uploaded under private-trace-v3/);
+    assert.ok(rerun.stdout.includes(`sha256:${firstSha}`), rerun.stdout);
+    assert.ok(rerun.stdout.includes(first.disclosed.absolutePath));
+  } finally {
+    await slop.close();
+  }
+});
+
+test("a rerun with the uploaded file gone finalizes only the recorded digest", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer({ failEvents: 1 });
+  try {
+    const first = [];
+    await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, first),
+      ),
+    );
+    await rm(first.disclosed.absolutePath);
+    const rerun = await capture(() =>
+      installed.receipt.main(sessionArgs(runId), sessionDeps(slop.fetchImpl)),
+    );
+    assert.equal(
+      rerun.stderr.split("\n").filter((l) => /missing on this machine/.test(l))
+        .length,
+      1,
+      rerun.stderr,
+    );
+    assert.ok(rerun.stdout.includes(`sha256:${first.disclosed.sha256}`));
+    assert.equal(
+      slop.log.filter((row) => row.path === "/trace-upload-s").length,
+      1,
+    );
+  } finally {
+    await slop.close();
+  }
+});
+
+test("a recorded digest the server does not hold stops before finalize", async () => {
+  await freshConfig();
+  const { runId, stdout: startOutput } = await startRun();
+  await writeClaudeSession(runId, startOutput);
+  const slop = await sessionServer({ failEvents: 1 });
+  try {
+    const first = [];
+    await capture(() =>
+      installed.receipt.main(
+        sessionArgs(runId),
+        sessionDeps(slop.fetchImpl, first),
+      ),
+    );
+    await rm(first.disclosed.absolutePath);
+    const record = JSON.parse(readFileSync(attachedRecord(runId), "utf8"));
+    await writeFile(
+      attachedRecord(runId),
+      JSON.stringify({ ...record, sha256: "c".repeat(64) }),
+    );
+    const rerun = await capture(() =>
+      installed.receipt.main(sessionArgs(runId), sessionDeps(slop.fetchImpl)),
+    );
+    const lines = rerun.stdout.trim().split("\n");
+    assert.equal(lines.length, 1, rerun.stdout);
+    assert.match(lines[0], /the pull request stands/);
     assert.ok(!slop.log.some((row) => row.path.endsWith("/finalize")));
   } finally {
     await slop.close();
