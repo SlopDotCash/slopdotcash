@@ -277,12 +277,13 @@ actions to verify the whole project.
 For a transfer between trusted runners, call `prepareSimulationReceipts` with
 the same three arguments and an existing private scratch directory as the
 fourth. It returns `results` and, when all requested simulations passed and
-their receipts are complete, `seedDirectory`. Transfer only the files in that
-returned directory. They hold the model typechecks and simulation results the
-ordinary check can reuse. Copy them into the receiving project's `.spec-cache`
-before the full normal check. Match the checkout and toolchain, and keep the
-seed within the same trust boundary as other spec cache entries. The check
-computes its own keys and recomputes a missing or unreadable result.
+their receipts are complete, `seedDirectory`. Otherwise `partialDirectory`
+can hold the certified model typechecks and simulation results available from
+the run, including reproducible failures. Transfer only the files in the
+returned directory. Copy them into the receiving project's `.spec-cache`
+before the full normal check and keep them within the same trust boundary as
+other spec cache entries. The check computes its own keys and recomputes a
+missing or unreadable result.
 
 Turborepo caches `gen`, `build`, `typecheck`, tests, selftest and lint according
 to `turbo.json`. The task entry point fingerprints Node, VibeLang, Dafny, Z3
