@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f4950206c24463e85db44862d90e4bae8b85ba0bd80ffb9e4af7a878122c3782",
+  "inventorySha256": "9812ccf50673b25df82dc4afc4e5c66b4a7253dc6f773456ab39e9f262470cf2",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3064,7 +3064,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 230,
+      "line": 254,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -3083,7 +3083,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 540,
+      "line": 573,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -3102,7 +3102,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1411,
+      "line": 1444,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -3697,7 +3697,7 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "line": 43,
+      "line": 47,
       "name": "CycleIndexState",
       "kind": "string-union",
       "values": [
