@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "5d5220324a66d2b33edb2ab9a20d9d450819e86b664ee4deb9ac9dfe4ea80e51",
+  "inventorySha256": "0f43718492a7d1f0a4a416c09816aad7e8f9dce717d5434077725182be23ca9b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2461,7 +2461,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 283,
+      "line": 284,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2483,7 +2483,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 533,
+      "line": 534,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2521,7 +2521,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4069,
+      "line": 4070,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2543,7 +2543,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4673,
+      "line": 4674,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -3071,7 +3071,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 230,
+      "line": 254,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -3090,7 +3090,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 540,
+      "line": 573,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -3109,7 +3109,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1411,
+      "line": 1444,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -3710,7 +3710,7 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "line": 43,
+      "line": 47,
       "name": "CycleIndexState",
       "kind": "string-union",
       "values": [
