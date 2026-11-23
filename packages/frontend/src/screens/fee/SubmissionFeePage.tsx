@@ -1,9 +1,10 @@
-// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"
-import { keptAfterClosedDays, reclaimDays, refundUndecidedDays } from "@repo/backend/client";
+// spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"; spec/backend/submissionFeeTerms.md, "The submission fee terms are published constants that change only by a reviewed change"
+import { keepFeeLabel, keptAfterClosedDays, reclaimDays, refundUndecidedDays } from "@repo/backend/client";
 import type { Layer } from "effect";
 import { Alert, Button, ExternalLink, PageHeader, Spinner } from "@repo/ui";
 import { Receipt } from "lucide-react";
 import { useState } from "react";
+import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
 import type { PageProps } from "../../app/pages.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { amountText, wayKey } from "../../wallets/fee/feeCalls.ts";
@@ -27,7 +28,7 @@ function Terms({ ways }: { ways: readonly FeeWay[] }) {
       <h2 className={heading}>What happens to a deposit</h2>
       <ul className="flex list-disc flex-col gap-2 pl-5 text-muted-foreground">
         <li>It goes back to the wallet that paid it when this pull request is merged, or if no maintainer has merged or closed it {refundUndecidedDays} days after the deposit.</li>
-        <li>It is kept if the pull request is closed without a merge and stays closed for {keptAfterClosedDays} days: {kept}.</li>
+        <li>It is kept if the pull request is closed without a merge and stays closed for {keptAfterClosedDays} days: {kept}. If the pull request closes an issue labelled {wantedLabelName} before it was opened, it goes back instead, unless a maintainer adds {keepFeeLabel} in that time.</li>
         <li>If nothing settles a deposit, the wallet that paid it can take it back from the deposit contract {reclaimDays} days after the deposit.</li>
         <li>A deposit of another token, or of less than the amount listed here, does not count.</li>
         <li>

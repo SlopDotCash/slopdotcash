@@ -1,4 +1,4 @@
-// spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"
+// spec/slopbot/submissionFeeGate.md, "Only a live fee with a published contract asks, and only a new outside pull request of a project with the setting on"; spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "Record-only mode notes the ask and writes nothing else"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"; spec/slopbot/review.md, "A bound review of a paused project's new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"
 import { submissionFeeItem, submissionFeeOptions, submissionFeeSettingOf } from "@repo/backend/client"
 import { isoAt } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
@@ -31,6 +31,8 @@ export interface FeeAsk {
   readonly mayAsk: boolean
 }
 
+schema FeePullLabel { readonly name: string }
+
 export schema FeePullRead {
   readonly number: number
   readonly state: string
@@ -38,6 +40,7 @@ export schema FeePullRead {
   readonly merged?: boolean
   readonly closed_at?: string | null
   readonly created_at?: string
+  readonly labels?: ReadonlyArray<FeePullLabel>
 }
 
 schema FeeCommentAuthor { readonly id: number; readonly type: string }

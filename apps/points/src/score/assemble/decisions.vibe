@@ -1,0 +1,105 @@
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration"
+import type { SourceDecision } from "@repo/ports/points"
+import type { AssessmentSource } from "../../../gen/points__scoringPolicy.ts"
+import { AssemblyRefused } from "../../collect/run/pipeline.vibe"
+import type { Assessment, ReviewValue } from "../facts.vibe"
+
+export schema HistoryRow {
+  readonly sequence: number
+  readonly record_digest: string
+  readonly record_json: string
+  readonly recorded_at: string
+}
+
+schema ReviewWire {
+  readonly sourceId: string
+  readonly tier: "none" | "triage" | "standard" | "deep" | "specialist"
+  readonly finding: string
+  readonly outcome: string
+}
+
+schema RecordWire {
+  readonly pullRequestNodeId: string
+  readonly repository: string
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly rubricVersion: string
+  readonly model: { readonly reported: string }
+  readonly assessment: {
+    readonly tier: "none" | "micro" | "small" | "medium" | "large" | "xl" | "exceptional" | null
+    readonly rationale: string
+    readonly reviews: ReadonlyArray<ReviewWire>
+  }
+}
+
+schema DecisionWire {
+  readonly status: "missing" | "incomplete" | "stale" | "assessed" | "unresolved"
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly latestDigest: string | null
+  readonly sourceUnavailable?: boolean
+  readonly record?: Schema.Unknown
+}
+
+export type DecisionStatus = DecisionWire["status"]
+
+export interface ValueDecision {
+  readonly status: DecisionStatus
+  readonly history: ReadonlyArray<HistoryRow>
+  readonly latestDigest: string | null
+  readonly sourceUnavailable: boolean
+  readonly record: RecordWire | undefined
+}
+
+export const decisionMismatch = "Current value decision does not match the collected accepted outcome"
+
+effect function decision(row: SourceDecision, joint: boolean) {
+  const refused = new AssemblyRefused({ message: `${joint ? "Joint value" : "Value"} decision for ${row.sourceId} is malformed` })
+  const wire = Schema.decodeUnknownEffect(DecisionWire)(row.decision) catch effect () => { throw refused }
+  if (wire.status !== "assessed") return { status: wire.status, history: wire.history, latestDigest: wire.latestDigest, sourceUnavailable: wire.sourceUnavailable === true, record: undefined } satisfies ValueDecision
+  if (joint) throw new AssemblyRefused({ message: "Joint value history requires the work-unit consumer" })
+  const record = Schema.decodeUnknownEffect(RecordWire)(wire.record) catch effect () => { throw refused }
+  if (wire.latestDigest === null || record.pullRequestNodeId !== row.sourceId) throw new AssemblyRefused({ message: decisionMismatch })
+  return { status: wire.status, history: wire.history, latestDigest: wire.latestDigest, sourceUnavailable: false, record } satisfies ValueDecision
+}
+
+export effect function decisionsOf(rows: ReadonlyArray<SourceDecision>, joint: boolean) {
+  const decisions = new Map<string, ValueDecision>()
+  for (const row of rows) {
+    if (decisions.has(row.sourceId)) throw new AssemblyRefused({ message: `Value decisions repeat ${row.sourceId}` })
+    decisions.set(row.sourceId, try decision(row, joint))
+  }
+  return decisions
+}
+
+export interface AcceptedSource {
+  readonly id: string
+  readonly repository: string
+  readonly acceptedAt: string
+}
+
+export interface Assessed {
+  readonly assessment: Assessment | null
+  readonly reviewValues: ReadonlyArray<ReviewValue>
+}
+
+const unassessed: Assessed = { assessment: null, reviewValues: [] }
+
+export effect function assessmentOf(found: ValueDecision | undefined, source: AcceptedSource, assessmentSource: AssessmentSource) {
+  const record = found?.record
+  if (found === undefined || record === undefined || found.latestDigest === null) return unassessed
+  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt || record.assessment.tier === null) {
+    throw new AssemblyRefused({ message: decisionMismatch })
+  }
+  const assessment: Assessment = {
+    tier: record.assessment.tier,
+    source: assessmentSource,
+    digest: found.latestDigest,
+    rubric: record.rubricVersion,
+    model: record.model.reported,
+    head: record.headSha,
+    recordedAt: found.history.at(-1)?.recorded_at ?? source.acceptedAt,
+    rationale: record.assessment.rationale,
+  }
+  const reviewValues: ReadonlyArray<ReviewValue> = record.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome }))
+  return { assessment, reviewValues } satisfies Assessed
+}

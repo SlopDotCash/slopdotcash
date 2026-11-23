@@ -1,3 +1,4 @@
+// spec/points/window.md, "Story: Publish one complete window with exact counts"
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/points__window.conformance.ts";
 import type { Machine } from "../../gen/points__window.effect.vibe";

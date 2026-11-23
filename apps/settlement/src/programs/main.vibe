@@ -1,14 +1,16 @@
-// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
+// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/asiNovemberCloseout.md, "Only an apply run under the reviewed packet and preview digests writes the closeout base, once"
 import { RegistryLive, RestrictionsLive } from "@repo/backend/ports"
 import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1Http } from "@repo/platform/d1Http"
+import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
 import { ClosedMonthLive } from "@repo/points/live"
 import { EnforcementRowsLive } from "@repo/security/live"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import { monthlyFacts } from "../monthly/store.vibe"
+import { asiNovemberCloseout } from "./asiCloseout.vibe"
 import { cycleIndex } from "./cycleIndex.vibe"
 import { deploymentsCommand } from "./deployments.vibe"
 import { disclosuresCommand } from "./disclosures.vibe"
@@ -25,16 +27,30 @@ function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run
 }
 
+function servedNetworks(testnet: boolean) {
+  return new Set(Object.keys(NETWORKS).filter((network) => isNetworkKey(network) && NETWORKS[network].testnet === testnet))
+}
+
 effect function proposeMonthCommand(args: ReadonlyArray<string>) {
   const tier = try tierOf(Option.getOrUndefined(try Config.option(Config.String("SLOP_ENVIRONMENT"))))
   if (tier === "local") throw new ConfigInvalid({ name: "SLOP_ENVIRONMENT", issue: "propose-month runs against production or staging" })
   const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
-  const served = new Set(Object.keys(NETWORKS).filter((network) => isNetworkKey(network) && NETWORKS[network].testnet === (tier === "staging")))
+  const served = servedNetworks(tier === "staging")
   const database = Layer.provide(d1Http({ accountId, databaseId: registryDatabases[tier], token }), outbound)
   const registry = Layer.mergeAll(Layer.provideMerge(RestrictionsLive, EnforcementRowsLive), RegistryLive, ClosedMonthLive)
   provide Layer.provideMerge(monthlyFacts(served), Layer.provideMerge(registry, database)) {
     try proposeMonth(args)
+  }
+}
+
+effect function asiCloseoutCommand(args: ReadonlyArray<string>) {
+  provide systemGit {
+    try asiNovemberCloseout(args, {
+      database: (accountId, token) => Layer.provide(d1Http({ accountId, databaseId: registryDatabases.production, token }), outbound),
+      checkout: ".",
+      served: servedNetworks(false),
+    })
   }
 }
 
@@ -46,6 +62,7 @@ program({
     disclosures: command(disclosuresCommand),
     keeper: command(keeperCommand),
     "propose-month": command(proposeMonthCommand),
+    "asi-november-closeout": command(asiCloseoutCommand),
     "reconcile-events": command(reconcileEvents),
     "unsafe-destinations": command(unsafeDestinations),
     deployments: command(deploymentsCommand),

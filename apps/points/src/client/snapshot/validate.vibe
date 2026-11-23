@@ -1,5 +1,7 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
 import { parseRunReceipt } from "@repo/contributor/client"
+import { sha256Hex } from "@repo/platform/crypto"
+import { historicalScopePinned } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { mergedPullRequestCredit } from "../../kernels/scoring/legacyV2.ts"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import {
@@ -857,7 +859,8 @@ function allocationProblem(snapshot: LeaderboardSnapshot, raw: unknown, index: n
 function reviewedUnitProblem(snapshot: LeaderboardSnapshot, raw: unknown): Problem {
   const membership = snapshot.reviewedImplementationUnits
   if (membership === undefined) return undefined
-  if (membership.length === 0 || snapshot.valueAssessmentCoverage === undefined) return "Reviewed implementation membership requires assessment coverage"
+  if (snapshot.valueAssessmentCoverage === undefined) return "Reviewed implementation membership requires assessment coverage"
+  if (membership.length === 0) return "Reviewed implementation membership must be nonempty"
   const sources = new Map(snapshot.valueAssessmentCoverage.map((row) => [row.pullRequestId, row.repository]))
   const members = new Set<string>()
   const groups = new Map<string, string>()
@@ -1167,5 +1170,43 @@ export effect function validatePublishable(raw: unknown, repositories: Repositor
   }
   if (!Number.isFinite(now)) throw new SnapshotInvalid({ message: "publication time must be finite" })
   if (millis(snapshot.generatedAt) > now + 5 * 60 * 1000) throw new SnapshotInvalid({ message: "snapshot.generatedAt cannot be in the future" })
+  return snapshot
+}
+
+export interface HistoricalPin {
+  readonly projectId: string
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly manifestSha256: string
+}
+
+export interface HistoricalProject {
+  readonly id: string
+  readonly status: string
+  readonly authority: { readonly repositoryNodeId?: string }
+  readonly repositories: ReadonlyArray<{ readonly id: string }>
+}
+
+export const historicalScopeRefused = "Historical leaderboard requires the pinned active project and repository"
+
+export effect function historicalRepository(registry: RepositoryRegistry, pin: HistoricalPin, project: HistoricalProject) {
+  const repository = registry.targets.find((row) => row.id === pin.repository)
+  const [only] = project.repositories
+  const manifest = try sha256Hex(JSON.stringify(project))
+  const pinned = historicalScopePinned({
+    projectActive: project.status === "active",
+    projectMatches: project.id === pin.projectId && repository?.projectId === pin.projectId,
+    repositories: project.repositories.length,
+    nodeIdMatches: only !== undefined && only.id.toLowerCase() === pin.repository.toLowerCase() && project.authority.repositoryNodeId === pin.repositoryNodeId,
+    manifestMatches: manifest === pin.manifestSha256,
+  })
+  if (repository === undefined || !pinned) throw new SnapshotInvalid({ message: historicalScopeRefused })
+  return repository
+}
+
+export effect function validateHistoricalSnapshot(raw: unknown, registry: RepositoryRegistry, pin: HistoricalPin, project: HistoricalProject, now: number) {
+  const repository = try historicalRepository(registry, pin, project)
+  const snapshot = try validatePublishable(raw, { ...registry, targets: [repository] }, now)
+  if (snapshot.source.repositoryId !== pin.repositoryNodeId) throw new SnapshotInvalid({ message: "Historical leaderboard source differs from the pinned repository" })
   return snapshot
 }

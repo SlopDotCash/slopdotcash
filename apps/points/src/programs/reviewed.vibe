@@ -1,4 +1,4 @@
-// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
+// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
 import { isoNow } from "@repo/platform/clock"
 import { d1Http } from "@repo/platform/d1Http"
 import { github } from "@repo/platform/github"
@@ -16,6 +16,8 @@ import { publishedJournal, publishedRegistry } from "../corrections/collect/publ
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
 import { exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
+import { readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
+import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
 import { enforcementGeneration, historicalStatements, recordHistorical, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
 
 module verified {
@@ -36,9 +38,19 @@ export type PublicationPhase =
   | "project and repository verification"
   | "owner authority verification"
   | "historical census verification"
+  | "duplicate acceptance order verification"
   | "accepted squash verification"
   | "financial protection verification"
+  | "assessment journal checkpoint read"
+  | "trusted replay receipt read"
+  | "assessment qualification match"
   | "value record verification"
+  | "complete assessment catalog read"
+  | "assessment source reconciliation"
+  | "historical assessment replay"
+  | "assessment qualification recheck"
+  | "private replay review staging"
+  | "assessment receipt"
   | "public Points read"
   | "recipient and account restriction verification"
   | "published checkpoint verification"
@@ -146,8 +158,6 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   try verifyHistoricalAcceptedSquashes(packet)
   setPhase("financial protection verification")
   const protection = try verifyHistoricalProtection(packet)
-  setPhase("value record verification")
-  try verifyHistoricalValueRecords(packet)
   setPhase("public Points read")
   const baseline = try publishedJournal()
   setPhase("recipient and account restriction verification")
@@ -160,6 +170,11 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     try Console.log(JSON.stringify({ projectId: packet.projectId, enforcementGeneration: generation, mode: "already-published", candidateDigest: packet.candidateDigest }))
     return
   }
+  setPhase("assessment journal checkpoint read")
+  try require(!invocation.apply, "Applying historical Points requires a reviewed replay qualification")
+  const assessmentHeads = try readHistoricalAssessmentJournalHeads()
+  setPhase("value record verification")
+  try verifyHistoricalValueRecords(packet)
   setPhase("historical Points reconstruction")
   const candidate = try reconstructHistoricalPoints({
     packet,
@@ -172,7 +187,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     projectOf: projectOfRegistry(project.registry.projects),
   })
   setPhase("import preparation")
-  const prepared = try historicalStatements(packet, candidate, generation, githubIdOf)
+  const prepared = try historicalStatements(packet, candidate, generation, githubIdOf, assessmentHeads)
   const candidateDigest = prepared.digest
   if (invocation.apply) {
     setPhase("protected import and readback")
@@ -220,6 +235,7 @@ export effect function reviewed(args: ReadonlyArray<string>) {
   }
   const run = effect {
     try trustedMain("Reviewed historical publication requires manual main workflow")
+    if (args.length === 1 && args[0] === "--audit-assessments") return try services(auditAssessments(setPhase))
     const invocation = try invocationOf(args)
     try services(published(setPhase, invocation))
   }

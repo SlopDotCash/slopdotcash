@@ -1,0 +1,194 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { GitHub } from "@repo/platform/github"
+import type { OutcomeCommit } from "../../collect/merged/wire.vibe"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { interrupted } from "../../quotaRecovery/run.vibe"
+import { canonicalInstant } from "./calendar.vibe"
+
+export error RetainedRefused { message: string }
+
+export const discoveryStale = "Retained-source discovery is incomplete or stale"
+export const originalIdentityUnavailable = "Retained original identity unavailable"
+export const retainedSourceChanged = "Retained source changed during evidence collection"
+export const lacksDirectAcceptance = "Historical allocation lacks direct acceptance"
+export const acceptanceChanged = "Historical allocation acceptance changed"
+const evidenceUnavailable = "retained-source-evidence-unavailable"
+
+const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu
+
+schema PullSide { readonly sha: string; readonly ref: string }
+schema RestPull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly state: string
+  readonly body: string | null
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+  readonly updated_at: string
+  readonly head: PullSide
+  readonly base: PullSide
+}
+schema RestRepository { readonly node_id: string }
+schema RestMergeCommit { readonly sha: string }
+schema Discussed { readonly body: string | null }
+schema ReferencedIssue { readonly node_id: string; readonly number: number; readonly html_url: string; readonly pull_request?: Schema.Unknown }
+schema TimelineSource { readonly issue?: ReferencedIssue }
+schema TimelineEntry { readonly event?: string; readonly source?: TimelineSource }
+
+export interface AcceptedSource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly sourceId: string
+  readonly number: number
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly mergeCommit?: { readonly oid: string } | null
+}
+
+export interface HistoricalAllocationAcceptance {
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly headSha: string
+  readonly acceptedSha: string
+  readonly mergedAt: string
+  readonly baseSha: string
+  readonly baseRef: string
+}
+
+export type RetainedDiscovery = "no-retained-original" | "retained-originals"
+
+interface Reference { readonly number: number; readonly id?: string }
+
+function refused(message: string) {
+  return new RetainedRefused({ message })
+}
+
+export function hasUnlinkedCommit(commits: ReadonlyArray<OutcomeCommit>, owned: (oid: string) => boolean) {
+  return commits.some((commit) => commit.parentCount <= 1 && owned(commit.oid) &&
+    !(commit.author !== null && commit.author.kind === "User" && isCreditEligibleCommitAuthor(commit.author)))
+}
+
+export function referencedNumbers(repository: string, texts: ReadonlyArray<string>) {
+  const numbers = new Set<number>()
+  for (const text of texts) {
+    for (const match of text.matchAll(referencePattern)) {
+      const named = match[1] ?? match[3]
+      const number = Number(match[2] ?? match[4])
+      if ((named === undefined || named.toLowerCase() === repository.toLowerCase()) && Number.isSafeInteger(number) && number > 0) numbers.add(number)
+    }
+  }
+  return numbers
+}
+
+function pullUrl(repository: string, number: number) {
+  return `https://github.com/${repository}/pull/${number}`.toLowerCase()
+}
+
+effect function acceptedPull(source: AcceptedSource) {
+  const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${source.number}`, RestPull) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  if (pull.node_id !== source.sourceId || pull.head.sha !== source.headSha || canonicalInstant(pull.merged_at ?? "") !== source.occurredAt) throw refused(discoveryStale)
+  return pull
+}
+
+effect function discussed(path: string) {
+  const listed = (try GitHub).pages(path, Discussed) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  return listed.map((entry) => entry.body ?? "")
+}
+
+effect function referencesOf(source: AcceptedSource, pull: RestPull) {
+  const root = `/repos/${source.repository}`
+  const texts = [
+    pull.body ?? "",
+    ...(try discussed(`${root}/pulls/${source.number}/reviews`)),
+    ...(try discussed(`${root}/issues/${source.number}/comments`)),
+    ...(try discussed(`${root}/pulls/${source.number}/comments`)),
+  ]
+  const timeline = (try GitHub).pages(`${root}/issues/${source.number}/timeline`, TimelineEntry) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(discoveryStale)
+  }
+  const found = new Map<number, Reference>()
+  for (const entry of timeline) {
+    const issue = entry.source?.issue
+    if (entry.event !== "cross-referenced" || issue === undefined || issue.pull_request === undefined) continue
+    if (issue.html_url.toLowerCase() === pullUrl(source.repository, issue.number)) found.set(issue.number, { number: issue.number, id: issue.node_id })
+  }
+  for (const number of referencedNumbers(source.repository, texts)) if (!found.has(number)) found.set(number, { number })
+  return [...found.values()].filter((reference) => reference.number < source.number).sort((left, right) => left.number - right.number)
+}
+
+effect function originalPulls(source: AcceptedSource, references: ReadonlyArray<Reference>) {
+  const originals: RestPull[] = []
+  for (const reference of references) {
+    const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${reference.number}`, RestPull) catch effect (error) => {
+      if (try interrupted()) throw error
+      if (error._tag === "NotFound" && reference.id === undefined) return undefined
+      throw refused(originalIdentityUnavailable)
+    }
+    if (pull === undefined) continue
+    if ((reference.id !== undefined && pull.node_id !== reference.id) || pull.html_url.toLowerCase() !== pullUrl(source.repository, reference.number) || pull.number !== reference.number) {
+      throw refused(originalIdentityUnavailable)
+    }
+    if (pull.state === "closed" && pull.merged_at === null) originals.push(pull)
+  }
+  return originals
+}
+
+effect function reread(source: AcceptedSource, number: number) {
+  const pull = (try GitHub).json(`/repos/${source.repository}/pulls/${number}`, RestPull) catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(evidenceUnavailable)
+  }
+  return pull
+}
+
+function acceptanceOf(source: AcceptedSource, pull: RestPull): HistoricalAllocationAcceptance | undefined {
+  const acceptedSha = pull.merge_commit_sha
+  const mergedAt = pull.merged_at
+  if (acceptedSha === null || acceptedSha === "" || mergedAt === null) return undefined
+  return { repositoryNodeId: source.repositoryNodeId, pullRequestNodeId: source.sourceId, headSha: source.headSha, acceptedSha, mergedAt, baseSha: pull.base.sha, baseRef: pull.base.ref }
+}
+
+effect function acceptedEvidence(source: AcceptedSource, acceptance: HistoricalAllocationAcceptance) {
+  const github = try GitHub
+  const root = `/repos/${source.repository}`
+  const reading = effect {
+    const repository = try github.json(root, RestRepository)
+    const pull = try github.json(`${root}/pulls/${source.number}`, RestPull)
+    const commit = try github.json(`${root}/commits/${acceptance.acceptedSha}`, RestMergeCommit)
+    return { repository, pull, commit }
+  }
+  const read = reading catch effect (error) => {
+    if (try interrupted()) throw error
+    throw refused(evidenceUnavailable)
+  }
+  const { repository, pull, commit } = read
+  const recorded = source.mergeCommit
+  const indirect = recorded !== undefined && recorded !== null && recorded.oid !== acceptance.acceptedSha
+  if (repository.node_id !== acceptance.repositoryNodeId || pull.node_id !== acceptance.pullRequestNodeId || pull.head.sha !== acceptance.headSha ||
+    pull.merge_commit_sha !== acceptance.acceptedSha || commit.sha !== acceptance.acceptedSha || pull.merged_at !== acceptance.mergedAt ||
+    pull.base.sha !== acceptance.baseSha || pull.base.ref !== acceptance.baseRef || indirect || pull.state !== "closed") {
+    throw refused(acceptanceChanged)
+  }
+  return pull
+}
+
+export effect function discoverRetained(source: AcceptedSource) {
+  const accepted = try acceptedPull(source)
+  const originals = try originalPulls(source, try referencesOf(source, accepted))
+  if (originals.length === 0) return "no-retained-original" satisfies RetainedDiscovery
+  const acceptance = acceptanceOf(source, accepted)
+  if (acceptance === undefined) throw refused(lacksDirectAcceptance)
+  for (const expected of [accepted, ...originals]) {
+    const current = expected === accepted ? try acceptedEvidence(source, acceptance) : try reread(source, expected.number)
+    if (current.node_id !== expected.node_id || current.head.sha !== expected.head.sha || current.updated_at !== expected.updated_at) throw refused(retainedSourceChanged)
+  }
+  return "retained-originals" satisfies RetainedDiscovery
+}

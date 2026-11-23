@@ -1,0 +1,309 @@
+// spec/points/window.md, "A hosted feed outage is read again on the configured delays; any other failure stops at once"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { assert, describe, it } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { githubFake } from "@repo/platform/testing/github"
+import { type Recollection, recollectedOnce } from "../src/census/reviews.vibe"
+import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
+import { type RegisteredRepository, type RepositoryRegistry, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, verificationWindowDays } from "../src/client/snapshot/schema.vibe"
+import { accountBanFeedUrl, participationBans } from "../src/collect/feeds/bans.vibe"
+import { type ConfirmationWait, probeUnavailableSources } from "../src/collect/merged/collection.vibe"
+import { Graphql, type UnavailableSource, graphqlClient } from "../src/ingestion/graphql.vibe"
+import { journalText } from "../src/kernels/records/canonical.ts"
+import { journalFile } from "../src/kernels/records/ids.vibe"
+import { projectionFiles } from "../src/publication/projections.vibe"
+import { recoverPublished } from "../src/recovery/published.vibe"
+import { adaptPullRequestLedger } from "../src/snapshot/adaptPr.vibe"
+import { banFeed, scripted } from "./support/u6/feeds.ts"
+
+module fakes {
+  import { Response as WebResponse } from "miniflare"
+  import type { Fetcher } from "@repo/platform/bindings"
+
+  export type Probe = "missing" | "present"
+
+  interface Sent { readonly query?: string; readonly variables?: { readonly ids?: ReadonlyArray<string> } }
+
+  const rateLimit = { cost: 1, limit: 5000, remaining: 4000, resetAt: "2026-11-22T01:00:00.000Z" }
+
+  /** @throws {never} */
+  export function availability(answers: Array<Probe>, seen: Array<ReadonlyArray<string>>): Fetcher {
+    return {
+      fetch: async (request) => {
+        const sent = JSON.parse(await request.clone().text()) as Sent
+        const ids = sent.variables?.ids ?? []
+        const probe = sent.query?.includes("LeaderboardSourceAvailability") === true
+        if (probe) seen.push(ids)
+        const body = !probe
+          ? { data: { rateLimit } }
+          : answers.shift() === "missing"
+          ? { data: { nodes: ids.map(() => null), rateLimit }, errors: ids.map((_, index) => ({ type: "NOT_FOUND", path: ["nodes", index], message: "Could not resolve requested node" })) }
+          : { data: { nodes: ids.map((id) => ({ __typename: "PullRequest", id })), rateLimit } }
+        return new WebResponse(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }) as unknown as globalThis.Response
+      },
+    }
+  }
+
+  export interface Drained {
+    readonly fetch: typeof globalThis.fetch
+    readonly events: string[]
+  }
+
+  /** @throws {never} */
+  export function drainingSite(files: ReadonlyMap<string, string>): Drained {
+    const events: string[] = []
+    let release = () => {}
+    const failed = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let outstandingAttempts = 0
+    const fetch = async (input: string | URL | globalThis.Request, init?: RequestInit) => {
+      const url = new URL(new globalThis.Request(input, init).url)
+      if (url.pathname === "/api/v1/points/journal") return globalThis.Response.json({ error: "points_not_published" }, { status: 503 })
+      if (url.pathname === "/data/points/0.json") {
+        release()
+        return new globalThis.Response(null, { status: 404 })
+      }
+      if (url.pathname === "/data/points/1.json") {
+        outstandingAttempts += 1
+        if (outstandingAttempts === 1) {
+          await failed
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          throw Object.assign(new Error("socket connection closed"), { code: "ECONNRESET" })
+        }
+        events.push("outstanding shard retried")
+      }
+      const file = files.get(url.pathname)
+      return file === undefined ? new globalThis.Response(null, { status: 404 }) : new globalThis.Response(file)
+    }
+    return { fetch: fetch as typeof globalThis.fetch, events }
+  }
+}
+import { type Probe, availability, drainingSite } from fakes
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function banRead(delays: string | undefined) {
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown(delays === undefined ? {} : { SLOP_VALUE_FEED_RETRY_DELAYS_MS: delays }))
+  const settled: string = Effect.map(Effect.provide(participationBans(), environment), (bans) => `bans:${bans.size}`) catch (error) => error._tag
+  return settled
+}
+
+const firstAttempt: Recollection = { attempt: 1, unavailableSources: [], allowJointHolds: false }
+const recollection: Recollection = { attempt: 2, unavailableSources: [{ nodeId: "PR_joint", reason: "NOT_FOUND" }], allowJointHolds: true }
+
+effect function probedWith<E extends { readonly _tag: string }>(answers: ReadonlyArray<Probe>, probe: (wait: ConfirmationWait) => ReadonlyArray<UnavailableSource>!E!Graphql) {
+  const seen: Array<ReadonlyArray<string>> = []
+  const waits: number[] = []
+  const layer = Layer.provide(graphqlClient({ token: Redacted.make("probe-token"), sleep: () => Effect.void }), outboundVia(availability([...answers], seen)))
+  const wait: ConfirmationWait = (millis) => sync(() => { waits.push(millis) })
+  const held: ReadonlyArray<string> | string = Effect.map(Effect.provide(probe(wait), layer), (sources) => sources.map((source) => source.nodeId)) catch (error) => error._tag
+  return { held, probes: seen.length, waits }
+}
+
+const repository: RegisteredRepository = {
+  id: "member-41/widgets",
+  owner: "member-41",
+  name: "widgets",
+  displayName: "member-41/widgets",
+  githubUrl: "https://github.com/member-41/widgets",
+  description: "Research tooling repository.",
+  integrationBranch: "vibestack",
+  projectId: "widgets",
+  nodeId: "R_9001",
+  aliases: [],
+}
+const registry: RepositoryRegistry = { registered: [repository], targets: [repository], projects: [{ id: "widgets", skillSourcePath: "skills/project-contributor-template" }] }
+const cutoff = "2026-11-20T00:00:00.000Z"
+const cutoffMs = Date.parse(cutoff)
+const windowFrom = new Date(cutoffMs - scoreWindowDays * 24 * 60 * 60 * 1000).toISOString()
+
+function manifest(branch: string) {
+  const name = repository.id
+  return {
+    schemaVersion: "1",
+    id: "widgets",
+    slug: "widgets",
+    name: "Project widgets",
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
+    listingTier: "community",
+    status: "paused",
+    steward: { displayName: "member-41", kind: "individual", github: { actorId: "41", nodeId: "U_41", login: "member-41", type: "User", profileUrl: "https://github.com/member-41" }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: "9001", repositoryNodeId: "R_9001", proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${name}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: name, displayName: name, githubUrl: `https://github.com/${name}`, description: repository.description, integrationBranch: branch }],
+    skill: { id: "contribute-to-widgets", publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: "/projects/widgets/skill.md" },
+    reviewSkill: { id: "review-widgets-contributions", sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" },
+    contribution: {
+      approvedScope: "Bug fixes and documented features in the toolkit.",
+      contributionGuide: "Branch from main and keep one change per pull request.",
+      supportedTasks: "Reproduced bugs with a failing test.",
+      requiredTests: "Run the test suite and attach the output.",
+      reviewExpectations: "The failing test fails on the base and passes on the head.",
+      securityContact: "security@example.org",
+      closurePolicy: "Maintainers close duplicates.",
+      maintainerNotes: "",
+    },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: "funding/widgets", addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${name}`, issues: `https://github.com/${name}/issues` },
+  }
+}
+
+effect function revision(branch: string, number: number, createdAtMs: number) {
+  const body = manifest(branch)
+  return { projectId: "widgets", revision: number, createdAt: new Date(createdAtMs).toISOString(), manifest: body, manifestSha256: try sha256Hex(JSON.stringify(body)), reason: "fixture" }
+}
+
+function deployedLedger(branch: string, nodeId: string, description: string = repository.description) {
+  const generatedAt = "2026-11-20T00:05:00.000Z"
+  return {
+    schemaVersion,
+    repository: repository.id,
+    repositories: [{ id: repository.id, owner: repository.owner, name: repository.name, displayName: repository.displayName, githubUrl: repository.githubUrl, description, integrationBranch: branch, projectId: repository.projectId, role: "primary" }],
+    ruleVersion,
+    generatedAt,
+    sourceUpdatedAt: cutoff,
+    stale: false,
+    window: { days: scoreWindowDays, from: windowFrom, to: cutoff },
+    methodology: leaderboardMethodology,
+    source: {
+      provider: "github-graphql",
+      fetchedAt: generatedAt,
+      cutoffAt: cutoff,
+      repositoryId: nodeId,
+      repositories: [{ id: repository.id, repositoryId: nodeId }],
+      requestCount: 1,
+      searchSliceCount: 0,
+      rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: generatedAt },
+      counts: { mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+      verificationWindow: { days: verificationWindowDays, from: windowFrom, to: cutoff },
+      evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 100, maxArtifacts: 200 },
+    },
+    leaders: [],
+    ledger: [],
+    reviewExclusions: [],
+    penalties: [],
+    opportunities: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
+    workQueue: { issues: [], pullRequests: [] },
+    paymentReviewBasisOmitted: { policy: paymentReviewPolicy, effectiveAt: paymentReviewPolicyAt, reason: paymentReviewBasisOmittedReason },
+  }
+}
+
+function refusalOf(error: { readonly _tag: string }) {
+  if (error._tag !== "AdaptRefused" || !("message" in error) || typeof error.message !== "string") return error._tag
+  if (error.message.endsWith("integrationBranch is not verified by registry history")) return "unverified"
+  return error.message.endsWith("cannot change during a transfer") ? "drift" : error._tag
+}
+
+effect function prepared(deployed: unknown, revisions: ReadonlyArray<unknown>) {
+  const outcome: string = Effect.map(adaptPullRequestLedger(deployed, registry, revisions), (snapshot) => {
+    const rows = (snapshot as { readonly repositories?: ReadonlyArray<{ readonly integrationBranch?: unknown }> }).repositories ?? []
+    return `branch:${String(rows[0]?.integrationBranch)}`
+  }) catch (error) => refusalOf(error)
+  return outcome
+}
+
+describe('Publish one complete window with exact counts (spec/points/window.md, "A hosted feed outage is read again on the configured delays; any other failure stops at once")', () => {
+  it.live("a ban feed outage is read again on each configured delay and a refused answer never", () => effect {
+    const fake = try Effect.try(() => githubFake())
+    const net = scripted(fake)
+    net.reply(accountBanFeedUrl, { status: 503 }, { status: 503 }, { json: banFeed([]) }, { status: 503 }, { status: 503 }, { status: 503 }, { status: 403 })
+    const live = Layer.mergeAll(Layer.provideMerge(github({ userAgent: "slop-points-test" }), outboundVia(net.fetcher)), webCrypto)
+    provide live {
+      const calls: number[] = []
+      const outcomes: string[] = []
+      for (const delays of ["0,0", "0", undefined, "0,-1", "0,0"]) {
+        const before = net.seen.length
+        outcomes.push(try banRead(delays))
+        calls.push(net.seen.length - before)
+      }
+      try same({ outcomes, calls, unexpected: net.unexpected }, {
+        outcomes: ["bans:0", "ValueFeedUnavailable", "ValueFeedUnavailable", "FeedRefused", "FeedRefused"],
+        calls: [3, 2, 1, 0, 1],
+        unexpected: [],
+      })
+    }
+  })
+})
+
+describe('Collect a complete inventory and a decision for every item (spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => {
+  it.live("a joint member outside the census is held only when every probe agrees, else the census recollects once", () => effect {
+    const ids = ["PR_joint"]
+    const confirmed = try probedWith(["missing", "missing", "missing"], (wait) => probeUnavailableSources(ids, firstAttempt, true, wait))
+    const differing = try probedWith(["missing", "present"], (wait) => probeUnavailableSources(ids, firstAttempt, true, wait))
+    const insideCensus = try probedWith(["missing"], (wait) => probeUnavailableSources(ids, firstAttempt, false, wait))
+    const recollected = try probedWith(["missing"], (wait) => probeUnavailableSources(ids, recollection, true, wait))
+    const once = try probedWith(["missing", "missing", "present", "missing"], (wait) => recollectedOnce((current) => probeUnavailableSources(ids, current, true, wait)))
+    try same({ confirmed, differing, insideCensus, recollected, once }, {
+      confirmed: { held: ids, probes: 3, waits: [5000, 5000] },
+      differing: { held: "SourceNodeUnavailable", probes: 2, waits: [5000] },
+      insideCensus: { held: "SourceNodeUnavailable", probes: 1, waits: [] },
+      recollected: { held: ids, probes: 1, waits: [] },
+      once: { held: ids, probes: 4, waits: [5000, 5000] },
+    })
+  })
+})
+
+describe('Read the published projection without mistaking a reset for a refusal (spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times")', () => {
+  it.live("a refused Points projection waits for its outstanding shard retry", () => effect {
+    const journal = try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: "2026-11-02T00:00:00.000Z", coverage: [], revisions: [] })}\n`)
+    const files = try projectionFiles(journal)
+    const served = new Map<string, string>([["/data/points.json", files.index], ...files.shards.map((text, position) => [`/data/points/${position.toString(16)}.json`, text] as [string, string])])
+    const site = drainingSite(served)
+    const waits: number[] = []
+    const refused: string = Effect.as(provideService(recoverPublished({ environment: "Staging", bootstrap: false, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, site.fetch), "recovered") catch (error) => error._tag === "RecoveryRefused" ? error.outcome : error._tag
+    site.events.push("read refused")
+    try same({ refused, events: site.events, waits }, { refused: "SourceUnavailable", events: ["outstanding shard retried", "read refused"], waits: [1000] })
+  })
+})
+
+describe('Publish one complete window with exact counts (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => {
+  it.live("the pull-request ledger adopts only an integration branch move that registry history proves", () => effect {
+    provide webCrypto {
+      const history = [try revision("main", 1, cutoffMs - 1_000), try revision("vibestack", 2, cutoffMs + 1_000)]
+      const [collected, latest] = history
+      const beforeCutoff = [try revision("main", 1, cutoffMs - 2_000), try revision("vibestack", 2, cutoffMs - 1_000)]
+      const brokenDigest = collected === undefined || latest === undefined ? [] : [{ ...collected, manifestSha256: "0".repeat(64) }, latest]
+      const outcomes = {
+        proven: try prepared(deployedLedger("main", "R_9001"), history),
+        arbitrary: try prepared(deployedLedger("other", "R_9001"), history),
+        wrongNode: try prepared(deployedLedger("main", "R_other"), history),
+        newerCutoff: try prepared(deployedLedger("main", "R_9001"), beforeCutoff),
+        brokenDigest: try prepared(deployedLedger("main", "R_9001"), brokenDigest),
+        withoutHistory: try prepared(deployedLedger("main", "R_9001"), []),
+        description: try prepared(deployedLedger("main", "R_9001", "Another repository."), history),
+      }
+      try same(outcomes, {
+        proven: "branch:vibestack",
+        arbitrary: "unverified",
+        wrongNode: "unverified",
+        newerCutoff: "unverified",
+        brokenDigest: "unverified",
+        withoutHistory: "unverified",
+        description: "drift",
+      })
+    }
+  })
+})

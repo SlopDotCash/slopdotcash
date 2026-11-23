@@ -1,4 +1,4 @@
-// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import type { ReferenceDiscussion } from "../../gen/points__referenceDiscussion.ts"
 import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
@@ -142,6 +142,8 @@ export interface MergedPull {
   readonly externalPrize: boolean
   readonly traceUpload: boolean
   readonly automatedReviews: ReadonlyArray<AutomatedReview>
+  readonly emptyAcceptanceMarker?: boolean
+  readonly acceptedOrdinaryCommitOid?: string
 }
 
 export interface ClosedPull {
@@ -217,7 +219,18 @@ export interface Activity {
   readonly models: ReadonlyArray<string>
 }
 
-export interface ScoringFacts {
+export type ScoringMode = "rolling" | "historical"
+
+export interface ImplementationHistory {
+  readonly mode: ScoringMode
+  readonly valueInput: boolean
+  readonly acceptedImplementationDigests: ReadonlyMap<string, string>
+  readonly previousImplementationDigests: ReadonlySet<string>
+  readonly previousAcceptedOrdinaryOwners: ReadonlyMap<string, string>
+  readonly unresolvedImplementationSources: ReadonlySet<string>
+}
+
+export interface ScoringFacts extends Partial<ImplementationHistory> {
   readonly windowFrom: string
   readonly windowTo: string
   readonly merged: ReadonlyArray<MergedPull>
@@ -345,6 +358,8 @@ export interface Scoring {
   readonly ledger: ReadonlyArray<ScoreEvent>
   readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
   readonly held: ReadonlyArray<HeldSource>
+  readonly implementationHeld: ReadonlySet<string>
+  readonly standaloneReview: ReadonlySet<string>
   readonly penaltyThirds: ReadonlyMap<string, number>
 }
 
@@ -411,6 +426,17 @@ export effect function instantAtIso(iso: string, sourceId: string) {
   const instant = instantOf(try isoAt(try millisAt(iso, sourceId)))
   if (instant === null) throw new FactsRefused({ reason: "timestamp outside the instant range", sourceId })
   return instant
+}
+
+export function implementationHistory(facts: ScoringFacts): ImplementationHistory {
+  return {
+    mode: facts.mode ?? "rolling",
+    valueInput: facts.valueInput ?? false,
+    acceptedImplementationDigests: facts.acceptedImplementationDigests ?? new Map(),
+    previousImplementationDigests: facts.previousImplementationDigests ?? new Set(),
+    previousAcceptedOrdinaryOwners: facts.previousAcceptedOrdinaryOwners ?? new Map(),
+    unresolvedImplementationSources: facts.unresolvedImplementationSources ?? new Set(),
+  }
 }
 
 export function compareCodeUnits(left: string, right: string) {

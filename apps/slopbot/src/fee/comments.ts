@@ -1,5 +1,6 @@
 // spec/slopbot/submissionFeeGate.md, "One job asks under a lease, and a failed write hands the lease back"; spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "An ask that stops applying is taken back and its unpaid item removed"
-import { keptAfterClosedDays, refundUndecidedDays } from "../../gen/backend__submissionFeeTerms.ts";
+import { wantedLabelName } from "../../gen/backend__mergeActivity.ts";
+import { keepFeeLabel, keptAfterClosedDays, refundUndecidedDays } from "../../gen/backend__submissionFeeTerms.ts";
 
 export const feeMarker = "<!-- slopbot:fee -->";
 
@@ -26,7 +27,7 @@ export interface FeeWay {
   readonly stable: boolean;
 }
 
-export type FeeOutcomeWhy = "merged" | "undecided" | "closed";
+export type FeeOutcomeWhy = "merged" | "undecided" | "closed" | "wanted" | "marked";
 export type FeeReleaseWhy = "setting-off" | "author-exempt";
 
 export interface CommentFacts {
@@ -93,7 +94,8 @@ function outcomeRules(ways: ReadonlyArray<FeeWay>): string[] {
   return [
     "- This pull request is merged: the deposit goes back to the wallet that paid it.",
     `- No maintainer merges or closes it within ${refundUndecidedDays} days of the deposit: the deposit goes back.`,
-    `- It is closed without a merge and is still closed ${keptAfterClosedDays} days later: a ${stableNames(ways)} deposit is kept by Slop${hasSlop(ways) ? ", and a SLOP deposit is burned" : ""}.`,
+    `- It closes an issue labelled \`${wantedLabelName}\` (labelled before this pull request was opened) and is closed without a merge: the deposit goes back, unless a maintainer adds the label \`${keepFeeLabel}\` within ${keptAfterClosedDays} days of the close.`,
+    `- Any other pull request closed without a merge and still closed ${keptAfterClosedDays} days later: a ${stableNames(ways)} deposit is kept by Slop${hasSlop(ways) ? ", and a SLOP deposit is burned" : ""}.`,
   ];
 }
 
@@ -121,11 +123,22 @@ export function feeNeededComment(facts: CommentFacts): string {
   ].join("\n\n");
 }
 
-function outcomeText(outcome: FeeOutcomeNote, ways: ReadonlyArray<FeeWay>): string {
-  if (outcome.kind === "kept_due") return `**Fee kept.** This pull request stayed closed without a merge for ${keptAfterClosedDays} days, so the deposit is kept: a ${stableNames(ways)} deposit by Slop${hasSlop(ways) ? ", a SLOP deposit burned" : ""}.`;
-  return outcome.why === "merged"
+function keptBecause(why: FeeOutcomeWhy): string {
+  return why === "marked"
+    ? `This pull request was closed without a merge and a maintainer added \`${keepFeeLabel}\``
+    : `This pull request stayed closed without a merge for ${keptAfterClosedDays} days`;
+}
+
+function refundText(why: FeeOutcomeWhy): string {
+  if (why === "wanted") return `**Refund due.** This pull request closed a \`${wantedLabelName}\` issue and was not merged, and no maintainer added \`${keepFeeLabel}\`, so the deposit is due back to the wallet that paid it.`;
+  return why === "merged"
     ? "**Refund due.** This pull request was merged, so the deposit is due back to the wallet that paid it."
     : `**Refund due.** No maintainer merged or closed this pull request within ${refundUndecidedDays} days of the deposit, so it is due back to the wallet that paid it.`;
+}
+
+function outcomeText(outcome: FeeOutcomeNote, ways: ReadonlyArray<FeeWay>): string {
+  if (outcome.kind === "kept_due") return `**Fee kept.** ${keptBecause(outcome.why)}, so the deposit is kept: a ${stableNames(ways)} deposit by Slop${hasSlop(ways) ? ", a SLOP deposit burned" : ""}.`;
+  return refundText(outcome.why);
 }
 
 export function feePaidComment(facts: PaidFacts): string {

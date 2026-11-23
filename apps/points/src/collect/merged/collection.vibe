@@ -1,4 +1,5 @@
 // spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/workUnits.md, "Story: Value one logical work unit once"
+import { confirmationDelayMs, confirmationProbes, holdsJointMember } from "../../../gen/points__census.effect.vibe"
 import { type Recollection, type ReviewCensus, assertReviewCensusStable, collectReviewCensus, reconcileReviewCensus } from "../../census/reviews.vibe"
 import { Graphql, type UnavailableSource, ensureEstimatedBudget, estimateFirstPageDetailCost, estimateReviewFirstPageDetailCost, executeNodeBatch, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
 import type { SearchStats } from "../../ingestion/search.vibe"
@@ -63,19 +64,47 @@ export interface MergedWork<A> {
 
 schema AvailableNode { readonly __typename: string; readonly id: string }
 
-export effect function probeUnavailableSources(ids: ReadonlyArray<string>, recollection: Recollection) {
+export type ConfirmationWait = (millis: number) => void!!
+
+effect function probeBatch(batch: ReadonlyArray<string>) {
+  const nodes = try arrayAt((try executeNodeBatch(sourceAvailabilityQuery, batch)).nodes, "source availability.nodes")
+  if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
+  for (const [index, value] of nodes.entries()) {
+    const node = try decoded(AvailableNode, value, `source availability.nodes[${index}]`)
+    if (node.__typename !== "PullRequest" || node.id !== batch[index]) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
+  }
+}
+
+function unavailableKey(sources: ReadonlyArray<UnavailableSource>) {
+  return sources.map((source) => `${source.nodeId}\u0000${source.reason}`).sort().join("\n")
+}
+
+effect function probedKey(batch: ReadonlyArray<string>) {
+  try probeBatch(batch)
+  return undefined
+}
+
+effect function agreeingProbes(batch: ReadonlyArray<string>, first: ReadonlyArray<UnavailableSource>, wait: ConfirmationWait) {
+  const expected = unavailableKey(first)
+  let agreeing = 1
+  for (let probe = 0; probe < confirmationProbes; probe++) {
+    try wait(confirmationDelayMs)
+    const key: string | undefined = probedKey(batch) catch (error) => error._tag === "SourceNodeUnavailable" ? unavailableKey(error.sources) : undefined
+    if (key !== expected) return agreeing
+    agreeing += 1
+  }
+  return agreeing
+}
+
+export effect function probeUnavailableSources(ids: ReadonlyArray<string>, recollection: Recollection, outsideCensus = false, wait: ConfirmationWait = (millis) => sleep(Duration.millis(millis))) {
   const unavailable: UnavailableSource[] = []
   for (const batch of chunks(ids, reviewDetailBatchSize)) {
-    const probed = effect {
-      const nodes = try arrayAt((try executeNodeBatch(sourceAvailabilityQuery, batch)).nodes, "source availability.nodes")
-      if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
-      for (const [index, value] of nodes.entries()) {
-        const node = try decoded(AvailableNode, value, `source availability.nodes[${index}]`)
-        if (node.__typename !== "PullRequest" || node.id !== batch[index]) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
-      }
-    }
-    probed catch effect (error) => {
-      if (error._tag !== "SourceNodeUnavailable" || !recollection.allowJointHolds) throw error
+    probeBatch(batch) catch effect (error) => {
+      if (error._tag !== "SourceNodeUnavailable") throw error
+      const attempt = recollection.allowJointHolds ? 2 : 1
+      let agreeing = 1
+      if (outsideCensus && attempt === 1) agreeing = try agreeingProbes(batch, error.sources, wait)
+      if (!holdsJointMember(attempt, agreeing)) throw error
       unavailable.push(...error.sources)
     }
   }

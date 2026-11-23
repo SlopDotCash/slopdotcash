@@ -2,11 +2,11 @@
 import { keccak } from "@repo/platform/chain/evm"
 import type { SlopRate } from "@repo/ports/backend"
 import { feeSettingAmount } from "../../gen/backend__submissionFeeSettings.effect.vibe"
-import { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keptAfterClosedDays, keptToFor, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, ratesAt, rateInForce, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
+import { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keepFeeLabel, keptAfterClosedDays, keptToFor, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, ratesAt, rateInForce, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, tokenKind, unknownItemGraceMs } from "../../gen/backend__submissionFeeTerms.effect.vibe"
 import { inStableLimits, lowerAmount, rateMicros, rateScale, slopFeeUnits } from "./submissionFeeKernels.ts"
 
 export type { FeeNetwork, FeeToken, TokenKind } from "../../gen/backend__submissionFeeTerms.effect.vibe"
-export { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keptAfterClosedDays, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, unknownItemGraceMs }
+export { bandMaxBps, bandMinBps, burnAddress, defaultMinor, depositContract, feeNetworks, feeWallet, keepFeeLabel, keptAfterClosedDays, maxMinor, minMinor, networkTerms, rateGraceMs, ratePeriodMs, reclaimDays, refundUndecidedDays, slopDecimals, slopShareBps, stableDecimals, switchedOn, unknownItemGraceMs }
 
 export type FeeTokenKind = "stable" | "slop"
 

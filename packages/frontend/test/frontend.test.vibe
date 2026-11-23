@@ -315,6 +315,8 @@ module accountWorld {
     /** @throws {never} */
     beforeNext(route: string, act: () => void): void
     /** @throws {never} */
+    answerNext(route: string, status: number): void
+    /** @throws {never} */
     serveOperations(served: Served): void
     /** @throws {never} */
     dispose(): Promise<void>
@@ -347,6 +349,7 @@ module accountWorld {
     const sent: Array<Sent> = []
     const requests: Array<string> = []
     const hooks = new Map<string, () => void>()
+    const answers = new Map<string, number>()
     let jar = ""
     let served: Served | undefined = undefined
     const mf: StartedWorker = startWorker({
@@ -376,6 +379,11 @@ module accountWorld {
         hooks.delete(route)
         hook()
       }
+      const answered = answers.get(route)
+      if (answered !== undefined) {
+        answers.delete(route)
+        return answer(answered, { error: "unavailable" })
+      }
       const headers: Record<string, string> = { ...Object.fromEntries(request.headers), "cf-connecting-ip": address }
       if (jar !== "") headers.cookie = `__Host-slop_points=${jar}`
       if (request.method !== "GET") headers.origin = site
@@ -394,6 +402,9 @@ module accountWorld {
       },
       beforeNext: (route, act) => {
         hooks.set(route, act)
+      },
+      answerNext: (route, status) => {
+        answers.set(route, status)
       },
       serveOperations: (handler) => {
         served = handler
@@ -2003,6 +2014,11 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
           keptSession: (try session.view()) === shownBefore,
           recipient: (try inbox.view()).recipient,
         }
+        world.answerNext("GET /api/v1/notifications", 503)
+        const failedFrom = world.requests.length
+        try returnToTab(browser, inbox)
+        const failedReturn = { ...shape(try inbox.view()), lists: world.requests.slice(failedFrom).filter((sent) => sent === "GET /api/v1/notifications").length }
+        const retried = shape(try inbox.load())
         const marked = shape(try inbox.markRead(["project-revision:account-1"]))
         const caseNotice = (try inbox.view()).page?.notifications.find((row) => row.eventKey === "security-case:account-1")
         const acknowledged = shape(caseNotice === undefined ? try inbox.view() : try inbox.acknowledge(caseNotice))
@@ -2014,7 +2030,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
         const switched = viewActor(try session.view())
         const otherInbox = shape(try readyFor(inbox.changes, other))
         const incompleteReads = requestsOf(world, "GET /api/v1/notifications/incomplete-assessments")
-        const steps = { signedOut, signedOutLists, incompleteReads, loaded: shape(loaded), unread, returned, marked, acknowledged, ignoredKeys, raced, awardReadAt, switched, otherInbox }
+        const steps = { signedOut, signedOutLists, incompleteReads, loaded: shape(loaded), unread, returned, failedReturn, retried, marked, acknowledged, ignoredKeys, raced, awardReadAt, switched, otherInbox }
         try same(steps, {
           signedOut: { status: "signedOut", recipient: null, unread: undefined, rows: undefined, message: undefined, done: undefined, actionError: undefined, busy: false },
           signedOutLists: 0,
@@ -2037,6 +2053,27 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
             session: ["signedIn"],
             keptSession: true,
             recipient: reader,
+          },
+          failedReturn: {
+            status: "failed",
+            recipient: reader,
+            unread: undefined,
+            rows: undefined,
+            message: inboxMessages.unavailable,
+            done: undefined,
+            actionError: undefined,
+            busy: false,
+            lists: 1,
+          },
+          retried: {
+            status: "ready",
+            recipient: reader,
+            unread: 3,
+            rows: [["security-case:account-1", false, false], ["project-revision:account-1", false, "none"], ["award-reserved:account-1", false, "none"]],
+            message: undefined,
+            done: undefined,
+            actionError: undefined,
+            busy: false,
           },
           marked: {
             status: "ready",

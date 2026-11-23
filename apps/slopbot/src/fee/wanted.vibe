@@ -1,0 +1,77 @@
+// spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/backend/mergeActivity.md, "Wanted issues are read with the activity and their label is created once"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"
+import { keepFeeLabel } from "@repo/backend/client"
+import { GitHub } from "@repo/platform/github"
+import { wantedLabelName } from "../../gen/backend__mergeActivity.effect.vibe"
+import { type ClosingIssue, type LabelEvent, invitedOf } from "../../gen/slopbot__submissionFeeGate.effect.vibe"
+import { requireScope } from "../publish/scope.vibe"
+import { type FeeTarget, scopedOf } from "./gate.vibe"
+import { type PullRef, secondsOf } from "./store.vibe"
+
+export const wantedQuery = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      createdAt
+      closingIssuesReferences(first: 10) {
+        nodes {
+          repository { databaseId }
+          timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], first: 100) {
+            nodes {
+              __typename
+              ... on LabeledEvent { createdAt label { name } }
+              ... on UnlabeledEvent { createdAt label { name } }
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+const keepLabelColor = "b60205"
+const keepLabelDescription = "A maintainer keeps this pull request's Slop submission fee."
+
+schema WantedLabelRead { readonly name: string }
+schema WantedEventRead { readonly __typename: string; readonly createdAt?: string; readonly label?: WantedLabelRead | null }
+schema WantedEventsRead { readonly nodes: ReadonlyArray<WantedEventRead> }
+schema WantedRepositoryRead { readonly databaseId: number }
+schema ClosingIssueRead { readonly repository: WantedRepositoryRead | null; readonly timelineItems: WantedEventsRead }
+schema ClosingIssuesRead { readonly nodes: ReadonlyArray<ClosingIssueRead> }
+schema WantedPullRead { readonly createdAt: string; readonly closingIssuesReferences: ClosingIssuesRead }
+schema WantedRepoRead { readonly pullRequest: WantedPullRead | null }
+schema WantedAnswer { readonly repository: WantedRepoRead | null }
+
+function labelEventsOf(issue: ClosingIssueRead): LabelEvent[] {
+  return issue.timelineItems.nodes.flatMap((event) => {
+    const at = secondsOf(event.createdAt)
+    return event.label?.name === wantedLabelName && at > 0 ? [{ label: wantedLabelName, added: event.__typename === "LabeledEvent", at }] : []
+  })
+}
+
+function closingIssueOf(issue: ClosingIssueRead, repositoryId: number): ClosingIssue {
+  return { ownRepository: issue.repository?.databaseId === repositoryId, events: labelEventsOf(issue) }
+}
+
+export effect function wantedLink(pull: PullRef) {
+  const github = try GitHub
+  const answer: WantedAnswer | undefined = github.graphql(wantedQuery, { owner: pull.owner, repo: pull.repo, number: pull.number }, WantedAnswer) catch () => undefined
+  if (answer === undefined) return invitedOf(false, [], 0)
+  const read = answer.repository?.pullRequest ?? null
+  if (read === null) return invitedOf(true, [], 0)
+  return invitedOf(true, read.closingIssuesReferences.nodes.map((issue) => closingIssueOf(issue, pull.repositoryId)), secondsOf(read.createdAt))
+}
+
+effect function createdKeepLabel(target: FeeTarget) {
+  try requireScope(scopedOf(target), "contributor")
+  const github = try GitHub
+  const labels = `/repositories/${target.pull.repositoryId}/labels`
+  const found: number = github.status(`${labels}/${encodeURIComponent(keepFeeLabel)}`) catch effect (error) => {
+    if (error._tag === "NotFound") return 404
+    throw error
+  }
+  if (found === 200) return
+  try github.send("POST", labels, { name: keepFeeLabel, color: keepLabelColor, description: keepLabelDescription })
+}
+
+export effect function ensureKeepLabel(target: FeeTarget) {
+  const _attempted = createdKeepLabel(target) catch () => undefined
+}

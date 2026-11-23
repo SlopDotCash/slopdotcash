@@ -1,0 +1,88 @@
+// spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { octoberDuplicateRetirementReason } from "../../gen/points__journal.effect.vibe"
+import { pointKey } from "../kernels/records/ids.vibe"
+import type { PointRevision, PointsJournal } from "../kernels/records/records.schema.ts"
+import { compareCodeUnits } from "./facts.vibe"
+
+export error ImplementationHistoryRefused { reason: string }
+
+export interface AcceptedImplementationPredecessor {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly mergedAt: string
+}
+
+export interface PredecessorScope {
+  readonly repository: string
+  readonly projectId: string
+  readonly mergedBefore: string
+  readonly recordedThrough: string
+}
+
+interface SourceIdentity {
+  readonly projectId: string
+  readonly url: string
+  readonly mergedAt: string
+  positive: boolean
+}
+
+const repositoryPath = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const pullTail = /^[1-9][0-9]*$/u
+
+effect function cutoff(value: string) {
+  const at = millisOf(value)
+  if (!Number.isFinite(at) || (try isoAt(at)) !== value) throw new ImplementationHistoryRefused({ reason: "Implementation history requires an exact UTC cutoff" })
+  return at
+}
+
+function pullNumber(url: string, prefix: string) {
+  if (!url.startsWith(prefix)) return undefined
+  const tail = url.slice(prefix.length)
+  if (!pullTail.test(tail)) return undefined
+  const number = Number(tail)
+  return Number.isSafeInteger(number) ? number : undefined
+}
+
+function configured(scope: PredecessorScope) {
+  return scope.projectId !== "" && scope.repository.length <= 201 && repositoryPath.test(scope.repository) && !scope.repository.split("/").some((part) => part === "." || part === "..")
+}
+
+export effect function previousPositiveImplementationSources(journal: PointsJournal, scope: PredecessorScope) {
+  if (!configured(scope)) throw new ImplementationHistoryRefused({ reason: "Implementation history requires a configured repository" })
+  const acceptedBefore = try cutoff(scope.mergedBefore)
+  const recordedThrough = try cutoff(scope.recordedThrough)
+  const prefix = `https://github.com/${scope.repository}/pull/`
+  const latest = new Map<string, PointRevision>()
+  for (const revision of journal.revisions) if (millisOf(revision.recordedAt) <= recordedThrough) latest.set(revision.award.key, revision)
+
+  const byId = new Map<string, SourceIdentity>()
+  const byNumber = new Map<number, string>()
+  const ambiguous = new Set<string>()
+  for (const { award, decision } of latest.values()) {
+    if (award.category !== "merged-pull-request" || award.sourceId === "") continue
+    if (award.key !== (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }))) continue
+    const id = award.sourceId
+    const positive = award.amount > 0 && decision?.reason !== octoberDuplicateRetirementReason
+    const prior = byId.get(id)
+    if (prior === undefined) byId.set(id, { projectId: award.projectId, url: award.sourceUrl, mergedAt: award.occurredAt, positive })
+    else if (prior.projectId !== award.projectId || prior.url !== award.sourceUrl || prior.mergedAt !== award.occurredAt) ambiguous.add(id)
+    else if (positive) prior.positive = true
+    const number = pullNumber(award.sourceUrl, prefix)
+    if (number === undefined) continue
+    const owner = byNumber.get(number)
+    if (owner !== undefined && owner !== id) {
+      ambiguous.add(owner)
+      ambiguous.add(id)
+    } else byNumber.set(number, id)
+  }
+
+  const result: AcceptedImplementationPredecessor[] = []
+  for (const [id, source] of byId) {
+    if (ambiguous.has(id) || source.projectId !== scope.projectId || !source.positive || millisOf(source.mergedAt) >= acceptedBefore) continue
+    const number = pullNumber(source.url, prefix)
+    if (number !== undefined) result.push({ id, number, url: source.url, mergedAt: source.mergedAt })
+  }
+  return result.sort((left, right) => compareCodeUnits(left.mergedAt, right.mergedAt) || left.number - right.number)
+}

@@ -1,0 +1,242 @@
+import { assert, describe, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import type { GitHubFake } from "@repo/platform/testing/github"
+import { type ValueCensus, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
+import { type CollectionMemoFile, type MemoSession, openMemoFromEnv, openSession, readCollectionMemo, writeMemo } from "../src/collect/memo/memo.vibe"
+import { restoreMemo } from "../src/collect/memo/restore.vibe"
+import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { acceptedReviewHistoryJson, creditlessSnapshot, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { type ArchivedFile, checkedOutCommit, checkpointOf } from "./support/u3/archive.ts"
+import { fetcherOf, repository, seeded as seededActions, start as actionsStart } from "./support/u3/github.ts"
+import { type Seeded, requestsMatching, seeded, start } from "./support/u5/github.ts"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const read: ValueInputsRead = { valueDecisions: [], jointValueDecisions: [], valueActors: [], retainedCommitCredits: [], attributionHolds: [], heldWorkUnits: [] }
+const codeDigest = "c".repeat(64)
+const localRun = { actions: false, gitRef: "", eventName: "" }
+const lineQuery = "LeaderboardOutcomeCommitLines"
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+function collectionLayers(world: Seeded, collections: Array<Collection>) {
+  const outbound = outboundVia(served(world).fetcher)
+  return Layer.mergeAll(
+    outbound,
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
+    Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
+    Layer.succeed(ValueInputs, { load: (_census: ValueCensus) => Effect.succeed(read) }),
+    Layer.succeed(SnapshotAssembly, {
+      assemble: (collection: Collection) => effect {
+        collections.push(collection)
+        return creditlessSnapshot(collection, leaderboardMethodology)
+      },
+    }),
+  )
+}
+
+function lineEvidence(collection: Collection | undefined) {
+  return (collection?.work.outcomes ?? []).map((outcome) => ({ id: outcome.id, commits: (outcome.commits ?? []).map((commit) => [commit.oid, commit.additions, commit.deletions]) }))
+}
+
+describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "Story: Reach the same collection with fewer reads"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/collectionMemo.md, "A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
+  it.live("a memo written by a full collection answers the next collection's unchanged commit statistics, a changed object id is read live and a malformed memo collects in full", () => effect {
+    const world = try Effect.try(() => seeded())
+    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+      const fs = try FileSystem.FileSystem
+      try scoped(effect {
+        const directory = try fs.makeTempDirectoryScoped()
+        try fs.makeDirectory(`${directory}/data`, { recursive: true })
+        try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
+        try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
+        const memoPath = `${directory}/memo/collection-memo.json`
+        const collections: Collection[] = []
+
+        effect function collected(name: string, memo: CollectionMemoFile | null) {
+          const session: MemoSession = try openSession({ memo, forceFull: false, nowMs: try Clock.currentTimeMillis, codeDigest, context: localRun })
+          const before = requestsMatching(world, lineQuery)
+          const request = { registryPath: `${directory}/registry.json`, cutoffMs: start, dataRoot: directory, output: `${directory}/${name}/leaderboard.json`, memo: session }
+          const snapshot = try Effect.provide(collectSnapshot(request), collectionLayers(world, collections))
+          try writeMemo({ session, output: memoPath }, snapshot.source.cutoffAt)
+          const written = try readCollectionMemo(memoPath)
+          return {
+            mode: session.state().mode,
+            phase: session.state().phase,
+            lineReads: requestsMatching(world, lineQuery) - before,
+            counts: { ...session.commitLines.counts },
+            evidence: lineEvidence(collections.at(-1)),
+            written,
+          }
+        }
+
+        const full = try collected("full", null)
+        const incremental = try collected("incremental", full.written)
+        const first = full.written.commitLines[0]
+        const changedOid = first === undefined ? [] : [[first[0], first[1], first[2] === "f".repeat(40) ? "e".repeat(40) : "f".repeat(40), first[3], first[4]] as const]
+        const changed = try collected("changed", { ...incremental.written, commitLines: [...changedOid, ...incremental.written.commitLines.slice(1)] })
+
+        try fs.writeFileString(memoPath, "{\"format\":\"slop-collection-memo-v1\"}\n")
+        const environment = (values: Record<string, string>) => ConfigProvider.layer(ConfigProvider.fromUnknown({ SLOP_COLLECTION_MEMO: memoPath, ...values }))
+        const outcomeOf = (variables: Record<string, string>) => Effect.provide(openMemoFromEnv(codeDigest), environment(variables)) catch (error) => error._tag
+        const malformed = try outcomeOf({})
+        const untrusted = try outcomeOf({ GITHUB_ACTIONS: "true", GITHUB_REF: "refs/pull/7/merge", GITHUB_EVENT_NAME: "pull_request" })
+        const unparsedFull = try outcomeOf({ SLOP_COLLECTION_FULL: "yes" })
+        const nothing = try Effect.provide(openMemoFromEnv(codeDigest), ConfigProvider.layer(ConfigProvider.fromUnknown({})))
+
+        const commitCount = new Set(full.evidence.flatMap((outcome) => outcome.commits.map(([oid]) => oid))).size
+        try same({
+          full: { mode: full.mode, phase: full.phase, lineReads: full.lineReads > 0, counts: full.counts, lastFull: full.written.lastFullAt === full.written.producedAt, rows: full.written.commitLines.length },
+          incremental: { mode: incremental.mode, lineReads: incremental.lineReads, counts: incremental.counts, evidence: incremental.evidence, lastFull: incremental.written.lastFullAt, rows: incremental.written.commitLines },
+          changed: { lineReads: changed.lineReads, counts: changed.counts, evidence: changed.evidence, rows: changed.written.commitLines },
+          malformed: typeof malformed === "string" ? malformed : { mode: malformed?.session.mode, reason: malformed?.session.state().reason, output: malformed?.output },
+          untrusted,
+          unparsedFull,
+          nothing,
+        }, {
+          full: { mode: "FullCollection", phase: "MemoWritten", lineReads: true, counts: { reused: 0, read: commitCount }, lastFull: true, rows: commitCount },
+          incremental: { mode: "IncrementalCollection", lineReads: 0, counts: { reused: commitCount, read: 0 }, evidence: full.evidence, lastFull: full.written.lastFullAt, rows: full.written.commitLines },
+          changed: { lineReads: 1, counts: { reused: commitCount - 1, read: 1 }, evidence: full.evidence, rows: full.written.commitLines },
+          malformed: { mode: "full", reason: "NoPreviousMemo", output: undefined },
+          untrusted: "MemoRefused",
+          unparsedFull: "MemoRefused",
+          nothing: undefined,
+        })
+      })
+    }
+  })
+})
+
+const currentRun = 900
+const trustedRun = 800
+const foreignRun = 801
+const runAttempt = 2
+
+function json(value: unknown): Response {
+  return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } })
+}
+
+interface Served {
+  readonly id: number
+  readonly name: string
+  readonly zip: Uint8Array
+  readonly digest: string
+  readonly expired?: boolean
+  readonly ageMs?: number
+}
+
+function workflowRun(id: number, headSha: string, headRepository: string) {
+  return {
+    id,
+    head_sha: headSha,
+    head_branch: "main",
+    event: "schedule",
+    path: ".github/workflows/deploy.yml",
+    status: "completed",
+    run_attempt: runAttempt,
+    repository: { full_name: repository },
+    head_repository: { full_name: headRepository },
+  }
+}
+
+function servedRuns(fake: GitHubFake, headSha: string, artifacts: ReadonlyArray<Served>) {
+  fake.alterNext(/^GET \/repos\/ada\/widgets\/actions\/workflows\/deploy\.yml\/runs\?branch=main&status=completed&per_page=40$/u, () => json({
+    total_count: 3,
+    workflow_runs: [workflowRun(currentRun, headSha, repository), workflowRun(foreignRun, headSha, "mallory/widgets"), workflowRun(trustedRun, headSha, repository)],
+  }))
+  fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/runs/${trustedRun}/artifacts\\?per_page=100$`, "u"), () => json({
+    total_count: artifacts.length,
+    artifacts: artifacts.map((artifact) => ({
+      id: artifact.id,
+      name: artifact.name,
+      digest: artifact.digest,
+      size_in_bytes: artifact.zip.length,
+      expired: artifact.expired ?? false,
+      created_at: new Date(actionsStart - (artifact.ageMs ?? 3_600_000)).toISOString(),
+      workflow_run: { id: trustedRun, head_sha: headSha },
+    })),
+  }))
+  for (const artifact of artifacts) fake.alterNext(new RegExp(`^GET /repos/ada/widgets/actions/artifacts/${artifact.id}/zip$`, "u"), () => new Response(artifact.zip.slice(), { status: 200, headers: { "content-type": "application/zip" } }))
+}
+
+function archived(name: string, text: string): ArchivedFile {
+  return { name, content: encoder.encode(text), deflated: true }
+}
+
+describe('Restore the newest trusted memo for a fresh main collection (spec/operations/releaseCoverage.md, "A fresh trusted main collection reuses its memo run\'s discussion reads only when no explicit resume names a run"; spec/points/collectionMemo.md, "Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection")', () => {
+  it.live("the newest attempt's unexpired memo of the nearest trusted ancestor run is restored with its sidecar and discussion reads, and a digest mismatch restores nothing", () => effect {
+    const clock = settableClock(actionsStart)
+    const world = try Effect.try(() => seededActions(clock.now))
+    const fake = world.fake
+    const headSha = try Effect.try(() => checkedOutCommit())
+    const memoText = "{\"memo\":2}\n"
+    const sidecarText = "{\"implementation\":2}\n"
+    const cachedName = `${"a".repeat(64)}.bin`
+    const cachedText = "{\"cached\":1}"
+    const memoOf = (text: string) => checkpointOf([archived("collection-memo.json", text)])
+    const newest = memoOf(memoText)
+    const older = memoOf("{\"memo\":1}\n")
+    const sidecar = checkpointOf([archived("accepted-implementation-memo.json", sidecarText)])
+    const discussions = checkpointOf([{ name: cachedName, content: encoder.encode(cachedText), deflated: false }])
+    const listing = (memoDigest: string): ReadonlyArray<Served> => [
+      { id: 9101, name: "collection-memo-1", ...older },
+      { id: 9102, name: "collection-memo-2", zip: newest.zip, digest: memoDigest },
+      { id: 9103, name: "collection-memo-3", ...newest, expired: true },
+      { id: 9104, name: "collection-memo-4", ...newest, ageMs: 8 * 86_400_000 },
+      { id: 9105, name: "coverage-report-2", ...newest },
+      { id: 9202, name: "accepted-implementation-memo-2", ...sidecar },
+      { id: 9302, name: `leaderboard-discussions-${runAttempt}`, ...discussions },
+    ]
+    const live = Layer.provideMerge(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outboundVia(fetcherOf(fake)))
+    provide NodeServices.layer, webCrypto, clock.layer, live {
+      const fs = try FileSystem.FileSystem
+
+      effect function restored(memoDigest: string) {
+        return try scoped(effect {
+          const runnerTemp = try fs.makeTempDirectoryScoped()
+          const output = `${runnerTemp}/restored`
+          const results = `${runnerTemp}/github-output`
+          servedRuns(fake, headSha, listing(memoDigest))
+          const before = fake.requests.length
+          const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
+            GITHUB_REPOSITORY: repository,
+            GITHUB_SHA: headSha,
+            GITHUB_REF: "refs/heads/main",
+            GITHUB_RUN_ID: String(currentRun),
+            RUNNER_TEMP: runnerTemp,
+            RESTORE_OUTPUT: output,
+            RESTORE_DISCUSSIONS: "true",
+            GITHUB_OUTPUT: results,
+          }))
+          try Effect.provide(restoreMemo({ token: Redacted.make(world.token) }), environment)
+          effect function text(path: string) {
+            return (try fs.exists(path)) ? decoder.decode(try fs.readFile(path)) : null
+          }
+          const flags = Object.fromEntries((try fs.readFileString(results)).trim().split("\n").map((line) => line.split("=") as [string, string]))
+          const downloads = fake.requests.slice(before).map((request) => /\/actions\/artifacts\/(\d+)\/zip$/u.exec(new URL(request.url).pathname)?.[1]).filter((id) => id !== undefined)
+          return {
+            flags,
+            memo: try text(`${output}/collection-memo.json`),
+            sidecar: try text(`${output}/accepted-implementation-memo.json`),
+            discussion: try text(`${output}/leaderboard-discussions/${cachedName}`),
+            downloads,
+          }
+        })
+      }
+
+      const good = try restored(newest.digest)
+      const mismatched = try restored(older.digest)
+      try same({ good, mismatched }, {
+        good: { flags: { memo: "true", discussions: "true" }, memo: memoText, sidecar: sidecarText, discussion: cachedText, downloads: ["9102", "9202", "9302"] },
+        mismatched: { flags: { memo: "false", discussions: "false" }, memo: null, sidecar: null, discussion: null, downloads: ["9102"] },
+      })
+    }
+  })
+})

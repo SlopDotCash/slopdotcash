@@ -71,7 +71,7 @@ effect function collectedText(stream: Stream.Stream<Uint8Array, unknown>, limit:
   return text
 }
 
-effect function git(args: ReadonlyArray<string>, seconds: number, failure: string) {
+export effect function git(args: ReadonlyArray<string>, seconds: number, failure: string) {
   const ran = scoped(effect {
     const spawner = try ChildProcessSpawner.ChildProcessSpawner
     const handle = try spawner.spawn(ChildProcess.make("git", args, { stdin: "ignore", stderr: "ignore" }))
@@ -119,7 +119,7 @@ export function checkedEntries(entries: ReadonlyArray<ZipEntry>) {
   return undefined
 }
 
-effect function downloaded(options: RestoreOptions, repo: string, artifact: Artifact) {
+export effect function downloaded(options: RestoreOptions, repo: string, artifact: Artifact, timeoutMs: number = downloadTimeoutMs) {
   const client = try HttpClient.HttpClient
   const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
   const headers = { accept: "application/vnd.github+json", authorization: `Bearer ${Redacted.value(options.token)}`, "user-agent": options.userAgent ?? "slopbot", "x-github-api-version": "2022-11-28" }
@@ -134,7 +134,7 @@ effect function downloaded(options: RestoreOptions, repo: string, artifact: Arti
     }
   }
   const manual = provideService(download, FetchHttpClient.RequestInit, { redirect: "manual" })
-  const bytes = timeout(manual, Duration.millis(downloadTimeoutMs)) catch effect (error) => {
+  const bytes = timeout(manual, Duration.millis(timeoutMs)) catch effect (error) => {
     if (error._tag === "CheckpointInvalid") throw error
     throw new CheckpointInvalid({ message: "Checkpoint download failed" })
   }
@@ -142,7 +142,7 @@ effect function downloaded(options: RestoreOptions, repo: string, artifact: Arti
   return bytes
 }
 
-effect function extracted(bytes: Uint8Array, destination: string) {
+export effect function extracted(bytes: Uint8Array, destination: string) {
   const fs = try FileSystem.FileSystem
   const entries = Effect.try(() => zipEntries(bytes)) catch effect () => {
     throw new CheckpointInvalid({ message: "Invalid checkpoint archive" })

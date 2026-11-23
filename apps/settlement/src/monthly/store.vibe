@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "A stored pledge in the vault that pays the month freezes it at the cutoff, never for a retired project"; spec/settlement/monthPledges.md, "Only a stored pledge above zero in the vault that pays the month counts, and never for a retired project"; spec/settlement/monthPledges.md, "Another month's open pledge is held back from this month's funding"; spec/settlement/monthly.md, "The reviewed ASI closeout proposes its month from the cutoff with its fixed pool and no change"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
@@ -98,6 +98,13 @@ export schema ManifestTerms {
   readonly receiptPolicy?: ManifestState
 }
 
+export schema ManifestRewardAsset {
+  readonly network: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
+}
+
 export schema MonthlyManifest {
   readonly id: string
   readonly status: string
@@ -105,6 +112,7 @@ export schema MonthlyManifest {
   readonly authority?: ManifestAuthority
   readonly terms?: ManifestTerms
   readonly reward: ManifestReward
+  readonly rewardAsset?: ManifestRewardAsset
   readonly repositories?: ReadonlyArray<ManifestRepository>
   readonly escrow?: ManifestEscrow
 }
@@ -535,6 +543,8 @@ function shareWrites(key: MonthKey, proposal: Statement, share: StoredShare, cre
 
 export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>, share: StoredShare | undefined) {
   const created = try isoAt(next.now * 1000)
+  let early = { column: sql``, value: sql`` }
+  if (next.earlyCloseAt > 0) early = { column: sql`, early_close_at`, value: sql`, ${try isoAt(next.earlyCloseAt * 1000)}` }
   const period = formatPeriod(key.period)
   const digests: string[] = []
   for (const share of next.proposedShares) digests.push(try awardSource(key.projectId, key.period, share.actor))
@@ -546,7 +556,7 @@ export effect function proposalWrites(key: MonthKey, next: Monthly, current: Cur
     rows.push(sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) SELECT ${key.projectId}, ${period}, ${String(share.actor)}, ${login}, ${fromAmount(share.amount).toString()}, ${digests[index] ?? ""} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`)
   }
   return [
-    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}) ON CONFLICT (project_id, period) DO NOTHING`,
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at${early.column}) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}${early.value}) ON CONFLICT (project_id, period) DO NOTHING`,
     ...rows,
     ...(share === undefined ? [] : shareWrites(key, proposal, share, created)),
   ]

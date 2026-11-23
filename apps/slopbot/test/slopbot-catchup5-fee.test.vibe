@@ -39,6 +39,7 @@ interface Fees {
   manifest: string
   paused: boolean
   failLabels: boolean
+  unreadLink: boolean
   readonly reports: Map<number, Record<string, unknown>>
 }
 
@@ -69,6 +70,7 @@ function handlerOf(fees: () => Fees) {
     const current = fees()
     const path = new URL(request.url).pathname
     if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 })
+    if (current.unreadLink && path.endsWith("/graphql")) return new Response("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } })
     const found = /\/pulls\/(\d+)$/u.exec(path)
     const answer = await current.fake.handler(request)
     const report = found === null || request.method !== "GET" ? undefined : current.reports.get(Number(found[1]))
@@ -91,7 +93,7 @@ const World = Layer.effect(FeeWorld, effect {
   fake.world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" })
   fake.world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } })
   const clock = settableClock(t0)
-  const fees: Fees = { fake, db, clock, sent: [], mode: "FeeLive", manifest: settingOn(true), paused: false, failLabels: false, reports: new Map() }
+  const fees: Fees = { fake, db, clock, sent: [], mode: "FeeLive", manifest: settingOn(true), paused: false, failLabels: false, unreadLink: false, reports: new Map() }
   const manifestRow = () => ({ projectId, active: true, revision: 1, manifest: fees.manifest, manifestSha256: "0".repeat(64), updatedAt: iso(t0) })
   const ports = Layer.mergeAll(
     Layer.succeed(Registry, {
@@ -137,11 +139,40 @@ effect function at<A, E>(millis: number, program: A!E!unknown) {
   return try provided
 }
 
-effect function opened(title: string, openedAt: number) {
+effect function opened(title: string, openedAt: number, body: string = "") {
   const { fees } = try FeeWorld
-  const number = fees.fake.world.addPull({ repo, author: "carol", title, headSha: "1".padStart(40, "0") })
+  const number = fees.fake.world.addPull({ repo, author: "carol", title, body, createdAt: iso(openedAt), headSha: "1".padStart(40, "0") })
   fees.reports.set(number, { created_at: iso(openedAt) })
   return number
+}
+
+effect function wantedIssue(labelledAt: number) {
+  const { fees } = try FeeWorld
+  const world = fees.fake.world
+  const number = world.addIssue({ repo, author: "ada", title: `Wanted ${labelledAt}` })
+  const issue = world.item(repo, number)
+  world.addLabel(repo, { name: "slop-wanted" })
+  world.record(issue, "labeled", world.account("ada"), { label: { name: "slop-wanted" } })
+  const event = issue.timeline[issue.timeline.length - 1]
+  issue.timeline[issue.timeline.length - 1] = { ...event, createdAt: iso(labelledAt) }
+  return number
+}
+
+effect function keepMarked(number: number) {
+  const { fees } = try FeeWorld
+  const pull = fees.fake.world.pull(repo, number)
+  pull.labels = [...pull.labels, fees.fake.world.addLabel(repo, { name: "slop-keep-fee" })]
+}
+
+effect function keepLabelCalls() {
+  const { fees } = try FeeWorld
+  const labels = `/repositories/${repositoryId}/labels`
+  return fees.fake.requests.filter((entry) => [labels, `${labels}/slop-keep-fee`].includes(new URL(entry.url).pathname)).map((entry) => entry.method)
+}
+
+effect function gateOf(number: number) {
+  const { fees } = try FeeWorld
+  return try Effect.promise(() => fees.db.prepare("SELECT reason, next_check_at FROM slopbot_fee_gates WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, number).first<{ reason: string; next_check_at: string | null }>())
 }
 
 function pullRef(number: number) {
@@ -219,7 +250,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     })
   })
 
-  it.effect('A paid fee swaps the label and queues the held review, merged is refund due, closed a week is kept due, a withdrawn payment asks again, and an unpaid pull request is not ready (spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
+  it.effect('A paid fee swaps the label and queues the held review, merged is refund due, closed a week is kept due, unmarked wanted work closed a week is refund due and creates the keep label, marked wanted work is kept due, an unreadable wanted link waits a day, a label added after opening does not invite, a withdrawn payment asks again, and an unpaid pull request is not ready (spec/slopbot/submissionFeeGate.md, "A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row"; spec/slopbot/submissionFeeGate.md, "A withdrawn payment asks again"; spec/slopbot/submissionFeeGate.md, "Due checks are claimed before they are sent, 20 every five minutes"; spec/slopbot/readyLabel.md, "The decision takes the first failing condition, and only a running review or unsettled mergeability is pending")', () => effect {
     const { fees } = try FeeWorld
     const merged = try opened("Merged after paying", t0 - 1000)
     const kept = try opened("Closed after paying", t0 - 1000)
@@ -242,6 +273,44 @@ layer(World, { timeout: "240 seconds" })((it) => {
     try Effect.promise(() => fees.db.prepare("UPDATE submission_fee_items SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, withdrawn).run())
     const askedAgain = try refreshed(withdrawn, t0 + 6000)
     const notReady = try at(t0 + 7000, refreshReadyLabel(readyJob({ deliveryId: `ready-${withdrawn}`, installationId, repositoryId, owner: "ada", repo: "widgets", number: withdrawn })))
+    const wantedBefore = try wantedIssue(t0 - day)
+    const wantedAfter = try wantedIssue(t0)
+    const invited = try opened("Wanted work", t0 - 1000, `Closes #${wantedBefore}`)
+    const marked = try opened("Wanted work the maintainer keeps", t0 - 1000, `Closes #${wantedBefore}`)
+    const unread = try opened("Wanted link unreadable", t0 - 1000, `Closes #${wantedBefore}`)
+    const lateLabel = try opened("Labelled after opening", t0 - 1000, `Closes #${wantedAfter}`)
+    const wanted = [invited, marked, unread, lateLabel]
+    for (const number of wanted) try gated(number, t0)
+    for (const number of wanted) try paidBy(number, t0 + 1000)
+    for (const number of wanted) try refreshed(number, t0 + 3000)
+    for (const number of wanted) try closed(number, t0 + 4000, false)
+    const decidedAt = t0 + 4000 + 7 * day
+    const labelCallsBefore = try keepLabelCalls()
+    fees.fake.alterNext(new RegExp(`^POST /repositories/${repositoryId}/labels$`, "u"), () => {
+      const label = fees.fake.world.addLabel(repo, { name: "slop-keep-fee", color: "b60205" })
+      return new Response(JSON.stringify({ name: label.name, color: label.color }), { status: 201, headers: { "content-type": "application/json" } })
+    })
+    try refreshed(invited, decidedAt)
+    const labelCallsInvited = try keepLabelCalls()
+    try keepMarked(marked)
+    try refreshed(marked, decidedAt)
+    const labelCallsMarked = try keepLabelCalls()
+    fees.unreadLink = true
+    try refreshed(unread, decidedAt)
+    fees.unreadLink = false
+    const labelCallsUnread = try keepLabelCalls()
+    try refreshed(lateLabel, decidedAt)
+    try same({
+      invited: { item: (try seen(invited)).item?.outcome ?? null, gate: (try gateOf(invited))?.reason ?? null, labelCalls: labelCallsInvited.slice(labelCallsBefore.length), repositoryLabel: fees.fake.world.repo(repo).labels.has("slop-keep-fee") },
+      marked: { item: (try seen(marked)).item?.outcome ?? null, gate: (try gateOf(marked))?.reason ?? null, labelCalls: labelCallsMarked.slice(labelCallsInvited.length) },
+      unread: { item: (try seen(unread)).item?.outcome ?? null, gate: try gateOf(unread), labelCalls: labelCallsUnread.slice(labelCallsMarked.length) },
+      lateLabel: { item: (try seen(lateLabel)).item?.outcome ?? null, gate: (try gateOf(lateLabel))?.reason ?? null },
+    }, {
+      invited: { item: "refund_due", gate: "refund_due: wanted", labelCalls: ["GET", "POST"], repositoryLabel: true },
+      marked: { item: "kept_due", gate: "kept_due: marked", labelCalls: ["GET"] },
+      unread: { item: null, gate: { reason: "fee-paid", next_check_at: iso(decidedAt + day) }, labelCalls: [] },
+      lateLabel: { item: "kept_due", gate: "kept_due: closed" },
+    })
     try same({
       unpaidBefore,
       dispatched,

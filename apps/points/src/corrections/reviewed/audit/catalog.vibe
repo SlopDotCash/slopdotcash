@@ -1,0 +1,341 @@
+// spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"
+import { D1 } from "@repo/platform/d1"
+import { parsedJson, sha256Of, textBytes } from "@repo/platform/git/bytes"
+
+export error AssessmentCatalogRefused { message: string }
+
+export interface HistoricalAssessmentScope {
+  readonly projectId: string
+  readonly repositoryNodeId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly expectedPointsDigest: string
+}
+
+export interface HistoricalAssessmentJournalHeads {
+  readonly jointThrough: number
+  readonly legacyThrough: number
+}
+
+export interface HistoricalAssessmentHeads extends HistoricalAssessmentJournalHeads {
+  readonly jointScopedCount: number
+  readonly legacyRepoCount: number
+  readonly d1PointsDigest: string
+  readonly d1PointsCount: number
+  readonly enforcementGeneration: number
+  readonly registryRevision: number
+  readonly registryManifestSha256: string
+}
+
+export interface AssessmentCatalogRow {
+  readonly sequence: number
+  readonly record_digest: string
+  readonly record_json: string
+  readonly recorded_at: string
+}
+
+export interface JointAssessmentCatalogRow extends AssessmentCatalogRow {
+  readonly project_id: string
+  readonly source_digest: string
+  readonly source_keys_json: string
+}
+
+export interface LegacyAssessmentCatalogRow extends AssessmentCatalogRow {
+  readonly repository_node_id: string
+  readonly pull_request_node_id: string
+  readonly head_sha: string
+  readonly source_digest: string
+  readonly supersedes: string | null
+}
+
+export interface HistoricalAssessmentCatalog {
+  readonly heads: HistoricalAssessmentHeads
+  readonly joint: ReadonlyArray<JointAssessmentCatalogRow>
+  readonly legacy: ReadonlyArray<LegacyAssessmentCatalogRow>
+}
+
+export type Row = Readonly<Record<string, unknown>>
+
+type ScopeKeys = Pick<HistoricalAssessmentScope, "projectId" | "repositoryNodeId">
+
+interface Descriptor {
+  readonly sequence: number
+  readonly digest: string
+  readonly bytes: number
+}
+
+interface CatalogSource<T> {
+  readonly table: "slopbot_work_unit_journal" | "slopbot_value_journal"
+  readonly scopeSql: string
+  readonly columns: string
+  readonly through: number
+  readonly count: number
+  readonly decode: (row: Row, base: AssessmentCatalogRow, value: Row) => T!AssessmentCatalogRefused
+}
+
+const descriptorPageSize = 100
+const bodyPageBytes = 2_000_000
+const digestPattern = /^[a-f0-9]{64}$/u
+const commitPattern = /^[a-f0-9]{40}$/u
+const nodePattern = /^[A-Za-z0-9_=+/-]{1,256}$/u
+const projectPattern = /^[a-z0-9][a-z0-9-]{0,47}$/u
+const journalHeadsSql = `SELECT
+  COALESCE((SELECT MAX(sequence) FROM slopbot_work_unit_journal), 0) AS joint_through,
+  COALESCE((SELECT MAX(sequence) FROM slopbot_value_journal), 0) AS legacy_through`
+const jointIndexColumns = `r.project_id, r.source_digest,
+  (
+    (SELECT COUNT(*) FROM slopbot_work_unit_sources s
+      WHERE s.record_digest = r.record_digest)
+      = json_array_length(r.record_json, '$.sources')
+    AND NOT EXISTS (
+      SELECT 1 FROM slopbot_work_unit_sources s
+      WHERE s.record_digest = r.record_digest AND NOT EXISTS (
+        SELECT 1 FROM json_each(r.record_json, '$.sources') source
+        WHERE json_extract(source.value, '$.repositoryNodeId') = s.repository_node_id
+          AND json_extract(source.value, '$.pullRequestNodeId') = s.pull_request_node_id
+      )
+    )
+  ) AS source_index_matches`
+const legacyColumns = "r.repository_node_id, r.pull_request_node_id, r.head_sha, r.source_digest, r.supersedes"
+const latestBatch = "SELECT digest, revision_count FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1"
+
+function quote(value: string) {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+effect function requireCatalog(holds: boolean, reason: string) {
+  if (!holds) throw new AssessmentCatalogRefused({ message: `Historical assessment catalog: ${reason}` })
+}
+
+effect function query(text: string) {
+  return try (try D1).all({ text, params: [] })
+}
+
+function isRow(value: unknown): value is Row {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function record(value: unknown) {
+  try requireCatalog(isRow(value), "invalid database or record shape")
+  return value as Row
+}
+
+effect function integer(value: unknown) {
+  try requireCatalog(typeof value === "number" && Number.isSafeInteger(value) && value >= 0, "invalid sequence or row count")
+  return value as number
+}
+
+effect function validatedText(value: unknown, pattern: RegExp) {
+  try requireCatalog(typeof value === "string" && pattern.test(value), "invalid immutable binding")
+  return value as string
+}
+
+effect function parseRecord(raw: string) {
+  const parsed = parsedJson(raw)
+  try requireCatalog(parsed !== undefined, "invalid stored JSON")
+  return try record(parsed?.value)
+}
+
+effect function descriptorPage(input: ReadonlyArray<unknown>, after: number, through: number, expectedCount: number, seen: Set<string>) {
+  try requireCatalog(input.length === expectedCount, "incomplete descriptor page")
+  const descriptors: Descriptor[] = []
+  let previous = after
+  for (const value of input) {
+    const row = try record(value)
+    const sequence = try integer(row.sequence)
+    const digest = try validatedText(row.record_digest, digestPattern)
+    const bytes = try integer(row.record_bytes)
+    try requireCatalog(sequence > previous && sequence <= through && !seen.has(digest), "invalid descriptor cursor or identity")
+    try requireCatalog(bytes > 0 && bytes <= bodyPageBytes && (try integer(row.timestamp_bytes)) <= 128, "record exceeds the protected read bound")
+    previous = sequence
+    seen.add(digest)
+    descriptors.push({ sequence, digest, bytes })
+  }
+  return descriptors
+}
+
+function bodyPages(descriptors: ReadonlyArray<Descriptor>) {
+  const pages: Descriptor[][] = []
+  let page: Descriptor[] = []
+  let bytes = 0
+  for (const descriptor of descriptors) {
+    if (bytes + descriptor.bytes > bodyPageBytes) {
+      pages.push(page)
+      page = []
+      bytes = 0
+    }
+    page.push(descriptor)
+    bytes += descriptor.bytes
+  }
+  if (page.length > 0) pages.push(page)
+  return pages
+}
+
+effect function verifiedBody(value: unknown, descriptor: Descriptor | undefined) {
+  const row = try record(value)
+  const raw = row.record_json
+  const recordedAt = row.recorded_at
+  try requireCatalog(descriptor !== undefined && row.sequence === descriptor.sequence && row.record_digest === descriptor.digest && typeof raw === "string" &&
+    textBytes(raw).length === descriptor.bytes && sha256Of(raw) === descriptor.digest && typeof recordedAt === "string" &&
+    textBytes(recordedAt).length <= 128 && Number.isFinite(Date.parse(recordedAt)), "stored bytes do not match their descriptor")
+  return { sequence: descriptor?.sequence ?? 0, record_digest: descriptor?.digest ?? "", record_json: raw as string, recorded_at: recordedAt as string } satisfies AssessmentCatalogRow
+}
+
+effect function readSource<T>(source: CatalogSource<T>) {
+  const found: T[] = []
+  const seen = new Set<string>()
+  const { table, scopeSql, columns, count, through, decode } = source
+  let after = 0
+  while (found.length < count) {
+    const pageSize = Math.min(descriptorPageSize, count - found.length)
+    const descriptors = try descriptorPage(try query(`SELECT r.sequence, r.record_digest,
+        length(CAST(r.record_json AS BLOB)) AS record_bytes,
+        length(CAST(r.recorded_at AS BLOB)) AS timestamp_bytes
+      FROM ${table} r
+      WHERE r.sequence > ${after} AND r.sequence <= ${through} AND (${scopeSql})
+      ORDER BY r.sequence LIMIT ${pageSize}`), after, through, pageSize, seen)
+    for (const page of bodyPages(descriptors)) {
+      const bodies = try query(`SELECT r.sequence, r.record_digest, r.record_json,
+        r.recorded_at, ${columns}
+      FROM ${table} r
+      WHERE r.sequence <= ${through} AND (${scopeSql})
+        AND r.sequence IN (${page.map(({ sequence }) => sequence).join(",")})
+      ORDER BY r.sequence`)
+      try requireCatalog(bodies.length === page.length, "incomplete body page")
+      for (const [index, value] of bodies.entries()) {
+        const base = try verifiedBody(value, page[index])
+        found.push(try decode(try record(value), base, try parseRecord(base.record_json)))
+      }
+    }
+    after = descriptors[descriptors.length - 1]?.sequence ?? through
+  }
+  return found
+}
+
+function jointDecoder(scope: HistoricalAssessmentScope) {
+  return effect (row: Row, base: AssessmentCatalogRow, value: Row) => {
+    const sourceDigest = try validatedText(row.source_digest, digestPattern)
+    const sources = value.sources
+    try requireCatalog(row.project_id === scope.projectId && value.schemaVersion === "slop-work-unit-record:v1" && value.projectId === scope.projectId &&
+      value.sourceDigest === sourceDigest && row.source_index_matches === 1 && Array.isArray(sources) && sources.length > 0,
+      "joint record or source index differs from project scope")
+    const pullIds: string[] = []
+    for (const source of sources as ReadonlyArray<unknown>) {
+      const item = try record(source)
+      try requireCatalog(item.repositoryNodeId === scope.repositoryNodeId, "joint record refers to another repository")
+      pullIds.push(try validatedText(item.pullRequestNodeId, nodePattern))
+    }
+    try requireCatalog(new Set(pullIds).size === pullIds.length, "joint source keys are duplicated")
+    const sourceKeys = pullIds.sort().map((id) => [scope.repositoryNodeId, id])
+    return { ...base, project_id: scope.projectId, source_digest: sourceDigest, source_keys_json: JSON.stringify(sourceKeys) } satisfies JointAssessmentCatalogRow
+  }
+}
+
+function legacyDecoder(scope: HistoricalAssessmentScope) {
+  return effect (row: Row, base: AssessmentCatalogRow, value: Row) => {
+    const pullId = try validatedText(row.pull_request_node_id, nodePattern)
+    const headSha = try validatedText(row.head_sha, commitPattern)
+    const sourceDigest = try validatedText(row.source_digest, digestPattern)
+    const supersedes = row.supersedes === null ? null : try validatedText(row.supersedes, digestPattern)
+    try requireCatalog(row.repository_node_id === scope.repositoryNodeId && value.schemaVersion === "slop-value-record:v1" && value.projectId === scope.projectId &&
+      value.repositoryNodeId === scope.repositoryNodeId && value.pullRequestNodeId === pullId && value.headSha === headSha &&
+      value.sourceDigest === sourceDigest && value.supersedes === supersedes, "legacy record differs from its indexed scope")
+    return { ...base, repository_node_id: scope.repositoryNodeId, pull_request_node_id: pullId, head_sha: headSha, source_digest: sourceDigest, supersedes } satisfies LegacyAssessmentCatalogRow
+  }
+}
+
+effect function assessmentJournalScopes(scope: ScopeKeys) {
+  const projectId = quote(try validatedText(scope.projectId, projectPattern))
+  const repositoryNodeId = quote(try validatedText(scope.repositoryNodeId, nodePattern))
+  return {
+    projectId,
+    repositoryNodeId,
+    jointScope: `r.project_id = ${projectId} OR EXISTS (SELECT 1 FROM slopbot_work_unit_sources s WHERE s.record_digest = r.record_digest AND s.repository_node_id = ${repositoryNodeId})`,
+    legacyScope: `r.repository_node_id = ${repositoryNodeId}`,
+  }
+}
+
+function activeProject(projectId: string, revision: number, manifestSha256: string, repositoryNodeId: string) {
+  return `p.id = ${projectId} AND p.revision = ${revision} AND p.manifest_sha256 = ${quote(manifestSha256)} AND p.status = 'active' AND json_extract(p.manifest, '$.authority.repositoryNodeId') = ${repositoryNodeId} AND json_array_length(p.manifest, '$.repositories') = 1`
+}
+
+export effect function readHistoricalAssessmentJournalHeads() {
+  const found = try query(journalHeadsSql)
+  try requireCatalog(found.length === 1, "journal heads unavailable")
+  const row = try record(found[0])
+  return { jointThrough: try integer(row.joint_through), legacyThrough: try integer(row.legacy_through) } satisfies HistoricalAssessmentJournalHeads
+}
+
+export effect function historicalAssessmentRecordingConditions(scope: ScopeKeys, heads: HistoricalAssessmentJournalHeads) {
+  const { jointScope, legacyScope } = try assessmentJournalScopes(scope)
+  return [
+    `NOT EXISTS (SELECT 1 FROM slopbot_work_unit_journal r WHERE r.sequence > ${try integer(heads.jointThrough)} AND (${jointScope}))`,
+    `NOT EXISTS (SELECT 1 FROM slopbot_value_journal r WHERE r.sequence > ${try integer(heads.legacyThrough)} AND (${legacyScope}))`,
+  ]
+}
+
+export effect function historicalPointsBaselineCondition(digest: string, revisionCount: number) {
+  return `EXISTS (SELECT 1 FROM (${latestBatch}) baseline WHERE baseline.digest = ${quote(try validatedText(digest, digestPattern))} AND baseline.revision_count = ${try integer(revisionCount)})`
+}
+
+export effect function historicalAssessmentFreshness(scope: HistoricalAssessmentScope, heads: HistoricalAssessmentHeads) {
+  const { projectId, repositoryNodeId } = try assessmentJournalScopes(scope)
+  const current = [
+    ...(try historicalAssessmentRecordingConditions(scope, heads)),
+    try historicalPointsBaselineCondition(scope.expectedPointsDigest, heads.d1PointsCount),
+    `EXISTS (SELECT 1 FROM projects p WHERE ${activeProject(projectId, try integer(scope.revision), try validatedText(scope.manifestSha256, digestPattern), repositoryNodeId)})`,
+    `(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ${try integer(heads.enforcementGeneration)}`,
+  ]
+  const found = try query(`SELECT (${current.join(" AND ")}) AS fresh`)
+  return found.length === 1 && found[0]?.fresh === 1
+}
+
+export effect function assertHistoricalAssessmentFreshness(scope: HistoricalAssessmentScope, heads: HistoricalAssessmentHeads) {
+  try requireCatalog(try historicalAssessmentFreshness(scope, heads), "assessment qualification changed during collection")
+}
+
+export effect function readHistoricalAssessmentCatalog(requested: HistoricalAssessmentScope, through?: HistoricalAssessmentJournalHeads) {
+  const scope = { ...requested }
+  const { projectId, repositoryNodeId, jointScope, legacyScope } = try assessmentJournalScopes(scope)
+  const revision = try integer(scope.revision)
+  try requireCatalog(revision > 0, "registry revision is missing")
+  const manifestSha256 = try validatedText(scope.manifestSha256, digestPattern)
+  const expectedPointsDigest = try validatedText(scope.expectedPointsDigest, digestPattern)
+  let headsSql = journalHeadsSql
+  if (through !== undefined) {
+    const joint = try integer(through.jointThrough)
+    const legacy = try integer(through.legacyThrough)
+    headsSql = `SELECT ${joint} AS joint_through, ${legacy} AS legacy_through
+      FROM (${journalHeadsSql}) current_heads
+      WHERE current_heads.joint_through >= ${joint} AND current_heads.legacy_through >= ${legacy}`
+  }
+  const output = try query(`SELECT h.joint_through, h.legacy_through,
+    (SELECT COUNT(*) FROM slopbot_work_unit_journal r
+      WHERE r.sequence <= h.joint_through AND (${jointScope})) AS joint_scoped_count,
+    (SELECT COUNT(*) FROM slopbot_value_journal r
+      WHERE r.sequence <= h.legacy_through AND (${legacyScope})) AS legacy_repo_count,
+    checkpoint.digest AS d1_points_digest,
+    checkpoint.revision_count AS d1_points_count,
+    (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) AS enforcement_generation,
+    p.revision AS registry_revision, p.manifest_sha256 AS registry_manifest_sha256
+  FROM (${headsSql}) h CROSS JOIN (${latestBatch}) checkpoint CROSS JOIN projects p
+  WHERE ${activeProject(projectId, revision, manifestSha256, repositoryNodeId)}`)
+  try requireCatalog(output.length === 1, "scope head unavailable")
+  const head = try record(output[0])
+  const heads: HistoricalAssessmentHeads = {
+    jointThrough: try integer(head.joint_through),
+    legacyThrough: try integer(head.legacy_through),
+    jointScopedCount: try integer(head.joint_scoped_count),
+    legacyRepoCount: try integer(head.legacy_repo_count),
+    d1PointsDigest: try validatedText(head.d1_points_digest, digestPattern),
+    d1PointsCount: try integer(head.d1_points_count),
+    enforcementGeneration: try integer(head.enforcement_generation),
+    registryRevision: try integer(head.registry_revision),
+    registryManifestSha256: try validatedText(head.registry_manifest_sha256, digestPattern),
+  }
+  try requireCatalog(heads.registryRevision === revision && heads.registryManifestSha256 === manifestSha256 && heads.d1PointsDigest === expectedPointsDigest &&
+    heads.jointScopedCount <= heads.jointThrough && heads.legacyRepoCount <= heads.legacyThrough, "registry, Points checkpoint or journal heads changed")
+  const joint = try readSource({ table: "slopbot_work_unit_journal", scopeSql: jointScope, columns: jointIndexColumns, count: heads.jointScopedCount, through: heads.jointThrough, decode: jointDecoder(scope) })
+  const legacy = try readSource({ table: "slopbot_value_journal", scopeSql: legacyScope, columns: legacyColumns, count: heads.legacyRepoCount, through: heads.legacyThrough, decode: legacyDecoder(scope) })
+  return { heads, joint, legacy } satisfies HistoricalAssessmentCatalog
+}

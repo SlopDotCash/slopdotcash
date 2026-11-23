@@ -1,0 +1,265 @@
+import { assert, it, layer } from "@effect/vitest"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { outboundVia } from "@repo/platform/http"
+import { type Answer, Area, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { proveCandidates } from "../src/corrections/apply/prove.vibe"
+import { type CollectionInputs, type CollectionOptions, type Provenance, collectCorrections } from "../src/corrections/collect/collect.vibe"
+import { lacksDirectAcceptance } from "../src/corrections/collect/retained.vibe"
+import { verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import { type Journal, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { collectionServices } from "../src/programs/corrections.vibe"
+import { resumeAcrossQuota } from "../src/quotaRecovery/run.vibe"
+import { absentService } from "./support/u11/pages.ts"
+import { actionsRepository, day, fastClock, mainHead, repository, start } from "./support/u13/github.ts"
+import { alpha, author, baseGeneratedAt, carrier, censusDigest, collectedAt, correctionRule, receiptSchema, registry, sourceOf, urlOf } from "./support/u14/fixtures.ts"
+
+type Body = Readonly<Record<string, unknown>>
+type CensusSource = ReturnType<typeof sourceOf>
+
+interface Collected {
+  readonly manifest: string
+  readonly receipt: string
+  readonly digest: string
+}
+
+interface Plan {
+  readonly dispositions: ReadonlyArray<{ readonly candidateId: string; readonly status: string }>
+  readonly phases: ReadonlyArray<string>
+  readonly journal: string
+}
+
+const root = new URL("..", import.meta.url).pathname
+const earlierSource = "PR_kwDOearlier1"
+const firstSha = "1".repeat(39) + String(alpha.number)
+const headSha = "2".repeat(39) + String(alpha.number)
+
+const Corrections = areaLayer({
+  root,
+  config: "test/support/u14/vite.config.ts",
+  entry: "corrections",
+  d1: { SLOP_DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local" },
+  services: { SLOP_IDENTITY: absentService() },
+})
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null && !Array.isArray(answer.body) ? answer.body as Body : {}
+}
+
+function iso(millis: number) {
+  return new Date(millis).toISOString()
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function recordedPool(holder: { readonly id: string; readonly login: string }) {
+  const key = try pointKey({ projectId: alpha.project, actorId: holder.id, category: "merged-pull-request", sourceId: alpha.source })
+  const body: RevisionBody = {
+    previous: null,
+    recordedAt: alpha.recordedAt,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: {
+      key,
+      actor: { id: holder.id, login: holder.login },
+      projectId: alpha.project,
+      category: "merged-pull-request",
+      amount: 30,
+      occurredAt: alpha.occurredAt,
+      sourceId: alpha.source,
+      sourceUrl: urlOf(alpha),
+      workUnitId: alpha.source,
+      provisional: false,
+    },
+  }
+  const revision = { id: try pointRevisionId(body), ...body } satisfies Revision
+  return try journalFile(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: baseGeneratedAt, coverage: [], revisions: [revision] })}\n`)
+}
+
+function censusOf(commits: CensusSource["commits"]): CensusSource {
+  return { ...sourceOf(alpha), commits }
+}
+
+effect function collected(base: Journal, source: CensusSource) {
+  const revisionIdsDigest = try sha256Hex(JSON.stringify(base.revisions.map((revision) => revision.id)))
+  const latest = new Map(base.revisions.map((revision) => [revision.award.key, revision] as const))
+  const candidate = {
+    id: `correction_${alpha.project}`,
+    kind: "pull-request",
+    projectId: alpha.project,
+    sourceId: alpha.source,
+    sourceUrl: urlOf(alpha),
+    occurredAt: alpha.occurredAt,
+    workUnitId: alpha.source,
+    sourceIds: [alpha.source],
+    expectedPredecessors: [...latest.values()].map((revision) => ({ key: revision.award.key, revisionId: revision.id })),
+    proof: { status: "complete", censusDigest, sources: [source] },
+  }
+  const manifest = JSON.stringify({ schemaVersion: "1", rule: correctionRule, generatedAt: collectedAt, baseline: { revisionCount: base.revisions.length, revisionIdsDigest }, candidates: [candidate] })
+  const digest = try sha256Hex(manifest)
+  const receipt = JSON.stringify({
+    schemaVersion: receiptSchema,
+    manifestDigest: digest,
+    through: collectedAt,
+    projects: [alpha.project],
+    totalPositivePools: 1,
+    completeProofs: 1,
+    heldProofs: 0,
+    ownershipComplete: true,
+    registryDigest: try sha256Hex(registry),
+  })
+  return { manifest: `${manifest}\n`, receipt, digest } satisfies Collected
+}
+
+effect function planned(journal: string, collection: Collected, recordedAt: string) {
+  const answer = try (try Area).post("/api/v1/test/points/corrections/plan", { journal, manifest: collection.manifest, receipt: collection.receipt, registry, bans: [], recordedAt, mode: "apply", reviewed: collection.digest })
+  return fields(answer) as unknown as Plan
+}
+
+effect function appended(base: Journal, text: string) {
+  const journal = try journalFile(text)
+  return journal.revisions.slice(base.revisions.length).map((revision) => ({
+    actor: revision.award.actor.id,
+    amount: revision.award.amount,
+    previous: revision.previous,
+    sourceDigest: revision.sourceDigest,
+    reason: revision.decision?.reason,
+    delta: revision.decision?.delta,
+  }))
+}
+
+function outcomeOf(plan: Plan, journal: string) {
+  return { dispositions: plan.dispositions, phases: plan.phases, unchanged: plan.journal === journal }
+}
+
+layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('An empty promotion marker cannot reallocate previously credited implementation (spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "A historical source retains its original carrier and every successor")', () => effect {
+    const base = try recordedPool(carrier)
+    const baseText = `${journalText(base)}\n`
+    const marker = censusOf([
+      { sha: firstSha, parentCount: 1, author, additions: 0, deletions: 0, firstAcceptedSourceId: alpha.source },
+      { sha: headSha, parentCount: 1, author, additions: 5, deletions: 1, firstAcceptedSourceId: earlierSource },
+    ])
+    const plan = try planned(baseText, try collected(base, marker), "2026-11-12T00:00:00.000Z")
+    try same(outcomeOf(plan, baseText), {
+      dispositions: [{ candidateId: `correction_${alpha.project}`, status: "held" }],
+      phases: ["EvidenceHeld"],
+      unchanged: true,
+    })
+  })
+
+  it.effect('An already-correct pool records its complete earlier-acceptance proof once (spec/points/corrections.md, "An already-correct pool records its earlier-acceptance proof once"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor")', () => effect {
+    const base = try recordedPool(author)
+    const baseText = `${journalText(base)}\n`
+    const proof = censusOf([
+      { sha: firstSha, parentCount: 1, author, additions: 10, deletions: 2, firstAcceptedSourceId: alpha.source },
+      { sha: headSha, parentCount: 1, author, additions: 5, deletions: 0, firstAcceptedSourceId: earlierSource },
+    ])
+    const collection = try collected(base, proof)
+    const first = try planned(baseText, collection, "2026-11-12T00:00:00.000Z")
+    try same({ dispositions: first.dispositions, phases: first.phases, rows: try appended(base, first.journal) }, {
+      dispositions: [{ candidateId: `correction_${alpha.project}`, status: "applied" }],
+      phases: ["Applied"],
+      rows: [{ actor: author.id, amount: 30, previous: base.revisions[0]?.id ?? null, sourceDigest: collection.digest, reason: verifiedHistoricalAllocationDecision, delta: 0 }],
+    })
+
+    const replay = try planned(first.journal, collection, "2026-11-13T00:00:00.000Z")
+    const confirmed = try journalFile(first.journal)
+    const again = try planned(first.journal, try collected(confirmed, proof), "2026-11-13T00:00:00.000Z")
+    try same({ replay: outcomeOf(replay, first.journal), again: outcomeOf(again, first.journal) }, {
+      replay: { dispositions: [{ candidateId: `correction_${alpha.project}`, status: "already-applied" }], phases: ["Replayed"], unchanged: true },
+      again: { dispositions: [{ candidateId: `correction_${alpha.project}`, status: "unchanged" }], phases: ["Unchanged"], unchanged: true },
+    })
+  })
+})
+
+function acceptanceWorld() {
+  const clock = fastClock(start - 50 * day)
+  const fake = githubFake({ now: () => clock.now() })
+  fake.world.addUser({ id: 101, login: "ada" })
+  const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" })
+  const base = created.branches.get(created.defaultBranch) ?? ""
+  const original = fake.world.addCommit(repository, { branch: "original", parents: [base], author: "ada", files: { "src/carried.ts": "original\n" } })
+  fake.world.addPull({ repo: repository, number: 1, author: "ada", state: "closed", commits: [original], headSha: original })
+  const carried = fake.world.addCommit(repository, { branch: "carried", parents: [base], files: { "src/carried.ts": "carried\n" } })
+  const mergedAt = start - 20 * day
+  fake.world.addPull({ repo: repository, number: 2, author: "ada", body: "Carries #1 forward.", mergedAt: iso(mergedAt), commits: [carried], headSha: carried })
+  clock.set(start)
+  return {
+    clock,
+    fetcher: { fetch: (request: Request) => fake.fetch(request) },
+    token: fake.tokens.user("ada"),
+    directory: mkdtempSync(join(tmpdir(), "slop-retained-")),
+    source: fake.world.pull(repository, 2).nodeId,
+    mergedAt,
+    ada: fake.world.account("ada").nodeId,
+  }
+}
+
+type World = ReturnType<typeof acceptanceWorld>
+
+effect function inputsOf(world: World) {
+  const category = "merged-pull-request"
+  const award = {
+    key: try pointKey({ projectId: "widgets", actorId: world.ada, category, sourceId: world.source }),
+    actor: { id: world.ada, login: "ada" },
+    projectId: "widgets",
+    category,
+    amount: 20,
+    occurredAt: iso(world.mergedAt),
+    sourceId: world.source,
+    sourceUrl: `https://github.com/${repository}/pull/2`,
+    workUnitId: `history_${world.source}`,
+    provisional: false,
+  }
+  const body = { previous: null, recordedAt: iso(start - day), sourceDigest: "a".repeat(64), sourceRule: "slop-score-v1", award }
+  const revision = { id: try pointRevisionId(body), ...body } satisfies Revision
+  const project = {
+    id: "widgets",
+    status: "active",
+    listingTier: "listed",
+    authority: {},
+    reward: { committedMinor: "0", monthlyCapMinor: "0" },
+    skill: {},
+    repositories: [{ id: repository, githubUrl: `https://github.com/${repository}`, displayName: "widgets", description: "widgets", integrationBranch: "main" }],
+  }
+  return {
+    journal: { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: iso(start - day), coverage: [], revisions: [revision] },
+    registry: { projects: [project] },
+    collectedAt: start,
+  } satisfies CollectionInputs
+}
+
+effect function collectedFrom(world: World) {
+  const options = { projects: ["widgets"], directory: world.directory, before: iso(start - 3_600_000) } satisfies CollectionOptions
+  const provenance: Provenance = { authority: { manual: true, onMain: true, repository: actionsRepository, head: mainHead } }
+  const services = Layer.provideMerge(
+    collectionServices({ directory: world.directory, token: Redacted.make(world.token), limits: { started: world.clock.now(), budget: 1_000, durationMs: 180_000 } }),
+    Layer.mergeAll(webCrypto, outboundVia(world.fetcher), NodeServices.layer),
+  )
+  const inputs = try inputsOf(world)
+  provide services, world.clock.layer {
+    return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenance, proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
+  }
+}
+
+it.live('A retained original is bound only to a directly accepted pull request (spec/points/corrections.md, "A historical source retains its original carrier and every successor")', () => effect {
+  const world = try Effect.try(() => acceptanceWorld())
+  const result = try collectedFrom(world)
+  const candidate = result.manifest.candidates.find((entry) => entry.sourceId === world.source)
+  try same({
+    proof: candidate?.proof.status,
+    refusals: result.receipt.limitations.filter((entry) => entry.id === candidate?.id).map((entry) => entry.reason),
+  }, {
+    proof: "held",
+    refusals: [lacksDirectAcceptance],
+  })
+})

@@ -1,4 +1,4 @@
-// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
 import { sha256Hex } from "@repo/platform/crypto"
 import { GitHub } from "@repo/platform/github"
 import { apply as applyCorrection, initial as openCorrection } from "../../../gen/points__corrections.effect.vibe"
@@ -15,6 +15,7 @@ import { EvidenceCache, atomicJson, atomicText, metadataDocument, readJson, reta
 import { type CorrectionBaseline, type CorrectionCandidate, type CorrectionManifest, type CorrectionPool, correctionBaseline, correctionRule, digestOf, encoded, hasBaselinePrefix, inventoryCorrectionPools } from "./inventory.vibe"
 import { type CensusMonth, canonicalInstant, censusMonths, historicalCutoff, isCanonicalInstant, isCensusMonth, wholeSecondIso } from "./calendar.vibe"
 import { assertCorrectionRegistry } from "./registry.vibe"
+import { discoverRetained, discoveryStale, hasUnlinkedCommit } from "./retained.vibe"
 
 export const collectorWorkflow = ".github/workflows/points-implementation-corrections.yml"
 export const newCampaignPageSize = 50
@@ -104,6 +105,7 @@ export interface CollectedEvidence {
   readonly reads: ReadonlyMap<string, SourceRead>
   readonly outcomes: ReadonlyArray<MergedOutcome>
   readonly owners: ReadonlyMap<string, string>
+  readonly withoutRetainedOriginals: ReadonlySet<string>
   readonly ownershipComplete: boolean
   readonly missingMonths: ReadonlyArray<string>
   readonly supplementDigests: ReadonlyArray<string>
@@ -720,6 +722,40 @@ effect function censusSupplements(directory: string, campaign: Campaign, pools: 
   return { outcomes, digests, fences, unavailable }
 }
 
+effect function retainedDiscoveries(selected: ReadonlyArray<CorrectionPool>, reads: ReadonlyMap<string, SourceRead>, owners: ReadonlyMap<string, string>, options: CollectionOptions, limitations: Map<string, string>) {
+  const discovered = new Set<string>()
+  for (const { candidate } of selected) {
+    const read = reads.get(candidate.sourceId)
+    const commits = read?.outcome.commits ?? null
+    if (read === undefined || commits === null || candidate.kind !== "pull-request" || limitations.has(candidate.id) ||
+      (options.octoberOriginalCredit === true && candidate.occurredAt.startsWith("2026-10-"))) continue
+    const { outcome } = read
+    const repository = repositoryIdOf(outcome.url)
+    if (!hasUnlinkedCommit(commits, (oid) => owners.get(commitKey(repository, oid)) === outcome.id)) continue
+    const occurredAt = canonicalInstant(outcome.mergedAt)
+    if (occurredAt === undefined) {
+      limitations.set(candidate.id, discoveryStale)
+      continue
+    }
+    const source = {
+      repository,
+      repositoryNodeId: read.repositoryNodeId,
+      sourceId: outcome.id,
+      number: outcome.number,
+      headSha: outcome.headRefOid,
+      occurredAt,
+      ...(read.mergeCommit === undefined ? {} : { mergeCommit: read.mergeCommit }),
+    }
+    const found = discoverRetained(source) catch effect (error) => {
+      if (error._tag !== "RetainedRefused") throw error
+      limitations.set(candidate.id, error.message)
+      return undefined
+    }
+    if (found === "no-retained-original") discovered.add(candidate.sourceId)
+  }
+  return discovered
+}
+
 export effect function collectEvidence(options: CollectionOptions, inputs: CollectionInputs, provenance: Provenance) {
   try (try EvidenceCache).beginPass()
   try validated(options)
@@ -768,6 +804,7 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     if (!ownershipComplete) limitations.set(candidate.id, "repository-ownership-census-incomplete")
     else if (!reads.has(candidate.sourceId)) limitations.set(candidate.id, limitations.get(candidate.sourceId) ?? "source-unavailable")
   }
+  const withoutRetainedOriginals = ownershipComplete ? try retainedDiscoveries(selected, reads, owners, options, limitations) : new Set<string>()
   return {
     options,
     campaign,
@@ -777,6 +814,7 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     reads,
     outcomes: supplemented.outcomes,
     owners,
+    withoutRetainedOriginals,
     ownershipComplete,
     missingMonths: census.missingMonths,
     supplementDigests,

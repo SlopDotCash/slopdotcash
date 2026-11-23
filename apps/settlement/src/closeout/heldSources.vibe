@@ -1,0 +1,136 @@
+// spec/settlement/asiNovemberCloseout.md, "The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { rows, sql } from "@repo/platform/d1"
+import type { HeldWorkUnit, UnavailableSource } from "@repo/points/client"
+import type { HeldWork } from "../../gen/settlement__asiNovemberCloseout.ts"
+import { type Period, periodStartSeconds } from "../kernels/calendar.ts"
+
+export error CloseoutRefused { message: string }
+
+export const digestPattern = /^[a-f0-9]{64}$/u
+
+export schema IdentityAuthority { readonly repositoryId?: string | number; readonly repositoryNodeId?: string }
+export schema IdentityRepository { readonly id: string; readonly aliases?: ReadonlyArray<string>; readonly githubId?: string | number; readonly nodeId?: string; readonly countsFrom?: string }
+export schema IdentityProject { readonly id: string; readonly authority?: IdentityAuthority; readonly repositories: ReadonlyArray<IdentityRepository> }
+export schema IdentityRegistry { readonly projects: ReadonlyArray<IdentityProject> }
+
+export schema JournalRow { readonly recordDigest: string; readonly projectId: string; readonly recordJson: string; readonly sourceKeys: string }
+schema RecordSource { readonly repository: string; readonly repositoryNodeId: string; readonly pullRequestNodeId: string; readonly pullRequestNumber: number; readonly repositoryDatabaseId: number }
+schema WorkUnitRecord { readonly schemaVersion: string; readonly projectId: string; readonly sourceDigest: string; readonly sources: ReadonlyArray<RecordSource> }
+
+const SourceKeys = Schema.Array(Schema.Unknown)
+
+export type HeldRecord = JournalRow
+
+export interface HeldSources {
+  readonly heldWorkUnits?: ReadonlyArray<HeldWorkUnit>
+  readonly unavailableSources?: ReadonlyArray<UnavailableSource>
+}
+
+interface Identity {
+  readonly nodeId: string
+  readonly githubId: string
+}
+
+interface Registered {
+  readonly projectId: string
+  readonly identity: Identity | undefined
+}
+
+export function refusal(message: string) {
+  return new CloseoutRefused({ message })
+}
+
+function identityOf(project: IdentityProject, index: number): Identity | undefined {
+  const found = index === 0
+    ? { githubId: project.authority?.repositoryId, nodeId: project.authority?.repositoryNodeId }
+    : { githubId: project.repositories[index]?.githubId, nodeId: project.repositories[index]?.nodeId }
+  return found.githubId !== undefined && found.githubId !== "" && found.nodeId !== undefined && found.nodeId !== "" ? { githubId: String(found.githubId), nodeId: found.nodeId } : undefined
+}
+
+export function countedRepositories(project: IdentityProject, period: Period) {
+  const start = periodStartSeconds(period) * 1000
+  return project.repositories
+    .map((repository, index) => ({ id: repository.id, identity: identityOf(project, index), countsFrom: repository.countsFrom }))
+    .filter((repository) => repository.countsFrom === undefined || millisOf(repository.countsFrom) <= start)
+}
+
+function registeredRepositories(projects: ReadonlyArray<IdentityProject>) {
+  const byName = new Map<string, Registered>()
+  for (const project of projects) {
+    for (const [index, repository] of project.repositories.entries()) {
+      const registered = { projectId: project.id, identity: identityOf(project, index) }
+      for (const name of [repository.id, ...(repository.aliases ?? [])]) byName.set(name.toLowerCase(), registered)
+    }
+  }
+  return byName
+}
+
+function sameUniqueMembers(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  const members = new Set(right)
+  return new Set(left).size === left.length && members.size === right.length && left.length === right.length && left.every((member) => members.has(member))
+}
+
+function safePositive(value: number) {
+  return Number.isSafeInteger(value) && value >= 1
+}
+
+effect function parsedJson(text: string) {
+  return Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+}
+
+export effect function readHeldWorkUnitRecords(source: HeldSources) {
+  const records: HeldRecord[] = []
+  for (const { recordDigest } of source.heldWorkUnits ?? []) {
+    if (!digestPattern.test(recordDigest)) throw refusal("Invalid held work digest.")
+    const found = rows(JournalRow, sql`SELECT j.record_digest AS recordDigest, j.project_id AS projectId, j.record_json AS recordJson, (SELECT json_group_array(json_array(repository_node_id, pull_request_node_id)) FROM slopbot_work_unit_sources WHERE record_digest = j.record_digest) AS sourceKeys FROM slopbot_work_unit_journal j WHERE j.record_digest = ${recordDigest}`) catch effect () => {
+      throw refusal("A held work unit has no exact canonical journal row.")
+    }
+    const [row] = found
+    if (found.length !== 1 || row === undefined || row.recordDigest !== recordDigest) throw refusal("A held work unit has no exact canonical journal row.")
+    records.push(row)
+  }
+  return records
+}
+
+effect function heldUnitProven(unit: HeldWorkUnit, row: HeldRecord, asiNodes: ReadonlySet<string>, registered: ReadonlyMap<string, Registered>, seen: Set<string>) {
+  if ((try sha256Hex(row.recordJson)) !== unit.recordDigest) return false
+  const value = try parsedJson(row.recordJson)
+  const record = Schema.decodeUnknownEffect(WorkUnitRecord)(value) catch () => undefined
+  if (record === undefined || record.schemaVersion !== "slop-work-unit-record:v1" || record.projectId !== row.projectId || !digestPattern.test(record.sourceDigest)) return false
+  const members: string[] = []
+  const keys: string[] = []
+  for (const source of record.sources) {
+    if (source.pullRequestNodeId === "" || seen.has(source.pullRequestNodeId) || !safePositive(source.pullRequestNumber) || !safePositive(source.repositoryDatabaseId) || asiNodes.has(source.repositoryNodeId)) return false
+    const owner = registered.get(source.repository.toLowerCase())
+    const identity = owner?.identity
+    if (owner === undefined || owner.projectId !== row.projectId || identity === undefined || identity.nodeId !== source.repositoryNodeId || identity.githubId !== String(source.repositoryDatabaseId)) return false
+    seen.add(source.pullRequestNodeId)
+    members.push(source.pullRequestNodeId)
+    keys.push(JSON.stringify([identity.nodeId, source.pullRequestNodeId]))
+  }
+  const indexed = Schema.decodeUnknownEffect(SourceKeys)(try parsedJson(row.sourceKeys)) catch () => undefined
+  return indexed !== undefined && sameUniqueMembers(members, unit.sourceNodeIds) && sameUniqueMembers(keys, indexed.map((key) => JSON.stringify(key)))
+}
+
+export effect function heldWorkOf(source: HeldSources, asi: IdentityProject, period: Period, registry: ReadonlyArray<IdentityProject>, records: ReadonlyArray<HeldRecord>) {
+  const held = source.heldWorkUnits ?? []
+  const unavailable = source.unavailableSources ?? []
+  if (held.length === 0) return (unavailable.length === 0 && records.length === 0 ? "NoHeldWork" : "HeldUnproved") satisfies HeldWork
+  if (held.length !== records.length) return "HeldUnproved" satisfies HeldWork
+  const counted = countedRepositories(asi, period)
+  if (counted.length === 0 || counted.some((repository) => repository.identity === undefined)) return "HeldUnproved" satisfies HeldWork
+  const asiNodes = new Set(counted.map((repository) => repository.identity?.nodeId ?? ""))
+  const byDigest = new Map(records.map((record) => [record.recordDigest, record]))
+  if (byDigest.size !== records.length) return "HeldUnproved" satisfies HeldWork
+  const registered = registeredRepositories(registry)
+  const seen = new Set<string>()
+  const unavailableMembers: string[] = []
+  for (const unit of held) {
+    const row = byDigest.get(unit.recordDigest)
+    if (row === undefined || row.projectId === asi.id || !(try heldUnitProven(unit, row, asiNodes, registered, seen))) return "HeldUnproved" satisfies HeldWork
+    unavailableMembers.push(...unit.unavailableNodeIds)
+  }
+  return (sameUniqueMembers(unavailableMembers, unavailable.map((entry) => entry.nodeId)) ? "HeldOutsideAsi" : "HeldUnproved") satisfies HeldWork
+}

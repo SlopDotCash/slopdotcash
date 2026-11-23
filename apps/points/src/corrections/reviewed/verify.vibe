@@ -1,4 +1,4 @@
-// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed source's submitted commits and accepted squash bind one live source"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"
 import { isoAt } from "@repo/platform/clock"
 import { D1, type Statement, rows, sql } from "@repo/platform/d1"
 import { gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
@@ -13,14 +13,15 @@ import { batchRecorded, isExtension } from "../apply/apply.vibe"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { instantOf } from "../../kernels/records/instants.ts"
-import { type AuditedSource, type HistoricalPacket, type PacketSquash, digestPattern, githubIdPattern, refusal, require } from "./packet.vibe"
+import { type AuditedSource, type HistoricalPacket, type PacketSquash, type SourceAudit, digestPattern, githubIdPattern, historicalFrom, historicalThrough, refusal, require } from "./packet.vibe"
+import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
 
 schema CensusRepository { readonly id: string }
 schema CensusNode { readonly id: string; readonly number: number; readonly headRefOid: string; readonly mergedAt: string; readonly repository: CensusRepository }
 schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
 schema CensusSearch { readonly issueCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<CensusNode> }
 schema CensusPage { readonly search: CensusSearch }
-schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
+export schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name: string }
 schema PullUser { readonly node_id: string; readonly type: string }
 schema PullRef { readonly sha: string }
 schema Pull {
@@ -86,13 +87,13 @@ effect function mergedRange(from: number, through: number) {
   return `merged:${(try isoAt(from)).replace(".000Z", "Z")}..${(try isoAt(through)).replace(".000Z", "Z")}`
 }
 
-effect function censusRange(packet: HistoricalPacket, from: string, through: string): AuditedSource[] {
+effect function censusRange(repository: string, repositoryNodeId: string, from: string, through: string): AuditedSource[] {
   const github = try GitHub
   const rowsFound: AuditedSource[] = []
   let cursor: string | null = null
   let total: number | undefined
   do {
-    const query = `repo:${packet.sourceAudit.repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
+    const query = `repo:${repository} is:pr is:merged ${try mergedRange(Date.parse(from), Date.parse(through) - 1000)}`
     const page = (try github.graphql(censusQuery, { query, after: cursor }, CensusPage)).search
     try require(Number.isSafeInteger(page.issueCount) && (total === undefined || total === page.issueCount), "Historical census count changed")
     total = page.issueCount
@@ -101,13 +102,16 @@ effect function censusRange(packet: HistoricalPacket, from: string, through: str
       const end = Date.parse(through)
       try require(end - start > 1000, "Historical census cannot be split further")
       const middle = new Date(Math.floor((start + end) / 2000) * 1000).toISOString()
-      const combined = [...(try censusRange(packet, from, middle)), ...(try censusRange(packet, middle, through))]
+      const combined = [...(try censusRange(repository, repositoryNodeId, from, middle)), ...(try censusRange(repository, repositoryNodeId, middle, through))]
       try require(combined.length === total && new Set(combined.map((row) => row.id)).size === total, "Historical split census changed")
       return combined
     }
     for (const node of page.nodes) {
-      try require(node.repository.id === packet.sourceAudit.repositoryNodeId, "Historical census repository changed")
-      rowsFound.push({ id: node.id, number: node.number, headSha: node.headRefOid, mergedAt: iso(node.mergedAt) })
+      try require(node.repository.id === repositoryNodeId, "Historical census repository changed")
+      const mergedAt = iso(node.mergedAt)
+      try require(node.id !== "" && Number.isSafeInteger(node.number) && node.number > 0 && /^[a-f0-9]{40}$/u.test(node.headRefOid) && mergedAt >= from && mergedAt < through,
+        "Historical census source is invalid")
+      rowsFound.push({ id: node.id, number: node.number, headSha: node.headRefOid, mergedAt })
     }
     const next = page.pageInfo
     try require(!next.hasNextPage || (next.endCursor !== null && next.endCursor !== cursor), "Historical census pagination failed")
@@ -117,8 +121,14 @@ effect function censusRange(packet: HistoricalPacket, from: string, through: str
   return rowsFound
 }
 
+export effect function historicalSourceAudit(repository: string, repositoryNodeId: string) {
+  const sources = try censusRange(repository, repositoryNodeId, historicalFrom, historicalThrough)
+  try require(sources.length > 0 && new Set(sources.map(({ number }) => number)).size === sources.length, "Historical census pull request numbers are invalid")
+  return { repository, repositoryNodeId, from: historicalFrom, through: historicalThrough, sources: [...sources].sort((left, right) => left.number - right.number) } satisfies SourceAudit
+}
+
 export effect function verifyHistoricalCensus(packet: HistoricalPacket) {
-  const found = try censusRange(packet, packet.sourceAudit.from, packet.sourceAudit.through)
+  const found = try censusRange(packet.sourceAudit.repository, packet.sourceAudit.repositoryNodeId, packet.sourceAudit.from, packet.sourceAudit.through)
   const ordered = (list: ReadonlyArray<AuditedSource>) => JSON.stringify([...list].sort((left, right) => left.id.localeCompare(right.id)).map((row) => ({ id: row.id, number: row.number, headSha: row.headSha, mergedAt: row.mergedAt })))
   try require(ordered(found) === ordered(packet.sourceAudit.sources), "Reviewed historical census changed")
 }
@@ -365,7 +375,7 @@ function quoted(value: string) {
   return `'${value.replaceAll("'", "''")}'`
 }
 
-export function historicalGuards(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string) {
+export effect function historicalGuards(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string, heads: HistoricalAssessmentJournalHeads) {
   const conditions = [
     `EXISTS (SELECT 1 FROM projects WHERE id=${quoted(packet.projectId)} AND revision=${packet.revision} AND manifest_sha256=${quoted(packet.manifestSha256)} AND status='active')`,
     `(SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=${generation}`,
@@ -374,10 +384,14 @@ export function historicalGuards(packet: HistoricalPacket, candidate: Journal, g
   for (const actor of actors) {
     conditions.push(`NOT EXISTS (SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${quoted(githubIdOf(actor))} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1)`)
   }
-  return conditions.join(" AND ")
+  conditions.push(...(try historicalAssessmentRecordingConditions({ projectId: packet.projectId, repositoryNodeId: packet.sourceAudit.repositoryNodeId }, heads)))
+  conditions.push(try historicalPointsBaselineCondition(packet.baselineDigest, packet.baselineRevisionCount))
+  return conditions.map((condition) => `(${condition})`).join(" AND ")
 }
 
-export effect function historicalStatements(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string) {
+const recordedCoverage = " THEN json_group_array(json(entry)) END"
+
+export effect function historicalStatements(packet: HistoricalPacket, candidate: Journal, generation: number, githubIdOf: (actor: string) => string, heads: HistoricalAssessmentJournalHeads) {
   try require(Number.isSafeInteger(generation) && generation >= 0, "Invalid enforcement generation")
   for (const actor of new Set(candidate.revisions.slice(packet.baselineRevisionCount).map((row) => row.award.actor.id))) {
     try require(githubIdPattern.test(githubIdOf(actor)), "Unknown historical actor identity")
@@ -385,8 +399,9 @@ export effect function historicalStatements(packet: HistoricalPacket, candidate:
   const digest = try batchDigest(candidate)
   const statements = importStatements(digest, candidate)
   const gate = statements[statements.length - 3]
-  try require(gate !== undefined && gate.text.startsWith("INSERT INTO points_batches"), "Points import gate unavailable")
-  const guarded: Statement = { text: `${gate?.text ?? ""} AND ${historicalGuards(packet, candidate, generation, githubIdOf)}`, params: gate?.params ?? [] }
+  const parts = gate?.text.split(recordedCoverage) ?? []
+  try require(gate !== undefined && gate.text.startsWith("INSERT INTO points_batches") && parts.length === 2, "Points import gate unavailable")
+  const guarded: Statement = { text: `${parts[0] ?? ""} AND ${try historicalGuards(packet, candidate, generation, githubIdOf, heads)}${recordedCoverage}${parts[1] ?? ""}`, params: gate?.params ?? [] }
   return { digest, statements: statements.map((statement) => statement === gate ? guarded : statement) } satisfies PreparedImport
 }
 

@@ -1,5 +1,6 @@
 // spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
-import { utf8 } from "@repo/platform/crypto"
+import { definitionProblem } from "@repo/backend/projects/definition"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
 import { at, compareCodeUnits, isRecord, isScoreThirds, isUnavailableModel, pointsOf } from "../client/snapshot/checks.vibe"
 import { leaderboardMethodology } from "../client/snapshot/methodology.vibe"
 import {
@@ -26,7 +27,61 @@ function records(value: unknown): ReadonlyArray<unknown> | undefined {
   return Array.isArray(value) ? value : undefined
 }
 
-function rebound(candidate: Json, registry: RepositoryRegistry): Json | string {
+interface Listed {
+  readonly index: number
+  readonly repository: Json
+}
+
+function listedRepository(value: unknown, repositoryId: string): Listed | undefined {
+  const repositories = records(value) ?? []
+  const wanted = repositoryId.toLowerCase()
+  let index = repositories.findIndex((entry) => isRecord(entry) && typeof entry.id === "string" && entry.id.toLowerCase() === wanted)
+  if (index < 0) index = repositories.findIndex((entry) => isRecord(entry) && (records(entry.aliases) ?? []).some((alias) => typeof alias === "string" && alias.toLowerCase() === wanted))
+  const repository = repositories[index]
+  return index < 0 || !isRecord(repository) ? undefined : { index, repository }
+}
+
+function identityNode(manifest: Json, listed: Listed): unknown {
+  const githubId = listed.index === 0 ? at(manifest, "authority", "repositoryId") : listed.repository.githubId
+  const nodeId = listed.index === 0 ? at(manifest, "authority", "repositoryNodeId") : listed.repository.nodeId
+  return githubId && nodeId ? nodeId : undefined
+}
+
+function collectedRevision(revisions: ReadonlyArray<Json>, cutoffMs: number): Json | undefined {
+  for (let index = revisions.length - 1; index >= 0; index--) {
+    const revision = revisions[index]
+    if (revision !== undefined && typeof revision.createdAt === "string" && Date.parse(revision.createdAt) <= cutoffMs) return revision
+  }
+  return undefined
+}
+
+effect function revisionNames(revision: Json, current: RegisteredRepository, branch: unknown, nodeId: unknown) {
+  if ((try sha256Hex(JSON.stringify(revision.manifest))) !== revision.manifestSha256) return false
+  const manifest = revision.manifest
+  if (!isRecord(manifest) || definitionProblem(manifest, { escrow: manifest.escrow, securityBounty: manifest.securityBounty }) !== undefined) return false
+  const listed = listedRepository(manifest.repositories, current.id)
+  if (manifest.id !== current.projectId || listed === undefined) return false
+  const identity = identityNode(manifest, listed)
+  return identity !== undefined && identity === nodeId && listed.repository.integrationBranch === branch
+}
+
+effect function branchProven(candidate: Json, deployed: Json, current: RegisteredRepository, revisions: ReadonlyArray<unknown>) {
+  const cutoff = at(candidate, "window", "to")
+  const cutoffMs = typeof cutoff === "string" ? Date.parse(cutoff) : Number.NaN
+  if (!Number.isFinite(cutoffMs) || new Date(cutoffMs).toISOString() !== cutoff) return false
+  if (!revisions.every(isRecord)) return false
+  const project = revisions.filter(isRecord).filter((revision) => revision.projectId === current.projectId)
+  const collected = collectedRevision(project, cutoffMs)
+  const latest = project[project.length - 1]
+  const latestAt = typeof latest?.createdAt === "string" ? Date.parse(latest.createdAt) : Number.NaN
+  const sources = (records(at(candidate, "source", "repositories")) ?? []).filter((entry) => at(entry, "id") === current.id)
+  if (collected === undefined || latest === undefined || !(latestAt > cutoffMs) || sources.length !== 1) return false
+  const nodeId = at(sources[0], "repositoryId")
+  if (!(try revisionNames(collected, current, deployed.integrationBranch, nodeId))) return false
+  return try revisionNames(latest, current, current.integrationBranch, nodeId)
+}
+
+effect function rebound(candidate: Json, registry: RepositoryRegistry, revisions: ReadonlyArray<unknown>) {
   const repositories = records(candidate.repositories)
   if (repositories === undefined) return "snapshot.repositories must be an array"
   let changed = false
@@ -41,6 +96,7 @@ function rebound(candidate: Json, registry: RepositoryRegistry): Json | string {
     for (const key of ["id", "description", "projectId"] as const) {
       if (deployed[key] !== current[key]) return `${path}.${key} cannot change during a transfer`
     }
+    if (deployed.integrationBranch !== current.integrationBranch && !(try branchProven(candidate, deployed, current, revisions))) return `${path}.integrationBranch is not verified by registry history`
     const identity = `${String(deployed.owner)}/${String(deployed.name)}`
     if (![current.id, ...current.aliases].some((name) => name.toLowerCase() === identity.toLowerCase()) || deployed.displayName !== identity || deployed.githubUrl !== `https://github.com/${identity}`) {
       return `${path} is not a registered stable repository identity or alias`
@@ -49,7 +105,7 @@ function rebound(candidate: Json, registry: RepositoryRegistry): Json | string {
     changed ||= publishedRepositoryKeys.some((key) => key !== "role" && deployed[key] !== replacement[key])
     next.push(replacement)
   }
-  return changed ? { ...candidate, repositories: next } : candidate
+  return changed ? { ...candidate, repositories: next } satisfies Json : candidate
 }
 
 function activated(candidate: Json, registry: RepositoryRegistry): Json | string {
@@ -296,7 +352,7 @@ function migratedSchemaFive(candidate: Json, registry: RepositoryRegistry): Json
   return { ...candidate, schemaVersion, ruleVersion, methodology: leaderboardMethodology, leaders, ledger, attributions }
 }
 
-export effect function adaptPullRequestLedger(value: unknown, registry: RepositoryRegistry) {
+export effect function adaptPullRequestLedger(value: unknown, registry: RepositoryRegistry, revisions: ReadonlyArray<unknown> = []) {
   if (!isRecord(value)) throw new AdaptRefused({ message: "snapshot must be an object" })
   const now = try Clock.currentTimeMillis
   if (typeof value.generatedAt !== "string" || Date.parse(value.generatedAt) > now + futureMillis) throw new AdaptRefused({ message: "snapshot.generatedAt cannot be in the future" })
@@ -306,7 +362,7 @@ export effect function adaptPullRequestLedger(value: unknown, registry: Reposito
     try validatePublishable(empty, registry, now)
     return empty
   }
-  const transferred = rebound(value, registry)
+  const transferred = try rebound(value, registry, revisions)
   if (typeof transferred === "string") throw new AdaptRefused({ message: transferred })
   const candidate = activated(transferred, registry)
   if (typeof candidate === "string") throw new AdaptRefused({ message: candidate })
@@ -337,15 +393,23 @@ export effect function readRegistry(path: string) {
   return registry
 }
 
-export effect function adaptPullRequestFile(input: string, output: string, registryPath: string) {
+effect function projectRevisions(registrySnapshotPath: string | undefined) {
+  if (registrySnapshotPath === undefined) return []
+  const revisions = records(at(try jsonFile(registrySnapshotPath, maxRegistryBytes), "revisions"))
+  if (revisions === undefined) throw new AdaptRefused({ message: "project revisions must be an array" })
+  return revisions
+}
+
+export effect function adaptPullRequestFile(input: string, output: string, registryPath: string, registrySnapshotPath?: string) {
   const fs = try FileSystem.FileSystem
   const files = try Path.Path
   const registry = try readRegistry(registryPath)
+  const revisions = try projectRevisions(registrySnapshotPath)
   const bytes = try readSnapshotFile(files.resolve(input))
   const parsed: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
     throw new AdaptRefused({ message: "The deployed ledger is not UTF-8 JSON" })
   }
-  const snapshot = try adaptPullRequestLedger(parsed, registry)
+  const snapshot = try adaptPullRequestLedger(parsed, registry, revisions)
   const target = files.resolve(output)
   try attempt(fs.makeDirectory(files.dirname(target), { recursive: true }), target, "Pull-request ledger directory could not be created")
   try atomicWrite(target, utf8(`${JSON.stringify(snapshot)}\n`))

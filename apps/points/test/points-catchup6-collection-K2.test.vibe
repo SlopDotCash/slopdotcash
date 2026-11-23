@@ -1,0 +1,265 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import { GitHub, githubApi } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import type { GitHubFake } from "@repo/platform/testing/github"
+import { type LocalGitObjects, localGitObjects } from "../src/ingestion/localGit.vibe"
+import { Ingestion, ingestion, ingestionGitHub } from "../src/ingestion/read.vibe"
+import { fetcherOf, repository, seeded, start, statuses } from "./support/u3/github.ts"
+
+const fixtures = new URL("./fixtures/local-git-objects", import.meta.url).pathname
+const repoPath = `/repos/${repository}`
+const zeros = "0".repeat(40)
+const remoteOnly = ["node_id", "verification"]
+const identities = {
+  GIT_AUTHOR_NAME: "Ada Example",
+  GIT_AUTHOR_EMAIL: "ada@example.com",
+  GIT_AUTHOR_DATE: "1794088867 +0900",
+  GIT_COMMITTER_NAME: "GitHub",
+  GIT_COMMITTER_EMAIL: "noreply@github.com",
+  GIT_COMMITTER_DATE: "1794088900 -0500",
+}
+
+type Body = Readonly<Record<string, unknown>>
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function exact(method: string, path: string) {
+  return new RegExp(`^${`${method} ${path}`.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u")
+}
+
+function answers(fake: GitHubFake, match: RegExp, replies: ReadonlyArray<() => Response>) {
+  for (const reply of replies) fake.alterNext(match, reply)
+}
+
+function withoutKeys(body: Body, keys: ReadonlyArray<string>): Body {
+  return Object.fromEntries(Object.entries(body).filter(([key]) => !keys.includes(key)))
+}
+
+effect function git(gitDir: string, args: ReadonlyArray<string>, input?: string | Uint8Array) {
+  const bytes = try gitBytes({ args: ["--git-dir", gitDir, ...args], env: identities, ...(input === undefined ? {} : { input }), limit: 16 * 1024 * 1024, seconds: 60 }, `git ${args[0] ?? ""} failed`)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function bare(root: string, owner: string, name: string) {
+  const fs = try FileSystem.FileSystem
+  const gitDir = `${root}/${owner}/${name}.git`
+  try fs.makeDirectory(gitDir, { recursive: true })
+  try gitBytes({ args: ["init", "--bare", "--quiet", gitDir], limit: 1024 * 1024, seconds: 60 }, "git init failed")
+  return gitDir
+}
+
+effect function served(objects: LocalGitObjects, path: string) {
+  const bytes = try objects.read(new URL(`${githubApi}${path}`))
+  return bytes === undefined ? null : new TextDecoder().decode(bytes)
+}
+
+effect function body(objects: LocalGitObjects, path: string) {
+  const text = try served(objects, path)
+  return text === null ? null : JSON.parse(text) as unknown
+}
+
+it.live('Read immutable Git objects without spending the GitHub allowance (spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub\'s")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  provide NodeServices.layer, systemGit, clock.layer {
+    const fs = try FileSystem.FileSystem
+    const checked = try scoped(effect {
+      const temporary = try fs.makeTempDirectoryScoped()
+      const recorded = JSON.parse(try fs.readFileString(`${fixtures}/github-responses.json`)) as { readonly responses: Readonly<Record<string, Body>> }
+      const realRoot = `${temporary}/real`
+      const realGit = try bare(realRoot, "SlopDotCash", "slopdotcash")
+      try git(realGit, ["unpack-objects", "-q"], try fs.readFile(`${fixtures}/objects.pack`))
+      const real = try localGitObjects(realRoot)
+      const paths = Object.keys(recorded.responses)
+      const github = (path: string) => JSON.stringify(withoutKeys(recorded.responses[path] ?? {}, path.includes("/git/commits/") ? remoteOnly : []))
+      const recordedReads = try Effect.forEach(paths, (path) => served(real, path))
+      const first = paths[0] ?? ""
+      const otherCasing = try served(real, first.replace("SlopDotCash/slopdotcash", "slopdotcash/SLOPDOTCASH"))
+      const realStats = try real.stats()
+
+      const synthetic = `${temporary}/synthetic`
+      const syntheticGit = try bare(synthetic, "owner", "repo")
+      const blob = try git(syntheticGit, ["hash-object", "-w", "--stdin"], "hello\n")
+      const link = try git(syntheticGit, ["hash-object", "-w", "--stdin"], "target")
+      const inner = try git(syntheticGit, ["mktree"], `100755 blob ${blob}\trun.sh\n`)
+      const root = try git(syntheticGit, ["mktree"], `100644 blob ${blob}\ta.txt\n040000 tree ${inner}\tbin\n120000 blob ${link}\tlink\n`)
+      const commit = try git(syntheticGit, ["commit-tree", root, "-m", "Subject\n\nBody"])
+      const submodule = try git(syntheticGit, ["mktree"], `160000 commit ${commit}\tvendor\n100644 blob ${blob}\ta.txt\n`)
+      effect function rawCommit(header: string, message: string) {
+        return try git(syntheticGit, ["hash-object", "-t", "commit", "-w", "--stdin", "--literally"], `tree ${root}\nauthor A <a@b> 1 +0000\ncommitter A <a@b> 1 +0000\n${header}\n${message}`)
+      }
+      const encoded = try rawCommit("encoding ISO-8859-1\n", "x\n")
+      const blankEnding = try rawCommit("", "x\n\n")
+      const prefix = new TextEncoder().encode(`100644 blob ${blob}\t`)
+      const nonUtf8Name = try git(syntheticGit, ["mktree", "-z"], new Uint8Array([...prefix, 0xff, 0x41, 0]))
+      try fs.makeDirectory(`${synthetic}/owner/broken.git`, { recursive: true })
+      const objects = try localGitObjects(synthetic)
+      const api = `${githubApi}/repos/owner/repo`
+
+      const shapes = {
+        tree: try body(objects, `/repos/owner/repo/git/trees/${root}?recursive=1`),
+        commit: try body(objects, `/repos/owner/repo/git/commits/${commit}`),
+      }
+      const afterShapes = try objects.stats()
+      const uncertain = try Effect.forEach([
+        `/repos/owner/repo/git/trees/${submodule}`,
+        `/repos/owner/repo/git/trees/${nonUtf8Name}`,
+        `/repos/owner/repo/git/trees/${commit}`,
+        `/repos/owner/repo/git/commits/${root}`,
+        `/repos/owner/repo/git/commits/${encoded}`,
+        `/repos/owner/repo/git/commits/${blankEnding}`,
+        `/repos/owner/repo/git/trees/${zeros}`,
+      ], (path) => body(objects, path))
+      const afterUncertain = try objects.stats()
+      const unoffered = try Effect.forEach([
+        `/repos/other/repo/git/trees/${root}`,
+        `/repos/owner/repo/git/trees/${root}?recursive=0`,
+        `/repos/owner/repo/git/commits/${commit}?recursive=1`,
+        `/repos/owner/repo/git/blobs/${blob}`,
+        `/repos/owner/repo/commits/${commit}`,
+      ], (path) => body(objects, path))
+      const treeUrl = new URL(`${api}/git/trees/${root}`)
+      const elsewhere = [
+        try objects.read(new URL(`https://example.com/repos/owner/repo/git/trees/${root}`)),
+        try objects.read(new URL(`${api}/git/trees/${root}#fragment`)),
+        try objects.read(treeUrl, { "if-none-match": "\"tree\"" }),
+        try objects.read(treeUrl, { range: "bytes=0-10" }),
+        try objects.read(treeUrl, { accept: "application/vnd.github.raw" }),
+      ]
+      const afterUnoffered = try objects.stats()
+      const killed = try Effect.forEach([`/repos/owner/broken/git/trees/${root}`, `/repos/owner/broken/git/commits/${commit}`], (path) => body(objects, path), { concurrency: "unbounded" })
+      const restarted = try body(objects, `/repos/owner/broken/git/trees/${root}`)
+      const afterKilled = try objects.stats()
+
+      answers(fake, exact("GET", `/repos/owner/repo/git/blobs/${blob}`), [() => Response.json({ sha: blob, size: 6 })])
+      answers(fake, exact("GET", `/repos/owner/repo/git/trees/${zeros}`), [() => Response.json({ sha: zeros, tree: [], truncated: false })])
+      const from = fake.requests.length
+      const transport = Layer.provide(ingestionGitHub({ token: Redacted.make(world.token), localGitObjects: objects }), outboundVia(fetcherOf(fake)))
+      const ingested = try (effect {
+        provide transport {
+          const reads = try GitHub
+          const tree = try reads.json(`/repos/owner/repo/git/trees/${root}`, Schema.Unknown)
+          const askedForTree = fake.requests.length - from
+          try reads.json(`/repos/owner/repo/git/blobs/${blob}`, Schema.Unknown)
+          try reads.json(`/repos/owner/repo/git/trees/${zeros}`, Schema.Unknown)
+          return { sha: (tree as { readonly sha?: unknown }).sha, askedForTree, urls: fake.requests.slice(from).map((request) => request.url) }
+        }
+      })
+      const afterIngestion = try objects.stats()
+
+      const entry = (path: string, mode: string, type: string, sha: string, size?: number) => ({ path, mode, type, sha, ...(size === undefined ? {} : { size }), url: `${api}/git/${type === "tree" ? "trees" : "blobs"}/${sha}` })
+      return {
+        actual: { recordedReads, otherCasing, realStats, shapes, afterShapes, uncertain, afterUncertain, unoffered, elsewhere, afterUnoffered, killed, restarted, afterKilled, ingested, afterIngestion },
+        expected: {
+          recordedReads: paths.map(github),
+          otherCasing: github(first),
+          realStats: { served: paths.length + 1, declined: 0 },
+          shapes: {
+            tree: {
+              sha: root,
+              url: `${api}/git/trees/${root}`,
+              tree: [entry("a.txt", "100644", "blob", blob, 6), entry("bin", "040000", "tree", inner), entry("bin/run.sh", "100755", "blob", blob, 6), entry("link", "120000", "blob", link, 6)],
+              truncated: false,
+            },
+            commit: {
+              sha: commit,
+              url: `${api}/git/commits/${commit}`,
+              html_url: `https://github.com/owner/repo/commit/${commit}`,
+              author: { name: "Ada Example", email: "ada@example.com", date: "2026-11-07T22:01:07Z" },
+              committer: { name: "GitHub", email: "noreply@github.com", date: "2026-11-07T22:01:40Z" },
+              tree: { sha: root, url: `${api}/git/trees/${root}` },
+              message: "Subject\n\nBody",
+              parents: [],
+            },
+          },
+          afterShapes: { served: 2, declined: 0 },
+          uncertain: [null, null, null, null, null, null, null],
+          afterUncertain: { served: 2, declined: 7 },
+          unoffered: [null, null, null, null, null],
+          elsewhere: [undefined, undefined, undefined, undefined, undefined],
+          afterUnoffered: { served: 2, declined: 7 },
+          killed: [null, null],
+          restarted: null,
+          afterKilled: { served: 2, declined: 10 },
+          ingested: { sha: root, askedForTree: 0, urls: [`${api}/git/blobs/${blob}`, `${api}/git/trees/${zeros}`] },
+          afterIngestion: { served: 3, declined: 11 },
+        },
+      }
+    })
+    try same(checked.actual, checked.expected)
+  }
+})
+
+it.live('Read GitHub without retrying writes or inventing success: every exact GET retries two gateway errors (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const authority = fake.authority
+  const waits: number[] = []
+  const headers = { authorization: `Bearer ${world.token}` }
+  const transport = ingestion({
+    sleep: (millis) => effect {
+      waits.push(millis)
+      clock.advance(millis)
+    },
+  })
+  const gateway = (status: number) => () => new Response("gateway", { status })
+  const page = JSON.stringify([{ id: 1 }])
+  const finalBody = "GitHub still cannot serve the pull request commits"
+  const pull = world.pull
+  const pages = [
+    `${repoPath}/pulls/${pull}/commits?per_page=100&page=1`,
+    `${repoPath}/pulls/${pull}`,
+    `${repoPath}/commits/${world.commit}`,
+    `/repositories/7001/issues/${pull}/timeline?per_page=100&page=3`,
+  ]
+  const gatewayStatuses = [502, 503, 504]
+  provide Layer.provide(transport, outboundVia(fetcherOf(fake))), clock.layer {
+    const client = (try Ingestion).client
+
+    effect function read(url: string, method: "GET" | "POST" = "GET") {
+      const from = fake.requests.length
+      const waited = waits.length
+      const answered = effect {
+        const response = try client.execute(HttpClientRequest.make(method)(url, { headers }))
+        return { status: response.status, body: try response.text }
+      }
+      const outcome = answered catch (error) => error._tag
+      return { outcome, statuses: statuses(fake, from), waits: waits.slice(waited) }
+    }
+
+    const recovered = try Effect.forEach(pages, (path) => Effect.forEach(gatewayStatuses, (status) => effect {
+      answers(fake, exact("GET", path), [gateway(status), gateway(status), () => new Response(page, { status: 200, headers: { "content-type": "application/json" } })])
+      return try read(`${authority}${path}`)
+    }))
+    const commitsPage = pages[0] ?? ""
+    answers(fake, exact("GET", commitsPage), [gateway(502), gateway(502), () => new Response(finalBody, { status: 502, statusText: "Still unavailable" })])
+    const persistent = try read(`${authority}${commitsPage}`)
+    const immediate = try Effect.forEach([
+      { url: `${authority}${commitsPage}`, method: "POST" as const, match: exact("POST", commitsPage) },
+      { url: `https://example.com${commitsPage}`, method: "GET" as const, match: exact("GET", commitsPage) },
+      { url: `${authority}${commitsPage}#fragment`, method: "GET" as const, match: exact("GET", commitsPage) },
+    ], (attempt) => effect {
+      answers(fake, attempt.match, [gateway(502)])
+      const answer = try read(attempt.url, attempt.method)
+      return { statuses: answer.statuses, waits: answer.waits }
+    })
+    const credentialed = try read(`${authority.replace("://", "://user:pass@")}${commitsPage}`)
+
+    try same(
+      { recovered, persistent, immediate, credentialed: { waits: credentialed.waits, repeated: credentialed.statuses.length > 1 } },
+      {
+        recovered: pages.map(() => gatewayStatuses.map((status) => ({ outcome: { status: 200, body: page }, statuses: [status, status, 200], waits: [1_000, 2_000] }))),
+        persistent: { outcome: { status: 502, body: finalBody }, statuses: [502, 502, 502], waits: [1_000, 2_000] },
+        immediate: [{ statuses: [502], waits: [] }, { statuses: [502], waits: [] }, { statuses: [502], waits: [] }],
+        credentialed: { waits: [], repeated: false },
+      },
+    )
+  }
+})

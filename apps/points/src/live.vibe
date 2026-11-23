@@ -12,6 +12,9 @@ import { ClosedMonthLive } from "./rewardWeights/live.vibe"
 export { DisputeTriage, SourceUnverified, type Lease, type Triage, type TriageOutcome, disputeSource, disputeTriage, pendingDisputes, triageDispute } from "./disputes/port.vibe"
 export { type ProtectedMonthsVars, protectedMonthsAccess } from "./publication/protectedRoute.vibe"
 export { ClosedMonthLive, type CloseoutMonth, closeoutLedger, contributorAudience, currentPointsBatch, disputeAudience }
+export { checkedSnapshot, repositoryRegistry } from "./programs/registry.vibe"
+export { protectedScope } from "./publication/protection.vibe"
+export { restoreSnapshot } from "./snapshot/restore.vibe"
 
 export const points = area({
   name: "points",

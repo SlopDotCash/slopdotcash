@@ -29,6 +29,7 @@ interface Held {
   readonly clock: ReturnType<typeof settableClock>;
   readonly db: D1Database;
   readonly number: number;
+  readonly issue: number;
   now: number;
   mode: FeeFacts["mode"];
   manifest: string;
@@ -36,6 +37,7 @@ interface Held {
   contributor: boolean;
   hidden: boolean;
   failLabels: boolean;
+  unreadLink: boolean;
   report: Record<string, unknown>;
 }
 
@@ -45,6 +47,9 @@ const repo = "ada/widgets";
 const repositoryId = 8301;
 const installationId = 9501;
 const projectId = "fee-project";
+const wantedLabel = "slop-wanted";
+const keepLabel = "slop-keep-fee";
+const hour = 3_600_000;
 const states: Readonly<Record<string, GateState>> = { recorded: "Recorded", asking: "Asking", asked: "Asked", paid: "Paid", released: "Released" };
 const settlements: Readonly<Record<string, Settlement>> = { refund_due: "RefundDue", kept_due: "KeptDue", refunded: "Refunded", kept: "Kept" };
 const finals: Readonly<Record<Settlement, string | null>> = { NoSettlement: null, RefundDue: null, KeptDue: null, Refunded: "refunded", Kept: "kept" };
@@ -84,6 +89,7 @@ function handlerOf(state: () => Held, fake: GitHubFake) {
     const current = state();
     const path = new URL(request.url).pathname;
     if (current.failLabels && request.method === "POST" && path.endsWith("/labels")) return new Response("{\"message\":\"unavailable\"}", { status: 500 });
+    if (current.unreadLink && path.endsWith("/graphql")) return new Response("{\"errors\":[{\"message\":\"unavailable\"}]}", { status: 200, headers: { "content-type": "application/json" } });
     if (request.method !== "GET" || !path.endsWith(`/pulls/${current.number}`)) return fake.handler(request);
     if (current.hidden) return new Response("{\"message\":\"Not Found\"}", { status: 404 });
     const answer = await fake.handler(request);
@@ -104,7 +110,9 @@ async function started(key: string): Promise<Held> {
   world.addUser({ id: 301, login: "carol" });
   world.addRepo({ id: repositoryId, owner: "ada", name: "widgets" });
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", issues: "write", pull_requests: "write" } });
-  const number = world.addPull({ repo, author: "carol", title: "Fee check", headSha: "1".padStart(40, "0") });
+  const issue = world.addIssue({ repo, author: "ada", title: "Wanted work" });
+  world.addLabel(repo, { name: wantedLabel });
+  const number = world.addPull({ repo, author: "carol", title: "Fee check", body: `Closes #${issue}`, headSha: "1".padStart(40, "0") });
   let state: Held | undefined;
   function current(): Held {
     if (state === undefined) throw new Error("the driver state is not ready");
@@ -151,7 +159,7 @@ async function started(key: string): Promise<Held> {
   const githubLayer = Layer.provide(github({ authority: fake.authority, token: Redacted.make(fake.tokens.installation(installationId)), userAgent: "slopbot-fee-conformance" }), http);
   const settings = webhookSettings({ SLOPBOT_WEBHOOK_SECRET: "fee-conformance-secret", SLOPBOT_APP_USER_ID: String(fake.app.bot.id) });
   const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, ports, githubLayer, settings)) as unknown as ManagedRuntime.ManagedRuntime<never, never>;
-  state = { fake, runtime, clock, db, number, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, report: {} };
+  state = { fake, runtime, clock, db, number, issue, now: start, mode: "FeeLive", manifest: JSON.stringify({ id: projectId }), since: null, contributor: true, hidden: false, failLabels: false, unreadLink: false, report: {} };
   return state;
 }
 
@@ -171,9 +179,22 @@ function realizeFacts(state: Held, facts: FeeFacts) {
   state.report = { ...state.report, created_at: iso(Math.max(1, facts.openedAt)) };
 }
 
+function realizeLink(state: Held, pull: PullFacts) {
+  const world = state.fake.world;
+  const read = world.pull(repo, state.number);
+  const issue = world.item(repo, state.issue);
+  const opened = Date.parse(read.createdAt);
+  state.unreadLink = pull.invited === "LinkUnread";
+  issue.timeline.splice(0);
+  world.record(issue, "labeled", world.account("ada"), { label: { name: wantedLabel } });
+  issue.timeline[0] = { ...issue.timeline[0], createdAt: new Date(pull.invited === "InvitedWork" ? opened - hour : opened + hour).toISOString() };
+  read.labels = [...read.labels.filter((label) => label.name !== keepLabel), ...(pull.keepMarked ? [world.addLabel(repo, { name: keepLabel })] : [])];
+}
+
 async function realizePull(state: Held, pull: PullFacts) {
   state.contributor = pull.contributorScope;
   state.hidden = !pull.readable;
+  realizeLink(state, pull);
   state.report = { ...state.report, state: pull.open && !pull.merged ? "open" : "closed", merged: pull.merged, draft: pull.draft, closed_at: pull.closedAt > 0 ? iso(pull.closedAt) : null };
   await state.db.prepare("UPDATE slopbot_installations SET removed_at = ? WHERE installation_id = ?").bind(pull.installationActive ? null : iso(start), installationId).run();
 }

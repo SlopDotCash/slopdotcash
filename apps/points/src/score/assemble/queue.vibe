@@ -1,0 +1,120 @@
+// spec/points/census.md, "Every retained item has a deterministic, fail-closed selection decision with all its reasons"; spec/points/census.md, "A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days"
+import type { CensusEntry } from "../../census/collect.vibe"
+import { queueSelection } from "../../census/selection.vibe"
+import type { GitHubActor, WorkItem, WorkItemClaim } from "../../client/snapshot/schema.vibe"
+import type { IssueRecord, PullRequestRecord } from "../../collect/merged/hydrate.vibe"
+import { AssemblyRefused, type Collection } from "../../collect/run/pipeline.vibe"
+import type { GitHubItem } from "../../kernels/scoring/selection.ts"
+import { compareCodeUnits, sameActor } from "../facts.vibe"
+
+module verified {
+  import type { ClaimSource } from "../../../gen/points__census.ts"
+  import type { GitHubItem } from "../../kernels/scoring/selection.ts"
+  import { claimDecision as decided, hasBlockedLabel as blocked, workItemPriority as priority } from "../../kernels/scoring/selection.ts"
+  /** @throws {never} */
+  export function claimDecision(item: GitHubItem, referenceTime: number): { source: ClaimSource; comment: number } { return decided(item, referenceTime) }
+  /** @throws {never} */
+  export function hasBlockedLabel(labels: string[]): boolean { return blocked(labels) }
+  /** @throws {never} */
+  export function workItemPriority(labels: string[]): "urgent" | "high" | "normal" | "low" { return priority(labels) }
+}
+import { claimDecision, hasBlockedLabel, workItemPriority } from verified
+
+const unclaimed: WorkItemClaim = { status: "unclaimed", source: "none", kind: null, actors: [], claimedAt: null }
+const noEvidence = { status: "missing", points: 0, maxPoints: 6, categories: [] }
+const noModel = { status: "missing", identifiers: [], machineMarkerCount: 0, invalidMarkerCount: 0, eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0, provenance: "none" }
+const actionabilityRank: Readonly<Record<string, number>> = { actionable: 0, blocked: 1, draft: 2 }
+const priorityRank: Readonly<Record<string, number>> = { urgent: 0, high: 1, normal: 2, low: 3 }
+
+function uniqueActors(actors: ReadonlyArray<GitHubActor>) {
+  return [...new Map(actors.map((actor) => [actor.id, actor] as const)).values()].sort((left, right) => compareCodeUnits(left.id, right.id))
+}
+
+function claimOf(entry: CensusEntry, record: IssueRecord | PullRequestRecord, linked: ReadonlyArray<PullRequestRecord>, referenceTime: number): WorkItemClaim {
+  const item: GitHubItem = { ...entry.facts, id: 0, labels: [...entry.facts.labels], assignees: [...entry.facts.assignees], comments: [...entry.facts.comments] }
+  const decided = claimDecision(item, referenceTime)
+  const kind = entry.facts.kind === "IssueItem" ? "implementation" : "review"
+  const author = record.author
+  switch (decided.source) {
+    case "NoClaim": return unclaimed
+    case "AssigneeClaim": return { status: "claimed", source: "assignee", kind, actors: record.assignees.filter((actor) => actor.kind !== "Bot" && (kind === "implementation" || author === null || !sameActor(actor, author))), claimedAt: null }
+    case "LinkedPullRequestClaim": return { status: "claimed", source: "pull-request", kind, actors: uniqueActors(linked.flatMap((pull) => pull.author === null ? [] : [pull.author])), claimedAt: null }
+    case "CommentClaim": {
+      const comment = record.comments[decided.comment]
+      return comment === undefined || comment.author === null ? unclaimed : { status: "claimed", source: "claim-comment", kind, actors: [comment.author], claimedAt: comment.createdAt }
+    }
+    case "LabelClaim": return { status: "claimed", source: "label", kind, actors: [], claimedAt: null }
+    default: {
+      const _exhaustive: never = decided.source
+      return _exhaustive
+    }
+  }
+}
+
+effect function workItem(entry: CensusEntry, record: IssueRecord | PullRequestRecord, repository: string, linked: ReadonlyArray<PullRequestRecord>, referenceTime: number) {
+  const selection = try queueSelection(entry.item)
+  if (selection === undefined) throw new AssemblyRefused({ message: `Open census item ${record.id} is not open` })
+  const labels = [...new Set(record.labels.map((label) => label.name))].sort(compareCodeUnits)
+  const pull = "isDraft" in record ? record : undefined
+  const filesAvailable = pull === undefined || pull.files !== null
+  const actionability = pull?.isDraft === true ? "draft" : !filesAvailable || hasBlockedLabel(record.labels.map((label) => label.name)) ? "blocked" : "actionable"
+  return {
+    id: record.id,
+    kind: pull === undefined ? "issue" : "pull-request",
+    number: record.number,
+    title: record.title,
+    url: record.url,
+    repository,
+    author: record.author,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    labels,
+    priority: workItemPriority(record.labels.map((label) => label.name)),
+    actionability,
+    isDraft: pull === undefined ? null : pull.isDraft,
+    ...(pull === undefined ? {} : { filesAvailable }),
+    reviewDecision: pull === undefined ? null : pull.reviewDecision,
+    activeReviewRequestCount: pull === undefined ? null : pull.activeReviewRequestCount,
+    commentCount: new Set(record.comments.map((comment) => comment.id)).size,
+    claim: claimOf(entry, record, linked, referenceTime),
+    selection,
+    evidence: noEvidence,
+    model: noModel,
+  } satisfies WorkItem
+}
+
+export function compareWorkItems(left: WorkItem, right: WorkItem) {
+  return Number(left.selection.status === "excluded") - Number(right.selection.status === "excluded")
+    || (actionabilityRank[left.actionability] ?? 0) - (actionabilityRank[right.actionability] ?? 0)
+    || Number(left.claim.status === "claimed") - Number(right.claim.status === "claimed")
+    || (priorityRank[left.priority] ?? 0) - (priorityRank[right.priority] ?? 0)
+    || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    || right.number - left.number
+}
+
+export effect function workQueue(collection: Collection) {
+  const entries = new Map<string, { readonly entry: CensusEntry; readonly repository: string }>()
+  for (const repository of collection.work.collections) {
+    for (const entry of [...repository.open.census.issues.entries, ...repository.open.census.pullRequests.entries]) {
+      if (!entries.has(entry.reference.nodeId)) entries.set(entry.reference.nodeId, { entry, repository: repository.target.id })
+    }
+  }
+  const openPulls = new Map(collection.openPullRequests.map((pull) => [pull.id, pull] as const))
+  const referenceTime = collection.bounds.toMs
+  const queued = (record: IssueRecord | PullRequestRecord, linked: ReadonlyArray<PullRequestRecord>) => effect {
+    const found = entries.get(record.id)
+    if (found === undefined) throw new AssemblyRefused({ message: `Open work item ${record.id} has no census decision` })
+    return try workItem(found.entry, record, found.repository, linked, referenceTime)
+  }
+  const issues: WorkItem[] = []
+  for (const issue of collection.openIssues) {
+    const linked = (issue.referencedPullRequestIds ?? []).flatMap((id) => {
+      const pull = openPulls.get(id)
+      return pull === undefined ? [] : [pull]
+    })
+    issues.push(try queued(issue, linked))
+  }
+  const pullRequests: WorkItem[] = []
+  for (const pull of collection.openPullRequests) pullRequests.push(try queued(pull, []))
+  return { issues: issues.sort(compareWorkItems), pullRequests: pullRequests.sort(compareWorkItems) }
+}

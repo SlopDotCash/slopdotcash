@@ -1,0 +1,135 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import type { SourceAudit } from "../src/corrections/reviewed/packet.vibe"
+import { type HistoricalAssessmentCatalog, type HistoricalAssessmentJournalHeads, type HistoricalAssessmentScope, historicalAssessmentFreshness, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition, readHistoricalAssessmentCatalog, readHistoricalAssessmentJournalHeads } from "../src/corrections/reviewed/audit/catalog.vibe"
+import { classifyHistoricalAssessmentScope } from "../src/corrections/reviewed/audit/reconcile.vibe"
+import { capturedCut, sealedCut } from "../src/corrections/reviewed/audit/run.vibe"
+import { reviewed } from "../src/programs/reviewed.vibe"
+
+service World {
+  readonly db: D1Database
+}
+
+const recordedAt = "2026-11-19T12:00:00.000Z"
+const headSha = "c".repeat(40)
+const sourceDigest = "d".repeat(64)
+const baselineDigest = "b".repeat(64)
+const manifest = JSON.stringify({ id: "fixture", status: "active", authority: { repositoryNodeId: "R_audit" }, repositories: [{ id: "fixture/repo" }] })
+const scope: HistoricalAssessmentScope = { projectId: "fixture", repositoryNodeId: "R_audit", revision: 5, manifestSha256: sha256Of(manifest), expectedPointsDigest: baselineDigest }
+const audit: SourceAudit = {
+  repository: "fixture/repo",
+  repositoryNodeId: "R_audit",
+  from: "2026-09-27T00:00:00.000Z",
+  through: "2026-11-01T00:00:00.000Z",
+  sources: [{ id: "PR_known", number: 7, headSha, mergedAt: "2026-10-05T00:00:00.000Z" }],
+}
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "points-assessment-audit" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function seeded() {
+  const db = try D1
+  try db.run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('fixture', ${scope.revision}, ${manifest}, ${scope.manifestSha256}, 'fixture', ${recordedAt})`)
+  try db.run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('fixture', 'active', ${scope.revision}, ${manifest}, ${scope.manifestSha256}, ${recordedAt}, ${recordedAt})`)
+  try db.run(sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${baselineDigest}, ${recordedAt}, '[]', 0)`)
+}
+
+function legacyRecord(pull: string, options: { readonly project?: string; readonly repository?: string; readonly producerRevision?: string } = {}) {
+  return JSON.stringify({
+    schemaVersion: "slop-value-record:v1",
+    projectId: options.project ?? "fixture",
+    repository: "fixture/repo",
+    repositoryNodeId: options.repository ?? "R_audit",
+    repositoryDatabaseId: 42,
+    pullRequestNodeId: pull,
+    pullRequestNumber: 7,
+    headSha,
+    mergeSha: null,
+    policySha: "e".repeat(40),
+    sourceDigest,
+    occurredAt: "2026-10-05T00:00:00.000Z",
+    supersedes: null,
+    revisionReason: null,
+    assessment: { status: "assessed", reviews: [] },
+    model: { provider: "surplus", requested: "claude-opus-5.5", reported: "claude-opus-5.5" },
+    producerRevision: options.producerRevision ?? "f".repeat(40),
+    assessedAt: "2026-10-06T00:00:00.000Z",
+    rubricVersion: "slop-value-2026-10-01",
+  })
+}
+
+effect function legacy(pull: string, options: { readonly project?: string; readonly repository?: string } = {}) {
+  const raw = legacyRecord(pull, options)
+  try (try D1).run(sql`INSERT INTO slopbot_value_journal (record_digest, assessment_key, repository_node_id, pull_request_node_id, head_sha, source_digest, supersedes, record_json, recorded_at) VALUES (${sha256Of(raw)}, ${sha256Of(`legacy ${raw}`)}, ${options.repository ?? "R_audit"}, ${pull}, ${headSha}, ${sourceDigest}, NULL, ${raw}, ${recordedAt})`)
+}
+
+effect function joint(pull: string) {
+  const raw = JSON.stringify({ schemaVersion: "slop-work-unit-record:v1", projectId: "fixture", sourceDigest, sources: [{ repositoryNodeId: "R_audit", pullRequestNodeId: pull }], claims: [], supersedes: [], legacyPredecessors: [], revisionReason: null })
+  try (try D1).run(sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (${sha256Of(raw)}, ${sha256Of(`joint ${raw}`)}, 'fixture', ${sourceDigest}, ${raw}, ${recordedAt})`)
+}
+
+effect function conclusion(catalog: HistoricalAssessmentCatalog, fresh: boolean) {
+  const classified = try classifyHistoricalAssessmentScope(catalog, audit, "fixture")
+  const sealed = sealedCut(try capturedCut(classified, catalog.heads), fresh) catch (error) => error._tag
+  return { receipt: classified.receipt.status, blockers: classified.receipt.blockers, sealed: typeof sealed === "string" ? sealed : sealed.status }
+}
+
+effect function recordable(heads: HistoricalAssessmentJournalHeads) {
+  const conditions = [
+    ...(try historicalAssessmentRecordingConditions(scope, heads)),
+    try historicalPointsBaselineCondition(baselineDigest, 0),
+  ]
+  const [row] = try (try D1).all({ text: `SELECT (${conditions.join(" AND ")}) AS ok`, params: [] })
+  return row?.ok === 1
+}
+
+layer(Layer.mergeAll(Started, webCrypto, NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('An assessment audit concludes only at a complete, current journal cut (spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed")', () => effect {
+    const world = try World
+    provide d1(world.db) {
+      try seeded()
+      const empty = try readHistoricalAssessmentCatalog(scope)
+      try same([empty.heads.jointThrough, empty.heads.legacyThrough, empty.joint.length, empty.legacy.length], [0, 0, 0, 0])
+      try same(try conclusion(empty, true), { receipt: "no-scoped-active-assessments", blockers: [], sealed: "NoScopedActiveAssessments" })
+
+      try legacy("PR_known")
+      const active = try readHistoricalAssessmentCatalog(scope)
+      try same(try conclusion(active, true), { receipt: "requires-value-replay", blockers: [], sealed: "RequiresValueReplay" })
+      const found = try classifyHistoricalAssessmentScope(active, audit, "fixture")
+      try same(found.receipt.records.map((record) => record.sources.map((source) => source.finding)), [["audited-head"]])
+
+      const altered = legacyRecord("PR_known", { producerRevision: "not-a-revision" })
+      const invalid = { ...active, legacy: active.legacy.map((row) => ({ ...row, record_json: altered, record_digest: sha256Of(altered) })) }
+      try same(try conclusion(invalid, true), { receipt: "incomplete", blockers: ["invalid-legacy-history"], sealed: "AuditIncomplete" })
+      try same(try conclusion({ ...active, legacy: [] }, true), { receipt: "incomplete", blockers: ["incomplete-catalog"], sealed: "AuditIncomplete" })
+
+      const heads = try readHistoricalAssessmentJournalHeads()
+      try legacy("PR_unrelated", { project: "outside", repository: "R_other" })
+      try same([try historicalAssessmentFreshness(scope, active.heads), try recordable(heads)], [true, true])
+      try same(try conclusion(active, try historicalAssessmentFreshness(scope, active.heads)), { receipt: "requires-value-replay", blockers: [], sealed: "RequiresValueReplay" })
+
+      try joint("PR_new")
+      try same([try historicalAssessmentFreshness(scope, active.heads), try recordable(heads)], [false, false])
+      try same(try conclusion(active, try historicalAssessmentFreshness(scope, active.heads)), { receipt: "requires-value-replay", blockers: [], sealed: "ReviewedRefused" })
+    }
+  })
+
+  it.effect('An assessment audit outside the trusted main dispatch reads nothing (spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut")', () => effect {
+    const failure = try Effect.flip(reviewed(["--audit-assessments"]))
+    try same(failure._tag, "ReviewedPublicationRefused")
+  })
+})

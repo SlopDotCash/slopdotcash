@@ -33,6 +33,8 @@ export const everyFeeCommentCarriesTheMarker = contract({
       feeNeededComment(facts(options, number)),
       feePaidComment({ ...facts(options, number), paidNetwork: "base-mainnet", paidDepositId: 3, outcome: null }),
       feePaidComment({ ...facts(options, number), paidNetwork: null, paidDepositId: null, outcome: { kind: "kept_due", why: "closed" } }),
+      feePaidComment({ ...facts(options, number), paidNetwork: null, paidDepositId: null, outcome: { kind: "refund_due", why: "wanted" } }),
+      feePaidComment({ ...facts(options, number), paidNetwork: null, paidDepositId: null, outcome: { kind: "kept_due", why: "marked" } }),
       feeReleasedComment(withSlop ? "setting-off" : "author-exempt"),
     ];
   },

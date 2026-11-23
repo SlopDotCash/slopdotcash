@@ -1,4 +1,4 @@
-// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"
+// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"; spec/points/projectionTransport.md, "A reset read of the published index or a shard is repeated at most three times"; spec/points/projectionTransport.md, "Story: Read the published projection without mistaking a reset for a refusal"
 import { boundedBytes } from "@repo/platform/browser"
 import { millisOf } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
@@ -7,7 +7,7 @@ import { journalFile } from "../kernels/records/ids.vibe"
 import { maxIndexBytes, maxPageBytes, maxRevisions, maxShardBytes, pointsRule, shardCount, shardPath } from "../client/journal.vibe"
 import { assembleProjection } from "../publication/projections.vibe"
 import type { PublishedRecord } from "../../gen/points__publication.ts"
-import { type Event as TransportEvent, type ProjectionRead, Machine as TransportMachine, initial as transportInitial, machineOver as transportOver, resetWaitMs } from "../../gen/points__projectionTransport.effect.vibe"
+import { type Event as TransportEvent, type ProjectionRead, Machine as TransportMachine, initial as transportInitial, machineOver as transportOver, resetWaitMs, resetsOf } from "../../gen/points__projectionTransport.effect.vibe"
 import { type CopyEvidence, type CopyState, type Environment, type Event, type PublicHistory, type Recovery, type RecoveryEvidence, type SourceCoverage, Machine, decodeState, enabled, initial, machineOver } from "../../gen/points__recovery.effect.vibe"
 
 export error RecoveryRefused { outcome: string; message: string }
@@ -29,6 +29,8 @@ interface Fetched {
 }
 
 type Read = Fetched | "reset" | "failed"
+
+type Settled = Fetched | "failed" | "exhausted"
 
 type JsonObject = Readonly<Record<string, unknown>>
 
@@ -116,12 +118,17 @@ effect function fetched(url: string, limitBytes: number, label: string) {
   return answer
 }
 
+function resetCounted(next: ProjectionRead, reset: TransportEvent, resets: number) {
+  if (reset.type === "resetShard") return (next.phase === "ReadingShards" || next.phase === "Draining") && resetsOf(next, reset.shard) === resets + 1
+  return next.phase === "ReadingIndex"
+}
+
 effect function resetRead(read: TransportMachine.Shape, reset: TransportEvent, url: string, limitBytes: number, label: string, wait: (millis: number) => void!!) {
-  while (true) {
+  for (let resets = 0; ; resets++) {
     const answer = try fetched(url, limitBytes, label)
-    if (answer !== "reset") return answer
+    if (answer !== "reset") return answer satisfies Settled
     const next = read.send(reset) catch () => undefined
-    if (next === undefined || next.phase === "Refused") return "failed" as const
+    if (next === undefined || !resetCounted(next, reset, resets)) return "exhausted" satisfies Settled
     try wait(resetWaitMs)
   }
 }
@@ -192,18 +199,30 @@ effect function refusedRead(read: TransportMachine.Shape, copy: Copy) {
   return copy
 }
 
-effect function projectionParts(origin: string, index: unknown, read: TransportMachine.Shape, wait: (millis: number) => void!!) {
+function shardsListed(index: unknown) {
   const shards = objectOf(index)?.shards
-  if (!Array.isArray(shards) || shards.length !== shardCount) return undefined
+  if (!Array.isArray(shards) || shards.length !== shardCount) return false
   const entries: ReadonlyArray<unknown> = shards
-  if (entries.some((entry, position) => objectOf(entry)?.path !== shardPath(position))) return undefined
-  const answers = try Effect.forEach(entries, (_entry, position) => resetRead(read, { type: "resetShard", shard: position }, `${origin}${shardPath(position)}`, maxShardBytes, "points shard", wait), { concurrency: shardCount })
+  return entries.every((entry, position) => objectOf(entry)?.path === shardPath(position))
+}
+
+effect function shardText(origin: string, position: number, read: TransportMachine.Shape, wait: (millis: number) => void!!) {
+  const answer = try resetRead(read, { type: "resetShard", shard: position }, `${origin}${shardPath(position)}`, maxShardBytes, "points shard", wait)
+  if (answer === "exhausted") return unavailable
+  if (answer === "failed" || answer.status < 200 || answer.status > 299) return try refusedRead(read, unavailable)
+  const text = try textOf(answer.bytes)
+  if (text === undefined) return try refusedRead(read, unverified)
+  read.send({ type: "settleShard" }) catch () => undefined
+  return text
+}
+
+effect function projectionParts(origin: string, read: TransportMachine.Shape, wait: (millis: number) => void!!) {
+  const positions = Array.from({ length: shardCount }, (_entry, position) => position)
+  const answers = try Effect.forEach(positions, (position) => shardText(origin, position, read, wait), { concurrency: shardCount })
   const parts: string[] = []
-  for (const shard of answers) {
-    if (typeof shard === "string" || shard.status < 200 || shard.status > 299) return unavailable
-    const text = try textOf(shard.bytes)
-    if (text === undefined) return undefined
-    parts.push(text)
+  for (const answer of answers) {
+    if (typeof answer !== "string") return answer
+    parts.push(answer)
   }
   return parts
 }
@@ -221,15 +240,14 @@ effect function pagesCopy(origin: string, wait: (millis: number) => void!!) {
     const text = try textOf(answer.bytes)
     if (text === undefined) return try refusedRead(read, unverified)
     const index = try jsonOf(answer.bytes)
-    if (index === undefined) return try refusedRead(read, unverified)
+    if (index === undefined || !shardsListed(index)) return try refusedRead(read, unverified)
     const identity = JSON.stringify(index)
     const generation = generations.get(identity) ?? generations.size + 1
     generations.set(identity, generation)
     const indexed = try read.send({ type: "readIndex", generation })
     if (indexed.phase === "Refused") return unverified
-    const parts = try projectionParts(origin, index, read, wait)
-    if (parts === undefined) return try refusedRead(read, unverified)
-    if (!Array.isArray(parts)) return try refusedRead(read, parts)
+    const parts = try projectionParts(origin, read, wait)
+    if (!Array.isArray(parts)) return parts
     const assembled = assembleProjection(text, parts) catch effect (error) => {
       if (error.message === "Points shard checksum mismatch") return "changed" as const
       return undefined

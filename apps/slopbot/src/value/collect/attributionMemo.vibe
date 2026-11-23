@@ -1,0 +1,339 @@
+// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"
+import { GitHub, decoded } from "@repo/platform/github"
+import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AttributionPullDependency, type AttributionReferenceDependency, Graphql, canonicalJson } from "@repo/points/collect"
+import { referenceTimelineRequest, valueReferenceQuery } from "../evidence/references.vibe"
+
+type Fields = Readonly<Record<string, unknown>>
+
+const timelineQuery = referenceTimelineRequest("o/r", 1, null).query
+const sha = "[a-f0-9]{40}"
+const immutablePath = new RegExp(`^(?:commits/${sha}|compare/${sha}\\.\\.\\.${sha}|git/(?:commits|trees|blobs)/${sha})(?:\\?.*)?$`, "u")
+const contentsPath = /^contents\/[^?]*(?:\?(.*))?$/u
+const exactRef = /^ref=[a-f0-9]{40}$/u
+const pullPath = /^pulls\/([1-9]\d*)$/u
+const discussionPath = /^(?:pulls\/([1-9]\d*)\/(?:reviews|comments|files|commits)|issues\/([1-9]\d*)\/comments)(?:\?.*)?$/u
+const pullUrl = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/[1-9]\d*$/u
+const maxReasons = 8
+
+const pullFenceQuery = "query SlopAttributionPullFences($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id updatedAt url state}} rateLimit{cost limit remaining resetAt}}"
+const incomingFenceQuery = "query SlopAttributionIncomingFences($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id timelineItems(first:100,itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage} nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{id number url repository{nameWithOwner isPrivate}}}}}}}} rateLimit{cost limit remaining resetAt}}"
+const referenceSelection = "id isPrivate nameWithOwner issueOrPullRequest(number:$x__){__typename ... on PullRequest{id number url}}"
+const pullBatch = 100
+const incomingBatch = 20
+const referenceBatch = 25
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function isoOf(value: string) {
+  return new Date(value).toISOString()
+}
+
+export function normalizeIncoming(node: unknown) {
+  const source = fieldsOf(fieldsOf(node)?.["source"])
+  const kind = source?.["__typename"]
+  if (kind !== "PullRequest") return canonicalJson({ t: typeof kind === "string" ? kind : null })
+  const repository = fieldsOf(source?.["repository"])
+  return canonicalJson({
+    t: "PullRequest",
+    id: source?.["id"] ?? null,
+    number: source?.["number"] ?? null,
+    url: source?.["url"] ?? null,
+    repository: repository === undefined ? null : { nameWithOwner: repository["nameWithOwner"] ?? null, isPrivate: repository["isPrivate"] ?? null },
+  })
+}
+
+function pullState(pull: Fields): AttributionPullDependency["state"] | undefined {
+  const merged = pull["merged_at"] !== null && pull["merged_at"] !== undefined && pull["merged_at"] !== ""
+  if (pull["state"] === "open") return merged ? undefined : "OPEN"
+  if (pull["state"] === "closed") return merged ? "MERGED" : "CLOSED"
+  return undefined
+}
+
+function timelineNodes(value: unknown) {
+  const items = fieldsOf(fieldsOf(fieldsOf(fieldsOf(value)?.["repository"])?.["pullRequest"])?.["timelineItems"])
+  const nodes = items?.["nodes"]
+  const complete = fieldsOf(items?.["pageInfo"])?.["hasNextPage"] !== true
+  return Array.isArray(nodes) && complete ? nodes as ReadonlyArray<unknown> : undefined
+}
+
+export interface AttributionRecorder {
+  readonly reasons: ReadonlyArray<string>
+  observePull(value: unknown): void
+  observeGet(path: string, value: unknown): void
+  observeGraphql(query: string, variables: Readonly<Record<string, unknown>>, data: unknown): void
+  observeDiscussion(answer: unknown): void
+  observeError(): void
+  entry(outcomeId: string, fence: AttributionMemoFence, result: AttributionMemoResult | null): AttributionMemoEntry | undefined
+}
+
+export function attributionRecorder(spellings: ReadonlyArray<string>, repositoryDatabaseId: number): AttributionRecorder {
+  const names = new Set(spellings.map((name) => name.toLowerCase()))
+  const pulls = new Map<string, AttributionPullDependency>()
+  const pullNumbers = new Set<number>()
+  const subresources = new Set<number>()
+  const references = new Map<string, AttributionReferenceDependency>()
+  const reasons: string[] = []
+  let incoming: string[] | undefined = undefined
+  let incomingFromDiscussion = false
+
+  function named(value: string) {
+    return names.has(value.toLowerCase())
+  }
+
+  function refuse(reason: string) {
+    if (reasons.length < maxReasons) reasons.push(reason)
+  }
+
+  function observePull(value: unknown) {
+    const pull = fieldsOf(value)
+    const state = pull === undefined ? undefined : pullState(pull)
+    const id = pull?.["node_id"]
+    const updatedAt = pull?.["updated_at"]
+    const url = pull?.["html_url"]
+    const number = pull?.["number"]
+    if (pull === undefined || state === undefined || typeof id !== "string" || typeof updatedAt !== "string" || !Number.isFinite(Date.parse(updatedAt))
+      || typeof url !== "string" || typeof number !== "number" || !named(pullUrl.exec(url)?.[1] ?? "")) {
+      refuse("unrecognized pull request read")
+      return
+    }
+    const dependency: AttributionPullDependency = { id, updatedAt: isoOf(updatedAt), state, url }
+    const prior = pulls.get(id)
+    if (prior !== undefined && canonicalJson(prior) !== canonicalJson(dependency)) refuse("pull request changed during the computation")
+    pulls.set(id, dependency)
+    pullNumbers.add(number)
+  }
+
+  function observeIncoming(nodes: ReadonlyArray<unknown>, fromDiscussion: boolean) {
+    if (incoming !== undefined && !incomingFromDiscussion) {
+      refuse("incoming references read twice")
+      return
+    }
+    incoming = nodes.map(normalizeIncoming).sort()
+    incomingFromDiscussion = fromDiscussion
+  }
+
+  function restOf(path: string) {
+    const listed = /^\/repos\/([^/]+)\/([^/?]+)(?:\/(.*))?$/u.exec(path)
+    if (listed !== null && named(`${listed[1]}/${listed[2]}`)) return { inside: true, rest: listed[3] }
+    const numbered = /^\/repositories\/([1-9]\d*)(?:\/(.*))?$/u.exec(path)
+    if (numbered !== null && Number(numbered[1]) === repositoryDatabaseId) return { inside: true, rest: numbered[2] }
+    return { inside: false, rest: undefined }
+  }
+
+  return {
+    reasons,
+    observePull,
+    observeGet(path: string, value: unknown) {
+      const { inside, rest } = restOf(path)
+      if (!inside) {
+        refuse(`read outside the repository: ${path.slice(0, 80)}`)
+        return
+      }
+      if (rest === undefined) return
+      if (pullPath.test(rest)) {
+        observePull(value)
+        return
+      }
+      const discussion = discussionPath.exec(rest)
+      if (discussion !== null) {
+        subresources.add(Number(discussion[1] ?? discussion[2]))
+        return
+      }
+      const contents = contentsPath.exec(rest)
+      if (contents !== null) {
+        if (!exactRef.test(contents[1] ?? "")) refuse("file read outside an exact commit")
+        return
+      }
+      if (immutablePath.test(rest)) return
+      refuse(`unfenced read: ${rest.slice(0, 80)}`)
+    },
+    observeGraphql(query: string, variables: Readonly<Record<string, unknown>>, data: unknown) {
+      if (query === valueReferenceQuery) {
+        const repository = fieldsOf(fieldsOf(data)?.["repository"])
+        if (repository === undefined || repository["isPrivate"] !== false || fieldsOf(repository["issueOrPullRequest"]) === undefined) {
+          refuse("reference is private, renamed or unavailable")
+          return
+        }
+        const dependency: AttributionReferenceDependency = { owner: String(variables["owner"]), name: String(variables["name"]), number: Number(variables["number"]), repository }
+        references.set(canonicalJson([dependency.owner, dependency.name, dependency.number]), dependency)
+        return
+      }
+      if (query === timelineQuery) {
+        const items = fieldsOf(fieldsOf(fieldsOf(fieldsOf(data)?.["repository"])?.["pullRequest"])?.["timelineItems"])
+        const nodes = items?.["nodes"]
+        if (items === undefined || !Array.isArray(nodes) || fieldsOf(items["pageInfo"])?.["hasNextPage"] === true) {
+          refuse("incoming references span several pages")
+          return
+        }
+        observeIncoming(nodes, false)
+        return
+      }
+      refuse("unfenced GraphQL read")
+    },
+    observeDiscussion(answer: unknown) {
+      const nodes = timelineNodes(answer)
+      if (nodes !== undefined) observeIncoming(nodes, true)
+    },
+    observeError() {
+      refuse("a read failed")
+    },
+    entry(outcomeId: string, fence: AttributionMemoFence, result: AttributionMemoResult | null) {
+      if (result === null) refuse("the result is a hold")
+      if (incoming === undefined) refuse("incoming references were not read")
+      for (const number of subresources) if (!pullNumbers.has(number)) refuse("a pull request's discussion was read without its version")
+      if (reasons.length > 0 || result === null || incoming === undefined) return undefined
+      return {
+        outcomeId,
+        fence,
+        pulls: [...pulls.values()].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
+        references: [...references.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map(([, dependency]) => dependency),
+        incoming,
+        result,
+      } satisfies AttributionMemoEntry
+    },
+  }
+}
+
+effect function watched<A, E, R>(recorder: AttributionRecorder | undefined, read: Effect.Effect<A, E, R>) {
+  return try Effect.tapError(read, () => Effect.sync(() => recorder?.observeError()))
+}
+
+export function recordingGitHub(inner: GitHub.Shape, current: () => AttributionRecorder | undefined): GitHub.Shape {
+  return {
+    ...inner,
+    json: (path, schema, options) => effect {
+      const recorder = current()
+      return try watched(recorder, effect {
+        const raw: unknown = try inner.json(path, Schema.Unknown, options)
+        recorder?.observeGet(path, raw)
+        return try decoded(schema, raw, path)
+      })
+    },
+    pages: (path, itemSchema, options) => effect {
+      const recorder = current()
+      return try watched(recorder, effect {
+        const items = try inner.pages(path, itemSchema, options)
+        recorder?.observeGet(path, items)
+        return items
+      })
+    },
+    graphql: (query, variables, schema, options) => effect {
+      const recorder = current()
+      return try watched(recorder, effect {
+        const raw: unknown = try inner.graphql(query, variables, Schema.Unknown, options)
+        recorder?.observeGraphql(query, variables, raw)
+        return try decoded(schema, raw, "/graphql")
+      })
+    },
+    bytes: (path, limitBytes) => effect {
+      const recorder = current()
+      return try watched(recorder, effect {
+        const bytes = try inner.bytes(path, limitBytes)
+        recorder?.observeGet(path, undefined)
+        return bytes
+      })
+    },
+    status: (path) => effect {
+      const recorder = current()
+      return try watched(recorder, effect {
+        const status = try inner.status(path)
+        recorder?.observeGet(path, undefined)
+        return status
+      })
+    },
+  }
+}
+
+export function recordingGraphql(inner: Graphql.Shape, current: () => AttributionRecorder | undefined): Graphql.Shape {
+  return {
+    ...inner,
+    tryReferenceDiscussion: (variables, deadlineMs) => effect {
+      const recorder = current()
+      const answer = try watched(recorder, inner.tryReferenceDiscussion(variables, deadlineMs))
+      if (answer !== null) recorder?.observeDiscussion(answer)
+      return answer
+    },
+  }
+}
+
+function batches<T>(values: ReadonlyArray<T>, size: number) {
+  const out: T[][] = []
+  for (let index = 0; index < values.length; index += size) out.push(values.slice(index, index + size))
+  return out
+}
+
+effect function fenceAnswer(document: string, variables: Readonly<Record<string, unknown>>) {
+  const graph = try Graphql
+  const answer: Fields | undefined = graph.execute(document, variables) catch () => undefined
+  return answer
+}
+
+effect function listedNodes(document: string, ids: ReadonlyArray<string>) {
+  const answer = try fenceAnswer(document, { ids })
+  const nodes = answer?.["nodes"]
+  return Array.isArray(nodes) && nodes.length === ids.length ? nodes as ReadonlyArray<unknown> : undefined
+}
+
+export effect function revalidateAttributionEntries(entries: ReadonlyArray<AttributionMemoEntry>) {
+  const pullIds = [...new Set(entries.flatMap((entry) => entry.pulls.map((pull) => pull.id)))]
+  const livePulls = new Map<string, string>()
+  for (const ids of batches(pullIds, pullBatch)) {
+    const nodes = try listedNodes(pullFenceQuery, ids)
+    for (const [index, node] of (nodes ?? []).entries()) {
+      const pull = fieldsOf(node)
+      const id = pull?.["id"]
+      const updatedAt = pull?.["updatedAt"]
+      if (pull?.["__typename"] === "PullRequest" && id === ids[index] && typeof id === "string" && typeof updatedAt === "string" && Number.isFinite(Date.parse(updatedAt)))
+        livePulls.set(id, canonicalJson({ id, updatedAt: isoOf(updatedAt), state: pull["state"] ?? null, url: pull["url"] ?? null }))
+    }
+  }
+
+  const incomingIds = [...new Set(entries.map((entry) => entry.outcomeId))]
+  const liveIncoming = new Map<string, string>()
+  for (const ids of batches(incomingIds, incomingBatch)) {
+    const nodes = try listedNodes(incomingFenceQuery, ids)
+    for (const [index, node] of (nodes ?? []).entries()) {
+      const pull = fieldsOf(node)
+      const id = pull?.["id"]
+      const items = fieldsOf(pull?.["timelineItems"])
+      const listed = items?.["nodes"]
+      if (pull?.["__typename"] === "PullRequest" && id === ids[index] && typeof id === "string" && Array.isArray(listed) && fieldsOf(items?.["pageInfo"])?.["hasNextPage"] === false)
+        liveIncoming.set(id, canonicalJson((listed as ReadonlyArray<unknown>).map(normalizeIncoming).sort()))
+    }
+  }
+
+  const referenceKeys = new Map<string, AttributionReferenceDependency>()
+  for (const entry of entries) {
+    for (const reference of entry.references) referenceKeys.set(canonicalJson([reference.owner, reference.name, reference.number]), reference)
+  }
+  const liveReferences = new Map<string, string>()
+  for (const group of batches([...referenceKeys], referenceBatch)) {
+    const variables: Record<string, unknown> = {}
+    const declarations: string[] = []
+    const fields: string[] = []
+    for (const [index, [, reference]] of group.entries()) {
+      variables[`o${index}`] = reference.owner
+      variables[`n${index}`] = reference.name
+      variables[`x${index}`] = reference.number
+      declarations.push(`$o${index}:String!,$n${index}:String!,$x${index}:Int!`)
+      fields.push(`r${index}:repository(owner:$o${index},name:$n${index}){${referenceSelection.replace("$x__", `$x${index}`)}}`)
+    }
+    const answer = try fenceAnswer(`query SlopAttributionReferenceFences(${declarations.join(",")}){${fields.join(" ")} rateLimit{cost limit remaining resetAt}}`, variables)
+    if (answer === undefined) continue
+    for (const [index, [key]] of group.entries()) {
+      const repository = answer[`r${index}`]
+      if (repository !== null && repository !== undefined) liveReferences.set(key, canonicalJson(repository))
+    }
+  }
+
+  const valid = new Set<string>()
+  for (const entry of entries) {
+    const pullsMatch = entry.pulls.every((pull) => livePulls.get(pull.id) === canonicalJson(pull))
+    const incomingMatch = liveIncoming.get(entry.outcomeId) === canonicalJson(entry.incoming)
+    const referencesMatch = entry.references.every((reference) => liveReferences.get(canonicalJson([reference.owner, reference.name, reference.number])) === canonicalJson(reference.repository))
+    if (pullsMatch && incomingMatch && referencesMatch) valid.add(entry.outcomeId)
+  }
+  return valid
+}

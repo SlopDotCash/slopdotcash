@@ -1,0 +1,229 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { octoberDuplicateRetirementReason } from "../gen/points__journal.effect.vibe"
+import { pointKey } from "../src/kernels/records/ids.vibe"
+import type { PointRevision, PointsJournal } from "../src/kernels/records/records.schema.ts"
+import { books } from "../src/score/book.vibe"
+import { type Actor, type Assessment, type Commit, type ImplementationHistory, type MergedPull, actorIndex, actorsOf } from "../src/score/facts.vibe"
+import { previousPositiveImplementationSources } from "../src/score/history.vibe"
+import { mergedCredit } from "../src/score/merges.vibe"
+
+const repository = "SlopDotCash/slop"
+const windowFrom = Date.parse("2026-10-12T00:00:00.000Z")
+const windowTo = Date.parse("2026-11-16T00:00:00.000Z")
+
+function actor(login: string): Actor {
+  return { id: `U_${login}`, login, avatarUrl: `https://avatars.githubusercontent.com/${login}`, url: `https://github.com/${login}`, kind: "User" }
+}
+
+const alice = actor("alice")
+const bob = actor("bob")
+const carol = actor("carol")
+const mia = actor("mia")
+
+function commit(oid: string, by: Actor, additions: number, extra: Partial<Commit> = {}): Commit {
+  const files = additions === 0 ? [] : [{ filename: `src/${oid}.ts`, previousFilename: null, additions, deletions: 0 }]
+  return { oid, parentCount: 1, author: by, retained: null, additions, deletions: 0, attributions: files.length === 0 ? [] : [{ limited: false, files }], resolutions: [], ...extra }
+}
+
+function pull(number: number, day: number, author: Actor, commits: ReadonlyArray<Commit> | null, extra: Partial<MergedPull> = {}): MergedPull {
+  return {
+    id: `PR_${number}`,
+    number,
+    repository,
+    project: "slop",
+    url: `https://github.com/${repository}/pull/${number}`,
+    title: `Change ${number}`,
+    mergedAt: `2026-11-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    author,
+    headRefOid: `head-${number}`,
+    commits,
+    reviews: [],
+    assessment: null,
+    ratification: null,
+    reviewValues: [],
+    externalPrize: false,
+    traceUpload: false,
+    automatedReviews: [],
+    ...extra,
+  }
+}
+
+function assessed(source: MergedPull): MergedPull {
+  const assessment: Assessment = { tier: "small", source: "PaidApiReceipt", digest: "d".repeat(64), rubric: "slop-value-v1", model: "slopbot-model", head: source.headRefOid, recordedAt: "2026-11-14T02:00:00.000Z", rationale: "Fixture standalone assessment." }
+  return { ...source, assessment }
+}
+
+const rolling: ImplementationHistory = {
+  mode: "rolling",
+  valueInput: true,
+  acceptedImplementationDigests: new Map(),
+  previousImplementationDigests: new Set(),
+  previousAcceptedOrdinaryOwners: new Map(),
+  unresolvedImplementationSources: new Set(),
+}
+
+effect function credit(pulls: ReadonlyArray<MergedPull>, history: Partial<ImplementationHistory> = {}) {
+  provide books {
+    const merges = try mergedCredit({ pulls, closed: [], contexts: [], decisions: [], attributionHolds: new Set(), windowFrom, windowTo, implementation: { ...rolling, ...history } }, actorIndex(actorsOf(pulls)))
+    return {
+      credited: merges.events.map((event) => `${event.id} ${event.actor.login}`).sort(),
+      implementationHeld: [...merges.implementationHeld].sort(),
+      standaloneReview: [...merges.standaloneReview].sort(),
+      held: merges.held.map((entry) => `${entry.sourceId} ${entry.reason}`),
+      reviewCensus: [...merges.creditActors].map(([id, actors]) => `${id} ${[...actors].sort().join(",")}`).sort(),
+    }
+  }
+}
+
+const nothingHeld = { implementationHeld: [], standaloneReview: [], held: [] }
+
+const delta = "c".repeat(64)
+
+const projectId = "slop"
+const mergedAt = "2026-10-14T01:00:00.000Z"
+const mergedBefore = "2026-11-01T00:00:00.000Z"
+const before = "2026-11-02T00:00:00.000Z"
+const through = "2026-11-03T00:00:00.000Z"
+const after = "2026-11-04T00:00:00.000Z"
+
+function url(number: number) {
+  return `https://github.com/${repository}/pull/${number}`
+}
+
+interface Recorded {
+  readonly sourceId: string
+  readonly number: number
+  readonly recordedAt: string
+  readonly login?: string
+  readonly amount?: number
+  readonly occurredAt?: string
+  readonly sourceUrl?: string
+  readonly workUnitId?: string
+  readonly reason?: string
+}
+
+effect function revision(sequence: number, entry: Recorded) {
+  const login = entry.login ?? "creator"
+  const workUnitId = entry.workUnitId ?? `${entry.sourceId}:merged`
+  const unit = workUnitId.startsWith("wu_") ? { workUnitId } : {}
+  const amount = entry.amount ?? 30
+  const row: PointRevision = {
+    id: sequence.toString(16).padStart(64, "0"),
+    previous: null,
+    recordedAt: entry.recordedAt,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: {
+      key: try pointKey({ projectId, actorId: `U_${login}`, category: "merged-pull-request", sourceId: entry.sourceId, ...unit }),
+      actor: { id: `U_${login}`, login },
+      projectId,
+      category: "merged-pull-request",
+      amount,
+      occurredAt: entry.occurredAt ?? mergedAt,
+      sourceId: entry.sourceId,
+      sourceUrl: entry.sourceUrl ?? url(entry.number),
+      workUnitId,
+      provisional: true,
+    },
+    ...(entry.reason === undefined ? {} : { decision: { sourceId: `value:${"e".repeat(64)}`, effectiveAt: entry.recordedAt, reason: entry.reason, delta: 0 } }),
+  }
+  return row
+}
+
+const recorded: ReadonlyArray<Recorded> = [
+  { sourceId: "PR_keep", number: 10, recordedAt: before },
+  { sourceId: "PR_keep", number: 10, recordedAt: before, login: "carrier" },
+  { sourceId: "PR_later_zero", number: 11, recordedAt: before },
+  { sourceId: "PR_earlier_zero", number: 12, recordedAt: before },
+  { sourceId: "PR_joint_only", number: 13, recordedAt: before, workUnitId: `wu_${"1".repeat(64)}` },
+  { sourceId: "PR_at_cutoff", number: 14, recordedAt: before, occurredAt: mergedBefore },
+  { sourceId: "PR_fragment", number: 15, recordedAt: before, sourceUrl: `${url(15)}#discussion` },
+  { sourceId: "PR_wrong_repo", number: 16, recordedAt: before, sourceUrl: "https://github.com/other/slop/pull/16" },
+  { sourceId: "PR_conflicting_id", number: 17, recordedAt: before },
+  { sourceId: "PR_conflicting_id", number: 18, recordedAt: before, login: "secondary" },
+  { sourceId: "PR_number_one", number: 19, recordedAt: before },
+  { sourceId: "PR_number_two", number: 19, recordedAt: before },
+  { sourceId: "PR_retired", number: 20, recordedAt: before },
+  { sourceId: "PR_earlier_zero", number: 12, recordedAt: through, amount: 0 },
+  { sourceId: "PR_keep", number: 10, recordedAt: through, login: "carrier", amount: 0 },
+  { sourceId: "PR_retired", number: 20, recordedAt: through, reason: octoberDuplicateRetirementReason },
+  { sourceId: "PR_later_zero", number: 11, recordedAt: after, amount: 0 },
+]
+
+layer(webCrypto, { excludeTestServices: true })((it) => {
+  it.effect('A fresh unassessed merge with an empty census, an empty marker, a zero-line promotion, an unresolved source or a repeated accepted delta keeps no new implementation credit, and legacy or assessed scoring is unchanged (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census")', () => effect {
+    const earlier = pull(1, 3, alice, [commit("a1", alice, 10)])
+    const later = pull(2, 5, bob, [commit("b1", bob, 6)])
+    const { credited: both } = try credit([earlier, later])
+    try Effect.try(() => assert.deepStrictEqual(both, ["PR_1:merged alice", "PR_2:merged bob"]))
+
+    for (const census of [[], null]) {
+      const outcome = try credit([earlier, { ...later, author: mia, commits: census }])
+      try Effect.try(() => assert.deepStrictEqual({ credited: outcome.credited, implementationHeld: outcome.implementationHeld }, { credited: ["PR_1:merged alice"], implementationHeld: ["PR_2"] }))
+    }
+    const historicalEmpty = try credit([earlier, { ...later, commits: [] }], { mode: "historical" })
+    try Effect.try(() => assert.deepStrictEqual(historicalEmpty.credited, ["PR_1:merged alice", "PR_2:merged bob"]))
+
+    const marked = { ...later, emptyAcceptanceMarker: true }
+    const markerHeld = try credit([earlier, marked])
+    try Effect.try(() => assert.deepStrictEqual({ credited: markerHeld.credited, implementationHeld: markerHeld.implementationHeld }, { credited: ["PR_1:merged alice"], implementationHeld: ["PR_2"] }))
+    const legacy = try credit([earlier, marked], { valueInput: false })
+    try Effect.try(() => assert.deepStrictEqual({ credited: legacy.credited, implementationHeld: legacy.implementationHeld }, { credited: ["PR_1:merged alice", "PR_2:merged bob"], implementationHeld: [] }))
+    const resolved = try credit([earlier, assessed(marked)])
+    try Effect.try(() => assert.deepStrictEqual({ credited: resolved.credited, implementationHeld: resolved.implementationHeld }, { credited: ["PR_1:merged alice", "PR_2:merged bob"], implementationHeld: [] }))
+
+    const carried = commit("f1", alice, 40)
+    const original = pull(3, 2, alice, [carried])
+    const marker = commit("m1", mia, 0)
+    const promotion = (withMarker: Commit) => pull(4, 6, mia, [carried, commit("e1", mia, 0, { parentCount: 2 }), withMarker])
+    const promoted = try credit([original, promotion(marker)])
+    try Effect.try(() => assert.deepStrictEqual({ credited: promoted.credited, implementationHeld: promoted.implementationHeld }, { credited: ["PR_3:merged alice"], implementationHeld: ["PR_4"] }))
+    const independent = try credit([original, promotion({ ...marker, additions: 1, attributions: [{ limited: false, files: [{ filename: "src/m1.ts", previousFilename: null, additions: 1, deletions: 0 }] }] })])
+    try Effect.try(() => assert.deepStrictEqual(independent.credited, ["PR_3:merged alice", "PR_4:merged mia"]))
+    const renamed = try credit([original, promotion({ ...marker, attributions: [{ limited: false, files: [{ filename: "src/m1.ts", previousFilename: "src/m0.ts", additions: 0, deletions: 0 }] }] })])
+    try Effect.try(() => assert.deepStrictEqual({ credited: renamed.credited, implementationHeld: renamed.implementationHeld }, { credited: ["PR_3:merged alice"], implementationHeld: ["PR_4"] }))
+
+    const repeated = try credit([later, earlier], { acceptedImplementationDigests: new Map([["PR_1", delta], ["PR_2", delta]]) })
+    try Effect.try(() => assert.deepStrictEqual({ credited: repeated.credited, implementationHeld: repeated.implementationHeld }, { credited: ["PR_1:merged alice"], implementationHeld: ["PR_2"] }))
+    const rewardedBefore = try credit([earlier, later], { acceptedImplementationDigests: new Map([["PR_1", delta]]), previousImplementationDigests: new Set([`slopdotcash/slop\u0000${delta}`]) })
+    try Effect.try(() => assert.deepStrictEqual({ credited: rewardedBefore.credited, implementationHeld: rewardedBefore.implementationHeld }, { credited: ["PR_2:merged bob"], implementationHeld: ["PR_1"] }))
+    const unresolved = try credit([earlier, later], { unresolvedImplementationSources: new Set(["PR_2"]) })
+    try Effect.try(() => assert.deepStrictEqual({ credited: unresolved.credited, implementationHeld: unresolved.implementationHeld }, { credited: ["PR_1:merged alice"], implementationHeld: ["PR_2"] }))
+  })
+
+  it.effect('Earlier accepted work owns its commits in rolling scoring, the review census stays whole, and a standalone assessment of that work is held for joint review (spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
+    const squashed = pull(5, 3, alice, [commit("a5", alice, 10)], { acceptedOrdinaryCommitOid: "s5" })
+    const copy = pull(6, 5, bob, [commit("s5", alice, 10), commit("b6", bob, 5)])
+    const rollingCopy = try credit([squashed, copy])
+    try Effect.try(() => assert.deepStrictEqual(rollingCopy.credited, ["PR_5:merged alice", "PR_6:merged bob"]))
+    const historicalCopy = try credit([squashed, copy], { mode: "historical" })
+    try Effect.try(() => assert.deepStrictEqual(historicalCopy.credited, ["PR_5:merged alice", "PR_6:merged bob", "PR_6:merged:U_alice alice"]))
+
+    const carrier = pull(7, 6, carol, [commit("c1", alice, 10), commit("c2", carol, 5)])
+    const earlierOwners = new Map([[`slopdotcash/slop\u0000c1`, "PR_earlier_accepted"]])
+    const reserved = try credit([carrier], { previousAcceptedOrdinaryOwners: earlierOwners })
+    try Effect.try(() => assert.deepStrictEqual(reserved, { credited: ["PR_7:merged carol"], ...nothingHeld, reviewCensus: ["PR_7 U_alice,U_carol"] }))
+    const historicalReserved = try credit([carrier], { mode: "historical", previousAcceptedOrdinaryOwners: earlierOwners })
+    try Effect.try(() => assert.deepStrictEqual(historicalReserved.credited, ["PR_7:merged carol", "PR_7:merged:U_alice alice"]))
+
+    const standalone = try credit([assessed(carrier)], { previousAcceptedOrdinaryOwners: earlierOwners })
+    try Effect.try(() => assert.deepStrictEqual(standalone, { credited: [], implementationHeld: ["PR_7"], standaloneReview: ["PR_7"], held: [], reviewCensus: ["PR_7 U_alice,U_carol"] }))
+    const historicalStandalone = try credit([assessed(carrier)], { mode: "historical", previousAcceptedOrdinaryOwners: earlierOwners })
+    try Effect.try(() => assert.deepStrictEqual({ implementationHeld: historicalStandalone.implementationHeld, standaloneReview: historicalStandalone.standaloneReview, credits: historicalStandalone.credited.length }, { implementationHeld: [], standaloneReview: [], credits: 2 }))
+  })
+
+  it.effect('Earlier windows\' owners come from positive ordinary latest revisions at an exact cutoff (spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
+    const revisions: PointRevision[] = []
+    for (const [index, entry] of recorded.entries()) revisions.push(try revision(index + 1, entry))
+    const journal: PointsJournal = { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: after, coverage: [], revisions }
+    const scope = { projectId, repository, mergedBefore, recordedThrough: through }
+    const first = { id: "PR_keep", number: 10, url: url(10), mergedAt }
+    try Effect.try(() => assert.deepStrictEqual(try previousPositiveImplementationSources(journal, scope), [first, { id: "PR_later_zero", number: 11, url: url(11), mergedAt }]))
+    try Effect.try(() => assert.deepStrictEqual(try previousPositiveImplementationSources(journal, { ...scope, recordedThrough: after }), [first]))
+    for (const refused of [{ ...scope, mergedBefore: "2026-11-01T00:00:00Z" }, { ...scope, recordedThrough: "2026-11-03" }, { ...scope, repository: "../slop" }, { ...scope, projectId: "" }]) {
+      const failure = try Effect.flip(previousPositiveImplementationSources(journal, refused))
+      try Effect.try(() => assert.strictEqual(failure._tag, "ImplementationHistoryRefused"))
+    }
+  })
+})

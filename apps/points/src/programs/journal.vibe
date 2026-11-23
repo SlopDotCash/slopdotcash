@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { d1Http } from "@repo/platform/d1Http"
 import { journalText } from "../kernels/records/canonical.ts"
-import { holdProtected } from "../journal/hold.vibe"
+import { type ReviewedMergeGroups, holdProtected, reviewedMergeGroups } from "../journal/hold.vibe"
 import { type Store, finish, openStore } from "../journal/ledger.vibe"
 import { repositoriesOf, readSnapshots } from "../journal/build.vibe"
 import { reconcilePenalties } from "../journal/penalties.vibe"
@@ -163,11 +163,12 @@ effect function waitFor(millis: number) {
 interface Holding {
   readonly known: ReadonlySet<string>
   readonly protection: Protection
+  readonly groups: ReviewedMergeGroups
 }
 
 effect function heldIn(store: Store, holding: Holding | null) {
   if (holding === null) return 0
-  return try holdProtected(store, holding.known, holding.protection)
+  return try holdProtected(store, holding.known, holding.protection, holding.groups)
 }
 
 effect function build(args: ReadonlyArray<string>) {
@@ -180,9 +181,12 @@ effect function build(args: ReadonlyArray<string>) {
   const registry = try readRegistry(parsed.registry)
   const repositories = repositoriesOf(registry, try countsFromOf(parsed.snapshot))
   const origin = origins[parsed.environment]
+  const snapshots = try readSnapshots(try snapshotTexts(parsed.directory), registry)
   let holding: Holding | null = null
-  if (published !== null) holding = { known: new Set(published.revisions.map((revision) => revision.id)), protection: try resolveProtection(try committedMonths(), try protectionEnvironment(), origin) }
-  try applySnapshots(store, repositories, try readSnapshots(try snapshotTexts(parsed.directory), registry), recordedAt)
+  if (published !== null) {
+    holding = { known: new Set(published.revisions.map((revision) => revision.id)), protection: try resolveProtection(try committedMonths(), try protectionEnvironment(), origin), groups: reviewedMergeGroups(snapshots, repositories) }
+  }
+  try applySnapshots(store, repositories, snapshots, recordedAt)
   const heldAfterSnapshots = try heldIn(store, holding)
   const vaults = parsed.online ? try loadVaultPayouts(store.revisions.map((row) => row.award.actor), origin) : []
   const recognizedAt = try isoNow()

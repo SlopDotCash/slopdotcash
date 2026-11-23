@@ -1,6 +1,7 @@
 // spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/authorship.md, "A late author link repairs a credited fallback by an appended correction"
 import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
 import { mergeResolutionLineCounts } from "@repo/platform/git/evidence"
+import { type CensusCommit, unprovedZeroLinePromotion } from "../../../gen/points__corrections.effect.vibe"
 import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionFile, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
 
 export interface Scope { readonly commit: string; readonly path: string }
@@ -87,6 +88,29 @@ export function correctionClaimCommit(commit: CorrectionCommit) {
 function sameFiles(left: ReadonlyArray<CorrectionFile> | null, right: ReadonlyArray<CorrectionFile> | undefined) {
   return left !== null && right !== undefined && left.length === right.length &&
     left.every((file, position) => file.path === right[position]?.path && file.additions === right[position]?.additions && file.deletions === right[position]?.deletions)
+}
+
+function censusRow(source: CorrectionSource, commit: CorrectionCommit): CensusCommit {
+  return {
+    parentsKnown: true,
+    parents: commit.parentCount,
+    owned: commit.firstAcceptedSourceId === source.sourceId,
+    linesKnown: commit.additions !== null && commit.deletions !== null,
+    additions: commit.additions ?? 0,
+    deletions: commit.deletions ?? 0,
+    files: commit.files?.length ?? 0,
+  }
+}
+
+function emptyPromotion(source: CorrectionSource) {
+  return unprovedZeroLinePromotion(source.commits.map((commit) => censusRow(source, commit)))
+}
+
+export function isEmptyPromotion(candidate: ManifestCandidate) {
+  const proof = candidate.proof
+  if (candidate.kind !== "pull-request" || proof.status !== "complete" || proof.originalContributor !== undefined) return false
+  const accepted = proof.sources.find((source) => source.sourceId === candidate.sourceId)
+  return accepted !== undefined && emptyPromotion(accepted)
 }
 
 effect function validCommit(commit: CorrectionCommit) {
@@ -203,6 +227,7 @@ export effect function deriveProof(candidate: ManifestCandidate, projectOf: Proj
   if (incomplete || accepted === undefined) return null
   const tally: Tally = { actors: new Map(), weights: new Map(), scopes: [], incomplete: false }
   if (candidate.kind === "pull-request") {
+    if (emptyPromotion(accepted)) return null
     for (const commit of accepted.commits) try add(tally, sources, candidate, accepted, commit, { additions: commit.additions, deletions: commit.deletions, path: "*" })
   } else {
     try addClaims(tally, sources, candidate, proof)

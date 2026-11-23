@@ -51,7 +51,7 @@ function unmappedObligation(project: Statement) {
   return sql`EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT ${baseQualificationPaid} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest))`
 }
 
-function protectedScope(project: Statement, period: Statement) {
+export function protectedScope(project: Statement, period: Statement) {
   return sql`(${separated([...monthSources.map((source) => recordedMonth(source, project, period)), unmappedObligation(project)], sql` OR `)})`
 }
 

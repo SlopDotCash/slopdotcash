@@ -1,5 +1,5 @@
 // spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"
-import { switchedOn as feeSwitchedOn } from "@repo/backend/client";
+import { switchedOn as feeSwitchedOn, keepFeeLabel, refundUndecidedDays } from "@repo/backend/client";
 import { REPORT_DEPOSIT_SWITCHED_ON } from "@repo/security/client";
 import { Checkbox, Label } from "@repo/ui";
 import type { ReactNode } from "react";
@@ -9,8 +9,7 @@ import { fieldId, TextField } from "../fields/ProjectFields.tsx";
 
 export type ContributionSetting = "submissionFee" | "wantedIssues" | "reportDeposit";
 
-export const SUBMISSION_FEE_HINT =
-  "Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does 14 days without a maintainer decision. A pull request closed without a merge keeps it. Contributors can pay in SLOP at half the price instead.";
+export const SUBMISSION_FEE_HINT = `Slopbot reviews an outside contributor's pull request once a refundable fee is deposited. A merge sends the fee back, and so does ${refundUndecidedDays} days without a maintainer decision. A pull request closed without a merge keeps it, unless it answers a ${wantedLabelName} issue and you do not add ${keepFeeLabel}. Contributors can pay in SLOP at half the price instead.`;
 
 export type ContributionSettingsProps = {
   /** A listing that is only a security program takes no contributions, so it asks for neither fee nor wanted issues. */
