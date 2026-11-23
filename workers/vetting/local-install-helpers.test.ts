@@ -136,8 +136,14 @@ test("unresolved shell context cannot claim complete helper coverage", () => {
   for (const command of [
     ". change; sh hidden",
     "(cd sub; sh first); sh hidden",
-    "echo $(sh hidden)",
     "false && cd sub; sh hidden",
+    "cd sub | true; sh hidden",
+    "test -d sub && { cd sub; }; sh hidden",
+    "if true; then cd sub; fi; sh hidden",
+    "echo $(cd sub && sh hidden)",
+    "echo $(sh hidden",
+    "echo $((1 + $(sh hidden)))",
+    "case x in a) sh hidden;; esac",
   ]) {
     const result = inspectRepository({
       files: [
@@ -384,4 +390,86 @@ test("ordinary lifecycle commands do not gain helper gaps", () => {
       gaps: [],
     });
   }
+});
+
+test("ordinary shell syntax no longer hides a helper it runs (23 November 2026)", () => {
+  // Commands inside substitutions, `if` and `{ }` bodies are read as if they
+  // run, so the helper they launch is followed, not left as a gap.
+  for (const command of [
+    "echo $(sh hidden)",
+    "v=`sh hidden`",
+    'v="$(printf %s "$(sh hidden)")"',
+    "if [ -f hidden ]; then sh hidden; fi",
+    "test -f hidden && { sh hidden; exit 0; }",
+    "if ! command -v node >/dev/null; then sh hidden; fi",
+  ]) {
+    const result = inspectRepository({
+      files: [
+        manifest("package.json", command),
+        file("hidden", "curl https://example.com/root"),
+      ],
+    });
+    expect(result.downloads).toEqual(["https://example.com/root"]);
+    expect(result.coverage.installScripts.state).toBe("complete");
+  }
+});
+
+test("cd to the script's own directory keeps later helpers resolved", () => {
+  for (const line of [
+    'cd "$(dirname "$0")"',
+    "cd $(dirname $0)",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal shell line.
+    'cd "$(dirname "${BASH_SOURCE[0]}")"',
+  ]) {
+    const result = inspectRepository({
+      files: [
+        file("tools/setup.sh", `#!/bin/sh\n${line}\nsh ./run.sh\n`),
+        file("tools/run.sh", "curl https://example.com/tools\n"),
+        file("run.sh", "curl https://example.com/root\n"),
+      ],
+    });
+    expect(result.downloads).toEqual(["https://example.com/tools"]);
+    expect(result.coverage.installScripts.state).toBe("complete");
+  }
+  // In a package script `$0` is the shell, not a file, so the directory is
+  // not known and a later local launch stays a gap.
+  const result = inspectRepository({
+    files: [
+      manifest("package.json", 'cd "$(dirname "$0")"; sh ./run.sh'),
+      file("run.sh", "curl https://example.com/root\n"),
+    ],
+  });
+  expect(result.coverage.installScripts.state).toBe("partial");
+});
+
+test("a one-time database setup script with ordinary shell syntax is complete", () => {
+  // The shape of a real self-service project's setup script: it changes to
+  // its own directory, branches on `grep`, and runs a package from the
+  // registry, but launches no local helper.
+  const script = [
+    "#!/bin/bash",
+    "# creates the d1 db and adds it to wrangler.toml (run once)",
+    "set -e",
+    'cd "$(dirname "$0")"',
+    'grep -q "d1_databases" wrangler.toml && { echo "db already set up"; exit 0; }',
+    "npx -y wrangler@latest d1 create app > .d1.txt 2>&1 || true",
+    "ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}' .d1.txt | head -1)",
+    '[ -z "$ID" ] && ID=$(npx -y wrangler@latest d1 list 2>/dev/null | grep -w app | head -1)',
+    "rm -f .d1.txt",
+    '[ -z "$ID" ] && { echo "d1 create failed"; exit 1; }',
+    'printf \'\\n[[d1_databases]]\\nbinding = "DB"\\n\' "$ID" >> wrangler.toml',
+    'echo "db: $ID"',
+    "",
+  ].join("\n");
+  const result = inspectRepository({
+    files: [
+      file("setup-db.sh", script),
+      file("wrangler.toml", 'name = "app"\n'),
+    ],
+  });
+  expect(
+    result.visibilityGaps.filter((gap) =>
+      gap.startsWith("Local install helper"),
+    ),
+  ).toEqual([]);
 });
