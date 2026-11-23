@@ -188,9 +188,12 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "f23a3e2a61929b034c34c3fc97e90a19f347a43fa75486b41efa69eb5881fb4e",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 164, 165, 168, 173],
+      "sha256": "27fa0462af4d9e883b09b6e46fd6583c123c2993d13098714d23302a582fa5f3",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [53, 58, 62, 63, 72, 74, 101, 107, 159, 160, 163, 168],
       "review": "mapped-abstraction"
     },
     {
@@ -5468,9 +5471,12 @@
     },
     {
       "path": "scripts/run-vetting-controller.ts",
-      "sha256": "accc465ec0ead5270ff90d1f4a45c5cdc058c706189063bd02838be027450dba",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [3, 53, 134, 135],
+      "sha256": "1c343ba37f10ceece683a54054c795f0c4d0e9cf5ef1dbeebefef7c2b6996345",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [3, 58, 127, 148, 151, 153, 186, 187],
       "review": "mapped-abstraction"
     },
     {
@@ -5698,6 +5704,13 @@
       "sha256": "2dfb4d302bc438d7a4e059c5c31416045c31499ff7bedf132253e1cd74adc4d4",
       "models": ["formal/models/release/deployment_probe.qnt"],
       "candidateLines": [4, 6, 29, 42, 44, 47, 51],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/vetting-runner-equivalence.ts",
+      "sha256": "cdb7d43e053b373a898567c5c2b6d44d538da6b23bd9b17ba4002ae77b646cc3",
+      "models": ["formal/models/vetting/vetting_runner_equivalence.qnt"],
+      "candidateLines": [141, 152, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -9713,7 +9726,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "24deaa5b5d0edacbf54667dfa54de7f10b68d6c5b1b68565b3a149c70ebc9e40",
+      "sha256": "4a66027226ef27e143f6ab550e844b8128d9e1e362b74d572d9367d334517bf4",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9729,13 +9742,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 170, 285, 300, 309, 319, 322, 521, 675, 854, 883, 893, 1028, 1033,
-        1038, 1040, 1043, 1045, 1046, 1057, 1060, 1062, 1119, 1120, 1122, 1123,
-        1139, 1145, 1196, 1224, 1225, 1233, 1238, 1339, 1341, 1361, 1380, 1463,
-        1468, 1626, 1748, 1761, 1762, 1799, 1816, 1819, 1820, 1983, 1988, 2050,
-        2063, 2068, 2075, 2076, 2080, 2081, 2089, 2105, 2162, 2315, 2375, 2381,
-        2392, 2418, 2448, 2473, 2481, 2504, 2509, 2585, 2586, 2636, 2671, 2722,
-        2867, 3138, 3213, 3400, 3411, 3419, 3517, 3518, 3558, 3608, 3622, 3638
+        3, 171, 287, 302, 311, 321, 324, 523, 677, 856, 885, 895, 1030, 1035,
+        1040, 1042, 1045, 1047, 1048, 1059, 1062, 1064, 1121, 1122, 1124, 1125,
+        1141, 1147, 1198, 1226, 1227, 1235, 1240, 1341, 1343, 1363, 1382, 1465,
+        1470, 1628, 1750, 1763, 1764, 1801, 1818, 1821, 1822, 1985, 1990, 2052,
+        2065, 2070, 2077, 2078, 2082, 2083, 2091, 2107, 2164, 2318, 2379, 2385,
+        2396, 2422, 2452, 2477, 2485, 2508, 2513, 2594, 2595, 2646, 2681, 2732,
+        2877, 3148, 3223, 3410, 3421, 3429, 3527, 3528, 3568, 3618, 3632, 3648
       ],
       "review": "mapped-abstraction"
     },
@@ -17716,7 +17729,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_penalty_once.qnt",
-      "sha256": "d2097502c9f42900ec68b0d335dcc1fe954c1c88c60df23736dbb3498e50fcc8",
+      "sha256": "f1498f80fbf1679b6504509b43621525af29900a907d973ff02f8a6f8e34a016",
       "sources": [
         "migrations/0064_slopbot_penalties_appeals.sql",
         "workers/slopbot/penalties.ts",
@@ -17724,7 +17737,10 @@
       ],
       "scenarios": [
         "appealUpholdReversesCoveredDebitTest",
+        "delayedReopenKeepsLaterHeadDebitTest",
         "lateReopenReversesOwnRevisionDebitTest",
+        "mergeBeforeNonMaintainerDeliveryCannotReverseTest",
+        "mergeBeforeReopenDeliveryReversesDebitOnceTest",
         "newerHeadDebitSurvivesOlderAppealTest",
         "olderCloseJobKeepsLaterHeadDebitTest",
         "reopenBeforeRecordWritesNoDebitTest",
@@ -22602,6 +22618,22 @@
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",
         "unknownRetryStaysUnknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_runner_equivalence.qnt",
+      "sha256": "f9240ca4367837865433402503ee4c3b3d9cb5a6c0ecd2b2f3080eed57596112",
+      "sources": [
+        ".github/workflows/vetting-controller.yml",
+        "scripts/run-vetting-controller.ts",
+        "scripts/vetting-runner-equivalence.ts"
+      ],
+      "scenarios": [
+        "laterUnrelatedMergeRunsTest",
+        "sameCommitRunsTest",
+        "scannerChangeWaitsForReleaseTest",
+        "unreadableCompareRefusesTest",
+        "unrelatedMergeAfterScannerReleaseRunsTest"
       ]
     },
     {
