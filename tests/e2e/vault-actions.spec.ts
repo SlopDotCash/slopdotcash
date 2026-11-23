@@ -3184,8 +3184,8 @@ test("depositor approves and deposits with one wallet request when the wallet ba
   await expect(actions).toContainText("Deposit awaiting verification");
   await expect(actions.getByRole("status")).toContainText("Deposit received");
   await expect(
-    actions.getByRole("link", { name: "View submitted transaction" }),
-  ).toBeVisible();
+    actions.getByRole("link", { name: "Transaction", exact: true }),
+  ).toHaveAttribute("href", `https://sepolia.basescan.org/tx/${sends[1]}`);
   await expect(actions.getByText("Deposit verified")).toHaveCount(0);
   expect(JSON.parse((await saved()) ?? "{}")).toMatchObject({
     step: "batch",
