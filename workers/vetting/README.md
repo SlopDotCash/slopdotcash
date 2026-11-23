@@ -45,8 +45,14 @@ and make source coverage incomplete; an extension never proves they are safe.
 An unclassified file whose extension and complete byte structure agree on PNG,
 JPEG, GIF or WebP (`wellFormedImage`: valid chunks or segments, nothing before
 the signature or after the end marker) is listed by digest under `media` in
-the inventory instead. Appended bytes, a corrupt chunk or a binary under an
-image name stay quarantined.
+the inventory instead. Fonts are treated the same way (operator decision,
+23 November 2026): TrueType and OpenType need a table directory whose tables
+lie inside the file without a repeated tag, a `head` or `bhed` table and
+nothing after the last table but its padding (the recorded checksum is not
+required, since font tools often leave it stale); WOFF needs its recorded
+length, tables and metadata and private blocks inside the file; WOFF2 needs
+its signature and a recorded length equal to the file length. Appended bytes,
+a corrupt chunk or a binary under an image or font name stay quarantined.
 Unknown-format compressed payloads remain quarantined under the existing gzip
 policy even when their decoded bytes are UTF-8; this fallback does not release
 them or claim that the model reviewed those payloads.
