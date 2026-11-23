@@ -251,7 +251,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('A stuck send is replaced at the same nonce with exactly the bounded fee step, after three minutes, handed to the journal before broadcast, reads the network fee only after the wait, and lets the journal's rule refuse it while ten times its priced fee exceeds the recorded value or a swap is within two minutes of its deadline, and neither an oversized step nor a recorded unlimited approval is ever signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
+  it.effect('A stuck send is replaced at the same nonce with exactly the bounded fee step, after three minutes, handed to the journal before broadcast, reads the network fee only after the wait, and lets the journal\'s rule refuse it while ten times its priced fee exceeds the recorded value or a swap is within two minutes of its deadline, and neither an oversized step nor a recorded unlimited approval is ever signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
     const chains = try Chains
     const { chain, token } = chains.ethereum
     const owner = chain.accounts[1]

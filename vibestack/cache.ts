@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -56,8 +57,7 @@ const keepSaid = () => {
     return false;
   }
 };
-function lasting(key: string, files: string[]) {
-  const now = stamp(files);
+function lasting(key: string, files: string[], now = stamp(files)) {
   const known = (said ??= readSaid())[key];
   return {
     value: known?.stamp === now ? known.value : undefined,
@@ -122,8 +122,60 @@ const dafnySaid = (version: string | undefined, stopped?: string, out = "") => {
  * Dafny's files and their stamps, as installed now: read once for each check (`steady`), and on
  * every call outside one.
  */
-interface Check { installation?: { files?: string[]; at: string }; programs: Map<string, Program | undefined>; evaluators: Map<string, string>; changed?: boolean }
+type Check = {
+  installation?: { files?: string[]; at: string };
+  programs: Map<string, Program | undefined>;
+  evaluators: Map<string, string>;
+  pending: Map<string, Buffer>;
+  verify: Set<Program>;
+  bytes: number;
+  lastPublished: number;
+  changed?: boolean;
+  closed?: boolean;
+  certified?: boolean;
+};
 const checking = new AsyncLocalStorage<Check>();
+
+const MAX_PENDING_ENTRIES = 16;
+const MAX_PENDING_BYTES = 8 * 1024 ** 2;
+const PUBLISH_INTERVAL_MS = 1_000;
+
+function includePrograms(check: Check) {
+  for (const program of check.programs.values()) if (program?.id) check.verify.add(program);
+}
+
+export class InstallationChanged extends Error {
+  constructor() { super("a tool installation changed during this check; run the check again"); }
+}
+
+function publishChecked(complete = false) {
+  const check = checking.getStore();
+  if (!check) return;
+  if (complete) includePrograms(check);
+  const replaced = [...check.verify].some((program) => !program.unchanged());
+  if (replaced || check.changed) {
+    check.changed = true;
+    check.pending.clear();
+    check.verify.clear();
+    if (replaced) throw new InstallationChanged();
+    return;
+  }
+  if (!check.pending.size) return;
+  for (const [file, bytes] of check.pending) writeWhole(file, bytes);
+  check.pending.clear();
+  check.verify.clear();
+  check.bytes = 0;
+  check.lastPublished = performance.now();
+}
+
+export function certifyInstallation() {
+  const check = checking.getStore();
+  if (!check) return;
+  publishChecked(true);
+  if (check.changed) throw new InstallationChanged();
+  check.certified = true;
+}
+
 function installation() {
   const now = () => {
     const files = dafnyFiles();
@@ -138,7 +190,20 @@ function installation() {
   return scope ? (scope.installation ??= now()) : now();
 }
 /** Run a check, which reads Dafny's installation once: a reinstall during it is seen by the next check, and by `verifiedNow`. */
-export const steady = <T>(run: () => Promise<T>) => checking.run({ programs: new Map(), evaluators: new Map() }, run);
+export const steady = <T>(run: () => Promise<T>) => {
+  const check: Check = { programs: new Map(), evaluators: new Map(), pending: new Map(), verify: new Set(), bytes: 0, lastPublished: -Infinity };
+  return checking.run(check, async () => {
+    try {
+      const result = await run();
+      if (!check.certified) publishChecked(true);
+      return result;
+    } finally {
+      check.closed = true;
+      check.pending.clear();
+      check.verify.clear();
+    }
+  });
+};
 
 function perCheck<T>(read: () => Promise<T>): () => Promise<T> {
   const known = new WeakMap<Check, Promise<T>>();
@@ -152,47 +217,319 @@ function perCheck<T>(read: () => Promise<T>): () => Promise<T> {
 }
 
 const TOOL_PACKAGES = { quint: "@informalsystems/quint", lsc: "lemmascript" } as const;
-type Program = { exe: string; id: string; unchanged: () => boolean };
+const packageName = (name: string) => /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name);
+const NODE_FLAGS = ["NODE_OPTIONS", "NODE_PRESERVE_SYMLINKS", "NODE_PRESERVE_SYMLINKS_MAIN"] as const;
+const nodeFlags = () => JSON.stringify(NODE_FLAGS.map((name) => process.env[name] ?? ""));
+type Isolated = { entry: string; script: string };
+type Program = { exe: string; unchanged: () => boolean } & ({ id: string; isolated: Isolated } | { id: undefined; isolated?: never });
 const latest = new Map<keyof typeof TOOL_PACKAGES, Program>();
+
+function virtualStore(dir: string): string | undefined {
+  for (let at = dir; at !== path.dirname(at); at = path.dirname(at)) if (path.basename(at) === ".pnpm") return at;
+  return undefined;
+}
+
+function pnpmSearchPaths(from: string, store: string): string[] {
+  const paths: string[] = [];
+  for (let dir = from; dir.startsWith(store + path.sep) || dir === store; dir = path.dirname(dir)) {
+    if (path.basename(dir) !== "node_modules") paths.push(path.join(dir, "node_modules"));
+  }
+  return paths;
+}
+
+function shimNode(exe: string, text: string, observe: (file: string) => boolean): string | undefined {
+  const windows = process.platform === "win32";
+  const guard = windows ? '@IF EXIST "%~dp0\\node.exe" (' : 'if [ -x "$basedir/node" ]; then';
+  const adjacentCall = windows ? /^  "%~dp0\\node\.exe" /m : /^  exec "\$basedir\/node" /m;
+  const pathCall = windows ? /^  node /m : /^  exec node /m;
+  if (!text.split(/\r?\n/).includes(guard) || !adjacentCall.test(text) || !pathCall.test(text) || /^ *(?:export |@SET "?)?PATH=/im.test(text)) return undefined;
+  const executable = (file: string) => {
+    if (!observe(file)) return false;
+    if (windows) return true;
+    try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; }
+  };
+  const adjacent = path.join(path.dirname(exe), windows ? "node.exe" : "node");
+  let chosen = executable(adjacent) ? adjacent : undefined;
+  if (!chosen) {
+    // cmd.exe also searches the spawned working directory and PATHEXT.
+    if (windows) return undefined;
+    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+      if (!path.isAbsolute(dir)) return undefined;
+      const candidate = path.join(dir, "node");
+      if (executable(candidate)) { chosen = candidate; break; }
+    }
+  }
+  if (!chosen) return undefined;
+  const resolved = fs.realpathSync(chosen);
+  return resolved === fs.realpathSync(process.execPath) && observe(resolved) ? executableDigest(resolved) : undefined;
+}
+
+const PNPM_SHIM = [
+  "#!/bin/sh",
+  "basedir=$(dirname \"$(echo \"$0\" | sed -e 's,\\\\,/,g')\")",
+  "",
+  "case `uname` in",
+  "    *CYGWIN*|*MINGW*|*MSYS*)",
+  "        if command -v cygpath > /dev/null 2>&1; then",
+  "            basedir=`cygpath -w \"$basedir\"`",
+  "        fi",
+  "    ;;",
+  "esac",
+  "",
+  "if [ -z \"$NODE_PATH\" ]; then",
+  "  export NODE_PATH=\"<paths>\"",
+  "else",
+  "  export NODE_PATH=\"<paths>\"",
+  "fi",
+  "if [ -x \"$basedir/node\" ]; then",
+  "  exec \"$basedir/node\"  \"$basedir/<entry>\" \"$@\"",
+  "else",
+  "  exec node  \"$basedir/<entry>\" \"$@\"",
+  "fi",
+].join("\n") + "\n";
+
+function launcherInputs(exe: string, packageDir: string, exists: (file: string) => boolean): { digest: string; entry: string } | undefined {
+  const launcher = fs.realpathSync(exe);
+  if (path.basename(path.dirname(launcher)) !== ".bin" || NODE_FLAGS.some((name) => process.env[name])) return undefined;
+  const bytes = fs.readFileSync(launcher);
+  if (!isUtf8(bytes)) return undefined;
+  const store = virtualStore(packageDir);
+  const text = bytes.toString("utf8").replaceAll("\r\n", "\n");
+  if (!store) return undefined;
+  const node = shimNode(exe, text, exists);
+  if (node === undefined) return undefined;
+  const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  const name = path.basename(exe).replace(/\.cmd$/i, "");
+  const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[name];
+  if (typeof bin !== "string") return undefined;
+  const entry = path.resolve(packageDir, bin);
+  const relativeEntry = path.relative(packageDir, entry);
+  if (path.isAbsolute(relativeEntry) || relativeEntry.split(path.sep).includes("..") || !exists(entry) || !fs.statSync(entry).isFile()) return undefined;
+  const resolvedEntry = path.relative(packageDir, fs.realpathSync(entry));
+  if (path.isAbsolute(resolvedEntry) || resolvedEntry.split(path.sep).includes("..")) return undefined;
+  const normalized: string[] = [];
+  for (const line of text.split("\n")) {
+    if (/^  export NODE_PATH="[^"\r]*"$/.test(line)) normalized.push('  export NODE_PATH="<paths>"');
+    else {
+      const call = /^(  exec (?:"\$basedir\/node"|node)  "\$basedir\/)([^"$`\r\n]+)(" "\$@")$/.exec(line);
+      if (!call) normalized.push(line);
+      else {
+        const called = path.resolve(path.dirname(exe), call[2]);
+        if (!exists(called) || fs.realpathSync(called) !== fs.realpathSync(entry)) return undefined;
+        normalized.push(`${call[1]}<entry>${call[3]}`);
+      }
+    }
+  }
+  if (normalized.join("\n") !== PNPM_SHIM) return undefined;
+  const known = new Set(pnpmSearchPaths(bin ? path.dirname(path.resolve(packageDir, bin)) : packageDir, store));
+  const lines = [node, path.relative(packageDir, entry)];
+  for (const [index, line] of text.split("\n").entries()) {
+    const assignment = /^( *export NODE_PATH="| *@SET "NODE_PATH=)([^"\r]*)("\r?)$/.exec(line);
+    if (!assignment) {
+      if (/\bNODE_PATH\s*=/.test(line)) return undefined;
+      lines.push(JSON.stringify(normalized[index]));
+      continue;
+    }
+    const [, before, paths, after] = assignment;
+    const relative: (string | string[])[] = [];
+    for (const entry of paths.split(before.includes("export") ? ":" : ";")) {
+      if (entry === "$NODE_PATH" || entry === "%NODE_PATH%") relative.push(entry);
+      else if (known.has(entry) && (path.dirname(entry) === packageDir || !entry.startsWith(packageDir + path.sep) || !exists(entry))) {
+        relative.push([path.relative(store, entry)]);
+      }
+      else return undefined;
+    }
+    lines.push(JSON.stringify([before, relative, after]));
+  }
+  return { digest: sha(...lines), entry };
+}
+
+type Stamps = Iterable<readonly [string, string]>;
+const fileStamp = (file: string, follow = true) => {
+  const stat = (follow ? fs.statSync : fs.lstatSync)(file, { bigint: true, throwIfNoEntry: false });
+  return stat ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}` : "";
+};
+const sameFiles = (files: Stamps, links: Stamps) => {
+  for (const [file, stamp] of files) if (fileStamp(file) !== stamp) return false;
+  for (const [file, stamp] of links) if (fileStamp(file, false) !== stamp) return false;
+  return true;
+};
+const isStamps = (value: unknown): value is [string, string][] => Array.isArray(value) && value.every((entry) =>
+  Array.isArray(entry) && entry.length === 2 && typeof entry[0] === "string" && typeof entry[1] === "string");
+
+function readProgram(index: string, key: string): { id: string; isolated: Isolated; unchanged: () => boolean } | undefined {
+  try {
+    const data: unknown = JSON.parse(zstdDecompressSync(fs.readFileSync(index)).toString("utf8"));
+    if (!Array.isArray(data)) return undefined;
+    const [saved, id, files, links, isolated] = data;
+    if (saved !== key || typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id) || !isStamps(files) || !files.length || !isStamps(links)) return undefined;
+    if (typeof isolated !== "object" || !isolated || typeof isolated.entry !== "string" || typeof isolated.script !== "string"
+      || ![isolated.entry, isolated.script].every((file) => file.startsWith(path.join(path.dirname(LASTING), "programs") + path.sep) && files.some(([observed]) => observed === file))) return undefined;
+    const unchanged = () => sameFiles(files, links);
+    if (unchanged()) return { id, isolated: { entry: isolated.entry, script: isolated.script }, unchanged };
+  } catch {
+    return undefined;
+  }
+}
 
 function packageGraph(exe: string, name: string) {
   const observations = new Map<string, string>();
-  const state = (file: string) => {
-    const stat = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
-    return stat ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}` : "";
-  };
+  const links = new Map<string, string>();
   const observed = (file: string) => {
-    if (!observations.has(file)) observations.set(file, state(file));
+    if (!observations.has(file)) observations.set(file, fileStamp(file));
     return observations.get(file) !== "";
   };
+  const contents = (root: string, isolated = false) => {
+    const files: { name: string; file?: string; target?: string }[] = [];
+    const signature = createHash("sha256");
+    const record = (file: string) => {
+      const exists = observed(file);
+      signature.update(JSON.stringify([file, observations.get(file), links.get(file)]));
+      return exists;
+    };
+    const walk = (dir: string, ancestors: Set<string>) => {
+      record(dir);
+      if (isolated && dir !== root && observed(path.join(dir, "node_modules"))) throw new Error("an isolated package has nested ambient modules");
+      const real = fs.realpathSync(dir);
+      if (ancestors.has(real)) return;
+      const parents = new Set(ancestors).add(real);
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        const file = path.join(dir, entry.name);
+        const name = path.relative(root, file).split(path.sep).join("/");
+        if (entry.isSymbolicLink()) links.set(file, fileStamp(file, false));
+        const target = entry.isSymbolicLink() ? fs.readlinkSync(file) : undefined;
+        if (!record(file)) files.push({ name, target });
+        else if (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(file).isDirectory())) {
+          files.push({ name: name + "/", target });
+          walk(file, parents);
+        } else files.push({ name, file, target });
+      }
+    };
+    walk(root, new Set());
+    const { value, keep } = lasting(`package contents ${root}`, [root], signature.digest("hex"));
+    return value ?? keep(sha(...files.map(({ name, file, target }) =>
+      JSON.stringify([name, target, file && createHash("sha256").update(fs.readFileSync(file)).digest("hex")])).sort()));
+  };
+  const observeLocation = (file: string) => {
+    const present = observed(file);
+    if (present && path.basename(file) !== "package.json" && fs.lstatSync(file).isSymbolicLink()) links.set(file, fileStamp(file, false));
+    return present;
+  };
   const seen = new Map<string, number>();
-  const graph: { version: string; dependencies: [string, number | null][] }[] = [];
+  const graph: { dir: string; name: string; version: string; dependencies: [string, number | null][] }[] = [];
+  let complete = true;
   const visit = (dir: string): number => {
     const previous = seen.get(dir);
     if (previous !== undefined) return previous;
     const file = path.join(dir, "package.json");
     observed(file);
     const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (typeof pkg.name !== "string" || typeof pkg.version !== "string") throw new Error(`no ${pkg.name ?? name} with a version is installed at ${dir}`);
+    if (typeof pkg.name !== "string" || !packageName(pkg.name) || typeof pkg.version !== "string") throw new Error(`no ${pkg.name ?? name} with a version is installed at ${dir}`);
     const index = graph.length;
     seen.set(dir, index);
     const dependencies: [string, number | null][] = [];
-    graph.push({ version: `${pkg.name}@${pkg.version}`, dependencies });
+    graph.push({ name: pkg.name, version: `${pkg.name}@${pkg.version}`, dir, dependencies });
     for (const dependency of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies, ...pkg.peerDependencies }).sort()) {
-      const at = packageLocation(dependency, dir, observed);
+      if (!packageName(dependency)) throw new Error(`invalid package dependency ${dependency}`);
+      const at = packageLocation(dependency, dir, observeLocation);
+      if (!at && dependency in (pkg.dependencies ?? {})) complete = false;
       dependencies.push([dependency, at ? visit(at) : null]);
     }
     return index;
   };
   observed(exe);
-  const [main, loaded] = packageRoots(exe, name, observed);
+  if (fs.lstatSync(exe).isSymbolicLink()) links.set(exe, fileStamp(exe, false));
+  observed(path.dirname(exe));
+  const [main, loaded] = packageRoots(exe, name, observeLocation);
   if (!main) throw new Error(`no ${name} with a version is installed beside ${exe} or these tools; run pnpm install`);
   const roots = [visit(main), loaded && visit(loaded)];
-  return { graph, roots, unchanged: () => [...observations].every(([file, at]) => state(file) === at) };
+  const isolate = (id: string, entry: string, expected: readonly string[]): Isolated => {
+    if (!complete) throw new Error("a declared dependency needs ambient resolution");
+    const script = path.join(import.meta.dirname, `simulator${path.extname(import.meta.filename)}`);
+    observed(script);
+    const scriptId = executableDigest(script);
+    const directory = path.join(path.dirname(LASTING), "programs", "1");
+    const view = path.join(directory, `${id}-${scriptId.slice(0, 12)}`);
+    const dependencies = graph.map((node, index): [string, number | null][] => node.dependencies.some(([name]) => name === node.name) ? node.dependencies : [...node.dependencies, [node.name, index]]);
+    fs.mkdirSync(directory, { recursive: true });
+    if (!fs.existsSync(view)) {
+      const staged = fs.mkdtempSync(path.join(directory, ".building-"));
+      try {
+        for (const [index, { dir }] of graph.entries()) {
+          const target = path.join(staged, "packages", String(index));
+          fs.cpSync(dir, target, { recursive: true, verbatimSymlinks: true, mode: fs.constants.COPYFILE_FICLONE,
+            filter: (file) => {
+              if (["node_modules", ".git"].includes(path.basename(file))) return false;
+              if (fs.lstatSync(file).isSymbolicLink()) {
+                const link = fs.readlinkSync(file);
+                if (path.isAbsolute(link) || path.relative(dir, fs.realpathSync(file)).startsWith("..")) throw new Error("a package link escapes its isolated installation");
+              }
+              return true;
+            } });
+          const modules = path.join(target, "node_modules");
+          fs.mkdirSync(modules);
+          for (const [name, dependency] of dependencies[index]) if (dependency !== null) {
+            const link = path.join(modules, name);
+            fs.mkdirSync(path.dirname(link), { recursive: true });
+            fs.symlinkSync(path.relative(path.dirname(link), path.join(staged, "packages", String(dependency))), link, "dir");
+          }
+        }
+        fs.writeFileSync(path.join(staged, "package.json"), '{"type":"module"}');
+        const loaded = roots[1] ?? roots[0];
+        const link = path.join(staged, "node_modules", name);
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.symlinkSync(path.relative(path.dirname(link), path.join(staged, "packages", String(loaded))), link, "dir");
+        fs.copyFileSync(script, path.join(staged, path.basename(script)));
+        if (!sameFiles(observations, links)) throw new InstallationChanged();
+        try { fs.renameSync(staged, view); } catch (error) { if (!fs.existsSync(view)) throw error; }
+      } finally { fs.rmSync(staged, { recursive: true, force: true }); }
+    }
+    const modulesMatch = (directory: string, names: string[]) => {
+      observeLocation(directory);
+      const first = [...new Set(names.map((name) => name.split("/")[0]))].sort();
+      if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(first)) throw new Error("an isolated installation has undeclared modules");
+      for (const scope of first.filter((name) => name.startsWith("@"))) {
+        const scoped = path.join(directory, scope);
+        observeLocation(scoped);
+        const expected = names.filter((name) => name.startsWith(scope + "/")).map((name) => name.slice(scope.length + 1)).sort();
+        if (JSON.stringify(fs.readdirSync(scoped).sort()) !== JSON.stringify(expected)) throw new Error("an isolated installation has undeclared scoped modules");
+      }
+    };
+    for (const [index] of graph.entries()) {
+      const target = path.join(view, "packages", String(index));
+      if (contents(target, true) !== expected[index]) throw new Error("an isolated package differs from its source");
+      const modules = path.join(target, "node_modules");
+      modulesMatch(modules, dependencies[index].filter(([, dependency]) => dependency !== null).map(([name]) => name));
+      for (const [name, dependency] of dependencies[index]) if (dependency !== null) {
+        const link = path.join(modules, name);
+        if (!observeLocation(link) || fs.realpathSync(link) !== path.join(view, "packages", String(dependency))) throw new Error("an isolated dependency differs from its source");
+      }
+    }
+    const privateScript = path.join(view, path.basename(script));
+    const privateEntry = path.join(view, "packages", String(roots[0]), path.relative(main, entry));
+    if (!observeLocation(privateEntry) || path.relative(path.join(view, "packages", String(roots[0])), fs.realpathSync(privateEntry)).split(path.sep).includes("..")
+      || executableDigest(privateEntry) !== executableDigest(entry)) throw new Error("an isolated entry differs from its source");
+    for (const file of [privateScript, path.join(view, "package.json"), path.join(view, "node_modules", name)]) observeLocation(file);
+    if (executableDigest(privateScript) !== scriptId) throw new Error("an isolated runner differs from its source");
+    if (fs.readFileSync(path.join(view, "package.json"), "utf8") !== '{"type":"module"}') throw new Error("an isolated runner has a different module format");
+    modulesMatch(path.join(view, "node_modules"), [name]);
+    const loadedLink = path.join(view, "node_modules", name);
+    if (fs.realpathSync(loadedLink) !== path.join(view, "packages", String(roots[1] ?? roots[0]))) throw new Error("an isolated runner resolves a different package");
+    for (let parent = path.dirname(view); ; parent = path.dirname(parent)) {
+      if (observeLocation(path.join(parent, "node_modules"))) throw new Error("an isolated installation has ambient modules");
+      if (parent === path.dirname(parent)) break;
+    }
+    if (observeLocation(path.join(view, "packages", "node_modules"))) throw new Error("isolated packages have ambient modules");
+    if (!sameFiles(observations, links)) throw new InstallationChanged();
+    return { entry: privateEntry, script: privateScript };
+  };
+  return { graph, roots, main, contents, observeLocation, isolate, files: observations, links, unchanged: () => sameFiles(observations, links) };
 }
 
 export const installedPackages = (exe: string, name: string) => packageGraph(exe, name).graph.map((p) => p.version).sort();
 
+let programSource: string | undefined;
 export function installedProgram(root: string, tool: keyof typeof TOOL_PACKAGES): Program | undefined {
   const scope = checking.getStore();
   const key = `${tool}\0${path.resolve(root)}`;
@@ -204,12 +541,40 @@ export function installedProgram(root: string, tool: keyof typeof TOOL_PACKAGES)
   }
   let previous = latest.get(tool);
   if (previous?.exe !== exe || !previous.unchanged()) {
-    const { graph, roots, unchanged } = packageGraph(exe, TOOL_PACKAGES[tool]);
-    const id = sha(executableDigest(exe), JSON.stringify([roots, graph]), `node@${process.versions.node}:${process.platform}:${process.arch}`);
-    latest.set(tool, previous = { exe, id, unchanged });
+    const searchPath = process.env.NODE_PATH;
+    const commandPath = process.env.PATH;
+    const nodeOptions = nodeFlags();
+    const key = sha(programSource ??= code(closure("cache")), import.meta.dirname, path.resolve(exe), searchPath ?? "", commandPath ?? "", nodeOptions ?? "", process.execPath, process.version, process.platform, process.arch);
+    const name = `installed-${key.slice(0, 24)}.json.zst`;
+    const directory = path.join(path.dirname(LASTING), "installations");
+    const index = path.join(directory, name);
+    let installed: { id: string; isolated: Isolated; unchanged: () => boolean } | undefined = unsure || previous?.exe === exe ? undefined : readProgram(index, key);
+    if (!installed) {
+      const inventory = packageGraph(exe, TOOL_PACKAGES[tool]);
+      const { graph, roots, main, contents, observeLocation, isolate, files, links, unchanged } = inventory;
+      try {
+        const launcher = launcherInputs(exe, main, observeLocation);
+        if (launcher) {
+          const expected = graph.map(({ dir }) => contents(dir));
+          const id = sha(launcher.digest, JSON.stringify([roots, graph.map(({ version, dependencies }, index) => [version, expected[index], dependencies])]), `node@${process.versions.node}:${process.platform}:${process.arch}`);
+          const isolated = isolate(id, launcher.entry, expected);
+          installed = { id, isolated, unchanged };
+          if (!unsure) {
+            try {
+              writeWhole(index, zstdCompressSync(JSON.stringify([key, id, [...files], [...links], isolated])));
+              pruneCache(directory, new Set([name]), (file) => /^installed-[a-f0-9]{24}\.json\.zst$/.test(file));
+            } catch { /* optional cache */ }
+          }
+        }
+      } catch (error) { if (error instanceof InstallationChanged) throw error; }
+      const stable = () => process.env.NODE_PATH === searchPath && process.env.PATH === commandPath && nodeFlags() === nodeOptions && unchanged();
+      latest.set(tool, previous = installed ? { exe, ...installed, unchanged: stable } : { exe, id: undefined, unchanged: stable });
+    } else {
+      const stable = installed.unchanged;
+      latest.set(tool, previous = { exe, ...installed, unchanged: () => process.env.NODE_PATH === searchPath && process.env.PATH === commandPath && nodeFlags() === nodeOptions && stable() });
+    }
   }
-  const { id, unchanged } = previous;
-  const program = { exe, id, unchanged: () => findBin(tool, root) === exe && unchanged() };
+  const program: Program = { ...previous, unchanged: () => findBin(tool, root) === exe && previous.unchanged() };
   scope?.programs.set(key, program);
   return program;
 }
@@ -389,15 +754,18 @@ type Stage = (typeof STAGES)[number];
  * what is installed now.
  */
 const toolchains = new Map<string, Promise<string>>();
-async function toolchainId(root: string, stage: Stage): Promise<string> {
+async function toolchainId(root: string, stage: Stage): Promise<string | undefined> {
   const everything = stage === "tests" || stage === "traces" || stage === "explore";
+  const proofVerifier = stage === "prove" ? await verifierIdentity() : "";
   const versions = (stage === "action" || stage === "prove" || stage === "simulate" ? []
     : ["@informalsystems/quint", "typescript", "vibelang", ...everything ? ["lemmascript"] : []]).map(packageVersion);
   for (const tool of ["quint", "lsc"] as const) {
     if (!everything && !(tool === "quint" ? stage === "simulate" : stage === "prove")) continue;
-    versions.push(installedProgram(root, tool)?.id ?? `no ${tool} launcher`);
+    const program = installedProgram(root, tool);
+    if (program && !program.id) return undefined;
+    versions.push(program?.id ?? `no ${tool} launcher`);
   }
-  const verifier = stage === "prove" ? await verifierIdentity() : everything ? await verifierIdentity().catch(() => "no verifier") : "";
+  const verifier = everything ? await verifierIdentity().catch(() => "no verifier") : proofVerifier;
   const known = [stage, ...versions, verifier].join(" ");
   let id = toolchains.get(known);
   if (id) return id;
@@ -418,7 +786,7 @@ async function toolchainId(root: string, stage: Stage): Promise<string> {
 /** The remembered results of one check: whether it may read them, and every entry it read or wrote. */
 export interface Memory { root: string; fresh: boolean; used: Set<string>; cacheValue?: (value: unknown) => unknown }
 /** An entry of `.spec-cache`: JSON, compressed, since a run of the simulator says megabytes. */
-interface Entry { name: string; file: string; evaluator?: string | null }
+interface Entry { name: string; file: string; reusable: boolean; evaluator?: string }
 const formats = [["zst", zstdDecompressSync], ["gz", gunzipSync]] as const;
 const primaryExtension = `.${formats[0][0]}`;
 const localCache = (root: string) => path.join(root, ".spec-cache");
@@ -431,14 +799,16 @@ export async function withFormalCache<T>(directory: string, run: () => Promise<T
   try {
     return await formalCache.run(scope, run);
   } finally {
-    pruneCache(scope.directory, scope.used, true);
+    pruneCache(scope.directory, scope.used, isActionEntry);
   }
 }
 
-export async function entry(root: string, stage: Stage, key: string[], evaluates = ["simulate", "tests", "traces", "explore"].includes(stage)): Promise<Entry> {
-  const evaluator = evaluates ? evaluatorForCheck(root) ?? null : undefined;
-  const name = `${stage}-${sha(await toolchainId(root, stage), ...evaluator ? [evaluator] : [], ...key).slice(0, 24)}.json${primaryExtension}`;
-  return { name, file: cacheFile(root, name), evaluator };
+export async function entry(root: string, stage: Stage, key: (string | undefined)[], evaluates = ["simulate", "tests", "traces", "explore"].includes(stage)): Promise<Entry> {
+  const evaluator = evaluates ? evaluatorForCheck(root) : undefined;
+  const inputs = [await toolchainId(root, stage), ...evaluates ? [evaluator] : [], ...key];
+  const reusable = inputs.every((input) => input !== undefined);
+  const name = `${stage}-${sha(...inputs.map((input) => input ?? "")).slice(0, 24)}.json${primaryExtension}`;
+  return { name, file: cacheFile(root, name), reusable, evaluator };
 }
 /** Entries are deleted when unused for a while (see collectGarbage), so a hit says the entry is in use. */
 function use(memory: Memory, name: string) {
@@ -447,16 +817,17 @@ function use(memory: Memory, name: string) {
   try { const now = new Date(); fs.utimesSync(cacheFile(memory.root, name), now, now); } catch { /* still a hit */ }
 }
 /** What an entry holds, or undefined. An entry that cannot be read, cut short by a kill or a full disk, is deleted and is a miss. */
-export function recall<T>(memory: Memory, { name, file, evaluator }: Entry): T | undefined {
+export function recall<T>(memory: Memory, { name, file, reusable }: Entry): T | undefined {
   memory.used.add(name);
-  if (memory.fresh || evaluator === null) return undefined;
+  const check = checking.getStore();
+  if (memory.fresh || !reusable || check?.changed || check?.closed) return undefined;
   const fileBase = file.slice(0, -primaryExtension.length);
   const nameBase = name.slice(0, -primaryExtension.length);
   for (const [extension, decompress] of formats) {
     const stored = `${fileBase}.${extension}`;
     let bytes: Buffer;
     try {
-      bytes = fs.readFileSync(stored);
+      bytes = check?.pending.get(stored) ?? fs.readFileSync(stored);
     } catch {
       continue;
     }
@@ -471,12 +842,24 @@ export function recall<T>(memory: Memory, { name, file, evaluator }: Entry): T |
   return undefined;
 }
 /** Remember `value` under an entry, unless this process cannot say which tools computed it: then the next check computes it again. */
-export function store(memory: Memory, { name, file, evaluator }: Entry, value: unknown) {
+export function store(memory: Memory, { name, file, evaluator, reusable }: Entry, value: unknown, action?: { program: Program; began: number }) {
   memory.used.add(name);
-  if (!unsure && !checking.getStore()?.changed && evaluator !== null && (evaluator === undefined || stableInstallation(evaluatorIdentity(memory.root) === evaluator))) {
-    writeWhole(file, zstdCompressSync(JSON.stringify(memory.cacheValue ? memory.cacheValue(value) : value)));
-    sharedCache(name)?.used.add(name);
+  const check = checking.getStore();
+  if (unsure || check?.changed || check?.closed || !reusable) return;
+  if (evaluator !== undefined && !stableInstallation(evaluatorIdentity(memory.root) === evaluator)) return;
+  if (action && !check && !action.program.unchanged()) return;
+  const bytes = zstdCompressSync(JSON.stringify(memory.cacheValue ? memory.cacheValue(value) : value));
+  sharedCache(name)?.used.add(name);
+  if (action) check?.verify.add(action.program);
+  else if (check) includePrograms(check);
+  if (!check?.verify.size) {
+    writeWhole(file, bytes);
+    return;
   }
+  check.bytes += bytes.length - (check.pending.get(file)?.length ?? 0);
+  check.pending.set(file, bytes);
+  if (!action || check.pending.size >= MAX_PENDING_ENTRIES || check.bytes >= MAX_PENDING_BYTES
+    || performance.now() - Math.min(check.lastPublished, action.began) >= PUBLISH_INTERVAL_MS) publishChecked();
 }
 
 /**
@@ -505,20 +888,20 @@ const ENTRY = new RegExp(`^(${STAGES.join("|")})-(?:.*-)?[a-f0-9]{24}\\.json\\.(
 export const isActionEntry = (name: string) => name.startsWith("action-") && ENTRY.test(name);
 /** Keep recent branches and profiles for a month, within 256 MiB; never evict this check's entries. */
 export function collectGarbage(memory: Memory) {
-  pruneCache(localCache(memory.root), memory.used, false);
+  pruneCache(localCache(memory.root), memory.used);
 }
 
-function pruneCache(directory: string, inUse: ReadonlySet<string>, shared: boolean) {
+function pruneCache(directory: string, inUse: ReadonlySet<string>, owns?: (name: string) => boolean) {
   if (!fs.existsSync(directory)) return;
   const expired = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const retained: { file: string; size: number; touched: number; used: boolean }[] = [];
   for (const name of fs.readdirSync(directory)) {
-    if (name === "lock" || (shared && !isActionEntry(name))) continue;
+    if (name === "lock" || (owns && !owns(name))) continue;
     const file = path.join(directory, name);
     const stat = fs.lstatSync(file, { throwIfNoEntry: false });
     if (!stat) continue;
     const used = inUse.has(name);
-    if (!used && (!ENTRY.test(name) || !stat.isFile() || stat.mtimeMs < expired))
+    if (!used && ((!owns && !ENTRY.test(name)) || !stat.isFile() || stat.mtimeMs < expired))
       fs.rmSync(file, { recursive: true, force: true });
     else retained.push({ file, size: stat.size, touched: stat.mtimeMs, used });
   }
