@@ -223,6 +223,13 @@ to GitHub, uses no monthly review and is recorded as skipped with the reason
 own pull request is not refused, and a count that was never read or is older
 than three days refuses nothing. Value assessment and scoring are unchanged.
 
+The backlog rule (operator decision, 23 November 2026; PRD section 5,
+`src/lib/backlog-rule.mjs`) changes listing only, never reviews: Slopbot keeps
+reviewing a project that is out of rotation. After each scheduled merge
+activity run, `sendBacklogNotices` (`backend/projects/backlog-notices.ts`)
+writes the rule's owner Inbox notices from the stored rows; a failure there
+never fails the merge activity read.
+
 A project owner may turn on wanted issues (operator decision, 21 November
 2026; PRD section 5, `src/lib/wanted-label.mjs`). Every project uses the one
 label `slop-wanted`. The scheduled merge activity job
