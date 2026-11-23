@@ -11,7 +11,11 @@ import {
   PROJECT_OWNER,
 } from "../tests/penalty-score-fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { pointsSql } from "./generate-points";
+import {
+  finalizePointsJournal,
+  pointsSql,
+  retainPublishedHistory,
+} from "./generate-points";
 
 const AT = "2026-11-05T00:00:00.000Z";
 const RECORDED = "2026-11-06T00:00:00.000Z";
@@ -73,6 +77,92 @@ function setup(initialAward = award()) {
   };
   return { sqlite, initial, publish, before, correction, base, freeze };
 }
+
+test("timestamp-only rebuilds keep the published journal and its D1 batch", () => {
+  const f = setup();
+  try {
+    const candidate = retainPublishedHistory(f.initial, {
+      ...structuredClone(f.initial),
+      generatedAt: CORRECTED,
+    });
+    const retained = finalizePointsJournal(candidate, f.initial, CORRECTED);
+
+    expect(retained).toBe(f.initial);
+    expect(retained.generatedAt).toBe(RECORDED);
+    expect(pointsSql(retained)).toBe(pointsSql(f.initial));
+    f.publish(retained);
+    expect(
+      f.sqlite.query("SELECT count(*) AS n FROM points_batches").get(),
+    ).toEqual({ n: 1 });
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("Pages-only coverage at the same revision count advances the D1 batch", () => {
+  const f = setup();
+  try {
+    const pages = {
+      ...f.initial,
+      coverage: [
+        {
+          repository: "SlopDotCash/asi",
+          from: AT,
+          to: RECORDED,
+          digest: "b".repeat(64),
+        },
+      ],
+    };
+    const combined = retainPublishedHistory(f.initial, pages);
+    expect(combined.generatedAt).toBe(RECORDED);
+    expect(combined.revisions).toEqual(f.initial.revisions);
+    const next = finalizePointsJournal(combined, f.initial, CORRECTED);
+    expect(next.generatedAt).toBe(CORRECTED);
+    f.publish(next);
+    const latest = f.sqlite
+      .query(
+        "SELECT generated_at,coverage FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1",
+      )
+      .get();
+    expect(latest).toEqual({
+      generated_at: CORRECTED,
+      coverage: JSON.stringify(pages.coverage),
+    });
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("revision and coverage changes and unpublished journals use the new timestamp", () => {
+  const f = setup();
+  try {
+    const revised = f.correction([award(PROJECT_OWNER, 30)]);
+    const coverage = {
+      repository: "SlopDotCash/asi",
+      from: AT,
+      to: RECORDED,
+      digest: "b".repeat(64),
+    };
+    const published = { ...f.initial, coverage: [coverage] };
+    const covered = {
+      ...published,
+      coverage: [{ ...coverage, digest: "c".repeat(64) }],
+    };
+    expect(finalizePointsJournal(revised, f.initial, CORRECTED)).toEqual(
+      revised,
+    );
+    expect(finalizePointsJournal(covered, published, CORRECTED)).toEqual({
+      ...covered,
+      generatedAt: CORRECTED,
+    });
+    expect(finalizePointsJournal(f.initial, null, CORRECTED)).toEqual({
+      ...f.initial,
+      generatedAt: CORRECTED,
+    });
+  } finally {
+    f.sqlite.close();
+  }
+});
 
 for (const protection of [
   "frozen",
