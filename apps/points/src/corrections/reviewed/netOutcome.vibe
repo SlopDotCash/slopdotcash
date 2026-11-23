@@ -92,7 +92,7 @@ effect function observeSources(audit: SourceAudit, refs: ReadonlyArray<Lifecycle
       const repositoryName: string = row.repository.nameWithOwner
       if (row.id !== ref.id || row.number !== ref.number || row.url !== pullUrl(audit.repository, ref.number) || row.state !== "MERGED" ||
         isoOf(row.mergedAt) !== ref.mergedAt || row.repository.id !== audit.repositoryNodeId || row.repository.isPrivate !== false ||
-        row.repository.nameWithOwner.toLowerCase() !== audit.repository.toLowerCase() || !shaPattern.test(row.headRefOid) || row.mergeCommit?.oid !== ref.mergeSha) {
+        repositoryName.toLowerCase() !== audit.repository.toLowerCase() || !shaPattern.test(row.headRefOid) || row.mergeCommit?.oid !== ref.mergeSha) {
         throw refusal("Reviewed net outcome source lifecycle changed")
       }
       observed.set(ref.id, row)

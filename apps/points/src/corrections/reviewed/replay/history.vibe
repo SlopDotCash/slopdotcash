@@ -99,7 +99,9 @@ effect function frozenIndex(catalog: HistoricalAssessmentCatalog, scope: History
 }
 
 function answer(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(request, new globalThis.Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))
+  const options = { status, headers: { "content-type": "application/json" } }
+  const response = body === null ? HttpServerResponse.empty(options) : HttpServerResponse.jsonUnsafe(body, options)
+  return HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(response))
 }
 
 export function historicalAssessmentTransport(catalog: HistoricalAssessmentCatalog, scope: HistoryScope) {
