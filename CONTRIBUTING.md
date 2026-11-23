@@ -459,9 +459,10 @@ requests can read it.
 Turborepo shares task results through the private Cloudflare/R2 cache.
 The task entry point disables Turbo telemetry. Each `selftest:tools` task waits for the root and
 Studio test tasks so those integration journeys do not compete with it.
-Verification installs the headless shell for Playwright and full Chromium for
-Bombadil. A hosted isolated shard A can defer full Chromium until its Bombadil
-journey runs; the nightly check installs it during setup.
+Canonical hosted verification installs the headless shell for Playwright.
+In that job, Bombadil installs full Chromium on its first exploration or saved
+replay. The nightly check and other setup paths that need both browsers install them during
+setup.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
 policy. A pull request keeps its own Turborepo results in the GitHub cache

@@ -16,6 +16,7 @@
 //   entry contracts test/**                 the conformance driver, loaded by path by the traces stage; evm/ and solana/ are Foundry and Cargo projects
 //   ignoreIssues fees dln exports           the buyback leg's order checks, kept for the fee Worker entry (fees:U14)
 import { readFileSync } from "node:fs"
+import { URL } from "node:url"
 import vibelang from "vibelang/knip"
 
 const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
@@ -68,6 +69,7 @@ export default {
         "vibestack/design/cli.ts",
         "vibestack/stories/cli.ts",
         "vibestack/remote-cache.ts",
+        "vibestack/chromium.ts",
         "vibestack/*/test/*.test.ts",
         "vibestack/testing/test/fixture/*/src/*.{schema,contract}.{ts,vibe}"
       ],
