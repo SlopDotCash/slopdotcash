@@ -18,6 +18,8 @@
 /account/ / 200
 /points / 200
 /points/ / 200
+/requested / 200
+/requested/ / 200
 /earnings / 200
 /earnings/ / 200
 /inbox / 200
