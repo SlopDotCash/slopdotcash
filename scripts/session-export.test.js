@@ -208,3 +208,17 @@ test("secret assignments with prefixed names are replaced", () => {
   ])
     assert.ok(!joined.includes(bad), bad);
 });
+
+test("long unbroken input cleans quickly", () => {
+  for (const text of [
+    "A".repeat(1_000_000),
+    "a1_".repeat(300_000),
+    "-".repeat(500_000),
+  ]) {
+    const start = performance.now();
+    const out = clean([ev("tool_result", text)]);
+    const ms = performance.now() - start;
+    assert.ok(ms < 1000, `${ms} ms`);
+    assert.equal(out.events[0].text, text);
+  }
+});

@@ -50,8 +50,8 @@ const SECRET_SHAPES = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g,
   /\b(?:mnemonic|seed phrase|recovery phrase)\b\s*[:=]\s*(?:[a-z]{3,8}\s+){11,23}[a-z]{3,8}\b/gi,
-  /[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi,
-  /--[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*\s+["']?[A-Za-z0-9._~+/=-]{12,}/gi,
+  /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi,
+  /(?<!-)--[A-Za-z0-9_-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key)[A-Za-z0-9_-]*\s+["']?[A-Za-z0-9._~+/=-]{12,}/gi,
 ];
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
 
