@@ -15,6 +15,7 @@ import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, robinhoodUsdg } from "../runtime/pins.ts"
 import { type Leg, type Ledger, type SendRecord, type Terms, modelBalance } from "./codec.vibe"
 import { orderParties } from "./parties.ts"
+import { providerErrorLog } from "../kernels/providerFailure.ts"
 import { BuybackRefused, type Facts, type SignedFacts, ledgerOf, send, sendFloors } from "./store.vibe"
 
 module verified {
@@ -305,7 +306,7 @@ export effect function bridgeLeg(leg: Leg, settings: LegSettings) {
     if (running.state.orderPhase === "Approving" && running.state.approval.phase === "Finalized") return try orderEvm(running, settings)
     if (running.state.orderPhase === "NoOrder") try evaluate(running, settings)
   }
-  ran catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: running.leg.network, leg: "bridge", error: tagOf(error) }) }
+  ran catch effect (error) => { try Effect.logWarning("fee_buyback_error", { network: running.leg.network, leg: "bridge", ...(running.leg.network === "Solana" ? providerErrorLog(error, "solana-rpc", tagOf(error)) : { error: tagOf(error) }) }) }
   return { leg: running.leg, state: running.state, records: running.records } satisfies LegResult
 }
 

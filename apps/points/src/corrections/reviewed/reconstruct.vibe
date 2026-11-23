@@ -17,7 +17,7 @@ import type { Event } from "../../../gen/points__journal.effect.vibe"
 import type { MixedProof, PacketRun, RecipientCorrection } from "../../../gen/points__reviewedHistory.ts"
 import { initial as unbound, machineOver as bindingOver } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetirement, digestPattern, digestText, githubIdPattern, refusal, require } from "./packet.vibe"
-import { type VerifiedRetirements, checkedRetirement } from "./retirement.vibe"
+import { type VerifiedRetirements, checkedRetirement, ownRecordPool } from "./retirement.vibe"
 import { type VerifiedClosedReviews, projectHistoricalValueChanges } from "./replay/value.vibe"
 import { latestOf } from "./replay/latest.vibe"
 
@@ -282,8 +282,14 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
   const source = retirement.source
   const candidate = packet.corrections.candidates.find((item) => item.sourceId === source.sourceId && item.workUnitId === retirement.workUnitId)
   const rows = poolRows(journal, packet.projectId, retirement.sourceId, retirement.workUnitId)
+  const latestBaseline = latestOf(input.baseline.revisions)
+  const ownPool = try ownRecordPool(rows)
   try require(candidate !== undefined && rows.length > 0 && rows.every(({ award }) => award.occurredAt === source.occurredAt && award.occurredAt.startsWith("2026-10-") &&
-    award.sourceUrl === source.sourceUrl) && matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
+    award.sourceUrl === source.sourceUrl) &&
+    (retirement.netOutcome === undefined || (candidate?.kind === "pull-request" && candidate.sourceIds.length === 1 && candidate.sourceIds[0] === source.sourceId &&
+      rows.every((row) => latestBaseline.get(row.award.key)?.id === row.id))) &&
+    ((retirement.identicalAcceptedChange === undefined && retirement.netOutcome === undefined) || ownPool) &&
+    matchesPredecessors(rows, retirement.expectedPredecessors), "Duplicate pool changed after owner review")
   const templates = rows.map((row) => row.award)
   const pool = try openedPool(journal, input, rows, templates, retirement.sourceId, "Duplicate pool changed after owner review")
   const sources = new Map(pool.opened.names.sources)
@@ -306,11 +312,11 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
     packet,
     retirement,
     baseline: input.baseline,
-    latestBaseline: latestOf(input.baseline.revisions),
+    latestBaseline,
     rewarded: context.rewarded,
     current: latestOf(journal.revisions),
     pool: rows,
-    verified: input.verifiedRetirements ?? { identical: new Set(), order: new Map() },
+    verified: input.verifiedRetirements ?? { duplicates: new Set(), order: new Map() },
     retiringSources: context.retiring,
     validated: context.validated,
     sourceOf,

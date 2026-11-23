@@ -1,0 +1,86 @@
+// spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { RowMismatch, decoded, first, rows, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Event, NotAState, type RepoFlag, type RepoRequests, apply, boardLimit, decodeEvent, decodeState, flagOf, live } from "../../gen/backend__repoRequests.effect.vibe"
+
+schema FlagRow { repo_id: string; github_id: string; full_name: string; created_at: string; flagged_at: string; expires_at: string; withdrawn_at: string | null }
+schema CountRow { n: number }
+schema BoardEntry { repo_id: string; n: number; newest: string; full_name: string }
+
+function flagOfRow(row: FlagRow): RepoFlag {
+  return {
+    repoId: row.repo_id,
+    account: row.github_id,
+    fullName: row.full_name,
+    createdAt: millisOf(row.created_at),
+    flaggedAt: millisOf(row.flagged_at),
+    expiresAt: millisOf(row.expires_at),
+    withdrawn: row.withdrawn_at !== null,
+  }
+}
+
+effect function flagsOf([found]: ReadonlyArray<Rows>) {
+  const flagRows = try decoded(FlagRow, found ?? [], "repo requests")
+  return try decodeState({ now: try Clock.currentTimeMillis, flags: flagRows.map(flagOfRow) })
+}
+
+function accountOf(by: string): Aggregate<RepoRequests, NotAState | RowMismatch, never> {
+  return {
+    name: `repo requests of ${by}`,
+    version: sql`SELECT coalesce((SELECT group_concat(repo_id || ':' || full_name || ':' || flagged_at || ':' || expires_at || ':' || coalesce(withdrawn_at, '-'), ',') FROM (SELECT * FROM repo_requests WHERE github_id = ${by} ORDER BY repo_id)), '') AS version`,
+    reads: [sql`SELECT repo_id, github_id, full_name, created_at, flagged_at, expires_at, withdrawn_at FROM repo_requests WHERE github_id = ${by} ORDER BY repo_id`],
+    decode: flagsOf,
+  }
+}
+
+effect function writesFor(current: RepoRequests, next: RepoRequests, event: Event, by: string) {
+  const now = try isoAt(current.now)
+  switch (event.type) {
+    case "observeClock": return []
+    case "withdraw": return [sql`UPDATE repo_requests SET withdrawn_at = ${now} WHERE repo_id = ${event.repoId} AND github_id = ${by} AND withdrawn_at IS NULL`]
+    case "flag": {
+      const expiresAt = try isoAt(flagOf(next, event.repoId, by).expiresAt)
+      return [sql`INSERT INTO repo_requests (repo_id, github_id, full_name, created_at, flagged_at, expires_at, withdrawn_at) VALUES (${event.repoId}, ${by}, ${event.fullName}, ${now}, ${now}, ${expiresAt}, NULL) ON CONFLICT (repo_id, github_id) DO UPDATE SET full_name = excluded.full_name, flagged_at = excluded.flagged_at, expires_at = excluded.expires_at, withdrawn_at = NULL`]
+    }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
+  }
+}
+
+effect function decide(current: RepoRequests, event: Event, by: string) {
+  const next = try apply(current, event, by)
+  return { value: next, writes: try writesFor(current, next, event, by) } satisfies Decision<RepoRequests>
+}
+
+export effect function send(event: Event, by: string) {
+  return try update(accountOf(by), (current) => decide(current, event, by))
+}
+
+export effect function receive(input: unknown, by: string) {
+  return try send(try decodeEvent(input), by)
+}
+
+export effect function accountFlags(by: string) {
+  return (try load(accountOf(by))).state
+}
+
+export function activeFlags(state: RepoRequests): ReadonlyArray<RepoFlag> {
+  return state.flags.filter((each) => live(each, state.now)).sort((a, b) => b.flaggedAt - a.flaggedAt || (a.repoId < b.repoId ? -1 : a.repoId > b.repoId ? 1 : 0))
+}
+
+export function activeByName(state: RepoRequests, path: string): RepoFlag | undefined {
+  const key = path.toLowerCase()
+  return state.flags.find((each) => live(each, state.now) && each.fullName.toLowerCase() === key)
+}
+
+export effect function activeCount(repoId: string, now: number) {
+  const counted = try first(CountRow, sql`SELECT count(*) AS n FROM repo_requests WHERE repo_id = ${repoId} AND withdrawn_at IS NULL AND expires_at > ${try isoAt(now)}`)
+  return counted?.n ?? 0
+}
+
+export effect function board(now: number) {
+  return try rows(BoardEntry, sql`SELECT repo_id, n, newest, full_name FROM (SELECT r.repo_id, count(*) AS n, max(r.flagged_at) AS newest, (SELECT l.full_name FROM repo_requests l WHERE l.repo_id = r.repo_id ORDER BY l.flagged_at DESC, l.github_id LIMIT 1) AS full_name FROM repo_requests r WHERE r.withdrawn_at IS NULL AND r.expires_at > ${try isoAt(now)} GROUP BY r.repo_id) b WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE CAST(json_extract(p.manifest, '$.authority.repositoryId') AS TEXT) = b.repo_id OR EXISTS (SELECT 1 FROM json_each(p.manifest, '$.repositories') listed WHERE CAST(json_extract(listed.value, '$.githubId') AS TEXT) = b.repo_id)) AND NOT EXISTS (SELECT 1 FROM project_repositories k WHERE k.repository_key = lower(b.full_name)) ORDER BY n DESC, newest DESC, repo_id LIMIT ${boardLimit}`)
+}

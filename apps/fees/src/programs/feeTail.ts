@@ -1,4 +1,5 @@
 // spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"
+import { type ProviderFailure, sanitizeProviderFailure } from "../kernels/providerFailure.ts";
 import { jsonValue } from "../solana/bytes.ts";
 import { candidateAccepted, keptCount } from "./feeTailBounds.ts";
 
@@ -116,6 +117,7 @@ export interface TailRecord {
   readonly vault?: string;
   readonly errorCategory?: FeeErrorCategory;
   readonly rpcMethod?: string;
+  readonly providerFailure?: ProviderFailure;
   readonly trigger?: "recovery" | "receipts" | "unknown";
   readonly results?: ReadonlyArray<RunResult>;
 }
@@ -228,6 +230,8 @@ function tailRecord(event: unknown): ReadonlyArray<TailRecord> {
   const reason = stated ?? errored;
   const rpcMethod = failed ? feeRpcMethod(reason) : undefined;
   const trigger = fieldOf(event, "trigger");
+  const diagnosed = name === "fee_claim_error" || name === "fee_conversion_error" || (name === "fee_buyback_error" && network === "solana" && leg === "bridge");
+  const providerFailure = diagnosed ? sanitizeProviderFailure(fieldOf(event, "providerFailure")) : undefined;
   return [{
     event: name,
     ...(network === undefined ? {} : { network }),
@@ -236,6 +240,7 @@ function tailRecord(event: unknown): ReadonlyArray<TailRecord> {
     ...(publicAddress(network, vault) ? { vault } : {}),
     ...(failed ? { errorCategory: feeErrorCategory(reason) } : {}),
     ...(rpcMethod === undefined ? {} : { rpcMethod }),
+    ...(providerFailure === undefined ? {} : { providerFailure }),
     ...(name === "fee_converter_run" ? { trigger: trigger === "recovery" || trigger === "receipts" ? trigger : "unknown", results: runResults(fieldOf(event, "results")) } : {}),
   }];
 }

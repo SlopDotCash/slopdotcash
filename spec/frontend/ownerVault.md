@@ -47,6 +47,12 @@ out neither hides nor resumes it for someone else, and whoever is in the tab
 checks, recovers or clears it. Creation, registration and withdrawal stay the
 signed-in owner's alone.
 
+A review that was never sent is replaced by the next one: the owner, or the
+deposit-only form's person, may review again after changing the amount, the
+action or the wallet, as development's `inspect` replaces its review whenever
+no attempt is pending (`src/VaultActions.tsx:260–306`). Only a flow whose
+request is awaiting the wallet, sent or unclear refuses a new review.
+
 ```quint
 import walletAttempt as WA from "./walletAttempt"
 import projections as P from "./projections"
@@ -97,12 +103,12 @@ pure def signOut(v: OwnerVault, by: int): OwnerVault = { ...v, owner: 0, lifetim
   notice: Quiet, creation: resumed(v.creation, 0), transfer: resumed(v.transfer, 0) }
 pure def canReview(v: OwnerVault, target: Target, withdrawal: M::Amount, pool: P::PoolFacts, by: int): bool =
   v.owner > 0 and by == v.owner and (flowOf(v, target).phase == Idle or flowOf(v, target).phase == Failed
-    or (target == Transfer and v.transfer.phase == Done))
+    or flowOf(v, target).phase == Reviewed or (target == Transfer and v.transfer.phase == Done))
   and (if (target == Creation) v.creation.phase != Done else v.creation.phase == Done)
 pure def reviewed(flow: Flow, depositOnly: bool): Flow = { ...flow, phase: Reviewed, depositOnly: depositOnly, inflight: NoCheck,
   autoAsks: 0, refusals: 0, stopped: false, hiddenAsks: 0 }
 pure def canReviewDeposit(v: OwnerVault, by: int): bool = by == actor(v) and v.creation.phase == Done
-  and (v.transfer.phase == Idle or v.transfer.phase == Failed or v.transfer.phase == Done)
+  and (v.transfer.phase == Idle or v.transfer.phase == Failed or v.transfer.phase == Done or v.transfer.phase == Reviewed)
 pure def reviewDeposit(v: OwnerVault, by: int): OwnerVault = withFlow(Transfer, reviewed(v.transfer, true), { ...v, notice: Quiet })
 ```
 

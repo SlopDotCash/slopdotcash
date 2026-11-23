@@ -1,5 +1,6 @@
 // spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
 import { isoNow } from "@repo/platform/clock"
+import { withPublicGitObjects } from "@repo/platform/git"
 import { type Journal } from "../kernels/records/canonical.ts"
 import { batchDigest } from "../kernels/records/ids.vibe"
 import { participationBans } from "../collect/feeds/bans.vibe"
@@ -9,6 +10,7 @@ import { batchRecorded } from "../corrections/apply/apply.vibe"
 import { projectOfRegistry } from "../corrections/apply/derive.vibe"
 import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
+import { type BeforeImportCheck, verifyHistoricalNetOutcomes } from "../corrections/reviewed/netOutcome.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
 import { exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
@@ -161,6 +163,9 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   setPhase("accepted squash verification")
   try verifyHistoricalAcceptedSquashes(packet)
   const identical = try verifyHistoricalIdenticalAcceptedChanges(packet, project.integrationBranch ?? "")
+  const beforeImport: Array<BeforeImportCheck> = []
+  const net = try verifyHistoricalNetOutcomes(packet, withPublicGitObjects, beforeImport)
+  const duplicates = new Set([...identical.identical, ...net])
   setPhase("financial protection verification")
   const protection = try verifyHistoricalProtection(packet)
   setPhase("public Points read")
@@ -210,7 +215,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     projectOf: projectOfRegistry(project.registry.projects),
     qualified: qualification !== undefined,
     closedReviews,
-    verifiedRetirements: { identical: identical.identical, order },
+    verifiedRetirements: { duplicates, order },
   })
   if (assessmentReceipt !== undefined) try assertRemovedMergeGroupsPreserved(candidate.revisions.slice(baseline.revisions.length), assessmentReceipt, latestOf(baseline.revisions))
   setPhase("import preparation")
@@ -225,6 +230,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
         try verifyOwnerAuthority(packet, project.manifest)
         try verifyHistoricalProtection(packet)
         try verifyCarrierTips(packet, identical)
+        for (const check of beforeImport) try check
         setPhase("protected import and readback")
       },
       loadPublic: publishedJournal,

@@ -1,0 +1,169 @@
+// spec/backend/repoRequests.md, "Story: Flag a repository a member would work on"; spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"; spec/backend/repoRequests.md, "A flag counts for 90 days, renews in place and is withdrawn without being deleted"; spec/backend/repoRequests.md, "A flag write is a same-origin JSON request naming exactly a repository and an action"; spec/backend/repoRequests.md, "Story: See which repositories members would work on"; spec/backend/repoRequests.md, "The public board counts active flags per repository, never names who flagged, and leaves out a repository on Slop"
+import { isoAt } from "@repo/platform/clock"
+import { type Actor, ActorChanged, Caller, Refused, SessionExpired, Unauthenticated, answered, handleRaw, json, jsonBody, sameOriginWrite } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { type Refusal, cacheControl } from "@repo/platform/route"
+import { Conflict } from "@repo/platform/stored"
+import { type FlagChoice, type FlagFacts, type RepoRead, Rejected, flagChoice, flagOf, flagRefusal } from "../../gen/backend__repoRequests.effect.vibe"
+import { getRepoRequests, postRepoRequests as rows } from "../client/refusals.vibe"
+import { type MyRepoRequest, type RepoRequestAnswer, type RepoRequestBoard, flagRepoRequest, repoRequestBoard, repoRequestsPath, validRepoPath } from "../client/repoRequests.vibe"
+import { sessionMember } from "../session.vibe"
+import { listedProject, mergedWork, readRepository } from "./facts.vibe"
+import { accountFlags, activeByName, activeCount, activeFlags, board, send } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+function parity(row: Row): Refusal {
+  return { status: row.status, code: row.error, message: row.message ?? "", headers: row.headers }
+}
+
+function refused(row: Row) {
+  return new Refused(parity(row))
+}
+
+function rowAnswer(row: Row) {
+  return json({ error: row.error, message: row.message ?? "" }, row.status, row.headers)
+}
+
+const privateAnswer = { "cache-control": cacheControl(flagRepoRequest.cache) }
+
+function messageOf(choice: Exclude<FlagChoice, "Flagged">, read: RepoRead, listed: string): string {
+  switch (choice) {
+    case "TeamRefused": return rows.teamAccount.message
+    case "NoMergedWork": return rows.noMergedWork.message
+    case "AtFlagLimit": return rows.requestLimit.message
+    case "GitHubDown": return read === "RepoIncomplete" ? rows.githubIncomplete.message : rows.githubUnavailable.message
+    case "NoPublicRepo": return rows.notFound.message
+    case "ForkRefused": return rows.fork.message
+    case "ArchivedRefused": return rows.archived.message
+    case "AlreadyListed": return listed
+    case "OwnRepoRefused": return rows.ownRepo.message
+    default: {
+      const _exhaustive: never = choice
+      return _exhaustive
+    }
+  }
+}
+
+function refusal(choice: FlagChoice, read: RepoRead, listed = "") {
+  if (choice === "Flagged") return refused(rows.requestLimit)
+  const { status, code } = flagRefusal(choice)
+  return new Refused({ status, code, message: messageOf(choice, read, listed), headers: rows.requestLimit.headers })
+}
+
+effect function flagRepo(actor: Actor, path: string) {
+  const by = actor.githubId
+  const team = try (try Roles).isTeam(by)
+  const merged = !team && (try mergedWork(by))
+  const state = try accountFlags(by)
+  const heldByName = activeByName(state, path) !== undefined
+  const unread: FlagFacts = { merged, team, heldByName, read: "RepoUnreachable", listed: false, own: false }
+  const beforeRead = flagChoice(state, "", unread, by)
+  if (beforeRead !== "GitHubDown") throw refusal(beforeRead, unread.read)
+  const { read, repo } = try readRepository(path)
+  if (repo === undefined) throw refusal(flagChoice(state, "", { ...unread, read }, by), read)
+  const listedAs = try listedProject(repo.id, repo.fullName)
+  const own = repo.ownerId === by || repo.ownerLogin.toLowerCase() === actor.login.toLowerCase()
+  const facts: FlagFacts = { merged, team, heldByName, read, listed: listedAs !== undefined, own }
+  const origin = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).origin
+  const listed = `${repo.fullName} is already on Slop. See ${origin}/projects/${listedAs ?? ""}.`
+  const next = send({ type: "flag", repoId: repo.id, fullName: repo.fullName, facts }, by) catch effect (error) => match (error) {
+    when Rejected: throw refusal(flagChoice(error.state, repo.id, facts, by), read, listed);
+    when Conflict: throw refused(rows.requestLimit);
+    default: throw error;
+  }
+  const expiresAt = try isoAt(flagOf(next, repo.id, by).expiresAt)
+  return { repo: repo.fullName, count: try activeCount(repo.id, next.now), flagged: true, expiresAt } satisfies RepoRequestAnswer
+}
+
+effect function withdrawRepo(by: string, path: string) {
+  const held = activeByName(try accountFlags(by), path)
+  if (held === undefined) throw refused(rows.notFlagged)
+  const next = send({ type: "withdraw", repoId: held.repoId }, by) catch effect (error) => match (error) {
+    when Rejected: throw refused(rows.notFlagged);
+    default: throw error;
+  }
+  return { repo: held.fullName, count: try activeCount(held.repoId, next.now), flagged: false, expiresAt: null } satisfies RepoRequestAnswer
+}
+
+function exactFields(value: unknown): { readonly repo: unknown; readonly action: unknown } | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const keys = Object.keys(value)
+  return keys.length === 2 && Object.hasOwn(value, "repo") && Object.hasOwn(value, "action") ? value as { readonly repo: unknown; readonly action: unknown } : undefined
+}
+
+effect function admitted() {
+  const caller = try Caller
+  return caller.current() catch effect (error) => match (error) {
+    when Unauthenticated: throw refused(rows.unauthorized);
+    when SessionExpired: throw refused(rows.unauthorized);
+    when ActorChanged: throw refused(rows.actorChanged);
+    when Refused: throw error.code === rows.invalidExpectedActor.error ? refused(rows.invalidExpectedActor) : error;
+    default: throw error;
+  }
+}
+
+effect function decided() {
+  const actor = try admitted()
+  const value = jsonBody(flagRepoRequest.limitKib) catch effect () => {
+    throw refused(rows.invalidRequestNotAnObject)
+  }
+  const fields = exactFields(value)
+  if (fields === undefined) throw refused(rows.invalidRequestUnexpectedFields)
+  const { repo, action } = fields
+  if (action !== "flag" && action !== "withdraw") throw refused(rows.invalidRequestAction)
+  if (!validRepoPath(repo)) throw refused(rows.invalidRepo)
+  return action === "flag" ? try flagRepo(actor, repo) : try withdrawRepo(actor.githubId, repo)
+}
+
+const flagWrite = { ...flagRepoRequest, access: "public" as const, request: undefined }
+
+effect function written() {
+  if (!(try sameOriginWrite())) throw refused(rows.originForbidden)
+  const answer = decided() catch effect (error) => {
+    if (error instanceof Refused) throw error
+    try Effect.logError("repo requests API failure")
+    throw refused(rows.internalError)
+  }
+  return json(answer, 200, privateAnswer)
+}
+
+effect function mineOf(githubId: string) {
+  const mine: MyRepoRequest[] = []
+  for (const each of activeFlags(try accountFlags(githubId))) {
+    const listedAs = try listedProject(each.repoId, each.fullName)
+    mine.push({ repo: each.fullName, expiresAt: try isoAt(each.expiresAt), listedAs: listedAs ?? null })
+  }
+  return mine
+}
+
+effect function boardRead() {
+  const viewer = try sessionMember()
+  const entries = try board(try Clock.currentTimeMillis)
+  const repos = entries.map((row) => ({ repo: row.full_name, count: row.n, newestAt: row.newest }))
+  const shown = { repos, mine: viewer === undefined ? null : try mineOf(viewer.github_id) } satisfies RepoRequestBoard
+  return json(shown, 200, { "cache-control": viewer === undefined ? cacheControl(repoRequestBoard.cache) : privateAnswer["cache-control"], vary: "cookie" })
+}
+
+effect function boardAnswer() {
+  return boardRead() catch effect () => {
+    try Effect.logError("repo requests read failure")
+    return rowAnswer(getRepoRequests.internalError)
+  }
+}
+
+const otherMethods = ["PUT", "PATCH", "DELETE", "OPTIONS"] as const
+
+export const RepoRequestRoutes = Layer.mergeAll(
+  handleRaw(repoRequestBoard, () => boardAnswer()),
+  handleRaw(flagWrite, () => written()),
+  HttpRouter.addAll([
+    HttpRouter.route("HEAD", repoRequestsPath, answered(boardAnswer())),
+    ...otherMethods.map((method) => HttpRouter.route(method, repoRequestsPath, answered(effect { throw refused(rows.originForbidden) }))),
+  ]),
+)

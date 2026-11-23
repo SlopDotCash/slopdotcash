@@ -15,9 +15,9 @@ type Source = Mutable<CorrectionSource>;
 
 export const hash = (value: unknown) => sha256Of(JSON.stringify(value));
 const oid = (raw: string) => createHash("sha1").update(`commit ${Buffer.byteLength(raw)}\0`).update(raw).digest("hex");
-const keyOf = (sourceId: string) => sha256Of(keyText({ projectId: "feed", actorId: actor.id, category: "merged-pull-request", sourceId }));
+export const keyOf = (sourceId: string) => sha256Of(keyText({ projectId: "feed", actorId: actor.id, category: "merged-pull-request", sourceId }));
 
-function appended(journal: Journal, award: Award, sourceDigest: string, decision?: { sourceId: string; reason: string }): Journal {
+export function appended(journal: Journal, award: Award, sourceDigest: string, decision?: { sourceId: string; reason: string }): Journal {
   const previous = [...journal.revisions].reverse().find((row) => row.award.key === award.key);
   const body: RevisionBody = {
     previous: previous?.id ?? null,
@@ -33,7 +33,7 @@ function appended(journal: Journal, award: Award, sourceDigest: string, decision
 
 export const batchDigestOf = (journal: Journal) => sha256Of(journalText(journal));
 
-function baselineOf(journal: Journal) {
+export function baselineOf(journal: Journal) {
   return { revisionCount: journal.revisions.length, revisionIdsDigest: hash(journal.revisions.map((row) => row.id)) };
 }
 

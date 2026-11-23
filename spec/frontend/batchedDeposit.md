@@ -9,11 +9,12 @@ wallet request to the original authorized intent and interprets expected
 same-wallet chain events. This state is a wallet request projection. It
 does not own the registered vault balance or publish a second receipt.
 
-The sender `by` is the signed-in owner (positive), the chain reader (`-1`)
-or the wallet adapter (`-2`). The owner who reviews is the sender of the
-review, never a value the request names; the wallet's replies to the batch
-request are the wallet adapter's and finalized vault evidence is the chain
-reader's.
+The sender `by` is the signed-in owner (positive), the person in a tab with
+no session on the public page's deposit-only form (`-4`, the
+[owner vault](./ownerVault.md)'s `visitor`), the chain reader (`-1`) or the
+wallet adapter (`-2`). Whoever reviews is the sender of the review, never a
+value the request names; the wallet's replies to the batch request are the
+wallet adapter's and finalized vault evidence is the chain reader's.
 
 ## Story: Offer one atomic request only on a wallet that already supports it
 
@@ -26,8 +27,16 @@ and no wallet prompt has been requested. The saved intent is a
 starts only after storage creates its empty slot, and a storage failure
 blocks it.
 
+The public project page's deposit-only form offers the same one request to
+any connected wallet, signed in or not (development `src/VaultActions.tsx`
+`send("batch")` with `depositOnly`, no session check, and
+`src/lib/evm-vault-actions.ts` `sendVaultBatch`): the review accepts the
+signed-out person as the owner vault's `canReviewDeposit` does, and that
+person alone then saves the intent and recovers its hash.
+
 ```quint
 import walletAttempt as WA from "./walletAttempt"
+import ownerVault as OV from "./ownerVault"
 type BatchCapability = AlreadyAtomic | RequiresUpgrade | NoCapability
 type BatchPhase = Unreviewed | Offered | Separate | IntentSaved | WalletReference | Uncertain | HashKnown | Declined | NotSent | Failed | Verified
 type ChainResult = ChainPending | ChainIncluded | ChainFinalFailed | ChainFinalEvent | ChainFinalMissingEvent
@@ -38,9 +47,10 @@ pure val initial: Batch = { phase: Unreviewed, capability: NoCapability, owner: 
   reference: "", transaction: "", requests: 0, evidence: ChainPending, slot: WA::noAttempt, storageBlocked: false,
   approval: ApprovalPending }
 pure val walletAdapter = -2
-pure def canReview(b: Batch, capability: BatchCapability, by: int): bool = b.phase == Unreviewed and by > 0
+pure def canReview(b: Batch, capability: BatchCapability, by: int): bool = b.phase == Unreviewed and (by > 0 or by == OV::visitor)
 pure def review(b: Batch, capability: BatchCapability, by: int): Batch =
   { ...b, owner: by, capability: capability, phase: if (capability == AlreadyAtomic) Offered else Separate }
+pure def sometimesVisitorBatch(b: Batch): bool = b.owner == OV::visitor and b.requests == 1
 pure def intentAttempt(digest: str): WA::Attempt = { identity: digest, bytesId: digest, hash: "", candidate: "" }
 pure def canSaveIntent(b: Batch, intent: int, digest: str, stored: bool, by: int): bool = b.phase == Offered and b.capability == AlreadyAtomic
   and intent > 0 and digest != "" and by == b.owner and b.requests == 0 and WA::mayCreate(b.slot)
@@ -137,7 +147,7 @@ pure def sometimesOneBatch(b: Batch): bool = b.requests == 1 and b.phase == Veri
 pure def sometimesSeparate(b: Batch): bool = b.phase == Separate and b.capability == RequiresUpgrade
 pure def sometimesUncertain(b: Batch): bool = b.phase == Uncertain
 pure def sometimesMissingEvent(b: Batch): bool = b.phase == HashKnown and b.evidence == ChainFinalMissingEvent
-pure val byValues = Set(1, 2, chainReader, walletAdapter)
+pure val byValues = Set(1, 2, chainReader, walletAdapter, OV::visitor)
 pure val intentValues = Set(1, 2)
 pure val digestValues = Set("plan", "wrong", "")
 pure val expectedDigestValues = Set("plan", "wrong", "")

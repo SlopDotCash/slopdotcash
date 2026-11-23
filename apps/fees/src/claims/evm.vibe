@@ -3,6 +3,7 @@ import { type Address, EvmRpc, type Receipt, type Transaction, checksum } from "
 import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
 import { accruedFeesCalldata, claimFeesCalldata, word } from "../evm/abi.ts"
 import { FeeChain } from "../evm/client.vibe"
+import { httpFailureStatus, noteProviderFailure } from "../kernels/providerFailure.ts"
 import { definitions } from "../runtime/networks.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { DeploymentRefused, type EvmVaultDeployment, VaultDeployments } from "./deployments.vibe"
@@ -59,9 +60,19 @@ effect function roleHeld(deployment: EvmVaultDeployment, block: bigint, wallet: 
   return roles.some((role) => same(role, wallet))
 }
 
+effect function deploymentAt(fact: VaultFact, block: bigint) {
+  const deployments = try VaultDeployments
+  const found = deployments.evm(fact, block) catch effect (error) => {
+    const httpStatus = error._tag === "RpcUnavailable" ? httpFailureStatus(error.message) : undefined
+    if (httpStatus !== undefined) throw noteProviderFailure(error, { provider: "evm-rpc", stage: "deployment-check", httpStatus })
+    throw error
+  }
+  return found
+}
+
 export effect function evmVault(fact: VaultFact, block: bigint) {
   const chain = try FeeChain
-  const deployment = try (try VaultDeployments).evm(fact, block)
+  const deployment = try deploymentAt(fact, block)
   if (!same(deployment.vault, fact.vault)) throw new DeploymentRefused({ message: "Vault differs from its reviewed network or deployment" })
   if (!same(deployment.feeRecipient, chain.wallet)) return undefined
   const roleFree = !(try roleHeld(deployment, block, chain.wallet))
@@ -90,7 +101,7 @@ effect function nativeEvidence(receipt: Receipt, transaction: Transaction, vault
 export effect function evmClaimEvidence(fact: VaultFact, receipt: Receipt, transaction: Transaction) {
   if (receipt.status !== "success") return failedClaim
   const chain = try FeeChain
-  const deployment = try (try VaultDeployments).evm(fact, receipt.blockNumber)
+  const deployment = try deploymentAt(fact, receipt.blockNumber)
   const vault = try addressOf(deployment.vault, "vault")
   if (!same(deployment.vault, fact.vault) || !same(deployment.feeRecipient, chain.wallet) || !same(receipt.from, chain.wallet) || !same(receipt.to, vault))
     throw new ClaimRefused({ issue: "Claim receipt does not match the reviewed vault or fee wallet" })

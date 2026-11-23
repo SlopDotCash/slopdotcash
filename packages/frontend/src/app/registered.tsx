@@ -1,4 +1,4 @@
-// spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"
+// spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/requestedRepos.md, "Story: See requested repos, flag one, renew or withdraw it"
 import { networkPays } from "../kernels/payingNetworks.ts";
 import { projectTermsOf, repositoryRegistryOf } from "../reads/registryTerms.ts";
 import { LoginPage, SettingsPage } from "../screens/account/index.ts";
@@ -10,6 +10,7 @@ import { PayoutsPage } from "../screens/payouts/index.ts";
 import { PointsPage } from "../screens/points/index.ts";
 import { ProfilePage } from "../screens/profiles/index.ts";
 import { ProjectPage } from "../screens/projects/index.ts";
+import { RequestedReposPage } from "../screens/requested/index.ts";
 import { HowItWorksPage } from "../screens/public/index.ts";
 import { casePayments, SecurityCasesWithPayments } from "../screens/security/payments/index.ts";
 import { SecurityProgramWithSettings } from "../screens/security/settings/index.ts";
@@ -39,4 +40,5 @@ export const pages: Readonly<Record<PageKind, RegisteredPage>> = {
   Profile: (props) => <ProfilePage {...props} repositoryRegistry={repositoryRegistryOf} projectTerms={projectTermsOf} />,
   Fee: SubmissionFeePage,
   FeeReport: ReportDepositPage,
+  Requested: RequestedReposPage,
 };

@@ -7,6 +7,7 @@ import type { Claims } from "../conversion/run.vibe"
 import { type Session, renewed, step } from "../conversion/session.vibe"
 import type { Facts } from "../journal/store.vibe"
 import { type JupiterSettings, jupiterQuote } from "../jupiter/quote.vibe"
+import { providerErrorLog, rpcProviderOf } from "../kernels/providerFailure.ts"
 import type { KyberSettings } from "../kyber/route.vibe"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { FeeWallet, type Prepared, type Signed, signedFacts } from "../signer/feeWallet.vibe"
@@ -15,7 +16,7 @@ import { solanaSignedFacts } from "../signer/solana.vibe"
 import { type FinalizedAccrual, evmFinalizedAccrual, observeAccrual, solanaFinalizedAccrual } from "./accrual.vibe"
 import { ClaimRefused, evmVault, failureText, roleRefusal } from "./evm.vibe"
 import { type SolanaClaimPlan, solanaVault } from "./solana.vibe"
-import { type Admission, admission, evmClaimCost, evmClaimValue } from "./value.vibe"
+import { type Admission, admission, evmClaimCost, evmClaimValue, valueAdmission } from "./value.vibe"
 
 export interface EvmClaimSettings { readonly vaults: ReadonlyArray<VaultFact>; readonly kyber: KyberSettings }
 
@@ -29,7 +30,7 @@ interface Planned {
   readonly roleFree: boolean
 }
 
-type Planning = Planned | { readonly skipped: string } | undefined
+type Planning = Planned | { readonly skipped: string; readonly amount: bigint } | undefined
 
 const runConditions: ReadonlyArray<readonly [(state: Fee, runId: number) => boolean, string]> = [
   [(state, runId) => leaseHeld(state, runId), "the fee lease is not held"],
@@ -94,19 +95,23 @@ effect function evmPlan(session: Session, holding: Holding, fact: VaultFact, set
   const amount = smaller(wideNumber(holding.accrued), current.accrued)
   if (amount === 0n) return undefined satisfies Planning
   const valued = try evmClaimValue(network, fact.token, amount, settings.kyber)
-  if (valued.kind === "skipped") return { skipped: valued.reason } satisfies Planning
+  if (valued.kind === "skipped") return { skipped: valued.reason, amount } satisfies Planning
+  const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), valued.valueMicro)
+  if (floor.kind === "skipped") return { skipped: floor.reason, amount } satisfies Planning
   const cost = try evmClaimCost(network, current.vault, settings.kyber)
   const intent: FeeIntent = { kind: "EvmClaimFees", network, nonceFloor: wideNumber(nonceFloor(session.state)), valueMicro: valued.valueMicro, vault: current.vault }
   return { intent, amount, value: valued.valueMicro, cost, roleFree: current.roleFree } satisfies Planning
 }
 
-effect function solanaPlan(holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
+effect function solanaPlan(session: Session, holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
   const current = try solanaVault(fact, "finalized")
   if (current === undefined) return undefined satisfies Planning
   if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
   const amount = smaller(wideNumber(holding.accrued), current.accrued)
   if (amount === 0n) return undefined satisfies Planning
   const value = current.deployment.mint === settings.jupiter.usdc ? amount : (try jupiterQuote(settings.jupiter, current.deployment.mint, amount, 0)).outAmount
+  const floor = valueAdmission(session.state, candidateOf(session.state, holding, amount, current.roleFree), value)
+  if (floor.kind === "skipped") return { skipped: floor.reason, amount } satisfies Planning
   const { program, project, vault, mint } = current.deployment
   const plan: SolanaClaimPlan = { program, project, vault, mint, amount, valueMicro: value }
   const intent: FeeIntent = { kind: "SolanaClaim", network: "Solana", ...plan }
@@ -164,7 +169,7 @@ effect function oneVault<E, R, F, S>(session: Session, mode: Mode, fact: VaultFa
   const planned = try plan(held, fact)
   if (planned === undefined) return 0
   if ("skipped" in planned) {
-    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: String(held.accrued), reason: planned.skipped })
+    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: planned.amount.toString(), reason: planned.skipped })
     return 0
   }
   return try submitted(session, mode, held, fact, planned)
@@ -180,7 +185,7 @@ effect function claimed<E, R, F, S>(session: Session, mode: Mode, vaults: Readon
   for (const fact of vaults) {
     if (!(try renewed(session, false))) break
     const moved = oneVault(session, mode, fact, accrual, plan) catch effect (error) => {
-      try Effect.logWarning("fee_claim_error", { network: session.state.network, vault: fact.vault, error: failureText(error) })
+      try Effect.logWarning("fee_claim_error", { network: session.state.network, vault: fact.vault, ...providerErrorLog(error, rpcProviderOf(session.state.network), failureText(error)) })
       return 0
     }
     count += moved
@@ -193,7 +198,7 @@ export function evmVaultClaims(settings: EvmClaimSettings) {
 }
 
 export function solanaVaultClaims(settings: SolanaClaimSettings) {
-  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, solanaFinalizedAccrual, (held, fact) => solanaPlan(held, fact, settings))
+  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, solanaFinalizedAccrual, (held, fact) => solanaPlan(session, held, fact, settings))
 }
 
 export effect function claimsIn<E, R>(hook: (session: Session, mode: Mode) => number!E!R) {

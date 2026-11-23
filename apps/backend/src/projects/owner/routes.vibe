@@ -21,7 +21,7 @@ import { manifestOf } from "../store/rows.vibe"
 import { isRepositoryConflict, loadProject, send } from "../store/store.vibe"
 import { verifiedAsset } from "../tokens/metadata.vibe"
 import { type BranchRevision, BranchRequest, branchReason, declarationMatches, primaryBranch, selectionOf, withBranch } from "./integrationBranch.vibe"
-import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, shareHistoryOf, shareOfReward, withMonthlyAmount } from "./manifest.vibe"
+import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, shareHistoryOf, withMonthlyAmount } from "./manifest.vibe"
 import { type Json, appendedRepositories, classified, objectOf, same } from "./revisionChanges.ts"
 import { type Trusted, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
 import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
@@ -254,7 +254,7 @@ effect function creationOf(manifest: Json, checked: Checked, by: number, referre
     fundingChoice: fundingChoiceOf(manifest),
     closureChecked: checkedIn(manifest),
     referrer,
-    reward: { ...rewardPromiseOf(objectOf(manifest.reward)), share: shareOfReward(objectOf(manifest.reward)) },
+    reward: rewardPromiseOf(objectOf(manifest.reward)),
     shareHistory: shareHistoryOf(objectOf(manifest.reward)),
   } satisfies Creation
 }
@@ -394,7 +394,7 @@ effect function ownerStep(input: StepInput) {
     clearance: input.clearance,
     consent: !input.consentChanged ? "ConsentUntouched" : input.consent.checked ? "ConsentChecked" : "ConsentUnchecked",
     appends,
-    reward: { ...rewardPromiseOf(objectOf(manifest.reward)), share: shareOfReward(objectOf(manifest.reward)) },
+    reward: rewardPromiseOf(objectOf(manifest.reward)),
     shareHistory: shareHistoryOf(objectOf(input.current.reward)),
   }
   const event: Event = input.stored

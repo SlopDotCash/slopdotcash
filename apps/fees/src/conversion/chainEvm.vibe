@@ -14,6 +14,7 @@ import { decodedSwap } from "../kyber/swap.ts"
 import type { NativeLimits } from "../runtime/config.vibe"
 import { definitions } from "../runtime/networks.vibe"
 import { kyberswap } from "../runtime/pins.ts"
+import { carryProviderFailure } from "../kernels/providerFailure.ts"
 import type { VaultFact } from "../runtime/reviewed.vibe"
 import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, type SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
 import type { EvmNetwork, FeeIntent, FirstEvmIntent } from "../signer/intents.ts"
@@ -84,7 +85,7 @@ function failureDetail(error: Failure): string {
 }
 
 function unavailable(operation: string, error: Failure) {
-  return new ChainUnavailable({ operation, detail: failureDetail(error) })
+  return carryProviderFailure(error, new ChainUnavailable({ operation, detail: failureDetail(error) }), "evm-rpc")
 }
 
 function chainError(operation: string, error: Failure | SendRefused): ChainUnavailable | SendRefused {

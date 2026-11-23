@@ -2,7 +2,7 @@
 import { EvmRpc } from "@repo/platform/chain/evm"
 import { SolanaRpc } from "@repo/platform/chain/solana"
 import { RowMismatch, rows, sql } from "@repo/platform/d1"
-import { type VaultAccrual, wallet } from "../../gen/fees__conversion.effect.vibe"
+import { type VaultAccrual, openRows, vaultOf, wallet } from "../../gen/fees__conversion.effect.vibe"
 import { safeNumber, wideNumber } from "../conversion/chain.vibe"
 import { type Session, step } from "../conversion/session.vibe"
 import { amountOf, networkNames } from "../journal/codec.vibe"
@@ -79,10 +79,17 @@ export effect function solanaFinalizedAccrual(vault: VaultFact) {
 export effect function observeAccrual<E, R>(session: Session, fact: VaultFact, read: (vault: VaultFact) => (FinalizedAccrual | undefined)!E!R) {
   const current = try read(fact)
   if (current === undefined) return false
+  const vault = session.names.number("vault", fact.vault)
   const accrued = safeNumber(current.accrued)
   const height = safeNumber(current.height)
-  if (accrued === undefined || height === undefined) throw new ClaimRefused({ issue: "the vault's accrued fee exceeds safe integer accounting" })
-  const accrual: VaultAccrual = { vault: session.names.number("vault", fact.vault), recipient: wallet(session.state), accrued, height, finalized: true, roleFree: current.roleFree }
+  if (height === undefined) throw new ClaimRefused({ issue: "the vault's accrual height exceeds safe integer accounting" })
+  if (accrued === undefined) {
+    if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
+    if (openRows(session.state, vaultOf(session.state, vault).token) > 0) return false
+    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: current.accrued.toString(), reason: "claim value exceeds safe integer accounting" })
+    return false
+  }
+  const accrual: VaultAccrual = { vault, recipient: wallet(session.state), accrued, height, finalized: true, roleFree: current.roleFree }
   if ((try step(session, { type: "accrue", accrual })) !== undefined) return true
   if (!current.roleFree) throw new ClaimRefused({ issue: roleRefusal })
   return false

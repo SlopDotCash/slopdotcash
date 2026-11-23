@@ -1,0 +1,66 @@
+// spec/backend/repoRequests.md, "Only a member with merged work flags a public, original, unarchived repository that is not theirs and not on Slop"
+import { first, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import type { RepoRead } from "../../gen/backend__repoRequests.ts"
+import { validRepoPath } from "../client/repoRequests.vibe"
+import { listedById, listedByKeys } from "../projectRegistry/claims.vibe"
+
+schema MergedWork { ok: number }
+
+export interface GitHubRepository {
+  readonly id: string
+  readonly fullName: string
+  readonly ownerId: string
+  readonly ownerLogin: string
+}
+
+export interface RepositoryRead {
+  readonly read: RepoRead
+  readonly repo?: GitHubRepository
+}
+
+const readBytes = 512 * 1024
+const missing: RepositoryRead = { read: "RepoMissing" }
+const unreachable: RepositoryRead = { read: "RepoUnreachable" }
+const incomplete: RepositoryRead = { read: "RepoIncomplete" }
+
+export effect function mergedWork(githubId: string) {
+  const found = try first(MergedWork, sql`SELECT EXISTS (SELECT 1 FROM points_members m JOIN points_revisions r ON json_extract(r.payload, '$.award.actor.id') = m.actor_id WHERE m.github_id = ${githubId} AND json_extract(r.payload, '$.award.category') = 'merged-pull-request' AND json_extract(r.payload, '$.award.amount') > 0 AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id)) AS ok`)
+  return found?.ok === 1
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function safeId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value)
+}
+
+function repositoryOf(answer: Readonly<Record<string, unknown>>): RepositoryRead {
+  if (answer.private !== false) return missing
+  const { id, full_name: fullName, fork, archived } = answer
+  const owner = record(answer.owner)
+  const ownerId = owner?.id
+  const ownerLogin = owner?.login
+  if (!safeId(id) || id <= 0 || !validRepoPath(fullName) || typeof fork !== "boolean" || typeof archived !== "boolean" || !safeId(ownerId) || typeof ownerLogin !== "string") return incomplete
+  if (fork) return { read: "RepoForked" }
+  if (archived) return { read: "RepoArchived" }
+  return { read: "RepoReadable", repo: { id: String(id), fullName, ownerId: String(ownerId), ownerLogin } }
+}
+
+effect function answerOf(path: string) {
+  const answer = record(try (try GitHub).json(`/repos/${path}`, Schema.Unknown, { limitBytes: readBytes }))
+  return answer === undefined ? unreachable : repositoryOf(answer)
+}
+
+export effect function readRepository(path: string) {
+  return answerOf(path) catch effect (failure) => {
+    return failure._tag === "NotFound" ? missing : unreachable
+  }
+}
+
+export effect function listedProject(repoId: string, fullName: string) {
+  const holders = [...try listedById(repoId), ...try listedByKeys([fullName.toLowerCase()])]
+  return holders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0]
+}

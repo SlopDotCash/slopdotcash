@@ -85,12 +85,29 @@ export schema IdenticalAcceptedChange {
 }
 export schema RewardedUnit { readonly recordDigest: string; readonly recordJson: string; readonly claimId: string; readonly workUnitId: string; readonly awardSourceId: string }
 export schema PathCoverage { readonly commitSha: string; readonly path: string; readonly sourceId: string; readonly rewardedUnit?: RewardedUnit }
+export schema NetOutcomeSource {
+  readonly id: string
+  readonly number: number
+  readonly mergedAt: string
+  readonly mergeSha: string
+  readonly awardKey: string
+  readonly awardRevisionId: string
+}
+export schema NetOutcomePath { readonly path: string; readonly sourceIds: ReadonlyArray<string> }
+export schema HistoricalNetOutcome {
+  readonly mergeSha: string
+  readonly firstParentSha: string
+  readonly rawDiffSha256: string
+  readonly sources: ReadonlyArray<NetOutcomeSource>
+  readonly paths: ReadonlyArray<NetOutcomePath>
+}
 export schema PacketRetirement {
   readonly sourceId: string
   readonly workUnitId: string
   readonly source: CorrectionSource
   readonly unchangedPromotion?: PacketUnchangedPromotion
   readonly earlierSources: ReadonlyArray<CorrectionSource>
+  readonly netOutcome?: HistoricalNetOutcome
   readonly identicalAcceptedChange?: IdenticalAcceptedChange
   readonly earlierAcceptanceProof?: EarlierAcceptanceProof
   readonly acceptedSquashes?: ReadonlyArray<PacketSquash>

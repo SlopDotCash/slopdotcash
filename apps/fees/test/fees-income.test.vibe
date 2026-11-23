@@ -537,7 +537,7 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     })
   })
 
-  it.effect('Inspect the deployed fee Worker bindings, its schedules, journal and tail, and probe the Solana RPC candidate from an unbound preview, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block")', () => scoped(effect {
+  it.effect('Inspect the deployed fee Worker bindings, its schedules, journal and tail, and probe the Solana RPC candidate from an unbound preview, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/diagnostics.md, "A fee diagnostic starts only on protected main, reads the exact active Worker before and after, and writes nothing")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const text = try fs.readFileString(`${repositoryRoot}apps/fees/wrangler/feeConverter.production.jsonc`)
     const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string>; readonly d1_databases: ReadonlyArray<{ readonly database_id: string }> }
@@ -614,6 +614,9 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
         { level: "warn", message: ["[2026-11-17T00:00:00.500Z] WARN (#4):", "fee_buyback_undecided", { network: "Base", error: "DlnUnavailable", txId: "0xPRIVATE_TX" }] },
         { level: "log", message: ["[2026-11-17T00:00:01.000Z] INFO (#4):", "fee_claim_skipped", { network: "Solana", vault: solanaVault, amount: "1", reason: "below the minimum" }] },
         { level: "warn", message: ["[2026-11-17T00:00:02.000Z] WARN (#4):", "fee_claim_error", { network: "Solana", error: "Solana getAccountInfo: IP blocked PRIVATE_RPC_KEY" }] },
+        { level: "warn", message: ["[2026-11-17T00:00:03.000Z] WARN (#4):", "fee_conversion_error", { network: "Solana", token: circleUsdc.solana, error: "HTTP 403", providerFailure: { provider: "solana-rpc", stage: "rpc-response", method: "getAccountInfo", httpStatus: 403 } }] },
+        { level: "warn", message: ["[2026-11-17T00:00:04.000Z] WARN (#4):", "fee_claim_error", { network: "Solana", vault: solanaVault, error: "unparseable response", providerFailure: { provider: "solana-rpc", stage: "response-json", method: leaked, body: leaked, url: leaked, httpStatus: 403 } }] },
+        { level: "warn", message: ["[2026-11-17T00:00:05.000Z] WARN (#4):", "fee_buyback_error", { network: "Robinhood", leg: "bridge", error: "HTTP 403", providerFailure: { provider: "evm-rpc", stage: "rpc-response", method: "eth_call", httpStatus: 403 } }] },
       ] }),
       JSON.stringify({ scriptName: "another-worker", logs: [{ message: [leaked] }] }),
       JSON.stringify({ scriptName: feeWorker, outcome: "ok", logs: [{ message: [JSON.stringify({ event: "fee_claim_error", error: "x".repeat(1024 * 1024) })] }] }),
@@ -626,6 +629,9 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
         { event: "fee_buyback_undecided", network: "base", errorCategory: "bridge-verification" },
         { event: "fee_claim_skipped", network: "solana", vault: solanaVault, errorCategory: "below-minimum" },
         { event: "fee_claim_error", network: "solana", errorCategory: "rpc-blocked", rpcMethod: "getAccountInfo" },
+        { event: "fee_conversion_error", network: "solana", token: circleUsdc.solana, errorCategory: "authentication", providerFailure: { provider: "solana-rpc", stage: "rpc-response", method: "getAccountInfo", httpStatus: 403 } },
+        { event: "fee_claim_error", network: "solana", vault: solanaVault, errorCategory: "response-json", providerFailure: { provider: "solana-rpc", stage: "response-json", httpStatus: 403 } },
+        { event: "fee_buyback_error", network: "robinhood", leg: "bridge", errorCategory: "authentication" },
       ] },
     ]
     const operationsFile = `${temp}/fee-worker-operations.json`
