@@ -8,6 +8,10 @@ import { afterEach, expect, test } from "bun:test";
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { findProject } from "../../src/lib/projects.mjs";
 import {
+  STANDING_DEPOSIT_COVERED_LABEL,
+  standingDepositItem,
+} from "../../src/lib/standing-deposit.mjs";
+import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
   SUBMISSION_FEE_KEEP_LABEL,
@@ -37,6 +41,7 @@ import {
   monthlyReviewOpen,
   reviewMonth,
 } from "./review-cap";
+import { checkStandingDeposits } from "./standing-deposit";
 import {
   dispatchFeeChecks,
   FEE_MARKER,
@@ -75,6 +80,8 @@ const APP_USER_ID = "999";
 const DAY = 24 * 60 * 60_000;
 const NOW_ISO = "2026-11-18T12:00:00.000Z";
 const RATE = { effectiveAt: SETTING_ON_AT, slopPerUsd: "75.4717" };
+/** Before the pull request opened, so its cover window starts at opening. */
+const STANDING_PAID_AT = "2026-11-05T00:00:00.000Z";
 
 afterEach(() => {
   feeContracts.current = SUBMISSION_FEE_CONTRACTS;
@@ -89,7 +96,11 @@ type Comment = {
 type WorldOptions = {
   mode?: string;
   /** The project setting; null leaves `slopbot` out of the project. */
-  fee?: { enabled: boolean; amountMinor?: string } | null;
+  fee?: {
+    enabled: boolean;
+    amountMinor?: string;
+    standingDeposits?: false;
+  } | null;
   contracts?: typeof DEPLOYED | typeof UNPUBLISHED;
   permission?: "read" | "write";
   author?: { id: number; type: string };
@@ -202,6 +213,14 @@ function world(options: WorldOptions = {}) {
     permission: options.permission ?? ("read" as "read" | "write"),
     /** How many of the next comment or label additions answer 502. */
     failures: { comment: 0, label: 0 },
+    /** The search's merged pull request count; null answers 502. */
+    mergedOnProject: 1 as number | null,
+    /** Every search query Slopbot sent. */
+    searches: [] as string[],
+    /** While true, reading the pull request answers 502. */
+    pullDown: false,
+    /** Reads of the pull request. */
+    pullReads: 0,
   };
   const writes: string[] = [];
   const prompts: string[] = [];
@@ -264,6 +283,19 @@ function world(options: WorldOptions = {}) {
           labels: github.labels.map((name) => ({ name })),
           pull_request: {},
         });
+      if (path === "/search/issues" && method === "GET") {
+        github.searches.push(new URL(request.url).searchParams.get("q") ?? "");
+        return github.mergedOnProject === null
+          ? new Response(null, { status: 502 })
+          : Response.json({
+              total_count: github.mergedOnProject,
+              items: [],
+            });
+      }
+      if (path.endsWith("/pulls/5") && method === "GET") {
+        github.pullReads += 1;
+        if (github.pullDown) return new Response(null, { status: 502 });
+      }
       if (path.endsWith("/pulls/5") && method === "GET")
         return Response.json({
           node_id: "PR_local",
@@ -523,6 +555,75 @@ function world(options: WorldOptions = {}) {
           "SELECT status, skip_reason FROM slopbot_reviews WHERE item_node_id = 'PR_local' ORDER BY created_at DESC LIMIT 1",
         )
         .get() as { status: string; skip_reason: string | null } | null,
+    /**
+     * The author's standing deposit, as the website and the submission-fee
+     * Worker write it. Paid unless `paidAt` is null.
+     */
+    standingDeposit(
+      options: {
+        paidAt?: string | null;
+        withdrawRequestedAt?: string | null;
+        outcome?: string | null;
+        round?: number;
+      } = {},
+    ) {
+      const round = options.round ?? 1;
+      const paidAt =
+        options.paidAt === undefined ? STANDING_PAID_AT : options.paidAt;
+      const id = `sd_localtest_${round}`;
+      sqlite.run(
+        `INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at,
+           paid_at, paid_network, paid_deposit_id, withdraw_requested_at, outcome, outcome_reason, outcome_at)
+         VALUES (?, 42, ?, ?, '755000000000000000000', '75.4717', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          round,
+          standingDepositItem(42, round),
+          "2026-11-01T00:00:00.000Z",
+          paidAt,
+          paidAt === null ? null : "robinhood-standing",
+          paidAt === null ? null : round,
+          options.withdrawRequestedAt ?? null,
+          options.outcome ?? null,
+          options.outcome ? "withdrawn" : null,
+          options.outcome ? paidAt : null,
+        ],
+      );
+      return id;
+    },
+    deposit: (id = "sd_localtest_1") =>
+      sqlite
+        .query(
+          "SELECT outcome, outcome_reason, strike_repository_id, strike_pull_number FROM standing_deposits WHERE id = ?",
+        )
+        .get(id) as {
+        outcome: string | null;
+        outcome_reason: string | null;
+        strike_repository_id: number | null;
+        strike_pull_number: number | null;
+      },
+    cover: () =>
+      sqlite
+        .query(
+          "SELECT deposit_id, opened_at, window_start, state, pr_open, strike_seen_at, next_check_at FROM standing_deposit_covers WHERE repository_id = ? AND pull_number = 5",
+        )
+        .get(repositoryId) as {
+        deposit_id: string;
+        opened_at: string;
+        window_start: string;
+        state: string;
+        pr_open: number;
+        strike_seen_at: string | null;
+        next_check_at: string | null;
+      } | null,
+    /** Make the cover due for the next scheduled read. */
+    coverDue() {
+      sqlite.run(
+        "UPDATE standing_deposit_covers SET next_check_at = NULL WHERE repository_id = ? AND pull_number = 5",
+        [repositoryId],
+      );
+    },
+    standing: (now: Date) => checkStandingDeposits(env as never, now),
     /** What the submission-fee Worker writes when it accepts a deposit. */
     pay(at: string) {
       sqlite.run(
@@ -1713,6 +1814,403 @@ test("a review that finds a fresh deposit queues the label swap at once", async 
     expect(w.github.labels).toEqual([FEE_PAID_LABEL]);
     expect(w.reviewRow()).toMatchObject({ status: "completed" });
     expect(w.feeComments()).toHaveLength(1);
+  } finally {
+    w.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The standing deposit (operator decision, 23 November 2026; PRD section 5).
+
+const HOUR = 60 * 60_000;
+/** Window of the cover: opened 10 November, so it ends 1 December. */
+const WINDOW_ENDS = Date.parse(OPENED_AFTER) + 21 * DAY;
+const COVERED = { status: "completed" };
+
+test("standing deposit: covered at first sight, one comment and label, and the review runs", async () => {
+  const w = world();
+  try {
+    w.standingDeposit();
+    expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
+    expect(w.prompts.length).toBeGreaterThan(0);
+    expect(w.reviewRow()).toMatchObject(COVERED);
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toMatchObject({
+      state: "released",
+      reason: "standing-deposit",
+      comment_id: 900,
+    });
+    expect(w.github.labels).toEqual([STANDING_DEPOSIT_COVERED_LABEL]);
+    expect(w.cover()).toMatchObject({
+      deposit_id: "sd_localtest_1",
+      opened_at: new Date(OPENED_AFTER).toISOString(),
+      // The later of opening and payment.
+      window_start: new Date(OPENED_AFTER).toISOString(),
+      state: "watch",
+      pr_open: 1,
+      strike_seen_at: null,
+    });
+    expect(w.github.searches).toEqual([
+      `is:pr is:merged author:author repo:${w.owner}/${w.repo}`,
+    ]);
+    const [comment] = w.feeComments();
+    expect(w.feeComments()).toHaveLength(1);
+    for (const fact of [
+      "**Covered by your standing deposit**",
+      "https://slop.cash/deposit",
+      "`slop-keep-fee` within 21 days",
+      "48 hours later",
+      "the whole standing deposit is kept and burned",
+      "An ordinary close costs nothing.",
+    ])
+      expect(comment.body).toContain(fact);
+    expect(comment.body).not.toContain("—");
+    expect(comment.body).not.toMatch(/faster|priority|earned|owed|stake/iu);
+    // A later delivery writes nothing more and spends no search.
+    w.takeWrites();
+    await w.review();
+    expect(w.takeWrites()).toEqual([]);
+    expect(w.github.searches).toHaveLength(1);
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: the merged answer is kept for a day, a paid deposit covering a pull request opened before payment starts the window at payment", async () => {
+  const w = world();
+  try {
+    w.standingDeposit({ paidAt: "2026-11-12T00:00:00.000Z" });
+    w.sqlite.run(
+      "INSERT INTO standing_deposit_merged_authors (project_id, github_id, checked_at) VALUES (?, 42, ?)",
+      [w.projectId, new Date().toISOString()],
+    );
+    await w.review();
+    expect(w.github.searches).toEqual([]);
+    expect(w.cover()).toMatchObject({
+      window_start: "2026-11-12T00:00:00.000Z",
+    });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: no merged pull request on the project, or a failed search, is asked the fee", async () => {
+  for (const merged of [0, null]) {
+    const w = world();
+    try {
+      w.standingDeposit();
+      w.github.mergedOnProject = merged;
+      expect(await w.review()).toBe(FEE_NEEDED_REASON);
+      expect(w.cover()).toBeNull();
+      expect(w.github.labels).toEqual([FEE_NEEDED_LABEL]);
+      expect(w.github.searches).toHaveLength(1);
+      // Neither answer is remembered.
+      expect(
+        w.sqlite
+          .query("SELECT COUNT(*) AS n FROM standing_deposit_merged_authors")
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      w.close();
+    }
+  }
+});
+
+test("standing deposit: a project whose owner refused it asks the fee, and no search is spent", async () => {
+  const w = world({ fee: { enabled: true, standingDeposits: false } });
+  try {
+    w.standingDeposit();
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.cover()).toBeNull();
+    expect(w.github.searches).toEqual([]);
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: ten covered pull requests open at once, the eleventh is asked", async () => {
+  const w = world();
+  try {
+    const id = w.standingDeposit();
+    for (let number = 100; number < 110; number++)
+      w.sqlite.run(
+        `INSERT INTO standing_deposit_covers (repository_id, pull_number, deposit_id, github_id, project_id,
+           installation_id, owner, repo, opened_at, window_start, covered_at, state, pr_open, updated_at)
+         VALUES (?, ?, ?, 42, ?, 1, ?, ?, ?, ?, ?, 'watch', 1, ?)`,
+        [
+          w.repositoryId,
+          number,
+          id,
+          w.projectId,
+          w.owner,
+          w.repo,
+          OPENED_AFTER,
+          OPENED_AFTER,
+          OPENED_AFTER,
+          OPENED_AFTER,
+        ],
+      );
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.cover()).toBeNull();
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: unpaid, withdrawn, expired or decided deposits cover nothing", async () => {
+  const cases = [
+    { paidAt: null },
+    // The withdrawal was asked before this pull request opened.
+    { withdrawRequestedAt: "2026-11-08T00:00:00.000Z" },
+    // Paid 341 days before this pull request opened.
+    { paidAt: new Date(Date.parse(OPENED_AFTER) - 341 * DAY).toISOString() },
+    { outcome: "refund_due" },
+  ];
+  for (const options of cases) {
+    const w = world();
+    try {
+      w.standingDeposit(options);
+      expect(await w.review()).toBe(FEE_NEEDED_REASON);
+      expect(w.cover()).toBeNull();
+      expect(w.github.labels).toEqual([FEE_NEEDED_LABEL]);
+    } finally {
+      w.close();
+    }
+  }
+});
+
+test("standing deposit: an unpaid per pull request ask is taken back and covered", async () => {
+  const w = world();
+  try {
+    expect(await w.review()).toBe(FEE_NEEDED_REASON);
+    expect(w.item()).not.toBeNull();
+    w.standingDeposit();
+    expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
+    expect(w.reviewRow()).toMatchObject(COVERED);
+    expect(w.item()).toBeNull();
+    expect(w.gate()).toMatchObject({
+      state: "released",
+      reason: "standing-deposit",
+      comment_id: 900,
+    });
+    expect(w.github.labels).toEqual([STANDING_DEPOSIT_COVERED_LABEL]);
+    expect(w.feeComments()).toHaveLength(1);
+    expect(w.feeComments()[0].body).toContain(
+      "**Covered by your standing deposit**",
+    );
+    expect(w.cover()).toMatchObject({ state: "watch", pr_open: 1 });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: a paid per pull request fee is never released", async () => {
+  const w = world();
+  try {
+    await w.review();
+    w.pay(new Date().toISOString());
+    w.standingDeposit();
+    expect(await w.review()).not.toBe(FEE_NEEDED_REASON);
+    expect(w.cover()).toBeNull();
+    expect(w.github.searches).toEqual([]);
+    expect(w.item()).toMatchObject({ outcome: null });
+    expect(w.item()?.paid_at).not.toBeNull();
+    expect(w.github.labels).not.toContain(STANDING_DEPOSIT_COVERED_LABEL);
+  } finally {
+    w.close();
+  }
+});
+
+/** A covered pull request, closed without a merge on 20 November. */
+async function coveredAndClosed(labelled: boolean) {
+  const w = world();
+  w.standingDeposit();
+  await w.review();
+  w.github.state = "closed";
+  w.github.closedAt = "2026-11-20T00:00:00.000Z";
+  if (labelled) w.github.labels.push(SUBMISSION_FEE_KEEP_LABEL);
+  w.coverDue();
+  return w;
+}
+
+test("standing deposit: a close and the keep label standing 48 hours keep the whole deposit", async () => {
+  const w = await coveredAndClosed(true);
+  try {
+    const seen = new Date("2026-11-21T00:00:00.000Z");
+    expect(await w.standing(seen)).toEqual({ read: 1, decided: 0 });
+    expect(w.cover()).toMatchObject({
+      state: "pending",
+      pr_open: 0,
+      strike_seen_at: seen.toISOString(),
+      next_check_at: new Date(seen.getTime() + 48 * HOUR).toISOString(),
+    });
+    // Not read again before the grace period ends.
+    expect(await w.standing(new Date(seen.getTime() + 47 * HOUR))).toEqual({
+      read: 0,
+      decided: 0,
+    });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    expect(await w.standing(new Date(seen.getTime() + 48 * HOUR))).toEqual({
+      read: 1,
+      decided: 1,
+    });
+    expect(w.cover()).toMatchObject({ state: "strike", next_check_at: null });
+    expect(w.deposit()).toEqual({
+      outcome: "kept_due",
+      outcome_reason: "strike",
+      strike_repository_id: w.repositoryId,
+      strike_pull_number: 5,
+    });
+    // A strike is final: never read again, and the outcome is written once.
+    const reads = w.github.pullReads;
+    expect(await w.standing(new Date(seen.getTime() + 30 * DAY))).toEqual({
+      read: 0,
+      decided: 0,
+    });
+    expect(w.github.pullReads).toBe(reads);
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: the keep label removed before 48 hours clears the strike", async () => {
+  const w = await coveredAndClosed(true);
+  try {
+    const seen = new Date("2026-11-21T00:00:00.000Z");
+    await w.standing(seen);
+    w.github.labels = w.github.labels.filter(
+      (name) => name !== SUBMISSION_FEE_KEEP_LABEL,
+    );
+    await w.standing(new Date(seen.getTime() + 48 * HOUR));
+    expect(w.cover()).toMatchObject({ state: "watch", strike_seen_at: null });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    // Past the window it is clear and can never cost the deposit.
+    const after = new Date(WINDOW_ENDS + 2 * DAY);
+    w.coverDue();
+    await w.standing(after);
+    expect(w.cover()).toMatchObject({ state: "clear", next_check_at: null });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: an ordinary close never strikes", async () => {
+  const w = await coveredAndClosed(false);
+  try {
+    await w.standing(new Date("2026-11-21T00:00:00.000Z"));
+    expect(w.cover()).toMatchObject({
+      state: "watch",
+      pr_open: 0,
+      strike_seen_at: null,
+    });
+    // Read once just after the window ends, and found clear.
+    const next = Date.parse(w.cover()?.next_check_at ?? "");
+    expect(next).toBeLessThanOrEqual(WINDOW_ENDS + 60_000 + DAY);
+    w.coverDue();
+    await w.standing(new Date(WINDOW_ENDS + 60_000));
+    expect(w.cover()).toMatchObject({ state: "clear" });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: a withdrawal is due back 21 days later, held while a cover is not clear", async () => {
+  const w = await coveredAndClosed(true);
+  try {
+    const asked = "2026-11-21T00:00:00.000Z";
+    w.sqlite.run(
+      "UPDATE standing_deposits SET withdraw_requested_at = ? WHERE id = 'sd_localtest_1'",
+      [asked],
+    );
+    const due = Date.parse(asked) + 21 * DAY;
+    // Closed and labelled inside the window: seen, pending.
+    const seen = new Date(due - 24 * HOUR);
+    await w.standing(seen);
+    expect(w.cover()).toMatchObject({ state: "pending" });
+    // The wait has passed, but a pending cover holds the deposit.
+    expect(await w.standing(new Date(due + HOUR))).toEqual({
+      read: 0,
+      decided: 0,
+    });
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    // The maintainer takes the label off: read again, past the window, clear.
+    w.github.labels = [];
+    expect(await w.standing(new Date(seen.getTime() + 48 * HOUR))).toEqual({
+      read: 1,
+      decided: 1,
+    });
+    expect(w.cover()).toMatchObject({ state: "clear" });
+    expect(w.deposit()).toEqual({
+      outcome: "refund_due",
+      outcome_reason: "withdrawn",
+      strike_repository_id: null,
+      strike_pull_number: null,
+    });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: a withdrawal with no cover is due back after 21 days, not before", async () => {
+  const w = world();
+  try {
+    w.standingDeposit({ withdrawRequestedAt: "2026-11-21T00:00:00.000Z" });
+    const due = Date.parse("2026-11-21T00:00:00.000Z") + 21 * DAY;
+    await w.standing(new Date(due - HOUR));
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    await w.standing(new Date(due));
+    expect(w.deposit()).toMatchObject({
+      outcome: "refund_due",
+      outcome_reason: "withdrawn",
+    });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: 340 days after payment it counts as withdrawn, reason expired", async () => {
+  const w = world();
+  try {
+    w.standingDeposit();
+    const due = Date.parse(STANDING_PAID_AT) + (340 + 21) * DAY;
+    await w.standing(new Date(due - HOUR));
+    expect(w.deposit()).toMatchObject({ outcome: null });
+    await w.standing(new Date(due));
+    expect(w.deposit()).toMatchObject({
+      outcome: "refund_due",
+      outcome_reason: "expired",
+    });
+  } finally {
+    w.close();
+  }
+});
+
+test("standing deposit: a failed GitHub read decides nothing", async () => {
+  const w = await coveredAndClosed(true);
+  try {
+    w.sqlite.run(
+      "UPDATE standing_deposits SET withdraw_requested_at = ? WHERE id = 'sd_localtest_1'",
+      ["2026-11-11T00:00:00.000Z"],
+    );
+    w.github.pullDown = true;
+    // Long past the withdrawal wait and the window, and long past 48 hours.
+    const later = new Date(WINDOW_ENDS + 30 * DAY);
+    for (const at of [later, new Date(later.getTime() + 3 * DAY)]) {
+      expect(await w.standing(at)).toEqual({ read: 0, decided: 0 });
+      expect(w.cover()).toMatchObject({
+        state: "watch",
+        strike_seen_at: null,
+      });
+      expect(w.deposit()).toMatchObject({ outcome: null });
+    }
+    // Read again once GitHub answers: the close was inside the window and
+    // labelled, so the grace period starts now; nothing is sent back.
+    w.github.pullDown = false;
+    await w.standing(new Date(later.getTime() + 4 * DAY));
+    expect(w.cover()).toMatchObject({ state: "pending" });
+    expect(w.deposit()).toMatchObject({ outcome: null });
   } finally {
     w.close();
   }

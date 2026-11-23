@@ -12,6 +12,20 @@
 //                `kept_due`. The Worker sends what is due.
 // Slopbot moves no money and never closes a pull request for an unpaid fee. A
 // maintainer can review and merge an unpaid pull request; scoring is unchanged.
+//
+// A standing deposit (operator decision, 23 November 2026; PRD section 5)
+// covers an author's pull requests on a project that accepts it, once they
+// have a merged pull request there: no fee is asked, one comment and the label
+// `slopbot:deposit-covered` say so, and the review runs. The cover is watched
+// in `standing-deposit.ts`.
+import {
+  STANDING_DEPOSIT_COVERED_LABEL,
+  STANDING_DEPOSIT_OPEN_CAP,
+  STANDING_DEPOSIT_STRIKE_GRACE_HOURS,
+  STANDING_DEPOSIT_STRIKE_WINDOW_DAYS,
+  standingDepositCovers,
+  standingDepositsAccepted,
+} from "../../src/lib/standing-deposit.mjs";
 import {
   SUBMISSION_FEE_CONTRACTS,
   SUBMISSION_FEE_DEFAULT_MINOR,
@@ -185,7 +199,11 @@ export type FeeOutcomeWhy =
   | "wanted"
   /** Closed a wanted issue, and a maintainer marked the fee to be kept. */
   | "marked";
-export type FeeReleaseWhy = "setting-off" | "author-exempt";
+export type FeeReleaseWhy =
+  | "setting-off"
+  | "author-exempt"
+  /** The author's standing deposit covers the pull request. */
+  | "standing-deposit";
 
 type CommentFacts = {
   owner: string;
@@ -222,6 +240,7 @@ export function feeNeededComment(facts: CommentFacts): string {
     FEE_MARKER,
     "**Submission fee needed before Slopbot reviews this pull request**",
     `This project asks outside contributors for a refundable submission fee: **${amount} ${names}**${slop ? ", or SLOP at half that price" : ""}. Slopbot's review is free and starts once a deposit for this pull request is seen. Slopbot never closes a pull request for an unpaid fee, and a maintainer can review and merge this one without it.`,
+    "Contribute regularly? One standing deposit at https://slop.cash/deposit replaces this fee on your pull requests to a project where you already have a merged pull request.",
     "**What happens to a deposit**",
     [
       ...outcomeRules(facts.ways),
@@ -284,7 +303,18 @@ export function feePaidComment(
   ].join("\n\n");
 }
 
+/** Slopbot's fee comment on a pull request a standing deposit covers. */
+export function feeCoveredComment(): string {
+  return [
+    FEE_MARKER,
+    "**Covered by your standing deposit**",
+    "This pull request is covered by its author's standing deposit (https://slop.cash/deposit), so no submission fee is asked for it and Slopbot reviews it as usual. Do not send a separate deposit for it: one sent now does not count and goes back.",
+    `If a maintainer closes this pull request without a merge as spam or a plain copy and adds the label \`${SUBMISSION_FEE_KEEP_LABEL}\` within ${STANDING_DEPOSIT_STRIKE_WINDOW_DAYS} days, and both still stand ${STANDING_DEPOSIT_STRIKE_GRACE_HOURS} hours later, the whole standing deposit is kept and burned. An ordinary close costs nothing.`,
+  ].join("\n\n");
+}
+
 export function feeReleasedComment(why: FeeReleaseWhy): string {
+  if (why === "standing-deposit") return feeCoveredComment();
   return [
     FEE_MARKER,
     "**No submission fee is needed for this pull request**",
@@ -613,6 +643,232 @@ export async function releaseExemptFee(
 }
 
 // ---------------------------------------------------------------------------
+// The standing deposit cover (operator decision, 23 November 2026).
+
+/** Released for a standing deposit: the gate's reason once the cover is written. */
+const COVER_REASON: FeeReleaseWhy = "standing-deposit";
+const NO_GATE: GateRow = {
+  state: "released",
+  reason: "",
+  comment_id: null,
+  updated_at: "",
+  next_check_at: null,
+};
+/** A positive merged-pull-request answer is reused for this long. */
+export const STANDING_MERGED_CACHE_MS = DAY_MS;
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
+const REPOSITORY_PATH = /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?$/u;
+
+type DepositRow = {
+  id: string;
+  paid_at: string;
+  withdraw_requested_at: string | null;
+  outcome: string | null;
+  cancelled_at: string | null;
+};
+
+async function coverRow(db: store.D1Database, job: PullRef) {
+  return (
+    (await db
+      .prepare(
+        "SELECT 1 AS ok FROM standing_deposit_covers WHERE repository_id = ? AND pull_number = ?",
+      )
+      .bind(job.repositoryId, job.number)
+      .first()) !== null
+  );
+}
+
+function coverFinished(gate: GateRow | null) {
+  return gate?.state === "released" && gate.reason === COVER_REASON;
+}
+
+/**
+ * True when the author has at least one merged pull request on the project's
+ * registered repositories: one GitHub search with the installation token. A
+ * positive answer is kept for a day; a failed read is false, so the normal
+ * ask happens.
+ */
+async function mergedOnProject(
+  db: store.D1Database,
+  github: GitHubClient,
+  project: { id: string; repositories: readonly { githubUrl: string }[] },
+  author: { id: number; login: string },
+  at: string,
+): Promise<boolean> {
+  const cached = await db
+    .prepare(
+      "SELECT 1 AS ok FROM standing_deposit_merged_authors WHERE project_id = ? AND github_id = ? AND checked_at > ?",
+    )
+    .bind(
+      project.id,
+      author.id,
+      new Date(Date.parse(at) - STANDING_MERGED_CACHE_MS).toISOString(),
+    )
+    .first();
+  if (cached !== null) return true;
+  if (!LOGIN.test(author.login)) return false;
+  const repos: string[] = [];
+  for (const repository of project.repositories) {
+    let match: RegExpExecArray | null = null;
+    try {
+      match = REPOSITORY_PATH.exec(new URL(repository.githubUrl).pathname);
+    } catch {
+      match = null;
+    }
+    if (match === null) return false;
+    repos.push(`repo:${match[1]}/${match[2]}`);
+  }
+  if (repos.length === 0) return false;
+  let total: number | null = null;
+  try {
+    const answer = await github.request<{ total_count?: unknown }>(
+      "GET",
+      `/search/issues?per_page=1&q=${encodeURIComponent(`is:pr is:merged author:${author.login} ${repos.join(" ")}`)}`,
+    );
+    const count = answer.data?.total_count;
+    total =
+      answer.status === 200 &&
+      typeof count === "number" &&
+      Number.isSafeInteger(count)
+        ? count
+        : null;
+  } catch {
+    total = null;
+  }
+  if (total === null || total <= 0) return false;
+  await db
+    .prepare(
+      `INSERT INTO standing_deposit_merged_authors (project_id, github_id, checked_at) VALUES (?, ?, ?)
+       ON CONFLICT(project_id, github_id) DO UPDATE SET checked_at = excluded.checked_at`,
+    )
+    .bind(project.id, author.id, at)
+    .run();
+  return true;
+}
+
+/**
+ * Whether the author's standing deposit covers this pull request, and if so
+ * the cover row, written at most once per pull request. Every fact goes
+ * through `standingDepositCovers`; the insert repeats the deposit and the
+ * open-cover cap, so two jobs cannot pass the cap or cover from a deposit
+ * that has just been decided.
+ */
+async function coverByStandingDeposit(
+  env: FeeEnv,
+  github: GitHubClient,
+  input: FeeGateInput,
+  project: Awaited<ReturnType<typeof registeredProject>>,
+  at: string,
+): Promise<boolean> {
+  const { author, job } = input;
+  if (
+    project === null ||
+    project.id !== input.projectId ||
+    author === null ||
+    !Number.isSafeInteger(author.id) ||
+    author.id <= 0
+  )
+    return false;
+  const db = env.SLOPBOT_DB;
+  const deposit = await db
+    .prepare(
+      `SELECT id, paid_at, withdraw_requested_at, outcome, cancelled_at FROM standing_deposits
+       WHERE github_id = ? AND paid_at IS NOT NULL AND outcome IS NULL AND cancelled_at IS NULL
+       ORDER BY round DESC LIMIT 1`,
+    )
+    .bind(author.id)
+    .first<DepositRow>();
+  if (deposit === null) return false;
+  const open = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM standing_deposit_covers WHERE deposit_id = ? AND pr_open = 1",
+    )
+    .bind(deposit.id)
+    .first<{ n: number }>();
+  const facts = {
+    deposit: {
+      paidAt: deposit.paid_at,
+      withdrawRequestedAt: deposit.withdraw_requested_at,
+      outcome: deposit.outcome,
+      cancelledAt: deposit.cancelled_at,
+    },
+    accepted: standingDepositsAccepted(project),
+    openCovered: open?.n ?? Number.NaN,
+    openedAt: input.openedAt ?? null,
+  };
+  // Every other fact first, so a search is spent only when it decides.
+  if (!standingDepositCovers({ ...facts, mergedOnProject: true })) return false;
+  if (!(await mergedOnProject(db, github, project, author, at))) return false;
+  if (!standingDepositCovers({ ...facts, mergedOnProject: true })) return false;
+  const windowStart = new Date(
+    Math.max(Date.parse(input.openedAt ?? ""), Date.parse(deposit.paid_at)),
+  ).toISOString();
+  const inserted = await db
+    .prepare(
+      `INSERT OR IGNORE INTO standing_deposit_covers
+         (repository_id, pull_number, deposit_id, github_id, project_id, installation_id, owner, repo,
+          opened_at, window_start, covered_at, state, pr_open, strike_seen_at, next_check_at, updated_at)
+       SELECT ?1, ?2, d.id, d.github_id, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'watch', 1, NULL, ?10, ?9
+       FROM standing_deposits d
+       WHERE d.id = ?11 AND d.paid_at IS NOT NULL AND d.outcome IS NULL AND d.cancelled_at IS NULL
+         AND (SELECT COUNT(*) FROM standing_deposit_covers c WHERE c.deposit_id = d.id AND c.pr_open = 1) < ?12`,
+    )
+    .bind(
+      job.repositoryId,
+      job.number,
+      input.projectId,
+      job.installationId,
+      job.owner,
+      job.repo,
+      new Date(Date.parse(input.openedAt ?? "")).toISOString(),
+      windowStart,
+      at,
+      new Date(Date.parse(at) + DAY_MS).toISOString(),
+      deposit.id,
+      STANDING_DEPOSIT_OPEN_CAP,
+    )
+    .run();
+  if ((inserted.meta?.changes ?? 0) === 1) return true;
+  // Another job covered it first.
+  return coverRow(db, job);
+}
+
+/**
+ * Write what a cover shows: the per pull request ask taken back when there
+ * was one, the covered comment, and the covered label. The gate then reads
+ * released for the standing deposit, which marks the cover as finished.
+ */
+async function finishCover(
+  env: FeeEnv,
+  github: GitHubClient,
+  job: PullRef,
+  gate: GateRow | null,
+  at: string,
+) {
+  // Read before the narrowing below: a gate that is not a standing ask can
+  // still hold the comment id.
+  const storedCommentId = gate?.comment_id ?? null;
+  if (askStands(gate, at))
+    await releaseFee(env, github, job, gate, COVER_REASON, at);
+  else {
+    const commentId = await writeFeeComment(
+      env,
+      github,
+      job,
+      storedCommentId,
+      feeCoveredComment(),
+    );
+    await saveGate(
+      env.SLOPBOT_DB,
+      job,
+      { state: "released", reason: COVER_REASON, commentId, nextCheckAt: null },
+      at,
+    );
+  }
+  await addLabel(github, job, STANDING_DEPOSIT_COVERED_LABEL);
+}
+
+// ---------------------------------------------------------------------------
 // The gate, called by the review before any model call.
 
 export type FeeGateInput = {
@@ -620,6 +876,12 @@ export type FeeGateInput = {
   github: GitHubClient;
   projectId: string;
   exemption: Exemption;
+  /**
+   * The pull request's author from the payload the review holds; a standing
+   * deposit is looked up by the numeric id and the merged pull request by
+   * the login. null: no standing deposit can cover it.
+   */
+  author: { id: number; login: string } | null;
   /** When GitHub says the pull request was opened. */
   openedAt: string | null | undefined;
   /**
@@ -720,6 +982,27 @@ export async function gateSubmissionFee(
     return gate?.state === "asked" || gate?.state === "asking"
       ? FEE_NEEDED_REASON
       : null;
+  }
+
+  // A standing deposit already covers this pull request: finish what a
+  // failed job left undone, and the review runs.
+  if (await coverRow(db, job)) {
+    if (askInFlight(gate ?? NO_GATE, at)) return FEE_NEEDED_REASON;
+    if (!coverFinished(gate)) await finishCover(env, github, job, gate, at);
+    return null;
+  }
+  // The author's standing deposit covers the pull request: at first sight,
+  // or when it was asked per pull request and is still unpaid, in which case
+  // the ask is taken back. A paid fee is never released (the paid row
+  // returned above), nor is an ask another job is still writing.
+  const firstSight =
+    gate === null || gate.state === "recorded" || gate.state === "released";
+  if (
+    (askStands(gate, at) || (firstSight && input.mayAsk)) &&
+    (await coverByStandingDeposit(env, github, input, project, at))
+  ) {
+    await finishCover(env, github, job, gate, at);
+    return null;
   }
 
   // `paid` with no payment: the Worker withdrew a deposit that a chain
