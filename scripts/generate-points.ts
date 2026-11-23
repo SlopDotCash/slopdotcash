@@ -132,11 +132,23 @@ async function loadPublishedProjection(
 }
 
 export async function loadPublishedPoints(
+  bootstrap?: boolean,
+  wait?: (milliseconds: number) => Promise<void>,
+  origin?: PointsOrigin,
+): Promise<PointsJournal | null> {
+  return (await loadPublishedPointsWithCheckpoint(bootstrap, wait, origin))
+    .published;
+}
+
+async function loadPublishedPointsWithCheckpoint(
   bootstrap = false,
   wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
   origin: PointsOrigin = "https://slop.cash",
-): Promise<PointsJournal | null> {
+): Promise<{
+  published: PointsJournal | null;
+  checkpoint: PointsJournal | null;
+}> {
   let cursor: number | null = 0;
   let batch: string | undefined;
   let journal: PointsJournal | undefined;
@@ -181,9 +193,12 @@ export async function loadPublishedPoints(
       });
       if (bootstrap && existing.status === 404) {
         await existing.body?.cancel();
-        return null;
+        return { published: null, checkpoint: null };
       }
-      return loadPublishedProjection(origin, wait, existing);
+      return {
+        published: await loadPublishedProjection(origin, wait, existing),
+        checkpoint: null,
+      };
     }
     if (
       bootstrap &&
@@ -200,7 +215,7 @@ export async function loadPublishedPoints(
         throw new Error(
           "Refusing bootstrap: published points may already exist",
         );
-      return null;
+      return { published: null, checkpoint: null };
     }
     if (!response.ok)
       throw new Error(
@@ -240,10 +255,13 @@ export async function loadPublishedPoints(
     throw new Error("Points batch digest mismatch");
   // Scheduled refreshes have Pages-only authority. Retain their published journal
   // as well as the latest protected-release D1 checkpoint; neither may fork history.
-  return retainPublishedHistory(
-    journal,
-    await loadPublishedProjection(origin, wait),
-  );
+  return {
+    published: retainPublishedHistory(
+      journal,
+      await loadPublishedProjection(origin, wait),
+    ),
+    checkpoint: journal,
+  };
 }
 export function retainPublishedHistory(
   checkpoint: PointsJournal,
@@ -278,6 +296,21 @@ export function retainPublishedHistory(
       ),
     ],
   };
+}
+export function finalizePointsJournal(
+  journal: PointsJournal,
+  checkpoint: PointsJournal | null,
+  generatedAt: string,
+): PointsJournal {
+  // The combined Pages and D1 history can include coverage absent from D1.
+  // Keep the old timestamp only for the exact verified D1 checkpoint.
+  if (
+    checkpoint &&
+    JSON.stringify({ ...journal, generatedAt: checkpoint.generatedAt }) ===
+      JSON.stringify(checkpoint)
+  )
+    return checkpoint;
+  return { ...journal, generatedAt };
 }
 export function pointsSql(
   journal: PointsJournal,
@@ -839,9 +872,13 @@ export async function generatePoints(
   );
   assertPointsJournal(history);
   let journal: PointsJournal = history;
-  const published = options.online
-    ? await loadPublishedPoints(options.bootstrap, undefined, options.origin)
-    : null;
+  const { published, checkpoint } = options.online
+    ? await loadPublishedPointsWithCheckpoint(
+        options.bootstrap,
+        undefined,
+        options.origin,
+      )
+    : { published: null, checkpoint: null };
   if (published) {
     // The checked-in history is an ancestor, never a second award source.
     const ids = new Set(published.revisions.map((r) => r.id));
@@ -955,7 +992,7 @@ export async function generatePoints(
     console.log(
       `[points] held ${heldRevisions} candidate revisions in months with a recorded payment`,
     );
-  journal.generatedAt = now;
+  journal = finalizePointsJournal(journal, checkpoint, now);
   assertPointsJournal(journal);
   await mkdir("public/data", { recursive: true });
   await mkdir("public/data/points", { recursive: true });
@@ -1001,7 +1038,7 @@ export async function generatePoints(
     ".points-build/report.json",
     JSON.stringify(
       {
-        generatedAt: now,
+        generatedAt: journal.generatedAt,
         revisionCount: journal.revisions.length,
         contributors: members.length,
         points: members.reduce((sum, m) => sum + m.total, 0),
