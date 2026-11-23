@@ -450,7 +450,11 @@ GitHub report that has neither, or the owner's notice of an older-style link
 GitHub has not confirmed yet. That claim notice is tried once: the sweep sets
 `claim_notice_at` after the try even when no notice row could be written (no
 technical approver with current GitHub authority, or a retired project), so
-such a claim never takes the sweep's slots again. Only a paid ask and a
+such a claim never takes the sweep's slots again. A try that meets a GitHub
+outage is not recorded there; the sweep sets `claim_retry_at` instead and
+orders retried claims behind claims not tried yet, oldest retry first, so a
+lasting outage on some projects cannot keep a later claim from its notice.
+Only a paid ask and a
 released ask are looked at; a row that record-only mode wrote is never
 touched. Each start is safe to repeat.
 

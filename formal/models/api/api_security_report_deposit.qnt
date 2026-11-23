@@ -3,7 +3,7 @@
 // @source backend/submission-fee/handler.ts
 // @source src/lib/security-report-deposit.mjs
 // @source migrations/0145_security_report_deposits.sql
-// @source migrations/0147_security_report_deposit_claim_notice.sql
+// @source migrations/0148_security_report_deposit_claim_notice.sql
 // @evidence backend/security/report-deposit.test.ts
 // @evidence backend/security/submissions.test.ts
 // @evidence scripts/security-report-deposit.test.ts
@@ -25,7 +25,9 @@
 // startReleasedWork, older-style link: a claim GitHub has not confirmed yet
 // whose row was paid or released gets one try at its owner's notice;
 // claim_notice_at records the try whether or not anyone could be told, so the
-// claim never takes the sweep's slots again.
+// claim never takes the sweep's slots again. A GitHub outage records no try;
+// claim_retry_at orders such a claim behind claims not tried yet (ordering is
+// covered by the unit tests, not modelled).
 // reportDepositOutcome: not live or project off sends back; a first response
 // that is not a keeping close sends back; 14 silent days send back; a
 // duplicate, an out-of-scope close or a person's rejection marked spam keeps

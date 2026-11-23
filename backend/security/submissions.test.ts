@@ -3798,6 +3798,52 @@ describe("the report deposit on a report that lives on GitHub", () => {
     expect(ownerNotices(t)).toBe(2);
   });
 
+  test("older-style links whose GitHub answer stays unavailable do not hold back a later claim", async () => {
+    const t = setup({ reportDeposit: "live" });
+    t.addProject("silent", "example/silent", true);
+    const claim = async (projectId: string, repository: string) => {
+      const advisory = t.github.seed(
+        repository,
+        { id: Number(REPORTER.githubId), login: REPORTER.githubLogin },
+        {
+          summary: "Filed on GitHub",
+          description: `Direct ${SENTINEL}`,
+          severity: "high",
+        },
+        "2026-10-20T08:30:00.000Z",
+      );
+      const created = await t.call(REPORTER, "POST", "security-cases", {
+        mode: "claim",
+        projectId,
+        advisory: advisory.ghsa_id,
+        idempotencyKey: t.key(),
+      });
+      expect(created.status).toBe(201);
+      const caseId = (created.body.case as { id: string }).id;
+      expect(pay(t, caseId)).toBe(1);
+      return caseId;
+    };
+    for (let i = 0; i < 3; i++) await claim("silent", "example/silent");
+    await claim(PROJECT, REPO);
+    // From now on GitHub keeps answering 503 for "silent" (a renamed
+    // repository whose new path is not recorded yet looks the same to the
+    // sweep).
+    t.unavailableRepositories.add("example/silent");
+    // The first sweep reaches only the three older claims, and their tries
+    // are not recorded.
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(0);
+    // The next sweep reaches the claim that was not tried yet.
+    expect(await sweep(t)).toMatchObject({ started: 1 });
+    expect(ownerNotices(t)).toBe(2);
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+    expect(ownerNotices(t)).toBe(2);
+    // Once GitHub answers again, the waiting claims are still tried.
+    t.unavailableRepositories.delete("example/silent");
+    expect(await sweep(t)).toMatchObject({ started: 3 });
+    expect(await sweep(t)).toMatchObject({ started: 0 });
+  });
+
   test("an older-style link released because the owner turned the deposit off tells the owners once", async () => {
     const t = setup({ reportDeposit: "live" });
     const advisory = seed(t);

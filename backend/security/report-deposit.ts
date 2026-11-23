@@ -500,14 +500,17 @@ async function startReleasedWork(
   // start, but its owner's notice of the claim waited too. It is tried once:
   // `claim_notice_at` is set after the try even when no notice row could be
   // written, so a claim nobody can be told about never takes these slots
-  // again.
+  // again. A claim whose try met a GitHub outage keeps waiting, but behind
+  // every claim not tried yet and behind claims retried longer ago
+  // (`claim_retry_at`), so an outage that lasts cannot hold the slots.
   const claimed = await deps.db
     .prepare(
       `SELECT c.id, c.project_id FROM security_report_deposits d
          JOIN security_cases c ON c.id = d.case_id
         WHERE ${ready} AND NOT ${depositHeldSql("d.case_id")}
           AND c.submission_state = 'claimed' AND d.claim_notice_at IS NULL
-        ORDER BY d.asked_at ASC, d.case_id ASC LIMIT ?1`,
+        ORDER BY d.claim_retry_at IS NOT NULL, d.claim_retry_at ASC,
+                 d.asked_at ASC, d.case_id ASC LIMIT ?1`,
     )
     .bind(RELEASE_LIMIT)
     .all<{ id: string; project_id: string }>();
@@ -528,7 +531,15 @@ async function startReleasedWork(
     await ownerNotice(deps, row.id, row.project_id).catch((error) => {
       unavailable = reportingAuthorityUnavailable(error);
     });
-    if (unavailable) continue;
+    if (unavailable) {
+      await deps.db
+        .prepare(
+          "UPDATE security_report_deposits SET claim_retry_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
+        )
+        .bind(deps.now().toISOString(), row.id)
+        .run();
+      continue;
+    }
     await deps.db
       .prepare(
         "UPDATE security_report_deposits SET claim_notice_at = ?1 WHERE case_id = ?2 AND claim_notice_at IS NULL",
