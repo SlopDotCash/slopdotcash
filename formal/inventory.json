@@ -1368,11 +1368,11 @@
     },
     {
       "path": "backend/trace-licensing/handler.ts",
-      "sha256": "24ea48dad75f54c9d0024a74da2fd5379e47acd02df1e5ead3c1b737d4a7c68c",
+      "sha256": "3a8901642f7d7296c4706ad6acbf9926bb6b83a10a3cc2ddd190f01772adef7c",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
-        3, 8, 9, 10, 61, 66, 68, 165, 172, 195, 196, 249, 268, 274, 276, 286,
-        288, 294, 297, 302, 303, 308, 390, 396, 419, 425, 436, 445, 447
+        4, 9, 10, 11, 74, 79, 81, 185, 192, 215, 216, 269, 296, 302, 304, 314,
+        316, 322, 325, 330, 331, 336, 378, 465, 471, 494, 500, 511, 520, 522
       ],
       "review": "mapped-abstraction"
     },
@@ -1390,7 +1390,7 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "e6c34f376b84114fc40289ca62eb25af576b8647e5f73033a24203f3d7e72bad",
+      "sha256": "90a6dc509bf9b39c4e28fdd0c6646e5557fb704cb9ec8b4db3491a1a63032f1b",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
@@ -1409,10 +1409,10 @@
       "candidateLines": [
         66, 161, 284, 285, 288, 306, 317, 322, 345, 383, 396, 399, 421, 422,
         427, 430, 460, 461, 464, 465, 481, 484, 506, 533, 540, 543, 547, 566,
-        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 722, 742, 745, 747,
-        758, 766, 776, 784, 798, 799, 804, 809, 829, 833, 835, 874, 879, 895,
-        903, 904, 910, 911, 917, 942, 948, 950, 1044, 1072, 1100, 1115, 1116,
-        1118, 1136, 1150, 1155, 1158, 1219, 1220, 1227, 1230, 1232
+        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 722, 742, 747, 750,
+        769, 777, 787, 795, 809, 810, 815, 820, 840, 844, 846, 885, 890, 906,
+        914, 915, 921, 922, 928, 953, 959, 961, 1055, 1083, 1111, 1126, 1127,
+        1129, 1147, 1161, 1166, 1169, 1230, 1231, 1238, 1241, 1243
       ],
       "review": "mapped-abstraction"
     },
@@ -1431,7 +1431,7 @@
     },
     {
       "path": "backend/trace/handler.ts",
-      "sha256": "403d637d445a0b515d98dda51dc6ac30753d3f384fa9858da53a4debfb877d62",
+      "sha256": "14d406743a7017552b6015066b0b3b1e1870e9af6f350e11560e054f7300dd76",
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
@@ -3877,6 +3877,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0149_trace_terms_v3.sql",
+      "sha256": "a056009f7709e387e84f74d3a6a55721061ceea66f975da004ff002ba7efccd4",
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
+      "candidateLines": [
+        7, 14, 33, 37, 39, 44, 61, 71, 73, 75, 80, 92, 111, 118, 120
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "9899cdca6be784f19ab4c30e435ca00ca917a17bdc93a1450de205aaaf2cd7e4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5022,13 +5031,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "c77f3f3f3bdbb9f60e14f41b833036466790381accc08009f1c3fce9b43b2133",
+      "sha256": "60d1d1490c94cd413fe0e278bb3582a8f3fc49611d54111ec62ae92bedf8f823",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [227, 272, 338],
+      "candidateLines": [235, 280, 346],
       "review": "mapped-abstraction"
     },
     {
@@ -8105,7 +8114,7 @@
     },
     {
       "path": "src/lib/trace-licensing.ts",
-      "sha256": "3a3c3788f2e21a1d9943d2916456e7a04ff11be5e08826f86d05f28e86365014",
+      "sha256": "4cb7cce07b1a3bc2666e4ea349a9d8c0832dfd86614408a41ac805a7a9bc050d",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -12020,13 +12029,14 @@
     },
     {
       "path": "formal/models/api/api_trace_licensing.qnt",
-      "sha256": "fd12e10c81d6251aaac7133a6ddc33d4ef1a6205d76023aa2467c3de5d999b8e",
+      "sha256": "8da78403f484a9556d1b1ed12db8c4c6321c96e54af9a270ad92dd74beadff44",
       "sources": [
         "backend/points/handler.ts",
         "backend/trace-licensing/handler.ts",
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/handler.ts",
         "migrations/0148_trace_licensing.sql",
+        "migrations/0149_trace_terms_v3.sql",
         "scripts/announce-trace-licensing.ts",
         "src/TraceLicensing.tsx",
         "src/lib/trace-licensing.ts"
@@ -12038,9 +12048,12 @@
         "closeWithdrawsTest",
         "noopWritesNothingTest",
         "optInWritesTest",
+        "reconfirmLicensesLaterV3Test",
         "staleCountRefusedTest",
         "turnOffWithdrawsTest",
-        "uploadWhileOnTest"
+        "uploadWhileOnTest",
+        "v2EnableDoesNotLicenseV3Test",
+        "v3UploadUnderV3EnableTest"
       ]
     },
     {

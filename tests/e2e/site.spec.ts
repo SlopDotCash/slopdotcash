@@ -1683,6 +1683,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityResponse,
     privateTraceContractResponse,
     privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1694,6 +1695,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
     request.get("/protocol/private-trace-v2.md"),
+    request.get("/protocol/private-trace-v3.md"),
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
@@ -1706,6 +1708,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityResponse,
     privateTraceContractResponse,
     privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1773,6 +1776,26 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContractV2).toContain("Retention is permanent");
   expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
   expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContractV2).not.toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3Response.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  const privateTraceContractV3 = await privateTraceContractV3Response.text();
+  expect(privateTraceContractV3).toContain(
+    "# Private trace privacy contract v3",
+  );
+  expect(privateTraceContractV3).toContain("private-trace-v3");
+  const privateTraceContractV3Text = privateTraceContractV3.replace(
+    /\s+/gu,
+    " ",
+  );
+  expect(privateTraceContractV3Text).toContain("OSI-approved licence");
+  expect(privateTraceContractV3Text).toContain(
+    "does not cover a version 3 trace",
+  );
+  expect(privateTraceContractV3).toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3).toContain("Retention is permanent");
+  expect(privateTraceContractV3).not.toContain("## Storage contract");
   expect(privateTraceContractV2).not.toContain("## Storage contract");
   for (const response of [pointsRulesResponse, scoringRulesResponse]) {
     const rules = await response.text();

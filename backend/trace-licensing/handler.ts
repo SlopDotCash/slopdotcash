@@ -1,5 +1,6 @@
 /**
- * Trace licensing consent (design 2026-11-22, contract version 2). A signed-in
+ * Trace licensing consent (design 2026-11-22, contract version 2; version 3
+ * from 23 November 2026). A signed-in
  * contributor lists their finalized traces, turns the account setting on or
  * off, and opts earlier traces in. Every change is one D1 batch that writes
  * its append-only history in the same transaction. No route returns a trace
@@ -11,9 +12,11 @@
  */
 
 import {
+  isTraceTermsVersion,
   TRACE_LICENCES_API,
   TRACE_LICENSING_API,
   TRACES_ME_API,
+  type TraceTermsVersion,
 } from "../../src/lib/trace-licensing";
 import type { D1QueryStatement, D1TransactionalDatabase } from "../d1";
 import {
@@ -27,8 +30,12 @@ import {
 } from "../http";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 
-/** The terms every licence and setting change here is made under. */
-const TERMS_VERSION = "private-trace-v2";
+/**
+ * The terms every licence and setting change here is made under. A setting
+ * turned on under an earlier version is confirmed again under this one
+ * before it licenses this version's uploads (`backend/trace/README.md`).
+ */
+const TERMS_VERSION: TraceTermsVersion = "private-trace-v3";
 const PAGE_SIZE = 100;
 const MAX_RUN_IDS = 500;
 /** Room for 500 run ids of the longest accepted form. */
@@ -45,6 +52,8 @@ type Setting = {
   enabled: boolean;
   since: string | null;
   providerTermsConfirmed: boolean;
+  /** Terms of the latest 'enabled' event while the setting is on, else null. */
+  confirmedTermsVersion: TraceTermsVersion | null;
 };
 
 // Guards bound with one GitHub id each.
@@ -53,6 +62,10 @@ const CLOSED = `EXISTS (SELECT 1 FROM points_members member
 const BANNED = `EXISTS (${PARTICIPATION_BAN_QUERY})`;
 const ENABLED = `EXISTS (SELECT 1 FROM trace_licensing_settings setting
   WHERE setting.github_id = ? AND setting.enabled = 1)`;
+/** Terms of the account's latest 'enabled' event. Bound with the GitHub id. */
+const CONFIRMED_TERMS = `(SELECT event.terms_version FROM trace_licensing_events event
+  WHERE event.github_id = ? AND event.kind = 'enabled'
+  ORDER BY event.id DESC LIMIT 1)`;
 /** The latest account event of a kind; inside its own batch, the one just written. */
 const LATEST_EVENT = `(SELECT MAX(event.id) FROM trace_licensing_events event
   WHERE event.github_id = ? AND event.kind = ?)`;
@@ -75,18 +88,25 @@ async function readSetting(
 ): Promise<Setting> {
   const row = await db
     .prepare(
-      "SELECT enabled, provider_terms_confirmed, changed_at FROM trace_licensing_settings WHERE github_id = ?",
+      `SELECT enabled, provider_terms_confirmed, changed_at,
+         ${CONFIRMED_TERMS} AS confirmed_terms_version
+       FROM trace_licensing_settings WHERE github_id = ?`,
     )
-    .bind(githubId)
+    .bind(githubId, githubId)
     .first<{
       enabled: number;
       provider_terms_confirmed: number;
       changed_at: string;
+      confirmed_terms_version: string | null;
     }>();
+  const enabled = row?.enabled === 1;
+  const confirmed = row?.confirmed_terms_version;
   return {
-    enabled: row?.enabled === 1,
-    since: row?.enabled === 1 ? row.changed_at : null,
+    enabled,
+    since: enabled ? (row?.changed_at ?? null) : null,
     providerTermsConfirmed: row?.provider_terms_confirmed === 1,
+    confirmedTermsVersion:
+      enabled && isTraceTermsVersion(confirmed) ? confirmed : null,
   };
 }
 
@@ -246,8 +266,16 @@ async function changeSetting(
     );
   const { db } = deps;
   await refuseClosed(db, githubId);
-  // A toggle to the state in force is a no-op, with or without the tick.
+  // A toggle to the state in force is a no-op, with or without the tick,
+  // except turning on a setting confirmed under earlier terms, which confirms
+  // it again under these.
   const current = await readSetting(db, githubId);
+  if (
+    current.enabled &&
+    enabled &&
+    current.confirmedTermsVersion !== TERMS_VERSION
+  )
+    return confirmAgain(deps, githubId, providerTermsConfirmed === true);
   if (current.enabled === enabled) return { setting: current, withdrawn: 0 };
   if (enabled && providerTermsConfirmed !== true)
     fail(
@@ -322,6 +350,53 @@ async function changeSetting(
     fail(409, "setting_changed", "The setting changed. Reload and try again.");
   }
   return { setting: after, withdrawn };
+}
+
+/**
+ * A setting that is on, last confirmed under earlier terms, is confirmed
+ * under `TERMS_VERSION` with one 'enabled' event. The setting row, its
+ * since date and every licence stay as they are.
+ */
+async function confirmAgain(
+  deps: TraceLicensingDependencies,
+  githubId: string,
+  providerTermsConfirmed: boolean,
+): Promise<{ setting: Setting; withdrawn: number }> {
+  const { db } = deps;
+  if (!providerTermsConfirmed)
+    fail(
+      422,
+      "provider_terms_unconfirmed",
+      "Confirm that your model provider's terms let you license these runs' output.",
+    );
+  await refuseBanned(db, githubId);
+  const guard = `${ENABLED} AND NOT ${BANNED} AND NOT ${CLOSED}
+    AND ${CONFIRMED_TERMS} IS NOT ?`;
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO trace_licensing_events (github_id, kind, terms_version, affected_count, at)
+         SELECT ?, 'enabled', ?, 0, ? WHERE ${guard}`,
+      )
+      .bind(
+        githubId,
+        TERMS_VERSION,
+        deps.now().toISOString(),
+        githubId,
+        githubId,
+        githubId,
+        githubId,
+        TERMS_VERSION,
+      ),
+  ]);
+  const after = await readSetting(db, githubId);
+  if (!after.enabled || after.confirmedTermsVersion !== TERMS_VERSION) {
+    // The guard refused inside the batch: report why.
+    await refuseClosed(db, githubId);
+    await refuseBanned(db, githubId);
+    fail(409, "setting_changed", "The setting changed. Reload and try again.");
+  }
+  return { setting: after, withdrawn: 0 };
 }
 
 type OptInRequest =

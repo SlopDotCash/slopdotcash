@@ -922,7 +922,7 @@ async function createTraceIntent(
     fail(
       400,
       "invalid_request",
-      "termsVersion must be private-trace-v1 or private-trace-v2",
+      "termsVersion must be private-trace-v1, private-trace-v2 or private-trace-v3",
     );
   }
   const stamp = await deps.persistence.stampTermsVersion(

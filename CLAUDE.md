@@ -518,7 +518,11 @@ Version 1 keeps governing traces uploaded under it. Operator decision,
 provider-terms confirmation. A contributor's earlier or unlicensed traces are
 licensed only by an explicit opt-in, one by one or all listed at once; turning
 the setting off or closing the account withdraws every unsold licence. No trace
-has been sold or exported.
+has been sold or exported. Operator decision, 23 November 2026: contract
+version 3 (`backend/trace/README.md#private-trace-privacy-contract-v3`) keeps
+the contents of files in the project's own repository when GitHub reports an
+OSI-approved licence for it, and licenses a version 3 upload at upload only
+when the setting is on and was last confirmed under version 3.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
 digests. No website or API route returns a trace body, including to
