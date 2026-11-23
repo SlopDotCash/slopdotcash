@@ -405,7 +405,6 @@ const ISO_TIME =
 const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
 const START_COMMAND = /run-receipt\.mjs["']?\s+start\b/;
 const END_COMMAND = /run-receipt\.mjs["']?\s+(?:session|export)\b/;
-const OWN_COMMAND = /run-receipt\.mjs/;
 
 function isoTime(t) {
   return typeof t === "string" &&
@@ -418,7 +417,17 @@ function isoTime(t) {
 export function commandText(args) {
   if (!args || typeof args !== "object") return "";
   const c = args.command ?? args.cmd;
-  if (Array.isArray(c)) return c.filter((x) => typeof x === "string").join(" ");
+  if (Array.isArray(c)) {
+    // Codex runs ["bash", "-lc", "<script>"]: analyse the script itself.
+    if (
+      c.length === 3 &&
+      c.every((x) => typeof x === "string") &&
+      /^(?:ba|z|da|k)?sh$/.test(c[0]) &&
+      /^-[a-z]*c$/.test(c[1])
+    )
+      return c[2];
+    return c.filter((x) => typeof x === "string").join(" ");
+  }
   return typeof c === "string" ? c : "";
 }
 
@@ -680,39 +689,90 @@ export function makeIsRepoFile(events, repoRoot, homeDir) {
   return (abs) => (tracked.has(abs) || written.has(abs)) && !ignored.has(abs);
 }
 
-const HARMLESS_RESULT =
-  /^(?:the file .{1,150} has been (?:created|updated|written)(?: successfully)?\.?|files? (?:created|updated|written|edited)(?: successfully)?(?: at:? .{1,150})?\.?|successfully (?:wrote|created|updated|edited) .{1,150}|wrote \d+ bytes.{0,60}|\(no content\)|no (?:matches|files) found\.?)$/i;
+const WRITE_TOOL = /^(?:write|edit|multiedit|notebookedit|apply_patch)$/i;
+const SEARCH_TOOL = /^(?:grep|glob|search|find)$/i;
+const SINGLE_RECEIPT =
+  /^\s*(?:node(?:js)?\s+)?(?:\S*\/)?run-receipt\.mjs(?:\s+[^;&|\n\r<>`$()\\]*)?\s*$/;
 
-function harmless(text) {
-  const t = (text ?? "").trim();
-  return (
-    t === "" ||
-    (t.length <= 200 && !t.includes("\n") && HARMLESS_RESULT.test(t))
-  );
+function isReceiptOnly(cmd) {
+  return SINGLE_RECEIPT.test(cmd) && !/\$\(|`/.test(cmd);
+}
+
+// A confirmation is accepted only when it is one of these exact lines for the
+// call's own path argument.
+function exactConfirmation(text, call) {
+  const p = readPathFor(call?.input);
+  if (p === undefined || p === "") return false;
+  const t = text.trim();
+  return [
+    `File created successfully at: ${p}`,
+    `File updated successfully at: ${p}`,
+    `The file ${p} has been updated successfully.`,
+    `The file ${p} has been created successfully.`,
+    `The file ${p} has been updated.`,
+    `Successfully wrote to ${p}`,
+  ].includes(t);
 }
 
 function unquote(t) {
   return t.replace(/^["'`]+|["'`]+$/g, "");
 }
 
-// Directory changes inside a command: any target outside the repo (or not
-// knowable) means the command ran somewhere else.
-function leavesRepo(call, g) {
+const DIR_CHANGES = [
+  /(?:^|[\s;&|(])(?:cd|pushd)\s+(\S+)/g,
+  /\bgit\s+-C\s+(\S+)/g,
+  /(?:^|\s)-C\s+(\S+)/g,
+  /--(?:cwd|directory|workdir|work-tree|prefix)(?:=|\s+)(\S+)/g,
+];
+
+function dirTargets(call) {
+  const cmd = commandText(call?.input);
+  const targets = [];
+  for (const re of DIR_CHANGES)
+    for (const m of cmd.matchAll(re)) targets.push(unquote(m[1]));
+  return targets;
+}
+
+// "outside": the command ran somewhere outside the repo.
+function leavesRepo(call, g, base) {
   const input = call?.input;
   const cmd = commandText(input);
-  const targets = [];
-  for (const re of [
-    /(?:^|[\s;&|(])(?:cd|pushd)\s+(\S+)/g,
-    /\bgit\s+-C\s+(\S+)/g,
-    /(?:^|\s)-C\s+(\S+)/g,
-    /--(?:cwd|directory|workdir|work-tree|prefix)(?:=|\s+)(\S+)/g,
-  ])
-    for (const m of cmd.matchAll(re)) targets.push(unquote(m[1]));
+  const targets = dirTargets(call);
   if (/(?:^|[;&|(]\s*)(?:cd|pushd)\s*(?:$|[;&|)])/.test(cmd)) return true;
   if (typeof input?.workdir === "string") targets.push(input.workdir);
   return targets.some(
-    (t) => t === "-" || /[$`]/.test(t) || isOutside(t, g.repoRoot, g.homeDir),
+    (t) => t === "-" || /[$`]/.test(t) || isOutside(t, base, g.homeDir),
   );
+}
+
+// Anything that cannot be resolved from the command text alone, or that
+// changes directory, is not analysed: the whole result is redacted.
+function unresolvable(call, cwd, g) {
+  const input = call?.input;
+  const cmd = commandText(input);
+  if (dirTargets(call).length > 0) return true;
+  if (/(?:^|[\s;&|(])(?:cd|pushd|popd)\b/.test(cmd)) return true;
+  if (typeof input?.workdir === "string") {
+    const same =
+      cwd !== undefined &&
+      normalise(input.workdir, cwd, g.homeDir) ===
+        normalise(cwd, cwd, g.homeDir);
+    if (!same) return true;
+  }
+  if (/[*?[\]{}\\]/.test(cmd)) return true;
+  if (/\$\(|`|\$[A-Za-z_{'"]/.test(cmd)) return true;
+  if (/(?:^|[\s;&|(])(?:xargs|eval|source)\b/.test(cmd)) return true;
+  if (/(?:^|[;&|(]\s*)\.\s/.test(cmd) || /^\s*\.\s/.test(cmd)) return true;
+  if (/\bfind\b/.test(cmd) && /\s-(?:exec|execdir|ok|okdir)\b/.test(cmd))
+    return true;
+  if (/(?:^|[\s;&|(])(?:ba|z|da|k)?sh\s+-[a-z]*c\b/.test(cmd)) return true;
+  for (const word of cmd.split(/\s+/)) {
+    if (!word) continue;
+    if (word.length > 1 && /["']/.test(word.slice(1, -1))) return true;
+    if (word.includes(":") && !word.includes("://") && !/:$/.test(word))
+      return true;
+  }
+  return false;
 }
 
 function fileStatus(abs, g) {
@@ -725,13 +785,12 @@ function fileStatus(abs, g) {
   return g.isRepoFile(abs) === true ? "ok" : "source";
 }
 
-function commandTouches(cmd, g) {
+function commandTouches(cmd, g, base) {
   let verdict = "ok";
   for (const raw of cmd.split(/[\s;&|<>()"'`=,]+/).slice(0, 400)) {
     if (!raw || raw.startsWith("-")) continue;
     if (SAFE_ABSOLUTE.has(raw)) continue;
-    if (/^\$/.test(raw) && raw.includes("/")) return "outside";
-    const abs = normalise(raw, g.repoRoot, g.homeDir);
+    const abs = normalise(raw, base, g.homeDir);
     if (
       (raw.includes("/") || raw.startsWith("~")) &&
       !insideRepo(abs, g.repoRoot)
@@ -744,7 +803,7 @@ function commandTouches(cmd, g) {
   return verdict;
 }
 
-function outputTouches(text, g) {
+function outputTouches(text, g, base) {
   let verdict = "ok";
   for (const line of text.split("\n").slice(0, 2000)) {
     const l = line.trim();
@@ -755,7 +814,7 @@ function outputTouches(text, g) {
     if (colon > 0) cands.push(l.slice(0, colon));
     for (const c of cands) {
       if (!/[./]/.test(c) || /\s/.test(c)) continue;
-      const st = fileStatus(normalise(c, g.repoRoot, g.homeDir), g);
+      const st = fileStatus(normalise(c, base, g.homeDir), g);
       if (st === "outside") return "outside";
       if (st === "source") verdict = "source";
     }
@@ -764,8 +823,8 @@ function outputTouches(text, g) {
 }
 
 // Marks tool results the cleaner must redact whole, and drops entries made
-// outside the repo. Fails closed: with no licence only receipt-tool output and
-// known confirmations survive.
+// outside the repo. Fails closed: with no licence only the receipt tool's own
+// output, empty results and exact write confirmations survive.
 function guardEvents(events, g) {
   const out = [];
   for (const e of events) {
@@ -774,24 +833,42 @@ function guardEvents(events, g) {
     if (e.kind === "tool_result") {
       const call = e.call;
       const cmd = commandText(call?.input);
-      if (OWN_COMMAND.test(cmd)) {
+      const base = e.cwd ?? g.repoRoot;
+      const tool = typeof e.tool === "string" ? e.tool : "";
+      if (isReceiptOnly(cmd)) {
         // the receipt tool's own output
       } else if (!g.keepRepoFiles) {
-        if (!harmless(e.text)) e.redactSource = true;
-      } else if (leavesRepo(call, g)) e.redactOutside = true;
+        const t = (e.text ?? "").trim();
+        const ok =
+          t === "" || (WRITE_TOOL.test(tool) && exactConfirmation(t, call));
+        if (!ok) e.redactSource = true;
+      } else if (!call) {
+        e.redactSource = true;
+      } else if (leavesRepo(call, g, base)) e.redactOutside = true;
       else if (e.path !== undefined) {
         // a read of one named file: the cleaner applies the file rule
-      } else if (typeof e.tool === "string" && CONTENT_TOOL.test(e.tool)) {
-        const p = call ? readPathFor(call.input) : undefined;
+      } else if (CONTENT_TOOL.test(tool)) {
+        const p = readPathFor(call.input);
         if (p !== undefined) e.path = p;
         else e.redactSource = true;
-      } else if (typeof e.tool === "string" && READ_TOOL.test(e.tool)) {
+      } else if (READ_TOOL.test(tool)) {
+        e.redactSource = true;
+      } else if (unresolvable(call, e.cwd, g)) {
         e.redactSource = true;
       } else {
-        const a = commandTouches(cmd, g);
-        const b = a === "outside" ? a : outputTouches(e.text ?? "", g);
-        if (a === "outside" || b === "outside") e.redactOutside = true;
-        else if (a === "source" || b === "source") e.redactSource = true;
+        let verdict = commandTouches(cmd, g, base);
+        if (SEARCH_TOOL.test(tool)) {
+          const p = readPathFor(call.input);
+          if (p !== undefined) {
+            const st = fileStatus(normalise(p, base, g.homeDir), g);
+            if (st !== "ok") verdict = st;
+          }
+        }
+        if (verdict !== "outside")
+          verdict =
+            outputTouches(e.text ?? "", g, base) === "ok" ? verdict : "source";
+        if (verdict === "outside") e.redactOutside = true;
+        else if (verdict === "source") e.redactSource = true;
       }
     }
     out.push(e);
