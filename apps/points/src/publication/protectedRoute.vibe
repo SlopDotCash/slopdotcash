@@ -58,7 +58,4 @@ effect function answer() {
   return json(encoded, 200, { "cache-control": noStore })
 }
 
-export const ProtectedMonthsRoutes = HttpRouter.addAll([
-  HttpRouter.route("*", protectedMonthsRoute.path, answered(answer())),
-  HttpRouter.route("*", `${protectedMonthsRoute.path}/`, answered(answer())),
-])
+export const ProtectedMonthsRoutes = HttpRouter.add("*", protectedMonthsRoute.path, answered(answer()))

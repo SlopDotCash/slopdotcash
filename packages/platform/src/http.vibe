@@ -366,6 +366,10 @@ export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (
   }))
 }
 
+export function answerSubtree<E, R>(path: `/${string}`, handler: HttpServerResponse.HttpServerResponse!E!R) {
+  return HttpRouter.add("*", `${path}/*`, answered(handler))
+}
+
 export function handleRaw<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R): Handled<X, R> {
   return HttpRouter.add(route.method, route.path, served(route, effect {
     const credential = try credentialOf(route, false)

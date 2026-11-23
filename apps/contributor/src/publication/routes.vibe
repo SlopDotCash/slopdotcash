@@ -221,7 +221,9 @@ effect function answerRequest() {
   return sent(method, route, unavailable)
 }
 
-const artifactRoutes = artifactNames.flatMap((name) => [
+const routedNames = [...new Set(artifactNames.map((name) => name.toLowerCase()))]
+
+const artifactRoutes = routedNames.flatMap((name) => [
   HttpRouter.route("GET", `/projects/:id/${name}`, answerRequest()),
   HttpRouter.route("HEAD", `/projects/:id/${name}`, answerRequest()),
 ])
