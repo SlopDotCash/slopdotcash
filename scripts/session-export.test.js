@@ -14,10 +14,13 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  addSecretStrings,
   CLEANER_VERSION,
   cleanEvents,
+  collectKnownSecrets,
   exportSession,
   findSessionFile,
+  makeRepoIndex,
   OSI_LICENCES,
   readClaudeCode,
   readCodex,
@@ -974,7 +977,7 @@ test("known secrets stay fast", () => {
 test("too many ignored files fail closed", async () => {
   const w = world();
   mkdirSync(join(w.repoRoot, "gen"));
-  for (let i = 0; i < 2100; i++)
+  for (let i = 0; i < 5100; i++)
     writeFileSync(
       join(w.repoRoot, "gen", `f${i}.txt`),
       `line number ${i} abcdefgh\n`,
@@ -1115,4 +1118,134 @@ test("secret values in common file formats are split out and redacted", async ()
     [],
   );
   assert.equal(header.contentGuard, "on");
+});
+
+// ---- fix round 5 ----
+test("url user-info extraction stays linear on minified lines", () => {
+  const line = "e.exports.default.a1-b2+c3".repeat(2500).slice(0, 64000);
+  assert.equal(line.length, 64000);
+  const start = performance.now();
+  const into = new Set();
+  addSecretStrings(line, into);
+  assert.ok(performance.now() - start < 50, "extract took too long");
+  const creds = new Set();
+  addSecretStrings(
+    "x https://gituser42:GitTok3n99@github.com y ftp://ftpuser1:ftppass99@h",
+    creds,
+  );
+  for (const v of ["gituser42", "GitTok3n99", "ftpuser1", "ftppass99"])
+    assert.ok(creds.has(v), v);
+});
+
+function guardRepo() {
+  const repo = mkdtempSync(join(tmpdir(), "slop-guard-"));
+  const put = (rel, body) => {
+    mkdirSync(dirname(join(repo, rel)), { recursive: true });
+    writeFileSync(join(repo, rel), body);
+  };
+  put(".gitignore", ".env\n.next/\ncache/\n");
+  put("src/index.ts", "export {}\n");
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a]);
+  g("init", "-q");
+  g("add", "-A");
+  g("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "i");
+  return { repo, put };
+}
+
+test("a typical JavaScript repo keeps the content guard on", async () => {
+  const w = world();
+  const env = Array.from(
+    { length: 20 },
+    (_, i) => `SERVICE_${i}_API_KEY=sk_live_${i}${"Ab9".repeat(8)} # note ${i}`,
+  ).join("\n");
+  writeFileSync(join(w.repoRoot, ".env"), env);
+  writeFileSync(
+    join(w.repoRoot, ".gitignore"),
+    "*.log\n.env\n*.pem\nsecrets/\n.next/\n",
+  );
+  const words = [
+    "useState",
+    "useEffect",
+    "className",
+    "createElement",
+    "webpackChunk",
+    "defineProperty",
+    "hasOwnProperty",
+    "addEventListener",
+  ];
+  let seed = 1;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const ident = () =>
+    `${words[Math.floor(rnd() * words.length)]}_${Math.floor(rnd() * 1e6).toString(36)}`;
+  mkdirSync(join(w.repoRoot, ".next", "static", "chunks"), { recursive: true });
+  for (let i = 0; i < 300; i++) {
+    const parts = [];
+    for (let j = 0; j < 120; j++)
+      parts.push(
+        `${ident()}:function(e,t,n){"use strict";n.d(t,{${ident()}:()=>${ident()}})}`,
+      );
+    writeFileSync(
+      join(w.repoRoot, ".next", "static", "chunks", `c${i}.js`),
+      `(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[${i}],{${parts.join(",")}}]);`,
+    );
+  }
+  mkdirSync(join(w.repoRoot, "notes"));
+  for (let i = 0; i < 50; i++)
+    writeFileSync(
+      join(w.repoRoot, "notes", `n${i}.md`),
+      `# Note ${i}\n\nTodo: refactor the payment adapter ${i} before release.\n`,
+    );
+  const secret = `sk_live_7${"Ab9".repeat(8)}`;
+  build(w, ({ call }) => {
+    call("Bash", { command: "cat src/a.ts" }, `export const a = 1; ${secret}`);
+  });
+  const { header, events } = await runOut(w);
+  assert.equal(header.contentGuard, "on");
+  assert.ok(!JSON.stringify(events).includes(secret));
+});
+
+test("a repo past 50,000 strings or 32 MiB fails closed", () => {
+  const strings = guardRepo();
+  for (let f = 0; f < 1000; f++)
+    strings.put(
+      `cache/f${f}.txt`,
+      Array.from({ length: 50 }, (_, i) => `tok_${f}_${i}_QQQQqqqq`).join("\n"),
+    );
+  const at = collectKnownSecrets(makeRepoIndex([], strings.repo, null), null);
+  assert.equal(at.capped, false);
+  assert.equal(at.strings.length, 50000);
+  strings.put("cache/extra.txt", "one_more_string_QQ\n");
+  const past = collectKnownSecrets(makeRepoIndex([], strings.repo, null), null);
+  assert.equal(past.capped, true);
+  assert.ok(past.strings.length <= 50000);
+
+  const bytes = guardRepo();
+  const body = `${"a".repeat(999)}\n`.repeat(60);
+  for (let f = 0; f < 600; f++) bytes.put(`cache/b${f}.txt`, body);
+  const big = collectKnownSecrets(makeRepoIndex([], bytes.repo, null), null);
+  assert.equal(big.capped, true);
+});
+
+test("collect and clean of 50,000 strings on a 4 MB session stay fast", () => {
+  const r = guardRepo();
+  for (let f = 0; f < 1000; f++)
+    r.put(
+      `cache/f${f}.txt`,
+      Array.from({ length: 50 }, (_, i) => `tok_${f}_${i}_QQQQqqqq`).join("\n"),
+    );
+  const big = `${"lorem ipsum dolor sit amet ".repeat(155000)} tok_999_49_QQQQqqqq tail`;
+  assert.ok(big.length > 4_000_000);
+  const start = performance.now();
+  const known = collectKnownSecrets(makeRepoIndex([], r.repo, null), null);
+  const out = cleanEvents(
+    [{ t: "2026-11-23T10:00:00Z", kind: "tool_result", text: big }],
+    ctx({ knownSecrets: known.strings }),
+  );
+  const ms = performance.now() - start;
+  assert.equal(known.capped, false);
+  assert.ok(ms < 2000, `took ${ms}ms`);
+  assert.ok(!out.events[0].text.includes("tok_999_49_QQQQqqqq"));
 });

@@ -754,6 +754,20 @@ const SKIP_DIRS = new Set([
   "venv",
   "vendor",
   "__pycache__",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  "coverage",
+  "out",
+  ".gradle",
+  ".tox",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".parcel-cache",
+  ".vercel",
+  ".output",
 ]);
 const HOME_SECRET_FILES = [
   ".npmrc",
@@ -764,15 +778,19 @@ const HOME_SECRET_FILES = [
   ".docker/config.json",
   ".pypirc",
 ];
-const MAX_GUARD_FILES = 2000;
-const MAX_GUARD_STRINGS = 5000;
+const MAX_GUARD_FILES = 5000;
+const MAX_GUARD_STRINGS = 50000;
 const MAX_GUARD_FILE_BYTES = 64 * 1024;
+const MAX_GUARD_TOTAL_BYTES = 32 * 1024 * 1024;
 
 const SECRET_SPLIT = /[\s"'`,;{}()[\]=:#@/]+/;
+// The lookbehind starts a scheme only at a run's first character, so a long
+// run of letters, digits and dots (minified code) is scanned once, not once
+// per position.
 const URL_USERINFO =
-  /[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\s/@:]+)(?::([^\s/@]*))?@/g;
+  /(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\s/@:]+)(?::([^\s/@]*))?@/g;
 
-function addSecretStrings(text, into) {
+export function addSecretStrings(text, into) {
   for (const line of text.split(/\r?\n/)) {
     const clean = (v) =>
       v
@@ -799,10 +817,17 @@ function addSecretStrings(text, into) {
   }
 }
 
-function readSmallText(path) {
+function readSmallText(path, budget) {
   try {
     const st = statSync(path);
     if (!st.isFile() || st.size > MAX_GUARD_FILE_BYTES) return null;
+    if (budget) {
+      if (st.size > budget.left) {
+        budget.over = true;
+        return null;
+      }
+      budget.left -= st.size;
+    }
     const buf = readFileSync(path);
     return buf.includes(0) ? null : buf.toString("utf8");
   } catch {
@@ -813,6 +838,12 @@ function readSmallText(path) {
 export function collectKnownSecrets(index, homeDir) {
   const strings = new Set();
   let capped = false;
+  // Home credential files first, so a cap never drops their strings.
+  for (const f of HOME_SECRET_FILES) {
+    if (!homeDir) break;
+    const text = readSmallText(join(homeDir, f));
+    if (text !== null) addSecretStrings(text, strings);
+  }
   const listed = git(index.root, ["ls-files", "-z", "-o"]);
   // A file the run wrote is skipped only when it is not gitignored: an edited
   // .env still holds secrets a tracked script may print.
@@ -829,22 +860,28 @@ export function collectKnownSecrets(index, homeDir) {
       if (rel) ignored.add(`${index.root}/${rel}`);
   if (listed && listed.status === 0) {
     let files = 0;
+    const budget = { left: MAX_GUARD_TOTAL_BYTES, over: false };
     for (const rel of listed.stdout.toString("utf8").split("\0")) {
-      if (!rel || rel.split("/").some((seg) => SKIP_DIRS.has(seg))) continue;
+      if (!rel) continue;
+      const dirs = rel.split("/").slice(0, -1);
+      if (dirs.some((seg) => SKIP_DIRS.has(seg))) continue;
       const abs = `${index.root}/${rel}`;
       if (index.written.has(abs) && !ignored.has(abs)) continue;
       if (++files > MAX_GUARD_FILES) {
         capped = true;
         break;
       }
-      const text = readSmallText(abs);
+      const text = readSmallText(abs, budget);
+      if (budget.over) {
+        capped = true;
+        break;
+      }
       if (text !== null) addSecretStrings(text, strings);
+      if (strings.size > MAX_GUARD_STRINGS) {
+        capped = true;
+        break;
+      }
     }
-  }
-  for (const f of HOME_SECRET_FILES) {
-    if (!homeDir) break;
-    const text = readSmallText(join(homeDir, f));
-    if (text !== null) addSecretStrings(text, strings);
   }
   let list = [...strings];
   if (list.length > MAX_GUARD_STRINGS) {
