@@ -279,7 +279,7 @@ import { LockUnobserved } from "../src/publicationLock/group.vibe"
 import { BundleRefused } from "../src/release/manifest/inventory.vibe"
 import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
 import { StagingHistoryRefused } from "../src/release/run/history.vibe"
-import { writeCollection } from "../src/release/manifest/release.vibe"
+import { readCollection, writeCollection } from "../src/release/manifest/release.vibe"
 import { DataOptionsRefused, releaseCoverage } from "../src/release/coverage/options.vibe"
 import { CollectedDataRefused, restoreCollected } from "../src/release/run/restore.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
@@ -431,12 +431,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       SLOP_GITHUB_ENVIRONMENT: "slop-production",
     }
     const calls: string[] = []
-    effect function settled<A, E, R>(program: A!E!R) {
-      const ended = try exit(provideService(program, FetchHttpClient.Fetch, fake.fetch))
+    effect function settled<A, E, R>(program: A!E!R, fetch: GitHubFake["fetch"] = fake.fetch) {
+      const ended = try exit(provideService(program, FetchHttpClient.Fetch, fetch))
       return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
     }
-    effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
-      return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
+    effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}, fetch: GitHubFake["fetch"] = fake.fetch) {
+      return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))), fetch)
     }
     effect function published(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle, afterFirstWorker?: void!!) {
       const run = effect {
@@ -460,6 +460,29 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     try written(files.join(siteless, "deployables/notify.js"), "export default {}\n")
     const withoutSite = try attempt(["manifest", "production", siteless])
     const retainedWithoutTime = try attempt(["collect", "production", bundle, "--retained"])
+    const registryOrigin = "http://127.0.0.1:8788"
+    const registryReads: string[] = []
+    const registryFetch: GitHubFake["fetch"] = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input)
+      if (url.origin !== registryOrigin) return fake.fetch(input, init)
+      registryReads.push(url.pathname)
+      const body = url.pathname === "/api/v1/projects" ? { schemaVersion: "1", projects: [], restrictions: [] } : { schemaVersion: "1", revisions: [] }
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }))
+    }
+    const collected = files.join(directory, "collected")
+    try written(files.join(collected, "github/leaderboard.json"), "{\"records\":[]}\n")
+    const registered = try attempt(["registry", "production", collected], { SLOP_API_ORIGIN: registryOrigin }, registryFetch)
+    const registryText = try fs.readFileString(files.join(collected, registrySnapshotPath))
+    const bound = try attempt(["collect", "production", collected], { SLOP_API_ORIGIN: registryOrigin }, registryFetch)
+    const boundCollection = try readCollection(collected)
+    const registrySnapshot = {
+      registered,
+      bound,
+      reads: registryReads,
+      unchanged: (try fs.readFileString(files.join(collected, registrySnapshotPath))) === registryText,
+      registrySha256: boundCollection.registrySha256 === (try sha256Hex(registryText)),
+      recordedAt: boundCollection.recordedAt === (JSON.parse(registryText) as { readonly syncedAt: string }).syncedAt,
+    }
     const manifested = try attempt(["manifest", "production", bundle])
     const verified = try attempt(["verify-bundle", bundle])
     const manifestSha256 = try sha256Hex(try fs.readFile(files.join(bundle, "release-manifest.json")))
@@ -707,12 +730,13 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     }
 
     try Effect.try(() => assert.deepStrictEqual({
-      withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
+      withoutSite, retainedWithoutTime, registrySnapshot, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, rotation, beforeCurrent,
       current, currentCalls, movedAfterWorkers, retained, restoredCollection, advanced, advancedCalls, rewritten, rewrittenCalls,
       staging, coverage,
     }, {
       withoutSite: "BundleRefused",
       retainedWithoutTime: "BundleRefused",
+      registrySnapshot: { registered: "ok", bound: "ok", reads: ["/api/v1/projects", "/api/v1/project-revisions"], unchanged: true, registrySha256: true, recordedAt: true },
       manifested: "ok",
       verified: "ok",
       pullRequest: "ReleaseRefused:configure",

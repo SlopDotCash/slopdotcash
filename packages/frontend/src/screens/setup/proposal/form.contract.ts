@@ -2,7 +2,7 @@
 import { emptyProposal, type Proposal } from "../../../flows/projects/proposal.ts";
 import { privateBountyCriteria, privateBountyTesting } from "../../../flows/security/program.vibe";
 import { vectors } from "../../../kernels/vectors.ts";
-import { facts, filled, monthly, promised } from "./fixtures.ts";
+import { facts, filled, monthly, optedOut, promised } from "./fixtures.ts";
 import { defaultCriteria, type Lookup, lookupKey, proposalErrors, restoredWizard, setupErrors, withFacts, withField, withLookup, withReferrer, withRepository } from "./form.ts";
 import { draftManifest } from "./manifest.ts";
 
@@ -30,7 +30,33 @@ export const onlyAnExplicitYesOutsideABountyAsksForClosure = vectors<Proposal, b
     [{ ...filled, automaticClosure: "yes" }, false],
     [{ ...filled, automaticClosure: "true", fundingMode: "bounty" }, false],
   ],
-  (proposal) => "slopbot" in draftManifest({ proposal, actor: undefined, valid: true, now }).manifest,
+  (proposal) => (draftManifest({ proposal, actor: undefined, valid: true, now }).manifest.slopbot as { automaticClosure?: unknown } | undefined)?.automaticClosure === true,
+);
+
+export const aNewListingAsksForTheFeeWantedIssuesAndDepositUnlessTurnedOff = vectors<Proposal, readonly [unknown, unknown]>(
+  [
+    [filled, [{ automaticClosure: false, submissionFee: { enabled: true }, wantedIssues: true }, undefined]],
+    [{ ...filled, automaticClosure: "true", wantedIssues: "false" }, [{ automaticClosure: true, submissionFee: { enabled: true } }, undefined]],
+    [optedOut, [undefined, { reportDeposit: false }]],
+    [{ ...filled, fundingMode: "bounty", automaticClosure: "true" }, [undefined, undefined]],
+    [{ ...optedOut, fundingMode: "bounty" }, [undefined, { reportDeposit: false }]],
+  ],
+  (proposal) => {
+    const { manifest } = draftManifest({ proposal, actor: undefined, valid: true, now });
+    return [manifest.slopbot, manifest.security] as const;
+  },
+);
+
+export const aStoredDraftWithoutTheNewSettingsReadsThemOn = vectors<string | null, readonly [string, string, string, string]>(
+  [
+    [null, ["false", "true", "true", "true"]],
+    [saved({ automaticClosure: "true", name: "engine" }), ["true", "true", "true", "true"]],
+    [saved({ submissionFee: "false", wantedIssues: "false", reportDeposit: "false" }), ["false", "false", "false", "false"]],
+  ],
+  (text) => {
+    const { proposal } = restoredWizard(text, "");
+    return [proposal.automaticClosure, proposal.submissionFee, proposal.wantedIssues, proposal.reportDeposit] as const;
+  },
 );
 
 export const anotherRepositoryForgetsTheLastRepositoryFacts = vectors<readonly [string, string], readonly [string, string, string, number]>(

@@ -167,6 +167,16 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `text.3xl.leading` | 1 |
 | `text.4xl.size` | 2.5rem |
 | `text.4xl.leading` | 0.95 |
+| `text.5xl.size` | 3rem |
+| `text.5xl.leading` | 1 |
+| `text.6xl.size` | 3.75rem |
+| `text.6xl.leading` | 1 |
+| `text.7xl.size` | 4.5rem |
+| `text.7xl.leading` | 1 |
+| `text.8xl.size` | 6rem |
+| `text.8xl.leading` | 1 |
+| `text.9xl.size` | 8rem |
+| `text.9xl.leading` | 1 |
 | `weight.medium` | 500 |
 | `weight.semibold` | 600 |
 | `weight.strong` | 650 |

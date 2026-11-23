@@ -1,8 +1,8 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/frontend/presentation.md, "Setup presents Project, Rewards and Review with both skill previews"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/frontend/readyLabelForm.md, "The control starts off with the defaults when nothing is saved, saves only bounded settings while on, and keeps the owner's numbers when turned off"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"; spec/backend/submissionFeeSettings.md, "Submission fee settings are exact, bounded and off unless enabled with a valid amount"
 import { vectors } from "../../../kernels/vectors.ts";
-import { manifest, promised, promiseRows, revokedRows } from "./fixtures.ts";
+import { branchChoices, configured, manifest, promised, promiseRows, revokedRows, settingsRows, stored } from "./fixtures.ts";
 import type { PendingRepository } from "./manifest.schema.ts";
-import { afterPublish, type Edit, initialDraft, managedOf, pendingRepositories, pendingText, restoredEdit, reviewOf, type UpdateField, untouched, withField } from "./revision.ts";
+import { afterPublish, type Edit, effectOf, feeAmountOf, initialDraft, primaryRepository, managedOf, pendingRepositories, pendingText, restoredEdit, reviewOf, type UpdateField, untouched, withField } from "./revision.ts";
 
 const now = new Date("2026-11-17T12:00:00.000Z");
 const revision = 2;
@@ -184,4 +184,70 @@ export const leavingTheMonthlyPoolClearsThePromise = vectors<readonly [Record<st
     const review = reviewOf(managed, withField(untouched, "fundingMode", mode, revision), now);
     return [review.value.honorSystem, (review.next.reward as { honorSystem?: unknown }).honorSystem] as const;
   },
+);
+
+const release = branchChoices[0];
+
+export const theFeeAmountIsAtMostTwoPlacesInsideItsRange = vectors<string, unknown>(
+  [
+    ["", { kind: "amount", minor: "2000000" }],
+    ["$2.50", { kind: "amount", minor: "2500000" }],
+    ["10", { kind: "amount", minor: "10000000" }],
+    ["0.99", { kind: "invalid", error: "Enter an amount from 1 to 10, with at most two decimal places." }],
+    ["2.505", { kind: "invalid", error: "Enter an amount from 1 to 10, with at most two decimal places." }],
+  ],
+  feeAmountOf,
+);
+
+export const theSettingsReadAsPublishedAndAnInvalidEntryKeepsThePublishedValue = vectors<readonly [Partial<Record<UpdateField, string>>, Record<string, unknown>], readonly [unknown, unknown, unknown, ReadonlyArray<string>]>(
+  [
+    [[{}, configured], [configured.slopbot, configured.security, 1000, []]],
+    [[{ intakeCap: "0", maintainerShare: "31", submissionFeeAmount: "11" }, configured], [configured.slopbot, configured.security, 1000, ["Enter a whole number from 1 to 500, or leave it empty.", "Enter an amount from 1 to 10, with at most two decimal places.", "Enter a whole number from 0 to 30, or leave it empty."]]],
+    [[{ intakeCap: "", maintainerShare: "0%", submissionFee: "false", wantedIssues: "false", reportDeposit: "true" }, configured], [{ automaticClosure: true, submissionFee: { enabled: false, amountMinor: "2500000" } }, { reportDeposit: true }, undefined, []]],
+    [[{ reportDeposit: "true" }, manifest], [{ automaticClosure: true }, undefined, undefined, []]],
+  ],
+  ([fields, base]) => {
+    const review = edited(fields, base);
+    return [review?.next.slopbot, review?.next.security, (review?.next.reward as { maintainerShare?: unknown } | undefined)?.maintainerShare, Object.entries(review?.errors ?? {}).filter(([field]) => ["intakeCap", "submissionFeeAmount", "maintainerShare"].includes(field)).map(([, message]) => message)] as const;
+  },
+);
+
+export const theNewSettingsHaveTheirOwnRows = vectors<Partial<Record<UpdateField, string>>, unknown>(
+  [[{ intakeCap: "40", submissionFee: "true", submissionFeeAmount: "2.5", wantedIssues: "true", reportDeposit: "false", maintainerShare: "10" }, settingsRows]],
+  (fields) => edited(fields)?.rows.filter((row) => settingsRows.some(({ field }) => field === row.field)),
+);
+
+export const anIntegrationBranchChangeStandsAloneBesideTheContributionGuide = vectors<Partial<Record<UpdateField, string>>, readonly [string | undefined, unknown, boolean]>(
+  [
+    [{}, [undefined, { integrationBranch: release }, true]],
+    [{ contributionGuide: "Read CONTRIBUTING.md first." }, [undefined, { integrationBranch: release, contribution: { ...manifest.contribution, contributionGuide: "Read CONTRIBUTING.md first." } }, true]],
+    [{ headline: "A faster engine for building open things." }, ["Save the other settings before changing the integration branch.", { integrationBranch: release }, true]],
+  ],
+  (fields) => {
+    const managed = managedOf(revision, manifest);
+    const review = managed && reviewOf(managed, { fields, baseRevision: revision }, now, release);
+    return [review?.errors.integrationBranch, review?.branchRequest, review?.changed ?? false] as const;
+  },
+);
+
+export const thePrimaryRepositoryIsVerifiedByItsStoredIds = vectors<Record<string, unknown>, unknown>(
+  [
+    [manifest, stored],
+    [{ ...manifest, authority: undefined }, undefined],
+  ],
+  (base) => {
+    const managed = managedOf(revision, base);
+    return managed && primaryRepository(managed.manifest);
+  },
+);
+
+export const theShareStartsNextMonthAndTheDepositAndBranchAreLive = vectors<readonly [Parameters<typeof effectOf>[0], boolean], string>(
+  [
+    [["maintainerShare", true], "NextMonth"],
+    [["reportDeposit", false], "LiveNow"],
+    [["integrationBranch", false], "LiveNow"],
+    [["submissionFee", false], "LiveNow"],
+    [["approvedScope", false], "NeedsRescan"],
+  ],
+  ([field, cleared]) => effectOf(field, cleared),
 );

@@ -6,7 +6,7 @@ import { pullRequestScope } from "../release/coverage/scope.vibe"
 import { DailyCollectionFailed, dailyAccess, followUpDaily, startDaily } from "../release/daily/controller.vibe"
 import { bundleSite, createPagesManifest, verifyPagesManifest } from "../release/manifest/pages.vibe"
 import { type EnvironmentName, createReleaseManifest, verifyBundle } from "../release/manifest/release.vibe"
-import { collect } from "../release/run/collect.vibe"
+import { collect, snapshotRegistry } from "../release/run/collect.vibe"
 import { environmentOf, runFacts } from "../release/run/facts.vibe"
 import { restoreCollected } from "../release/run/restore.vibe"
 import { publisher } from "../release/publish/publisher.vibe"
@@ -18,6 +18,7 @@ export error ReleaseUsage { message: string }
 const usage = [
   "release coverage production|staging",
   "release scope [root]",
+  "release registry production|staging <bundle>",
   "release collect production|staging <bundle> [--retained]",
   "release restore-collection <run id> <out dir> [root]",
   "release manifest production|staging <bundle>",
@@ -60,6 +61,10 @@ effect function daily(follow: string | undefined) {
   }
 }
 
+effect function warnWithheld(withheld: ReadonlyArray<string>) {
+  for (const projectId of withheld) try Console.log(`::warning::Project ${projectId} is restricted but its paused, retired revision is pending; the snapshot stores it paused and retired`)
+}
+
 export effect function release(args: ReadonlyArray<string>) {
   const [command, first, second, third, fourth, ...rest] = args
   const environment = environmentOf(first ?? "")
@@ -78,9 +83,15 @@ export effect function release(args: ReadonlyArray<string>) {
     }
     return
   }
+  if (command === "registry" && name !== undefined && second !== undefined && third === undefined) {
+    const snapshot = try snapshotRegistry(name, second)
+    try warnWithheld(snapshot.withheld)
+    try Console.log(`[Slop] snapshotted the ${name} registry at ${snapshot.syncedAt}`)
+    return
+  }
   if (command === "collect" && name !== undefined && second !== undefined && (third === undefined || third === "--retained") && fourth === undefined) {
     const collected = try collect(name, second, third === undefined ? "fresh" : "retained")
-    for (const projectId of collected.withheld) try Console.log(`::warning::Project ${projectId} is restricted but its paused, retired revision is pending; the snapshot stores it paused and retired`)
+    try warnWithheld(collected.withheld)
     try Console.log(`[Slop] collected the ${name} registry and GitHub data at ${collected.collection.recordedAt}`)
     return
   }

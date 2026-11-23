@@ -236,6 +236,20 @@ describe('Replace a payout wallet without losing the current destination (spec/b
   });
 });
 
+describe('Start and complete a GitHub sign-in flow (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow")', () => {
+  it('a browser that keeps no sign-in cookie is told to allow cookies and start again, and no session or membership opens (spec/backend/identity.md, "A website flow belongs to the browser that started it")', async () => {
+    await site.allow("^console Failed to load resource: the server responded with a status of 403", "^403 POST /v1/oauth/poll$");
+    await site.github(users.kai.login);
+    await site.blockCookies();
+    await site.open(loginPath("/account"));
+    await shown(named("heading", "Log in", { level: 1 })).toMatchObject({ visible: true });
+    await site.click(named("button", "Continue with GitHub"));
+    await shown({ text: "Sign-in could not be confirmed in this browser. Allow cookies for slop.cash, then start again." }).toMatchObject({ visible: true });
+    await shown(named("button", users.kai.login, { exact: false })).toMatchObject({ count: 0 });
+    expect(await membersOf(users.kai.id)).toEqual([]);
+  });
+});
+
 describe('Interface capability requirements survive responsive and accessibility modes (spec/frontend/projections.md, "Interface capability requirements survive responsive and accessibility modes")', () => {
   it('at 320 px, with reduced motion and 200% text, every account control stays named, reachable from the keyboard and usable', async () => {
     await site.wallets({ evm: { name: "Anvil Wallet" } });

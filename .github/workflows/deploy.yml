@@ -73,6 +73,16 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - uses: ./.github/actions/setup
         with:
           job: restore-discussions
@@ -81,7 +91,7 @@ jobs:
       - run: pnpm all build --filter=@repo/points
       - name: Load the exact trusted main attempt's checkpoint
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           RESUME_RUN: ${{ inputs.discussion_resume_run }}
         run: node apps/points/dist/programs/main.js snapshot restore-discussions
       - name: Pass verified checkpoint to preparation
@@ -116,6 +126,16 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Mint restore token
+        id: restore-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: read
       - uses: ./.github/actions/setup
         with:
           job: restore-collection
@@ -124,7 +144,7 @@ jobs:
       - run: pnpm all build --filter=@repo/operations
       - name: Load the exact trusted main attempt's collected data
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.restore-token.outputs.token || github.token }}
           DATA_RUN: ${{ inputs.data_from_run }}
         run: node apps/operations/dist/programs/main.js release restore-collection "$DATA_RUN" "$RUNNER_TEMP/collected-data"
       - name: Pass verified data to preparation

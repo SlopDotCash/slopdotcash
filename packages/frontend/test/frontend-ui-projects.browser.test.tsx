@@ -121,6 +121,7 @@ describe('Complete project setup with explicit independent readiness (spec/front
     await signIn(users.oli.login, "/projects/new");
     await shown(field("Setup steps")).toMatchObject({ text: expect.stringContaining("Rewards") });
     await shown(closure).toMatchObject({ checked: false });
+    for (const choice of ["Ask outside contributors for a refundable submission fee", "List the issues you most want done", "Ask reporters for a refundable SLOP deposit"]) await shown(named("checkbox", choice)).toMatchObject({ checked: true });
     await fillProject(fullName, "Engine", { x: "@elizaOS" });
     await expect.poll(async () => (await site.read(text("Saving draft…"))).count, { timeout: 30_000 }).toBe(0);
 
@@ -537,6 +538,128 @@ describe('Read only authorized retained evidence (spec/security/privacy.md, "Sto
     await shown(within(named("article", "trace"), named("alert"))).toMatchObject({ visible: true });
     await shown(named("textbox", "trace verified content")).toMatchObject({ count: 0 });
     expect(await site.leaks("tampered trace bytes")).toBe(false);
+  });
+});
+
+const awardPeriod = () => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+};
+
+async function monthlyPool(id: string, owner: User) {
+  const [current] = await site.sql("SELECT revision, manifest FROM projects WHERE id = ?", id);
+  const revision = Number(current?.revision) + 1;
+  const manifest = {
+    ...(parsed(current?.manifest) as Readonly<Record<string, unknown>>),
+    rewardAsset: { network: "base", kind: "stablecoin", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    escrow: { chain: "base", deployments: [] },
+  };
+  const text = JSON.stringify(manifest);
+  const digest = await sha256(text);
+  const now = new Date().toISOString();
+  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, text, digest, "Monthly awards", String(owner.id), owner.login, now);
+  await site.sql("UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", revision, text, digest, now, id);
+}
+
+async function proposeMonth(id: string, rows: ReadonlyArray<readonly [User, string]>) {
+  const period = awardPeriod();
+  const cap = rows.reduce((sum, [, gross]) => sum + BigInt(gross), 0n).toString();
+  await site.sql(
+    "INSERT INTO monthly_reward_bases(project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) SELECT id, ?, manifest, manifest_sha256, ?, ?, ?, ? FROM projects WHERE id = ?",
+    period, "f".repeat(64), cap, rows.length, new Date().toISOString(), id,
+  );
+  for (const [index, [user, gross]] of rows.entries()) {
+    await site.sql("INSERT INTO monthly_reward_base_rows(project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES(?,?,?,?,?,?)", id, period, String(user.id), user.login, gross, String(index + 1).padStart(64, "a"));
+  }
+}
+
+async function openAwards(id: string) {
+  await site.open(`/projects/${encodeURIComponent(id)}/funding`);
+  const awards = named("region", "Monthly awards");
+  await shown(awards).toMatchObject({ visible: true });
+  await site.click(named("button", "Open", { exact: true, within: awards }));
+  await shown({ label: "Contribution month", within: awards }).toMatchObject({ visible: true });
+  return awards;
+}
+
+describe('Edit the month\'s awards with public, noticed cuts (spec/frontend/ownerMonthly.md, "Story: Edit the month\'s awards with public, noticed cuts"; spec/settlement/monthly.md, "Story: Owners change amounts before the freeze, and cuts are public")', () => {
+  it('the owner lowers an award only with a 20 to 500 character public reason, the saved cut survives a reload, and a write maintainer without owner authority sees the month as View only (spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', async () => {
+    const fullName = await repository(users.oli, "awards");
+    const id = await createProject(users.oli, fullName, "Awards");
+    await site.permission(fullName, users.pia.login, "write");
+    await monthlyPool(id, users.oli);
+    await proposeMonth(id, [[users.pia, "3000000"], [users.eli, "2000000"]]);
+
+    const awards = await openAwards(id);
+    const award = named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards });
+    const save = named("button", `Save ${users.pia.login}`, { within: awards });
+    const reason = field("Reason (shown publicly and sent to the contributor)");
+    await shown(award).toMatchObject({ visible: true, disabled: false, value: expect.stringMatching(/^(3|3000000)$/u) });
+    await shown(save).toMatchObject({ disabled: true });
+    const units = (await site.read(award)).value === "3" ? 1_000_000n : 1n;
+
+    await site.fill(award, "1");
+    await shown(reason).toMatchObject({ visible: true });
+    await site.fill(reason, "Too short.");
+    await shown(save).toMatchObject({ disabled: true });
+    const why = "The second half of the change duplicated work already merged in October.";
+    await site.fill(reason, why);
+    await shown(save).toMatchObject({ disabled: false });
+    await site.click(save);
+    await shown({ text: "Saved", exact: true, within: awards }).toMatchObject({ visible: true });
+    await expect
+      .poll(() => site.sql("SELECT github_user_id, proposed_gross_base, gross_base, reason FROM monthly_allocation_cut_reasons WHERE project_id = ? AND period = ?", id, awardPeriod()), { timeout: 30_000 })
+      .toEqual([{ github_user_id: String(users.pia.id), proposed_gross_base: "3000000", gross_base: units.toString(), reason: why }]);
+
+    await openAwards(id);
+    await shown(award).toMatchObject({ value: "1" });
+    await shown(reason).toMatchObject({ count: 0 });
+    expect(await site.sql("SELECT count(*) AS changes FROM monthly_allocation_changes WHERE project_id = ? AND period = ?", id, awardPeriod())).toEqual([{ changes: 1 }]);
+
+    await signOut(users.oli.login);
+    await signIn(users.pia.login, `/projects/${encodeURIComponent(id)}/funding`);
+    const viewed = await openAwards(id);
+    await shown({ text: "View only", exact: true, within: viewed }).toMatchObject({ visible: true });
+    await shown(named("button", `Save ${users.eli.login}`, { within: viewed })).toMatchObject({ count: 0 });
+    expect((await writes(id)).filter((sent) => sent.actor === String(users.pia.id))).toEqual([]);
+  });
+});
+
+describe('Fund, reserve and pay one month through its own vault (spec/settlement/monthlySettlement.md, "Story: Fund, reserve and pay one month through its own vault"; spec/settlement/vaultDeposits.md, "Story: Record every finalized deposit of an ordinary EVM vault once")', () => {
+  it('any wallet deposits into the registered vault from the public project page after reviewing the exact amount, and is never offered a withdrawal (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/settlement/vaultDeposits.md, "A record row is a positive amount of one finalized deposit event")', async () => {
+    const fullName = await repository(users.tia, "vaulted");
+    const id = await createProject(users.tia, fullName, "Vaulted");
+    const deployed = await site.vault({ projectId: id });
+    await signOut(users.tia.login);
+    await site.wallets({ evm: { name: "Anvil Wallet" } });
+    await signIn(users.uma.login, `/projects/${encodeURIComponent(id)}/funding`);
+
+    const escrow = named("region", "Project escrow");
+    const card: Target = { label: "Fund this project ·", exact: false };
+    await shown({ text: "Depositors have no refund right.", within: escrow }).toMatchObject({ visible: true });
+    await shown({ text: "The project owner can withdraw free funds, less a 2% fee.", within: escrow }).toMatchObject({ visible: true });
+    await shown(card).toMatchObject({ count: 0 });
+    await site.click(named("button", "Fund this project", { exact: false, within: escrow }));
+    await shown(card).toMatchObject({ visible: true });
+    await shown({ text: deployed.vault, within: card }).toMatchObject({ count: 1 });
+    await site.click(named("button", "Connect Anvil Wallet", { within: card }));
+    await shown(field("Token amount")).toMatchObject({ visible: true, disabled: false });
+    await shown(field("Deposit tokens")).toMatchObject({ checked: true });
+    await shown(field("Withdraw free funds")).toMatchObject({ count: 0 });
+    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
+    expect(await site.walletAsked()).not.toContainEqual(expect.objectContaining({ method: "eth_sendTransaction" }));
+
+    await site.fill(field("Token amount"), "5");
+    await site.click(named("button", "Review deposit", { within: card }));
+    const review = named("region", "Review vault action", { within: card });
+    await shown(review).toMatchObject({ visible: true });
+    await shown({ text: "Depositors have no refund right.", within: review }).toMatchObject({ visible: true });
+    expect((await site.walletAsked()).filter((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls")).toEqual([]);
+
+    await site.click(named("button", "in wallet", { exact: false, within: review }));
+    await expect.poll(async () => (await site.walletAsked()).some((asked) => asked.method === "eth_sendTransaction" || asked.method === "wallet_sendCalls"), { timeout: 30_000 }).toBe(true);
+    await shown({ text: "Withdraw free funds" }).toMatchObject({ count: 0 });
   });
 });
 

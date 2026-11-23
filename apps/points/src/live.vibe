@@ -6,11 +6,12 @@ import { disputeRoutes } from "./disputes/routes.vibe"
 import { contributorAudience } from "./journal/audience.vibe"
 import { ProtectedMonthsRoutes } from "./publication/protectedRoute.vibe"
 import { journalRoutes } from "./publication/routes.vibe"
+import { type CloseoutMonth, closeoutLedger, currentPointsBatch } from "./rewardWeights/closeout.vibe"
 import { ClosedMonthLive } from "./rewardWeights/live.vibe"
 
 export { DisputeTriage, SourceUnverified, type Lease, type Triage, type TriageOutcome, disputeSource, disputeTriage, pendingDisputes, triageDispute } from "./disputes/port.vibe"
 export { type ProtectedMonthsVars, protectedMonthsAccess } from "./publication/protectedRoute.vibe"
-export { ClosedMonthLive, contributorAudience, disputeAudience }
+export { ClosedMonthLive, type CloseoutMonth, closeoutLedger, contributorAudience, currentPointsBatch, disputeAudience }
 
 export const points = area({
   name: "points",

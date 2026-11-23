@@ -2,7 +2,7 @@
 import { expect } from "vitest";
 import { commands } from "vitest/browser";
 import { loginPath } from "../../../src/platform/environment.ts";
-import type { Diagnostics, Op, Result, Role, Target, WalletSetup } from "./protocol.ts";
+import type { Diagnostics, Op, Result, Role, Target, Upload, WalletSetup } from "./protocol.ts";
 
 export const origin = "https://slop.cash";
 const journeyMs = 30_000;
@@ -24,6 +24,8 @@ export const site = {
   read: (target: Target) => ask({ kind: "read", target }),
   focused: () => ask({ kind: "focused" }),
   refocus: () => ask({ kind: "refocus" }),
+  blockCookies: () => ask({ kind: "blockCookies" }),
+  upload: (target: Target, file: Upload) => ask({ kind: "upload", target, file }),
   fetch: (method: "GET" | "POST", path: string, body?: unknown) => ask({ kind: "fetch", method, path, ...(body === undefined ? {} : { body }) }),
   leaks: (text: string) => ask({ kind: "leaks", text }),
   hold: (method: string, path: string) => ask({ kind: "hold", method, path }),

@@ -1,0 +1,37 @@
+{
+  "name": "slop-submission-fee",
+  "main": "../dist/submissionFee.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": ["*/5 * * * *", "7 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "SUBMISSION_FEE_DB",
+      "database_name": "slop-private",
+      "database_id": "1b453124-2709-45af-8389-151a8105c461",
+      "migrations_dir": "../../../migrations"
+    }
+  ],
+  "vars": {
+    "SLOP_ENVIRONMENT": "production",
+    "SUBMISSION_FEE_MODE": "live",
+    "SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI": "200000000000000",
+    "SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI": "2000000000000000"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "expectedSecrets": [],
+  "optionalSecrets": [
+    "SUBMISSION_FEE_RESOLVER_KEY",
+    "RPC_URL_SUBMISSION_FEE_BASE",
+    "RPC_URL_SUBMISSION_FEE_ROBINHOOD"
+  ]
+}

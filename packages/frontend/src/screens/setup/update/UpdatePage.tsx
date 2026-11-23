@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
+// spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/backend/projects.md, "A current repository administrator moves the integration branch with a committed declaration"
 import type { SetupStatus } from "@repo/backend/client";
 import { Alert, Button, NotFound, PageHeader, StatusIcon } from "@repo/ui";
 import { Exit } from "effect";
@@ -27,6 +27,7 @@ import { failureMessage, useRun } from "../proposal/run.ts";
 import { SetupStatusPanel } from "../status/SetupStatusPanel.tsx";
 import { type CurrentRevision, currentRevision, publishUpdate, removeManaged, revisionUnreadable } from "./actions.vibe";
 import { ChangeReview } from "./ChangeReview.tsx";
+import { useIntegrationBranch } from "./IntegrationBranch.tsx";
 import { type EditStore, useEdit, useEditStore } from "./editStore.ts";
 import type { PendingRepository } from "./manifest.schema.ts";
 import { ProjectRemoved, RemoveProject } from "./RemoveProject.tsx";
@@ -102,6 +103,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
   const [addition, setAddition] = useState<Addition>({ state: "idle" });
   const inFlight = useRef(false);
   const lookups = useRef(0);
+  const branch = useIntegrationBranch(runtime);
   const current = published !== undefined && published.revision >= base.revision ? published : base;
   const managed = managedOf(current.revision, current.manifest);
   if (managed === undefined)
@@ -112,7 +114,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     );
   const { manifest } = managed;
   if (removal.status === "removed") return <ProjectRemoved name={manifest.name} />;
-  const review = reviewOf(managed, edit, new Date());
+  const review = reviewOf(managed, edit, new Date(), branch.change);
   const valid = Object.keys(review.errors).length === 0;
   const publishing = submission.status === "publishing";
   const shown = (field: string) => (attempted ? review.errors[field] : undefined);
@@ -132,7 +134,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
     const submitted = edit;
     inFlight.current = true;
     setSubmission({ status: "publishing" });
-    const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId }));
+    const exit = await runtime.runPromiseExit(publishUpdate({ projectId: base.projectId, manifest: review.next, expectedRevision: managed.revision, monthlyAmount: review.monthlyAmount, actor: actorId, branch: review.branchRequest }));
     inFlight.current = false;
     if (Exit.isSuccess(exit)) {
       const { project, setup: answered } = exit.value;
@@ -141,11 +143,13 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
       setSetup(answered);
       store.update((latest) => afterPublish(latest, submitted, repositoryIds(project.manifest), project.revision));
       setAttempted(false);
+      if (review.branchRequest !== undefined) branch.clear();
       return setSubmission({ status: "published", revision: project.revision, vaultSetup: after !== undefined && !isBountyOnly(after) && after.escrow !== undefined && after.escrow.deployments.length === 0 });
     }
     const failure = Exit.findErrorOption(exit);
     const refused = failure._tag === "Some" && failure.value._tag === "EditorRefused" ? failure.value : undefined;
     if (refused?.accessLost) return onAccessLost();
+    if (refused?.branchMoved) branch.clear();
     setSubmission({ status: "failed", message: refused?.message ?? failureMessage(exit.cause, "Publication could not be confirmed."), staleRevision: refused?.staleRevision ?? false });
   };
 
@@ -211,6 +215,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
         }}
         onAdd={() => void add()}
         publishing={publishing}
+        branch={branch}
       />
       {review.stale ? (
         <Alert variant="destructive">

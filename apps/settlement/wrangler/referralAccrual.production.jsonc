@@ -12,7 +12,7 @@
     { "binding": "REFERRAL_DB", "database_name": "slop-private", "database_id": "1b453124-2709-45af-8389-151a8105c461", "migrations_dir": "../../../migrations" }
   ],
   "vars": {
-    "REFERRAL_ACCRUAL_MODE": "Off",
+    "REFERRAL_ACCRUAL_MODE": "DryRun",
     "REFERRAL_FIRST_PERIOD": "2026-11",
     "REFERRAL_RATE_BASE_PER_MICRO": "3000000000000",
     "REFERRAL_TOKEN_DECIMALS": "18",
@@ -22,9 +22,14 @@
     "REFERRAL_EXCLUDED_GITHUB_IDS": "18633264,202660855",
     "ADMIN_GITHUB_IDS": "18633264,202660855",
     "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
-    "REFERRAL_POST_NETWORK": "robinhood-testnet"
+    "REFERRAL_DISTRIBUTOR_ADDRESS": "0x6a24e993e59cba950c6f91a964bef2a5f91227cc",
+    "REFERRAL_TOKEN_ADDRESS": "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae",
+    "REFERRAL_DEPLOYMENT_BLOCK": "111162445",
+    "REFERRAL_DISTRIBUTOR_CODE_HASH": "0xefde415000d56976d6320dc6efd6d1c262eb7a8bcd83e247b708fa11173c10e4",
+    "REFERRAL_POST_NETWORK": "robinhood-mainnet"
   },
   "expectedSecrets": [],
+  "optionalSecrets": ["REFERRAL_POSTER_KEY", "RPC_URL_REFERRAL"],
   "observability": {
     "enabled": true,
     "logs": { "invocation_logs": false }
