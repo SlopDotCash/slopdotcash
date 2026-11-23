@@ -70,7 +70,8 @@ export schema Contribution {
 }
 export schema RewardAsset { network: string; address: string; decimals: number }
 export schema PayoutExclusion { actorId: string; relationship: "owner" | "funded-employee" | "related-party"; fromCycle: string; untilCycle: string | null }
-export schema Reward { kind?: string; chain: string | null; fundingState: string; committedMinor: string; monthlyCapMinor?: string; paymentMode: string; honorSystem?: boolean; payoutExclusions?: ReadonlyArray<PayoutExclusion> }
+export schema ShareRecord { throughCycle: string; basisPoints: number }
+export schema Reward { kind?: string; chain: string | null; fundingState: string; committedMinor: string; monthlyCapMinor?: string; paymentMode: string; honorSystem?: boolean; maintainerShare?: number; maintainerShareHistory?: ReadonlyArray<ShareRecord>; payoutExclusions?: ReadonlyArray<PayoutExclusion> }
 export schema Entry {}
 export schema Escrow { deployments?: ReadonlyArray<Entry> }
 export schema Funding { addresses?: ReadonlyArray<Entry>; commitments?: ReadonlyArray<Entry> }

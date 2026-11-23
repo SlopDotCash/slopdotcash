@@ -176,7 +176,7 @@ describe('An identity refresh applies only within the navigation lifetime that r
 });
 
 describe('Replace a payout wallet without losing the current destination (spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place")', () => {
-  it('the picker cancels without a wallet request, a rejection registers nothing, and a change is registered only on Register (spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row")', async () => {
+  it('the picker cancels without a wallet request, a rejection registers nothing, a change is registered only on Register, and a reserved award\'s payout consent shows its vault and the registered wallet before any signature and leaves the award reserved when closed (spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version")', async () => {
     await site.wallets({ evm: { name: "Anvil Wallet" }, solana: { name: "Ed25519 Wallet" } });
     await signIn(users.kai.login, "/account#wallets");
     const connect = named("button", "Connect EVM wallet");
@@ -231,8 +231,34 @@ describe('Replace a payout wallet without losing the current destination (spec/b
     await site.open("/account#wallets");
     await shown(solanaCard).toMatchObject({ text: expect.stringContaining((await site.walletAddresses()).solana ?? "") });
 
+    const vault = `0x${"2".repeat(40)}`;
+    const obligation = "obligation-consent";
+    await site.sql(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,'consent-kit',?,'base-mainnet','base',?,'0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',6,'1000000','20000',?,'reserved',?)",
+      obligation,
+      String(users.kai.id),
+      vault,
+      "a".repeat(64),
+      new Date().toISOString(),
+    );
+    const signatures = async () => (await site.walletAsked()).filter((asked) => asked.method === "personal_sign" || asked.method === "eth_signTypedData_v4").length;
+    const signedBefore = await signatures();
     await site.open("/earnings");
     await shown(named("heading", "Payouts", { level: 1 })).toMatchObject({ visible: true });
+    const authorize = named("button", "Authorize payout wallet");
+    const review = named("dialog", "Authorize payout wallet");
+    await site.click(authorize);
+    await shown(named("group", "Vault", { within: review })).toMatchObject({ visible: true, text: vault });
+    expect((await site.read(named("group", "Your wallet", { within: review }))).text.toLowerCase()).toBe(second.toLowerCase());
+    await shown(named("img", "Base", { within: review })).toMatchObject({ visible: true });
+    await shown(named("button", "Sign with Anvil Wallet", { within: review })).toMatchObject({ visible: true, disabled: false });
+    await shown({ text: "Paid", exact: true }).toMatchObject({ count: 0 });
+    expect(await signatures()).toBe(signedBefore);
+    await site.press("Escape");
+    await shown(review).toMatchObject({ count: 0 });
+    await expect.poll(() => site.focused()).toMatchObject({ name: "Authorize payout wallet" });
+    expect(await signatures()).toBe(signedBefore);
+    expect(await site.sql("SELECT state FROM payment_obligations WHERE id = ?", obligation)).toEqual([{ state: "reserved" }]);
   });
 });
 

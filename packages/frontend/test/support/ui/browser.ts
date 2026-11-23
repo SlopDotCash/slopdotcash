@@ -2,7 +2,7 @@
 import { expect } from "vitest";
 import { commands } from "vitest/browser";
 import { loginPath } from "../../../src/platform/environment.ts";
-import type { Diagnostics, Op, Result, Role, Target, Upload, WalletSetup } from "./protocol.ts";
+import type { Bucket, Diagnostics, InstallationSetup, Method, Op, Permission, RepositorySetup, Result, Role, Roles, Target, Upload, WalletSetup } from "./protocol.ts";
 
 export const origin = "https://slop.cash";
 const journeyMs = 30_000;
@@ -14,19 +14,29 @@ export const named = (role: Role, name?: string, more: Omit<Target, "role" | "na
 export const site = {
   start: () => ask({ kind: "start" }),
   user: (id: number, login: string) => ask({ kind: "user", id, login }),
+  deploy: (roles: Roles) => ask({ kind: "deploy", roles }),
+  repository: (setup: RepositorySetup) => ask({ kind: "repository", setup }),
+  permission: (repository: string, login: string, level: Permission) => ask({ kind: "permission", repository, login, level }),
+  installation: (setup: InstallationSetup) => ask({ kind: "installation", setup }),
+  githubFail: (path: string, status: number) => ask({ kind: "githubFail", path, status }),
+  scanner: (method: Method, path: string, body: string) => ask({ kind: "scanner", method, path, body }),
+  object: (bucket: Bucket, key: string, text: string) => ask({ kind: "object", bucket, key, text }),
+  vault: ({ projectId }: { readonly projectId: string }) => ask({ kind: "vault", projectId }),
   github: (login: string) => ask({ kind: "github", login }),
   open: (path: string, tab?: string) => ask({ kind: "open", path, ...(tab === undefined ? {} : { tab }) }),
   tab: (tab: string) => ask({ kind: "tab", tab }),
   where: () => ask({ kind: "where" }),
   click: (target: Target) => ask({ kind: "click", target }),
   fill: (target: Target, value: string) => ask({ kind: "fill", target, value }),
+  select: (target: Target, label: string) => ask({ kind: "select", target, label }),
   press: (keys: string) => ask({ kind: "press", keys }),
   read: (target: Target) => ask({ kind: "read", target }),
   focused: () => ask({ kind: "focused" }),
   refocus: () => ask({ kind: "refocus" }),
   blockCookies: () => ask({ kind: "blockCookies" }),
   upload: (target: Target, file: Upload) => ask({ kind: "upload", target, file }),
-  fetch: (method: "GET" | "POST", path: string, body?: unknown) => ask({ kind: "fetch", method, path, ...(body === undefined ? {} : { body }) }),
+  fetch: (method: Method, path: string, body?: unknown) => ask({ kind: "fetch", method, path, ...(body === undefined ? {} : { body }) }),
+  download: () => ask({ kind: "download" }),
   leaks: (text: string) => ask({ kind: "leaks", text }),
   hold: (method: string, path: string) => ask({ kind: "hold", method, path }),
   release: (method: string, path: string) => ask({ kind: "release", method, path }),

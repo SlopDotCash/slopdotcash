@@ -87,4 +87,7 @@ effect function answer() {
   }
 }
 
-export const ReferredProjectRoutes = HttpRouter.add("*", `${referredProjects.path}/*`, answered(answer()))
+export const ReferredProjectRoutes = Layer.mergeAll(
+  HttpRouter.add("*", referredProjects.path, answered(answer())),
+  HttpRouter.add("*", `${referredProjects.path}/*`, answered(answer())),
+)

@@ -1,6 +1,6 @@
 // spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
 import { isoNow } from "@repo/platform/clock"
-import { type Statement, sql } from "@repo/platform/d1"
+import { sql } from "@repo/platform/d1"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
 import type { Network } from "../../gen/fees__runtime.ts"
@@ -10,7 +10,7 @@ import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type Di
 import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { EVM_NATIVE_ASSET, NETWORKS } from "../kernels/networks.ts"
 import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
-import { type Facts, type Journal, asAmount, commit, currentIntent, decided, directModel, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
+import { type Alongside, type Facts, type Journal, asAmount, commit, currentIntent, decided, directModel, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
 
 export interface CaseContext {
   readonly caseId: string
@@ -118,7 +118,7 @@ function consentedTo(journal: Journal, deployment: string) {
   return latest !== undefined && JSON.stringify(latest.deployment) === deployment
 }
 
-export effect function consentPayment(context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function consentPayment(context: CaseContext, body: ConsentPaymentBody, alongside: Alongside) {
   if (body.confirmation !== true) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
   const award = try directAward(context.caseId)
   const existing = try journalFor(context.caseId)
@@ -151,7 +151,7 @@ export effect function consentPayment(context: CaseContext, body: ConsentPayment
   }, alongside)
 }
 
-effect function refreshed(context: CaseContext, award: ApprovedAward, network: string, alongside: ReadonlyArray<Statement>) {
+effect function refreshed(context: CaseContext, award: ApprovedAward, network: string, alongside: Alongside) {
   return try commit(context.caseId, (current) => effect {
     const intent = currentIntent(current)
     if (intent === undefined || current.paid) return try refuse("paymentNotPending")
@@ -167,7 +167,7 @@ effect function refreshed(context: CaseContext, award: ApprovedAward, network: s
   }, alongside)
 }
 
-export effect function preparePayment(context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function preparePayment(context: CaseContext, body: PreparePaymentBody, alongside: Alongside) {
   if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheExact75")
   const award = try directAward(context.caseId)
   const existing = try journalFor(context.caseId)
@@ -245,7 +245,7 @@ export function receiptEvent(state: DirectBounty, transfers: ReadonlyArray<Trans
     : { type: "recordTransfer", transfer: transfers[0] ?? noTransfer, ...progress }
 }
 
-export effect function verifyPayment(context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) {
+export effect function verifyPayment(context: CaseContext, body: VerifyPaymentBody, alongside: Alongside) {
   if (body.confirmation !== true || body.transactionIds.length < 1 || body.transactionIds.length > 2) return try refuse("invalidRequestConfirmOneOrTwo")
   const existing = try journalFor(context.caseId)
   const prepared = currentIntent(existing)

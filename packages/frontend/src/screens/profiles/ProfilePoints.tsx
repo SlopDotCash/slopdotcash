@@ -3,6 +3,7 @@ import type { XProfile } from "@repo/backend/client";
 import type { ProfileIndex } from "@repo/points/client";
 import { DataState, NotFound } from "@repo/ui";
 import type { ReactNode } from "react";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { Shown } from "../home/listing.ts";
 import { XAccountLink } from "../points/People.tsx";
 import type { StandingHistory } from "../points/standings.ts";
@@ -59,7 +60,11 @@ export function ProfilePoints({ login, actorId, census, history, own, joined, jo
   const resolved = actorId ?? identity?.actor.id ?? recorded?.id;
   const member = resolved ? members.find((entry) => entry.actor.id === resolved) : named.length === 1 ? named[0] : undefined;
   if (notFoundWhenUnrecorded && ready && census.value !== undefined && joinStatus === "absent" && !own && !member && !recorded && named.length === 0) {
-    return <NotFound as="section" title="Contributor not found" />;
+    return (
+      <NotFound as="section" title="Contributor not found">
+        <NotFoundHead />
+      </NotFound>
+    );
   }
   return (
     <section aria-label="Slop Points" className="flex flex-col gap-6">

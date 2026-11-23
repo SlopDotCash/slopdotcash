@@ -1,0 +1,183 @@
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+import { GitHub } from "@repo/platform/github"
+import type { Journal } from "../../../kernels/records/canonical.ts"
+import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
+import { valueReferenceQuery } from "../../collect/cache.vibe"
+import { refusal } from "../packet.vibe"
+import type { Row } from "../audit/catalog.vibe"
+import type { HistoricalAssessmentReceipt } from "../audit/reconcile.vibe"
+import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
+import { apply, catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
+import { latestOf } from "./latest.vibe"
+
+export type VerifiedClosedFinding = "verified-closed-context" | "verified-standalone-closed-review"
+
+export interface JointCandidate {
+  readonly source: Row
+  readonly standalone: boolean
+}
+
+export interface HistoricalEvidence {
+  readonly removed: ReadonlySet<string>
+  readonly verifiedClosed: ReadonlyMap<string, VerifiedClosedFinding>
+}
+
+export interface HistoricalArchiveScope {
+  readonly baseline: Journal
+  readonly integrationBranch: string | undefined
+}
+
+const sha = /^[a-f0-9]{40}$/u
+const closedContextQuery = "query HistoricalClosedContext($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest{id number state closed merged mergedAt mergeCommit{oid} closedAt headRefOid repository{id databaseId isPrivate nameWithOwner}}}}"
+const missingItem: ReadonlyArray<ReadonlyArray<string>> = [["repository", "issueOrPullRequest"]]
+const dispatch = "TrustedMainDispatch" as const
+const closedBatch = 30
+
+function fields(value: unknown): Row {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Row : {}
+}
+
+function list(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
+}
+
+function time(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+}
+
+function sameInstant(left: unknown, right: unknown) {
+  return time(left) && time(right) && Date.parse(left) === Date.parse(right)
+}
+
+export function isHistoricalClosedFinding(finding: string): finding is VerifiedClosedFinding {
+  return finding === "verified-closed-context" || finding === "verified-standalone-closed-review"
+}
+
+export function isStandaloneHistoricalReview(record: Row) {
+  const sources = list(record.sources).map(fields)
+  const units = list(record.units).map(fields)
+  const [source] = sources
+  const [unit] = units
+  const assessment = fields(unit?.assessment)
+  return sources.length === 1 && source !== undefined && source.indirectAcceptance === undefined && source.mergeRecipe === undefined &&
+    time(source.occurredAt) && time(record.assessedAt) && Date.parse(source.occurredAt) <= Date.parse(record.assessedAt) &&
+    Array.isArray(record.claims) && record.claims.length === 0 && units.length === 1 && Array.isArray(unit?.claimIds) && list(unit?.claimIds).length === 0 &&
+    assessment.status === "assessed" && assessment.tier === null && Array.isArray(assessment.reviews) && list(assessment.reviews).length > 0
+}
+
+effect function unless(holds: boolean) {
+  if (!holds) throw refusal("Historical assessment catalog: removed accepted merge evidence differs")
+}
+
+effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
+  const removed = new Set<string>()
+  const branch = archive.integrationBranch
+  if (branch === undefined || branch === "") return removed
+  const github = try GitHub
+  const matching = new Map<string, Set<string>>()
+  for (const { award } of latestOf(archive.baseline.revisions).values()) {
+    if (award.projectId !== projectId || award.category !== "merged-pull-request" || award.amount <= 0) continue
+    const occurrences = matching.get(award.sourceId) ?? new Set<string>()
+    occurrences.add(`${award.sourceUrl.toLowerCase()}\u0000${new Date(award.occurredAt).toISOString()}`)
+    matching.set(award.sourceId, occurrences)
+  }
+  for (const { source, standalone } of candidates) {
+    const repository = String(source.repository)
+    const number = Number(source.pullRequestNumber)
+    const id = String(source.pullRequestNodeId)
+    const mergeSha = typeof source.mergeSha === "string" ? source.mergeSha : null
+    const root = `/repos/${repository}`
+    const occurrence = `https://github.com/${repository.toLowerCase()}/pull/${number}\u0000${new Date(String(source.occurredAt)).toISOString()}`
+    if (standalone || mergeSha === null || matching.get(id)?.has(occurrence) !== true) continue
+    if ((try github.status(`${root}/pulls/${number}`)) !== 404) continue
+    const [owner = "", name = ""] = repository.split("/")
+    const answer = fields(try github.graphql(valueReferenceQuery, { owner, name, number }, Schema.Unknown, { absent: missingItem }))
+    const found = fields(answer.repository)
+    try unless(found.id === source.repositoryNodeId && found.isPrivate === false && String(found.nameWithOwner ?? "").toLowerCase() === repository.toLowerCase() &&
+      found.issueOrPullRequest === null)
+    const merge = fields(try github.json(`${root}/git/commits/${mergeSha}`, Schema.Unknown))
+    const parents = list(merge.parents).map(fields)
+    try unless(merge.sha === mergeSha && parents.length === 2 && typeof parents[0]?.sha === "string" && sha.test(parents[0].sha) && parents[1]?.sha === source.headSha)
+    const tip = fields(try github.json(`${root}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`, Schema.Unknown))
+    const object = fields(tip.object)
+    try unless(tip.ref === `refs/heads/${branch}` && object.type === "commit" && typeof object.sha === "string" && sha.test(object.sha))
+    const comparison = fields(try github.json(`${root}/compare/${mergeSha}...${String(object.sha)}?per_page=1`, Schema.Unknown))
+    try unless((comparison.status === "ahead" || comparison.status === "identical") && comparison.behind_by === 0 &&
+      fields(comparison.base_commit).sha === mergeSha && fields(comparison.merge_base_commit).sha === mergeSha)
+    removed.add(id)
+  }
+  return removed
+}
+
+function closedLifecycle(observed: Row, source: Row) {
+  const repository = fields(observed.repository)
+  return observed.__typename === "PullRequest" && observed.id === source.pullRequestNodeId && observed.number === source.pullRequestNumber &&
+    observed.state === "CLOSED" && observed.closed === true && observed.merged === false && observed.mergedAt === null && observed.mergeCommit === null &&
+    sameInstant(observed.closedAt, source.occurredAt) && observed.headRefOid === source.headSha && repository.id === source.repositoryNodeId &&
+    repository.databaseId === source.repositoryDatabaseId && repository.isPrivate === false &&
+    String(repository.nameWithOwner ?? "").toLowerCase() === String(source.repository).toLowerCase()
+}
+
+function restLifecycle(rest: Row, source: Row) {
+  const base = fields(fields(rest.base).repo)
+  return rest.number === source.pullRequestNumber && rest.node_id === source.pullRequestNodeId && rest.state === "closed" && rest.merged === false &&
+    rest.merged_at === null && rest.merge_commit_sha === (source.mergeSha ?? null) && sameInstant(rest.closed_at, source.occurredAt) &&
+    fields(rest.head).sha === source.headSha && base.node_id === source.repositoryNodeId && base.id === source.repositoryDatabaseId && base.private === false
+}
+
+effect function closedContexts(candidates: ReadonlyArray<JointCandidate>) {
+  const github = try GitHub
+  const verified = new Map<string, VerifiedClosedFinding>()
+  for (let offset = 0; offset < candidates.length; offset += closedBatch) {
+    const batch = candidates.slice(offset, offset + closedBatch)
+    const answer = fields(try github.graphql(closedContextQuery, { ids: batch.map(({ source }) => source.pullRequestNodeId) }, Schema.Unknown))
+    const nodes = list(answer.nodes)
+    if (!Array.isArray(answer.nodes) || nodes.length !== batch.length) throw refusal("Historical assessment catalog: closed context read is incomplete")
+    for (const [index, { source, standalone }] of batch.entries()) {
+      if (!closedLifecycle(fields(nodes[index]), source)) continue
+      if (standalone || (source.mergeSha ?? null) !== null) {
+        const rest = fields(try github.json(`/repos/${String(source.repository)}/pulls/${Number(source.pullRequestNumber)}`, Schema.Unknown))
+        if (!restLifecycle(rest, source)) continue
+      }
+      verified.set(String(source.pullRequestNodeId), standalone ? "verified-standalone-closed-review" : "verified-closed-context")
+    }
+  }
+  return verified
+}
+
+export function historicalEvidence(archive: HistoricalArchiveScope, projectId: string) {
+  return (candidates: ReadonlyArray<JointCandidate>) => effect {
+    const removed = try removedMerges(candidates, archive, projectId)
+    const verifiedClosed = try closedContexts(candidates.filter(({ source }) => !removed.has(String(source.pullRequestNodeId))))
+    return { removed, verifiedClosed } satisfies HistoricalEvidence
+  }
+}
+
+export function historicalClosedContextBindings(receipt: Pick<HistoricalAssessmentReceipt, "records">) {
+  return new Map(receipt.records.flatMap(({ digest, sources }) => {
+    const retainedMergeHold = sources.some(({ finding }) => finding === "retained-removed-merge")
+    return sources.filter(({ finding }) => isHistoricalClosedFinding(finding)).map(({ id, number, headSha, occurredAt, finding }) => [id, {
+      digest,
+      number,
+      headSha,
+      occurredAt,
+      ...(retainedMergeHold ? { retainedMergeHold: true as const } : {}),
+      ...(finding === "verified-standalone-closed-review" ? { standaloneReview: true as const } : {}),
+    } satisfies HistoricalClosedBinding] as const)
+  }))
+}
+
+export effect function boundCut(state: AssessmentAudit, receipt: HistoricalAssessmentReceipt) {
+  if (!catalogsComplete(state)) return state
+  let bound = state
+  for (const record of receipt.records) {
+    for (const source of record.sources) {
+      if (source.finding === "retained-removed-merge") bound = try apply(bound, { type: "bindRemovedMerge", removal: goodRemoval }, dispatch)
+      if (source.finding === "verified-closed-context") bound = try apply(bound, { type: "bindClosureReview", closure: goodClosure }, dispatch)
+      if (source.finding === "verified-standalone-closed-review") {
+        bound = try apply(bound, { type: "bindClosureReview", closure: { ...goodClosure, auditedMergedAnchor: false, standaloneReviewOnlyRecord: true } }, dispatch)
+      }
+    }
+  }
+  return bound
+}

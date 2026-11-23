@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/cases.md, "A report that waits for its deposit is its reporter's alone"
 import type { R2Bucket } from "@repo/platform/bindings"
 import { D1, first, sql } from "@repo/platform/d1"
 import { isoNow } from "@repo/platform/clock"
@@ -9,6 +9,7 @@ import type { AppealState, PrivateCase, RelatedReview, Submission } from "../../
 import { type Event, decodeState, initial, machineOver, receivedCase } from "../../gen/security__privacy.effect.vibe"
 import { type CaseAuthority, type ProgramApprovers, caseAuthority, sameRoles } from "../caseAuthority/snapshot.vibe"
 import { getSecuritySubmissionsById as submissionRead } from "../client/refusals.vibe"
+import { depositHeldOn } from "../deposit/hold.ts"
 
 export service ReportBucket { readonly binding: R2Bucket }
 
@@ -35,7 +36,7 @@ export interface ReportBody {
   readonly bytes: Uint8Array
 }
 
-schema CaseRow { project_id: string; reporter_github_id: string; submission_state: string; appeal_state: string; related_party_review: string }
+schema CaseRow { project_id: string; reporter_github_id: string; submission_state: string; appeal_state: string; related_party_review: string; deposit_held: number }
 schema IntakeRow { submission_id: string; report_version: number }
 schema ReportReference { object_key: string; content_sha256: string; byte_count: number }
 
@@ -57,6 +58,7 @@ function caseOf(row: CaseRow, roles: CaseAuthority): PrivateCase {
     triagers: [...roles.triagers],
     appeal: appeals[row.appeal_state] ?? "NoAppeal",
     relatedReview: reviews[row.related_party_review] ?? "ReviewNotApplicable",
+    depositHeld: row.deposit_held === 1,
   }
 }
 
@@ -79,7 +81,7 @@ export effect function reportBytes(submissionId: string, version: number) {
 
 export effect function readReport(request: ReportRead) {
   const unreadable = new ReportUnreadable({ caseId: request.caseId })
-  const found = try first(CaseRow, sql`SELECT project_id,reporter_github_id,submission_state,appeal_state,related_party_review FROM security_cases WHERE id=${request.caseId}`)
+  const found = try first(CaseRow, sql`SELECT project_id,reporter_github_id,submission_state,appeal_state,related_party_review,${depositHeldOn("security_cases.id")} AS deposit_held FROM security_cases WHERE id=${request.caseId}`)
   const intake = try first(IntakeRow, sql`SELECT submission_id,report_version FROM security_submission_intake WHERE case_id=${request.caseId}`)
   const viewer = githubNumber(request.viewerGithubId)
   if (found === undefined || intake === undefined || viewer === 0) throw unreadable

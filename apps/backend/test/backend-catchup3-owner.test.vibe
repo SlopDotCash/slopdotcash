@@ -59,11 +59,12 @@ const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const world = try World
   const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
   return areaLayer({
-    root: new URL("..", import.meta.url).pathname,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     d1: { SLOP_DB: "slop-private" },
     vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl },
-    services: { SLOPBOT: (request) => world.slopbot(request) },
+    services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: () => new Response("Not found", { status: 404 }) },
     internet: world.net,
   })
 }), Built)

@@ -1,0 +1,393 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { gitAt, gitBytes } from "@repo/platform/git"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { github } from "@repo/platform/github"
+import type { CorrectionSource } from "../src/corrections/apply/manifest.vibe"
+import { type IdenticalAcceptedChange, type PacketRetirement, type SourceAudit, digestText } from "../src/corrections/reviewed/packet.vibe"
+import { type RetirementScope, verifyCarrierTips, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges } from "../src/corrections/reviewed/verify.vibe"
+
+const repository = { id: 1, node_id: "R_feed", private: false, full_name: "feedforagents/feed" }
+const root = `/repos/${repository.full_name}`
+const identities = {
+  GIT_AUTHOR_NAME: "Fixture",
+  GIT_AUTHOR_EMAIL: "fixture@example.test",
+  GIT_AUTHOR_DATE: "1794088867 +0000",
+  GIT_COMMITTER_NAME: "Fixture",
+  GIT_COMMITTER_EMAIL: "fixture@example.test",
+  GIT_COMMITTER_DATE: "1794088900 +0000",
+}
+const old = "existing\n"
+const changed = `${old}accepted\n`
+const workPath = ":(exclude)literal[1].ts"
+
+type Files = Readonly<Record<string, string>>
+type Route = (reads: number) => unknown
+
+interface Remote {
+  readonly gitDir: string
+  readonly log: string
+  readonly routes: Map<string, Route>
+  readonly reads: Map<string, number>
+}
+
+interface FixturePull {
+  readonly number: number
+  readonly node_id: string
+  readonly merged_at: string
+  readonly commits: number
+  base: { sha: string; readonly ref: string; readonly repo: typeof repository }
+  readonly head: { readonly sha: string }
+  merge_commit_sha: string
+  readonly changed_files: number
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function messageOf(failure: unknown) {
+  return typeof failure === "object" && failure !== null && "message" in failure ? String((failure as { readonly message: unknown }).message) : String(failure)
+}
+
+effect function fixtureGit(gitDir: string, args: ReadonlyArray<string>, input?: string) {
+  const bytes = try gitBytes({ args: ["--git-dir", gitDir, ...args], env: identities, ...(input === undefined ? {} : { input }), limit: 16 * 1024 * 1024, seconds: 60 }, `git ${args[0] ?? ""} failed`)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function commit(gitDir: string, message: string, files: Files, parents: ReadonlyArray<string>) {
+  const entries: string[] = []
+  for (const path of Object.keys(files).sort()) entries.push(`100644 blob ${try fixtureGit(gitDir, ["hash-object", "-w", "--stdin"], files[path] ?? "")}\t${path}`)
+  const tree = try fixtureGit(gitDir, ["mktree"], entries.length === 0 ? "" : `${entries.join("\n")}\n`)
+  return try fixtureGit(gitDir, ["commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-m", message])
+}
+
+effect function changeDigest(gitDir: string, base: string, head: string) {
+  return sha256Of(try gitBytes({ args: ["--git-dir", gitDir, "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--"], limit: 16 * 1024 * 1024, seconds: 60 }, "git diff failed"))
+}
+
+effect function remote() {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-k7-" })
+  const gitDir = `${directory}/remote.git`
+  const log = `${directory}/fetches.log`
+  const wrapper = `${directory}/fixture-git`
+  try fs.writeFileString(wrapper, [
+    "#!/bin/sh",
+    "for last in \"$@\"; do :; done",
+    "if [ \"$last\" = \"--version\" ]; then echo \"git version 2.56.0\"; exit 0; fi",
+    `for arg in "$@"; do if [ "$arg" = fetch ]; then echo "$*" >> "${log}"; fi; done`,
+    `exec git -c protocol.file.allow=always -c "url.${gitDir}.insteadOf=https://github.com/${repository.full_name}.git" "$@"`,
+    "",
+  ].join("\n"))
+  try fs.chmod(wrapper, 0o755)
+  try fs.writeFileString(log, "")
+  return { gitDir, log, wrapper }
+}
+
+function api(server: Remote) {
+  return HttpClient.make((request) => {
+    const path = request.url.replace("https://api.github.com", "")
+    const reads = (server.reads.get(path) ?? 0) + 1
+    server.reads.set(path, reads)
+    const body = server.routes.get(path)?.(reads)
+    const response = new globalThis.Response(JSON.stringify(body ?? { message: "Not Found" }), { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } })
+    return succeed(HttpClientResponse.fromWeb(request, response))
+  })
+}
+
+effect function attempt<A, E, R>(server: Remote, run: A!E!R) {
+  server.reads.clear()
+  provide Layer.provide(github({ userAgent: "slop-points-test" }), Layer.succeed(HttpClient.HttpClient, api(server))) {
+    return run catch effect (failure) => messageOf(failure)
+  }
+}
+
+effect function fetches(server: Remote) {
+  const fs = try FileSystem.FileSystem
+  return (try fs.readFileString(server.log)).split("\n").filter((line) => line !== "")
+}
+
+function pullOf(source: CorrectionSource, pull: FixturePull) {
+  return { ...pull, state: "closed", html_url: source.sourceUrl, user: { node_id: source.author?.id ?? "", type: source.author?.kind ?? "" } }
+}
+
+function auditOf(pulls: ReadonlyArray<FixturePull>): SourceAudit {
+  return {
+    repository: repository.full_name,
+    repositoryNodeId: repository.node_id,
+    from: "2026-09-27T00:00:00.000Z",
+    through: "2026-11-01T00:00:00.000Z",
+    sources: pulls.map((pull) => ({ id: pull.node_id, number: pull.number, headSha: pull.head.sha, mergedAt: pull.merged_at })),
+  }
+}
+
+function serve(server: Remote, sources: ReadonlyArray<CorrectionSource>, pulls: ReadonlyArray<FixturePull>) {
+  server.routes.set(root, () => repository)
+  for (const [index, pull] of pulls.entries()) {
+    const source = sources[index]
+    if (source !== undefined) server.routes.set(`${root}/pulls/${pull.number}`, () => pullOf(source, pull))
+  }
+}
+
+function retirementOf(source: CorrectionSource, earlier: CorrectionSource, proof: IdenticalAcceptedChange): PacketRetirement {
+  return { sourceId: source.sourceId, workUnitId: "ordinary", source, earlierSources: [earlier], identicalAcceptedChange: proof, coverage: [], evidence: "", evidenceSha256: sha256Of(""), expectedPredecessors: [] }
+}
+
+effect function commitsOf(gitDir: string, head: string, base: string, sourceId: string) {
+  return (try fixtureGit(gitDir, ["rev-list", "--parents", head, `^${base}`])).split("\n").map((row) => {
+    const [sha = "", ...parentShas] = row.split(" ")
+    return { sha, parentShas, parentCount: parentShas.length, author: null, additions: 0, deletions: 0, firstAcceptedSourceId: sourceId }
+  })
+}
+
+type Scenario = "identical two-parent merges" | "identical accepted squashes" | "one shared multicommit acceptance" | "surviving carrier of an identical original merge" | "different squash with the same line counts"
+
+effect function identicalWorld(server: Remote, scenario: Scenario) {
+  const { gitDir } = server
+  const shared = scenario === "one shared multicommit acceptance"
+  const surviving = scenario === "surviving carrier of an identical original merge"
+  const twoParent = shared || surviving || scenario === "identical two-parent merges"
+  const base = try commit(gitDir, "base", { "feature.txt": old }, [])
+  let laterBase = base
+  let laterParent = base
+  if (!shared && !surviving) {
+    laterBase = try commit(gitDir, "later base", { "feature.txt": old }, [base])
+    laterParent = try commit(gitDir, "advanced base", { "feature.txt": old, "unrelated.txt": "other\n" }, [laterBase])
+  }
+  const earlierWork = try commit(gitDir, "earlier submission", { "feature.txt": changed }, [base])
+  let firstSubmission = earlierWork
+  if (shared) firstSubmission = try commit(gitDir, "submitter synchronization", { "feature.txt": changed }, [earlierWork, base])
+  let laterHead = firstSubmission
+  if (!shared) laterHead = try commit(gitDir, "later submission", { "feature.txt": changed }, [laterBase])
+  let originalMerge: string | undefined
+  if (surviving) originalMerge = try commit(gitDir, "original accepted object", { "feature.txt": changed }, [base, laterHead])
+  let earlierHead = firstSubmission
+  if (originalMerge !== undefined) earlierHead = try commit(gitDir, "carrier submission", { "feature.txt": changed }, [originalMerge])
+  const earlierMerge = try commit(gitDir, "earlier acceptance", { "feature.txt": changed }, twoParent ? [base, earlierHead] : [base])
+  let laterMerge = earlierMerge
+  if (originalMerge !== undefined) laterMerge = originalMerge
+  else if (!shared) {
+    const content = scenario === "different squash with the same line counts" ? `${old}different\n` : changed
+    laterMerge = try commit(gitDir, "later acceptance", { "feature.txt": content, "unrelated.txt": "other\n" }, twoParent ? [laterParent, laterHead] : [laterParent])
+  }
+  const pulls: FixturePull[] = [
+    { number: 1, node_id: "PR_earlier", merged_at: "2026-10-04T00:00:00.000Z", base: { sha: base, ref: "develop", repo: repository }, head: { sha: earlierHead }, merge_commit_sha: earlierMerge, commits: surviving ? 3 : shared ? 2 : 1, changed_files: 1 },
+    { number: 2, node_id: "PR_later", merged_at: "2026-10-04T01:00:00.000Z", base: { sha: laterBase, ref: "develop", repo: repository }, head: { sha: laterHead }, merge_commit_sha: laterMerge, commits: shared ? 2 : 1, changed_files: 1 },
+  ]
+  const earlierCommits = surviving ? try commitsOf(gitDir, earlierHead, base, "PR_earlier") : []
+  const sourceOf = (pull: FixturePull): CorrectionSource => {
+    const author = { id: `actor_${pull.number}`, login: `fixture-${pull.number}`, kind: "User" }
+    const first = { sha: shared ? earlierWork : pull.head.sha, parentCount: 1, parentShas: [pull.base.sha], author: surviving ? author : null, additions: 1, deletions: 0,
+      files: [{ path: "feature.txt", additions: 1, deletions: 0 }], firstAcceptedSourceId: pull.node_id }
+    const synchronization = { sha: earlierHead, parentCount: 2, parentShas: [earlierWork, base], author: null, additions: 0, deletions: 0, files: [], firstAcceptedSourceId: "PR_earlier" }
+    return {
+      repository: repository.full_name,
+      repositoryNodeId: repository.node_id,
+      sourceId: pull.node_id,
+      sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`,
+      occurredAt: pull.merged_at,
+      headSha: pull.head.sha,
+      author,
+      complete: true,
+      commitCount: pull.commits,
+      commits: surviving && pull.number === 1 ? earlierCommits : shared ? [first, synchronization] : [first],
+    }
+  }
+  const sources = pulls.map(sourceOf)
+  const [earlier, later] = sources
+  const proof: IdenticalAcceptedChange = { earlierSourceId: "PR_earlier", earlierMergeSha: earlierMerge, mergeSha: laterMerge, diffSha256: try changeDigest(gitDir, base, earlierMerge),
+    ...(surviving ? { survivingCarrier: true } : {}) }
+  const retirement = retirementOf(later ?? sources[0] as CorrectionSource, earlier ?? sources[0] as CorrectionSource, proof)
+  serve(server, sources, pulls)
+  return { base, earlierWork, earlierHead, laterHead, earlierMerge, laterMerge, pulls, sources, proof, retirement, scope: { sourceAudit: auditOf(pulls), duplicateRetirements: [retirement] } satisfies RetirementScope }
+}
+
+effect function survivingCarrier(server: Remote) {
+  const world = try identicalWorld(server, "surviving carrier of an identical original merge")
+  const { gitDir } = server
+  const published = try commit(gitDir, "later work on published branch", { "feature.txt": changed, "unrelated.txt": "other\n" }, [world.earlierMerge])
+  const advanced = try commit(gitDir, "ordinary next integration", { "feature.txt": changed }, [published])
+  const moved = try commit(gitDir, "carrier and old tip as side parents", { "feature.txt": changed }, [world.laterMerge, published])
+  let tips: ReadonlyArray<string> = [published]
+  let commitAuthor = "actor_2"
+  server.routes.set(`${root}/git/ref/heads/develop`, (reads) => ({ ref: "refs/heads/develop", object: { sha: tips[Math.min(reads, tips.length) - 1] ?? published, type: "commit" } }))
+  server.routes.set(`${root}/commits/${world.laterHead}`, () => ({ sha: world.laterHead, author: { node_id: commitAuthor, type: "User" } }))
+  const verify = (scope: RetirementScope) => verifyHistoricalIdenticalAcceptedChanges(scope, "develop")
+  const pinned = try attempt(server, verify(world.scope))
+  tips = [published, advanced]
+  const refreshed = try attempt(server, verify(world.scope))
+  const fetched = (try fetches(server)).filter((line) => line.includes("--negotiation-tip"))
+  let held: unknown = "unverified"
+  let moving: unknown = "unverified"
+  if (typeof refreshed !== "string") {
+    tips = [advanced]
+    held = try attempt(server, verifyCarrierTips(world.scope, refreshed))
+    tips = [published]
+    moving = try attempt(server, verifyCarrierTips(world.scope, refreshed))
+  }
+  tips = [published, moved]
+  const sideParents = try attempt(server, verify(world.scope))
+  tips = [moved]
+  const unpublishedEdge = try attempt(server, verify(world.scope))
+  tips = [published]
+  commitAuthor = "other_actor"
+  const otherAuthor = try attempt(server, verify(world.scope))
+  commitAuthor = "actor_2"
+  const { survivingCarrier: _dropped, ...withoutCarrier } = world.proof
+  const distinct = retirementOf(world.retirement.source, world.sources[0] as CorrectionSource, withoutCarrier)
+  const carried = try attempt(server, verify({ ...world.scope, duplicateRetirements: [distinct] }))
+  return {
+    actual: [typeof pinned === "string" ? pinned : [[...pinned.identical], pinned.pins], typeof refreshed === "string" ? refreshed : refreshed.pins, fetched.length,
+      fetched.every((line) => line.includes(`--negotiation-tip=${published}`) && line.endsWith(advanced)), held, moving, sideParents, unpublishedEdge, otherAuthor, carried],
+    expected: [[[digestText(world.retirement)], [{ ref: "develop", tip: published }]], [{ ref: "develop", tip: advanced }], 1, true, undefined,
+      "Surviving carrier integration branch changed", "Surviving carrier integration branch changed", "Surviving carrier does not match the published first-parent edge",
+      "Surviving carrier original commit author changed", "Earlier source already carries the retiring PR's merge"],
+  }
+}
+
+effect function sharedAcceptance(server: Remote) {
+  const world = try identicalWorld(server, "one shared multicommit acceptance")
+  const [earlierPull, laterPull] = world.pulls
+  const third: FixturePull = { ...(laterPull as FixturePull), number: 3, node_id: "PR_third", merged_at: "2026-10-04T02:00:00.000Z", base: { ...(laterPull as FixturePull).base } }
+  const thirdSource: CorrectionSource = { ...world.retirement.source, sourceId: "PR_third", sourceUrl: `https://github.com/${repository.full_name}/pull/3`, occurredAt: third.merged_at }
+  const thirdRetirement: PacketRetirement = { ...world.retirement, sourceId: "PR_third", source: thirdSource }
+  serve(server, [...world.sources, thirdSource], [...world.pulls, third])
+  const batch: RetirementScope = { sourceAudit: auditOf([...world.pulls, third]), duplicateRetirements: [world.retirement, thirdRetirement] }
+  const before = (try fetches(server)).length
+  const verified = try attempt(server, verifyHistoricalIdenticalAcceptedChanges(batch, "develop"))
+  const acquisitions = (try fetches(server)).slice(before)
+  const fetchedObjects = acquisitions.map((line) => line.split(" ").filter((part) => /^[a-f0-9]{40}$/u.test(part)).sort())
+  server.routes.set(`${root}/pulls/3`, (reads) => pullOf(thirdSource, { ...third, base: { ...third.base, sha: reads > 1 ? world.earlierWork : world.base } }))
+  const changedDuring = try attempt(server, verifyHistoricalIdenticalAcceptedChanges(batch, "develop"))
+  if (laterPull !== undefined) laterPull.base.sha = world.earlierWork
+  const differingBases = try attempt(server, verifyHistoricalIdenticalAcceptedChanges(world.scope, "develop"))
+  if (laterPull !== undefined) laterPull.base.sha = world.base
+  const [member] = world.retirement.source.commits
+  const repeated: PacketRetirement = { ...world.retirement, source: { ...world.retirement.source, commits: member === undefined ? [] : [member, member] } }
+  const incomplete = try attempt(server, verifyHistoricalIdenticalAcceptedChanges({ ...world.scope, duplicateRetirements: [repeated] }, "develop"))
+  return {
+    actual: [typeof verified === "string" ? verified : [...verified.identical], fetchedObjects, earlierPull?.head.sha === world.earlierHead, changedDuring, differingBases, incomplete],
+    expected: [[digestText(world.retirement), digestText(thirdRetirement)], [[world.earlierMerge, world.earlierHead, world.base].sort()], true,
+      "Reviewed identical change source changed during verification", "Shared acceptance has differing submitted bases", "Identical change has incomplete submitted commits"],
+  }
+}
+
+effect function emptySquash(server: Remote) {
+  const { gitDir } = server
+  const work = { [workPath]: "accepted work\n" }
+  const base = try commit(gitDir, "Initial tree", {}, [])
+  const earlierHead = try commit(gitDir, "Earlier submitted change", work, [base])
+  const earlierMerged = try commit(gitDir, "Earlier accepted squash", work, [base])
+  const laterHead = try commit(gitDir, "Later submitted copy", work, [base])
+  const unrelated = try commit(gitDir, "Empty squash without accepted ancestry", work, [laterHead])
+  const laterParent = try commit(gitDir, "Unrelated change after earlier acceptance", { ...work, "other.ts": "unrelated work\n" }, [earlierMerged])
+  const empty = try commit(gitDir, "Empty squash", { ...work, "other.ts": "unrelated work\n" }, [laterParent])
+  const nonempty = try commit(gitDir, "Nonempty squash", { [workPath]: "new accepted change\n", "other.ts": "unrelated work\n" }, [empty])
+  const revert = try commit(gitDir, "Earlier accepted change reverted", { "other.ts": "unrelated work\n" }, [laterParent])
+  const reverted = try commit(gitDir, "Empty squash after reverting the earlier change", { "other.ts": "unrelated work\n" }, [revert])
+  const pulls: FixturePull[] = [
+    { number: 1, node_id: "PR_earlier", merged_at: "2026-10-04T00:00:00.000Z", base: { sha: base, ref: "develop", repo: repository }, head: { sha: earlierHead }, merge_commit_sha: earlierMerged, commits: 1, changed_files: 1 },
+    { number: 2, node_id: "PR_later", merged_at: "2026-10-04T01:00:00.000Z", base: { sha: base, ref: "develop", repo: repository }, head: { sha: laterHead }, merge_commit_sha: empty, commits: 1, changed_files: 1 },
+  ]
+  const sources = pulls.map((pull): CorrectionSource => ({
+    repository: repository.full_name,
+    repositoryNodeId: repository.node_id,
+    sourceId: pull.node_id,
+    sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`,
+    occurredAt: pull.merged_at,
+    headSha: pull.head.sha,
+    author: { id: `actor_${pull.number}`, login: `fixture-${pull.number}`, kind: "User" },
+    complete: true,
+    commitCount: 1,
+    commits: [{ sha: pull.head.sha, parentCount: 1, parentShas: [base], author: null, additions: 1, deletions: 0, files: [{ path: workPath, additions: 1, deletions: 0 }], firstAcceptedSourceId: pull.node_id }],
+  }))
+  const [earlier, later] = sources
+  const proof: IdenticalAcceptedChange = { earlierSourceId: "PR_earlier", earlierMergeSha: earlierMerged, mergeSha: empty, diffSha256: try changeDigest(gitDir, base, earlierMerged), emptySquash: true }
+  serve(server, sources, pulls)
+  const outcomes: unknown[] = []
+  for (const merge of [empty, nonempty, unrelated, reverted]) {
+    const laterPull = pulls[1]
+    if (laterPull !== undefined) laterPull.merge_commit_sha = merge
+    const retirement = retirementOf(later ?? sources[0] as CorrectionSource, earlier ?? sources[0] as CorrectionSource, { ...proof, mergeSha: merge })
+    const outcome = try attempt(server, verifyHistoricalIdenticalAcceptedChanges({ sourceAudit: auditOf(pulls), duplicateRetirements: [retirement] }, "develop"))
+    outcomes.push(typeof outcome === "string" ? outcome : [...outcome.identical].length === 1 && outcome.identical.has(digestText(retirement)))
+  }
+  return { actual: outcomes, expected: [true, "Accepted squash changes its first-parent tree", "Earlier accepted squash is absent from the later base", "Later squash base does not retain all earlier accepted paths"] }
+}
+
+effect function withRemote<A, E, R>(use: (server: Remote) => A!E!R) {
+  const made = try remote()
+  provide gitAt(made.wrapper) {
+    try gitBytes({ args: ["init", "--bare", "--quiet", "--template=", made.gitDir], limit: 1024 * 1024, seconds: 60 }, "git init failed")
+    try fixtureGit(made.gitDir, ["config", "uploadpack.allowAnySHA1InWant", "true"])
+    return try use({ gitDir: made.gitDir, log: made.log, routes: new Map<string, Route>(), reads: new Map<string, number>() })
+  }
+}
+
+layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Reviewed identical accepted changes are verified against the complete accepted Git objects in one acquisition, and a surviving carrier stays pinned to its refreshed branch tip (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const results: unknown[] = []
+    const expected: unknown[] = []
+    for (const scenario of ["identical two-parent merges", "identical accepted squashes", "different squash with the same line counts"] as const) {
+      const checked = try withRemote((server) => effect {
+        const world = try identicalWorld(server, scenario)
+        const outcome = try attempt(server, verifyHistoricalIdenticalAcceptedChanges(world.scope, "develop"))
+        return { outcome: typeof outcome === "string" ? outcome : [...outcome.identical], digest: digestText(world.retirement) }
+      })
+      results.push(checked.outcome)
+      expected.push(scenario === "different squash with the same line counts" ? "Accepted Git file changes differ from the submitted source" : [checked.digest])
+    }
+    const carrier = try withRemote(survivingCarrier)
+    const shared = try withRemote(sharedAcceptance)
+    try same([results, carrier.actual, shared.actual], [expected, carrier.expected, shared.expected])
+  }))
+
+  it.effect('An empty accepted squash retires a duplicate only when the earlier rewarded change is already in its parent (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const squash = try withRemote(emptySquash)
+    try same(squash.actual, squash.expected)
+  }))
+
+  it.effect('A duplicate retirement verifies native acceptance order even for ordinary coverage (spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers")', () => scoped(effect {
+    const server: Remote = { gitDir: "", log: "", routes: new Map(), reads: new Map() }
+    const retiredMerge = "d".repeat(40)
+    const earlierMerge = "e".repeat(40)
+    const pulls: FixturePull[] = [
+      { number: 1, node_id: "PR_earlier", merged_at: "2026-10-04T00:00:00.000Z", base: { sha: "a".repeat(40), ref: "develop", repo: repository }, head: { sha: "b".repeat(40) }, merge_commit_sha: earlierMerge, commits: 1, changed_files: 1 },
+      { number: 2, node_id: "PR_later", merged_at: "2026-10-05T00:00:00.000Z", base: { sha: "a".repeat(40), ref: "develop", repo: repository }, head: { sha: "c".repeat(40) }, merge_commit_sha: retiredMerge, commits: 1, changed_files: 1 },
+    ]
+    const sources = pulls.map((pull): CorrectionSource => ({
+      repository: repository.full_name, repositoryNodeId: repository.node_id, sourceId: pull.node_id, sourceUrl: `https://github.com/${repository.full_name}/pull/${pull.number}`,
+      occurredAt: pull.merged_at, headSha: pull.head.sha, author: { id: `actor_${pull.number}`, login: `fixture-${pull.number}`, kind: "User" }, complete: true, commitCount: 1, commits: [],
+    }))
+    serve(server, sources, pulls)
+    const [earlier, later] = sources
+    const retirement: PacketRetirement = { sourceId: "PR_later", workUnitId: "ordinary", source: later ?? sources[0] as CorrectionSource, earlierSources: earlier === undefined ? [] : [earlier], coverage: [], evidence: "", evidenceSha256: sha256Of(""), expectedPredecessors: [] }
+    const scope: RetirementScope = { sourceAudit: auditOf(pulls), duplicateRetirements: [retirement] }
+    const headCompare = `${root}/compare/${retiredMerge}...${"b".repeat(40)}?per_page=1&page=1`
+    const mergeCompare = `${root}/compare/${retiredMerge}...${earlierMerge}?per_page=1&page=1`
+    const complete = { status: "diverged", behind_by: 1, base_commit: { sha: retiredMerge }, merge_base_commit: { sha: "f".repeat(40) } }
+    const reversed = { ...complete, status: "ahead", behind_by: 0, merge_base_commit: { sha: retiredMerge } }
+    const order = (head: unknown, merge: unknown, promoted?: string) => effect {
+      server.routes.set(headCompare, () => head)
+      server.routes.set(mergeCompare, () => merge)
+      const checked = promoted === undefined ? scope : { ...scope, duplicateRetirements: [{ ...retirement, acceptedPromotion: { headCommit: "", mergeCommit: "", mergeSha: promoted } }] }
+      const outcome = try attempt(server, verifyHistoricalDuplicateAcceptanceOrder(checked))
+      return typeof outcome === "string" ? outcome : [...outcome.values()]
+    }
+    const accepted = try order(complete, complete)
+    const headCarries = try order(reversed, complete)
+    const mergeCarries = try order(complete, reversed)
+    const unavailable = try order({ ...complete, base_commit: { sha: earlierMerge } }, complete)
+    const inconsistent = try order({ ...complete, status: "behind", behind_by: 0 }, complete)
+    const promotionMoved = try order(complete, complete, earlierMerge)
+    try same([accepted, headCarries, mergeCarries, unavailable, inconsistent, promotionMoved], [
+      [[{ sameMerge: false, ancestryKnown: true, carriesRetiringMerge: false }]],
+      "Earlier source already carries the retiring PR's merge",
+      "Earlier source already carries the retiring PR's merge",
+      "Duplicate acceptance ancestry is unavailable",
+      "Duplicate acceptance ancestry is inconsistent",
+      "Duplicate acceptance source changed",
+    ])
+  }))
+})

@@ -278,6 +278,17 @@ effect function releaseVariables() {
   return { slopbot, retention: retention === "enabled" }
 }
 
+const slopbotValueVariables = ["SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD", "SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD", "SLOPBOT_VALUE_START_AT"]
+
+effect function slopbotValueVars() {
+  const vars: Record<string, string> = {}
+  for (const name of slopbotValueVariables) {
+    const value = (try Config.withDefault(Config.String(name), "")).trim()
+    if (value !== "") vars[name] = value
+  }
+  return vars
+}
+
 function customDomain(reviewed: Reviewed) {
   const route = (reviewed.file.routes ?? []).find((entry) => entry.custom_domain === true)
   return route === undefined ? undefined : `https://${route.pattern}`
@@ -372,7 +383,8 @@ export function publisher(options: PublisherOptions) {
         return identity.tag
       }
       if (service === "Slopbot" || service === "RepositoryAccess") {
-        const overrides = { vars: { SLOPBOT_PRODUCER_REVISION: target.sourceSha }, withoutBindings: [] } satisfies Overrides
+        const values = try slopbotValueVars()
+        const overrides = { vars: { ...(service === "Slopbot" ? values : {}), SLOPBOT_PRODUCER_REVISION: target.sourceSha }, withoutBindings: [] } satisfies Overrides
         const slopbot = try publishWorker(reviewed, publication, { overrides, triggers: true, secrets })
         const origin = customDomain(reviewed)
         if (service === "Slopbot") {

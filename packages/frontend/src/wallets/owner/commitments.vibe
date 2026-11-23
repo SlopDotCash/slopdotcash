@@ -1,5 +1,6 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/escrow.md, "The owner turns monthly commitments on with a positive cap or off"; spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"
 import { address } from "@repo/platform/chain/solana"
+import type { VaultPurpose } from "@repo/settlement/chain/evm/abi"
 import { u64 } from "@repo/settlement/chain/solana/bytes"
 import { setMonthlyCommitment } from "@repo/settlement/chain/solana/instructions"
 import { type CommitmentPlan, type CommitmentReview, type MonthlyCommitmentState, type MonthlySettingAction, type MonthlySettingPlan, type SolanaCommitmentAction, type SolanaCommitmentReviewed, monthlyCommitment, monthlySolanaCommitment, paymentsSolanaMonthlyCommitment } from "@repo/settlement/client"
@@ -81,9 +82,9 @@ export effect function requestCommitment(projectId: string, period: string, revi
   return { plan, deployment, gross } satisfies VerifiedCommitment
 }
 
-export function evmVaultOf(deployment: Deployment): EvmVault | undefined {
+export function evmVaultOf(deployment: Deployment, purpose: VaultPurpose = "OrdinaryPurpose"): EvmVault | undefined {
   const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
-  const review = reviewedVaultOf(deployment.network, "OrdinaryPurpose")
+  const review = reviewedVaultOf(deployment.network, purpose)
   return network?.family === "evm" && review !== undefined ? { network: deployment.network, chainId: evmChainIdOf(network.chainId), vault: deployment.vault, asset: deployment.asset, owner: deployment.owner, review } : undefined
 }
 

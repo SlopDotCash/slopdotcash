@@ -10,6 +10,7 @@ import type { Handler } from "@repo/platform/testing"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Execution } from "@repo/platform/worker"
+import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { jsonValue } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
@@ -19,6 +20,7 @@ import { caseRecord } from "../src/cases/rows.vibe"
 import { acted, created, opened } from "../src/cases/routes.vibe"
 import { committed, observedCase } from "../src/cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../src/client/refusals.vibe"
+import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
@@ -125,12 +127,13 @@ function shellOf(cases: Cases.Shape) {
     portsOf(cases.bans),
     receiptNotices,
     directClearances,
+    reportDepositSettings("off"),
   )
   const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFake), webCrypto))
   const viaGitHub: Fetcher = { fetch: (sent) => Promise.resolve(cases.github.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
   const github = Layer.provide(githubApp({ appId: cases.github.app.id, privateKey: Redacted.make(cases.github.app.privateKeyPem), authority: cases.github.authority }), Layer.merge(outboundVia(viaGitHub), webCrypto))
   const execution: ExecutionContext = { waitUntil: (work) => { cases.pending.push(work) } }
-  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, github, outboundVia(viaGitHub), Layer.succeed(Execution, { context: execution })), base)
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, github, outboundVia(viaGitHub), SubmissionFeeRatesLive, ProjectParticipationLive, Layer.succeed(Execution, { context: execution })), base)
 }
 
 effect function same(actual: unknown, expected: unknown) {

@@ -5,6 +5,7 @@ import { Exit } from "effect";
 import { Check, CloudCheck, CloudOff, Lock, Settings2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { NotFoundHead } from "../../../app/notFoundHead.ts";
 import { type PageProps, signInPurposes } from "../../../app/pages.ts";
 import { Chip } from "../../admin/parts.tsx";
 import type { PageRuntime } from "../../../app/runtime.vibe";
@@ -396,7 +397,11 @@ export function UpdatePage({ runtime, route }: PageProps) {
     );
   const base = loaded ?? (read?.status === "done" ? read.value : undefined);
   if (base === undefined) {
-    if (read?.status === "done") return <NotFound title="Project not found" />;
+    if (read?.status === "done") return (
+      <NotFound title="Project not found">
+        <NotFoundHead />
+      </NotFound>
+    );
     return (
       <Frame>
         {read?.status === "failed" ? (

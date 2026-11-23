@@ -9,7 +9,7 @@ import type { MergedOutcome, OutcomeCommit, Review as WireReview } from "../../c
 import { AssemblyRefused, type Collection } from "../../collect/run/pipeline.vibe"
 import { valuePolicyAt } from "../../kernels/scoring/legacyV2.ts"
 import type { ReviewState } from "../../kernels/scoring/reviewBody.ts"
-import type { Activity, Actor, ClosedPull, Commit, ImplementationHistory, MergedPull, Penalty, Review, ScoringFacts, ScoringMode } from "../facts.vibe"
+import type { Activity, Actor, ClosedPull, Commit, ImplementationHistory, MergedPull, Penalty, Review, ScoreEvent, ScoringFacts, ScoringMode } from "../facts.vibe"
 import { isBot } from "../facts.vibe"
 import { type ValueDecision, assessmentOf, decisionsOf } from "./decisions.vibe"
 
@@ -156,6 +156,33 @@ function firstById<T extends { readonly id: string }>(items: ReadonlyArray<T>) {
   return [...byId.values()]
 }
 
+effect function retainedReviews(collection: Collection) {
+  const collected = new Set(collection.work.collections.map((repository) => repository.target.id))
+  const events = collection.acceptedReviewHistory.value.events
+    .filter((event) => collected.has(event.repository))
+    .sort((left, right) => millisOf(right.occurredAt) - millisOf(left.occurredAt) || left.id.localeCompare(right.id))
+  const reviews: ScoreEvent[] = []
+  for (const [index, event] of events.entries()) {
+    if (event.category !== "substantive-review" || event.source.kind !== "review") throw new AssemblyRefused({ message: `retainedReviewEvents[${index}] must be a formal substantive review` })
+    if (!(event.id.split(":", 1)[0] ?? "").startsWith("PR_")) throw new AssemblyRefused({ message: `retainedReviewEvents[${index}] does not bind a pull request node` })
+    reviews.push({
+      id: event.id,
+      actor: event.actor,
+      category: "substantive-review",
+      points: event.points,
+      ...(event.scoreThirds === undefined ? {} : { scoreThirds: event.scoreThirds }),
+      ...(event.workUnitId === undefined ? {} : { workUnitId: event.workUnitId }),
+      ...(event.scoreDecisionSourceId === undefined ? {} : { scoreDecisionSourceId: event.scoreDecisionSourceId }),
+      ...(event.scoreDecisionAt === undefined ? {} : { scoreDecisionAt: event.scoreDecisionAt }),
+      occurredAt: event.occurredAt,
+      repository: event.repository,
+      source: { id: event.source.id, kind: "review", number: event.source.number, title: event.source.title, url: event.source.url },
+      reason: event.reason,
+    })
+  }
+  return reviews
+}
+
 export effect function assemblyInputs(collection: Collection, mode: ScoringMode, history: Partial<ImplementationHistory>) {
   const { value, work, bounds } = collection
   if (millisOf(collection.valuePolicyEffectiveAt) < millisOf(valueScoringApprovedHistoryFrom)) throw new AssemblyRefused({ message: "The value policy cannot reinterpret earlier policy periods" })
@@ -239,6 +266,7 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
     projects: new Map(collection.registry.registered.map((repository) => [repository.id, repository.projectId] as const)),
     bans: collection.bans,
     activity: activityOf(collection, firstById(reviewed)),
+    retainedReviews: try retainedReviews(collection),
   }
   const sourceUpdatedAt = latestOf([
     ...work.outcomes.map((record) => record.updatedAt),

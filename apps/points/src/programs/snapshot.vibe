@@ -1,4 +1,7 @@
-// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { github } from "@repo/platform/github"
+import { restoreCheckpoint } from "../ingestion/restore.vibe"
+import { actionsToken } from "../ingestion/token.vibe"
 import { adaptPullRequestFile } from "../snapshot/adaptPr.vibe"
 import { restoreSnapshot } from "../snapshot/restore.vibe"
 import { extractCollectedData, restoreLocal } from "../snapshot/restoreLocal.vibe"
@@ -6,7 +9,7 @@ import { defaultSnapshotPath, packTransport } from "../snapshot/write.vibe"
 
 export error SnapshotUsage { message: string }
 
-const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot restore-local <data dir> <output> | snapshot extract-collected <bundle.zip> <data dir> | snapshot adapt-pr <input> <output> <registry>"
+const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot restore-local <data dir> <output> | snapshot extract-collected <bundle.zip> <data dir> | snapshot adapt-pr <input> <output> <registry> | snapshot restore-discussions"
 
 export effect function snapshot(args: ReadonlyArray<string>) {
   const [command, ...rest] = args
@@ -32,6 +35,13 @@ export effect function snapshot(args: ReadonlyArray<string>) {
   if (command === "adapt-pr" && rest.length === 3) {
     const version = try adaptPullRequestFile(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "")
     try Console.log(`[Slop] prepared schema ${version} pull-request ledger from deployed public data`)
+    return
+  }
+  if (command === "restore-discussions" && rest.length === 0) {
+    const token = try actionsToken()
+    provide github({ token, userAgent: "slopbot" }) {
+      try restoreCheckpoint({ token })
+    }
     return
   }
   throw new SnapshotUsage({ message: `Usage: ${usage}` })

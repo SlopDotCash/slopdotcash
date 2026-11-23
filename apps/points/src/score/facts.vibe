@@ -244,6 +244,7 @@ export interface ScoringFacts extends Partial<ImplementationHistory> {
   readonly projects: ReadonlyMap<string, string>
   readonly bans: ReadonlyMap<string, string>
   readonly activity: ReadonlyMap<string, Activity>
+  readonly retainedReviews?: ReadonlyArray<ScoreEvent>
 }
 
 export type EventCategory = "merged-pull-request" | "resolved-issue" | "material-test-change" | "evidence" | "substantive-review" | "evaluated-contribution"

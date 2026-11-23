@@ -1,0 +1,218 @@
+// spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import { GitHub, bounded, github, githubApi, githubJson } from "@repo/platform/github"
+import { parsedJson, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { type ReplayQualification, digestPattern, refusal, require } from "../packet.vibe"
+import { gitLine, parsePacketManifest } from "../transport.vibe"
+import { onlyZipEntry } from "./archive.ts"
+
+export type ReplayReference = ReplayQualification
+
+export interface ReplaySummary {
+  readonly snapshotSha256: string | null
+  readonly valueCoverageCount: number
+  readonly closedUnmergedCoverageCount: number
+  readonly valueEventCount: number
+  readonly qualificationSha256: string | null
+  readonly privateReviewManifest?: string
+}
+
+export interface HistoricalReplayReceipt {
+  readonly schemaVersion: "1"
+  readonly projectId: string
+  readonly mode: "assessment-replay"
+  readonly status: "requires-value-replay" | "no-scoped-active-assessments"
+  readonly sourceCommit: string
+  readonly sourceDigest: string
+  readonly sourceCount: number
+  readonly sourceRepositoryNodeId: string
+  readonly sourceFrom: string
+  readonly sourceThrough: string
+  readonly expectedPointsDigest: string
+  readonly baselineRevisionCount: number
+  readonly registryRevision: number
+  readonly registryManifestSha256: string
+  readonly enforcementGeneration: number
+  readonly jointThrough: number
+  readonly legacyThrough: number
+  readonly jointRecords: number
+  readonly legacyRecords: number
+  readonly receiptDigest: string
+  readonly replay: ReplaySummary
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+export const workflowFile = "reviewed-historical-points.yml"
+export const workflowPath = `.github/workflows/${workflowFile}`
+const jobName = "publish"
+const replayStep = "Read and verify the complete historical assessment catalog"
+const uploadStep = "Preserve the assessment audit receipt"
+const maximumReceiptBytes = 16 * 1024
+const maximumArchiveBytes = 32 * 1024
+const maximumMetadataBytes = 1024 * 1024
+const maximumReviewManifest = 8192
+const maximumReviewBytes = 128 * 1024 * 1024
+const maximumReviewChunks = 64
+const invalid = "Invalid historical replay evidence"
+const head = /^[a-f0-9]{40}$/u
+const positiveId = /^[1-9][0-9]{0,17}$/u
+const utcTime = /^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/u
+const receiptFields = "baselineRevisionCount,enforcementGeneration,expectedPointsDigest,jointRecords,jointThrough,legacyRecords,legacyThrough,mode,projectId,receiptDigest,registryManifestSha256,registryRevision,replay,schemaVersion,sourceCommit,sourceCount,sourceDigest,sourceFrom,sourceRepositoryNodeId,sourceThrough,status"
+const replayFields = "closedUnmergedCoverageCount,qualificationSha256,snapshotSha256,valueCoverageCount,valueEventCount"
+const reviewedReplayFields = "closedUnmergedCoverageCount,privateReviewManifest,qualificationSha256,snapshotSha256,valueCoverageCount,valueEventCount"
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function keysOf(value: Fields | undefined) {
+  return value === undefined ? "" : Object.keys(value).sort().join(",")
+}
+
+function matches(pattern: RegExp, value: unknown): value is string {
+  return typeof value === "string" && pattern.test(value)
+}
+
+function providerId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && positiveId.test(String(value))
+}
+
+function count(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+effect function evidence(holds: boolean) {
+  if (!holds) throw refusal(invalid)
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export function isReplayReference(value: unknown): value is ReplayReference {
+  const reference = fieldsOf(value)
+  return reference !== undefined && keysOf(reference) === "artifactId,attempt,qualificationSha256,runId" &&
+    [reference.runId, reference.attempt, reference.artifactId].every((id) => typeof id === "number" && Number.isSafeInteger(id) && id > 0) &&
+    matches(digestPattern, reference.qualificationSha256)
+}
+
+export effect function reviewManifest(text: unknown) {
+  try evidence(typeof text === "string" && text.length > 0 && text.length <= maximumReviewManifest)
+  const manifest = parsePacketManifest(String(text)) catch () => undefined
+  try evidence(manifest !== undefined && manifest.compression === "br" && manifest.chunks.length <= maximumReviewChunks && manifest.rawBytes <= maximumReviewBytes)
+  return String(text)
+}
+
+export effect function replayReceipt(data: Uint8Array, sourceCommit: string) {
+  const text = utf8Text(data)
+  const receipt = fieldsOf(text === undefined ? undefined : parsedJson(text)?.value)
+  const replay = fieldsOf(receipt?.replay)
+  try evidence(receipt !== undefined && replay !== undefined && keysOf(receipt) === receiptFields && receipt.schemaVersion === "1" &&
+    receipt.sourceCommit === sourceCommit && receipt.mode === "assessment-replay" &&
+    (receipt.status === "no-scoped-active-assessments" || receipt.status === "requires-value-replay") &&
+    matches(/^[a-z0-9][a-z0-9-]{0,63}$/u, receipt.projectId) && matches(/^[A-Za-z0-9_=+/-]{1,256}$/u, receipt.sourceRepositoryNodeId) &&
+    matches(utcTime, receipt.sourceFrom) && matches(utcTime, receipt.sourceThrough) &&
+    (keysOf(replay) === replayFields || keysOf(replay) === reviewedReplayFields) && matches(digestPattern, replay.qualificationSha256))
+  const fields = receipt ?? {}
+  const summary = replay ?? {}
+  try evidence(["sourceDigest", "expectedPointsDigest", "registryManifestSha256", "receiptDigest"].every((key) => matches(digestPattern, fields[key])) &&
+    ["sourceCount", "baselineRevisionCount", "registryRevision", "jointThrough", "legacyThrough", "jointRecords", "legacyRecords", "enforcementGeneration"].every((key) => count(fields[key])) &&
+    ["valueCoverageCount", "closedUnmergedCoverageCount", "valueEventCount"].every((key) => count(summary[key])))
+  const numbers = fields as Readonly<Record<string, number>>
+  try evidence(numbers.sourceCount > 0 && numbers.registryRevision > 0 && numbers.jointRecords <= numbers.jointThrough && numbers.legacyRecords <= numbers.legacyThrough &&
+    (fields.status === "requires-value-replay" ? matches(digestPattern, summary.snapshotSha256) : summary.snapshotSha256 === null))
+  if ("privateReviewManifest" in summary) try reviewManifest(summary.privateReviewManifest)
+  return fields as unknown as HistoricalReplayReceipt
+}
+
+effect function repositoryContext(sourceCommit: string) {
+  const repository = try environment("GITHUB_REPOSITORY")
+  const repositoryId = try environment("GITHUB_REPOSITORY_ID")
+  const currentRun = try environment("GITHUB_RUN_ID")
+  try evidence(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) && !repository.split("/").some((part) => part === "." || part === "..") &&
+    positiveId.test(repositoryId) && positiveId.test(currentRun) && head.test(sourceCommit) &&
+    (try environment("GITHUB_ACTIONS")) === "true" && (try environment("GITHUB_EVENT_NAME")) === "workflow_dispatch" &&
+    (try environment("GITHUB_REF")) === "refs/heads/main" && (try environment("GITHUB_WORKFLOW_REF")) === `${repository}/${workflowPath}@refs/heads/main` &&
+    (try environment("GITHUB_WORKFLOW_SHA")) === sourceCommit && (try environment("GITHUB_SHA")) === sourceCommit)
+  return { repository, repositoryId: Number(repositoryId), currentRun: Number(currentRun) }
+}
+
+effect function metadata(path: string) {
+  const value = (try GitHub).json(path, Schema.Unknown, { limitBytes: maximumMetadataBytes }) catch effect () => {
+    throw refusal(invalid)
+  }
+  const fields = fieldsOf(value)
+  try evidence(fields !== undefined)
+  return fields ?? {}
+}
+
+effect function verifiedAttempt(run: Fields, context: { readonly repository: string; readonly repositoryId: number }, reference: ReplayReference, workflowId: number, sourceCommit: string) {
+  try evidence(run.id === reference.runId && run.run_attempt === reference.attempt && run.workflow_id === workflowId && run.head_branch === "main" &&
+    run.head_sha === sourceCommit && run.path === workflowPath && run.event === "workflow_dispatch" && run.status === "completed" && run.conclusion === "success")
+  for (const identity of [run.repository, run.head_repository]) {
+    const fields = fieldsOf(identity)
+    try evidence(fields !== undefined && fields.id === context.repositoryId && fields.full_name === context.repository)
+  }
+}
+
+effect function verifiedJob(response: Fields) {
+  const jobs = Array.isArray(response.jobs) ? response.jobs.map(fieldsOf) : undefined
+  try evidence(jobs !== undefined && response.total_count === jobs.length)
+  const expected = (jobs ?? []).filter((job) => job?.name === jobName)
+  const [job] = expected
+  const steps = Array.isArray(job?.steps) ? job.steps.map(fieldsOf) : undefined
+  try evidence(expected.length === 1 && job?.status === "completed" && job.conclusion === "success" && steps !== undefined)
+  for (const name of [replayStep, uploadStep]) {
+    const selected = (steps ?? []).filter((step) => step?.name === name)
+    try evidence(selected.length === 1 && selected[0]?.status === "completed" && selected[0].conclusion === "success")
+  }
+}
+
+effect function verifiedArtifact(artifact: Fields, repositoryId: number, reference: ReplayReference, sourceCommit: string) {
+  const run = fieldsOf(artifact.workflow_run)
+  const size = artifact.size_in_bytes
+  const digest = artifact.digest
+  try evidence(artifact.id === reference.artifactId && artifact.name === `historical-assessment-replay-${reference.attempt}` && artifact.expired === false &&
+    count(size) && size > 0 && size <= maximumArchiveBytes && matches(/^sha256:[a-f0-9]{64}$/u, digest) && run !== undefined &&
+    run.id === reference.runId && run.repository_id === repositoryId && run.head_repository_id === repositoryId && run.head_branch === "main" && run.head_sha === sourceCommit)
+  return { size: Number(size), digest: String(digest) }
+}
+
+effect function archiveBytes(path: string, size: number, token: Redacted.Redacted<string>) {
+  const client = try HttpClient.HttpClient
+  const fetched = effect {
+    const first = try client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get(`${githubApi}${path}`, { headers: { accept: githubJson, "user-agent": "slop-historical-replay" } }), token))
+    const location = first.headers.location
+    if (first.status === 200) return try bounded(first, size, path)
+    try evidence((first.status === 302 || first.status === 307) && location !== undefined && URL.parse(location)?.protocol === "https:")
+    const moved = try client.execute(HttpClientRequest.get(location ?? "", { headers: { "user-agent": "slop-historical-replay" } }))
+    try evidence(moved.status === 200)
+    return try bounded(moved, size, path)
+  }
+  return provideService(fetched, FetchHttpClient.RequestInit, { redirect: "manual", cache: "no-store" }) catch effect () => {
+    throw refusal(invalid)
+  }
+}
+
+export effect function readTrustedHistoricalReplay(reference: ReplayReference, sourceCommit: string) {
+  const token = try Config.withDefault(Config.Redacted("HISTORICAL_REPLAY_ACTIONS_TOKEN"), Redacted.make(""))
+  try require(Redacted.value(token).trim() !== "", "Trusted replay read token unavailable")
+  try evidence(isReplayReference(reference))
+  const context = try repositoryContext(sourceCommit)
+  try evidence(reference.runId !== context.currentRun && (try gitLine(["rev-parse", "HEAD"], invalid)) === sourceCommit)
+  const actions = `/repos/${context.repository}/actions`
+  provide github({ token, userAgent: "slop-historical-replay" }) {
+    const workflow = try metadata(`${actions}/workflows/${workflowFile}`)
+    try evidence(providerId(workflow.id) && workflow.path === workflowPath)
+    const runPath = `${actions}/runs/${reference.runId}/attempts/${reference.attempt}`
+    try verifiedAttempt(try metadata(runPath), context, reference, Number(workflow.id), sourceCommit)
+    try verifiedJob(try metadata(`${runPath}/jobs?per_page=100`))
+    const artifactPath = `${actions}/artifacts/${reference.artifactId}`
+    const artifact = try verifiedArtifact(try metadata(artifactPath), context.repositoryId, reference, sourceCommit)
+    const archive = try archiveBytes(`${artifactPath}/zip`, artifact.size, token)
+    try evidence(archive.length === artifact.size && `sha256:${sha256Of(archive)}` === artifact.digest)
+    const data = onlyZipEntry(archive, "receipt.json", maximumReceiptBytes)
+    try evidence(data !== null)
+    return try replayReceipt(data ?? new Uint8Array(), sourceCommit)
+  }
+}

@@ -13,6 +13,7 @@ export interface NewProject {
   readonly manifest: unknown
   readonly referrer: string | null
   readonly monthlyAmount: string | null
+  readonly bountyAmount?: string | null
   readonly expectedActor: string
 }
 
@@ -22,6 +23,7 @@ export interface ProjectRevision {
   readonly expectedRevision: number
   readonly note: string
   readonly monthlyAmount: string | null
+  readonly bountyAmount?: string | null
   readonly expectedActor: string
 }
 
@@ -36,21 +38,25 @@ export effect function requireEditorActor(actorGithubId: string) {
 }
 
 export effect function createProject(project: NewProject) {
+  const bountyAmount = project.bountyAmount ?? null
   const body = {
     manifest: project.manifest,
     ...(project.referrer === null ? {} : { referrer: project.referrer }),
     ...(project.monthlyAmount === null ? {} : { monthlyAmount: project.monthlyAmount }),
+    ...(bountyAmount === null ? {} : { bountyAmount }),
   }
   return try call(createRoute, { body }, options(project.expectedActor))
 }
 
 export effect function publishRevision(revision: ProjectRevision) {
   const reason = revision.note.trim()
+  const bountyAmount = revision.bountyAmount ?? null
   const body = {
     manifest: revision.manifest,
     expectedRevision: revision.expectedRevision,
     ...(reason === "" ? {} : { reason }),
     ...(revision.monthlyAmount === null ? {} : { monthlyAmount: revision.monthlyAmount }),
+    ...(bountyAmount === null ? {} : { bountyAmount }),
   }
   return try call(reviseProject, { body, params: { id: revision.projectId } }, options(revision.expectedActor))
 }

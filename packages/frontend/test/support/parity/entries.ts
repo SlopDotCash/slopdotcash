@@ -55,7 +55,7 @@ export const successors: Readonly<Record<OldEntry, Successor>> = {
       r2: ["PRIVATE_TRACES", "VETTING_EVIDENCE"],
       vars: { ...roles, SLOP_ENVIRONMENT: "production", PUBLIC_SITE_URL: "https://slop.cash", PAYMENT_NETWORKS: "[]", TRACE_AUTH_SECRET: "parity-trace-secret-of-at-least-forty-characters" },
     },
-    services: ["SLOP_IDENTITY", "SLOP_NOTIFY", "SLOPBOT", "SANDBOX"],
+    services: ["SLOP_IDENTITY", "SLOP_NOTIFY", "SLOPBOT", "VETTING_SANDBOX"],
     assets: true,
   },
   "worker:slop-identity": {

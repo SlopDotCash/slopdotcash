@@ -1,7 +1,7 @@
-// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision or an administrator exception"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"
 import { isoNow } from "@repo/platform/clock"
 import { rows, sql } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { type Actor, Refused, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
 import type { Exception, RepositoryStart } from "../../../gen/backend__projects.ts"
 import { type Event, type Registry, type RegistryRead, Rejected, clearanceOf, withExceptionAppends } from "../../../gen/backend__projectComposition.effect.vibe"
 import { projectContract } from "../../access/routes.vibe"
@@ -11,6 +11,7 @@ import { getAdminProjects, putAdminProjectsByIdManifest } from "../../client/ref
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
 import { definitionProblem, registryProblem, transitionProblem } from "../owner/definition.ts"
 import { listedManifests } from "../owner/records.vibe"
+import { withBountyAmount } from "../owner/securityProgram.vibe"
 import { type Json, classified, objectOf, same } from "../owner/revisionChanges.ts"
 import { consentOf, exclusionsOf, idOf, monthOf } from "../store/codec.vibe"
 import { type Manifest, manifestOf } from "../store/rows.vibe"
@@ -51,6 +52,14 @@ effect function withVerifiedAsset(manifest: Json, prior: unknown) {
   const verified = try verifiedAsset(manifest.rewardAsset, priorAsset === undefined || typeof priorAsset.network !== "string" || typeof priorAsset.address !== "string" || typeof priorAsset.decimals !== "number" ? undefined : { ...priorAsset, network: priorAsset.network, address: priorAsset.address, decimals: priorAsset.decimals })
   const reward = objectOf(manifest.reward)
   return { ...manifest, rewardAsset: verified, ...(reward?.kind === "monthly-pool" ? { reward: { ...reward, chain: verified.network, currency: verified.symbol } } : {}) } satisfies Json
+}
+
+effect function withVerifiedBounty(manifest: Json, prior: unknown, amount: unknown) {
+  const requested = amount === undefined || typeof amount === "string" ? amount : ""
+  return withBountyAmount(manifest, prior, requested) catch effect (error) => {
+    if (error instanceof Refused && error.code === "invalid_manifest") throw invalid(error.message)
+    throw error
+  }
 }
 
 function nextCycleStart(nowIso: string): number {
@@ -138,11 +147,10 @@ effect function revise(actor: Actor, projectId: string) {
   const current = try projectRow(projectId)
   if (current === undefined) throw refused(manifestRows.notFoundProjectNotFound)
   if (current.revision !== expectedRevision) throw refused(manifestRows.staleRevision)
-  if (body.bountyAmount !== undefined) throw invalid("Administrator revisions do not change the security bounty")
   const submitted = objectOf(body.manifest)
   if (submitted === undefined) throw invalid("Project manifest is invalid")
   const previous = try orDie(Effect.try(() => JSON.parse(current.manifest) as Json))
-  const next = try withVerifiedAsset(submitted, previous.rewardAsset)
+  const next = try withVerifiedBounty(try withVerifiedAsset(submitted, previous.rewardAsset), previous.securityBounty, body.bountyAmount)
   if (next.id !== projectId) throw refused(manifestRows.invalidManifestProjectIdCannotChange)
   if (same(previous, next)) throw refused(manifestRows.noChange)
   const now = try isoNow()

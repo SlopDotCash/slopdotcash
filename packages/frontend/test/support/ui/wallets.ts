@@ -1,6 +1,6 @@
 // spec/frontend/wallets.md, "Story: Choose a wallet without a lookalike taking its place"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A Solana wallet qualifies only with a solana chain, connect and sign-message features"
 import { randomUUID, webcrypto } from "node:crypto";
-import { type Anvil, anvil } from "@repo/platform/testing/chains";
+import type { Anvil } from "@repo/platform/testing/chains";
 import type { BrowserContext } from "playwright";
 import type { Addresses, WalletAsked, WalletSetup } from "./protocol.ts";
 
@@ -22,7 +22,6 @@ export interface Wallets {
   useAccount(index: number): void;
   rejectNext(): void;
   addresses(): Addresses;
-  close(): Promise<void>;
 }
 
 const icon = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#5b6cff"/></svg>').toString("base64")}`;
@@ -129,8 +128,7 @@ async function solanaKey() {
   return { pair, publicKey, address: base58(publicKey) };
 }
 
-export async function injectWallets(context: BrowserContext, setup: WalletSetup): Promise<Wallets> {
-  const chain: Anvil | undefined = setup.evm === undefined ? undefined : await anvil({ chainId: 8453 });
+export async function injectWallets(context: BrowserContext, setup: WalletSetup, chain: Anvil | undefined): Promise<Wallets> {
   const key = setup.solana === undefined ? undefined : await solanaKey();
   const asked: WalletAsked[] = [];
   let account = 0;
@@ -178,8 +176,5 @@ export async function injectWallets(context: BrowserContext, setup: WalletSetup)
       rejections += 1;
     },
     addresses: () => ({ evm: chain === undefined ? null : evmAddress(), solana: key?.address ?? null }),
-    close: async () => {
-      await chain?.close();
-    },
   };
 }

@@ -1,8 +1,9 @@
+// spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"
 import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/fees__runtime.conformance.ts";
 import type { Event, Mode, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts";
-import { type Held, type RuntimeEvent, decodeConfig, send, unpublished } from "../../src/runtime/config.vibe";
+import { type Held, type RuntimeEvent, decodeConfig, publishedWallet, send, unpublished } from "../../src/runtime/config.vibe";
 import type { ConfigInvalid } from "@repo/platform/config";
 import { type FeeVars, definitions, evmNetworks } from "../../src/runtime/networks.vibe";
 
@@ -64,6 +65,8 @@ function translated(event: Event): Effect.Effect<RuntimeEvent, ConfigInvalid> {
         decodeConfig(varsOf(event.config), event.config.keys.map((network) => definitions[network].keySecret)),
         (config): RuntimeEvent => ({ type: "publish", source: event.config.source, config }),
       );
+    case "verifyReadiness":
+      return Effect.succeed({ type: "verifyReadiness", network: event.network, wallet: publishedWallet(held, event.network) ?? "" });
     default:
       return Effect.succeed(event);
   }
@@ -89,7 +92,7 @@ export const driver: Driver = {
           held = next;
           return "accepted" as const;
         }),
-        Effect.catchTags({ Rejected: () => Effect.succeed("refused" as const), ConfigInvalid: () => Effect.succeed("refused" as const) }),
+        Effect.catchTags({ Rejected: () => Effect.succeed("refused" as const), ReadinessUnbound: () => Effect.succeed("refused" as const), ConfigInvalid: () => Effect.succeed("refused" as const) }),
       ),
     );
   },

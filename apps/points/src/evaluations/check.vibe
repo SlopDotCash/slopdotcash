@@ -71,7 +71,7 @@ effect function repositoriesFrom(registryPath: string) {
   return repositoriesOf(registry, {})
 }
 
-export effect function admittedFrom(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, environment: RegistryEnvironment) {
+effect function admittedFrom(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, environment: RegistryEnvironment) {
   const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
   provide Layer.provide(RegistryManifestsLive, d1Http({ accountId, databaseId: databases[environment], token })) {

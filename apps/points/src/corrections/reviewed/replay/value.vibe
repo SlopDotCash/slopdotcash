@@ -1,0 +1,393 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"
+import { GitHub } from "@repo/platform/github"
+import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
+import type { Award, Journal, Revision } from "../../../kernels/records/canonical.ts"
+import { journalText } from "../../../kernels/records/canonical.ts"
+import { batchDigest } from "../../../kernels/records/ids.vibe"
+import { registryOf, repositoryIdFromUrl } from "../../../client/snapshot/checks.vibe"
+import type { LeaderboardSnapshot, RepositoryRegistry, ScoreEvent, ValueCoverage } from "../../../client/snapshot/schema.vibe"
+import { valueScoringApprovedHistoryFrom } from "../../../client/snapshot/schema.vibe"
+import { type HistoricalPin, type HistoricalProject, validateHistoricalSnapshot, validateSnapshot } from "../../../client/snapshot/validate.vibe"
+import { type Repositories, openStore } from "../../../journal/ledger.vibe"
+import { applySnapshot, awardFor } from "../../../journal/snapshot.vibe"
+import type { FreezeEvidence } from "../../../../gen/points__periods.ts"
+import { type SourceAudit, refusal } from "../packet.vibe"
+import type { HistoricalAssessmentCatalog, Row } from "../audit/catalog.vibe"
+import { type HistoricalAssessmentReceipt, canonicalJson } from "../audit/reconcile.vibe"
+import { historicalClosedContextBindings, isHistoricalClosedFinding, isStandaloneHistoricalReview } from "./bindings.vibe"
+import { latestOf } from "./latest.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export interface VerifiedClosedReview {
+  readonly parentId: string
+  readonly parentNumber: number
+  readonly actorNodeId: string
+  readonly sourceUrl: string
+  readonly occurredAt: string
+  readonly recordDigest: string
+}
+
+export type VerifiedClosedReviews = ReadonlyMap<string, VerifiedClosedReview>
+
+export interface ValueScope {
+  readonly projectId: string
+  readonly sourceAudit: SourceAudit
+}
+
+export interface ValuePacket extends ValueScope {
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly baselineDigest: string
+  readonly baselineRevisionCount: number
+  readonly valueSnapshot: unknown
+  readonly valueKeys: ReadonlyArray<string>
+}
+
+export interface ProjectionContext {
+  readonly registry: RepositoryRegistry
+  readonly repositories: Repositories
+  readonly protection: ReadonlyArray<FreezeEvidence>
+}
+
+export interface ReplayContext extends ProjectionContext {
+  readonly pin: HistoricalPin
+  readonly project: HistoricalProject
+  readonly now: number
+}
+
+export interface ValueProjection {
+  readonly snapshot: LeaderboardSnapshot
+  readonly snapshotDigest: string
+  readonly previous: ReadonlyMap<string, Revision>
+  readonly changed: ReadonlyArray<Revision>
+  readonly rows: ReadonlyArray<Revision>
+}
+
+const reviewPattern = /^#pullrequestreview-([1-9]\d*)$/u
+const pullPath = /^\/[^/]+\/[^/]+\/pull\/([1-9]\d*)$/u
+const absentStatuses: ReadonlyArray<string> = ["missing", "incomplete", "human-ratified"]
+
+effect function ensure(holds: boolean, message: string) {
+  if (!holds) throw refusal(message)
+}
+
+function wire(value: unknown) {
+  return canonicalJson(JSON.parse(JSON.stringify(value ?? null)))
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return wire(left) === wire(right)
+}
+
+function iso(value: string) {
+  return new Date(value).toISOString()
+}
+
+function hasValueDecision(row: Revision) {
+  return row.decision?.sourceId.startsWith("value:") === true
+}
+
+function inWindow(occurredAt: string, audit: Pick<SourceAudit, "from" | "through">) {
+  return occurredAt >= audit.from && occurredAt < audit.through
+}
+
+function parentPullNumber(url: string) {
+  const parsed = URL.parse(url)
+  const match = parsed === null ? null : pullPath.exec(parsed.pathname)
+  return match === null ? null : Number(match[1])
+}
+
+function scoredEvents(snapshot: LeaderboardSnapshot) {
+  return [...snapshot.ledger, ...(snapshot.paymentReviewBasis?.ledger ?? [])]
+}
+
+function boundClosedReview(event: ScoreEvent, reviews: VerifiedClosedReviews) {
+  const proof = reviews.get(event.source.id)
+  return proof !== undefined && event.category === "substantive-review" && event.source.kind === "review" &&
+    event.id === `${proof.parentId}:value-review:${event.source.id}` && event.actor.kind === "User" && event.actor.id === proof.actorNodeId &&
+    event.source.number === proof.parentNumber && event.source.url === proof.sourceUrl && iso(event.occurredAt) === proof.occurredAt &&
+    event.scoreDecisionSourceId === `value:${proof.recordDigest}`
+}
+
+function fields(value: unknown): Row {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Row : {}
+}
+
+function list(value: unknown): ReadonlyArray<Row> {
+  return Array.isArray(value) ? value.map(fields) : []
+}
+
+function recordOf(text: string) {
+  return fields(parsedJson(text)?.value)
+}
+
+export effect function verifyHistoricalClosedReviews(snapshot: LeaderboardSnapshot | null, receipt: HistoricalAssessmentReceipt, catalog: Pick<HistoricalAssessmentCatalog, "joint">) {
+  const proofs = new Map<string, VerifiedClosedReview>()
+  if (snapshot === null) return proofs as VerifiedClosedReviews
+  const contexts = new Map([...historicalClosedContextBindings(receipt)].map(([id, binding]) => [binding.number, { id, ...binding }] as const))
+  if (contexts.size === 0) return proofs as VerifiedClosedReviews
+  try ensure(receipt.status === "requires-value-replay", "Closed historical review is outside a reconciled assessment scope")
+  const github = try GitHub
+  const records = new Map(catalog.joint.map((row) => [row.record_digest, row.record_json] as const))
+  const primary = new Map(snapshot.ledger.map((event) => [event.id, event] as const))
+  for (const event of scoredEvents(snapshot)) {
+    const context = contexts.get(parentPullNumber(event.source.url) ?? 0)
+    if (context === undefined || event.repository.toLowerCase() !== receipt.scope.repository.toLowerCase()) continue
+    if (proofs.has(event.source.id)) {
+      const canonical = primary.get(event.id)
+      try ensure(canonical !== undefined && boundClosedReview(event, proofs) && sameJson(event, canonical), "Closed historical review is duplicated or differs from the canonical ledger")
+      continue
+    }
+    const recordJson = records.get(context.digest)
+    const reviewId = reviewPattern.exec(URL.parse(event.source.url)?.hash ?? "")?.[1]
+    try ensure(reviewId !== undefined && recordJson !== undefined && sha256Of(recordJson) === context.digest && event.category === "substantive-review" &&
+      event.source.kind === "review" && event.source.number === context.number && event.id === `${context.id}:value-review:${event.source.id}` &&
+      event.scoreDecisionSourceId === `value:${context.digest}` && inWindow(iso(event.occurredAt), receipt.scope) &&
+      Date.parse(event.occurredAt) < Date.parse(context.occurredAt) && primary.has(event.id), "Closed historical review has no authenticated source or recorded value")
+    const record = recordOf(recordJson ?? "")
+    try ensure(receipt.records.some((row) => row.journal === "joint" && row.digest === context.digest && (context.standaloneReview === true
+      ? row.sources.length === 1 && isStandaloneHistoricalReview(record)
+      : row.sources.some((source) => source.finding === "audited-head" || source.finding === "stale-head"))) &&
+      list(record.sources).some((source) => source.pullRequestNodeId === context.id && source.pullRequestNumber === context.number && source.headSha === context.headSha &&
+        Date.parse(String(source.occurredAt)) === Date.parse(context.occurredAt) && source.repositoryNodeId === receipt.scope.repositoryNodeId && source.indirectAcceptance === undefined) &&
+      list(record.units).some((unit) => {
+        const assessment = fields(unit.assessment)
+        return assessment.status === "assessed" && list(assessment.reviews).some((review) => review.sourceId === event.source.id && review.tier !== "none")
+      }), "Closed historical review is absent from the assessed work unit")
+    const current = fields(try github.json(`/repos/${receipt.scope.repository}/pulls/${context.number}/reviews/${reviewId ?? ""}`, Schema.Unknown))
+    const user = fields(current.user)
+    try ensure(current.node_id === event.source.id && String(current.id) === reviewId && current.html_url === event.source.url &&
+      (context.standaloneReview !== true || current.state === "APPROVED" || current.state === "CHANGES_REQUESTED") && typeof current.submitted_at === "string" &&
+      Date.parse(current.submitted_at) === Date.parse(event.occurredAt) && user.type === "User" && user.node_id === event.actor.id &&
+      String(user.id) === String(githubUserIdFromNodeId(event.actor.id)), "Closed historical review identity or timing changed")
+    proofs.set(event.source.id, { parentId: context.id, parentNumber: context.number, actorNodeId: event.actor.id, sourceUrl: event.source.url, occurredAt: iso(event.occurredAt), recordDigest: context.digest })
+    try ensure(boundClosedReview(event, proofs), "Closed historical review differs from the canonical evidence")
+  }
+  return proofs as VerifiedClosedReviews
+}
+
+export effect function projectHistoricalValueChanges(scope: ValueScope, baseline: Journal, raw: unknown, closedReviews: VerifiedClosedReviews, context: ProjectionContext) {
+  const { projectId, sourceAudit } = scope
+  const snapshot = try validateSnapshot(raw, context.registry)
+  try ensure(snapshot.valuePolicyEffectiveAt === valueScoringApprovedHistoryFrom && snapshot.window.from === sourceAudit.from && snapshot.window.to === sourceAudit.through,
+    "Historical value snapshot has another window")
+  const sources = new Map(sourceAudit.sources.map((source) => [source.id, source] as const))
+  const reviewParents = new Map([...closedReviews.values()].map((proof) => [proof.parentId, proof] as const))
+  const coverage = snapshot.valueAssessmentCoverage ?? []
+  try ensure(sources.size === sourceAudit.sources.length && coverage.length === sources.size + reviewParents.size &&
+    (snapshot.source.counts.closedUnmergedPullRequests ?? 0) === reviewParents.size && coverage.every((row) => {
+      const closed = reviewParents.get(row.pullRequestId)
+      return row.repository.toLowerCase() === sourceAudit.repository.toLowerCase() && (closed !== undefined
+        ? !sources.has(row.pullRequestId) && closed.parentNumber === row.pullRequestNumber && row.status === "assessed" && row.recordDigest === closed.recordDigest
+        : sources.get(row.pullRequestId)?.number === row.pullRequestNumber)
+    }), "Snapshot omits audited sources")
+  const reviewNumbers = new Set([...reviewParents.values()].map((proof) => proof.parentNumber))
+  for (const event of scoredEvents(snapshot)) {
+    if (event.repository.toLowerCase() === sourceAudit.repository.toLowerCase() && reviewNumbers.has(parentPullNumber(event.source.url) ?? 0)) {
+      try ensure(boundClosedReview(event, closedReviews), "Closed historical context has an unverified or non-review award")
+    }
+  }
+  const snapshotDigest = sha256Of(JSON.stringify(raw))
+  const previous = latestOf(baseline.revisions)
+  const scratch = try openStore(`${journalText(baseline)}\n`, null, context.protection)
+  try applySnapshot(scratch, context.repositories, snapshot, snapshotDigest, snapshot.generatedAt, { preserveHeldImplementation: true })
+  const changed = [...scratch.latest.values()].filter((row) => previous.get(row.award.key)?.id !== row.id)
+  const rows = changed.filter((row) => hasValueDecision(row) && row.award.projectId === projectId && inWindow(row.award.occurredAt, sourceAudit))
+  return { snapshot, snapshotDigest, previous, changed, rows } satisfies ValueProjection
+}
+
+export effect function assertRemovedMergeGroupsPreserved(changes: ReadonlyArray<Revision>, receipt: HistoricalAssessmentReceipt, previous: ReadonlyMap<string, Revision>) {
+  const held = receipt.records.filter(({ sources }) => sources.some(({ finding }) => finding === "retained-removed-merge"))
+  if (held.length === 0) return
+  const digests = new Set(held.map(({ digest }) => `value:${digest}`))
+  const ids = new Set(held.flatMap(({ sources }) => sources.map(({ id }) => id)))
+  const numbers = new Set(held.flatMap(({ sources }) => sources.map(({ number }) => number)))
+  const belongs = ({ award, decision }: Revision) => {
+    if (award.projectId !== receipt.scope.projectId) return false
+    const source = URL.parse(award.sourceUrl)
+    return digests.has(decision?.sourceId ?? "") || ids.has(award.sourceId) || (source !== null && source.origin === "https://github.com" &&
+      source.pathname.toLowerCase().startsWith(`/${receipt.scope.repository.toLowerCase()}/pull/`) && numbers.has(parentPullNumber(award.sourceUrl) ?? 0))
+  }
+  for (const row of changes) {
+    const prior = previous.get(row.award.key)
+    try ensure(!belongs(row) && (prior === undefined || !belongs(prior)), "Historical Points change would alter a retained removed-merge group")
+  }
+}
+
+interface ActiveSource {
+  readonly digest: string
+  readonly stale: boolean
+  readonly held: boolean
+}
+
+effect function verifiedCoverage(snapshot: LeaderboardSnapshot, receipt: HistoricalAssessmentReceipt, closedReviews: VerifiedClosedReviews) {
+  const reviewedParents = new Set([...closedReviews.values()].map((proof) => proof.parentId))
+  const active = new Map<string, ActiveSource>()
+  const heldByDigest = new Map((snapshot.source.heldWorkUnits ?? []).map((row) => [row.recordDigest, row] as const))
+  for (const { digest, journal, sources } of receipt.records) {
+    const removed = sources.filter(({ finding }) => finding === "retained-removed-merge")
+    if (removed.length > 0) {
+      const hold = heldByDigest.get(digest)
+      try ensure(journal === "joint" && hold !== undefined && sameJson(hold.sourceNodeIds, sources.map(({ id }) => id).sort()) &&
+        sameJson(hold.unavailableNodeIds, removed.map(({ id }) => id).sort()), "Historical replay did not retain the whole removed-merge group")
+    }
+    for (const source of sources) {
+      if (source.finding === "outside-audit" || source.finding === "retained-removed-merge" || (isHistoricalClosedFinding(source.finding) && !reviewedParents.has(source.id))) continue
+      try ensure((source.finding === "audited-head" || source.finding === "stale-head" || isHistoricalClosedFinding(source.finding)) && !active.has(source.id),
+        "Historical assessment has a conflicting active source")
+      active.set(source.id, { digest, stale: source.finding === "stale-head", held: removed.length > 0 })
+    }
+  }
+  const coverage = [...(snapshot.valueAssessmentCoverage ?? [])].sort((left, right) => left.pullRequestNumber - right.pullRequestNumber)
+  const staleIds = new Set<string>()
+  for (const row of coverage) {
+    const record = active.get(row.pullRequestId)
+    if (record === undefined) {
+      try ensure(row.recordDigest === null && absentStatuses.includes(row.status), "Historical value coverage cites an unaudited active assessment")
+      continue
+    }
+    try ensure(row.status !== "missing" && row.status !== "legacy-policy" && (!record.held || (row.status === "unresolved" && row.recordDigest === record.digest)) &&
+      (row.recordDigest === record.digest || (row.status === "incomplete" && row.recordDigest === null)) && !(record.stale && row.status === "assessed"),
+      "Historical value coverage omits or misstates an active assessment")
+    active.delete(row.pullRequestId)
+    if (record.stale) staleIds.add(row.pullRequestId)
+  }
+  try ensure(active.size === 0, "Historical value coverage omits an active assessment")
+  return { coverage: coverage as ReadonlyArray<ValueCoverage>, staleIds }
+}
+
+function snapshotScope(scope: ValueScope, closedReviews: VerifiedClosedReviews, registry: RepositoryRegistry) {
+  const { projectId, sourceAudit } = scope
+  const byNumber = new Map(sourceAudit.sources.map((source) => [source.number, source] as const))
+  const known = registryOf(registry)
+  const parent = (award: Award) => {
+    const parsed = URL.parse(award.sourceUrl)
+    const match = parsed === null ? null : pullPath.exec(parsed.pathname)
+    return match !== null && repositoryIdFromUrl(known, award.sourceUrl) === sourceAudit.repository ? byNumber.get(Number(match[1])) : undefined
+  }
+  const contains = (award: Award) => {
+    if (award.projectId !== projectId || !inWindow(award.occurredAt, sourceAudit)) return false
+    const source = parent(award)
+    if (source === undefined) {
+      const review = closedReviews.get(award.sourceId)
+      return award.category === "substantive-review" && review?.actorNodeId === award.actor.id && review.sourceUrl === award.sourceUrl && review.occurredAt === award.occurredAt
+    }
+    return award.category === "substantive-review" || (award.category === "merged-pull-request" && award.sourceId === source.id && award.occurredAt === source.mergedAt)
+  }
+  return { distinct: byNumber.size === sourceAudit.sources.length, parent, contains }
+}
+
+effect function verifiedLinkedScope(snapshot: LeaderboardSnapshot, receipt: HistoricalAssessmentReceipt, projection: ValueProjection, contains: (award: Award) => boolean) {
+  const crossing = "Historical value replay would split a linked implementation change across the audited scope"
+  for (const row of projection.changed) {
+    if (!hasValueDecision(row)) continue
+    const previous = projection.previous.get(row.award.key)
+    try ensure(contains(row.award) && (previous === undefined || (contains(previous.award) && previous.award.occurredAt === row.award.occurredAt)),
+      "Historical value change crosses the audited source or occurrence scope")
+  }
+  const unitKey = (row: Revision) => `${row.decision?.sourceId}\u0000${row.award.workUnitId}`
+  const groupsByUnit = new Map((snapshot.reviewedImplementationUnits ?? []).flatMap(({ units }) =>
+    units.map(({ groupId, recordDigest, workUnitId }) => [`value:${recordDigest}\u0000${workUnitId}`, groupId] as const)))
+  const changedUnitIds = new Set<string>()
+  const changedGroups = new Set<string>()
+  const changedDecisions = new Set<string>()
+  for (const row of projection.rows.filter(({ award }) => award.category === "merged-pull-request")) {
+    changedUnitIds.add(row.award.workUnitId)
+    if (row.decision !== undefined) changedDecisions.add(row.decision.sourceId)
+    const group = groupsByUnit.get(unitKey(row))
+    if (group !== undefined) changedGroups.add(group)
+  }
+  const outsideMembers = new Set(receipt.records.filter((record) => record.journal === "joint" && changedDecisions.has(`value:${record.digest}`))
+    .flatMap((record) => record.sources.filter((source) => source.finding === "outside-audit" || isHistoricalClosedFinding(source.finding)).map((source) => source.id)))
+  const linked = (row: Revision) => {
+    const group = groupsByUnit.get(unitKey(row))
+    return changedUnitIds.has(row.award.workUnitId) || (group !== undefined && changedGroups.has(group)) ||
+      (row.decision !== undefined && changedDecisions.has(row.decision.sourceId)) || outsideMembers.has(row.award.sourceId)
+  }
+  for (const row of projection.changed) {
+    if (row.award.projectId !== receipt.scope.projectId || row.award.category !== "merged-pull-request" || contains(row.award)) continue
+    try ensure(!linked(row), crossing)
+  }
+  for (const row of projection.previous.values()) {
+    const { award } = row
+    if (award.projectId !== receipt.scope.projectId || award.category !== "merged-pull-request" || award.amount <= 0 || contains(award)) continue
+    try ensure(!linked(row), crossing)
+  }
+}
+
+function pointProjection(rows: ReadonlyArray<Revision>) {
+  return rows.map(({ award, previous, decision, sourceRule }) => ({ award, previous, decision, sourceRule })).sort((left, right) => left.award.key.localeCompare(right.award.key))
+}
+
+export function sourceAuditSha256(audit: SourceAudit) {
+  return sha256Of(JSON.stringify({
+    repository: audit.repository,
+    repositoryNodeId: audit.repositoryNodeId,
+    from: audit.from,
+    through: audit.through,
+    sources: [...audit.sources].sort((left, right) => left.number - right.number).map(({ id, number, headSha, mergedAt }) => ({ id, number, headSha, mergedAt })),
+  }))
+}
+
+export effect function verifyHistoricalValueReplay(packet: ValuePacket, baseline: Journal, receipt: HistoricalAssessmentReceipt, trustedRaw: unknown, closedReviews: VerifiedClosedReviews, context: ReplayContext) {
+  const { projectId, sourceAudit: audit } = packet
+  try ensure(sameJson(receipt.scope, { projectId, repository: audit.repository, repositoryNodeId: audit.repositoryNodeId, from: audit.from, through: audit.through, sourceAuditSha256: sourceAuditSha256(audit) }) &&
+    receipt.counts.auditedSources === audit.sources.length && receipt.heads.registryRevision === packet.revision && receipt.heads.registryManifestSha256 === packet.manifestSha256 &&
+    receipt.heads.d1PointsDigest === packet.baselineDigest && receipt.heads.d1PointsCount === packet.baselineRevisionCount && baseline.revisions.length === packet.baselineRevisionCount &&
+    (try batchDigest(baseline)) === packet.baselineDigest, "Historical value replay differs from the reconciled audit or Points baseline")
+  const { receiptSha256, ...receiptBody } = receipt
+  try ensure(receipt.blockers.length === 0 && receipt.counts.relevantRecords === receipt.records.length && receiptSha256 === sha256Of(canonicalJson(receiptBody)),
+    "Historical assessment reconciliation is incomplete")
+  if (receipt.status === "no-scoped-active-assessments") {
+    try ensure(receipt.records.length === 0 && packet.valueSnapshot === null && trustedRaw === null && packet.valueKeys.length === 0 && closedReviews.size === 0,
+      "Empty assessment scope cannot carry historical value decisions")
+    return sha256Of(wire({ receiptSha256, value: null }))
+  }
+  try ensure(receipt.status === "requires-value-replay" && receipt.records.length > 0 && trustedRaw !== null && packet.valueSnapshot !== null, "Complete historical value replay is required")
+  const { distinct, parent, contains } = snapshotScope(packet, closedReviews, context.registry)
+  try ensure(distinct, "Historical audit repeats a source number")
+  const contexts = historicalClosedContextBindings(receipt)
+  for (const proof of closedReviews.values()) {
+    const binding = contexts.get(proof.parentId)
+    try ensure(binding?.digest === proof.recordDigest && binding.number === proof.parentNumber, "Closed historical review is outside the reconciled assessment scope")
+  }
+  const closedNumbers = new Set([...contexts.values()].map(({ number }) => number))
+  const replayed = (raw: unknown) => effect {
+    const pinned = try validateHistoricalSnapshot(raw, context.registry, context.pin, context.project, context.now)
+    for (const event of scoredEvents(pinned)) {
+      if (closedNumbers.has(parentPullNumber(event.source.url) ?? 0)) try ensure(boundClosedReview(event, closedReviews), "Closed historical context has an unverified or non-review award")
+    }
+    const projection = try projectHistoricalValueChanges(packet, baseline, raw, closedReviews, context)
+    const { snapshot } = projection
+    const { coverage, staleIds } = try verifiedCoverage(snapshot, receipt, closedReviews)
+    const events = snapshot.ledger.filter((event) => event.scoreDecisionSourceId?.startsWith("value:") === true)
+    for (const event of events) {
+      const credited = awardFor(event, context.repositories, event.workUnitId ?? "") catch () => undefined
+      const award = credited?.award
+      const source = award === undefined ? undefined : parent(award)
+      try ensure(award !== undefined && (source !== undefined ? !staleIds.has(source.id) : boundClosedReview(event, closedReviews)) && contains(award),
+        "Historical value decision crosses the audited source or uses stale evidence")
+    }
+    try verifiedLinkedScope(snapshot, receipt, projection, contains)
+    try assertRemovedMergeGroupsPreserved(projection.changed, receipt, projection.previous)
+    return {
+      coverage,
+      events: [...events].sort((left, right) => left.id.localeCompare(right.id)),
+      units: [...(snapshot.reviewedImplementationUnits ?? [])].sort((left, right) => left.pullRequestId.localeCompare(right.pullRequestId)),
+      held: [...(snapshot.source.heldWorkUnits ?? [])].sort((left, right) => left.recordDigest.localeCompare(right.recordDigest)),
+      unavailable: [...(snapshot.source.unavailableSources ?? [])].sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+      points: pointProjection(projection.rows),
+    }
+  }
+  const trusted = try replayed(trustedRaw)
+  const reviewed = packet.valueSnapshot === trustedRaw ? trusted : try replayed(packet.valueSnapshot)
+  try ensure(sameJson(trusted, reviewed), "Reviewed historical value decisions differ from the trusted replay")
+  try ensure(sameJson(trusted.points.map(({ award }) => award.key).sort(), [...packet.valueKeys].sort()), "Reviewed value keys omit or add a trusted assessed change")
+  return sha256Of(wire({ receiptSha256, value: trusted }))
+}

@@ -254,6 +254,9 @@ export type DirectRefusal =
   | "confirmationRequiredConfirmTheExact75"
   | "invalidRequestConfirmOneOrTwo"
   | "invalidRequestUseThePaymentS"
+  | "invalidRequestRequestBodyHasUnexpected"
+  | "invalidRequestProvideTheCancellationTransaction"
+  | "invalidRequestProvideTheExpiredRequest"
   | "forbiddenOnlyTheReporterMay"
   | "railUnavailable"
   | "railUnavailableTheProgramHasNo"
@@ -264,6 +267,11 @@ export type DirectRefusal =
   | "paymentWalletConflict"
   | "paymentWalletConflictPayerReporterAndPlatform"
   | "paymentConsentRequired"
+  | "paymentConsentRequiredTheReporterMustAccept"
+  | "paymentTermsMismatch"
+  | "settlementExists"
+  | "paymentVaultUnverified"
+  | "paymentFundsUnavailable"
   | "paymentProofUnavailable"
   | "paymentNonceUnavailable"
   | "paymentNotPending"
@@ -318,6 +326,6 @@ export interface DirectPaymentView {
 }
 
 export service DirectPayments {
-  act(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: ReadonlyArray<Statement>): Json!(ReadFailure | DirectRefused | RecoveryRefused | SolanaPayerRefused)
+  act(action: DirectPaymentAction, context: CaseContext, body: unknown, alongside: (detail: Json) => ReadonlyArray<Statement>): Json!(ReadFailure | DirectRefused | RecoveryRefused | SolanaPayerRefused)
   view(context: PaymentViewContext): DirectPaymentView!ReadFailure
 }

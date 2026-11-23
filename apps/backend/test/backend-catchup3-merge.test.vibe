@@ -63,7 +63,7 @@ effect function populate(fake: GitHubFake) {
     world.addUser({ id: 5004, login: "carol" })
     world.addMember(owner, "maint")
     world.addRepo({ id: 7201, owner, name: "gamma" })
-    world.addInstallation({ id: 78, account: owner, repositories: "all", permissions: { pull_requests: "read" } })
+    world.addInstallation({ id: 78, account: owner, repositories: "all", permissions: { pull_requests: "read", issues: "write" } })
     for (let index = 0; index < waitingPulls; index += 1) world.addPull({ repo: gamma, author: "alice", createdAt: iso(-400 + index / 4) })
     world.addPull({ repo: gamma, author: "bob", createdAt: iso(-72), mergedAt: iso(-24) })
     world.addPull({ repo: gamma, author: "carol", createdAt: iso(-10), mergedAt: iso(-20) })
@@ -102,7 +102,7 @@ effect function refreshed(clock: SettableClock) {
 }
 
 layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Merge activity reads six pages of open pull requests at most and counts a merge stamped before its opening (spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date")', () => effect {
+  it.effect('Merge activity reads six pages of open pull requests at most, counts every open outside pull request beyond them and counts a merge stamped before its opening (spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/intakeCap.md, "The count takes every open outside pull request that is not a draft, answered or not")', () => effect {
     const { fake, clock } = try World
     try project("gamma", [gamma])
     const before = fake.requests.length
@@ -111,14 +111,14 @@ layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: 
     const served = try mergeActivityAnswer()
     try Effect.try(() => assert.deepStrictEqual({ counts, graphql, served }, {
       counts: { read: 1, failed: 0 },
-      graphql: 7,
+      graphql: 8,
       served: {
         schema: "slop-merge-activity-v1",
         waitingDays: 7,
         medianWindowDays: 30,
         projects: [{
           projectId: "gamma",
-          repositories: [{ repository: gamma, observedAt: t0, lastAttemptFailed: false, lastMergedAt: iso(-20), waitingOutside: 300, waitingCapped: true, mergedOutsideLast30Days: 2, medianHoursToMerge: 48 }],
+          repositories: [{ repository: gamma, observedAt: t0, lastAttemptFailed: false, lastMergedAt: iso(-20), waitingOutside: 300, waitingCapped: true, mergedOutsideLast30Days: 2, medianHoursToMerge: 48, openOutside: waitingPulls, openOutsideCapped: false }],
         }],
       },
     }))

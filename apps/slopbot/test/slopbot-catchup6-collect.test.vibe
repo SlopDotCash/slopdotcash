@@ -1,0 +1,299 @@
+// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, describe, it } from "@effect/vitest"
+import { Response as WebResponse } from "miniflare"
+import { webCrypto } from "@repo/platform/crypto"
+import { GitHub } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import type { GitHubFake } from "@repo/platform/testing/github"
+import { type Handler, internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { type AuthorRow, type OpenedMemo, auditSample, audited, graphqlClient, openMemoFromEnv, writeMemo } from "@repo/points/collect"
+import { type CensusOutcome, type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { historyOrigin, workUnitHistoryPath } from "@repo/ports/slopbot"
+import type { RegisteredRepository } from "../src/value/evidence/types.vibe"
+import { type ValueInputsOptions, collectValueInputs } from "../src/value/collect/inputs.vibe"
+import { invalidConcurrency, valueFeedConcurrency } from "../src/value/collect/warmup.vibe"
+import { reviewedReplay } from "../src/programs/replay.vibe"
+import { type Seeded, acceptanceRecorder, githubOver, mergedAt, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
+import { githubOverKept, pullUrl, registeredKept, repository as keptRepository, seededKept } from "./support/retainedWorker.vibe"
+
+const feedHost = new URL(historyOrigin).host
+const codeDigest = "a".repeat(64)
+const trustedMain = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_EVENT_NAME: "push" }
+const discoveryRead = /^GET \/repos\/ada\/widgets\/pulls\/1$/u
+
+interface Feed {
+  readonly asked: string[]
+  readonly failing: Map<string, number>
+  inFlight: number
+  peak: number
+}
+
+interface Reads {
+  readonly fake: GitHubFake
+  readonly token: string
+  readonly github: Layer.Layer<GitHub>
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function feedOf(): Feed {
+  return { asked: [], failing: new Map(), inFlight: 0, peak: 0 }
+}
+
+function pageKey(url: URL) {
+  return `${url.pathname === workUnitHistoryPath ? "joint" : "single"}:${url.searchParams.get("pull")}`
+}
+
+function emptyHistory(feed: Feed): Handler {
+  return async (request) => {
+    const url = new URL(request.url)
+    const key = pageKey(url)
+    feed.asked.push(key)
+    feed.inFlight += 1
+    feed.peak = Math.max(feed.peak, feed.inFlight)
+    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve()
+    feed.inFlight -= 1
+    const failures = feed.failing.get(key) ?? 0
+    if (failures > 0) {
+      feed.failing.set(key, failures - 1)
+      return new WebResponse("missing", { status: 404 })
+    }
+    const joint = url.pathname === workUnitHistoryPath
+    return WebResponse.json({
+      schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
+      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
+      repository: url.searchParams.get("repository"),
+      pullRequestNumber: Number(url.searchParams.get("pull")),
+      records: [],
+      nextAfter: null,
+      ...(joint ? { throughSequence: 0, totalRecords: 0 } : {}),
+    })
+  }
+}
+
+function widgetsReads(world: Seeded): Reads {
+  return { fake: world.fake, token: world.token, github: githubOver(world), repositories: [policyOf(world)] }
+}
+
+function inputsOver(reads: Reads, feed: Feed, options: Omit<ValueInputsOptions, "repositories"> = {}) {
+  const net = internet({ github: reads.fake.handler, hosts: { [feedHost]: emptyHistory(feed) } })
+  const outbound = outboundVia({ fetch: asFetch(net.handler) })
+  const services = Layer.mergeAll(reads.github, Layer.provide(graphqlClient({ token: Redacted.make(reads.token) }), outbound), acceptanceRecorder().layer)
+  return Layer.provide(collectValueInputs({ repositories: reads.repositories, ...options }), Layer.mergeAll(services, outbound, webCrypto))
+}
+
+effect function loaded(census: ValueCensus) {
+  const read = Effect.map((try ValueInputs).load(census), (inputs) => ({ kind: "loaded" as const, inputs }))
+  return read catch (error) => ({ kind: error._tag, message: error.message })
+}
+
+effect function attributionOutcome(world: Seeded) {
+  const pull = try Effect.try(() => world.fake.world.pull(repository, 1))
+  return { id: pull.nodeId, url: `https://github.com/${repository}/pull/1`, number: 1, headRefOid: world.head, updatedAt: pull.updatedAt, mergedAt, closedAt: null, commits: [{ oid: world.head, author: null, parentCount: 1 }] } satisfies CensusOutcome
+}
+
+effect function memoFrom(input: string, output: string) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown({ ...trustedMain, SLOP_COLLECTION_MEMO: input, SLOP_COLLECTION_MEMO_OUT: output })) {
+    const opened = try openMemoFromEnv(codeDigest)
+    if (opened === undefined) return try Effect.die(new Error("collection memo settings were not read"))
+    return opened
+  }
+}
+
+effect function cutoffWhere(outcomeId: string, wanted: boolean) {
+  for (let second = 0; second < 10_000; second += 1) {
+    const cutoffAt = new Date(Date.UTC(2026, 10, 20, 0, 0, second)).toISOString()
+    if (audited(try auditSample(outcomeId, cutoffAt)) === wanted) return cutoffAt
+  }
+  return try Effect.die(new Error("no cutoff with the wanted audit sample"))
+}
+
+effect function attributed(reads: Reads, opened: OpenedMemo, cutoffAt: string, census: ValueCensus, options: Omit<ValueInputsOptions, "repositories" | "memo"> = {}) {
+  provide inputsOver(reads, feedOf(), { ...options, memo: { session: opened.session, cutoffAt } }) {
+    const result = try loaded(census)
+    try writeMemo(opened, cutoffAt)
+    return { result, stats: { ...opened.session.stats }, recorded: [...opened.session.next.keys()] }
+  }
+}
+
+effect function withAuthors(path: string, into: string, row: AuthorRow) {
+  const fs = try FileSystem.FileSystem
+  const text = try fs.readFileString(path)
+  const file = try Effect.try(() => JSON.parse(text) as { readonly attributions: ReadonlyArray<Readonly<Record<string, unknown>>> })
+  const attributions = file.attributions.map((entry) => ({ ...entry, result: { kind: "authors", authors: [row] } }))
+  try fs.writeFileString(into, `${JSON.stringify({ ...file, attributions })}\n`)
+}
+
+function stats(reused: number, live: number, audits: number, auditMismatches: number, fenceMisses: number) {
+  return { reused, live, audited: audits, auditMismatches, fenceMisses }
+}
+
+function credited(result: { readonly kind: string; readonly inputs?: { readonly retainedCommitCredits: ReadonlyArray<{ readonly commitSha: string; readonly actor: { readonly id: string; readonly login: string } }> } }) {
+  return (result.inputs?.retainedCommitCredits ?? []).map((credit) => [credit.commitSha, credit.actor.id, credit.actor.login])
+}
+
+describe('Reach the same collection with fewer reads (spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => {
+  it.live("a live attribution records every fenced input, an unchanged one is reused with no discovery reads, and a reused author is read live", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      const reads = widgetsReads(world)
+      const outcome = try attributionOutcome(world)
+      const census = { value: [], attribution: [outcome] } satisfies ValueCensus
+      const cutoffAt = try cutoffWhere(outcome.id, false)
+
+      const first = try attributed(reads, try memoFrom("", `${directory}/first.json`), cutoffAt, census)
+      try same({ stats: first.stats, recorded: first.recorded, credits: credited(first.result) }, { stats: stats(0, 1, 0, 0, 0), recorded: [outcome.id], credits: [] })
+
+      const before = requested(world, discoveryRead)
+      const second = try attributed(reads, try memoFrom(`${directory}/first.json`, `${directory}/second.json`), cutoffAt, census)
+      try same({ kind: second.result.kind, stats: second.stats, recorded: second.recorded, discovery: requested(world, discoveryRead) - before }, { kind: "loaded", stats: stats(1, 0, 0, 0, 0), recorded: [outcome.id], discovery: 0 })
+
+      const grace = try Effect.try(() => world.fake.world.account("grace"))
+      const earlier = try Effect.try(() => world.fake.world.pull(repository, 2))
+      try withAuthors(`${directory}/first.json`, `${directory}/authors.json`, [world.head, grace.nodeId, earlier.nodeId, `https://github.com/${repository}/pull/2`, world.base])
+      try Effect.try(() => world.fake.world.renameUser("grace", "grace-hopper"))
+      const renamed = try attributed(reads, try memoFrom(`${directory}/authors.json`, `${directory}/renamed.json`), cutoffAt, census)
+      try same({ stats: renamed.stats, credits: credited(renamed.result), discovery: requested(world, discoveryRead) - before }, { stats: stats(1, 0, 0, 0, 0), credits: [[world.head, grace.nodeId, "grace-hopper"]], discovery: 0 })
+    }
+  })
+
+  it.live("an audit difference discards every reuse and the audited answer is the live one", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      const reads = widgetsReads(world)
+      const outcome = try attributionOutcome(world)
+      const census = { value: [], attribution: [outcome] } satisfies ValueCensus
+      try attributed(reads, try memoFrom("", `${directory}/first.json`), try cutoffWhere(outcome.id, false), census)
+      const grace = try Effect.try(() => world.fake.world.account("grace"))
+      const earlier = try Effect.try(() => world.fake.world.pull(repository, 2))
+      try withAuthors(`${directory}/first.json`, `${directory}/authors.json`, [world.head, grace.nodeId, earlier.nodeId, `https://github.com/${repository}/pull/2`, world.base])
+      const before = requested(world, discoveryRead)
+      const audit = try attributed(reads, try memoFrom(`${directory}/authors.json`, `${directory}/audited.json`), try cutoffWhere(outcome.id, true), census)
+      try same({ stats: audit.stats, credits: credited(audit.result), recorded: audit.recorded, discovery: requested(world, discoveryRead) - before }, { stats: stats(0, 0, 1, 1, 0), credits: [], recorded: [outcome.id], discovery: 1 })
+    }
+  })
+
+  it.live("a changed pull request, text reference or incoming reference list is computed live again", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const world = try seeded()
+      try Effect.try(() => world.fake.world.addRepo({ id: 7399, owner: "grace", name: "tools", files: { "README.md": "tools\n" } }))
+      try Effect.try(() => world.fake.world.addIssue({ repo: "grace/tools", number: 1, author: "grace", title: "Tooling" }))
+      try Effect.try(() => world.fake.world.addComment(repository, 1, { author: "ada", body: "See grace/tools#1.", createdAt: "2026-11-11T00:00:00Z" }))
+      const reads = widgetsReads(world)
+      const first = try attributionOutcome(world)
+      const cutoffAt = try cutoffWhere(first.id, false)
+      try attributed(reads, try memoFrom("", `${directory}/first.json`), cutoffAt, { value: [], attribution: [first] })
+
+      try Effect.try(() => world.fake.world.addComment(repository, 1, { author: "carol", body: "Thanks.", createdAt: "2026-11-12T00:00:00Z" }))
+      const before = requested(world, discoveryRead)
+      const commented = try attributed(reads, try memoFrom(`${directory}/first.json`, `${directory}/commented.json`), cutoffAt, { value: [], attribution: [try attributionOutcome(world)] })
+      try same({ stats: commented.stats, discovery: requested(world, discoveryRead) - before }, { stats: stats(0, 1, 0, 0, 1), discovery: 1 })
+
+      try Effect.try(() => world.fake.world.addTimelineEvent(repository, 1, { event: "cross-referenced", actor: "grace", createdAt: "2026-11-12T01:00:00Z", source: { repo: repository, number: 4 } }))
+      const referenced = try attributed(reads, try memoFrom(`${directory}/commented.json`, `${directory}/referenced.json`), cutoffAt, { value: [], attribution: [try attributionOutcome(world)] })
+      try same({ stats: referenced.stats, discovery: requested(world, discoveryRead) - before }, { stats: stats(0, 1, 0, 0, 1), discovery: 2 })
+
+      try Effect.try(() => world.fake.world.renameRepo("grace/tools", "grace/kit"))
+      const renamed = try attributed(reads, try memoFrom(`${directory}/referenced.json`, `${directory}/renamed.json`), cutoffAt, { value: [], attribution: [try attributionOutcome(world)] })
+      try same({ stats: renamed.stats, discovery: requested(world, discoveryRead) - before }, { stats: stats(0, 1, 0, 0, 1), discovery: 3 })
+    }
+  })
+
+  it.live("a deferred retained attribution holds its source and is not recorded for reuse", () => effect {
+    provide NodeServices.layer, webCrypto {
+      const fs = try FileSystem.FileSystem
+      const directory = try fs.makeTempDirectory()
+      const kept = try seededKept()
+      try Effect.try(() => kept.fake.world.addComment(keptRepository, 2, { author: "grace", body: "Carries #1.", createdAt: "2026-11-05T01:00:00Z" }))
+      const pull = try Effect.try(() => kept.fake.world.pull(keptRepository, 2))
+      const outcome = { id: pull.nodeId, url: pullUrl(2), number: 2, headRefOid: kept.copy, updatedAt: pull.updatedAt, mergedAt: "2026-11-05T00:00:00Z", closedAt: null, commits: [{ oid: kept.copy, author: null, parentCount: 1 }] } satisfies CensusOutcome
+      const reads = { fake: kept.fake, token: kept.token, github: githubOverKept(kept), repositories: [registeredKept(kept)] } satisfies Reads
+      const opened = try memoFrom("", `${directory}/deferred.json`)
+      const deferred = try attributed(reads, opened, try cutoffWhere(outcome.id, false), { value: [], attribution: [outcome] }, { deferRetainedAttribution: true })
+      const holds = "inputs" in deferred.result ? deferred.result.inputs.attributionHolds.map((hold) => hold.sourceId) : []
+      try same({ holds, stats: deferred.stats, recorded: deferred.recorded, notReusable: opened.session.notReusable.size > 0 }, { holds: [outcome.id], stats: stats(0, 1, 0, 0, 0), recorded: [], notReusable: true })
+    }
+  })
+})
+
+function valueOutcomes(count: number): ReadonlyArray<CensusOutcome> {
+  return Array.from({ length: count }, (_, index) => ({ id: `PR_value_${index + 1}`, url: `https://github.com/${repository}/pull/${index + 1}`, number: index + 1, updatedAt: "2026-11-12T00:00:00Z", mergedAt: null }))
+}
+
+effect function historiesAt(world: Seeded, concurrency: number, failing: ReadonlyArray<readonly [string, number]> = []) {
+  const feed = feedOf()
+  for (const [key, times] of failing) feed.failing.set(key, times)
+  provide inputsOver(widgetsReads(world), feed, { feedConcurrency: concurrency }) {
+    const result = try loaded({ value: valueOutcomes(8), attribution: [] })
+    return { result, asked: feed.asked, peak: feed.peak }
+  }
+}
+
+describe('Recover complete history at a fixed sequence boundary (spec/slopbot/historyReadAhead.md, "First history pages may be read ahead, a bounded number at once, and decide nothing"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself")', () => {
+  it.live("one read at a time keeps the sequential order, and six at a time return the same decisions with never more than six in flight", () => effect {
+    const world = try seeded()
+    const sequential = try historiesAt(world, 1)
+    const expected = Array.from({ length: 8 }, (_, index) => [`joint:${index + 1}`, `single:${index + 1}`]).flat()
+    try same({ kind: sequential.result.kind, asked: sequential.asked, peak: sequential.peak }, { kind: "loaded", asked: expected, peak: 1 })
+    const ahead = try historiesAt(world, 6)
+    try same({ result: ahead.result, asked: [...ahead.asked].sort(), withinLimit: ahead.peak <= 6 }, { result: sequential.result, asked: [...expected].sort(), withinLimit: true })
+  })
+
+  it.live("a failed read-ahead page is read again by the loop, and a lasting failure surfaces from the loop as it does in order", () => effect {
+    const world = try seeded()
+    const sequential = try historiesAt(world, 1)
+    const recovered = try historiesAt(world, 6, [["joint:3", 1]])
+    try same({ result: recovered.result, jointThree: recovered.asked.filter((key) => key === "joint:3").length }, { result: sequential.result, jointThree: 2 })
+    const lasting = [["joint:3", Number.POSITIVE_INFINITY]] as const
+    const inOrder = try historiesAt(world, 1, lasting)
+    const ahead = try historiesAt(world, 6, lasting)
+    try same({ result: ahead.result, refused: ahead.result.kind }, { result: inOrder.result, refused: "ValueEvidenceRefused" })
+  })
+
+  it.live("an invalid concurrency stops before any read", () => effect {
+    const world = try seeded()
+    const before = requested(world, /^GET /u)
+    const invalid = try historiesAt(world, 17)
+    try same({ result: invalid.result, asked: invalid.asked, github: requested(world, /^GET /u) - before }, { result: { kind: "ValueEvidenceRefused", message: invalidConcurrency }, asked: [], github: 0 })
+    const settings = ["", "1", "6", "16", "0", "17", "007", "six", " 4 "]
+    const parsed: Array<number | string> = []
+    for (const raw of settings) {
+      provide ConfigProvider.layer(ConfigProvider.fromUnknown({ SLOP_VALUE_FEED_CONCURRENCY: raw })) {
+        const value = valueFeedConcurrency() catch (error) => error._tag
+        parsed.push(value)
+      }
+    }
+    try same(parsed, [1, 1, 6, 16, "FeedConcurrencyInvalid", "FeedConcurrencyInvalid", "FeedConcurrencyInvalid", "FeedConcurrencyInvalid", 4])
+  })
+})
+
+describe('Replay a historical scope only from a trusted dispatch (spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback")', () => {
+  it.live("reviewed-replay refuses a push run and a dispatch without its registry before any read", () => effect {
+    const net = internet()
+    const outbound = outboundVia({ fetch: asFetch(net.handler) })
+    const main = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_TOKEN: "replay-token" }
+    const runs: ReadonlyArray<readonly [Readonly<Record<string, string>>, ReadonlyArray<string>]> = [
+      [{ ...main, GITHUB_EVENT_NAME: "push" }, ["registry.json"]],
+      [{ ...main, GITHUB_EVENT_NAME: "workflow_dispatch" }, []],
+    ]
+    const outcomes: string[] = []
+    for (const [settings, args] of runs) {
+      provide ConfigProvider.layer(ConfigProvider.fromUnknown(settings)), outbound, webCrypto, NodeServices.layer {
+        const outcome = Effect.map(reviewedReplay(args), () => "completed") catch (error) => error._tag
+        outcomes.push(outcome)
+      }
+    }
+    try same({ outcomes, requests: net.requests.length }, { outcomes: ["ReviewedPublicationRefused", "ReviewedPublicationRefused"], requests: 0 })
+  })
+})

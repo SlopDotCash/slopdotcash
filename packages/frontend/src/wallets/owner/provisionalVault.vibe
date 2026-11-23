@@ -1,5 +1,6 @@
 // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
 import { type Event, type IncludedDepositEvidence, type Setup, type VaultKind, canCountDeposit, canFinalizeCreation, canFinalizeDeposit, canIncludeCreation, canIncludeDeposit, canObserveFailure, canReplaceCreation, canReplaceDeposit, depositAttempt, initial, machineOver } from "../../../gen/frontend__provisionalVault.effect.vibe"
+import { U256_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { EvmConnection } from "../core/evm.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -29,6 +30,14 @@ export const provisionalMessages = {
   noVault: "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
   depositFailed: "The transaction failed. Review the amount and wallet, then retry.",
 } as const
+
+export function provisionalReceived(network: string, hash: string): string {
+  return `Deposit received in a ${network} block. The vault is recorded once ${network} finalizes its creation, usually within 20 minutes, and the deposit counts after that; you can leave this page. ${hash}`
+}
+
+export function depositVerified(hash: string): string {
+  return `Deposit verified on the finalized chain. ${hash}`
+}
 
 export error DepositStopped { message: string }
 
@@ -82,6 +91,38 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
   effect function createdHere(connection: EvmConnection, read: ReceiptState | undefined) {
     if (read === undefined || !read.canonical || !read.success) return "absent" as const
     return Effect.as(verifyDeployment(connection, vault, hexQuantity(read.receipt.blockNumber)), "created" as const) catch (error) => error._tag === "VaultActionRefused" ? "absent" as const : "unavailable" as const
+  }
+
+  function savedGross(plan: EvmDepositPlan): bigint | undefined {
+    const value = BigInt(plan.call.value)
+    return value > 0n ? value : decodeUint(`0x${plan.call.data.slice(-64)}`, U256_MAX)
+  }
+
+  effect function followDeposit(connection: EvmConnection, gross: bigint) {
+    const state = try machine.get()
+    if (state.transaction === 0) return state
+    const plan = storedDeposit()
+    if (plan === undefined || plan.hash === "") throw new DepositStopped({ message: provisionalMessages.unreadable })
+    const saved = plan
+    const call = try plannedTransfer(vault, "deposit", "send", gross, saved)
+    const read = try receiptState(connection, vault, saved.hash, expectedOf(call))
+    if ((read === undefined || !read.canonical) && canReplaceDeposit(state)) try sent({ type: "replaceDeposit" }, "")
+    if (read !== undefined && read.canonical) {
+      const block = blockIndex(read.receipt.blockNumber)
+      const now = try machine.get()
+      if (!read.success && read.final && canObserveFailure(now, now.transaction, block)) try sent({ type: "observeFailure", transaction: now.transaction, block }, "")
+      if (read.success) {
+        const exact = depositsBy(vault, read.receipt, call.from, gross) === 1
+        const evidence: IncludedDepositEvidence | undefined = exact ? "ExactDepositEvent" : !(try vaultCodeAt(connection, vault, read.receipt.blockNumber)) ? "VerifiedAbsentCode" : undefined
+        if (evidence !== undefined && canIncludeDeposit(now, now.transaction, block, evidence)) try sent({ type: "includeDeposit", transaction: now.transaction, block, evidence }, "")
+        const included = try machine.get()
+        if (read.final && canFinalizeDeposit(included, included.transaction, block)) try sent({ type: "finalizeDeposit", transaction: included.transaction, block }, "")
+      }
+    }
+    const checked = try machine.get()
+    if (checked.phase !== "NoDeposit" && checked.phase !== "Prompt" && checked.phase !== "Verified") try sent({ type: "checkDeposit" }, "")
+    const counted = try machine.get()
+    return try step({ type: "countDeposit" }, canCountDeposit(counted))
   }
 
   effect function annotateHash(hash: string) {
@@ -148,32 +189,16 @@ export effect function provisionalVault(storage: SlotStorage | undefined, key: s
       if (!(try annotateHash(hash))) try stopped(provisionalMessages.changed)
       return try machine.get()
     },
-    followDeposit: effect (connection: EvmConnection, gross: bigint) => {
+    followDeposit,
+    followSaved: effect (connection: EvmConnection) => {
       const state = try machine.get()
-      if (state.transaction === 0) return state
+      if (state.transaction === 0) return { state, hash: "" }
       const plan = storedDeposit()
-      if (plan === undefined || plan.hash === "") throw new DepositStopped({ message: provisionalMessages.unreadable })
-      const saved = plan
-      const call = try plannedTransfer(vault, "deposit", "send", gross, saved)
-      const read = try receiptState(connection, vault, saved.hash, expectedOf(call))
-      if ((read === undefined || !read.canonical) && canReplaceDeposit(state)) try sent({ type: "replaceDeposit" }, "")
-      if (read !== undefined && read.canonical) {
-        const block = blockIndex(read.receipt.blockNumber)
-        const now = try machine.get()
-        if (!read.success && read.final && canObserveFailure(now, now.transaction, block)) try sent({ type: "observeFailure", transaction: now.transaction, block }, "")
-        if (read.success) {
-          const exact = depositsBy(vault, read.receipt, call.from, gross) === 1
-          const evidence: IncludedDepositEvidence | undefined = exact ? "ExactDepositEvent" : !(try vaultCodeAt(connection, vault, read.receipt.blockNumber)) ? "VerifiedAbsentCode" : undefined
-          if (evidence !== undefined && canIncludeDeposit(now, now.transaction, block, evidence)) try sent({ type: "includeDeposit", transaction: now.transaction, block, evidence }, "")
-          const included = try machine.get()
-          if (read.final && canFinalizeDeposit(included, included.transaction, block)) try sent({ type: "finalizeDeposit", transaction: included.transaction, block }, "")
-        }
-      }
-      const checked = try machine.get()
-      if (checked.phase !== "NoDeposit" && checked.phase !== "Prompt" && checked.phase !== "Verified") try sent({ type: "checkDeposit" }, "")
-      const counted = try machine.get()
-      return try step({ type: "countDeposit" }, canCountDeposit(counted))
+      const gross = plan === undefined ? undefined : savedGross(plan)
+      if (plan === undefined || gross === undefined) throw new DepositStopped({ message: provisionalMessages.unreadable })
+      return { state: try followDeposit(connection, gross), hash: plan.hash }
     },
+    saved: effect () => storedDeposit(),
     reload: effect () => {
       const state = try machine.get()
       return try step({ type: "reload" }, state.phase !== "Prompt")

@@ -1,5 +1,5 @@
 // spec/frontend/presentation.md, "Home keeps distinct contribution and report entry points and generic agent setup"; spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"; spec/frontend/presentation.md, "Home offers a Contributor / Maintainer switch whose journey sets the heading, the prompt and every agent's skill address together"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
-import { Button, cn, DataState, shell } from "@repo/ui";
+import { Button, cn, shell } from "@repo/ui";
 import { Plus } from "lucide-react";
 import { noProjectsText, showsNoProjects } from "../../../gen/frontend__poolListing.ts";
 import { audienceChanges, type HomeAudience } from "../../../gen/frontend__presentation.ts";
@@ -12,7 +12,7 @@ import { CampaignHeading } from "./CampaignHeading.tsx";
 import { CommunityRows } from "./CommunityRows.tsx";
 import { InstallPanel } from "./InstallPanel.tsx";
 import { homeSections, type ListedProject, type Shown } from "./listing.ts";
-import { ProjectGrid, sectionHeading, sectionTitle, tierNote, tierTitle } from "./ProjectCards.tsx";
+import { ListedRead, ProjectGrid, sectionHeading, sectionTitle, tierNote, tierTitle } from "./ProjectCards.tsx";
 import { copyText } from "./prompt.vibe";
 import { SecurityOffers } from "./SecurityOffers.tsx";
 
@@ -67,7 +67,7 @@ function Projects({ projects, funding }: HomeReads) {
           </a>
         </Button>
       </div>
-      <DataState status={projects.status} onRetry={projects.onRetry}>
+      <ListedRead read={projects}>
         {showsNoProjects(funding, featured.length + community.length) ? <p className={tierNote}>{noProjectsText}</p> : null}
         {featured.length > 0 ? (
           <section aria-labelledby="featured-projects">
@@ -80,7 +80,7 @@ function Projects({ projects, funding }: HomeReads) {
         <div className={featured.length > 0 && community.length > 0 ? "mt-12" : undefined}>
           <CommunityRows projects={community} />
         </div>
-      </DataState>
+      </ListedRead>
     </section>
   );
 }

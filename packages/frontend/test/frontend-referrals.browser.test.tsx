@@ -22,7 +22,7 @@ interface Posted {
   readonly actor: string | null;
 }
 
-const settingsRoute: Route = { kind: "Account", projectId: "", cycleId: "", login: "" };
+const settingsRoute: Route = { kind: "Account", projectId: "", cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" };
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 const previousActEnvironment = environment.IS_REACT_ACT_ENVIRONMENT;
 const opened: Array<{ root: Root; runtime: PageRuntime }> = [];

@@ -2,7 +2,7 @@
 import { FORWARDED_TOO_LONG, MAX_FORWARDED_DESCRIPTION, MAX_PROOF_BYTES, PROOF_FILE_EXTENSIONS, type ReportProof, forwardedDescription, proofBytes } from "@repo/security/client";
 import { Alert, FileField, buttonVariants, cn } from "@repo/ui";
 import { Cause, Effect, Exit } from "effect";
-import { Download } from "lucide-react";
+import { Download, FileUp } from "lucide-react";
 import { useId, useState } from "react";
 import { byteCount, descriptionAccept, descriptionOf, proofOf } from "../../../flows/security/reportFile.vibe";
 
@@ -32,7 +32,7 @@ function LoadDescriptionButton({ disabled, onLoad }: { disabled: boolean; onLoad
   const { error, choose } = useFileRead(descriptionOf, onLoad);
   return (
     <div className="flex flex-col gap-2">
-      <FileField accept={descriptionAccept} aria-label="Load report from file" chooseLabel="Load report from file" disabled={disabled} onFiles={(files) => void choose(files)} />
+      <FileField accept={descriptionAccept} aria-label="Load report from file" chooseLabel="Load report from file" icon={<FileUp aria-hidden className="size-3.5" />} disabled={disabled} onFiles={(files) => void choose(files)} />
       <Refusal message={error} />
     </div>
   );
@@ -53,9 +53,11 @@ function ProofFileField({ description, fileName, text, disabled, onChange }: { d
         accept={PROOF_FILE_EXTENSIONS.join(",")}
         aria-labelledby={legendId}
         chooseLabel={proof ? "Replace file" : "Choose file"}
+        icon={<FileUp aria-hidden className="size-3.5" />}
         disabled={disabled}
         file={proof ? `${proof.fileName} · ${byteCount(proofBytes(proof.patch))}` : undefined}
         removeLabel="Remove"
+        removeVisible
         onFiles={(files) => void choose(files)}
         onRemove={() => {
           setError(null);

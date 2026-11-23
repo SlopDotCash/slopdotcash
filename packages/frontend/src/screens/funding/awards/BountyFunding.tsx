@@ -14,7 +14,7 @@ export type BountyFundsManager = {
 export type BountyFundingProps = {
   /** A project whose security bounty has its own vault. */
   project: BountyProject;
-  /** The viewer manages the project, so the private funds are read in place of the address list. */
+  /** The viewer manages the project, so the private funds and the vault's deposit are shown in place of the address list. */
   manager?: BountyFundsManager;
 };
 
@@ -29,7 +29,7 @@ export function BountyFunding({ project, manager }: BountyFundingProps) {
         Project vault {chain === "base" ? <NetworkMark network="Base" showName={false} /> : chain === "solana" ? <NetworkMark network="Solana" showName={false} /> : null}
       </h2>
       {manager ? (
-        <BountyFunds projectId={project.id} account={manager.account} githubId={manager.githubId} />
+        <BountyFunds project={project} account={manager.account} githubId={manager.githubId} />
       ) : (
         <ul className="flex flex-col gap-2">
           {deployments.map((deployment) => (

@@ -518,6 +518,9 @@ importers:
       '@noble/hashes':
         specifier: 'catalog:'
         version: 2.4.0
+      '@repo/backend':
+        specifier: workspace:*
+        version: link:../backend
       '@repo/operations':
         specifier: workspace:*
         version: link:../operations
@@ -527,9 +530,15 @@ importers:
       '@repo/ports':
         specifier: workspace:*
         version: link:../../packages/ports
+      '@repo/security':
+        specifier: workspace:*
+        version: link:../security
       '@repo/settlement':
         specifier: workspace:*
         version: link:../settlement
+      '@repo/slopbot':
+        specifier: workspace:*
+        version: link:../slopbot
       '@scure/base':
         specifier: 'catalog:'
         version: 1.2.6
@@ -546,9 +555,6 @@ importers:
       '@effect/vitest':
         specifier: 4.1.1
         version: 4.1.1(effect@4.1.1)(vitest@5.1.0)
-      '@repo/backend':
-        specifier: workspace:*
-        version: link:../backend
       '@repo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

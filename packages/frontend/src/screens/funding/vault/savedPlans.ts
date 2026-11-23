@@ -86,7 +86,7 @@ export function vaultKeys(projectId: string, deployment: FundingDeployment, peri
     batch: `${storageKeys.vaultAction.key}${target}:batch`,
     commitment: `${storageKeys.awardCommitment.key}${projectId}:${period}`,
     setting: `${storageKeys.vaultMonthly.key}${deployment.network}:${deployment.vault}`,
-    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}`,
+    release: `${storageKeys.monthlyRelease.key}${projectId}:${period}:${deployment.network}`,
   };
 }
 

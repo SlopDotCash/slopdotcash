@@ -16,7 +16,6 @@ import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
 import { slopReceipt } from "../receipt/statements.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
-import { depositHeld } from "../deposit/held.vibe"
 import { depositView } from "../deposit/view.vibe"
 import { withDeposit } from "./list.vibe"
 import { RateLimited, admit, admitted, committed, objectKey, opened, putReport, upload } from "./attempt.vibe"
@@ -218,7 +217,7 @@ effect function revise(actor: Actor, id: string) {
   const record = try caseStanding(stored.case_id)
   if (record === undefined) throw refused(notFound)
   const digests = (try reportVersions(id)).map((version) => version.content_sha256)
-  const screening = { ...screeningOf(stored, githubNumber(row.reporter_github_id), digests), depositHeld: try depositHeld(stored.case_id) }
+  const screening = { ...screeningOf(stored, githubNumber(row.reporter_github_id), digests), depositHeld: record.deposit_held === 1 }
   const current = caseOf(record, stored.report_version)
   const prepared = revisionEvidence(row, current, actor.githubId, { object: true, admitted: true })
   if (!revisionPermitted(screening, { ...prepared, allowedCaseState: true })) throw refused(reviseRows.reportNotEditable)

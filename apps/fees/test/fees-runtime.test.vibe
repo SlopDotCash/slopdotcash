@@ -2,7 +2,7 @@ import { assert, layer } from "@effect/vitest"
 import { ExperimentalNodeFileSystem } from "vibelang-runtime/experimental/platform-node"
 import type { Network, Runtime } from "../gen/fees__runtime.ts"
 import { buybackSigns, conversionSigns, networkSigns, replacementSigns, runs } from "../gen/fees__runtime.effect.vibe"
-import { type Release, isolateRuntime, preflight, presentSecrets, summary, unpublished } from "../src/runtime/config.vibe"
+import { type Derived, type ReadinessSettings, type Release, isolateRuntime, preflight, presentSecrets, summary, unpublished } from "../src/runtime/config.vibe"
 import { type FeeVars, databaseBinding, expectedSecrets, keySecrets, networkOrder, varNames } from "../src/runtime/networks.vibe"
 import { decodeReviewed, reviewedFacts } from "../src/runtime/reviewed.vibe"
 
@@ -10,9 +10,13 @@ schema Crons { crons: ReadonlyArray<string> }
 schema D1Entry { binding: string; database_name: string; database_id: string }
 schema WranglerFile { name: string; main: string; no_bundle: boolean; triggers: Crons; d1_databases: ReadonlyArray<D1Entry>; vars: Record<string, string>; expectedSecrets: ReadonlyArray<string> }
 
+const feeWallet = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+const solanaWallet = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
 const otherWallet = "0x1111111111111111111111111111111111111111"
 const [keyBase, keyEthereum, keyRobinhood, keySolana] = keySecrets
 const liveBuyback: FeeVars = { BUYBACK_MODE: "live", BUYBACK_START_AT: "2026-11-10T00:00:00.000Z" }
+const noApproval: ReadinessSettings = { entries: [], replacementActive: false }
+const nothingSigns = { Base: false, Ethereum: false, Robinhood: false, Solana: false }
 
 effect function reviewed(environment: "production" | "staging") {
   const fs = try FileSystem.FileSystem
@@ -21,7 +25,7 @@ effect function reviewed(environment: "production" | "staging") {
 }
 
 effect function released(vars: FeeVars, secrets: ReadonlyArray<string>, release: Partial<Release> = {}) {
-  return preflight({ vars, secretInventory: secrets, releaseVariable: true, source: 1, previous: unpublished, ...release }) catch () => undefined
+  return preflight({ vars, secretInventory: secrets, releaseVariable: true, source: 1, previous: unpublished, ownerApproval: noApproval, ...release }) catch () => undefined
 }
 
 effect function derived(vars: FeeVars, secrets: ReadonlyArray<string>) {
@@ -30,6 +34,10 @@ effect function derived(vars: FeeVars, secrets: ReadonlyArray<string>) {
 
 function perNetwork(runtime: Runtime | undefined, signs: (r: Runtime, network: Network) => boolean) {
   return Object.fromEntries(networkOrder.map((network) => [network, runtime !== undefined && signs(runtime, network)]))
+}
+
+function granted(result: Derived | undefined) {
+  return result?.readiness.map((outcome) => outcome.granted)
 }
 
 function unknownVars(vars: Readonly<Record<string, string>>) {
@@ -66,7 +74,7 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
     }))
   })
 
-  it.effect('The reviewed production file publishes the Worker live only with every key, the release variable enabled and an advancing source, and only a later publication in off mode stops it (spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Simulation samples cover complete, incomplete and staging configurations")', () => effect {
+  it.effect('The reviewed production file publishes the Worker live only with every key, the release variable enabled and an advancing source, publishes no readiness, so nothing signs until the owner lists it, and only a later publication in off mode stops it (spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Simulation samples cover complete, incomplete and staging configurations"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address")', () => effect {
     const file = try reviewed("production")
     const keys = [keyBase, keyEthereum, keyRobinhood, keySolana]
     const paused: FeeVars = { ...file.vars, FEE_CONVERTER_MODE: "off", BUYBACK_MODE: "off" }
@@ -91,6 +99,10 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
         line: summary(live),
         runs: runs(live.held.runtime),
         modes: [live.held.runtime.converterMode, live.held.runtime.buybackMode],
+        ready: live.held.runtime.ready,
+        replacement: live.held.runtime.replacementActive,
+        readiness: granted(live),
+        signs: perNetwork(live.held.runtime, networkSigns),
         converter: live.config.converter,
         buyback: live.config.buyback,
         budgets: live.config.budgets.map((budget) => [budget.network, budget.limits.perTransaction, budget.limits.perDay, budget.limits.additionalFeeReserve]),
@@ -115,6 +127,10 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
         line: "fee-converter mode live; networks base,ethereum,robinhood,solana",
         runs: true,
         modes: ["Live", "Live"],
+        ready: { base: false, ethereum: false, robinhood: false, solana: false },
+        replacement: false,
+        readiness: [],
+        signs: nothingSigns,
         converter: { minValueMicro: 5_000_000n, gasMultiple: 10n, maxSlippageBps: 100, maxPriceImpactBps: 200, runCapMicro: 1_000_000_000n, dailyCapMicro: 5_000_000_000n, solanaFeeMicro: 2_000n },
         buyback: {
           startAt: 1_794_441_600_000,
@@ -150,7 +166,7 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
     }))
   })
 
-  it.effect('The staging Worker runs a dry run with no key and refuses a key or a live mode (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Signing needs a live mode and a published listing of the network, its key, native limits and wallet")', () => effect {
+  it.effect('The staging Worker runs a dry run with no key and refuses a key or a live mode (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet")', () => effect {
     const staging = try reviewed("staging")
     const production = try reviewed("production")
     const dryRun = try released(staging.vars, [], { releaseVariable: false })
@@ -188,22 +204,39 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
     }))
   })
 
-  it.effect('A dry run loads no key, and a network signs only while the live publication lists it with its key, native limits and wallet; an EVM network in live mode replaces and Solana never does (spec/fees/runtime.md, "Signing needs a live mode and a published listing of the network, its key, native limits and wallet"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration")', () => effect {
+  it.effect('A dry run loads no key, and signing needs live mode, the listing of the network with its key and native limits, and readiness listed for the exact published fee wallet and approved by the owner; an EVM network replaces only while the owner activates it and Solana never does (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration")', () => effect {
     const production = (try reviewed("production")).vars
     const keyMaterial = "key-material-that-must-not-be-read"
     const secrets = presentSecrets({ FEE_WALLET_KEY_BASE: keyMaterial, FEE_WALLET_KEY_ETHEREUM: keyMaterial, FEE_WALLET_KEY_ROBINHOOD: keyMaterial, FEE_WALLET_KEY_SOLANA: keyMaterial, JUPITER_API_KEY: " " })
     const budgets: Readonly<Record<string, unknown>> = try orDie(Effect.try(() => JSON.parse(production.FEE_CONVERTER_NATIVE_BUDGETS ?? "")))
     const withoutRobinhoodBudget = try orDie(Effect.try(() => JSON.stringify(Object.fromEntries(Object.entries(budgets).filter(([name]) => name !== "robinhood")))))
+    const ready = `base:${feeWallet},robinhood:${feeWallet},solana:${solanaWallet},ethereum:${otherWallet}`
+    const allReady = `base:${feeWallet},ethereum:${feeWallet},robinhood:${feeWallet},solana:${solanaWallet}`
+    const dryRunVars: FeeVars = { ...production, FEE_CONVERTER_MODE: "dry_run", BUYBACK_MODE: "off" }
     const liveVars: FeeVars = { ...production, FEE_CONVERTER_MODE: "live", BUYBACK_MODE: "live" }
-    const dryRun = try derived({ ...production, FEE_CONVERTER_MODE: "dry_run", BUYBACK_MODE: "off" }, secrets)
+    const readyVars: FeeVars = { ...liveVars, FEE_READY: allReady, FEE_REPLACEMENT_ACTIVE: "true" }
+    const dryRun = try derived({ ...dryRunVars, FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true" }, secrets)
     const dryRunText = try Effect.try(() => JSON.stringify(dryRun, (_, value: unknown) => typeof value === "bigint" ? value.toString() : value))
-    const live = try derived(liveVars, secrets)
-    const unlisted = try derived({ ...liveVars, FEE_CONVERTER_NETWORKS: "base,robinhood,solana" }, [keyBase, keyRobinhood, keySolana])
-    const withoutLimits = try derived({ ...liveVars, BUYBACK_MODE: "off", FEE_CONVERTER_NATIVE_BUDGETS: withoutRobinhoodBudget }, secrets)
-    const liveBuybackWithoutLimits = try derived({ ...liveVars, FEE_CONVERTER_NATIVE_BUDGETS: withoutRobinhoodBudget }, secrets)
-    const moved = try derived({ ...liveVars, FEE_WALLET_BASE: otherWallet, FEE_WALLET_ETHEREUM: otherWallet, FEE_WALLET_ROBINHOOD: otherWallet }, secrets)
-    const withoutSolanaWallet = try derived({ ...liveVars, FEE_WALLET_SOLANA: "" }, secrets)
-    const splitWallet = try derived({ ...production, FEE_WALLET_ETHEREUM: otherWallet }, [])
+    const notReady = try derived(liveVars, secrets)
+    const live = try derived({ ...liveVars, FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true" }, secrets)
+    const inactive = try derived({ ...readyVars, FEE_REPLACEMENT_ACTIVE: "false" }, secrets)
+    const unlisted = try derived({ ...readyVars, FEE_CONVERTER_NETWORKS: "base,robinhood,solana" }, [keyBase, keyRobinhood, keySolana])
+    const withoutLimits = try derived({ ...readyVars, BUYBACK_MODE: "off", FEE_CONVERTER_NATIVE_BUDGETS: withoutRobinhoodBudget }, secrets)
+    const liveBuybackWithoutLimits = try derived({ ...readyVars, FEE_CONVERTER_NATIVE_BUDGETS: withoutRobinhoodBudget }, secrets)
+    const moved = try derived({ ...liveVars, FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true", FEE_WALLET_BASE: otherWallet, FEE_WALLET_ETHEREUM: otherWallet, FEE_WALLET_ROBINHOOD: otherWallet }, secrets)
+    const withoutSolanaWallet = try derived({ ...readyVars, FEE_WALLET_SOLANA: "" }, secrets)
+    const splitWallet = try derived({ ...dryRunVars, FEE_WALLET_ETHEREUM: otherWallet }, [])
+    const unknownNetwork = try derived({ ...dryRunVars, FEE_READY: `polygon:${feeWallet}` }, [])
+    const wrongFamily = try derived({ ...dryRunVars, FEE_READY: `solana:${feeWallet}` }, [])
+    const unreadableReplacement = try derived({ ...dryRunVars, FEE_REPLACEMENT_ACTIVE: "yes" }, [])
+    const noReplacementSetting = try derived(dryRunVars, [])
+    const approval: ReadinessSettings = { entries: [{ network: "Base", wallet: feeWallet }], replacementActive: true }
+    const approvedVars: FeeVars = { ...production, FEE_CONVERTER_MODE: "live", BUYBACK_MODE: "off", FEE_CONVERTER_NETWORKS: "base", FEE_READY: `base:${feeWallet}`, FEE_REPLACEMENT_ACTIVE: "true" }
+    const approvedRelease = try released(approvedVars, [keyBase], { ownerApproval: approval })
+    const unapprovedPair = try released({ ...approvedVars, FEE_READY: `base:${feeWallet},ethereum:${feeWallet}` }, [keyBase], { ownerApproval: approval })
+    const unapprovedReplacement = try released({ ...approvedVars, FEE_REPLACEMENT_ACTIVE: "false" }, [keyBase], { ownerApproval: approval })
+    const withoutApproval = try released(approvedVars, [keyBase])
+    const withdrawn = approvedRelease === undefined ? undefined : try released({ ...approvedVars, FEE_READY: "", FEE_REPLACEMENT_ACTIVE: "false" }, [keyBase], { previous: approvedRelease.held, source: 2 })
     try Effect.try(() => assert.deepStrictEqual({
       secrets,
       dryRunRuns: dryRun === undefined ? undefined : runs(dryRun.held.runtime),
@@ -211,35 +244,73 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
       dryRunBuys: perNetwork(dryRun?.held.runtime, buybackSigns),
       dryRunReplaces: perNetwork(dryRun?.held.runtime, replacementSigns),
       dryRunHoldsNoKey: !dryRunText.includes(keyMaterial),
+      notReadyRuns: notReady === undefined ? undefined : runs(notReady.held.runtime),
+      notReadySigns: perNetwork(notReady?.held.runtime, networkSigns),
+      notReadyReplaces: perNetwork(notReady?.held.runtime, replacementSigns),
+      liveReadiness: granted(live),
       liveConverts: perNetwork(live?.held.runtime, conversionSigns),
       liveBuys: perNetwork(live?.held.runtime, buybackSigns),
       liveReplaces: perNetwork(live?.held.runtime, replacementSigns),
+      inactiveSigns: perNetwork(inactive?.held.runtime, networkSigns),
+      inactiveReplaces: perNetwork(inactive?.held.runtime, replacementSigns),
+      unlistedReadiness: granted(unlisted),
       unlistedSigns: perNetwork(unlisted?.held.runtime, networkSigns),
       unlistedReplaces: perNetwork(unlisted?.held.runtime, replacementSigns),
       withoutLimitsSigns: perNetwork(withoutLimits?.held.runtime, networkSigns),
       withoutLimitsReplaces: perNetwork(withoutLimits?.held.runtime, replacementSigns),
       liveBuybackWithoutLimits,
+      movedReadiness: granted(moved),
       movedSigns: perNetwork(moved?.held.runtime, networkSigns),
       withoutSolanaWallet,
       splitWallet,
+      unknownNetwork,
+      wrongFamily,
+      unreadableReplacement,
+      noReplacementSetting: noReplacementSetting === undefined ? undefined : { replacement: noReplacementSetting.held.runtime.replacementActive, readiness: granted(noReplacementSetting) },
+      approvedReadiness: granted(approvedRelease),
+      approvedConverts: perNetwork(approvedRelease?.held.runtime, conversionSigns),
+      unapprovedPair,
+      unapprovedReplacement,
+      withoutApproval,
+      withdrawnReadiness: withdrawn?.readiness.map((outcome) => [outcome.event.type, outcome.granted]),
+      withdrawnSigns: perNetwork(withdrawn?.held.runtime, networkSigns),
     }, {
       secrets: [keyBase, keyEthereum, keyRobinhood, keySolana],
       dryRunRuns: true,
-      dryRunConverts: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
-      dryRunBuys: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
-      dryRunReplaces: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
+      dryRunConverts: nothingSigns,
+      dryRunBuys: nothingSigns,
+      dryRunReplaces: nothingSigns,
       dryRunHoldsNoKey: true,
-      liveConverts: { Base: true, Ethereum: true, Robinhood: false, Solana: true },
-      liveBuys: { Base: true, Ethereum: true, Robinhood: true, Solana: true },
-      liveReplaces: { Base: true, Ethereum: true, Robinhood: true, Solana: false },
+      notReadyRuns: true,
+      notReadySigns: nothingSigns,
+      notReadyReplaces: nothingSigns,
+      liveReadiness: [true, true, true, false, true],
+      liveConverts: { Base: true, Ethereum: false, Robinhood: false, Solana: true },
+      liveBuys: { Base: true, Ethereum: false, Robinhood: true, Solana: true },
+      liveReplaces: { Base: true, Ethereum: false, Robinhood: true, Solana: false },
+      inactiveSigns: { Base: true, Ethereum: true, Robinhood: true, Solana: true },
+      inactiveReplaces: nothingSigns,
+      unlistedReadiness: [true, false, true, true, true],
       unlistedSigns: { Base: true, Ethereum: false, Robinhood: true, Solana: true },
       unlistedReplaces: { Base: true, Ethereum: false, Robinhood: true, Solana: false },
       withoutLimitsSigns: { Base: true, Ethereum: true, Robinhood: false, Solana: true },
       withoutLimitsReplaces: { Base: true, Ethereum: true, Robinhood: false, Solana: false },
       liveBuybackWithoutLimits: undefined,
-      movedSigns: { Base: true, Ethereum: true, Robinhood: true, Solana: true },
+      movedReadiness: [false, false, true, true, true],
+      movedSigns: { Base: false, Ethereum: true, Robinhood: false, Solana: true },
       withoutSolanaWallet: undefined,
       splitWallet: undefined,
+      unknownNetwork: undefined,
+      wrongFamily: undefined,
+      unreadableReplacement: undefined,
+      noReplacementSetting: { replacement: false, readiness: [] },
+      approvedReadiness: [true, true],
+      approvedConverts: { Base: true, Ethereum: false, Robinhood: false, Solana: false },
+      unapprovedPair: undefined,
+      unapprovedReplacement: undefined,
+      withoutApproval: undefined,
+      withdrawnReadiness: [["withdrawReadiness", true], ["setReplacement", true]],
+      withdrawnSigns: nothingSigns,
     }))
   })
 

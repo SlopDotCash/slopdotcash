@@ -1,0 +1,68 @@
+// spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
+import { Graphql } from "@repo/points/collect"
+import type { RegisteredRepository } from "../evidence/types.vibe"
+import { prepareWorkUnitEvidence, sourceDigestOf } from "../workUnits/prepare.vibe"
+import type { WorkUnitRecord } from "../workUnits/record.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+
+const referenceCreationQuery = "query HistoricalReferenceCreation($id:ID!){node(id:$id){__typename ... on PullRequest{id number url createdAt repository{id databaseId isPrivate nameWithOwner}}}}"
+const createdAtPattern = /^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/u
+
+schema PublicReference {
+  readonly __typename: string
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly createdAt: string
+  readonly repository: { readonly id: string; readonly databaseId: number; readonly isPrivate: boolean; readonly nameWithOwner: string }
+}
+
+const ReferenceAnswer = Schema.Struct({ node: Schema.NullOr(PublicReference) })
+
+const StandaloneAssessment = Schema.Struct({
+  status: Schema.Literal("assessed"),
+  tier: Schema.Null,
+  reviews: Schema.Array(Schema.Unknown),
+})
+
+export function isStandaloneHistoricalReview(record: WorkUnitRecord) {
+  const [binding] = record.sources
+  const [unit] = record.units
+  if (record.sources.length !== 1 || binding === undefined || binding.indirectAcceptance !== undefined || binding.mergeRecipe !== undefined) return false
+  if (!(Date.parse(binding.occurredAt) <= Date.parse(record.assessedAt)) || record.claims.length !== 0 || record.units.length !== 1 || unit === undefined || unit.claimIds.length !== 0) return false
+  const assessment = Schema.decodeUnknownOption(StandaloneAssessment)(unit.assessment)
+  return Option.isSome(assessment) && assessment.value.reviews.length > 0
+}
+
+function exactCreation(createdAt: string) {
+  return createdAtPattern.test(createdAt) && new Date(createdAt).toISOString() === createdAt.replace(/(?<!\.\d{3})Z$/u, ".000Z")
+}
+
+export effect function rebindHistoricalStandaloneReview(source: WorkUnitSource, record: WorkUnitRecord, repositories: ReadonlyArray<RegisteredRepository>) {
+  const [binding] = record.sources
+  if (!isStandaloneHistoricalReview(record) || binding === undefined) return source
+  const { evidence, policy } = source
+  const { pull, relatedPullRequests, evidenceUrls } = evidence
+  const [reference] = relatedPullRequests
+  if (
+    relatedPullRequests.length !== 1 || reference === undefined || evidence.limitations.length !== 0 || (evidence.unavailablePublicReferences?.length ?? 0) > 0
+    || evidence.indirectAcceptance !== undefined || evidence.repositoryNodeId !== binding.repositoryNodeId || evidence.repositoryDatabaseId !== binding.repositoryDatabaseId
+    || evidence.repository.toLowerCase() !== binding.repository.toLowerCase() || pull.node_id !== binding.pullRequestNodeId || pull.number !== binding.pullRequestNumber
+    || pull.head.sha !== binding.headSha || pull.merge_commit_sha !== binding.mergeSha || pull.state !== "closed" || pull.merged_at !== null
+    || Date.parse(pull.closed_at ?? "") !== Date.parse(binding.occurredAt) || !(Date.parse(pull.updated_at) <= Date.parse(record.assessedAt))
+    || reference.id === pull.node_id || reference.number === pull.number || reference.repository.toLowerCase() !== binding.repository.toLowerCase()
+    || evidenceUrls.filter((url) => url === reference.url).length !== 1
+  ) return source
+  const answer = try (try Graphql).execute(referenceCreationQuery, { id: reference.id })
+  const observed = Option.getOrUndefined(Schema.decodeUnknownOption(ReferenceAnswer)(answer))?.node ?? undefined
+  if (
+    observed === undefined || observed.__typename !== "PullRequest" || observed.id !== reference.id || observed.number !== reference.number || observed.url !== reference.url
+    || observed.repository.id !== binding.repositoryNodeId || observed.repository.databaseId !== binding.repositoryDatabaseId || observed.repository.isPrivate !== false
+    || observed.repository.nameWithOwner.toLowerCase() !== binding.repository.toLowerCase() || !exactCreation(observed.createdAt)
+    || !(Date.parse(observed.createdAt) > Date.parse(record.assessedAt))
+  ) return source
+  const candidate: WorkUnitSource = { ...source, evidence: { ...evidence, relatedPullRequests: [], evidenceUrls: evidenceUrls.filter((url) => url !== reference.url) } }
+  if ((try sourceDigestOf(candidate.evidence, policy)) !== binding.sourceDigest) return source
+  const prepared = try prepareWorkUnitEvidence([candidate], repositories)
+  return prepared.limitations.length === 0 && prepared.claims.length === 0 && prepared.sourceDigest === record.sourceDigest ? candidate : source
+}

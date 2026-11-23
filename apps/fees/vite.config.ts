@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig(
   workerBuild({
-    workers: { submissionFee: "src/workers/submissionFee.vibe" },
+    workers: { feeConverter: "src/workers/feeConverter.vibe", submissionFee: "src/workers/submissionFee.vibe" },
     programs: { main: "src/programs/main.vibe" },
   }),
 );

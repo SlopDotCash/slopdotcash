@@ -1,7 +1,7 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/collectionMemo.md, "Commit statistics are reused only for the same repository node, commit node and object id"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { utf8 } from "@repo/platform/crypto"
-import { type CensusOutcome, ValueEvidenceRefused, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { type CensusOutcome, type HistoricalClosedContext, ValueEvidenceRefused, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
 import { type ProjectView } from "../../../gen/points__census.effect.vibe"
 import { type Identities, NotCollected, type OpenCensus, collectOpen, identities } from "../../census/collect.vibe"
 import { type CollectedTarget, collectedTargets, defaultRegistryOrigin, fetchRegistry } from "../../census/projects.vibe"
@@ -20,6 +20,7 @@ import { type AcceptedReviewHistory, type EvaluatedContribution, type Retained, 
 import { type PenaltyFeedRecord, projectPenaltyState } from "../feeds/penalties.vibe"
 import { type MergedRepository, type MergedWork, collectMergedWork, confirmReviewCensus, probeUnavailableSources } from "../merged/collection.vibe"
 import { commitLineLoader } from "../merged/commits.vibe"
+import { type ImplementationCollected, type ImplementationRequest, implementationFacts } from "../implementation/facts.vibe"
 import type { MemoSession } from "../memo/memo.vibe"
 import type { IssueRecord, PullRequestRecord } from "../merged/hydrate.vibe"
 import { type MergedOutcome, dedupedById } from "../merged/wire.vibe"
@@ -45,6 +46,7 @@ export interface CollectRequest extends CollectOptions {
   readonly dataRoot?: string
   readonly output?: string
   readonly memo?: MemoSession
+  readonly implementation?: ImplementationRequest
 }
 
 export interface OpenCollection {
@@ -72,6 +74,7 @@ export interface Collection {
   readonly acceptedReviewHistory: Retained<AcceptedReviewHistory>
   readonly evaluatedContributions: Retained<{ readonly sourceRevision: string; readonly awards: ReadonlyArray<EvaluatedContribution> }> | undefined
   readonly source: CollectionSource
+  readonly implementation?: ImplementationCollected
 }
 
 export service SnapshotAssembly {
@@ -92,8 +95,8 @@ export effect function collectArguments(args: ReadonlyArray<string>) {
   return { registryPath, cutoffMs } satisfies CollectOptions
 }
 
-function underValuePolicy(acceptedAt: string | null | undefined) {
-  return typeof acceptedAt === "string" && millisOf(acceptedAt) >= valuePolicyAt
+function underValuePolicy(acceptedAt: string | null | undefined, fromMs: number) {
+  return typeof acceptedAt === "string" && millisOf(acceptedAt) >= fromMs
 }
 
 function mergedCensusOutcome(outcome: MergedOutcome): CensusOutcome {
@@ -113,13 +116,13 @@ function closedCensusOutcome(pull: PullRequestRecord): CensusOutcome {
   return { id: pull.id, url: pull.url, number: pull.number, headRefOid: pull.headRefOid, updatedAt: pull.updatedAt, mergedAt: null, closedAt: pull.closedAt }
 }
 
-function unavailableById(sources: ReadonlyArray<UnavailableSource>) {
+export function unavailableById(sources: ReadonlyArray<UnavailableSource>) {
   const merged = new Map<string, UnavailableSource>()
   for (const source of sources) merged.set(source.nodeId, { ...merged.get(source.nodeId), ...source })
   return [...merged.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId))
 }
 
-effect function openCollection(repository: MergedRepository, reservedCost: number, bounds: WindowBounds, ids: Identities, views: ReadonlyMap<string, ProjectView>) {
+export effect function openCollection(repository: MergedRepository, reservedCost: number, bounds: WindowBounds, ids: Identities, views: ReadonlyMap<string, ProjectView>) {
   const view = views.get(repository.target.projectId)
   if (view === undefined) throw new NotCollected({ projectId: repository.target.projectId })
   const records = openRecords()
@@ -134,7 +137,7 @@ effect function openCollection(repository: MergedRepository, reservedCost: numbe
   return { census, records } satisfies OpenCollection
 }
 
-effect function penaltyFeeds(projectIds: ReadonlyArray<string>, cutoff: string) {
+export effect function penaltyFeeds(projectIds: ReadonlyArray<string>, cutoff: string) {
   const penalties: PenaltyFeedRecord[] = []
   const history: PenaltyHistoryRecord[] = []
   let hasHistory = false
@@ -159,7 +162,12 @@ function failureMessage(error: { readonly _tag: string }) {
   return "message" in error && typeof error.message === "string" ? error.message : error._tag
 }
 
-effect function valueInputs(work: MergedWork<OpenCollection>, recollection: Recollection) {
+export interface HistoricalValue {
+  readonly valuePolicyFromMs: number
+  readonly closedContexts: ReadonlyMap<string, HistoricalClosedContext>
+}
+
+export effect function valueInputs(work: MergedWork<OpenCollection>, recollection: Recollection, historical?: HistoricalValue) {
   const graphql = try Graphql
   const held: ProbedSource[] = []
   const unconfirmed: SourceNodeUnavailable[] = []
@@ -172,9 +180,10 @@ effect function valueInputs(work: MergedWork<OpenCollection>, recollection: Reco
     return probed.map((source) => source.nodeId)
   }
   const value = (try ValueInputs).load({
-    value: [...work.outcomes.map(mergedCensusOutcome), ...work.closedUnmergedPullRequests.map(closedCensusOutcome)].filter((source) => underValuePolicy(source.mergedAt ?? source.closedAt)),
+    value: [...work.outcomes.map(mergedCensusOutcome), ...work.closedUnmergedPullRequests.map(closedCensusOutcome)].filter((source) => underValuePolicy(source.mergedAt ?? source.closedAt, historical?.valuePolicyFromMs ?? valuePolicyAt)),
     attribution: work.outcomes.map(mergedCensusOutcome),
     unavailableJointSources,
+    ...(historical === undefined ? {} : { historicalClosedContexts: historical.closedContexts }),
   }) catch effect (error) => {
     const [first] = unconfirmed
     if (first !== undefined) throw first
@@ -189,6 +198,7 @@ effect function generation(request: CollectRequest, bounds: WindowBounds, regist
   const views = new Map(registered.map((project) => [project.projectId, project.view] as const))
   const ids = identities()
   if (request.memo !== undefined) try request.memo.beginPass()
+  request.implementation?.memo?.beginPass()
   const verificationFromMs = bounds.toMs - verificationWindowDays * dayMs
   const work = try collectMergedWork({
     targets,
@@ -200,6 +210,7 @@ effect function generation(request: CollectRequest, bounds: WindowBounds, regist
     recollection,
   }, (repository, reservedCost) => openCollection(repository, reservedCost, bounds, ids, views), commitLineLoader(undefined, request.memo?.commitLines))
   try confirmReviewCensus(work)
+  const implementation = request.implementation === undefined ? undefined : try implementationFacts({ repositories: work.collections, windowFrom: bounds.from, recordedThrough: bounds.to, request: request.implementation })
   const { value, held } = try valueInputs(work, recollection)
   const deadline = request.discussionCheckpoint?.deadlineMs
   const checkedAt = try Clock.currentTimeMillis
@@ -264,6 +275,7 @@ effect function generation(request: CollectRequest, bounds: WindowBounds, regist
     acceptedReviewHistory: reviewHistory,
     evaluatedContributions: evaluated,
     source,
+    ...(implementation === undefined ? {} : { implementation }),
   }
   const raw = try (try SnapshotAssembly).assemble(collection)
   const censuses = work.collections.flatMap((repository) => [repository.open.census.issues.census, repository.open.census.pullRequests.census])

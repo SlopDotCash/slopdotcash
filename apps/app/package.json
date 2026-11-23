@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node ../contributor/dist/programs/main.js site --out .cache/site && vite build",
+    "build": "node ../contributor/dist/programs/main.js site --out .cache/contributor-site && vite build",
     "typecheck": "vibelang --noEmit -p .",
     "test": "vitest run",
     "test:browser": "vitest run --project browser"

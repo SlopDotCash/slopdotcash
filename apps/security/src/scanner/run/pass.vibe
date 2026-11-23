@@ -1,7 +1,7 @@
 // spec/security/admission.md, "Story: Review every acquired item before granting admission"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"; spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
 import { isoNow } from "@repo/platform/clock"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
-import type { Disposition, Event, Machine } from "../../../gen/security__admission.effect.vibe"
+import type { Disposition, Machine } from "../../../gen/security__admission.effect.vibe"
 import { ReuseAnswer } from "../../client/admission.vibe"
 import { type ScanResult, isScanResult, maxResultBytes, parseResult, resultProblems, scanSchema, sourceInventory, templatePrefix } from "../../admission/result.ts"
 import { readAcquiredObject, readAcquiredSource } from "../acquire/source.vibe"
@@ -12,7 +12,7 @@ import { complete, approved, journaled, reserve, submit } from "../publish/journ
 import { type ReviewOptions, reviewInventory } from "../review/inventory.vibe"
 import { inspectIsolatedArtifacts } from "../sandboxClient/client.vibe"
 import { attemptMachine, fetched, interrupted, publishedDigest, receiptOf, reusedOrigin } from "./attempt.vibe"
-import { type QueuedScan, type ScanComposition, composeAcquisitionRefusal, composeScanResult } from "./compose.ts"
+import { type QueuedScan, composeAcquisitionRefusal, composeScanResult, coveredByBoundedScan, primaryOutcome, specialistOutcome } from "./compose.ts"
 import { type EvidenceObject, retainEvidence } from "./evidence.vibe"
 import { type Assignment, QueuedRefusal, acquireQueued, readPendingAssessments } from "./queue.vibe"
 import { ScanService, signedCall, signedJson } from "./service.vibe"
@@ -42,7 +42,6 @@ export error QueuedInputsInvalid
 export error NamedObjectMissing
 export error DispositionDisagrees
 
-const coveredByBoundedScan: ReadonlySet<string> = new Set(["execution-dependencies-and-release-assets-not-acquired", "skill-template-inputs-not-acquired", "runtime-and-model-review-not-performed"])
 schema QueuedInput { path: string; sha256: string }
 schema QueuedInputs { schema: "slop-queued-inputs-v1"; repository: string; inputs: ReadonlyArray<QueuedInput> }
 
@@ -78,15 +77,6 @@ effect function acquiredInputs(directory: string) {
 }
 
 const dispositionOf: Readonly<Record<ScanResult["disposition"], Disposition>> = { clean: "DClean", incomplete: "DIncomplete", malicious: "DMalicious" }
-
-function modelEscalated(composition: ScanComposition) {
-  const review = composition.result.primaryReview
-  return review.verdict !== "no-findings" || review.risk !== "low"
-}
-
-function primaryReviewed(composition: ScanComposition): Event {
-  return { type: "reviewPrimary", primaryOutcome: modelEscalated(composition) ? "PrimaryEscalate" : "PrimaryClean" }
-}
 
 effect function reusableResult(assignment: Assignment, repository: string, inventorySha256: string) {
   const settings = try ScanSettings
@@ -214,6 +204,7 @@ effect function scanAcquired(machine: Machine.Shape, assignment: Assignment, dir
   }
   const first = try compose(null)
   const { ambiguous } = first
+  const reviewedPrimary = primaryOutcome(first.result.primaryReview)
   let composed = first
   let specialist: ScannerEvidence | null = null
   if (declined === undefined && first.needsSpecialist) {
@@ -221,8 +212,8 @@ effect function scanAcquired(machine: Machine.Shape, assignment: Assignment, dir
     if (second.review.status !== "completed") {
       if (!reviewDeclined(second.failure)) {
         try checked(isolated.uncovered, ambiguous)
-        try machine.send(primaryReviewed(first))
-        if (!modelEscalated(first)) try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
+        try machine.send({ type: "reviewPrimary", primaryOutcome: reviewedPrimary })
+        if (reviewedPrimary === "PrimaryClean") try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
         try machine.send({ type: "reviewSpecialist", specialistOutcome: "SpecialistUnavailable" })
         return retry(assessmentId, "specialist-review", second.failure)
       }
@@ -235,9 +226,12 @@ effect function scanAcquired(machine: Machine.Shape, assignment: Assignment, dir
   if (primary.review.status !== "completed") {
     try machine.send({ type: "reviewPrimary", primaryOutcome: "PrimaryDeclined" })
   } else {
-    try machine.send(specialist === null ? { type: "reviewPrimary", primaryOutcome: "PrimaryClean" } : primaryReviewed(first))
-    if (specialist !== null && !modelEscalated(first)) try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
-    if (specialist !== null) try machine.send({ type: "reviewSpecialist", specialistOutcome: specialist.review.status === "completed" ? "SpecialistClean" : "SpecialistDeclined" })
+    const specialistReview = composed.result.specialistReview
+    try machine.send({ type: "reviewPrimary", primaryOutcome: reviewedPrimary })
+    if (specialistReview !== null) {
+      if (reviewedPrimary === "PrimaryClean") try machine.send({ type: "escalateSpecialist", reason: "Ambiguous" })
+      try machine.send({ type: "reviewSpecialist", specialistOutcome: specialistOutcome(specialistReview) })
+    }
     if ((try machine.get()).phase === "Reviewing") try machine.send({ type: "synthesize" })
   }
   const decided = try machine.get()

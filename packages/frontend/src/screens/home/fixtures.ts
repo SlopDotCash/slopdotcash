@@ -30,8 +30,6 @@ export const withdrawn = (amountMinor: bigint): PoolFacts => ({ ...funded(amount
 
 export const unread = (amountMinor: bigint): PoolFacts => ({ ...funded(amountMinor), read: "PoolFailed" });
 
-export const pledged = (amountMinor: bigint): PoolFacts => ({ ...pointsOnly, amount: toAmount(amountMinor), pledgeSupport: true, pledged: toAmount(amountMinor) });
-
 const base = {
   status: "active",
   listingTier: "featured",

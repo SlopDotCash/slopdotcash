@@ -1,7 +1,7 @@
 // spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"; spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"
 import { base64url, rs256Sign, utf8 } from "../crypto.vibe"
 import { type Exchange, GitHub, decoded, defaultTimeoutMs, exchanged, githubApi, githubJson, githubWith, manualRedirects, parsed } from "./client.vibe"
-import { type GitHubFailure, GitHubMalformed } from "./errors.vibe"
+import { type GitHubFailure, GitHubMalformed, GitHubUnavailable } from "./errors.vibe"
 
 const jwtBackdateSeconds = 60
 const jwtLifetimeSeconds = 540
@@ -58,6 +58,10 @@ function scopeBody(scope: Scope | undefined) {
   }
 }
 
+function tokenPath(installationId: string) {
+  return `/app/installations/${installationId}/access_tokens`
+}
+
 export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, HttpClient.HttpClient> {
   return Layer.effect(GitHubApp, effect {
     const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
@@ -74,7 +78,7 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
     }
 
     effect function installationToken(installationId: string, scope?: Scope) {
-      const path = `/app/installations/${installationId}/access_tokens`
+      const path = tokenPath(installationId)
       if (!numericId.test(installationId)) throw new GitHubMalformed({ path, issue: "an installation id is a positive integer" })
       const cacheKey = scopeKey(installationId, scope)
       const now = try Clock.currentTimeMillis
@@ -112,3 +116,15 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
     }
   })
 }
+
+export const unconfiguredGitHubApp: Layer.Layer<GitHubApp> = Layer.succeed(GitHubApp, {
+  appJwt: () => Effect.die(new GitHubUnavailable({ path: "/app" })),
+  installationToken: (installationId) => Effect.fail(new GitHubUnavailable({ path: tokenPath(installationId) })),
+  installationFor: (owner, repository) => Effect.fail(new GitHubUnavailable({ path: `/repos/${owner}/${repository}/installation` })),
+  asInstallation: (installationId) => githubWith({
+    authority: githubApi,
+    credential: Effect.fail(new GitHubUnavailable({ path: tokenPath(installationId) })),
+    userAgent: "slop.cash",
+    timeoutMs: defaultTimeoutMs,
+  }),
+} satisfies GitHubApp.Shape)

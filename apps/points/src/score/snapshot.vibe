@@ -170,6 +170,16 @@ effect function admitted(facts: ScoringFacts, windowFrom: number, windowTo: numb
   return { merged, closed } satisfies Admitted
 }
 
+effect function creditRetained(retained: ReadonlyArray<ScoreEvent>, excluded: ReadonlySet<string>, ledger: LedgerBook, windowFrom: number, windowTo: number) {
+  const timed: Array<{ readonly event: ScoreEvent; readonly at: number }> = []
+  for (const event of retained) timed.push({ event, at: try millisAt(event.occurredAt, event.id) })
+  const credited = new Set(ledger.events.map((event) => event.id))
+  for (const { event, at } of timed.sort((left, right) => right.at - left.at || left.event.id.localeCompare(right.event.id))) {
+    if (at < windowFrom || at >= windowTo || excluded.has(event.id.split(":", 1)[0] ?? "") || credited.has(event.id) || ledger.scored(event.repository, event.source.id)) continue
+    if (try ledger.credit(event)) credited.add(event.id)
+  }
+}
+
 effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   const windowFrom = try millisAt(facts.windowFrom, "window")
   const windowTo = try millisAt(facts.windowTo, "window")
@@ -184,6 +194,7 @@ effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   const held = new Set([...merges.held.map((entry) => entry.sourceId), ...facts.heldUnits.flatMap((unit) => unit.sources)])
   const ordered = (try timedPulls(merged)).sort(outcomeOrder).map(({ pull }) => pull)
   const reviewExclusions = try reviewCredit(ordered, closed, { windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })
+  try creditRetained(facts.retainedReviews ?? [], new Set([...merged.map((pull) => pull.id), ...closed.map((pull) => pull.id), ...held]), ledger, windowFrom, windowTo)
   const events = published(ledger.events)
   const deducted = try deductions(events, facts.penalties, facts.projects)
   return {

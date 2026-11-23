@@ -9,7 +9,6 @@ export interface Deployable {
   readonly name: string;
   readonly config: string;
   readonly script: string;
-  readonly assets?: string;
 }
 
 export interface AssertionStore {
@@ -35,6 +34,7 @@ const Named = Schema.Struct({ binding: Schema.String });
 const WranglerConfig = Schema.Struct({
   name: Schema.optional(Schema.String),
   compatibility_date: Schema.optional(Schema.String),
+  pages_build_output_dir: Schema.optional(Schema.String),
   vars: Schema.Record(Schema.String, Schema.Unknown),
   d1_databases: Schema.Array(Schema.Struct({ binding: Schema.String, database_name: Schema.optional(Schema.String), database_id: Schema.optional(Schema.String) })),
   r2_buckets: Schema.Array(Named),
@@ -71,7 +71,7 @@ function assertionDatabase(configs: ReadonlyArray<{ readonly deployable: Deploya
   return { owner: owner.deployable.name, binding: bound.binding };
 }
 
-function bindingsOf(deployable: Deployable, config: Config, start: LocalStart, services: Readonly<Record<string, Handler>>): Bindings {
+function bindingsOf(config: Config, start: LocalStart, services: Readonly<Record<string, Handler>>): Bindings {
   return {
     d1: Object.fromEntries(config.d1_databases.map((database) => [database.binding, databaseName(database)])),
     r2: config.r2_buckets.map((bucket) => bucket.binding),
@@ -91,7 +91,7 @@ function bindingsOf(deployable: Deployable, config: Config, start: LocalStart, s
       ...mail.allowed_destination_addresses === undefined ? {} : { allowedDestinationAddresses: mail.allowed_destination_addresses },
     }])),
     durableObjects: Object.fromEntries(config.durable_objects.bindings.map((binding) => [binding.name, binding.class_name])),
-    ...deployable.assets === undefined ? {} : { assets: deployable.assets },
+    ...config.pages_build_output_dir === undefined ? {} : { assets: config.pages_build_output_dir },
   };
 }
 
@@ -116,13 +116,13 @@ export async function startLocal(start: LocalStart): Promise<LocalWorkers> {
   const workers = Object.fromEntries(extras.map(({ deployable, config }) => [`LOCAL_${deployable.name.toUpperCase()}`, {
     name: deployable.name,
     script: deployable.script,
-    ...bindingsOf(deployable, config, start, servicesOf(config)),
+    ...bindingsOf(config, start, servicesOf(config)),
   } satisfies ExtraWorker]));
   const options: WorkerOptions = {
     script: main.deployable.script,
     compatibilityDate: main.config.compatibility_date,
     workers,
-    ...bindingsOf(main.deployable, main.config, start, servicesOf(main.config)),
+    ...bindingsOf(main.config, start, servicesOf(main.config)),
   };
   const mf = new Miniflare({ ...workerOptions(options, []), resourcePersistencePath: start.persistence });
   holder.mf = mf;

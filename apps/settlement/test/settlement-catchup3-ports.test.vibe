@@ -156,7 +156,7 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it)
 })
 
 layer(Layer.mergeAll(EscrowStarted, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('A reviewed Solana entry verifies at finality, and a program version deployed at or after the claim slot is refused (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output or a booked direct-award fee")', () => effect {
+  it.effect('A reviewed Solana entry verifies at finality, and a program version deployed at or after the claim slot is refused (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/fees/composition.md, "Buyback income is a finalized USDC claim, a finalized conversion output, a booked direct-award fee or a kept submission fee")', () => effect {
     const { deployment } = try Escrow
     const { chain } = deployment
     provide solanaRpc({ urls: Redacted.make([chain.validator.url]), genesis: chain.validator.genesis }) {

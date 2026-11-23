@@ -44,8 +44,8 @@ function Editor({ runtime, projectId, actor, onPublished, onRetry }: EditorProps
   const current = published ?? read.value.value;
   const project = editorProjectOf(current.manifest);
   if (project === undefined) return <Refused message={settingsMessages.unreadable} label="Try again" onRetry={onRetry} />;
-  const publish: Publish = async (manifest) => {
-    const done = await run(runtime, publishProgram({ projectId, manifest, expectedRevision: current.revision, actorId: actor.githubId }));
+  const publish: Publish = async (manifest, bountyAmount) => {
+    const done = await run(runtime, publishProgram({ projectId, manifest, expectedRevision: current.revision, bountyAmount, actorId: actor.githubId }));
     if (!done.ok) return done.message;
     if (done.value.kind === "lost") {
       setLost(done.value.message);

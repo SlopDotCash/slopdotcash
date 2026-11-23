@@ -186,8 +186,6 @@ effect function writesOf(intent: Intent, event: Event, loaded: Loaded, next: Acc
       sql`DELETE FROM points_telegram_links WHERE actor_id = ${actor}`,
       sql`UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, destination_version = '', updated_at = ${at} WHERE github_id = ${githubId}`,
       sql`UPDATE notification_email_verifications SET cancelled_at = ${at} WHERE github_id = ${githubId} AND consumed_at IS NULL AND cancelled_at IS NULL`,
-      // spec/operations/notifications.md closeAccount: in the same write, every queued or retrying notice of the
-      // account is suppressed, whatever destination it was bound to. Claimed sends are not recalled.
       sql`UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${githubId} AND state IN ('queued', 'retrying')`,
       sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${githubId} AND state IN ('queued', 'retrying')`,
       sql`DELETE FROM points_sessions WHERE actor_id = ${actor}`,

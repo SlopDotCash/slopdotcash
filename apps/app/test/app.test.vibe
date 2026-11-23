@@ -1,10 +1,7 @@
-// The shell of src/routes.vibe from the addresses a browser hands it: what the conformance driver (test/drivers/app.ts)
-// cannot see, which is address.ts turning a path and a query into the opening.
 import { assert, it } from "@effect/vitest"
 import { openingOf, pathTo } from "../src/address.ts"
 import { current, opened, routes } from "../src/routes.vibe"
 
-/** The route a page loaded at `path` with `search` and `hash` shows. */
 effect function load(path: string, search: string, hash: string) {
   provide routes {
     try opened(try Effect.try(() => openingOf(path, search, hash)))
@@ -12,8 +9,9 @@ effect function load(path: string, search: string, hash: string) {
   }
 }
 
-// spec/app/index.md, "Story: Open a page by its address"
-it.effect("Open a page by its address", () => effect {
+const bare = { projectId: "", cycleId: "", login: "", owner: "", repo: "", number: "", caseId: "" }
+
+it.effect('Open a page by its address (spec/app/index.md, "Story: Open a page by its address")', () => effect {
   // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
   const profile = try load(try Effect.try(() => pathTo(["contributors", "a/b c"])), "", "")
   // spec/app/index.md, "The shell shows one route, opened from the address"
@@ -23,9 +21,16 @@ it.effect("Open a page by its address", () => effect {
   const wallet = try load("//wallet", "", "")
   const securitySettings = try load("/projects/slop/manage/", "", "#security-settings")
   const otherSection = try load("/projects/slop/manage", "", "#danger")
+  // spec/app/index.md, "A route carries exactly the identifiers its page needs"
+  const fee = try load("/fee/octocat/slop/7", "", "")
+  const deposit = try load("/fee/report/sc_abcdefgh", "", "")
+  const reportWithoutCase = try load("/fee/report", "", "")
+  const feeWithoutNumber = try load("/fee/octocat/slop", "", "")
   try Effect.try(() => assert.deepStrictEqual(
-    [profile.route, fromX.route.kind, undecodable.route.kind, wallet.route.kind, securitySettings.route, otherSection.route.kind],
-    [{ kind: "Profile", projectId: "", cycleId: "", login: "a/b c" }, "Account", "Unknown", "Account",
-      { kind: "SecurityProgram", projectId: "slop", cycleId: "", login: "" }, "ManageProject"],
+    [profile.route, fromX.route.kind, undecodable.route.kind, wallet.route.kind, securitySettings.route, otherSection.route.kind, fee.route, deposit.route, reportWithoutCase.route.kind, feeWithoutNumber.route.kind],
+    [{ ...bare, kind: "Profile", login: "a/b c" }, "Account", "Unknown", "Account",
+      { ...bare, kind: "SecurityProgram", projectId: "slop" }, "ManageProject",
+      { ...bare, kind: "Fee", owner: "octocat", repo: "slop", number: "7" },
+      { ...bare, kind: "FeeReport", caseId: "sc_abcdefgh" }, "Unknown", "Unknown"],
   ))
 })

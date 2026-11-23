@@ -1,6 +1,6 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/intakeCap.md, "A recent count at or above the cap of an active project pauses it"
 import { maxCap, minCap } from "../../../gen/backend__intakeCap.ts";
-import { honorSystemValid } from "../../../gen/backend__projects.ts";
+import { honorSystemValid, maxShareBasisPoints } from "../../../gen/backend__projects.ts";
 import { githubUserIdFromNodeId } from "../nodeId.ts";
 import { legacyHolder } from "../store/legacy.ts";
 import { readyLabelProblem } from "./readyLabel.ts";
@@ -616,17 +616,15 @@ function validateReviewBudget(value: unknown, field: string, poolPaymentMode: un
   if (BigInt(monthlyCapMinor) <= 0n || !effectiveAt.endsWith("-01T00:00:00.000Z") || budget.unusedFunds !== "rollover-without-cap-increase" || !fundingConsistent || (budget.paymentMode === "enabled" && poolPaymentMode !== "enabled") || budget.monthlyCapDisplay !== formatMonthlyCapDisplay(monthlyCapMinor)) fail(`${field} review budget policy is inconsistent`);
 }
 
-const maxMaintainerShareBasisPoints = 3000;
-
 function shareBasisPoints(value: unknown, minimum: number): boolean {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maxMaintainerShareBasisPoints;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum && value <= maxShareBasisPoints;
 }
 
 function validateMaintainerShare(reward: Json, field: string): void {
   const hasShare = Object.hasOwn(reward, "maintainerShare");
   const hasHistory = Object.hasOwn(reward, "maintainerShareHistory");
   if ((hasShare || hasHistory) && reward.kind !== "monthly-pool") fail(`${field}.maintainerShare applies to a monthly pool only`);
-  if (hasShare && !shareBasisPoints(reward.maintainerShare, 1)) fail(`${field}.maintainerShare must be whole basis points from 1 to ${maxMaintainerShareBasisPoints}, or omitted`);
+  if (hasShare && !shareBasisPoints(reward.maintainerShare, 1)) fail(`${field}.maintainerShare must be whole basis points from 1 to ${maxShareBasisPoints}, or omitted`);
   if (!hasHistory) return;
   const history = reward.maintainerShareHistory;
   if (!Array.isArray(history) || history.length === 0) fail(`${field}.maintainerShareHistory must be a nonempty array`);
@@ -757,9 +755,8 @@ function validateSlopbot(value: unknown): void {
   const field = "project.slopbot";
   const slopbot = record(value, field);
   const settings = slopbotSettings.filter((key) => slopbot[key] !== undefined);
-  const consent = slopbot.readyLabel === undefined || Object.hasOwn(slopbot, "automaticClosure");
-  exactKeys(slopbot, consent ? ["automaticClosure", ...settings] : settings, field);
-  if (consent && typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
+  exactKeys(slopbot, ["automaticClosure", ...settings], field);
+  if (typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
   const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, `${field}.readyLabel`);
   if (readyLabel !== undefined) fail(readyLabel);
   const { intakeCap } = slopbot;

@@ -1,0 +1,197 @@
+// spec/points/reviewedHistory.md, "A historical replay scores only the pinned project's one repository"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { HistoricalClosedContext } from "@repo/ports/points"
+import { identities } from "../../census/collect.vibe"
+import { collectedTargets, defaultRegistryOrigin, fetchRegistry } from "../../census/projects.vibe"
+import type { Recollection } from "../../census/reviews.vibe"
+import { type HistoricalPin, type HistoricalProject, historicalRepository, historicalScopeRefused } from "../../client/snapshot/validate.vibe"
+import type { HistoricalAssessmentHeads } from "../../corrections/reviewed/audit/catalog.vibe"
+import type { AuditedSource, SourceAudit } from "../../corrections/reviewed/packet.vibe"
+import { Graphql } from "../../ingestion/graphql.vibe"
+import type { PointsJournal } from "../../kernels/records/records.schema.ts"
+import { createHistoricalSnapshot } from "../../score/assemble/assemble.vibe"
+import { readRegistry } from "../../snapshot/adaptPr.vibe"
+import { windowBounds } from "../../window/window.vibe"
+import { participationBans } from "../feeds/bans.vibe"
+import { acceptedReviewHistory, evaluatedContributions } from "../feeds/history.vibe"
+import { type MergedOutcome, dedupedById } from "../merged/wire.vibe"
+import { collectMergedWork, confirmReviewCensus } from "../merged/collection.vibe"
+import { commitLineLoader } from "../merged/commits.vibe"
+import type { MemoSession } from "../memo/memo.vibe"
+import { type ImplementationRequest, implementationFacts } from "../implementation/facts.vibe"
+import { valueScoringApprovedHistoryFrom } from "../../client/snapshot/schema.vibe"
+import { type Collection, type CollectionSource, openCollection, penaltyFeeds, unavailableById, valueInputs } from "./pipeline.vibe"
+
+export error HistoricalCollectionRefused { message: string }
+
+export const approvedHistoryFrom = valueScoringApprovedHistoryFrom
+export const checkpointChanged = "Historical collection differs from the verified checkpoint"
+export const windowChanged = "Historical leaderboard has a different scoring window"
+export const censusChanged = "Collected historical outcomes differ from the source audit"
+const dayMs = 24 * 60 * 60 * 1000
+const verificationWindowDays = 35
+const firstAttempt: Recollection = { attempt: 1, unavailableSources: [], allowJointHolds: false }
+
+export interface HistoricalClosedBinding {
+  readonly digest: string
+  readonly number: number
+  readonly headSha: string
+  readonly occurredAt: string
+  readonly standaloneReview?: true
+  readonly retainedMergeHold?: true
+}
+
+export interface HistoricalRequest {
+  readonly registryPath: string
+  readonly registryOrigin?: string
+  readonly dataRoot?: string
+  readonly memo?: MemoSession
+  readonly pin: HistoricalPin
+  readonly project: HistoricalProject
+  readonly mergedScope: SourceAudit
+  readonly heads: HistoricalAssessmentHeads
+  readonly baseline: PointsJournal
+  readonly closedContexts?: ReadonlyMap<string, HistoricalClosedBinding>
+  readonly implementation?: Pick<ImplementationRequest, "proofs" | "memo">
+}
+
+export effect function assertCheckpoint(request: HistoricalRequest) {
+  const { pin, mergedScope, heads, baseline } = request
+  const digest = try sha256Hex(JSON.stringify(baseline))
+  if (
+    mergedScope.repository !== pin.repository ||
+    mergedScope.repositoryNodeId !== pin.repositoryNodeId ||
+    heads.registryManifestSha256 !== pin.manifestSha256 ||
+    heads.d1PointsCount !== baseline.revisions.length ||
+    heads.d1PointsDigest !== digest
+  ) throw new HistoricalCollectionRefused({ message: checkpointChanged })
+}
+
+export effect function assertMergedCensus(expected: ReadonlyArray<AuditedSource>, observed: ReadonlyArray<Pick<MergedOutcome, "id" | "number" | "headRefOid" | "mergedAt">>) {
+  const byId = new Map(expected.map((row) => [row.id, row] as const))
+  const seen = new Set<string>()
+  const differs = (row: Pick<MergedOutcome, "id" | "number" | "headRefOid" | "mergedAt">) => {
+    const source = byId.get(row.id)
+    if (source === undefined || seen.has(row.id) || source.number !== row.number || source.headSha !== row.headRefOid || millisOf(source.mergedAt) !== millisOf(row.mergedAt)) return true
+    seen.add(row.id)
+    return false
+  }
+  if (expected.length === 0 || expected.length !== observed.length || byId.size !== expected.length || observed.some(differs)) {
+    throw new HistoricalCollectionRefused({ message: censusChanged })
+  }
+}
+
+function valueContexts(bindings: ReadonlyMap<string, HistoricalClosedBinding>) {
+  return new Map([...bindings].map(([id, binding]) => [id, { standaloneReview: binding.standaloneReview === true, digest: binding.digest } satisfies HistoricalClosedContext] as const))
+}
+
+effect function pinnedTarget(request: HistoricalRequest) {
+  const { pin } = request
+  const registered = try fetchRegistry(request.registryOrigin ?? defaultRegistryOrigin)
+  const project = registered.filter((entry) => entry.projectId === pin.projectId)
+  const targets = (try collectedTargets(project)).filter((target) => target.id.toLowerCase() === pin.repository.toLowerCase())
+  const [target] = targets
+  const [entry] = project
+  if (target === undefined || entry === undefined || targets.length !== 1) throw new HistoricalCollectionRefused({ message: historicalScopeRefused })
+  return { target: { ...target, expectedNodeId: pin.repositoryNodeId, role: "primary" as const }, views: new Map([[entry.projectId, entry.view] as const]) }
+}
+
+export effect function collectHistorical(request: HistoricalRequest) {
+  const { pin, project, mergedScope } = request
+  try assertCheckpoint(request)
+  const registry = try readRegistry(request.registryPath)
+  try historicalRepository(registry, pin, project)
+  const bounds = try windowBounds(millisOf(mergedScope.through))
+  if (bounds.from !== mergedScope.from) throw new HistoricalCollectionRefused({ message: windowChanged })
+  const { target, views } = try pinnedTarget(request)
+  const ids = identities()
+  if (request.memo !== undefined) try request.memo.beginPass()
+  request.implementation?.memo?.beginPass()
+  const valuePolicyFromMs = millisOf(approvedHistoryFrom)
+  const verificationFromMs = bounds.toMs - verificationWindowDays * dayMs
+  const work = try collectMergedWork({
+    targets: [target],
+    nowMs: bounds.toMs,
+    windowFromMs: bounds.fromMs,
+    verificationFromMs,
+    valuePolicyFromMs,
+    evaluatedReviewKeys: new Set(),
+    recollection: firstAttempt,
+  }, (repository, reservedCost) => openCollection(repository, reservedCost, bounds, ids, views), commitLineLoader(undefined, request.memo?.commitLines))
+  try assertMergedCensus(mergedScope.sources, work.outcomes)
+  try confirmReviewCensus(work)
+  const baseline = request.baseline
+  const implementation = request.implementation === undefined ? undefined : try implementationFacts({
+    repositories: work.collections,
+    windowFrom: bounds.from,
+    recordedThrough: bounds.to,
+    request: { ...request.implementation, journal: () => effect { return baseline } },
+    historical: true,
+  })
+  const { value, held } = try valueInputs(work, firstAttempt, { valuePolicyFromMs, closedContexts: valueContexts(request.closedContexts ?? new Map()) })
+  const bans = try participationBans()
+  const cutoff = bounds.to
+  const feeds = try penaltyFeeds([pin.projectId], cutoff)
+  const root = request.dataRoot ?? "."
+  const reviewHistory = try acceptedReviewHistory(root)
+  const evaluated = try evaluatedContributions(root)
+  const openIssues = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.issues.values()]))
+  const openPullRequests = dedupedById(work.collections.flatMap((collection) => [...collection.open.records.pullRequests.values()]))
+  const graphql = try Graphql
+  const rateLimit = try graphql.rateLimit()
+  const generatedAt = try isoAt(try Clock.currentTimeMillis)
+  const verificationWindowFrom = try isoAt(verificationFromMs)
+  const unavailableSources = unavailableById([...work.unavailableSources, ...held])
+  const detailed = work.mergedPullRequests.filter((pull) => work.plan.detailEligibleIds.has(pull.id))
+  const latestPreflightUpdate = work.collections.length === 0
+    ? cutoff
+    : work.collections.map((collection) => collection.preflight.updatedAt).reduce((latest, current) => (millisOf(current) > millisOf(latest) ? current : latest))
+  const source: CollectionSource = {
+    provider: "github-graphql",
+    fetchedAt: generatedAt,
+    cutoffAt: cutoff,
+    repositoryId: work.collections[0]?.preflight.id ?? null,
+    repositories: work.collections.map((collection) => ({ id: collection.target.id, repositoryId: collection.preflight.id })),
+    requestCount: try graphql.requestCount(),
+    searchSliceCount: work.searchSliceCount,
+    unavailableSources,
+    heldWorkUnits: value.heldWorkUnits,
+    rateLimit,
+    counts: {
+      unavailableSources: unavailableSources.length,
+      unavailableMergedPullRequests: unavailableSources.filter((unavailable) => unavailable.unavailableInMergedCensus === true).length,
+      heldWorkUnits: value.heldWorkUnits.length,
+      mergedPullRequests: work.outcomes.length,
+      detailedMergedPullRequests: detailed.length,
+      closedIssues: work.closedIssueCount,
+      detailedClosedIssues: work.closedIssues.length,
+      resolvedIssues: 0,
+      openIssues: openIssues.length,
+      openPullRequests: openPullRequests.length,
+    },
+    verificationWindow: { days: verificationWindowDays, from: verificationWindowFrom, to: cutoff },
+  }
+  const collection: Collection = {
+    bounds,
+    generatedAt,
+    valuePolicyEffectiveAt: approvedHistoryFrom,
+    verificationWindowFrom,
+    registry,
+    targets: [target],
+    work,
+    openIssues,
+    openPullRequests,
+    latestPreflightUpdate,
+    value,
+    bans,
+    penalties: feeds.penalties,
+    penaltyHistory: feeds.history,
+    acceptedReviewHistory: reviewHistory,
+    evaluatedContributions: evaluated,
+    source,
+    ...(implementation === undefined ? {} : { implementation }),
+  }
+  const snapshot = try createHistoricalSnapshot(collection, pin, project, implementation?.history)
+  return { collection, snapshot }
+}

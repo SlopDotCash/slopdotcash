@@ -1,24 +1,30 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/referenceDiscussion.md, "A counted discussion read binds the census source and never replaces the retained-copy proof"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/slopbot/historyReadAhead.md, "The in-order reader takes each warmed page once and reads every other page itself"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"
+import { ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
+import { Git } from "@repo/platform/git"
+import type { MergeRecipe } from "@repo/platform/git/evidence"
 import { GitHub } from "@repo/platform/github"
-import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, audited, sameFence, valueHistoryPage, workUnitHistory } from "@repo/points/collect"
+import { type AttributionMemoEntry, type AttributionMemoFence, type AttributionMemoResult, type AuthorRow, Graphql, type HistoryPage, type HistorySource, type JointPage, type LiveAnswer, type MemoSession, ValueFeedUnavailable as FeedOutage, auditSample, audited, sameFence, valueHistoryPage, workUnitHistoryPage } from "@repo/points/collect"
 import { isCreditEligibleCommitAuthor } from "@repo/points/client"
-import { type AttributionHold, type CensusOutcome, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { type AttributionHold, type CensusOutcome, type HeldWorkUnit, type HistoricalClosedContext, type RetainedCommitCredit, type SourceDecision, type ValueActor, type ValueCensus, ValueEvidenceRefused, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
 import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
 import { absentOn404, loadPolicy } from "../../context/load.vibe"
 import { type CommitPages, publicationCommitPages } from "../../import/commitPages.vibe"
 import { Acceptance } from "../evidence/acceptance.vibe"
 import { collectEvidence } from "../evidence/collect.vibe"
 import { type ContextSelection, collectContext, validContextSelections } from "../evidence/context.vibe"
-import { type Actor, EvidenceRefused, type RegisteredRepository, type RelatedPullRequest, evidenceMatchesRepository, findRepository } from "../evidence/types.vibe"
+import { EvidenceRefused, type RegisteredRepository, type RelatedPullRequest, evidenceMatchesRepository, findRepository } from "../evidence/types.vibe"
 import { validateEvidenceAssessment, valueRubricVersion } from "../inference/assessment.vibe"
 import { producerRecognized } from "../inference/publish.vibe"
 import { retainedCopyBindings } from "../retained/copy.vibe"
+import { retention } from "../retained/repair.vibe"
 import { sourceDigestOf } from "../workUnits/prepare.vibe"
 import type { WorkUnitSource } from "../workUnits/types.vibe"
 import { readsAhead } from "../../../gen/slopbot__historyReadAhead.effect.vibe"
 import { type AttributionRecorder, attributionRecorder, recordingGitHub, recordingGraphql, revalidateAttributionEntries } from "./attributionMemo.vibe"
 import { referenceDiscovery } from "./discussion.vibe"
+import { type JointDecision, type JointHistory, consumeJointMembers, heldJointDecision, jointActorIds, readWorkUnitHistory, soleCreditActor } from "./joint.vibe"
+import { hydrateValueMergeSource } from "./recovery.vibe"
 import { type ReadAhead, type WarmTarget, readAhead } from "./warmup.vibe"
 
 export interface AttributionMemo {
@@ -34,7 +40,7 @@ export interface ValueInputsOptions {
   readonly feedConcurrency?: number
 }
 
-schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean }
+schema PublicRepository { readonly id: number; readonly node_id: string; readonly private: boolean; readonly full_name?: string }
 
 schema OriginalPull { readonly node_id: string; readonly number: number; readonly html_url: string; readonly state: string; readonly merged_at: string | null }
 
@@ -72,7 +78,6 @@ const valueRecordVersion = "slop-value-record:v1"
 const digestPattern = /^[a-f0-9]{64}$/u
 const shaPattern = /^[a-f0-9]{40}$/u
 const actorBatch = 100
-const recoveryPrefixes = ["Full diff required:", "Added binary implementation identity is unavailable:", "Added binary accepted identity is unavailable:"]
 const historyBytesInvalid = "Value history has invalid bytes or sequence"
 const historyIdentityInvalid = "Value history identity or predecessor is invalid"
 const producerInvalid = "Current value record has invalid producer identity"
@@ -87,6 +92,13 @@ interface Run {
   readonly sources: Map<string, WorkUnitSource>
   readonly actors: Map<string, ValueActor>
   readonly pages: CommitPages
+  readonly probe: ValueCensus["unavailableJointSources"]
+  readonly closedContexts: ReadonlyMap<string, HistoricalClosedContext> | undefined
+  readonly groups: Map<string, JointDecision>
+  readonly observedGroups: Map<string, string | null>
+  readonly jointDecisions: Map<string, JointDecision>
+  readonly held: HeldWorkUnit[]
+  readonly legacy: Map<string, string | null>
   recorder: AttributionRecorder | undefined
 }
 
@@ -160,11 +172,9 @@ effect function policyAt(repositoryId: number, sha: string) {
   return { sha, text: files.some((file) => file.truncated) ? "" : files.map((file) => `${file.path}\n${file.text}`).join("\n\n") }
 }
 
-effect function hydrated(identity: PublicRepository, raw: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>) {
+effect function hydrated(run: Run, repository: RegisteredRepository, identity: PublicRepository, raw: WorkUnitSource, contextPaths: ReadonlyArray<ContextSelection>, recipe: MergeRecipe | undefined) {
   const evidence = try collectContext(raw.evidence, contextPaths)
-  if (identity.node_id !== evidence.repositoryNodeId || identity.id !== evidence.repositoryDatabaseId) throw refused("Merge reconstruction requires the verified public repository")
-  if (evidence.limitations.some((limitation) => recoveryPrefixes.some((prefix) => limitation.startsWith(prefix)))) throw refused("Value source needs public git object recovery")
-  return { ...raw, evidence } satisfies WorkUnitSource
+  return try provideService(hydrateValueMergeSource({ ...raw, evidence }, recipe, identity, repository), GitHub, try run.pages.wrap)
 }
 
 function changedAfterCensus(evidence: WorkUnitSource["evidence"], id: string, identity: PublicRepository, outcome: CensusOutcome | undefined) {
@@ -173,7 +183,7 @@ function changedAfterCensus(evidence: WorkUnitSource["evidence"], id: string, id
     || (outcome.mergedAt === null && evidence.pull.closed_at !== outcome.closedAt) || Date.parse(evidence.pull.updated_at) !== Date.parse(outcome.updatedAt))
 }
 
-effect function source(run: Run, repositoryId: string, number: number, id: string, contextPaths: ReadonlyArray<ContextSelection> = []) {
+effect function source(run: Run, repositoryId: string, number: number, id: string, contextPaths: ReadonlyArray<ContextSelection> = [], recipe?: MergeRecipe) {
   const { repository, identity } = try registered(run, repositoryId)
   const cached = run.sources.get(id)
   if (cached !== undefined) {
@@ -181,13 +191,13 @@ effect function source(run: Run, repositoryId: string, number: number, id: strin
     run.recorder?.observePull(evidence.pull)
     if (evidence.repository.toLowerCase() !== repository.id.toLowerCase() || evidence.repositoryNodeId !== identity.node_id || evidence.repositoryDatabaseId !== identity.id || evidence.pull.number !== number)
       throw refused("Joint source identity changed between records")
-    return try hydrated(identity, cached, contextPaths)
+    return try hydrated(run, repository, identity, cached, contextPaths, recipe)
   }
   const evidence = try provideService(collectEvidence({ repository: repository.id, number, policy: repository }), GitHub, try run.pages.wrap)
   if (changedAfterCensus(evidence, id, identity, run.census.get(id))) throw refused("Value source changed after the outcome census")
   const collected = { evidence, policy: try policyAt(identity.id, evidence.pull.base.sha) } satisfies WorkUnitSource
   run.sources.set(id, collected)
-  return try hydrated(identity, collected, contextPaths)
+  return try hydrated(run, repository, identity, collected, contextPaths, recipe)
 }
 
 function resolvedUser(node: unknown, id: string | undefined): ValueActor | undefined {
@@ -218,13 +228,6 @@ effect function hydrateActors(run: Run, ids: Iterable<string>) {
       run.actors.set(actor.id, actor)
     }
   }
-}
-
-function soleCreditActor(sourceAuthor: Actor, commitAuthor: Actor | null) {
-  const committed = commitAuthor === null ? null : { id: commitAuthor.node_id, kind: commitAuthor.type }
-  if (committed !== null && isCreditEligibleCommitAuthor(committed)) return committed.id
-  const fallback = { id: sourceAuthor.node_id, kind: sourceAuthor.type }
-  return isCreditEligibleCommitAuthor(fallback) ? fallback.id : undefined
 }
 
 function incomplete(limitations: ReadonlyArray<string>): RetainedCredit {
@@ -514,15 +517,80 @@ effect function valueDecision(repository: RegisteredRepository, source: WorkUnit
   return { ...common, status: assessment.status, record: latestJson, assessment }
 }
 
+const missingDecision = { status: "missing" as const, history: [], latestDigest: null, implementationActorNodeIds: [] }
+
+effect function legacyDigestOf(run: Run, collected: WorkUnitSource) {
+  const id = collected.evidence.pull.node_id
+  const cached = run.legacy.get(id)
+  if (cached !== undefined) return cached
+  const { repository } = try registered(run, collected.evidence.repository)
+  const history: HistorySource = { repository: repository.id, pinnedNodeId: repository.expectedNodeId }
+  const first = try valueHistoryPage(history, collected.evidence.pull.number, 0, collected.evidence.repositoryNodeId)
+  const latest = first.records.length === 0 && first.nextAfter === null ? null : (try valueDecision(repository, run.sources.get(id) ?? collected, history, first)).latestDigest
+  run.legacy.set(id, latest)
+  return latest
+}
+
+effect function jointRead(run: Run, outcome: CensusOutcome, repository: RegisteredRepository, history: HistorySource, identity: PublicRepository, warmed: JointPage | undefined) {
+  let first = warmed
+  const load = (after: number, through: number | null) => effect {
+    const page = after === 0 && through === null ? first : undefined
+    first = undefined
+    return page ?? try workUnitHistoryPage(history, outcome.number, after, through, identity.node_id)
+  }
+  return try readWorkUnitHistory(load, { projectId: repository.projectId, repositoryNodeId: identity.node_id, pullRequestNodeId: outcome.id }, run.options.repositories)
+}
+
+effect function observe(run: Run, id: string, digest: string | null, changed: string) {
+  if (run.observedGroups.has(id) && run.observedGroups.get(id) !== digest) throw refused(changed)
+  run.observedGroups.set(id, digest)
+}
+
+effect function consumedGroup(run: Run, outcome: CensusOutcome, graph: JointHistory) {
+  const current = graph.current
+  try observe(run, outcome.id, current?.row.record_digest ?? null, "Joint value history changed during snapshot collection")
+  if (current === undefined) return false
+  const digest = current.row.record_digest
+  const bindings = current.record.sources
+  for (const member of bindings) {
+    try observe(run, member.pullRequestNodeId, digest, "Joint members disagree about their current decision")
+  }
+  let decision = run.groups.get(digest)
+  if (decision === undefined) {
+    const references = bindings.filter((member) => !run.census.has(member.pullRequestNodeId)).map((member) => member.pullRequestNodeId)
+    const probe = run.probe
+    const unavailable = references.length > 0 && probe !== undefined ? try probe(references) : []
+    if (unavailable.length > 0) {
+      if (unavailable.some((id) => !references.includes(id))) throw refused("Unavailable joint source was not requested")
+      const held = heldJointDecision(graph, current, unavailable)
+      run.held.push(held.held)
+      decision = held.decision
+    } else {
+      const members: WorkUnitSource[] = []
+      const legacyDigests = new Map<string, string | null>()
+      for (const member of bindings) {
+        const collected = try source(run, member.repository, member.pullRequestNumber, member.pullRequestNodeId, member.contextPaths ?? [], member.mergeRecipe)
+        members.push(collected)
+        legacyDigests.set(member.pullRequestNodeId, try legacyDigestOf(run, collected))
+      }
+      decision = try consumeJointMembers(graph, members, legacyDigests, run.closedContexts?.get(outcome.id), run.options.repositories)
+      if (decision.status === "assessed") try hydrateActors(run, jointActorIds(decision.evidence, decision.assessment))
+    }
+    run.groups.set(digest, decision)
+  }
+  for (const member of bindings) run.jointDecisions.set(member.pullRequestNodeId, decision)
+  return true
+}
+
 effect function outcomeDecision(run: Run, outcome: CensusOutcome, position: number, reading: ReadAhead) {
   const { repository, identity } = try registered(run, repositoryOf(outcome.url))
   const history: HistorySource = { repository: repository.id, pinnedNodeId: repository.expectedNodeId }
   const target: WarmTarget = { history, pull: outcome.number, repositoryNodeId: identity.node_id }
-  const joint = try workUnitHistory(history, outcome.number, identity.node_id, undefined, reading.takeJoint(position, target))
-  if (joint.rows.length > 0) throw refused("Joint value history requires the work-unit consumer")
+  const graph = try jointRead(run, outcome, repository, history, identity, reading.takeJoint(position, target))
+  if (try consumedGroup(run, outcome, graph)) return undefined
   let first = reading.takeSingle(position, target)
   if (first === undefined) first = try valueHistoryPage(history, outcome.number, 0, identity.node_id)
-  if (first.records.length === 0 && first.nextAfter === null) return { status: "missing" as const, history: [], latestDigest: null, implementationActorNodeIds: [] }
+  if (first.records.length === 0 && first.nextAfter === null) return missingDecision
   const collected = try source(run, repository.id, outcome.number, outcome.id)
   const decision = try valueDecision(repository, collected, history, first)
   if (decision.status === "assessed") try hydrateActors(run, decision.implementationActorNodeIds)
@@ -553,29 +621,44 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
   const concurrency = options.feedConcurrency ?? 1
   const reading = try readAhead(concurrency, input.value.length)
   const census = try censusOf(input)
-  const run: Run = { options, census, identities: new Map(), sources: new Map(), actors: new Map(), pages: publicationCommitPages(), recorder: undefined }
+  const run: Run = {
+    options,
+    census,
+    identities: new Map(),
+    sources: new Map(),
+    actors: new Map(),
+    pages: publicationCommitPages(),
+    probe: input.unavailableJointSources,
+    closedContexts: input.historicalClosedContexts,
+    groups: new Map(),
+    observedGroups: new Map(),
+    jointDecisions: new Map(),
+    held: [],
+    legacy: new Map(),
+    recorder: undefined,
+  }
   const github = try GitHub
   const graph = try Graphql
   const recorder = () => run.recorder
-  return try provideService(provideService(effect {
+  return try Effect.provide(provideService(provideService(effect {
     const found = try attributions(run, input.attribution, acceptedCommitOwners(census))
     if (readsAhead(concurrency, input.value.length)) try reading.warm(try warmTargets(run, input.value))
     const valueDecisions: SourceDecision[] = []
     for (const [index, outcome] of input.value.entries()) {
       const decision = try Effect.tapError(outcomeDecision(run, outcome, index + 1, reading), () => Effect.ignore(reading.failed()))
       try reading.decided()
-      valueDecisions.push({ sourceId: outcome.id, decision })
+      if (decision !== undefined) valueDecisions.push({ sourceId: outcome.id, decision })
     }
     try reading.finished()
     return {
       valueDecisions,
-      jointValueDecisions: [],
+      jointValueDecisions: [...run.jointDecisions].map(([sourceId, decision]) => ({ sourceId, decision })),
       valueActors: [...run.actors.values()],
       retainedCommitCredits: found.credits,
       attributionHolds: found.holds,
-      heldWorkUnits: [],
+      heldWorkUnits: run.held,
     } satisfies ValueInputsRead
-  }, GitHub, recordingGitHub(github, recorder)), Graphql, recordingGraphql(graph, recorder))
+  }, GitHub, recordingGitHub(github, recorder)), Graphql, recordingGraphql(graph, recorder)), retention)
 }
 
 function messageOf(error: { readonly _tag: string }) {
@@ -596,7 +679,7 @@ effect function answered<E extends { readonly _tag: string }>(read: ValueInputsR
 
 export function collectValueInputs(options: ValueInputsOptions) {
   return Layer.effect(ValueInputs, effect {
-    const services = try Effect.context<GitHub | Graphql | Acceptance | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+    const services = try Effect.context<GitHub | Graphql | Acceptance | HttpClient.HttpClient | Experimental.Crypto.Crypto | Git | ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem>()
     return {
       load: (census: ValueCensus) => answered(Effect.provideContext(loaded(options, census), services)),
     }

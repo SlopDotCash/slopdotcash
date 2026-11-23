@@ -1,12 +1,14 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "The maintainer share is an owner setting whose history only the server writes"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/projects.md, "An honor-system promise is the owner's opt-in on a positive monthly pool and changes no amount or payment"
 import { Refused } from "@repo/platform/http"
-import { type Project, type ShareEntry, prospectiveShare } from "../../../gen/backend__projects.effect.vibe"
+import { type Project, prospectiveShare } from "../../../gen/backend__projects.effect.vibe"
 import { postProjects, putProjectsById } from "../../client/refusals.vibe"
-import { fieldsCompleteOf, monthOf } from "../store/codec.vibe"
+import { fieldsCompleteOf, monthOf, shareHistoryOf, shareOfReward } from "../store/codec.vibe"
 import { manifestOf } from "../store/rows.vibe"
 import { type Json, objectOf, same } from "./revisionChanges.ts"
 
 type Row = { readonly status: number; readonly error: string; readonly message?: string }
+
+export { shareHistoryOf, shareOfReward }
 
 export function refusal(row: Row, message?: string): Refused {
   return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
@@ -166,15 +168,6 @@ export function positiveMinor(value: unknown): boolean {
 
 function fixedReward(reward: Json): Json {
   return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "honorSystem", "maintainerShare", "maintainerShareHistory", "payoutExclusions"].includes(key)))
-}
-
-export function shareOfReward(reward: Json | undefined): number {
-  const share = reward?.maintainerShare
-  return typeof share === "number" && Number.isSafeInteger(share) ? share : 0
-}
-
-export function shareHistoryOf(reward: Json | undefined): ShareEntry[] {
-  return list(reward?.maintainerShareHistory).map((entry) => objectOf(entry) ?? {}).map((entry) => ({ throughMonth: monthOf(`${String(entry.throughCycle ?? "")}-01`), basisPoints: typeof entry.basisPoints === "number" ? entry.basisPoints : -1 }))
 }
 
 function cycleText(month: number): string {

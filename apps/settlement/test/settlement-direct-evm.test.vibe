@@ -12,6 +12,7 @@ import type { Address } from "viem"
 import { reviewedFactory } from "../src/chain/evm/factories.ts"
 import { DirectIntent } from "../src/client/direct.vibe"
 import { evmDirectRails } from "../src/direct/evm.vibe"
+import { nothing } from "../src/direct/journal.vibe"
 import { DirectBountyLive } from "../src/direct/port.vibe"
 import { type CaseContext, DirectRefused, consentPayment, preparePayment, settlementView, verifyPayment } from "../src/direct/routes.vibe"
 import { DirectBounty } from "@repo/ports/settlement"
@@ -122,9 +123,9 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it)
     const payer: CaseContext = { ...reporter, actorGithubId: "101" }
     provide Layer.mergeAll(d1(db), outbound, webCrypto, evmDirectRails(JSON.stringify({ "base-mainnet": "http://127.0.0.1:9" })), fakePorts) {
       const outcomes = [
-        try reasonOf(consentPayment(reporter, { network: "base-mainnet", confirmation: true }, [])),
-        try reasonOf(preparePayment(payer, { network: "base-mainnet", confirmation: true }, [])),
-        try reasonOf(verifyPayment(payer, { transactionIds: [`0x${"1".repeat(64)}`], confirmation: true }, [])),
+        try reasonOf(consentPayment(reporter, { network: "base-mainnet", confirmation: true }, nothing)),
+        try reasonOf(preparePayment(payer, { network: "base-mainnet", confirmation: true }, nothing)),
+        try reasonOf(verifyPayment(payer, { transactionIds: [`0x${"1".repeat(64)}`], confirmation: true }, nothing)),
       ]
       const legs = try legsFor(caseId)
       const view = try settlementView(payer)
@@ -173,12 +174,12 @@ layer(ChainStarted, { excludeTestServices: true, timeout: "300 seconds" })((it) 
     const reporter = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "202", actorGithubId: "202" })
     const payer = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "202", actorGithubId: "101" })
     provide Layer.mergeAll(d1(db), outbound, webCrypto, evmDirectRails(JSON.stringify({ "base-mainnet": chain.url })), fakePorts) {
-      const unconsented = try reasonOf(preparePayment(payer(3), { network: "base-mainnet", confirmation: true }, []))
-      const otherNetwork = try reasonOf(consentPayment(reporter(3), { network: "ethereum", confirmation: true }, []))
-      const consented = try consentPayment(reporter(3), { network: "base-mainnet", confirmation: true }, [])
-      const reconsented = try consentPayment(reporter(4), { network: "base-mainnet", confirmation: true }, [])
-      const prepared = try preparePayment(payer(4), { network: "base-mainnet", confirmation: true }, [])
-      const refreshed = try preparePayment(payer(5), { network: "base-mainnet", confirmation: true }, [])
+      const unconsented = try reasonOf(preparePayment(payer(3), { network: "base-mainnet", confirmation: true }, nothing))
+      const otherNetwork = try reasonOf(consentPayment(reporter(3), { network: "ethereum", confirmation: true }, nothing))
+      const consented = try consentPayment(reporter(3), { network: "base-mainnet", confirmation: true }, nothing)
+      const reconsented = try consentPayment(reporter(4), { network: "base-mainnet", confirmation: true }, nothing)
+      const prepared = try preparePayment(payer(4), { network: "base-mainnet", confirmation: true }, nothing)
+      const refreshed = try preparePayment(payer(5), { network: "base-mainnet", confirmation: true }, nothing)
       const [stored] = try rowsOf(db, "SELECT intent FROM security_direct_payments WHERE case_id = ?", caseId)
       const intent = try Schema.decodeUnknownEffect(DirectIntent)(parsedJson(stored?.intent))
       const nonces = try rowsOf(db, "SELECT leg_index, nonce FROM security_direct_nonce_reservations WHERE case_id = ? ORDER BY leg_index", caseId)
@@ -186,14 +187,14 @@ layer(ChainStarted, { excludeTestServices: true, timeout: "300 seconds" })((it) 
       const feeLeg = try promise(() => chain.transact({ from: payerAccount.address, to: feeRecipient as Address, value: big(intent.feeBase) }))
       const researcherLeg = try promise(() => chain.transact({ from: payerAccount.address, to: reporterAccount.address, value: big(intent.netBase) }))
       try promise(() => chain.mine(80))
-      const firstLeg = try verifyPayment(payer(5), { transactionIds: [feeLeg.transactionHash], confirmation: true }, [])
+      const firstLeg = try verifyPayment(payer(5), { transactionIds: [feeLeg.transactionHash], confirmation: true }, nothing)
       const partial = try legsFor(caseId)
       const partlyPaid = try rowsOf(db, "SELECT case_id FROM security_direct_payment_receipts WHERE case_id = ?", caseId)
-      const replayed = try reasonOf(verifyPayment(payer(6), { transactionIds: [feeLeg.transactionHash], confirmation: true }, []))
-      const secondLeg = try verifyPayment(payer(6), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, [])
+      const replayed = try reasonOf(verifyPayment(payer(6), { transactionIds: [feeLeg.transactionHash], confirmation: true }, nothing))
+      const secondLeg = try verifyPayment(payer(6), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, nothing)
       const settled = try legsFor(caseId)
       const after = { reporter: try balance(chain, reporterAccount.address), fee: try balance(chain, feeRecipient) }
-      const again = try reasonOf(verifyPayment(payer(7), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, []))
+      const again = try reasonOf(verifyPayment(payer(7), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, nothing))
       const view = try settlementView(payer(7))
       try same({
         unconsented,

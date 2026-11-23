@@ -3,7 +3,7 @@ import { jsonVar } from "@repo/platform/config"
 import { providers } from "@repo/platform/providers"
 import { resultProblems } from "../admission/result.ts"
 import { secretVariable } from "../programs/checkout.vibe"
-import { pinnedProfiles } from "../programs/scan.vibe"
+import { RateCards, pinnedProfiles } from "../programs/scan.vibe"
 import { acquireRepository } from "../scanner/acquire/git.vibe"
 import { readAcquiredSource } from "../scanner/acquire/source.vibe"
 import { inspectRepository } from "../scanner/inspect/inspection.ts"
@@ -23,14 +23,6 @@ module compression {
 import { crc32, deflated } from compression
 
 export error VettingReviewQualificationFailed { message: string }
-
-schema Rate {
-  uncachedInputNanoUsdPerToken: string
-  cachedInputNanoUsdPerToken: string
-  cacheCreationNanoUsdPerToken: string
-  outputNanoUsdPerToken: string
-}
-schema RateCards { primary: Rate; specialist: Rate }
 
 const usage = "--repository owner/name --commit <40-hex sha>"
 const encoder = new TextEncoder()
