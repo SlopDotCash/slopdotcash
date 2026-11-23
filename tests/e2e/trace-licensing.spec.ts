@@ -275,13 +275,13 @@ test("bulk confirm shows the count and posts expectedCount", async ({
   });
 
   // Dismissing the confirm sends nothing.
-  const dismissed = page.waitForEvent("dialog");
+  const asked: string[] = [];
+  page.once("dialog", (dialog) => {
+    asked.push(dialog.message());
+    void dialog.dismiss();
+  });
   await all.click();
-  const first = await dismissed;
-  expect(first.message()).toBe(
-    "License 2 traces? You can turn this off any time.",
-  );
-  await first.dismiss();
+  expect(asked).toEqual(["License 2 traces? You can turn this off any time."]);
   expect(licences).toEqual([]);
 
   page.once("dialog", (dialog) => dialog.accept());
@@ -295,13 +295,14 @@ test("bulk confirm shows the count and posts expectedCount", async ({
     exact: true,
   });
   await expect(again).toBeVisible();
-  const accepted = page.waitForEvent("dialog");
+  page.once("dialog", (dialog) => {
+    asked.push(dialog.message());
+    void dialog.accept();
+  });
   await again.click();
-  const second = await accepted;
-  expect(second.message()).toBe(
+  expect(asked.at(-1)).toBe(
     "License 3 traces? You can turn this off any time.",
   );
-  await second.accept();
   await expect(
     section.getByText("Your traces (4) · licensed 4", { exact: true }),
   ).toBeVisible();
