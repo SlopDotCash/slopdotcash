@@ -6852,11 +6852,11 @@
     },
     {
       "path": "src/TraceLicensing.tsx",
-      "sha256": "d68569efb3b95507f9fca89d3af7a979fa6995c815df65814dc0dd62d5a51231",
+      "sha256": "de14832490c890b950197efac1d04a00ebf402e3e766da53ceb00b4b87253e5f",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
-        5, 8, 38, 39, 40, 160, 162, 181, 182, 183, 185, 192, 208, 212, 242, 244,
-        253, 255, 260, 267, 430
+        5, 8, 42, 43, 44, 171, 173, 198, 199, 200, 202, 209, 225, 229, 259, 261,
+        270, 272, 277, 284, 473
       ],
       "review": "mapped-abstraction"
     },

@@ -1,6 +1,6 @@
 /**
  * Trace licensing on the account settings page (private trace contract
- * version 2, design of 22 November 2026). The member turns the setting on or
+ * versions 2 and 3). The member turns the setting on or
  * off and opts earlier traces in. Every server answer is checked before it is
  * shown; an unexpected shape becomes the error state.
  */
@@ -17,7 +17,11 @@ import {
 import { useAction } from "./lib/use-action";
 import { EmptyState, formatDate, Spinner } from "./Presentation";
 
-type Setting = { enabled: boolean; since: string | null };
+type Setting = {
+  enabled: boolean;
+  since: string | null;
+  confirmedTermsVersion: TraceTermsVersion | null;
+};
 type Licence = "none" | "licensed" | "withdrawn";
 type Trace = {
   runId: string;
@@ -73,7 +77,14 @@ function setting(value: unknown): Setting {
   )
     throw new Error(INVALID);
   if (!v.enabled && v.since !== null) throw new Error(INVALID);
-  return { enabled: v.enabled, since: v.enabled ? date(v.since) : null };
+  const confirmed = v.confirmedTermsVersion;
+  if (confirmed !== null && !isTraceTermsVersion(confirmed))
+    throw new Error(INVALID);
+  return {
+    enabled: v.enabled,
+    since: v.enabled ? date(v.since) : null,
+    confirmedTermsVersion: confirmed,
+  };
 }
 
 function trace(value: unknown): Trace {
@@ -170,6 +181,12 @@ function traces(n: number): string {
   return n === 1 ? "trace" : "traces";
 }
 
+const TERMS_LABELS: Record<TraceTermsVersion, string> = {
+  "private-trace-v1": "v1",
+  "private-trace-v2": "v2",
+  "private-trace-v3": "v3",
+};
+
 const LICENCE_LABELS: Record<Licence, string> = {
   none: "not licensed",
   licensed: "licensed",
@@ -261,7 +278,7 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
   const lead = (
     <p>
       Let Slop license your traces to AI model builders for pay. You get 50% of
-      each sale. <a href="/protocol/private-trace-v2.md">Terms</a>
+      each sale. <a href="/protocol/private-trace-v3.md">Terms</a>
     </p>
   );
   if (view.status === "error")
@@ -273,6 +290,25 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
       </div>
     );
   const { setting: current, totals, nextCursor } = view.listing;
+  // On under an earlier version: v3 uploads need their own confirmation.
+  const needsV3 =
+    current.enabled && current.confirmedTermsVersion !== "private-trace-v3";
+  const confirmBox = (
+    <fieldset disabled={busy}>
+      <label>
+        <input
+          type="checkbox"
+          checked={ticked}
+          onChange={(event) => {
+            setTicked(event.target.checked);
+            setError(null);
+          }}
+        />
+        My model provider's terms let me license these runs' output, including
+        the code they contain.
+      </label>
+    </fieldset>
+  );
   const turnOn = () =>
     act(async (signal) => {
       const next = setting(
@@ -389,6 +425,25 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
       {current.enabled && current.since !== null ? (
         <>
           <p>On since {formatDate(current.since)}</p>
+          {needsV3 ? (
+            <>
+              <p>
+                Sessions uploaded under v3 include your project's code. Confirm
+                again to license them.
+              </p>
+              {confirmBox}
+              <div className="handoff-actions">
+                <button
+                  className="button secondary-button"
+                  disabled={busy || !ticked}
+                  type="button"
+                  onClick={turnOn}
+                >
+                  Confirm for v3
+                </button>
+              </div>
+            </>
+          ) : null}
           <div className="handoff-actions">
             <button
               className="button secondary-button"
@@ -402,19 +457,7 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
         </>
       ) : (
         <>
-          <fieldset disabled={busy}>
-            <label>
-              <input
-                type="checkbox"
-                checked={ticked}
-                onChange={(event) => {
-                  setTicked(event.target.checked);
-                  setError(null);
-                }}
-              />
-              My model provider's terms let me license these runs' output.
-            </label>
-          </fieldset>
+          {confirmBox}
           <div className="handoff-actions">
             <button
               className="button secondary-button"
@@ -460,8 +503,7 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
             {view.listing.traces.map((row) => (
               <li key={row.runId}>
                 {formatDate(row.finalizedAt)} · {row.projectId} · {row.provider}
-                /{row.model} ·{" "}
-                {row.termsVersion === "private-trace-v2" ? "v2" : "v1"} ·{" "}
+                /{row.model} · {TERMS_LABELS[row.termsVersion]} ·{" "}
                 {LICENCE_LABELS[row.licence]}
                 {current.enabled && row.licence !== "licensed" ? (
                   <>

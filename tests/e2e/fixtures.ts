@@ -198,7 +198,12 @@ export const escapeRegExp = (value: string) =>
 
 /** The trace licensing listing of a member who has never opted in. */
 export const EMPTY_TRACE_LISTING = {
-  setting: { enabled: false, since: null, providerTermsConfirmed: false },
+  setting: {
+    enabled: false,
+    since: null,
+    providerTermsConfirmed: false,
+    confirmedTermsVersion: null,
+  },
   totals: { traces: 0, licensed: 0, eligible: 0 },
   traces: [],
   nextCursor: null,
