@@ -6951,7 +6951,7 @@
 {"name":"syncProjectRegistry","kind":"FunctionDeclaration","line":300,"sha256":"1ce7b85c7250bb60582de371dbea2cf6f1dd826c23c8c635750ad5a31e055cf9","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
 {"name":"<ArrowFunction@351>","kind":"ArrowFunction","line":351,"sha256":"7e2953c1a3d7c89826234a25463df0cf4155eab8b911206a41707967e61a971b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/test-payout-browser.mjs","sha256":"70edbd360af4c1aad03876e9672181f146638889f1de92dbecba2ec82f5bb4b5","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/test-payout-browser.mjs","sha256":"62b6a7fd26db3aee54a68a518beeeb4dd761ae94b6a623ed7ce5ed71e612a3c9","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"ready","kind":"FunctionDeclaration","line":30,"sha256":"4a219675a4ef011868520c46f6496464fb97607dca11bc3af5f27c652294e90e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect","throw-unreachable-model"]},
 {"name":"<ArrowFunction@37>","kind":"ArrowFunction","line":37,"sha256":"39875ed065be1127ca2fff5be92492497234dcd515d591d73a116dd6b7fd349f","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
 {"name":"<ArrowFunction@59>","kind":"ArrowFunction","line":59,"sha256":"84666681aac220011b02d4c01fe4546e6ce40f1ca0cec8f777350e95701ff351","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
