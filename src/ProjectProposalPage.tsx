@@ -21,11 +21,20 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  backlogDate,
+  backlogState,
+  backlogStatusLine,
+  catchUpEnd,
+  catchUpOfferedEnd,
+  catchUpStartAllowed,
+} from "./lib/backlog-rule.mjs";
 import { INTAKE_CAP_LIMITS } from "./lib/intake-cap.mjs";
 import {
   MAINTAINER_SHARE_LIMITS,
   maintainerShareLabel,
 } from "./lib/maintainer-share.mjs";
+import { loadMergeActivity } from "./lib/merge-activity";
 import {
   type ProjectDraftStore,
   useProjectDraftSave,
@@ -49,6 +58,7 @@ import {
   submissionFeeSetting,
 } from "./lib/submission-fee-setting.mjs";
 import { reportDepositSetup } from "./lib/submission-fee-setup";
+import { usePublicResource } from "./lib/use-public-resource";
 import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
@@ -2481,6 +2491,64 @@ function intakeCapDraft(text: string): {
       };
 }
 
+function catchUpSummary(until: string | undefined, now: Date): string {
+  return until !== undefined && Date.parse(until) > now.getTime()
+    ? `Until ${backlogDate(until)}`
+    : "Off";
+}
+
+/**
+ * Catching up on reviews (PRD section 5, backlog rule): the project's backlog
+ * state in one line and one checkbox. A new pause ends 14 days ahead; it
+ * starts at most once per UTC month and can end early.
+ */
+function CatchUpField({
+  project,
+  value,
+  onChange,
+}: {
+  project: ProjectDefinition;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const now = new Date();
+  const [merge] = usePublicResource(
+    project.status === "active",
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const running = catchUpEnd(project, now);
+  const allowed = running !== null || catchUpStartAllowed(project, now);
+  const line =
+    merge.status === "ready"
+      ? backlogStatusLine(
+          backlogState(project, merge.index.get(project.id), now),
+        )
+      : null;
+  return (
+    <div>
+      {line ? (
+        <p className="field-hint" id="catch-up-state">
+          {line}
+        </p>
+      ) : null}
+      <label className="checkbox-field">
+        <input
+          aria-describedby={line ? "catch-up-state" : undefined}
+          checked={value === "true"}
+          disabled={!allowed}
+          name="catchingUp"
+          onChange={(event) => onChange(String(event.currentTarget.checked))}
+          type="checkbox"
+        />{" "}
+        {allowed
+          ? `Catching up on reviews until ${backlogDate(running ?? catchUpOfferedEnd(now))}`
+          : "Catching up on reviews (already used this month)"}
+      </label>
+    </div>
+  );
+}
+
 function intakeCapSummary(cap: number | undefined): string {
   return cap === undefined
     ? "Off"
@@ -2516,6 +2584,8 @@ type UpdateDraft = ReadyDraft & {
   wantedIssues: string;
   reportDeposit: string;
   intakeCap: string;
+  /** "true" while catching up on reviews (backlog rule). */
+  catchingUp: string;
   headline: string;
   goal: string;
   website: string;
@@ -2548,6 +2618,7 @@ const DRAFT_FIELDS = [
   "wantedIssues",
   "reportDeposit",
   "intakeCap",
+  "catchingUp",
   "headline",
   "goal",
   "website",
@@ -2847,6 +2918,7 @@ function ProjectUpdateForm({
     // On unless the project turned it off; absent is on.
     reportDeposit: String(reportDepositOn(current)),
     intakeCap: String(current.slopbot?.intakeCap ?? ""),
+    catchingUp: String(catchUpEnd(current, new Date()) !== null),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
@@ -2993,6 +3065,19 @@ function ProjectUpdateForm({
   const intake = intakeCapDraft(value.intakeCap);
   // An invalid entry keeps the published number until it is corrected.
   const nextIntakeCap = intake.error ? current.slopbot?.intakeCap : intake.cap;
+  // Catching up keeps a running pause's end, or offers 14 days from today;
+  // unticking ends a running pause. An ended pause keeps its stored end.
+  const catchUpNow = new Date();
+  const runningCatchUp = catchUpEnd(current, catchUpNow);
+  const nextCatchUpUntil =
+    value.catchingUp === "true"
+      ? (runningCatchUp ??
+        (catchUpStartAllowed(current, catchUpNow)
+          ? catchUpOfferedEnd(catchUpNow)
+          : current.slopbot?.catchUpUntil))
+      : runningCatchUp === null
+        ? current.slopbot?.catchUpUntil
+        : undefined;
   const feeOn = value.submissionFee === "true";
   const feeAmount = submissionFeeAmountDraft(value.submissionFeeAmount);
   // Off keeps the owner's last amount so turning it back on restores it. An
@@ -3140,6 +3225,7 @@ function ProjectUpdateForm({
       value.automaticClosure === "true" ||
       nextReady !== undefined ||
       nextIntakeCap !== undefined ||
+      nextCatchUpUntil !== undefined ||
       nextFee !== undefined ||
       value.wantedIssues === "true"
         ? {
@@ -3148,6 +3234,13 @@ function ProjectUpdateForm({
               ...(nextReady ? { readyLabel: nextReady } : {}),
               ...(nextIntakeCap !== undefined
                 ? { intakeCap: nextIntakeCap }
+                : {}),
+              ...(nextCatchUpUntil !== undefined
+                ? { catchUpUntil: nextCatchUpUntil }
+                : {}),
+              // Only the server writes the history; it is sent back as is.
+              ...(source.slopbot?.catchUpHistory !== undefined
+                ? { catchUpHistory: source.slopbot.catchUpHistory }
                 : {}),
               ...(nextFee ? { submissionFee: nextFee } : {}),
               ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
@@ -3225,6 +3318,12 @@ function ProjectUpdateForm({
       label: "Pause new contributors",
       before: intakeCapSummary(current.slopbot?.intakeCap),
       after: intakeCapSummary(next.slopbot?.intakeCap),
+    },
+    {
+      field: "catchUp",
+      label: "Catching up on reviews",
+      before: catchUpSummary(current.slopbot?.catchUpUntil, catchUpNow),
+      after: catchUpSummary(next.slopbot?.catchUpUntil, catchUpNow),
     },
     {
       field: "submissionFee",
@@ -3604,6 +3703,7 @@ function ProjectUpdateForm({
       ? "next-month"
       : [
             "slopbot",
+            "catchUp",
             "reportDeposit",
             "image",
             "headline",
@@ -3777,6 +3877,13 @@ function ProjectUpdateForm({
             onChange={set("intakeCap")}
             value={value.intakeCap}
           />
+          {current.reward.kind === "monthly-pool" ? (
+            <CatchUpField
+              onChange={set("catchingUp")}
+              project={current}
+              value={value.catchingUp}
+            />
+          ) : null}
           <details className="proposal-skill-rules">
             <summary>More rules</summary>
             {SKILL_RULE_FIELDS.map((field) => (

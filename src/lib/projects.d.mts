@@ -236,6 +236,13 @@ export interface ProjectDefinition {
      */
     readonly intakeCap?: number;
     /**
+     * Catching up on reviews until this instant (PRD section 5, backlog
+     * rule); absent means not catching up.
+     */
+    readonly catchUpUntil?: string;
+    /** Each catch-up start, written only by the server. */
+    readonly catchUpHistory?: readonly { readonly startedAt: string }[];
+    /**
      * The refundable submission fee (PRD section 5); absent means off.
      */
     readonly submissionFee?: SubmissionFeeSetting;
