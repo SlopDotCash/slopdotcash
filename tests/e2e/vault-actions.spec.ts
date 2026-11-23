@@ -1965,7 +1965,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .filter({ hasText: /^Monthly rewards$/u })
       .click();
     await expect(
-      recoveryPage.getByRole("textbox", { name: /^Monthly amount/u }),
+      recoveryPage.getByRole("textbox", { name: /^Amount \/ month/u }),
     ).toHaveValue("2000");
     const [revisionResponse, setupResponse] = await Promise.all([
       registeredRevision,
