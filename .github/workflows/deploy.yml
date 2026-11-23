@@ -752,6 +752,13 @@ jobs:
           # the generator then uses data/points/protected-months.json alone.
           POINTS_PROTECTION_URL: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'https://slop.cash/api/v1/operator/protected-point-months' || '' }}
           POINTS_PROTECTION_TOKEN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.POINTS_PROTECTION_TOKEN || '' }}
+          # Every release build (fresh or published data) rebuilds the public
+          # record, /data/record.json (PRD section 7). It never fails the build:
+          # on any error the previous record is published unchanged. Pull
+          # requests skip it. The token only lifts the GitHub API rate limit
+          # for reading the public archive commit.
+          SLOP_RECORD_BUILD: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+          SLOP_RECORD_GITHUB_TOKEN: ${{ github.event_name != 'pull_request' && github.token || '' }}
         run: bun run build
 
       - name: Bind the checked registry snapshot
