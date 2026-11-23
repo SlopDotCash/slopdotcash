@@ -1020,9 +1020,8 @@ async function listCases(
   const reportingProjects = await Promise.all(
     rowProjectIds.map((projectId) => currentReportingProject(deps, projectId)),
   );
-  rowProjectIds.forEach((projectId, index) =>
-    projects.set(projectId, reportingProjects[index]),
-  );
+  for (const [index, projectId] of rowProjectIds.entries())
+    projects.set(projectId, reportingProjects[index]);
   const triagerIds = new Set<string>();
   for (const part of chunked(rows.map((row) => row.id))) {
     const found = await deps.db
