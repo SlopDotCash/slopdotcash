@@ -7,18 +7,19 @@ import { instantOf } from "../../kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../../client/snapshot/schema.vibe"
 import { validateSnapshot } from "../../client/snapshot/validate.vibe"
 import { type Opened, type Repositories, type Store, advanceTo, command, finish, openStore, unitNameOf } from "../../journal/ledger.vibe"
-import { appended, commit, flush, rowsOf, sendAll } from "../../journal/rows.vibe"
+import { commit, flush, rowsOf } from "../../journal/rows.vibe"
 import { applySnapshot, octoberDuplicateRetirementDecision, octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
 import { isExtension, planCorrections } from "../apply/apply.vibe"
 import type { Collection } from "../apply/manifest.vibe"
 import { type ProjectOfRepository, sameSet } from "../apply/derive.vibe"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { periodOf } from "../../../gen/points__periods.effect.vibe"
-import type { Event } from "../../../gen/points__journal.effect.vibe"
+import { type Revision, previewDuplicateRetirement, previewRecipients } from "../../../gen/points__journal.effect.vibe"
 import type { MixedProof, PacketRun, RecipientCorrection } from "../../../gen/points__reviewedHistory.ts"
 import { initial as unbound, machineOver as bindingOver } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { type HistoricalPacket, type PacketRecipientCorrection, type PacketRetirement, digestPattern, digestText, githubIdPattern, refusal, require } from "./packet.vibe"
 import { checkedRetirement } from "./retirement.vibe"
+import type { RetirementOrder } from "./verify.vibe"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -36,6 +37,7 @@ export interface ReconstructInput {
   readonly registry: RepositoryRegistry
   readonly repositories: Repositories
   readonly projectOf: ProjectOfRepository
+  readonly retirementOrder?: RetirementOrder
 }
 
 interface DecisionText {
@@ -164,7 +166,7 @@ effect function corrected(input: ReconstructInput, journal: Journal) {
   return planned.journal
 }
 
-function runOf(input: ReconstructInput): PacketRun {
+function previewRunOf(input: ReconstructInput): PacketRun {
   return {
     baselineMatches: true,
     reviewedAt: millisOf(input.packet.reviewedAt),
@@ -174,6 +176,9 @@ function runOf(input: ReconstructInput): PacketRun {
     deltaInScope: true,
     occurrencesKept: true,
     candidateMatches: true,
+    qualifiedReplay: false,
+    assessmentCurrent: false,
+    baselineCurrent: false,
   }
 }
 
@@ -190,13 +195,11 @@ effect function openedPool(journal: Journal, input: ReconstructInput, rows: Read
   return { store, opened, unit }
 }
 
-effect function appendedPool(pool: { readonly store: Store; readonly opened: Opened }, event: Event, templates: ReadonlyArray<Award>, sourceDigest: string, decisionSourceId: string, recordedAt: string, message: string) {
-  const refused = try sendAll(pool.opened, [event])
-  try require(refused === "", message)
+effect function materializedPool(pool: { readonly store: Store; readonly opened: Opened }, revisions: ReadonlyArray<Revision>, templates: ReadonlyArray<Award>, sourceDigest: string, decisionSourceId: string, recordedAt: string) {
   const byActor = new Map(templates.map((award) => [award.actor.id, award] as const))
   const provenance = { recordedAt, sourceDigest, decisionSourceId, effectiveAt: recordedAt }
   const written: Row[] = []
-  for (const revision of try appended(pool.opened)) written.push(...(try rowsOf(pool.store, pool.opened, revision, byActor, provenance)))
+  for (const revision of revisions) written.push(...(try rowsOf(pool.store, pool.opened, revision, byActor, provenance)))
   const buffer: Row[] = []
   try commit(pool.store, buffer, written)
   flush(pool.store, buffer)
@@ -278,10 +281,11 @@ effect function recipientsCorrected(input: ReconstructInput, correction: PacketR
     reviewedShares: ordered.map((award) => ({ actor: actors.get(award.actor.id) ?? 0, points: correction.expectedAfter.find((expected) => expected.key === award.key)?.amount ?? -1 })),
   }
   const digest = digestText(correction)
-  const event: Event = { type: "correctRecipients", project: input.packet.projectId, unit: pool.unit, correction: record, packetRun: runOf(input), reason: octoberOriginalContributorDecision, digest }
-  const appendedRows = try appendedPool(pool, event, checked.replacements, digest, `owner_october_${correction.evidenceSha256}`, input.packet.reviewedAt, changed)
-  try require(appendedRows.written.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.amount === row.award.amount)), changed)
-  return appendedRows.journal
+  const revision = previewRecipients(try pool.opened.machine.get(), input.packet.projectId, pool.unit, record, previewRunOf(input), octoberOriginalContributorDecision, digest)
+  try require(revision.id === pool.opened.start, changed)
+  const preview = try materializedPool(pool, [revision], checked.replacements, digest, `owner_october_${correction.evidenceSha256}`, input.packet.reviewedAt)
+  try require(preview.written.every((row) => correction.expectedAfter.some((expected) => expected.key === row.award.key && expected.amount === row.award.amount)), changed)
+  return preview.journal
 }
 
 effect function retired(input: ReconstructInput, retirement: PacketRetirement, journal: Journal, context: { readonly retiring: ReadonlySet<string>; readonly validated: ReadonlyMap<string, string>; readonly rewarded: ReadonlyArray<Award> }) {
@@ -317,12 +321,14 @@ effect function retired(input: ReconstructInput, retirement: PacketRetirement, j
     rewardedAwards: context.rewarded,
     retiringSources: context.retiring,
     validated: context.validated,
+    acceptanceOrder: input.retirementOrder?.get(retirement.sourceId),
     sourceOf,
     objectOf,
   })
   const digest = digestText(retirement)
-  const event: Event = { type: "retireDuplicate", project: packet.projectId, unit: pool.unit, retirement: checked.record, packetRun: runOf(input), reason: octoberDuplicateRetirementDecision, digest }
-  const result = try appendedPool(pool, event, templates, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt, "Duplicate retirement does not meet the reviewed rules")
+  const revision = previewDuplicateRetirement(try pool.opened.machine.get(), packet.projectId, pool.unit, checked.record, previewRunOf(input), octoberDuplicateRetirementDecision, digest)
+  try require(revision.id === pool.opened.start, "Duplicate retirement does not meet the reviewed rules")
+  const result = try materializedPool(pool, [revision], templates, digest, `owner_duplicate_${retirement.evidenceSha256}`, packet.reviewedAt)
   return { journal: result.journal, mixed: checked.mixed }
 }
 
@@ -375,7 +381,7 @@ export effect function reconstructHistoricalPoints(input: ReconstructInput) {
   }
   try require((try batchDigest(result)) === packet.candidateDigest, "Canonical candidate differs from owner review")
   for (const binding of bindings) {
-    binding.send({ type: "validate", packetRun: runOf(input) }) catch effect () => {
+    binding.send({ type: "validate", packetRun: previewRunOf(input) }) catch effect () => {
       throw refusal("Submitted source and accepted squash bindings differ")
     }
   }

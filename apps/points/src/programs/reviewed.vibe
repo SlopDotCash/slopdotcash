@@ -18,7 +18,7 @@ import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct
 import { type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
 import { readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
 import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
-import { enforcementGeneration, historicalStatements, recordHistorical, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
+import { enforcementGeneration, historicalStatements, recordHistorical, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalDuplicateOrder, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -154,6 +154,8 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   try verifyOwnerAuthority(packet, project.manifest)
   setPhase("historical census verification")
   try verifyHistoricalCensus(packet)
+  setPhase("duplicate acceptance order verification")
+  const retirementOrder = try verifyHistoricalDuplicateOrder(packet)
   setPhase("accepted squash verification")
   try verifyHistoricalAcceptedSquashes(packet)
   setPhase("financial protection verification")
@@ -185,6 +187,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     registry,
     repositories: repositoriesOf(registry, project.countsFrom),
     projectOf: projectOfRegistry(project.registry.projects),
+    retirementOrder,
   })
   setPhase("import preparation")
   const prepared = try historicalStatements(packet, candidate, generation, githubIdOf, assessmentHeads)

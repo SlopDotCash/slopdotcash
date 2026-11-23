@@ -6,7 +6,8 @@ import { type Award, type Journal, type Revision as Row } from "../../kernels/re
 import { scoreTiers } from "../../kernels/scoring/tiers.ts"
 import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
 import type { CorrectionCommit, CorrectionSource } from "../apply/manifest.vibe"
-import type { AcceptanceSource, AcceptedPromotion, AcceptedSquash, ClaimCover, EarlierBasis, MixedProof, NativeCover, Retirement, UnchangedPromotion } from "../../../gen/points__reviewedHistory.ts"
+import type { AcceptanceOrder, AcceptanceSource, AcceptedPromotion, AcceptedSquash, ClaimCover, EarlierBasis, MixedProof, NativeCover, Retirement, UnchangedPromotion } from "../../../gen/points__reviewedHistory.ts"
+import { noIdentical } from "../../../gen/points__reviewedHistory.effect.vibe"
 import { commitObjectId } from "./bytes.ts"
 import { type ContextSource, type HistoricalPacket, type PacketRetirement, type PacketSquash, digestPattern, digestText, mergeGitVersion, octoberStart, pullUrl, require, shaPattern } from "./packet.vibe"
 
@@ -20,6 +21,7 @@ export interface RetirementInput {
   readonly validated: ReadonlyMap<string, string>
   readonly sourceOf: (id: string) => number
   readonly objectOf: (text: string) => number
+  readonly acceptanceOrder?: ReadonlyArray<AcceptanceOrder>
 }
 
 export interface CheckedRetirement {
@@ -42,7 +44,8 @@ function objectOfJson(value: unknown): Json | undefined {
 }
 
 function listOf(value: unknown): ReadonlyArray<Json> {
-  return Array.isArray(value) ? value.flatMap((item) => objectOfJson(item) ?? []) : []
+  if (!Array.isArray(value)) return []
+  return value.map(objectOfJson).filter((item): item is Json => item !== undefined)
 }
 
 function textOf(value: unknown): string | undefined {
@@ -450,6 +453,9 @@ export effect function checkedRetirement(input: RetirementInput) {
     covers: native.covers,
     earlier: native.bases,
     claims,
+    mergeEdges: [],
+    order: [...(input.acceptanceOrder ?? [])],
+    identical: noIdentical,
   }
   return { record, mixed } satisfies CheckedRetirement
 }

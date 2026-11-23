@@ -10,10 +10,11 @@ import { batchDigest } from "../../kernels/records/ids.vibe"
 import { importStatements } from "../../publication/import.vibe"
 import { protectionEvidence } from "../../publication/protection.vibe"
 import { batchRecorded, isExtension } from "../apply/apply.vibe"
+import type { AcceptanceOrder } from "../../../gen/points__reviewedHistory.ts"
 import type { FreezeEvidence } from "../../../gen/points__periods.ts"
 import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
 import { instantOf } from "../../kernels/records/instants.ts"
-import { type AuditedSource, type HistoricalPacket, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, githubIdPattern, historicalFrom, historicalThrough, refusal, require } from "./packet.vibe"
+import { type AuditedSource, type HistoricalPacket, pullUrl, shaPattern, type PacketSquash, type ReviewedRefused, type SourceAudit, digestPattern, githubIdPattern, historicalFrom, historicalThrough, refusal, require } from "./packet.vibe"
 import { type HistoricalAssessmentJournalHeads, historicalAssessmentRecordingConditions, historicalPointsBaselineCondition } from "./audit/catalog.vibe"
 
 schema CensusRepository { readonly id: string }
@@ -33,6 +34,23 @@ schema Pull {
   readonly merged_at: string | null
   readonly merge_commit_sha: string | null
 }
+schema DuplicatePull {
+  readonly number: number
+  readonly node_id: string
+  readonly state: string
+  readonly html_url: string
+  readonly head: PullRef
+  readonly merged_at: string | null
+  readonly merge_commit_sha: string | null
+}
+schema DuplicateComparison {
+  readonly status: string
+  readonly behind_by: number
+  readonly base_commit: PullRef
+  readonly merge_base_commit: PullRef
+}
+type DuplicateSource = Pick<PacketSquash, "sourceId" | "sourceUrl" | "headSha" | "repositoryNodeId"> & { readonly occurredAt: string | null }
+export type RetirementOrder = ReadonlyMap<string, ReadonlyArray<AcceptanceOrder>>
 schema CommitAuthor { readonly node_id: string; readonly type: string }
 schema PullCommit { readonly sha: string; readonly parents: ReadonlyArray<PullRef>; readonly author: CommitAuthor | null }
 schema ComparePage { readonly total_commits: number; readonly commits: ReadonlyArray<PullCommit> }
@@ -161,6 +179,62 @@ function samePull(current: Pull, pull: Pull, withUser: boolean) {
 effect function publicGit(directory: string, args: ReadonlyArray<string>) {
   const bytes = try gitBytes({ args: publicGitArguments(directory, args), env: { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }, limit: 1024 * 1024, seconds: 120 }, "Earlier automatic merge tree changed")
   return (utf8Text(bytes) ?? "").trim()
+}
+
+effect function duplicatePull(audit: SourceAudit, root: string, source: DuplicateSource, number: number | undefined, expectedMerges: ReadonlyArray<string | undefined>) {
+  try require(number !== undefined && Number.isSafeInteger(number) && number > 0 && source.repositoryNodeId === audit.repositoryNodeId &&
+    source.sourceUrl === pullUrl(audit.repository, number ?? 0), "Duplicate acceptance source is outside the reviewed scope")
+  const pull = try (try GitHub).json(`${root}/pulls/${number}`, DuplicatePull)
+  const merge = pull.merge_commit_sha ?? ""
+  try require(pull.number === number && pull.node_id === source.sourceId && pull.state === "closed" && pull.html_url === source.sourceUrl &&
+    pull.head.sha === source.headSha && shaPattern.test(pull.head.sha) && pull.merged_at !== null && iso(pull.merged_at) === source.occurredAt &&
+    shaPattern.test(merge) && expectedMerges.every((expected) => expected === undefined || expected === merge), "Duplicate acceptance source changed")
+  return { head: pull.head.sha, merge }
+}
+
+effect function verifyEarlierRevision(root: string, retiringMerge: string, earlierRevision: string) {
+  const comparison = try (try GitHub).json(`${root}/compare/${retiringMerge}...${earlierRevision}?per_page=1&page=1`, DuplicateComparison)
+  const common = comparison.merge_base_commit.sha
+  try require(comparison.base_commit.sha === retiringMerge && shaPattern.test(common) && Number.isSafeInteger(comparison.behind_by) &&
+    comparison.behind_by >= 0, "Duplicate acceptance ancestry is unavailable")
+  try require((comparison.status === "behind" || comparison.status === "diverged") && comparison.behind_by > 0 &&
+    common !== retiringMerge, "Earlier source may already carry the retiring PR's merge")
+}
+
+export effect function verifyHistoricalDuplicateOrder(packet: HistoricalPacket) {
+  const order = new Map<string, ReadonlyArray<AcceptanceOrder>>()
+  const retirements = packet.duplicateRetirements ?? []
+  if (retirements.length === 0) return order
+  const audit = packet.sourceAudit
+  const root = `/repos/${audit.repository}`
+  const repository = try (try GitHub).json(root, PublicRepository)
+  try require(repository.node_id === audit.repositoryNodeId && repository.full_name.toLowerCase() === audit.repository.toLowerCase() &&
+    !repository.private, "Duplicate acceptance repository changed")
+  const audited = new Map(audit.sources.map((source) => [source.id, source.number] as const))
+  const checked = new Set<string>()
+  for (const retirement of retirements) {
+    const retired = try duplicatePull(audit, root, retirement.source, audited.get(retirement.sourceId),
+      [retirement.acceptedPromotion?.mergeSha, retirement.unchangedPromotion?.merge.sha])
+    const squashes = retirement.acceptedSquashes ?? []
+    const observations: AcceptanceOrder[] = []
+    for (const source of [...retirement.earlierSources, ...squashes]) {
+      const context = retirement.earlierAcceptanceProof?.contextSources.find((row) => row.id === source.sourceId)
+      const squash = squashes.find((row) => row.sourceId === source.sourceId)
+      const earlier = try duplicatePull(audit, root, source, audited.get(source.sourceId) ?? context?.number, [context?.mergeSha, squash?.commit.sha])
+      const sameMerge = retired.merge === earlier.merge
+      if (!sameMerge) {
+        for (const revision of new Set([earlier.head, earlier.merge])) {
+          const pair = `${retired.merge}...${revision}`
+          if (checked.has(pair)) continue
+          try verifyEarlierRevision(root, retired.merge, revision)
+          checked.add(pair)
+        }
+      }
+      observations.push({ sameMerge, ancestryKnown: !sameMerge, carriesRetiringMerge: false })
+    }
+    order.set(retirement.sourceId, observations)
+  }
+  return order as RetirementOrder
 }
 
 export effect function verifyHistoricalAcceptedSquashes(packet: HistoricalPacket) {

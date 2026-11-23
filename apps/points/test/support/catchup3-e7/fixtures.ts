@@ -292,3 +292,41 @@ export function mixedSubmittedAndSquashFixture(perPathNative = false) {
 }
 
 export const protectionFor = (period: number) => [{ project: "feed", period, phase: "Collecting" as const, obligationExists: false }];
+
+export function duplicateOrderFixture(mode: "behind" | "reverse" | "missing") {
+  const f = mixedSubmittedAndSquashFixture()
+  const retired = f.retirement.acceptedPromotion?.mergeSha
+  const earlier = f.retirement.earlierAcceptanceProof?.contextSources[0]?.mergeSha
+  if (retired === undefined || earlier === undefined) throw Error("fixture order")
+  const audit = f.packet.sourceAudit
+  const root = `/repos/${audit.repository}`
+  const reads: string[] = []
+  const fetcher = {
+    async fetch(request: Request) {
+      const url = new URL(request.url)
+      reads.push(url.pathname + url.search)
+      if (url.pathname === root) return Response.json({
+        id: 1, node_id: audit.repositoryNodeId, full_name: audit.repository, private: false,
+      })
+      for (const source of audit.sources) {
+        if (url.pathname === `${root}/pulls/${source.number}`) return Response.json({
+          number: source.number, node_id: source.id, html_url: `https://github.com/${audit.repository}/pull/${source.number}`,
+          head: { sha: source.headSha }, state: "closed", merged_at: source.mergedAt,
+          merge_commit_sha: source.id === f.retirement.sourceId ? retired : earlier,
+        })
+      }
+      const oldHead = f.prior.headSha
+      if (url.search === "?per_page=1&page=1" &&
+        [oldHead, earlier].some((sha) => url.pathname === `${root}/compare/${retired}...${sha}`)) {
+        if (mode === "missing") return Response.json({ message: "not found" }, { status: 404 })
+        const reverse = mode === "reverse" && url.pathname.endsWith(oldHead)
+        return Response.json({
+          status: reverse ? "ahead" : "behind", behind_by: reverse ? 0 : 1,
+          base_commit: { sha: retired }, merge_base_commit: { sha: reverse ? retired : earlier },
+        })
+      }
+      return Response.json({ message: "unexpected fixture request" }, { status: 404 })
+    },
+  }
+  return { ...f, reads, fetcher }
+}

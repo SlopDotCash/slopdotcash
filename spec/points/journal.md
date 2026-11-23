@@ -708,27 +708,43 @@ pure val priorOrdinaryPoolValues = Set(true, false)
 The [reviewed historical runner](./reviewedHistory.md) zeroes a source's
 October implementation pool when every claim is already covered by an
 earlier accepted source, with the decision `owner_duplicate_<dossier digest>`
-and the v2 score, only inside a reviewed packet that applies
-(`reconstructHistoricalPoints` refuses the whole packet otherwise). The
-retired source is one of the unit's sources. The pool must be positive and in October
-2026. A frozen reward period refuses it.
+and the v2 score, only inside a reviewed packet that qualifies for apply.
+A preview can project the same zero award without
+changing the ledger or qualifying the packet for apply. The retired source
+is one of the unit's sources. The pool must be positive and in October 2026.
+A frozen reward period refuses both.
 
 ```quint
-pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+pure def duplicatePreviewAllowed(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
     reason: str, digest: str): bool =
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount > 0 and P::periodOf(prior.occurredAt) == P::october2026 and
-  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetApplies(packetRun) and
+  unitOf(l, unit).sources.contains(retirement.source) and RH::retirementApplies(retirement) and RH::packetPreviews(packetRun) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
-pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
-    reason: str, digest: str): Ledger =
+pure def canRetireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+    reason: str, digest: str): bool =
+  RH::packetApplies(packetRun) and duplicatePreviewAllowed(l, project, unit, retirement, packetRun, reason, digest)
+pure def duplicateRetirementRevision(l: Ledger, project: str, unit: int, reason: str, digest: str): Revision =
   val prior = latest(l, unitKey(project, unit))
-  appendRevision({ ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: 0,
+  { ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: 0,
     priorAmount: prior.amount, occurredAt: prior.occurredAt, recordedAt: l.now, rule: ScoreV2, sourceDigest: digest,
     decision: { basis: DuplicateRetirement, effectiveAt: l.now, reason: reason, delta: 0 - prior.amount, source: digest,
       valued: false },
-    recipients: prior.recipients, completeLines: prior.completeLines, shares: A::allocatePoints(0, prior.recipients) }, l)
+    recipients: prior.recipients, completeLines: prior.completeLines, shares: A::allocatePoints(0, prior.recipients) }
+pure def previewDuplicateRetirement(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+    reason: str, digest: str): Revision =
+  if (duplicatePreviewAllowed(l, project, unit, retirement, packetRun, reason, digest))
+    duplicateRetirementRevision(l, project, unit, reason, digest)
+  else noRevision
+pure def retireDuplicate(l: Ledger, project: str, unit: int, retirement: RH::Retirement, packetRun: RH::PacketRun,
+    reason: str, digest: str): Ledger =
+  appendRevision(duplicateRetirementRevision(l, project, unit, reason, digest), l)
+pure def lawQualifiedDuplicatePreviewMatches(l: Ledger, project: str, unit: int, retirement: RH::Retirement,
+    packetRun: RH::PacketRun, reason: str, digest: str): bool =
+  canRetireDuplicate(l, project, unit, retirement, packetRun, reason, digest) implies
+    previewDuplicateRetirement(l, project, unit, retirement, packetRun, reason, digest) ==
+      lastRevision(retireDuplicate(l, project, unit, retirement, packetRun, reason, digest))
 pure def sometimesDuplicateRetired(l: Ledger): bool = l.revisions.some(r => r.decision.basis == DuplicateRetirement)
 ```
 
@@ -739,25 +755,43 @@ October implementation pool, unchanged since the owner's review, between the
 reviewed recipients by their reviewed weights. The pool keeps its total; the
 revision is recorded under the v2 score with the decision
 `owner_october_<dossier digest>`, with the reviewed shares, only inside a
-reviewed packet that applies. A frozen reward period refuses it.
+reviewed packet that applies. A preview can project the same revision without
+changing the ledger or qualifying the packet for apply. A frozen reward period
+refuses both.
 
 ```quint
-pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+pure def recipientPreviewAllowed(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
     packetRun: RH::PacketRun, reason: str, digest: str): bool =
   val prior = latest(l, unitKey(project, unit))
   prior.id > 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
   project != "" and unit > 0 and prior.amount >= 10 and prior.amount <= P::maxSafe and correction.pool == prior.amount and
   P::periodOf(prior.occurredAt) == P::october2026 and RH::recipientCorrectionApplies(correction) and
-  RH::packetApplies(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
+  RH::packetPreviews(packetRun) and A::canWriteAllocation(prior.amount, correction.recipients, true, false) and
   reason != "" and digest != "" and not(isFrozen(l, project, P::periodOf(prior.occurredAt)))
-pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
-    packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
+pure def canCorrectRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    packetRun: RH::PacketRun, reason: str, digest: str): bool =
+  RH::packetApplies(packetRun) and recipientPreviewAllowed(l, project, unit, correction, packetRun, reason, digest)
+pure def recipientCorrectionRevision(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    reason: str, digest: str): Revision =
   val prior = latest(l, unitKey(project, unit))
-  appendRevision({ ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: prior.amount,
+  { ...noRevision, id: l.nextId, previous: prior.id, key: unitKey(project, unit), amount: prior.amount,
     priorAmount: prior.amount, occurredAt: prior.occurredAt, recordedAt: l.now, rule: ScoreV2, sourceDigest: digest,
     decision: { basis: Reallocation, effectiveAt: l.now, reason: reason, delta: 0, source: digest, valued: false },
     recipients: correction.recipients, completeLines: true,
-    shares: RH::correctedShares(correction) }, l)
+    shares: RH::correctedShares(correction) }
+pure def previewRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    packetRun: RH::PacketRun, reason: str, digest: str): Revision =
+  if (recipientPreviewAllowed(l, project, unit, correction, packetRun, reason, digest))
+    recipientCorrectionRevision(l, project, unit, correction, reason, digest)
+  else noRevision
+pure def correctRecipients(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    packetRun: RH::PacketRun, reason: str, digest: str): Ledger =
+  appendRevision(recipientCorrectionRevision(l, project, unit, correction, reason, digest), l)
+pure def lawQualifiedRecipientPreviewMatches(l: Ledger, project: str, unit: int, correction: RH::RecipientCorrection,
+    packetRun: RH::PacketRun, reason: str, digest: str): bool =
+  canCorrectRecipients(l, project, unit, correction, packetRun, reason, digest) implies
+    previewRecipients(l, project, unit, correction, packetRun, reason, digest) ==
+      lastRevision(correctRecipients(l, project, unit, correction, packetRun, reason, digest))
 pure def sometimesOwnerCorrected(l: Ledger): bool =
   l.revisions.some(r => r.key.category == MergedWork and r.rule == ScoreV2 and r.decision.basis == Reallocation)
 ```
