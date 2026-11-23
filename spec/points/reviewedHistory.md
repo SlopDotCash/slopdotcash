@@ -73,24 +73,50 @@ snapshot makes inside the project and the audited window. Every appended
 revision lies in the project and the window `[from, through)`, is never
 payout recognition and keeps its key's occurrence time, and the digest of
 the resulting journal must equal the reviewed candidate's. Any difference
-refuses the whole packet: a reviewed source is validated, and the journal
-appends a recipient correction or a duplicate retirement, only with a packet
-that applies.
+refuses the whole packet: a reviewed source is validated only with a packet
+that previews, and the journal appends a recipient correction or a duplicate
+retirement only with a packet that applies.
+
+Applying, unlike a preview, also needs the packet's replay qualification:
+the trusted receipt of the canonical main `replay-assessments` run at the
+same source commit (job `publish`, a receipt of at most 16 KiB in an
+archive of at most 32 KiB, exact field sets) whose journals, read again at
+the receipt's cutoffs, classify the same, and whose rebuilt value
+projection's digest equals the packet's qualification; without one apply is
+refused ("Applying historical Points requires a reviewed replay
+qualification") and a preview still runs. The runner captures both
+assessment journal heads before it checks the value records, and the final
+batch insert itself requires the exact prior Points checkpoint (the latest
+batch digest and revision count still the reviewed baseline) and no joint
+or legacy assessment appended in the project or repository after the
+captured heads (development `pointsSql` recording conditions,
+`source_import` `qualifyReplay`, `appendAssessment`, `advanceBaseline`,
+`publishHistorical`); an assessment appended elsewhere changes nothing.
 
 ```quint
 type PacketRun = { baselineMatches: bool, reviewedAt: int, baselineAt: int, now: int, valueKeysExact: bool,
-  deltaInScope: bool, occurrencesKept: bool, candidateMatches: bool }
-pure def packetApplies(r: PacketRun): bool =
+  deltaInScope: bool, occurrencesKept: bool, candidateMatches: bool, qualifiedReplay: bool, assessmentCurrent: bool,
+  baselineCurrent: bool }
+pure def packetPreviews(r: PacketRun): bool =
   r.baselineMatches and r.now >= r.reviewedAt and r.now >= r.baselineAt and r.valueKeysExact and r.deltaInScope and
   r.occurrencesKept and r.candidateMatches
-pure def canValidate(b: Binding, packetRun: PacketRun): bool = not(b.validated) and packetApplies(packetRun)
+pure def packetApplies(r: PacketRun): bool =
+  packetPreviews(r) and r.qualifiedReplay and r.assessmentCurrent and r.baselineCurrent
+pure def canValidate(b: Binding, packetRun: PacketRun): bool = not(b.validated) and packetPreviews(packetRun)
 pure def validate(b: Binding, packetRun: PacketRun): Binding = { ...b, validated: true }
 pure def lawChangedBaselineRefused(r: PacketRun): bool = not(r.baselineMatches) implies not(packetApplies(r))
 pure def lawChangedCandidateRefused(r: PacketRun): bool = not(r.candidateMatches) implies not(packetApplies(r))
+pure def lawRelevantAppendRefused(r: PacketRun): bool = not(r.assessmentCurrent) implies not(packetApplies(r))
+pure def lawChangedCheckpointRefused(r: PacketRun): bool = not(r.baselineCurrent) implies not(packetApplies(r))
+pure def lawUnqualifiedApplyRefused(r: PacketRun): bool = not(r.qualifiedReplay) implies not(packetApplies(r))
+pure def lawPreviewNeedsNoQualification(r: PacketRun): bool =
+  packetPreviews({ ...r, qualifiedReplay: false, assessmentCurrent: false, baselineCurrent: false }) == packetPreviews(r)
 pure val readyRun: PacketRun = { baselineMatches: true, reviewedAt: 2432150, baselineAt: 2432140, now: 2432160,
-  valueKeysExact: true, deltaInScope: true, occurrencesKept: true, candidateMatches: true }
+  valueKeysExact: true, deltaInScope: true, occurrencesKept: true, candidateMatches: true, qualifiedReplay: true,
+  assessmentCurrent: true, baselineCurrent: true }
 pure val rValues = Set(readyRun, { ...readyRun, baselineMatches: false }, { ...readyRun, now: 2432100 },
-  { ...readyRun, candidateMatches: false })
+  { ...readyRun, candidateMatches: false }, { ...readyRun, qualifiedReplay: false }, { ...readyRun, assessmentCurrent: false },
+  { ...readyRun, baselineCurrent: false })
 pure val packetRunValues = rValues
 ```
 
@@ -167,7 +193,47 @@ meets its condition:
   sources ordered by acceptance time and then GitHub node ID in code-unit
   order), by a canonical bot exclusion (a unit whose every claim names no
   implementation actor, or a squash whose author and commit author are
-  bots), or by a positive award of the earlier source.
+  bots), or by a positive award of the earlier source;
+- an earlier GitHub acceptance carried as a submitted merge of the promotion
+  covers that merge only when its earlier source, accepted before the
+  retired one and not itself retiring, names it as its accepted merge, the
+  merge has two parents with the earlier head second, the promotion's
+  member is that two-parent merge, the promotion's complete range and
+  ordered parents were read from its actual first parent (an automatic
+  merge proof must reproduce the accepted tree), and the earlier source
+  holds a positive ordinary award of its own single-source candidate;
+- for every earlier source and accepted squash whose accepted merge differs
+  from the retired one's, GitHub's comparison must show the retired merge is
+  not already contained in the earlier source's head or merge: an
+  unavailable or inconsistent ancestry, or an earlier source that already
+  carries the retiring merge, refuses ("Earlier source already carries the
+  retiring PR's merge"; development
+  `verifyHistoricalDuplicateAcceptanceOrder`, `source_import`
+  `retireDistinctDuplicate`).
+
+Instead of claim coverage, a retirement may rest on one identical accepted
+change (`identicalAcceptedChange`): exactly one earlier source, accepted
+strictly earlier and not itself retiring, whose complete accepted
+first-parent diff the runner verified the retired source repeats, with no
+other proof (no promotion, unchanged promotion, earlier acceptance proof,
+squash or claim coverage), a pool keyed by the source's own record, and a
+positive ordinary award of the earlier source. Its kinds: a shared accepted
+commit (both sources record the same accepted merge and the same head, and
+the earlier award was already positive at the baseline: `bindSharedAcceptance`);
+a carried acceptance (the later head is the exact earlier accepted merge and
+adds no members, the earlier award was positive at the baseline and the
+packet leaves the earlier ordinary pool unchanged, or only confirms it with
+the verified allocation decision); an empty squash (the later squash is
+empty, its parent already holds the change, its one commit is its head with
+one parent, and the earlier award was positive at the baseline); a
+surviving carrier (two distinct merges with one result, the source's one
+commit its head with one parent and authored by the original human author,
+who holds the one positive ordinary award of each source with the same
+amount in October, and a carrier tip refreshed at most once along the
+first-parent chain without the retiring merge and pinned until the import:
+`refreshCarrierTip`, `retireSurvivingCarrier`); or a distinct squash (its
+one commit is its head with one parent). The ancestry check does not apply
+to an identical accepted change.
 
 ```quint
 type AcceptedPromotion = { headTree: int, mergeTree: int, mergeParents: List[int], sourceHead: int }
@@ -211,21 +277,52 @@ pure def claimRetained(c: ClaimCover): bool =
   c.coverings == 1 and not(c.ownerRetiring) and c.sameCounts and
   (not(c.jointUnit) or (c.jointAssessed and jointCompletes(c.jointSources, c.awardSource))) and
   (c.botUnit or c.botSquash or c.ownerRewarded)
+type CarriedMergeEdge = { origin: int, originAt: int, originRetiring: bool, namedAcceptedMerge: bool, twoParents: bool,
+  originHeadSecond: bool, memberIsMerge: bool, rangeFromFirstParent: bool, ordinaryRewarded: bool, repeated: bool }
+pure def mergeEdgeCovers(e: CarriedMergeEdge, retiredAt: int): bool =
+  not(e.repeated) and e.origin > 0 and e.originAt < retiredAt and not(e.originRetiring) and e.namedAcceptedMerge and
+  e.twoParents and e.originHeadSecond and e.memberIsMerge and e.rangeFromFirstParent and e.ordinaryRewarded
+type AcceptanceOrder = { sameMerge: bool, ancestryKnown: bool, carriesRetiringMerge: bool }
+pure def orderAllows(o: AcceptanceOrder): bool = o.sameMerge or (o.ancestryKnown and not(o.carriesRetiringMerge))
+type IdenticalKind = NoIdenticalChange | SharedMerge | CarriedAcceptance | EmptySquash | SurvivingCarrier | DistinctSquash
+type IdenticalChange = { kind: IdenticalKind, earlierSources: int, ownerAt: int, ownerRetiring: bool, diffVerified: bool,
+  ownRecordPool: bool, ownerPositive: bool, ownerPositiveAtBaseline: bool, sameHead: bool, singleOwnCommit: bool,
+  carriedMatches: bool, ownerPoolKept: bool, originalAuthorPair: bool, carrierTipPinned: bool }
+pure def identicalChangeApplies(i: IdenticalChange, retiredAt: int): bool =
+  i.kind != NoIdenticalChange and i.earlierSources == 1 and i.ownerAt >= 0 and i.ownerAt < retiredAt and not(i.ownerRetiring) and
+  i.diffVerified and i.ownRecordPool and i.ownerPositive and
+  (if (i.kind == SharedMerge) i.sameHead and i.ownerPositiveAtBaseline
+   else if (i.kind == CarriedAcceptance) i.carriedMatches and i.ownerPoolKept and i.ownerPositiveAtBaseline
+   else if (i.kind == EmptySquash) i.singleOwnCommit and i.ownerPositiveAtBaseline
+   else if (i.kind == SurvivingCarrier) i.singleOwnCommit and i.originalAuthorPair and i.carrierTipPinned
+   else i.singleOwnCommit)
 type Retirement = { source: int, occurredAt: int, sourceComplete: bool, poolUnchanged: bool, octoberPool: bool,
   dossierBound: bool, claimedPaths: int, promotion: AcceptedPromotion, unchanged: List[UnchangedPromotion],
-  squashes: List[AcceptedSquash], covers: List[NativeCover], earlier: List[EarlierBasis], claims: List[ClaimCover] }
+  squashes: List[AcceptedSquash], covers: List[NativeCover], earlier: List[EarlierBasis], claims: List[ClaimCover],
+  mergeEdges: List[CarriedMergeEdge], order: List[AcceptanceOrder], identical: IdenticalChange }
 pure def coveringSource(retirement: Retirement, owner: int): bool =
   owner != retirement.source and (retirement.earlier.some(e => e.source == owner) or retirement.squashes.some(s => s.source == owner))
-pure def retirementApplies(retirement: Retirement): bool =
-  retirement.source > 0 and retirement.sourceComplete and retirement.poolUnchanged and retirement.octoberPool and retirement.dossierBound and
+pure def claimCoverageApplies(retirement: Retirement): bool =
   retirement.unchanged.length() <= 1 and retirement.unchanged.every(u => unchangedPromotion(u)) and
-  ((retirement.squashes.length() > 0 or retirement.covers.length() > 0) implies promotionKeepsContent(retirement.promotion)) and
+  ((retirement.squashes.length() > 0 or retirement.covers.length() > 0 or retirement.mergeEdges.length() > 0) implies
+    promotionKeepsContent(retirement.promotion)) and
+  (retirement.mergeEdges.length() > 0 implies retirement.covers.length() > 0) and
   retirement.squashes.every(s => squashCovers(s, retirement.source, retirement.occurredAt)) and
   retirement.covers.every(c => nativeCovers(c, retirement.occurredAt)) and
-  retirement.earlier.every(e => earlierAccepted(e, retirement.source, retirement.occurredAt)) and
+  retirement.mergeEdges.every(e => mergeEdgeCovers(e, retirement.occurredAt)) and
+  retirement.order.length() == retirement.earlier.length() + retirement.squashes.length() and
+  retirement.order.every(o => orderAllows(o)) and
   retirement.claims.length() > 0 and retirement.claims.length() == retirement.claimedPaths and
   retirement.claims.every(c => claimRetained(c) and coveringSource(retirement, c.owner)) and
   retirement.squashes.every(s => retirement.claims.some(c => c.owner == s.source))
+pure def identicalRetirementApplies(retirement: Retirement): bool =
+  identicalChangeApplies(retirement.identical, retirement.occurredAt) and retirement.earlier.length() == 1 and
+  retirement.unchanged.length() == 0 and retirement.squashes.length() == 0 and retirement.covers.length() == 0 and
+  retirement.mergeEdges.length() == 0 and retirement.claims.length() == 0 and retirement.claimedPaths == 0
+pure def retirementApplies(retirement: Retirement): bool =
+  retirement.source > 0 and retirement.sourceComplete and retirement.poolUnchanged and retirement.octoberPool and retirement.dossierBound and
+  retirement.earlier.every(e => earlierAccepted(e, retirement.source, retirement.occurredAt)) and
+  (if (retirement.identical.kind == NoIdenticalChange) claimCoverageApplies(retirement) else identicalRetirementApplies(retirement))
 pure def lawPromotionMustKeepContent(a: AcceptedPromotion): bool = a.headTree != a.mergeTree implies not(promotionKeepsContent(a))
 pure def lawChangedPromotionIsNotUnchanged(u: UnchangedPromotion): bool =
   (u.changedLines > 0 or u.headTree != u.baseTree) implies not(unchangedPromotion(u))
@@ -265,9 +362,43 @@ pure val claimCover: ClaimCover = { owner: 2, coverings: 1, ownerRetiring: false
 pure val claimValues = Set(claimCover, { ...claimCover, coverings: 2 }, { ...claimCover, ownerRewarded: false, botUnit: true },
   { ...claimCover, jointUnit: true, jointAssessed: true, jointSources: List({ source: 2, acceptedAt: 2432110, nodeRank: 1 },
     { source: 3, acceptedAt: 2432110, nodeRank: 2 }), awardSource: 2 })
+pure val noIdentical: IdenticalChange = { kind: NoIdenticalChange, earlierSources: 0, ownerAt: -1, ownerRetiring: false,
+  diffVerified: false, ownRecordPool: false, ownerPositive: false, ownerPositiveAtBaseline: false, sameHead: false,
+  singleOwnCommit: false, carriedMatches: false, ownerPoolKept: false, originalAuthorPair: false, carrierTipPinned: false }
+pure val distinctOrder: AcceptanceOrder = { sameMerge: false, ancestryKnown: true, carriesRetiringMerge: false }
 pure val readyRetirement: Retirement = { source: 1, occurredAt: 2432120, sourceComplete: true, poolUnchanged: true,
   octoberPool: true, dossierBound: true, claimedPaths: 1, promotion: promotion, unchanged: List(), squashes: List(squash),
-  covers: List(), earlier: List({ ...earlier, rewarded: true }), claims: List(claimCover) }
+  covers: List(), earlier: List({ ...earlier, rewarded: true }), claims: List(claimCover), mergeEdges: List(),
+  order: List(distinctOrder, distinctOrder), identical: noIdentical }
+pure val sharedChange: IdenticalChange = { ...noIdentical, kind: SharedMerge, earlierSources: 1, ownerAt: 2432110,
+  diffVerified: true, ownRecordPool: true, ownerPositive: true, ownerPositiveAtBaseline: true, sameHead: true }
+pure val identicalRetirement: Retirement = { ...readyRetirement, claimedPaths: 0, squashes: List(), claims: List(), order: List(),
+  identical: sharedChange }
+pure val carriedEdge: CarriedMergeEdge = { origin: 2, originAt: 2432110, originRetiring: false, namedAcceptedMerge: true,
+  twoParents: true, originHeadSecond: true, memberIsMerge: true, rangeFromFirstParent: true, ordinaryRewarded: true, repeated: false }
+pure def lawEarlierCarrierOfTheMergeRefused(retirement: Retirement): bool =
+  (retirement.identical.kind == NoIdenticalChange and retirement.order.some(o => not(o.sameMerge) and o.carriesRetiringMerge)) implies
+    not(retirementApplies(retirement))
+pure def lawUnknownAncestryRefused(retirement: Retirement): bool =
+  (retirement.identical.kind == NoIdenticalChange and retirement.order.some(o => not(o.sameMerge) and not(o.ancestryKnown))) implies
+    not(retirementApplies(retirement))
+pure def lawIdenticalChangeNeedsOneEarlierRewardedSource(change: IdenticalChange, retiredAt: int): bool =
+  (change.earlierSources != 1 or not(change.ownerPositive) or change.ownerAt >= retiredAt) implies
+    not(identicalChangeApplies(change, retiredAt))
+pure def lawSurvivingCarrierNeedsPinnedTip(change: IdenticalChange, retiredAt: int): bool =
+  (change.kind == SurvivingCarrier and not(change.carrierTipPinned)) implies not(identicalChangeApplies(change, retiredAt))
+pure def lawCarriedMergeEdgeNeedsTheEarlierHeadSecond(edge: CarriedMergeEdge, retiredAt: int): bool =
+  not(edge.originHeadSecond) implies not(mergeEdgeCovers(edge, retiredAt))
+pure val changeValues = Set(sharedChange, { ...sharedChange, sameHead: false },
+  { ...sharedChange, kind: CarriedAcceptance, carriedMatches: true, ownerPoolKept: true },
+  { ...sharedChange, kind: CarriedAcceptance, carriedMatches: true, ownerPoolKept: false },
+  { ...sharedChange, kind: EmptySquash, singleOwnCommit: true },
+  { ...sharedChange, kind: SurvivingCarrier, singleOwnCommit: true, originalAuthorPair: true, carrierTipPinned: true },
+  { ...sharedChange, kind: SurvivingCarrier, singleOwnCommit: true, originalAuthorPair: true },
+  { ...sharedChange, kind: DistinctSquash, singleOwnCommit: true, ownerPositiveAtBaseline: false },
+  { ...sharedChange, earlierSources: 2 }, { ...sharedChange, ownerAt: 2432130 })
+pure val edgeValues = Set(carriedEdge, { ...carriedEdge, originHeadSecond: false }, { ...carriedEdge, originAt: 2432130 },
+  { ...carriedEdge, rangeFromFirstParent: false })
 pure def lawUncoveredClaimRefused(retirement: Retirement): bool =
   retirement.claims.length() != retirement.claimedPaths implies not(retirementApplies(retirement))
 pure def lawSquashNeedsKeptPromotion(retirement: Retirement): bool =
@@ -276,5 +407,53 @@ pure def lawSquashNeedsKeptPromotion(retirement: Retirement): bool =
 pure val retirementValues = Set(readyRetirement, { ...readyRetirement, claimedPaths: 2 },
   { ...readyRetirement, promotion: { ...promotion, mergeTree: 6 } },
   { ...readyRetirement, claims: List({ ...claimCover, owner: 1 }) },
-  { ...readyRetirement, earlier: List({ ...earlier, acceptedAt: 2432130, rewarded: true }) })
+  { ...readyRetirement, earlier: List({ ...earlier, acceptedAt: 2432130, rewarded: true }) },
+  { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, carriesRetiringMerge: true }) },
+  { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, ancestryKnown: false }) },
+  { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, sameMerge: true, ancestryKnown: false }) },
+  identicalRetirement, { ...identicalRetirement, identical: { ...sharedChange, sameHead: false } },
+  { ...identicalRetirement, squashes: List(squash) })
+```
+
+### A historical replay scores only the pinned project's one repository
+
+The historical scorer (`createHistoricalLeaderboardSnapshot`) needs the
+pinned scope: an active project with exactly one repository whose project
+id, repository node id and manifest digest equal the pinned ones, or it
+refuses ("Historical leaderboard requires the pinned active project and
+repository"). Every input source, retained review or evaluation, retained
+attribution and penalty must lie in that repository and project, and the
+census must list that one repository ("Historical leaderboard input is
+outside the pinned repository"); an assessed joint record naming any source
+outside it refuses ("Historical joint assessment is outside the pinned
+repository"). It scores in historical mode, so the rolling-only owners and
+holds of [authorship](./authorship.md) are off. A retained replay is
+validated against that repository only, and it is never published to the
+site.
+
+```quint
+type HistoricalScope = { projectActive: bool, projectMatches: bool, repositories: int, nodeIdMatches: bool,
+  manifestMatches: bool }
+type HistoricalInput = { censusRepository: bool, listedRepositories: int, sourcesInside: bool, eventsInside: bool,
+  penaltiesInside: bool, jointInside: bool }
+type ScoringMode = RollingScoring | HistoricalScoring
+pure def historicalScopePinned(scope: HistoricalScope): bool =
+  scope.projectActive and scope.projectMatches and scope.repositories == 1 and scope.nodeIdMatches and scope.manifestMatches
+pure def historicalInputAdmitted(scope: HistoricalScope, input: HistoricalInput): bool =
+  historicalScopePinned(scope) and input.censusRepository and input.listedRepositories == 1 and input.sourcesInside and
+  input.eventsInside and input.penaltiesInside and input.jointInside
+pure def sitePublishable(mode: ScoringMode): bool = mode == RollingScoring
+pure def lawSecondRepositoryRefused(scope: HistoricalScope, input: HistoricalInput): bool =
+  (scope.repositories != 1 or input.listedRepositories != 1) implies not(historicalInputAdmitted(scope, input))
+pure def lawOutsideJointRecordRefused(scope: HistoricalScope, input: HistoricalInput): bool =
+  not(input.jointInside) implies not(historicalInputAdmitted(scope, input))
+pure def lawHistoricalReplayNeverPublished(mode: ScoringMode): bool = mode == HistoricalScoring implies not(sitePublishable(mode))
+pure val pinnedScope: HistoricalScope = { projectActive: true, projectMatches: true, repositories: 1, nodeIdMatches: true,
+  manifestMatches: true }
+pure val pinnedInput: HistoricalInput = { censusRepository: true, listedRepositories: 1, sourcesInside: true, eventsInside: true,
+  penaltiesInside: true, jointInside: true }
+pure val scopeValues = Set(pinnedScope, { ...pinnedScope, repositories: 2 }, { ...pinnedScope, manifestMatches: false },
+  { ...pinnedScope, projectActive: false })
+pure val inputValues = Set(pinnedInput, { ...pinnedInput, listedRepositories: 2 }, { ...pinnedInput, jointInside: false },
+  { ...pinnedInput, penaltiesInside: false })
 ```

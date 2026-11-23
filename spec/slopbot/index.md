@@ -19,6 +19,7 @@ Slopbot review remains free.
 - [Value request outcomes and source contention](./valueRequests.md)
 - [Work-unit value inference](./valueInference.md)
 - [Value history selection](./valueHistory.md)
+- [First history pages read ahead](./historyReadAhead.md)
 - [Work units and the joint journal](./workUnits.md)
 - [Historical subscription import](./historicalImport.md)
 - [Incomplete assessments in the private Inbox](./assessmentInbox.md)

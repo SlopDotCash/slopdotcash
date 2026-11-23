@@ -109,6 +109,47 @@ pure def sometimesFailedKeepsPrior(w: Window): bool = w.phase == Failed and w.pu
 pure def sometimesUnverifiedNeverPublishes(w: Window): bool = w.phase == Building and w.censusTotal < 0 and w.records.length() > 0
 ```
 
+### A hosted feed outage is read again on the configured delays; any other failure stops at once
+
+Each read of an authoritative Slopbot feed (bans, penalties) and of every
+value or work-unit history page fails as an outage when the transport fails,
+the 30-second request times out, the body cannot be read to its end, or the
+answer is 408, 429 or 500 and above, or, for an authoritative feed, 404 (a
+release without the route) (`ValueFeedUnavailableError`). Such a read is sent again after each delay of
+`SLOP_VALUE_FEED_RETRY_DELAYS_MS` in turn (comma-separated non-negative safe
+integer milliseconds, at most 10; unset or blank means one attempt; any other
+list refuses the run with `SLOP_VALUE_FEED_RETRY_DELAYS_MS is invalid`),
+logging `{"event":"value_feed_retry","attempt":<n>,"delayMs":<ms>}` before
+each wait. A refused or invalid answer (any other status, a redirect,
+malformed JSON or a failed identity check) is never sent again. After the
+last delay the outage ends the refresh as before, and the previous window
+stays published (`scripts/value-ingestion.ts`, `withFeedRetry`,
+`feedRetryDelays`; operator decision, 19 November 2026; main ffd4fb846,
+development 7f71c6ce9). The release collector sets
+`2000,10000,30000,60000`. `feedAttempt` counts the attempts already made,
+from 1.
+
+```quint
+pure val maxFeedDelays = 10
+pure def feedDelaysValid(delays: List[int]): bool = delays.length() <= maxFeedDelays and delays.every(d => d >= 0)
+pure def feedAttempts(delays: List[int]): int = delays.length() + 1
+pure def feedRetried(outage: bool, feedAttempt: int, delays: List[int]): bool =
+  outage and feedAttempt >= 1 and feedAttempt < feedAttempts(delays)
+pure def feedDelayBefore(feedAttempt: int, delays: List[int]): int = delays.nthOr(feedAttempt - 1, 0)
+pure def lawRefusedFeedAnswerNeverRetried(feedAttempt: int, delays: List[int]): bool = not(feedRetried(false, feedAttempt, delays))
+pure def lawNoDelaysIsOneAttempt(outage: bool, feedAttempt: int): bool = not(feedRetried(outage, feedAttempt, List()))
+pure def lawFeedRetriesBounded(outage: bool, feedAttempt: int, delays: List[int]): bool =
+  feedRetried(outage, feedAttempt, delays) implies (feedAttempt <= delays.length() and delays.length() >= 1)
+pure def lawEveryConfiguredDelayIsUsed(delays: List[int]): bool =
+  (delays.length() >= 1 and delays.length() <= maxFeedDelays) implies
+    (feedRetried(true, delays.length(), delays) and not(feedRetried(true, delays.length() + 1, delays)))
+pure def lawInvalidDelaysRefused(delays: List[int]): bool =
+  (delays.length() > maxFeedDelays or delays.some(d => d < 0)) implies not(feedDelaysValid(delays))
+pure val delaysValues = Set(List(), List(2000, 10000, 30000, 60000), List(0), List(-1),
+  List(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+pure val feedAttemptValues = Set(0, 1, 4, 5, 11)
+```
+
 ### Simulation samples include duplicates and every exclusion
 
 ```quint

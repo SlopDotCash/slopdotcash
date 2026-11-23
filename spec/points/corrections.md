@@ -35,38 +35,81 @@ repository owner.
 
 ### A historical source retains its original carrier and every successor
 
+An unproved zero-line promotion has no connected proof, so its allocation is
+held as incomplete evidence: a pull-request candidate without a proved
+original contributor whose accepted one-parent commits first accepted by
+this source are all empty markers (no additions, no deletions, no files)
+while a commit it carries from elsewhere changes lines
+(`isUnprovedZeroLinePromotion` of `src/lib/commit-credit.ts`, which
+development's `points-implementation-corrections.ts` applies with ownership
+by first accepted source; `historical_implementation_allocation`
+`bindEmptyPromotion`). A commit with an unknown parent count, or an owned
+one-parent commit that changes anything, proves the promotion is not one;
+merge commits are left out. The collector computes `emptyPromotion` with
+`unprovedZeroLinePromotion`.
+
 ```quint
 import allocation as A from "./allocation"
 import periods as P from "./periods"
 type Actor = TrustedWorkflow | Owner | Contributor
-type CorrectionPhase = Open | Prepared | EvidenceHeld | AttributionHeld | OutOfScope | Protected | Banned | Stale | Applied | Replayed
+type CorrectionPhase = Open | Prepared | EvidenceHeld | AttributionHeld | OutOfScope | Protected | Banned | Stale | Applied |
+  Replayed | Unchanged
 type Supplement = SearchOnly | SupplementPending | SupplementVerified | SupplementUnavailable | SupplementFailed
 type ManifestKind = OrdinaryReallocation | OctoberReplacement
 type WorkLine = { author: int, lines: int, origin: int, followup: bool, parentEdges: bool, ambiguous: bool }
 type JournalEntry = { source: int, occurredAt: int, shares: List[A::PointShare] }
 type Manifest = { digest: str, source: int, predecessor: int, connectedProof: bool, recipients: List[A::Recipient],
-  kind: ManifestKind, work: List[WorkLine] }
+  kind: ManifestKind, work: List[WorkLine], emptyPromotion: bool, earlierAcceptance: bool }
 type Chunk = { index: int, digest: str }
 type Packet = { digest: str, expected: List[str], staged: List[Chunk], assembled: bool, reviewedDigest: str }
 type Correction = { phase: CorrectionPhase, project: str, source: int, occurredAt: int, pool: int,
   history: List[JournalEntry], staged: Manifest, applied: List[str], frozen: bool,
-  packet: Packet, appliedWork: List[WorkLine], supplement: Supplement, supplementAffects: bool }
+  packet: Packet, appliedWork: List[WorkLine], supplement: Supplement, supplementAffects: bool, confirmed: bool }
 pure val octoberAt = 2432110
 pure val original: JournalEntry = { source: 1, occurredAt: octoberAt,
   shares: List({ actor: 3, points: 30 }) }
 pure val emptyManifest: Manifest = { digest: "", source: 0, predecessor: 0, connectedProof: false, recipients: List(),
-  kind: OrdinaryReallocation, work: List() }
+  kind: OrdinaryReallocation, work: List(), emptyPromotion: false, earlierAcceptance: false }
 pure val initial: Correction = { phase: Open, project: "eliza", source: 1, occurredAt: octoberAt, pool: 30,
   history: List(original), staged: emptyManifest, applied: List(), frozen: false,
   packet: { digest: "packet", expected: List("chunk-a", "chunk-b"), staged: List(), assembled: false, reviewedDigest: "" },
-  appliedWork: List(), supplement: SearchOnly, supplementAffects: false }
+  appliedWork: List(), supplement: SearchOnly, supplementAffects: false, confirmed: false }
 pure def predecessorMatches(c: Correction, manifest: Manifest): bool =
   manifest.source == c.source and manifest.digest != "" and manifest.predecessor == c.history.length()
 pure def completeCorrection(c: Correction, manifest: Manifest): bool =
-  manifest.connectedProof and not(c.supplementAffects and c.supplement == SupplementUnavailable) and
+  manifest.connectedProof and not(manifest.emptyPromotion) and not(c.supplementAffects and c.supplement == SupplementUnavailable) and
   A::canWriteAllocation(c.pool, manifest.recipients, true, false)
     and (manifest.kind == OctoberReplacement implies
       manifest.work.length() > 0 and manifest.recipients == replacementRecipients(manifest.work))
+type CensusCommit = { parentsKnown: bool, parents: int, owned: bool, linesKnown: bool, additions: int, deletions: int, files: int }
+type ZeroLineScan = { unknownParents: bool, changedOwned: bool, emptyOwned: bool, carriedChange: bool }
+pure def scanCommit(t: ZeroLineScan, row: CensusCommit): ZeroLineScan =
+  if (not(row.parentsKnown)) { ...t, unknownParents: true }
+  else if (row.parents > 1) t
+  else if (row.owned)
+    (if (row.linesKnown and row.additions == 0 and row.deletions == 0 and row.files == 0) { ...t, emptyOwned: true }
+     else { ...t, changedOwned: true })
+  else if (row.linesKnown and (row.additions > 0 or row.deletions > 0)) { ...t, carriedChange: true }
+  else t
+pure def unprovedZeroLinePromotion(commits: List[CensusCommit]): bool =
+  val t = commits.foldl({ unknownParents: false, changedOwned: false, emptyOwned: false, carriedChange: false },
+    (acc, row) => scanCommit(acc, row))
+  not(t.unknownParents) and not(t.changedOwned) and t.emptyOwned and t.carriedChange
+pure val emptyMarkerRow: CensusCommit = { parentsKnown: true, parents: 1, owned: true, linesKnown: true, additions: 0,
+  deletions: 0, files: 0 }
+pure val carriedChangeRow: CensusCommit = { ...emptyMarkerRow, owned: false, additions: 4, deletions: 1, files: 1 }
+pure def lawMergeRowsLeaveTheMarkerUnproved(censusRow: CensusCommit): bool =
+  (censusRow.parentsKnown and censusRow.parents > 1) implies
+    unprovedZeroLinePromotion(List(emptyMarkerRow, carriedChangeRow, censusRow))
+pure def lawOwnedChangeProvesWork(censusRow: CensusCommit): bool =
+  (censusRow.parentsKnown and censusRow.parents <= 1 and censusRow.owned and censusRow.linesKnown and censusRow.additions > 0) implies
+    not(unprovedZeroLinePromotion(List(emptyMarkerRow, carriedChangeRow, censusRow)))
+pure def lawUnknownParentsProveNothing(censusRow: CensusCommit): bool =
+  not(censusRow.parentsKnown) implies not(unprovedZeroLinePromotion(List(emptyMarkerRow, carriedChangeRow, censusRow)))
+pure def lawEmptyPromotionNeverPrepared(c: Correction, manifest: Manifest): bool =
+  manifest.emptyPromotion implies classify(c, manifest) != Prepared
+pure val censusRowValues = Set(emptyMarkerRow, carriedChangeRow, { ...carriedChangeRow, parents: 2 },
+  { ...emptyMarkerRow, additions: 3 }, { ...emptyMarkerRow, parentsKnown: false })
 ```
 
 ### October replacement PRs credit the verified original contributors by their accepted lines
@@ -145,11 +188,12 @@ refuses the import when the bans' digest differs from the plan's). A replayed
 applied manifest is `Replayed` and appends nothing. A batch
 whose receipt (`correctionBatchRecorded`) is already present is a replay and
 appends nothing. Existing approved, funded, scheduled and paid terms never
-change through this correction flow.
+change through this correction flow. A manifest that changes no share of an
+ordinary pool is not committed: it is applied as unchanged (below).
 
 ```quint
 pure def canCommit(c: Correction, recipientBanned: bool, by: Actor): bool = c.phase == Prepared and by == TrustedWorkflow
-  and c.packet.assembled and c.packet.reviewedDigest == c.packet.digest
+  and c.packet.assembled and c.packet.reviewedDigest == c.packet.digest and not(noShareChange(c, c.staged))
 pure def commit(c: Correction, recipientBanned: bool, by: Actor): Correction =
   if (classify(c, c.staged) != Prepared) { ...c, phase: classify(c, c.staged), staged: emptyManifest }
   else if (recipientBanned) { ...c, phase: Banned, staged: emptyManifest }
@@ -163,7 +207,7 @@ pure def alwaysOctoberOnlyInScope(c: Correction): bool = c.appliedWork.length() 
 pure def stepNoHistoryGrowthAfterProtection(before: Correction, after: Correction): bool =
   before.frozen implies after.history == before.history
 pure def stepOnlyApplyAppends(before: Correction, via: str, after: Correction): bool =
-  via != "commit" implies after.history == before.history and after.applied == before.applied
+  (via != "commit" and via != "applyUnchanged") implies after.history == before.history and after.applied == before.applied
 pure def sometimesApplied(c: Correction): bool = c.phase == Applied and c.history.length() > 1
 pure def sometimesProtected(c: Correction): bool = c.phase == Protected
 pure def sometimesBanned(c: Correction): bool = c.phase == Banned
@@ -175,6 +219,44 @@ pure def sometimesFollowupRedirected(c: Correction): bool =
 pure def sometimesTwoOriginSplit(c: Correction): bool =
   c.phase == Applied and c.history.some(row => row.shares.length() == 2) and c.appliedWork.every(w => redirected(w))
 pure def sometimesAmbiguousHeld(c: Correction): bool = c.phase == AttributionHeld
+```
+
+### An already-correct pool records its earlier-acceptance proof once
+
+An ordinary pull-request manifest whose complete proof changes no share of
+the current pool appends nothing (`Unchanged`), except once: when the
+source has a one-parent commit first accepted by another source, or by a
+retained copy (`earlierAcceptance`), and no revision of the pool carries the
+verified historical allocation decision yet, the import appends one
+revision of the unchanged shares with that decision ("Verified
+primary-commit changed lines reallocate this unchanged historical
+implementation Points pool; its value and occurrence date are preserved.",
+on the first positive share by key in development), so that a later
+unassessed rolling refresh cannot guess the recipients again. A second
+application appends nothing. The same rechecks as the atomic import apply
+(`points-implementation-corrections.ts`, "an already-correct pool records
+its complete earlier-acceptance proof once"). An October replacement keeps
+the atomic import.
+
+```quint
+pure val noEntry: JournalEntry = { source: 0, occurredAt: 0, shares: List() }
+pure def lastShares(c: Correction): List[A::PointShare] = c.history.nthOr(c.history.length() - 1, noEntry).shares
+pure def noShareChange(c: Correction, manifest: Manifest): bool =
+  manifest.kind == OrdinaryReallocation and A::allocatePoints(c.pool, manifest.recipients) == lastShares(c)
+pure def confirmsAcceptance(c: Correction, manifest: Manifest): bool = manifest.earlierAcceptance and not(c.confirmed)
+pure def canApplyUnchanged(c: Correction, recipientBanned: bool, by: Actor): bool = c.phase == Prepared and
+  by == TrustedWorkflow and c.packet.assembled and c.packet.reviewedDigest == c.packet.digest and noShareChange(c, c.staged)
+pure def applyUnchanged(c: Correction, recipientBanned: bool, by: Actor): Correction =
+  if (classify(c, c.staged) != Prepared) { ...c, phase: classify(c, c.staged), staged: emptyManifest }
+  else if (not(confirmsAcceptance(c, c.staged))) { ...c, phase: Unchanged, staged: emptyManifest }
+  else if (recipientBanned) { ...c, phase: Banned, staged: emptyManifest }
+  else { ...c, phase: Applied, staged: emptyManifest, applied: c.applied.append(c.staged.digest), confirmed: true,
+    history: c.history.append({ source: c.source, occurredAt: c.occurredAt,
+      shares: A::allocatePoints(c.pool, c.staged.recipients) }) }
+pure def alwaysConfirmationApplied(c: Correction): bool = c.confirmed implies c.applied.length() > 0
+pure def stepConfirmationKept(before: Correction, after: Correction): bool = before.confirmed implies after.confirmed
+pure def sometimesConfirmed(c: Correction): bool = c.phase == Applied and c.confirmed
+pure def sometimesUnchangedAppendsNothing(c: Correction): bool = c.phase == Unchanged
 ```
 
 ## Story: Apply a reviewed private packet only in full and only under its reviewed digest
@@ -251,7 +333,8 @@ pure val resultValues = Set(SupplementVerified, SupplementUnavailable, Supplemen
 
 ```quint
 pure val readyManifest: Manifest = { digest: "manifest", source: 1, predecessor: 1, connectedProof: true,
-  recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }), kind: OrdinaryReallocation, work: List() }
+  recipients: List({ actor: 1, lines: 1 }, { actor: 2, lines: 2 }), kind: OrdinaryReallocation, work: List(),
+  emptyPromotion: false, earlierAcceptance: false }
 pure val carrier = 9
 pure val followupWork: List[WorkLine] = List({ author: 1, lines: 2, origin: 1, followup: false, parentEdges: false, ambiguous: false },
   { author: carrier, lines: 1, origin: 1, followup: true, parentEdges: true, ambiguous: false },
@@ -270,7 +353,10 @@ pure val manifestValues = Set(readyManifest,
     work: List({ author: carrier, lines: 2, origin: 1, followup: false, parentEdges: false, ambiguous: true }),
     recipients: List({ actor: 1, lines: 2 }) },
   { ...readyManifest, digest: "carrier-kept", kind: OctoberReplacement, work: followupWork,
-    recipients: List({ actor: 1, lines: 2 }, { actor: carrier, lines: 1 }, { actor: 2, lines: 3 }) })
+    recipients: List({ actor: 1, lines: 2 }, { actor: carrier, lines: 1 }, { actor: 2, lines: 3 }) },
+  { ...readyManifest, digest: "empty-promotion", emptyPromotion: true },
+  { ...readyManifest, digest: "confirm", recipients: List({ actor: 3, lines: 1 }), earlierAcceptance: true },
+  { ...readyManifest, digest: "unchanged", recipients: List({ actor: 3, lines: 1 }) })
 pure val settledFreeze: P::FreezeEvidence = { project: "eliza", period: P::october2026, phase: P::Frozen, obligationExists: false }
 pure val fValues = Set(settledFreeze, { ...settledFreeze, phase: P::Proposed }, { ...settledFreeze, period: P::november2026 })
 pure val ownWork: WorkLine = { author: 1, lines: 2, origin: 1, followup: false, parentEdges: false, ambiguous: false }

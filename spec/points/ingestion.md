@@ -22,10 +22,13 @@ or `issues/<n>/comments`, `events` or `timeline`, under `/repos/<owner>/<name>`
 or `/repositories/<id>`) or an exact commit's pull-request association page
 answering 500 is read again at most twice, and an exact commit's file page
 (`commits/<sha>?per_page=100&page=<n>`) answering 422 once, waiting one
-second times the number of such retries so far. The same commit file page,
-when its address carries no credentials or fragment, answering 502 is also
-read again at most twice on a budget of its own, waiting one second times
-the number of 502 retries so far; the third 502 is returned as it is. These
+second times the number of such retries so far. Any GET to the GitHub API
+whose address carries no credentials or fragment, answering 502, 503 or 504
+(a gateway error, never GitHub's answer for the page), is also read again at
+most twice on a budget of its own, waiting one second times the number of
+gateway retries so far; the third gateway error is returned as it is (main
+345108c7e, development 7f71c6ce9). A write, another origin and an address
+with credentials or a fragment return the gateway error at once. These
 page and gateway retries never count as attempts. A wait that
 would reach the run's quota deadline stops the run with a checkpoint, and the
 checkpoint then refuses every later read. Times and delays are integer
@@ -41,11 +44,11 @@ type Origin = GitHubApi | OtherOrigin
 type ReadPhase = Idle | Waiting | Returned | Checkpointed
 type Page = OtherPage | ItemList | CommitPulls | CommitFiles
 type Response = { status: int, primaryDelay: int, retryAfter: int, secondaryMessage: bool }
-type Read = { phase: ReadPhase, method: Method, origin: Origin, page: Page, attempt: int, pageRetries: int,
+type Read = { phase: ReadPhase, method: Method, origin: Origin, page: Page, exactAddress: bool, attempt: int, pageRetries: int,
   pageWait: bool, gatewayRetries: int, gatewayWait: bool, now: int, deadline: int, wakeAt: int, returnedStatus: int,
   sent: int, checkpoint: bool }
 pure val maxAttempts = 5
-pure val initial: Read = { phase: Idle, method: Get, origin: GitHubApi, page: OtherPage, attempt: 0, pageRetries: 0,
+pure val initial: Read = { phase: Idle, method: Get, origin: GitHubApi, page: OtherPage, exactAddress: true, attempt: 0, pageRetries: 0,
   pageWait: false, gatewayRetries: 0, gatewayWait: false, now: 0, deadline: 1000000, wakeAt: 0, returnedStatus: 0,
   sent: 0, checkpoint: false }
 pure def retryable(r: Read): bool = r.method == Get and r.origin == GitHubApi
@@ -55,9 +58,10 @@ pure def pageRetryStatus(page: Page): int = if (page == CommitFiles) 422 else 50
 pure def pageRetried(r: Read, x: Response): bool =
   retryable(r) and r.pageRetries < pageRetryLimit(r.page) and x.status == pageRetryStatus(r.page)
 pure def pageDelay(r: Read): int = 1000 * (r.pageRetries + 1)
-pure def gatewayRetryLimit(page: Page): int = if (page == CommitFiles) 2 else 0
+pure def gatewayStatus(s: int): bool = s == 502 or s == 503 or s == 504
+pure val gatewayRetryLimit = 2
 pure def gatewayRetried(r: Read, x: Response): bool =
-  retryable(r) and x.status == 502 and r.gatewayRetries < gatewayRetryLimit(r.page)
+  retryable(r) and r.exactAddress and gatewayStatus(x.status) and r.gatewayRetries < gatewayRetryLimit
 pure def gatewayDelay(r: Read): int = 1000 * (r.gatewayRetries + 1)
 pure def delayFor(x: Response): int =
   val hinted = if (x.primaryDelay > x.retryAfter) x.primaryDelay else x.retryAfter
@@ -65,11 +69,11 @@ pure def delayFor(x: Response): int =
   else if (hinted > 0) hinted
   else if (x.status == 429 or x.secondaryMessage) 60000
   else -1
-pure def canBegin(r: Read, method: Method, origin: Origin, page: Page): bool = r.phase == Idle and r.sent == 0 and not(r.checkpoint)
-pure def begin(r: Read, method: Method, origin: Origin, page: Page): Read =
+pure def canBegin(r: Read, method: Method, origin: Origin, page: Page, exactAddress: bool): bool = r.phase == Idle and r.sent == 0 and not(r.checkpoint)
+pure def begin(r: Read, method: Method, origin: Origin, page: Page, exactAddress: bool): Read =
   if (method == Get and origin == GitHubApi and r.now >= r.deadline)
-    { ...r, method: method, origin: origin, page: page, phase: Checkpointed, checkpoint: true }
-  else { ...r, method: method, origin: origin, page: page, attempt: 1, sent: 1 }
+    { ...r, method: method, origin: origin, page: page, exactAddress: exactAddress, phase: Checkpointed, checkpoint: true }
+  else { ...r, method: method, origin: origin, page: page, exactAddress: exactAddress, attempt: 1, sent: 1 }
 pure def canRespond(r: Read, x: Response): bool = r.phase == Idle and r.sent > 0 and x.status >= 100 and x.primaryDelay >= 0 and x.retryAfter >= 0
 pure def respond(r: Read, x: Response): Read =
   if (pageRetried(r, x))
@@ -91,10 +95,10 @@ pure def retry(r: Read): Read =
   else { ...r, phase: Idle, attempt: r.attempt + 1, sent: r.sent + 1 }
 pure def alwaysAttemptsBounded(r: Read): bool = r.attempt >= 0 and r.attempt <= maxAttempts and
   r.pageRetries >= 0 and r.pageRetries <= pageRetryLimit(r.page) and
-  r.gatewayRetries >= 0 and r.gatewayRetries <= gatewayRetryLimit(r.page) and
+  r.gatewayRetries >= 0 and r.gatewayRetries <= gatewayRetryLimit and
   r.sent == r.attempt + r.pageRetries + r.gatewayRetries and (r.sent > 0 implies r.attempt >= 1) and
   (r.pageWait implies (r.phase == Waiting and r.pageRetries < pageRetryLimit(r.page))) and
-  (r.gatewayWait implies (r.phase == Waiting and r.gatewayRetries < gatewayRetryLimit(r.page))) and
+  (r.gatewayWait implies (r.phase == Waiting and r.gatewayRetries < gatewayRetryLimit)) and
   not(r.pageWait and r.gatewayWait)
 pure def alwaysWritesSentOnce(r: Read): bool = not(retryable(r)) implies r.sent <= 1
 pure def alwaysCheckpointFinal(r: Read): bool = r.checkpoint iff r.phase == Checkpointed
@@ -122,7 +126,7 @@ pure def lawPageRetryKeepsAttempt(page: Page): bool =
     { status: pageRetryStatus(page), primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
   pageRetryLimit(page) > 0 implies (after.phase == Waiting and after.pageWait and after.wakeAt == 1000)
 pure def lawOtherPageServerErrorReturned(status: int): bool =
-  (status == 500 or status == 422 or status == 502) implies
+  (status == 500 or status == 422) implies
     respond({ ...initial, attempt: 1, sent: 1 }, { status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: false }).phase == Returned
 pure def lawGatewayRetryKeepsAttempt(gatewayRetries: int): bool =
   val after = respond({ ...initial, page: CommitFiles, attempt: maxAttempts, gatewayRetries: gatewayRetries,
@@ -134,9 +138,13 @@ pure def lawThirdGatewayErrorReturned(pageRetries: int): bool =
   val after = respond({ ...initial, page: CommitFiles, attempt: 1, pageRetries: pageRetries, gatewayRetries: 2,
     sent: 3 + pageRetries }, { status: 502, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
   (pageRetries == 0 or pageRetries == 1) implies (after.phase == Returned and after.returnedStatus == 502)
-pure def lawGatewayRetryOnlyOnCommitFiles(page: Page): bool =
-  page != CommitFiles implies
-    respond({ ...initial, page: page, attempt: 1, sent: 1 }, { status: 502, primaryDelay: 0, retryAfter: 0, secondaryMessage: false }).phase == Returned
+pure def lawGatewayRetryNeedsExactGet(page: Page, method: Method, origin: Origin, exactAddress: bool, status: int): bool =
+  val after = respond({ ...initial, page: page, method: method, origin: origin, exactAddress: exactAddress, attempt: 1, sent: 1 },
+    { status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+  (gatewayStatus(status) and (method == Write or origin == OtherOrigin or not(exactAddress))) implies after.phase == Returned
+pure def lawEveryExactGetRetriesGateway(page: Page, status: int): bool =
+  val after = respond({ ...initial, page: page, attempt: 1, sent: 1 }, { status: status, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+  gatewayStatus(status) implies (after.phase == Waiting and after.gatewayWait and after.wakeAt == 1000)
 pure def sometimesGatewayRetriedThenReturned(r: Read): bool = r.phase == Returned and r.gatewayRetries > 0
 ```
 
@@ -182,9 +190,11 @@ pure val xValues = Set({ status: 200, primaryDelay: 0, retryAfter: 0, secondaryM
   { status: 429, primaryDelay: 0, retryAfter: 1000, secondaryMessage: false },
   { status: 500, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
   { status: 422, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
-  { status: 502, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
+  { status: 502, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
+  { status: 503, primaryDelay: 0, retryAfter: 0, secondaryMessage: false },
+  { status: 504, primaryDelay: 0, retryAfter: 0, secondaryMessage: false })
 pure val atValues = Set(1000, 2000, 3000, 4000, 5000, 60000, 1000000)
-pure val statusValues = Set(403, 429, 422, 500, 502)
+pure val statusValues = Set(403, 429, 422, 500, 502, 503, 504)
 pure val gatewayRetriesValues = Set(-1, 0, 1, 2)
 pure val pageRetriesValues = Set(0, 1)
 pure val primaryDelayValues = Set(0, 5000)

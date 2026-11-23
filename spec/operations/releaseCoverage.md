@@ -69,8 +69,8 @@ pure def lawSeparateOptions(request: Requests): bool = coverage(request).eligibl
 
 ### A resumed collection is a fresh manual main collection that revalidates every reused response
 
-Only a manual main release that does not retain published data may resume
-discussion reads. A reused response enters the ledger only after live
+Only a manual main release that does not retain published data may name a
+run in `discussion_resume_run` to resume discussion reads from. A reused response enters the ledger only after live
 revalidation; a mismatch is read again live. Resuming changes no lane
 selection: the registry sync, census, scoring inputs and every selected
 check still run. A collection that stops at its checkpoint deadline is not
@@ -102,6 +102,33 @@ pure def lawUnrevalidatedNeverAdmitted(responses: List[ReusedResponse]): bool =
   admittedResponses(responses).every(x => x.revalidated and x.matchesLive)
 pure def lawDeadlineNeverPublishes(request: Requests, receipts: CheckReceipts): bool =
   not(publishable(request, DeadlineStopped, receipts))
+```
+
+### A fresh trusted main collection reuses its memo run's discussion reads only when no explicit resume names a run
+
+Every fresh release to main, a deploying push or a manual release, that does
+not retain published data restores the newest trusted collection memo
+([collection memo](../points/collectionMemo.md)). When that memo was restored,
+the same run's public discussion reads, at most 48 hours old, are reused as
+well, unless the release names its own run in `discussion_resume_run`; then
+only that explicit checkpoint is used. A memo that is missing or fails
+verification means fresh discussion reads, never a refused release. The
+reused reads are admitted only after live revalidation, exactly as resumed
+ones, and the reuse changes no lane selection.
+
+```quint
+pure def reusesMemoDiscussions(request: Requests, memoRestored: bool): bool =
+  coverage(request).eligible and request.target == Main and not(request.usePublishedData)
+    and not(request.resumeDiscussions) and memoRestored
+pure def lawMemoDiscussionsOnlyFreshMain(request: Requests, memoRestored: bool): bool =
+  reusesMemoDiscussions(request, memoRestored) implies
+    deploying(request) and request.target == Main and not(request.usePublishedData) and memoRestored
+pure def lawExplicitResumeTakesPrecedence(request: Requests, memoRestored: bool): bool =
+  request.resumeDiscussions implies not(reusesMemoDiscussions(request, memoRestored))
+pure def lawPushMayReuseMemoDiscussions(request: Requests): bool =
+  (request.kind == DeployingPush and request.target == Main
+    and not(request.resumeDiscussions or request.usePublishedData or request.dataFromRun))
+    implies reusesMemoDiscussions(request, true)
 ```
 
 ### Source-bound receipts satisfy only the lanes they actually ran

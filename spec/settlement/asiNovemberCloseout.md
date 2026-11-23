@@ -4,18 +4,21 @@ PRD section 6 records one historical exception, approved and reviewed on
 development: ASI's November 2026 pool closes early, at
 2026-11-19T00:00:00.000Z, from one reviewed import, and its owner may
 finalize the month from then on instead of after the calendar month and its
-cutoff. Sources at development `8660a6121`:
+cutoff. Sources at development `8660a6121` and main `a73480a8c`
+(`c7ba3b9db`, `7febcc40b`, `a1c80d7f3`), whose later repairs decide:
 `src/lib/payments/asi-november-closeout.ts` (`ASI_NOVEMBER_CLOSEOUT`),
 `scripts/prepare-asi-november-closeout.ts`,
 `scripts/run-asi-november-closeout.ts`, `scripts/guarded-monthly-import.ts`,
 `.github/workflows/asi-november-closeout.yml`,
 `migrations/0143_asi_november_closeout.sql` and the retained model
-`formal/models/rewards/asi_november_closeout.qnt`. The import ran once on
-development and is not run again here (orchestrator decision plan5:O13):
-the port carries the stored base row with its `early_close_at`, and
-[monthly allocations](./monthly.md) honours it (`proposeCloseout`, the
-owner's early finalization, no allocation change). This unit records what
-the reviewed import guaranteed, so that the stored row means exactly that.
+`formal/models/rewards/asi_november_closeout.qnt`. The import had not
+landed on main by 21 November, so it is ported as the settlement program
+`asi-november-closeout` (orchestrator decision settlement6:S1, replacing
+plan5:O13); a run after a base was written only reports the replay, and
+[monthly allocations](./monthly.md) honours the stored row with its
+`early_close_at` (`proposeCloseout`, the owner's early finalization, no
+allocation change). This unit records what the reviewed import guarantees,
+so that the stored row means exactly that.
 The ordinary [October import](./octoberImport.md) is the precedent.
 
 ## Story: Close ASI's November pool early from one reviewed import
@@ -65,8 +68,13 @@ pure def lawOnlyTheReviewedMonth(packet: Packet): bool = packetApproved(packet) 
 
 ### Only an apply run under the reviewed packet and preview digests writes the closeout base, once
 
-The workflow runs only by manual dispatch on `main`, at the current head of
-`main` (a moved `main` refuses, checked again just before the write), under
+The run is trusted only from a manual dispatch (`workflow_dispatch`) of the
+canonical repository `SlopDotCash/slopdotcash` on `refs/heads/main`
+(`trustedDispatch`: the program observes its own dispatch before it reads
+anything, and a preview or an import needs a trusted one; the operator
+workflow reaches inspect, preview and apply under the same condition), at
+the current head of `main` (a moved `main` refuses, checked again just
+before the write), under
 the shared production lock, in one of three modes. Inspect reads the
 published cutoff and the canonical Points coverage and writes nothing.
 Preview needs the exact reviewed packet and its digest, computes the import
@@ -86,20 +94,33 @@ calendar month, 3 from the ordinary automatic cutoff.
 
 ```quint
 type BaseKind = NoBase | CloseoutBase | OrdinaryBase
-type Closeout = { phase: int, sourcesVerified: bool, packet: Packet, preview: str, base: BaseKind, frozen: bool,
-  ownerSigned: bool, admitted: bool }
+type HeldWork = NoHeldWork | HeldOutsideAsi | HeldUnproved
+type Closeout = { phase: int, dispatchTrusted: bool, sourcesVerified: bool, heldSources: HeldWork, packet: Packet, preview: str,
+  base: BaseKind, frozen: bool, ownerSigned: bool, admitted: bool }
 pure val noPacket: Packet = { project: "", period: 0, cutoff: 0, gross: 0, producer: 0, reviewer: 0, reviewedAt: 0, digest: "" }
-pure val initial: Closeout = { phase: 0, sourcesVerified: false, packet: noPacket, preview: "", base: NoBase, frozen: false,
-  ownerSigned: false, admitted: false }
+pure val initial: Closeout = { phase: 0, dispatchTrusted: false, sourcesVerified: false, heldSources: NoHeldWork, packet: noPacket,
+  preview: "", base: NoBase, frozen: false, ownerSigned: false, admitted: false }
+pure def trustedDispatch(repository: str, gitRef: str, dispatchEvent: str): bool =
+  repository == "SlopDotCash/slopdotcash" and gitRef == "refs/heads/main" and dispatchEvent == "workflow_dispatch"
+pure def lawOnlyTrustedDispatch(repository: str, gitRef: str, dispatchEvent: str): bool =
+  (repository != "SlopDotCash/slopdotcash" or gitRef != "refs/heads/main" or dispatchEvent != "workflow_dispatch")
+    implies not(trustedDispatch(repository, gitRef, dispatchEvent))
+pure def canObserveDispatch(c: Closeout, repository: str, gitRef: str, dispatchEvent: str, by: str): bool =
+  by == "workflow" and trustedDispatch(repository, gitRef, dispatchEvent) != c.dispatchTrusted
+pure def observeDispatch(c: Closeout, repository: str, gitRef: str, dispatchEvent: str, by: str): Closeout =
+  { ...c, dispatchTrusted: trustedDispatch(repository, gitRef, dispatchEvent) }
 pure def canAdvance(c: Closeout, by: str): bool = by == "clock" and c.phase < 3
 pure def advance(c: Closeout, by: str): Closeout = { ...c, phase: c.phase + 1 }
 pure def canPreviewCloseout(c: Closeout, packet: Packet, preview: str, by: str): bool =
-  by == "workflow" and c.phase >= 1 and c.base == NoBase and c.sourcesVerified and packetApproved(packet) and preview != ""
+  by == "workflow" and c.dispatchTrusted and c.phase >= 1 and c.base == NoBase and c.sourcesVerified and packetApproved(packet)
+    and preview != ""
 pure def previewCloseout(c: Closeout, packet: Packet, preview: str, by: str): Closeout = { ...c, packet: packet, preview: preview }
 pure def canImportCloseout(c: Closeout, packetDigest: str, preview: str, by: str): bool =
-  by == "workflow" and c.phase >= 1 and c.base == NoBase and c.sourcesVerified and packetApproved(c.packet)
+  by == "workflow" and c.dispatchTrusted and c.phase >= 1 and c.base == NoBase and c.sourcesVerified and packetApproved(c.packet)
     and c.preview != "" and preview == c.preview and packetDigest == c.packet.digest
 pure def importCloseout(c: Closeout, packetDigest: str, preview: str, by: str): Closeout = { ...c, base: CloseoutBase }
+pure def stepCloseoutBaseOnlyFromTrustedVerifiedRun(before: Closeout, after: Closeout): bool =
+  (before.base == NoBase and after.base == CloseoutBase) implies (before.dispatchTrusted and before.sourcesVerified)
 pure def canImportOrdinary(c: Closeout, by: str): bool = by == "workflow" and c.phase >= 2 and c.base == NoBase
 pure def importOrdinary(c: Closeout, by: str): Closeout = { ...c, base: OrdinaryBase }
 ```
@@ -120,9 +141,31 @@ and gross, and a trigger refuses every allocation change of a month that
 has it. A source that stops being the reviewed one before the write stops
 the import (`sourcesVerified`).
 
+The cutoff snapshot may hold work units and name unavailable sources only
+when every held unit is another project's work, proven from Slopbot's
+journal: each held unit is the exact canonical work-unit journal row named
+by its digest (its bytes hash to the digest, schema
+`slop-work-unit-record:v1`, a 64-hex source digest) of a project other than
+ASI; every source of it is a registered repository of that project,
+identified by its immutable node and database ids, and none is a repository
+counted for ASI in November; no pull request appears twice; the journal's
+source index equals the record's sources; and the snapshot's unavailable
+sources are exactly the held units' unavailable members. Each held unit has
+its own journal row, and its listed sources are exactly the record's pull
+requests. A snapshot with no
+held unit names no unavailable source. Held work of ASI, mixed work, a
+missing or altered journal row and an unbound unavailable source stop the
+import. The workflow observes the coverage (`verified`) together with what
+the held units prove: `NoHeldWork` (none held), `HeldOutsideAsi` (all proven
+another project's) or `HeldUnproved`.
+
 ```quint
-pure def canObserveSources(c: Closeout, verified: bool, by: str): bool = by == "workflow" and verified != c.sourcesVerified
-pure def observeSources(c: Closeout, verified: bool, by: str): Closeout = { ...c, sourcesVerified: verified }
+pure def heldSourcesAdmitted(heldSources: HeldWork): bool = heldSources == NoHeldWork or heldSources == HeldOutsideAsi
+pure def lawUnprovedHeldRefused(heldSources: HeldWork): bool = heldSources == HeldUnproved implies not(heldSourcesAdmitted(heldSources))
+pure def canObserveSources(c: Closeout, verified: bool, heldSources: HeldWork, by: str): bool = by == "workflow"
+  and ((verified and heldSourcesAdmitted(heldSources)) != c.sourcesVerified or heldSources != c.heldSources)
+pure def observeSources(c: Closeout, verified: bool, heldSources: HeldWork, by: str): Closeout =
+  { ...c, sourcesVerified: verified and heldSourcesAdmitted(heldSources), heldSources: heldSources }
 pure def canOwnerFinalize(c: Closeout, by: str): bool = by == "owner" and c.base != NoBase and not(c.frozen)
   and (c.phase >= 2 or (c.base == CloseoutBase and c.phase >= 1))
 pure def ownerFinalize(c: Closeout, by: str): Closeout = { ...c, frozen: true }
@@ -145,6 +188,7 @@ the reviewed packet never change once written.
 pure def alwaysCloseoutBaseReviewed(c: Closeout): bool =
   c.base == CloseoutBase implies (c.preview != "" and packetApproved(c.packet) and c.phase >= 1)
 pure def alwaysOrdinaryBaseAfterMonth(c: Closeout): bool = c.base == OrdinaryBase implies c.phase >= 2
+pure def alwaysVerifiedOnlyAdmittedHeld(c: Closeout): bool = c.sourcesVerified implies heldSourcesAdmitted(c.heldSources)
 pure def alwaysFrozenHasBase(c: Closeout): bool = c.frozen implies c.base != NoBase
 pure def alwaysEarlyFreezeOnlyFromCloseout(c: Closeout): bool = (c.frozen and c.phase < 2) implies c.base == CloseoutBase
 pure def alwaysReservedOnlyFrozen(c: Closeout): bool = c.ownerSigned implies c.frozen
@@ -155,6 +199,7 @@ pure def stepReviewedPacketFixed(before: Closeout, after: Closeout): bool =
 pure def sometimesOwnerClosesEarly(c: Closeout): bool = c.ownerSigned and c.phase == 1 and c.base == CloseoutBase
 pure def sometimesOrdinaryCalendar(c: Closeout): bool = c.admitted and c.base == OrdinaryBase
 pure def sometimesPreviewedNotApplied(c: Closeout): bool = c.preview != "" and c.base == OrdinaryBase
+pure def sometimesClosedWithOtherProjectsHeld(c: Closeout): bool = c.base == CloseoutBase and c.heldSources == HeldOutsideAsi
 pure val reviewedPacket: Packet = { project: closeoutProject, period: closeoutPeriod, cutoff: closeoutCutoff, gross: closeoutGross,
   producer: 1, reviewer: 2, reviewedAt: closeoutCutoff, digest: "d1" }
 pure val packetValues = Set(reviewedPacket, { ...reviewedPacket, reviewer: 1 }, { ...reviewedPacket, gross: 250000000 },
@@ -162,5 +207,20 @@ pure val packetValues = Set(reviewedPacket, { ...reviewedPacket, reviewer: 1 }, 
 pure val previewValues = Set("p1", "p2")
 pure val packetDigestValues = Set("d1", "d2")
 pure val byValues = Set("clock", "workflow", "owner", "coordinator", "other")
+pure val repositoryValues = Set("SlopDotCash/slopdotcash", "other/slopdotcash")
+pure val gitRefValues = Set("refs/heads/main", "refs/heads/vibestack", "refs/pull/1/merge")
+pure val dispatchEventValues = Set("workflow_dispatch", "workflow_run", "pull_request")
 pure val weight_importCloseout = 3
+pure val eval_witness_sometimesOwnerClosesEarly = (
+  ("observeDispatch", "SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch", "workflow"),
+  ("observeSources", true, NoHeldWork, "workflow"), ("advance", "clock"), ("previewCloseout", reviewedPacket, "p1", "workflow"),
+  ("importCloseout", "d1", "p1", "workflow"), ("ownerFinalize", "owner"), ("ownerReserve", "owner"))
+pure val eval_witness_sometimesClosedWithOtherProjectsHeld = (
+  ("observeDispatch", "SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch", "workflow"),
+  ("observeSources", true, HeldOutsideAsi, "workflow"), ("advance", "clock"), ("previewCloseout", reviewedPacket, "p1", "workflow"),
+  ("importCloseout", "d1", "p1", "workflow"))
+pure val eval_witness_sometimesPreviewedNotApplied = (
+  ("observeDispatch", "SlopDotCash/slopdotcash", "refs/heads/main", "workflow_dispatch", "workflow"),
+  ("observeSources", true, NoHeldWork, "workflow"), ("advance", "clock"), ("previewCloseout", reviewedPacket, "p1", "workflow"),
+  ("advance", "clock"), ("importOrdinary", "workflow"))
 ```

@@ -41,17 +41,46 @@ category, amount, occurrence, source, work unit, and for a substantive review
 its provisional mark, for a substantive review or an evaluated contribution
 its source URL) differs from its published predecessor's, or it has no
 published predecessor, and its own award or that predecessor's lies in a
-protected scope. Everything not held publishes.
+protected scope. A held revision also holds every candidate revision that
+shares one of its merge pools, and holding spreads through successors and
+pools until nothing more is held, so a frozen retirement also holds its
+replacement in a later month (development 00beb0097, `holdProtectedPointAwards`
+`protectedMergePoolKeys`). Only a merged-work revision that is not
+published, not payout recognition and changes its economic identity has
+pools: those of its own award and of its predecessor's, both read against
+the revision's own snapshot digest. A merged-work award's pools are its pull
+source, its work unit, the reviewed membership groups the snapshot's
+`reviewedImplementationUnits` give its source (every group for an award
+keyed by its own source record, otherwise the group of its own work unit and
+value decision), and, only when that snapshot has no membership for the
+source, its `value:<digest>` decision record in that snapshot. An
+independent reviewed unit of the same assessment, in another group, still
+publishes. Everything not held publishes.
 
 ```quint
 import periods as P from "./periods"
 import reservedAwardsFeed as F from "../settlement/reservedAwardsFeed"
 type ProtectedMonth = { project: str, period: int }
 type Protection = { months: List[ProtectedMonth], everyMonthProjects: List[str] }
-type CandidateRevision = { id: int, previous: int, payoutReceived: bool, economic: str, project: str, occurredAt: int }
+type PoolKind = PullPool | WorkUnitPool | DecisionPool | GroupPool
+type PoolKey = { project: str, kind: PoolKind, id: str, snapshot: str }
+type CandidateRevision = { id: int, previous: int, payoutReceived: bool, economic: str, project: str, occurredAt: int,
+  pools: List[PoolKey] }
+type ReviewedMembership = { groupId: str, valueSource: str, workUnit: str }
+type MergePoolAward = { merged: bool, project: str, source: str, workUnit: str, valueDecision: str, ownRecord: bool,
+  snapshot: str, membershipKnown: bool, memberships: List[ReviewedMembership] }
+pure def mergePoolKeys(m: MergePoolAward): List[PoolKey] =
+  val pullKeys = if (m.source != "") List({ project: m.project, kind: PullPool, id: m.source, snapshot: "" }) else List()
+  val unitKeys = if (m.workUnit != "") List({ project: m.project, kind: WorkUnitPool, id: m.workUnit, snapshot: "" }) else List()
+  val decisionKeys = if (not(m.membershipKnown) and m.valueDecision != "")
+    List({ project: m.project, kind: DecisionPool, id: m.valueDecision, snapshot: m.snapshot }) else List()
+  val groups = m.memberships.select(g => m.membershipKnown and (m.ownRecord or (g.workUnit == m.workUnit and g.valueSource == m.valueDecision)))
+  val groupKeys = groups.listMap(g => { project: m.project, kind: GroupPool, id: g.groupId, snapshot: m.snapshot })
+  if (m.merged) pullKeys.concat(unitKeys).concat(decisionKeys).concat(groupKeys) else List()
 type ProtectionReadResult = ReadNotConfigured | ReadFailed | ReadAnswered
 type PrivateProtectionRead = { result: ProtectionReadResult, months: List[ProtectedMonth], everyMonthProjects: List[str] }
-pure val noRevision: CandidateRevision = { id: 0, previous: 0, payoutReceived: false, economic: "", project: "", occurredAt: 0 }
+pure val noRevision: CandidateRevision = { id: 0, previous: 0, payoutReceived: false, economic: "", project: "", occurredAt: 0,
+  pools: List() }
 pure def resolvedProtection(committed: List[ProtectedMonth], privateRead: PrivateProtectionRead): Protection =
   if (privateRead.result == ReadAnswered)
     { months: committed.concat(privateRead.months.select(m => not(committed.includes(m)))),
@@ -69,8 +98,21 @@ pure def holdsRevision(known: List[CandidateRevision], scopes: Protection, held:
     ((r.previous > 0 and held.includes(r.previous)) or
      (not(r.payoutReceived) and not(prior.id > 0 and prior.economic == r.economic) and
        (protects(scopes, r) or (prior.id > 0 and protects(scopes, prior)))))
+pure def poolEligible(known: List[CandidateRevision], r: CandidateRevision): bool =
+  val prior = publishedPredecessor(known, r)
+  not(isPublished(known, r.id)) and not(r.payoutReceived) and not(prior.id > 0 and prior.economic == r.economic)
+pure def heldPools(known: List[CandidateRevision], candidates: List[CandidateRevision], held: List[int]): List[PoolKey] =
+  candidates.foldl(List(), (acc, r) => if (held.includes(r.id) and poolEligible(known, r)) acc.concat(r.pools) else acc)
+pure def joinsHeldPool(known: List[CandidateRevision], candidates: List[CandidateRevision], held: List[int],
+  r: CandidateRevision): bool =
+  val pools = heldPools(known, candidates, held)
+  poolEligible(known, r) and r.pools.some(k => pools.includes(k))
+pure def holdPass(known: List[CandidateRevision], scopes: Protection, candidates: List[CandidateRevision], held: List[int]): List[int] =
+  candidates.foldl(held, (acc, r) =>
+    if (not(acc.includes(r.id)) and (holdsRevision(known, scopes, acc, r) or joinsHeldPool(known, candidates, acc, r)))
+      acc.append(r.id) else acc)
 pure def heldRevisions(known: List[CandidateRevision], scopes: Protection, candidates: List[CandidateRevision]): List[int] =
-  candidates.foldl(List(), (acc, r) => if (holdsRevision(known, scopes, acc, r)) acc.append(r.id) else acc)
+  candidates.foldl(List(), (acc, r) => holdPass(known, scopes, candidates, acc))
 pure def publishedCandidates(known: List[CandidateRevision], scopes: Protection,
   candidates: List[CandidateRevision]): List[CandidateRevision] =
   val held = heldRevisions(known, scopes, candidates)
@@ -98,6 +140,14 @@ pure def lawEveryCandidateHeldOrPublished(known: List[CandidateRevision], scopes
 pure def lawPublishedCandidatesPassTheImportGuard(known: List[CandidateRevision], scopes: Protection,
   candidates: List[CandidateRevision]): bool =
   publishedCandidates(known, scopes, candidates).every(r => not(holdsRevision(known, scopes, List(), r)))
+pure def lawSharedPoolHeld(known: List[CandidateRevision], scopes: Protection, candidates: List[CandidateRevision]): bool =
+  val held = heldRevisions(known, scopes, candidates)
+  candidates.every(r => joinsHeldPool(known, candidates, held, r) implies held.includes(r.id))
+pure def lawNothingHeldWithoutProtection(known: List[CandidateRevision], candidates: List[CandidateRevision]): bool =
+  heldRevisions(known, { months: List(), everyMonthProjects: List() }, candidates) == List()
+pure def lawOnlyAMergeHasPools(m: MergePoolAward): bool = not(m.merged) implies mergePoolKeys(m) == List()
+pure def lawMembershipReplacesTheDecisionRecord(m: MergePoolAward): bool =
+  m.membershipKnown implies not(mergePoolKeys(m).some(k => k.kind == DecisionPool))
 ```
 
 ### The generator reads the protected months only from this site's own route, once, with a bounded answer
@@ -189,13 +239,27 @@ pure def lawListingNamesOnlyMonthsAndProjects(scopes: Protection): bool =
 pure val paidMonth: ProtectedMonth = { project: "asi", period: 24321 }
 pure val otherMonth: ProtectedMonth = { project: "feed", period: 24321 }
 pure val publishedAward: CandidateRevision = { id: 1, previous: 0, payoutReceived: false, economic: "e1", project: "asi",
-  occurredAt: 2432105 }
+  occurredAt: 2432105, pools: List() }
 pure val changedAward: CandidateRevision = { ...publishedAward, id: 2, previous: 1, economic: "e2" }
 pure val chainedAward: CandidateRevision = { ...publishedAward, id: 3, previous: 2, economic: "e3" }
 pure val movedAward: CandidateRevision = { ...publishedAward, id: 4, previous: 1, economic: "e4", occurredAt: 2432205 }
 pure val payoutAward: CandidateRevision = { ...publishedAward, id: 5, previous: 0, payoutReceived: true, economic: "p" }
 pure val unchangedAward: CandidateRevision = { ...publishedAward, id: 6, previous: 1 }
 pure val freshAward: CandidateRevision = { ...publishedAward, id: 7, previous: 0, economic: "e7", project: "eliza" }
+pure val pullPool: PoolKey = { project: "asi", kind: PullPool, id: "PR_1", snapshot: "" }
+pure val unitPool: PoolKey = { project: "asi", kind: WorkUnitPool, id: "wu_1", snapshot: "" }
+pure val otherGroupPool: PoolKey = { project: "asi", kind: GroupPool, id: "g2", snapshot: "s1" }
+pure val frozenRetirement: CandidateRevision = { ...publishedAward, id: 8, previous: 1, economic: "e8", pools: List(pullPool, unitPool) }
+pure val laterReplacement: CandidateRevision = { ...publishedAward, id: 9, previous: 0, economic: "e9", occurredAt: 2432205,
+  pools: List(unitPool) }
+pure val independentUnit: CandidateRevision = { ...publishedAward, id: 10, previous: 0, economic: "e10", occurredAt: 2432205,
+  pools: List(otherGroupPool) }
+pure val replacementSuccessor: CandidateRevision = { ...laterReplacement, id: 11, previous: 9, economic: "e11", pools: List() }
+pure def lawFrozenRetirementHoldsItsReplacement(known: List[CandidateRevision]): bool =
+  val held = heldRevisions(known, { months: List(paidMonth), everyMonthProjects: List() },
+    List(independentUnit, replacementSuccessor, laterReplacement, frozenRetirement))
+  known == List(publishedAward) implies
+    (held.includes(8) and held.includes(9) and held.includes(11) and not(held.includes(10)))
 pure val committedValues = Set(List(), List(paidMonth), List(paidMonth, otherMonth))
 pure val monthValues = Set(paidMonth, otherMonth, { project: "asi", period: 24322 })
 pure val privateReadValues = Set({ result: ReadNotConfigured, months: List(), everyMonthProjects: List() },
@@ -208,7 +272,13 @@ pure val scopesValues = Set({ months: List(), everyMonthProjects: List() }, { mo
 pure val heldValues = Set(List(), List(2))
 pure val rValues = Set(publishedAward, changedAward, chainedAward, movedAward, payoutAward, unchangedAward, freshAward)
 pure val candidatesValues = Set(List(publishedAward, changedAward, chainedAward),
-  List(publishedAward, movedAward, payoutAward, unchangedAward, freshAward))
+  List(publishedAward, movedAward, payoutAward, unchangedAward, freshAward),
+  List(independentUnit, replacementSuccessor, laterReplacement, frozenRetirement))
+pure val reviewedGroup: ReviewedMembership = { groupId: "g1", valueSource: "value:r1", workUnit: "wu_1" }
+pure val poolAward: MergePoolAward = { merged: true, project: "asi", source: "PR_1", workUnit: "wu_1", valueDecision: "value:r1",
+  ownRecord: false, snapshot: "s1", membershipKnown: true, memberships: List(reviewedGroup, { ...reviewedGroup, groupId: "g2", workUnit: "wu_2" }) }
+pure val mValues = Set(poolAward, { ...poolAward, membershipKnown: false, memberships: List() }, { ...poolAward, ownRecord: true },
+  { ...poolAward, merged: false })
 pure val goodAnswer: ProtectionAnswerShape = { status: 200, bytes: 512, exactShape: true, schema: "slop-protected-point-months-v1",
   monthEntries: 5, projectEntries: 1, longestProjectId: 10 }
 pure val answerValues = Set(goodAnswer, { ...goodAnswer, status: 404 }, { ...goodAnswer, bytes: 1048577 },

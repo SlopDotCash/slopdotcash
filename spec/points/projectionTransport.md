@@ -23,7 +23,14 @@ the bounded body is read), the same request is sent again after one second
 (`resetWaitMs`), and the third reset refuses the read. The shards are read
 side by side, and each keeps its own count. Any other failure, a status
 other than success, an oversized body or an invalid index or shard is
-refused at once and never repeated.
+refused and never repeated. A failed index read refuses at once. The first
+failure of a shard read (its third reset or any other refusal) is kept while
+every other shard read of that index settles, each with its own reset
+retries, and only then refuses the read (`Promise.allSettled` in
+`loadPublishedProjection`, development 7f71c6ce9 and main a73480a8c; the
+`draining` phase of the legacy model): no shard read is still running once
+the read is refused, and nothing a sibling settles turns the refusal into a
+verified projection.
 
 When the shards do not all match the index (the shard checksum mismatch of
 the assembly), one fresh index is read, past the cache. Only when its
@@ -37,36 +44,49 @@ projection is exactly the generation its index names.
 pure val resetAttempts = 3
 pure val resetWaitMs = 1000
 pure val publishedShards = 16
-type TransportPhase = ReadingIndex | ReadingShards | Verified | Refused
-type ProjectionRead = { phase: TransportPhase, index: int, indexResets: int, shardResets: List[int], rollover: bool }
-pure val initial: ProjectionRead = { phase: ReadingIndex, index: 0, indexResets: 0, shardResets: List(), rollover: false }
+type TransportPhase = ReadingIndex | ReadingShards | Draining | Verified | Refused
+type ProjectionRead = { phase: TransportPhase, index: int, indexResets: int, shardResets: List[int], rollover: bool, pending: int }
+pure val initial: ProjectionRead = { phase: ReadingIndex, index: 0, indexResets: 0, shardResets: List(), rollover: false, pending: 0 }
 pure def resetsOf(r: ProjectionRead, shard: int): int = r.shardResets.select(k => k == shard).length()
-pure def reading(r: ProjectionRead): bool = r.phase == ReadingIndex or r.phase == ReadingShards
+pure def reading(r: ProjectionRead): bool = r.phase == ReadingIndex or r.phase == ReadingShards or r.phase == Draining
+pure def shardFailed(settling: int, r: ProjectionRead): ProjectionRead =
+  if (r.phase == ReadingIndex or settling <= 0) { ...r, phase: Refused, pending: 0 }
+  else { ...r, phase: Draining, pending: settling }
 pure def canResetIndex(r: ProjectionRead): bool = r.phase == ReadingIndex
 pure def resetIndex(r: ProjectionRead): ProjectionRead =
   if (r.indexResets + 1 < resetAttempts) { ...r, indexResets: r.indexResets + 1 } else { ...r, phase: Refused }
-pure def canResetShard(r: ProjectionRead, shard: int): bool = r.phase == ReadingShards and shard >= 0 and shard < publishedShards
+pure def canResetShard(r: ProjectionRead, shard: int): bool =
+  (r.phase == ReadingShards or r.phase == Draining) and shard >= 0 and shard < publishedShards
 pure def resetShard(r: ProjectionRead, shard: int): ProjectionRead =
-  if (resetsOf(r, shard) + 1 < resetAttempts) { ...r, shardResets: r.shardResets.append(shard) } else { ...r, phase: Refused }
+  if (resetsOf(r, shard) + 1 < resetAttempts) { ...r, shardResets: r.shardResets.append(shard) }
+  else shardFailed(r.pending - 1, r)
 pure def canRefuseRead(r: ProjectionRead): bool = reading(r)
-pure def refuseRead(r: ProjectionRead): ProjectionRead = { ...r, phase: Refused }
+pure def refuseRead(r: ProjectionRead): ProjectionRead = shardFailed(r.pending - 1, r)
+pure def canSettleShard(r: ProjectionRead): bool = (r.phase == ReadingShards and r.pending > 1) or r.phase == Draining
+pure def settleShard(r: ProjectionRead): ProjectionRead =
+  if (r.phase == ReadingShards) { ...r, pending: r.pending - 1 } else shardFailed(r.pending - 1, r)
 pure def canReadIndex(r: ProjectionRead, generation: int): bool = r.phase == ReadingIndex and generation > 0
 pure def readIndex(r: ProjectionRead, generation: int): ProjectionRead =
   if (r.rollover and generation == r.index) { ...r, phase: Refused }
-  else { ...r, phase: ReadingShards, index: generation, indexResets: 0, shardResets: List() }
+  else { ...r, phase: ReadingShards, index: generation, indexResets: 0, shardResets: List(), pending: publishedShards }
 pure def shardsMatch(r: ProjectionRead, generations: Set[int]): bool =
   generations.subseteq(Set(r.index)) and Set(r.index).subseteq(generations)
 pure def canReadShards(r: ProjectionRead, generations: Set[int]): bool =
   r.phase == ReadingShards and generations.forall(g => g > 0) and generations.size() > 0
 pure def readShards(r: ProjectionRead, generations: Set[int]): ProjectionRead =
-  if (shardsMatch(r, generations)) { ...r, phase: Verified }
-  else if (r.rollover) { ...r, phase: Refused }
-  else { ...r, phase: ReadingIndex, rollover: true, indexResets: 0, shardResets: List() }
+  if (shardsMatch(r, generations)) { ...r, phase: Verified, pending: 0 }
+  else if (r.rollover) { ...r, phase: Refused, pending: 0 }
+  else { ...r, phase: ReadingIndex, rollover: true, indexResets: 0, shardResets: List(), pending: 0 }
 pure def alwaysResetsBounded(r: ProjectionRead): bool =
   r.indexResets >= 0 and r.indexResets < resetAttempts and
   r.shardResets.every(k => k >= 0 and k < publishedShards and r.shardResets.select(o => o == k).length() < resetAttempts)
 pure def alwaysVerifiedNamesItsIndex(r: ProjectionRead): bool = r.phase == Verified implies r.index > 0
 pure def alwaysShardsAfterIndex(r: ProjectionRead): bool = r.phase == ReadingShards implies r.index > 0
+pure def alwaysPendingOnlyWhileShardsRead(r: ProjectionRead): bool =
+  r.pending >= 0 and r.pending <= publishedShards and
+  ((r.phase == ReadingShards or r.phase == Draining) iff r.pending > 0)
+pure def stepDrainingEndsRefused(before: ProjectionRead, after: ProjectionRead): bool =
+  before.phase == Draining implies (after.phase == Draining or after.phase == Refused)
 pure def stepFinalStays(before: ProjectionRead, after: ProjectionRead): bool =
   (before.phase == Verified or before.phase == Refused) implies after == before
 pure def stepOneRollover(before: ProjectionRead, after: ProjectionRead): bool =
@@ -77,6 +97,12 @@ pure def sometimesVerifiedAfterResets(r: ProjectionRead): bool = r.phase == Veri
 pure def sometimesVerifiedAfterRollover(r: ProjectionRead): bool = r.phase == Verified and r.rollover
 pure def sometimesRefusedOnThirdReset(r: ProjectionRead): bool = r.phase == Refused and r.indexResets == resetAttempts - 1
 pure def sometimesUnchangedIndexRefused(r: ProjectionRead): bool = r.phase == Refused and r.rollover and r.shardResets == List()
+pure def sometimesSiblingRetriesWhileDraining(r: ProjectionRead): bool = r.phase == Draining and r.shardResets.length() > 0
+pure def sometimesRefusedAfterDraining(r: ProjectionRead): bool = r.phase == Refused and r.index > 0 and not(r.rollover) and r.shardResets.length() > 0
+pure val eval_witness_sometimesRefusedAfterDraining = (("readIndex", 1), "settleShard", "settleShard", "settleShard", "settleShard",
+  "settleShard", "settleShard", "settleShard", "settleShard", "settleShard", "settleShard", "settleShard", "settleShard",
+  "settleShard", "settleShard", ("resetShard", 15), "refuseRead", "settleShard")
+pure val eval_witness_sometimesSiblingRetriesWhileDraining = (("readIndex", 1), "refuseRead", ("resetShard", 0))
 pure val generationValues = Set(1, 2)
 pure val generationsValues = Set(Set(1), Set(2), Set(1, 2))
 pure val shardValues = Set(0, 1, 15, 16)

@@ -36,7 +36,10 @@ kept SLOP to the burn address `0x000000000000000000000000000000000000dEaD`.
 The stablecoin fee is 2.00 by default, at least 1.00 and at most 10.00, in
 six-decimal base units; the SLOP fee is half its value (5,000 basis points).
 An undecided pull request is refunded after 14 days, a closed one keeps its
-fee after 7 days, and the payer may reclaim an open deposit from the
+fee after 7 days, unless it answers wanted work, whose fee goes back unless a
+maintainer has added the keep label `slop-keep-fee` to it within those 7 days
+(operator decision, 22 November 2026; development `7f71c6ce9`), and the payer
+may reclaim an open deposit from the
 contract after 30 days (`RECLAIM_DELAY`). A deposit whose pull request Slop
 never asked a fee for waits 24 hours after finality before it is refunded as
 unknown. The previous SLOP rate still counts 48 hours after a change; a rate
@@ -71,6 +74,7 @@ pure val maxMinor = 10000000
 pure val slopShareBps = 5000
 pure val refundUndecidedDays = 14
 pure val keptAfterClosedDays = 7
+pure val keepFeeLabel = "slop-keep-fee"
 pure val reclaimDays = 30
 pure val unknownItemGraceMs = 86400000
 pure val rateGraceMs = 172800000
