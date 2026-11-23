@@ -196,6 +196,14 @@ export async function routeReporterInbox(
 export const escapeRegExp = (value: string) =>
   value.replaceAll(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
 
+/** The trace licensing listing of a member who has never opted in. */
+export const EMPTY_TRACE_LISTING = {
+  setting: { enabled: false, since: null, providerTermsConfirmed: false },
+  totals: { traces: 0, licensed: 0, eligible: 0 },
+  traces: [],
+  nextCursor: null,
+};
+
 export const test = base.extend<{ diagnostics: Diagnostics }>({
   diagnostics: [
     // Depending on `page` sets this fixture up after the page and tears it
@@ -291,6 +299,16 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
               },
             });
           },
+        );
+      // Settings reads the member's trace licensing listing. Neither server
+      // has the trace backend in these lanes, so it reads as off with no
+      // traces unless a spec routes its own listing (page routes win).
+      if (
+        testInfo.config.metadata.server === "preview" ||
+        testInfo.config.metadata.server === "pages"
+      )
+        await context.route(/\/api\/v1\/traces\/me(\?.*)?$/u, (route) =>
+          route.fulfill({ json: EMPTY_TRACE_LISTING }),
         );
       await use({
         allow: (...patterns) => allowed.push(...patterns),

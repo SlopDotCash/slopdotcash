@@ -45,7 +45,8 @@ async function setup(
               p.startsWith("0063") ||
               p.startsWith("0065") ||
               p.startsWith("0079") ||
-              p.startsWith("0111")
+              p.startsWith("0111") ||
+              p.startsWith("0148")
             )),
       )
       .sort(),
@@ -1264,6 +1265,8 @@ test("pre-pilot inbox history is not mailed and does not expose a dead acknowled
   h.sqlite.exec(
     readFileSync("migrations/0111_verified_notification_email.sql", "utf8"),
   );
+  h.sqlite.exec(readFileSync("migrations/0148_trace_licensing.sql", "utf8"));
+  expect(h.rows()).toEqual([]);
   const response = await handleNotificationsApi(
     new Request(origin + "/api/v1/notifications"),
     {
@@ -1378,6 +1381,14 @@ test("populated mail upgrades preserve history and bind only future notices to n
       id: (row as { id: string }).id,
       destination_version: null,
     }));
+    expect(boundVersions()).toEqual(unboundHistory);
+    expect(activityQueue()).toEqual(oldActivity);
+    expect(securityEvidence()).toEqual(oldSecurityEvidence);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
+    // The trace licensing rebuild keeps the same history and queues.
+    apply("0148_trace_licensing.sql");
+    expect(notices()).toEqual(populatedNotices);
+    expect(securityQueue()).toEqual(oldSecurity);
     expect(boundVersions()).toEqual(unboundHistory);
     expect(activityQueue()).toEqual(oldActivity);
     expect(securityEvidence()).toEqual(oldSecurityEvidence);
