@@ -459,6 +459,26 @@ lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
     PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
     assert s.vaultCase > 0 ==> s.vaultCase != id;
     assert s.directCase > 0 ==> s.directCase != id;
+    forall x | x in security__bounty_caseIds
+      ensures operations__notifications_noticeExists(decideAward(s, id, by_, checkedEpoch, amount).inbox, noticeKey(AwardNotice.AwardPaid, x), security__bounty_caseOf(nb, x).reporter)
+        == operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, x), caseOf(s, x).reporter)
+    {
+      assert noticeKey(AwardNotice.AwardPaid, x) != noticeKey(AwardNotice.AwardCommitted, id);
+      assert security__bounty_caseOf(nb, x).reporter == caseOf(s, x).reporter;
+    }
+    assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
+    forall x | x in security__bounty_caseIds && x != id
+      ensures vaultHold(nb, x) == vaultHold(b, x)
+    {
+      if vaultHold(b, x) {
+        var h :| h in b.holds && h.caseId == x && h.kind.VaultHold?;
+        assert h in nb.holds;
+      }
+      if vaultHold(nb, x) {
+        var h :| h in nb.holds && h.caseId == x && h.kind.VaultHold?;
+        assert h in b.holds;
+      }
+    }
   }
 }
 
@@ -531,6 +551,26 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
     PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
     assert s.vaultCase > 0 ==> s.vaultCase != id;
     assert s.directCase > 0 ==> s.directCase != id;
+    forall x | x in security__bounty_caseIds
+      ensures operations__notifications_noticeExists(reviewRelated(s, id, by_, checkedEpoch, approve).inbox, noticeKey(AwardNotice.AwardPaid, x), security__bounty_caseOf(nb, x).reporter)
+        == operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, x), caseOf(s, x).reporter)
+    {
+      assert noticeKey(AwardNotice.AwardPaid, x) != noticeKey(AwardNotice.AwardCommitted, id);
+      assert security__bounty_caseOf(nb, x).reporter == caseOf(s, x).reporter;
+    }
+    assert !operations__notifications_noticeExists(s.inbox, noticeKey(AwardNotice.AwardPaid, id), c.reporter);
+    forall x | x in security__bounty_caseIds && x != id
+      ensures vaultHold(nb, x) == vaultHold(b, x)
+    {
+      if vaultHold(b, x) {
+        var h :| h in b.holds && h.caseId == x && h.kind.VaultHold?;
+        assert h in nb.holds;
+      }
+      if vaultHold(nb, x) {
+        var h :| h in nb.holds && h.caseId == x && h.kind.VaultHold?;
+        assert h in b.holds;
+      }
+    }
   }
 }
 
