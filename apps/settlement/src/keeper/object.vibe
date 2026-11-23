@@ -73,6 +73,8 @@ const ResultBody = Schema.Struct({
   operation: Schema.String,
   state: Schema.String,
   transactionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  transactionIds: Schema.optionalKey(Schema.Array(Schema.String)),
+  alreadyCommitted: Schema.optionalKey(Schema.Boolean),
   error: Schema.optionalKey(Schema.String),
   failureStage: Schema.optionalKey(Schema.Literals(STAGE_LABELS)),
   failureCause: Schema.optionalKey(Schema.Literals(CAUSE_LABELS)),

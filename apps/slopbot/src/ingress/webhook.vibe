@@ -181,7 +181,7 @@ effect function routed(context: Context, claimed: Webhook, parsed: Parsed, delay
 effect function releasing(context: Context, claimed: Webhook, parsed: Parsed, delaySeconds: number) {
   return routed(context, claimed, parsed, delaySeconds) catch effect (error) => {
     try Effect.logError("slopbot webhook failed", { delivery: context.deliveryId, failure: error._tag })
-    const _released = durable(context, claimed, { type: "releaseOrdinary" }) catch () => claimed
+    const _released = durable(context, claimed, { type: "failRouting", requestId }) catch () => claimed
     throw error
   }
 }

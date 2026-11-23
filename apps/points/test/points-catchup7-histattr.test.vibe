@@ -240,6 +240,7 @@ effect function rebuiltNet(world: NetPacket, trusted: ReadonlyArray<Retirement>)
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
     qualified: true,
+    preview: false,
     verifiedRetirements: { duplicates: new Set(trusted.map((retirement) => digestText(retirement))), order: new Map() },
   })
 }

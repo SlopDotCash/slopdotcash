@@ -80,6 +80,27 @@ function submissionFeeConfig(vars: Readonly<Record<string, string>>, changes: Re
   }
 }
 
+const attesterName = "slop-payments-base-mainnet-attester"
+
+const attesterConfig = {
+  name: attesterName,
+  main: "../dist/attester.js",
+  no_bundle: true,
+  compatibility_date: "2026-10-06",
+  workers_dev: false,
+  preview_urls: false,
+  triggers: { crons: [] },
+  vars: { SLOP_ENVIRONMENT: "production", SIGNER_STACK: "production", PAYMENT_NETWORK: "base-mainnet", PAYMENT_DEPLOYMENTS: "[]" },
+  expectedSecrets: ["PAYMENT_RPC_URLS", "SIGNER_PRIVATE_KEY"],
+}
+
+const attesterSecrets = ["PAYMENT_RPC_URLS", "SIGNER_PRIVATE_KEY"]
+
+const attesterPlan = [
+  { network: "base-mainnet", enabled: true, ordinary: [{ projectId: "journey", network: "base-mainnet", chain: "base", vault: `0x${"ab".repeat(20)}`, sourceCommit: "c".repeat(5_200) }], security: [], secrets: attesterSecrets },
+  { network: "ethereum", enabled: false, ordinary: [], security: [], secrets: attesterSecrets },
+]
+
 const privateSite = { ...siteConfig, d1_databases: [{ binding: "SLOP_DB", database_name: "slop-private", database_id: productionDatabase }] }
 
 interface Site {
@@ -209,10 +230,20 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try written(files.join(root, "apps/backend/wrangler/identity.production.jsonc"), `${JSON.stringify(identityConfig, null, 2)}\n`)
     try written(files.join(root, "apps/operations/wrangler/notify.production.jsonc"), `// reviewed production notify Worker\n${JSON.stringify(notifyConfig("slop-notify", "production", productionDatabase), null, 2)}\n`)
     try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", productionDatabase), null, 2)}\n`)
+    try written(files.join(root, "apps/settlement/wrangler/attester.base-mainnet.production.jsonc"), `${JSON.stringify(attesterConfig, null, 2)}\n`)
     try written(files.join(root, "apps/operations/src/tables.ts"), "export const writes = [\"security_notification_outbox\"]\n")
+    try written(files.join(bundle, "apps/settlement/dist/attester.js"), "export default { scheduled: () => undefined }\n")
     try written(files.join(bundle, "apps/app/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
     const disclosures = files.join(directory, "disclosures.jsonl")
-    try written(files.join(bundle, "apps/settlement/dist/programs/main.js"), `require("node:fs").appendFileSync(${JSON.stringify(disclosures)}, JSON.stringify({ args: process.argv.slice(2), account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN !== undefined }) + "\\n")\n`)
+    const plans = files.join(directory, "plans.jsonl")
+    try written(files.join(bundle, "apps/settlement/dist/programs/main.js"), [
+      `const fs = require("node:fs")`,
+      `const args = process.argv.slice(2)`,
+      `const recorded = JSON.stringify({ args, account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN !== undefined }) + "\\n"`,
+      `if (args[0] === "deployments") { fs.appendFileSync(${JSON.stringify(plans)}, recorded); process.stdout.write(${JSON.stringify(JSON.stringify(attesterPlan))}) }`,
+      `else fs.appendFileSync(${JSON.stringify(disclosures)}, recorded)`,
+      "",
+    ].join("\n"))
     const feeRoot = files.join(directory, "fee-checkout")
     const feeWorkspace = files.join(directory, "fee-workspace")
     try fs.makeDirectory(feeWorkspace, { recursive: true })
@@ -260,7 +291,11 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       const isolation = try settled(publishing.prepare(target))
       const isolationAsked = api.calls.length - isolationCalls
       try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", stagingDatabase), null, 2)}\n`)
+      const unsigned = try settled(publishing.prepare(target))
+      for (const name of attesterSecrets) try secret(served, "PUT", name, attesterName)
       const prepared = try settled(publishing.prepare(target))
+      const plannedText = try fs.readFileString(plans)
+      const planned = try Effect.try(() => plannedText.trim().split("\n").map((line): unknown => JSON.parse(line)))
       const migrated = [...api.state.d1Migrations[productionDatabase] ?? []]
       const recorded = try fs.readFileString(disclosures)
       const imported = try Effect.try(() => recorded.trim().split("\n").map((line): unknown => JSON.parse(line)))
@@ -276,11 +311,23 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       const tag = publishing.publish("Notify", target) catch (error) => described(error)
       const [serving] = api.state.deployments["slop-notify"]?.at(-1)?.versions ?? []
       const version = (api.state.versions["slop-notify"] ?? []).find((candidate) => candidate.id === serving?.versionId)
+      const attesterTag = publishing.publish("PaymentAttesters", target) catch (error) => described(error)
+      const [attesterServing] = api.state.deployments[attesterName]?.at(-1)?.versions ?? []
+      const attesterVersion = (api.state.versions[attesterName] ?? []).find((candidate) => candidate.id === attesterServing?.versionId)
+      const pins = (attesterVersion?.bindings ?? []).filter((binding) => binding.type === "plain_text" && binding.name.startsWith("PAYMENT_DEPLOYMENTS"))
+      const attester = {
+        tag: attesterTag,
+        pins: pins.map((binding) => binding.name).sort(),
+        framed: pins.some((binding) => binding.name === "PAYMENT_DEPLOYMENTS" && /^pins:v1:2:[1-9][0-9]*:[a-f0-9]{64}$/u.test(String(binding.text ?? ""))),
+        schedules: [...api.state.schedules[attesterName] ?? []],
+        unpinnedUploads: (api.state.versions["slop-payments-ethereum-attester"] ?? []).length,
+      }
       const since = (try Clock.currentTimeMillis) - 60_000
       api.loseNext({ method: "POST", path: `/accounts/${accountId}/pages/projects/${siteProject}/deployments` })
       try settled(publishing.site(target))
       const lost = api.calls.filter((call) => call.lost).map((call) => `${call.method} ${call.path}`)
       const pages = api.state.pagesDeployments[siteProject] ?? []
+      const paymentNetworks = api.state.pagesProjects[siteProject]?.production.PAYMENT_NETWORKS
       const listed = publishing.deployments(target, since) catch () => []
       const reconciled = listed.filter((entry) => entry.artifactSha256 === target.manifestSha256)
       const deploymentId = reconciled[0]?.deploymentId ?? "unlisted"
@@ -344,7 +391,9 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       return {
         isolation,
         isolationAsked,
+        unsigned,
         prepared,
+        planned,
         imported,
         migrated: migrated.length,
         missing,
@@ -353,6 +402,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         strayUploads,
         tag,
         serving: { percentage: serving?.percentage, tag: version?.tag },
+        attester,
+        paymentNetworks,
         lost,
         published: pages.map((entry) => ({ branch: entry.branch, commitHash: entry.commitHash, commitDirty: entry.commitDirty, worker: entry.worker !== undefined })),
         reconciled: reconciled.length,
@@ -369,7 +420,9 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try Effect.try(() => assert.deepStrictEqual(observed, {
       isolation: "isolation: apps/operations/wrangler/notify.staging.jsonc and apps/operations/wrangler/notify.production.jsonc both name d1:1b453124-2709-45af-8389-151a8105c461: staging and production must never share a resource",
       isolationAsked: 0,
+      unsigned: `attesters: ${attesterName} lacks PAYMENT_RPC_URLS, SIGNER_PRIVATE_KEY`,
       prepared: "ok",
+      planned: [1, 2].map(() => ({ args: ["deployments", "attesters", "mainnet", "--registry", files.join(bundle, "registry/snapshot.json")], account: accountId, token: true })),
       imported: [{ args: ["disclosures", "--database", productionDatabase, "--root", root], account: accountId, token: true }],
       migrated: migrations,
       missing: "publish Notify: slop-notify lacks NOTIFY_UNSUBSCRIBE_KEY",
@@ -378,6 +431,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       strayUploads: 0,
       tag: sourceSha,
       serving: { percentage: 100, tag: sourceSha },
+      attester: { tag: sourceSha, pins: ["PAYMENT_DEPLOYMENTS", "PAYMENT_DEPLOYMENTS_PART_1", "PAYMENT_DEPLOYMENTS_PART_2"], framed: true, schedules: ["*/5 * * * *"], unpinnedUploads: 0 },
+      paymentNetworks: { type: "plain_text", value: "[\"base-mainnet\"]" },
       lost: [`POST /accounts/${accountId}/pages/projects/${siteProject}/deployments`],
       published: [{ branch: "main", commitHash: sourceSha, commitDirty: false, worker: true }],
       reconciled: 1,

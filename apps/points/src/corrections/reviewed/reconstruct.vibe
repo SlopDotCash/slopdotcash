@@ -38,6 +38,7 @@ export interface ReconstructInput {
   readonly repositories: Repositories
   readonly projectOf: ProjectOfRepository
   readonly qualified?: boolean
+  readonly preview: boolean
   readonly closedReviews?: VerifiedClosedReviews
   readonly verifiedRetirements?: VerifiedRetirements
 }
@@ -167,6 +168,7 @@ function runOf(input: ReconstructInput): PacketRun {
     qualifiedReplay: input.qualified === true,
     assessmentCurrent: true,
     baselineCurrent: true,
+    preview: input.preview,
   }
 }
 

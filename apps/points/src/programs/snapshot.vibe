@@ -9,7 +9,7 @@ import { defaultSnapshotPath, packTransport } from "../snapshot/write.vibe"
 
 export error SnapshotUsage { message: string }
 
-const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot restore-local <data dir> <output> | snapshot extract-collected <bundle.zip> <data dir> | snapshot adapt-pr <input> <output> <registry> | snapshot restore-discussions"
+const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot restore-local <data dir> <output> | snapshot extract-collected <bundle.zip> <data dir> | snapshot adapt-pr <input> <output> <registry> [<registry snapshot>] | snapshot restore-discussions"
 
 export effect function snapshot(args: ReadonlyArray<string>) {
   const [command, ...rest] = args
@@ -32,8 +32,8 @@ export effect function snapshot(args: ReadonlyArray<string>) {
     try extractCollectedData(rest[0] ?? "", rest[1] ?? "")
     return
   }
-  if (command === "adapt-pr" && rest.length === 3) {
-    const version = try adaptPullRequestFile(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "")
+  if (command === "adapt-pr" && (rest.length === 3 || rest.length === 4)) {
+    const version = try adaptPullRequestFile(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "", rest[3])
     try Console.log(`[Slop] prepared schema ${version} pull-request ledger from deployed public data`)
     return
   }

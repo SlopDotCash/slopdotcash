@@ -1,36 +1,27 @@
-// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/census.md, "An optional discussion probe starts only with two available points and never waits for quota to probe"; spec/points/collectorToken.md, "A request carrying the original App token gets a fresh one from ten minutes before expiry"; spec/operations/releaseCoverage.md, "A resumed collection is a fresh manual main collection that revalidates every reused response"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/localGitObjects.md, "A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { systemGit } from "@repo/platform/git"
 import { temporaryFailure } from "@repo/platform/program"
-import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, fetchRegistry, graphqlClient, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, openMemoFromEnv, snapshotAssembly, writeMemo } from "@repo/points/collect"
+import { actionsToken, collectArguments, collectionMemoFormat, collectorRenewal, collectSnapshot, collectedTargets, discussionCache, discussionCheckpoint, fetchRegistry, graphqlClient, implementationCodeDigest, ingestionGitHub, localGitObjectsFromEnv, localGitSummary, nativeProofReader, openImplementationMemo, openMemoFromEnv, publishedJournalReader, snapshotAssembly, writeImplementationMemo, writeMemo } from "@repo/points/collect"
 import { collectValueInputs } from "../value/collect/inputs.vibe"
 import { valueFeedConcurrency } from "../value/collect/warmup.vibe"
 import { collectRetainedMergeReferences } from "../value/retained/reference.vibe"
 import { acceptanceWith } from "../value/workUnits/acceptance.vibe"
 
-export error DiscussionCheckpointInvalid { message: string }
+export error DeploymentTierInvalid { message: string }
 
 const deferredTags: ReadonlyArray<string> = ["ValueFeedUnavailable", "CollectDeferred"]
-
-export interface DiscussionCheckpoint {
-  readonly directory: string
-  readonly deadlineMs: number
-}
 
 effect function setting(name: string) {
   return (try Config.withDefault(Config.String(name), "")).trim()
 }
 
-export effect function discussionCheckpoint() {
-  const directory = try setting("SLOP_DISCUSSION_CHECKPOINT")
-  const deadline = try setting("SLOP_DISCUSSION_DEADLINE_MS")
-  if (directory === "" && deadline === "") return undefined
-  const deadlineMs = Number(deadline)
-  const trusted = (try setting("GITHUB_ACTIONS")) === "true" && (try setting("GITHUB_REF")) === "refs/heads/main" && ["push", "workflow_dispatch"].includes(try setting("GITHUB_EVENT_NAME"))
-  if (!trusted || directory === "" || !Number.isSafeInteger(deadlineMs) || deadlineMs <= (try Clock.currentTimeMillis))
-    throw new DiscussionCheckpointInvalid({ message: "Invalid trusted production discussion checkpoint settings" })
-  return { directory, deadlineMs } satisfies DiscussionCheckpoint
+export effect function registryOrigin() {
+  const tier = try setting("VITE_SLOP_ENVIRONMENT")
+  if (tier === "" || tier === "production") return "https://slop.cash"
+  if (tier === "staging") return "https://staging.slop.cash"
+  throw new DeploymentTierInvalid({ message: "Invalid deployment tier" })
 }
 
 effect function fileDigest(path: string) {
@@ -66,16 +57,21 @@ function messageOf(error: { readonly _tag: string }) {
 effect function written(args: ReadonlyArray<string>) {
   const options = try collectArguments(args)
   const opened = try openMemoFromEnv(try attributionCodeDigest())
+  const implementationDigest = opened === undefined ? undefined : try implementationCodeDigest()
+  const implementationMemo = implementationDigest === undefined ? undefined : try openImplementationMemo(implementationDigest)
   const checkpoint = try discussionCheckpoint()
   const feedConcurrency = try valueFeedConcurrency()
   const deferRetainedAttribution = (try setting("SLOP_DEFER_RETAINED_ATTRIBUTION")) === "1"
   const token = try actionsToken()
-  const repositories = try collectedTargets(try fetchRegistry())
+  const origin = try registryOrigin()
+  const repositories = try collectedTargets(try fetchRegistry(origin))
   const cutoffMs = options.cutoffMs ?? (try Clock.currentTimeMillis)
   const cutoffAt = try isoAt(cutoffMs)
   provide systemGit {
     try scoped(effect {
       const local = try localGitObjectsFromEnv()
+      const proofs = try nativeProofReader()
+      const journal = try publishedJournalReader()
       const discussions = checkpoint === undefined ? undefined : try discussionCache({
         directory: checkpoint.directory,
         repositories: repositories.flatMap((repository) => repository.expectedNodeId === null ? [] : [{ name: repository.id, nodeId: repository.expectedNodeId }]),
@@ -101,6 +97,9 @@ effect function written(args: ReadonlyArray<string>) {
             return try collectSnapshot({
               ...options,
               cutoffMs,
+              registryOrigin: origin,
+              evidenceToken: token,
+              implementation: { proofs, journal, memo: implementationMemo },
               ...(checkpoint === undefined ? {} : { discussionCheckpoint: checkpoint }),
               ...(opened === undefined ? {} : { memo: opened.session }),
             })
@@ -110,6 +109,7 @@ effect function written(args: ReadonlyArray<string>) {
       const snapshot = try Effect.ensuring(collected, local === undefined ? Effect.void : local.close())
       if (local !== undefined) try Console.error(localGitSummary(try local.stats()))
       if (opened !== undefined) try writeMemo(opened, snapshot.source.cutoffAt)
+      if (opened?.output !== undefined && implementationDigest !== undefined && implementationMemo !== undefined) try writeImplementationMemo(implementationMemo, implementationDigest, opened.output)
     })
   }
 }

@@ -6,12 +6,13 @@ import { useState, useSyncExternalStore } from "react";
 import type { Batch } from "../../../../gen/frontend__batchedDeposit.ts";
 import { useMachine as useBatch } from "../../../../gen/frontend__batchedDeposit.react.ts";
 import { type PoolFacts, publicFunding } from "../../../../gen/frontend__projections.ts";
-import { visibleTo } from "../../../../gen/frontend__ownerVault.ts";
+import { actor, visibleTo } from "../../../../gen/frontend__ownerVault.ts";
 import { useMachine as useVault } from "../../../../gen/frontend__ownerVault.react.ts";
 import { formatAssetAmount, networkLabel } from "../../../kernels/assetText.ts";
 import { transactionUrl } from "../../../kernels/explorers.ts";
 import type { PayoutPolicy } from "../../../kernels/payout.ts";
 import { familyOf } from "../../../wallets/owner/commitments.vibe";
+import { type DepositStep, stepOf } from "../../../wallets/owner/provisionalVault.vibe";
 import {
   type ActionReview,
   type Connection,
@@ -67,6 +68,16 @@ export type VaultActionsProps = {
 };
 
 type Operation = "deposit" | "withdraw";
+
+export const resetNote = "Reset the existing token allowance to zero first.";
+
+/** What the wallet button says for the reviewed step. */
+export function signLabel(step: DepositStep, operation: Operation): string {
+  if (step === "batch") return "Approve and deposit in wallet";
+  if (step === "reset") return "Reset token allowance in wallet";
+  if (step === "approve") return "Approve exact token amount in wallet";
+  return operation === "deposit" ? "Confirm deposit in wallet" : "Confirm withdrawal in wallet";
+}
 
 const live = new Set(["Awaiting", "Sent", "Unclear"]);
 const batchLive = new Set<Batch["phase"]>(["IntentSaved", "WalletReference", "Uncertain", "HashKnown"]);
@@ -140,7 +151,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
   const transfer = vault.state?.transfer;
   const batched = batch.state;
   const pendingTransfer = transfer !== undefined && live.has(transfer.phase) && visibleTo(transfer, account);
-  const pendingBatch = batched !== undefined && batchLive.has(batched.phase) && batched.owner === account;
+  const pendingBatch = batched !== undefined && vault.state !== undefined && batchLive.has(batched.phase) && batched.owner === actor(vault.state);
   const label = useSettled(runtime, `label:${transfer?.slot.identity ?? ""}:${cleared}`, () => savedAction());
   const savedLabel = label.status === "done" ? label.value : "Transaction";
   const funding = depositOnly ? publicFunding(true, true, savedFundingOf(pendingBatch, pendingTransfer, savedLabel)) : undefined;
@@ -166,7 +177,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     if (outcome.message !== fundingMessages.approval) return onFinalized();
     if (connection === undefined || amount.trim() === "" || !canDeposit) return;
     setOperation("deposit");
-    void run(runtime, reviewAction(connection, "deposit", amount, pool, account, pledgeSupport, depositOnly ? publicFunding(true, true, "NoSavedRequest") : undefined)).then((done) => {
+    void run(runtime, reviewAction(connection, "deposit", amount, pool, pledgeSupport, depositOnly ? publicFunding(true, true, "NoSavedRequest") : undefined)).then((done) => {
       if (done.ok) setReview(done.value);
     });
   };
@@ -215,7 +226,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
       busy={busy}
       onLookup={() => wallet && act(lookupBatch(wallet), settle)}
       onObserve={() => wallet && act(observeBatch(wallet), settle)}
-      onRecover={(candidate) => wallet && act(recoverBatch(wallet, candidate, account), settle)}
+      onRecover={(candidate) => wallet && act(recoverBatch(wallet, candidate), settle)}
     />
   ) : pendingTransfer && transfer ? (
     <PendingCheckPanel
@@ -232,17 +243,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
     />
   ) : null;
 
-  const step = shown?.kind === "evm" ? (shown.batch ? "batch" : shown.review.resetAllowance ? "reset" : shown.review.approvalNeeded ? "approve" : "send") : "send";
-  const signLabel =
-    step === "batch"
-      ? "Approve and deposit in wallet"
-      : step === "reset"
-        ? "Reset token allowance in wallet"
-        : step === "approve"
-          ? "Approve exact token amount in wallet"
-          : operation === "deposit"
-            ? "Confirm deposit in wallet"
-            : "Confirm withdrawal in wallet";
+  const step: DepositStep = shown?.kind === "evm" ? stepOf({ ...shown.review, batch: shown.batch }) : "send";
 
   return (
     <Card className="flex flex-col gap-4" aria-label={`${title} · ${network}`}>
@@ -279,7 +280,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                 className="flex flex-col gap-3"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  void act(reviewAction(wallet, operation, amount, pool, account, pledgeSupport, funding), setReview);
+                  void act(reviewAction(wallet, operation, amount, pool, pledgeSupport, funding), setReview);
                 }}
               >
                 <RadioGroup
@@ -318,7 +319,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                     : "Reserved awards cannot be withdrawn. Funds go only to the refund destination below."}
                 </p>
                 <Address value={deployment.owner} label="Refund destination" />
-                {step === "reset" ? <p className="text-sm text-muted-foreground">Reset the existing token allowance to zero first.</p> : null}
+                {step === "reset" ? <p className="text-sm text-muted-foreground">{resetNote}</p> : null}
                 <Button
                   loading={busy}
                   onClick={() =>
@@ -330,7 +331,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
                     })
                   }
                 >
-                  {signLabel}
+                  {signLabel(step, operation)}
                 </Button>
               </section>
             ) : null}

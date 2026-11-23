@@ -1,4 +1,4 @@
-// spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope and missing evidence are label-only"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"
+// spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model's missing-evidence finding is a label"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"
 import { GitHub } from "@repo/platform/github"
 import type { CategoryName } from "../review/verdict.vibe"
 import { type ScopedItem, type WriteScope, requireScope } from "./scope.vibe"

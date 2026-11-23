@@ -1,9 +1,9 @@
-// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
 import { isoAt } from "@repo/platform/clock"
 import { outcomeFirstPolicyAt, paymentReviewPolicyAt, scoreV2EffectiveAt, v2EventPoints } from "../kernels/scoring/legacyV2.ts"
 import { paymentReviewBasisOmittedReason, paymentReviewPolicy } from "../client/snapshot/schema.vibe"
 import { books } from "./book.vibe"
-import { type AcceptedOutcomes, type Activity, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type LeaderEntry, type MergedPull, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, implementationHistory, isBot, millisAt, workUnitSlug } from "./facts.vibe"
+import { type AcceptedOutcomes, type Activity, type Actor, type CategoryCounts, type ClosedPull, type EventCategory, FactsRefused, type LeaderEntry, type MergedPull, type RawActivity, type ReviewDecision, type ReviewExclusion, type ScoreEvent, type ScoredSnapshot, type Scoring, type ScoringFacts, actorIndex, actorsOf, implementationHistory, isBot, millisAt, workUnitSlug } from "./facts.vibe"
 import { mergedCredit, outcomeOrder, timedPulls } from "./merges.vibe"
 import { type Credited, deductions, eventPoints } from "./penalties.vibe"
 import { ranked, sortedModels } from "./ranks.vibe"
@@ -84,8 +84,14 @@ export function leadersOf(ledger: ReadonlyArray<LedgerEvent>, penaltyThirds: Rea
   })
 }
 
+function githubWork(event: ScoreEvent) {
+  if (event.source.kind === "external") return undefined
+  return `${event.repository}\u0000${event.source.number}\u0000${(URL.parse(event.source.url)?.hash ?? "").toLowerCase()}`
+}
+
 interface LedgerBook extends Ledger {
   readonly events: ReadonlyArray<ScoreEvent>
+  readonly bearing: (event: ScoreEvent) => boolean
 }
 
 function ledgerOf(bans: ReadonlyMap<string, number>, projects: ReadonlyMap<string, string>): LedgerBook {
@@ -114,13 +120,18 @@ function ledgerOf(bans: ReadonlyMap<string, number>, projects: ReadonlyMap<strin
         merged: event.category === "merged-pull-request",
       }
       if (!admits(keys, key)) return false
-      events.push(event)
+      const thirds = scored.points / 10
+      events.push({ ...event, points: thirds / 3, scoreThirds: thirds, workUnitId: key.unit })
       keys.push(key)
       sources.add(`${event.repository}\u0000${event.source.id}`)
       return true
     },
     scored(repository: string, sourceId: string) {
       return sources.has(`${repository}\u0000${sourceId}`)
+    },
+    bearing(event: ScoreEvent) {
+      const work = githubWork(event)
+      return events.some((existing) => existing.repository === event.repository && (existing.source.id === event.source.id || existing.source.url === event.source.url || (work !== undefined && githubWork(existing) === work)))
     },
     amend(id: string, history: ReadonlyArray<ReviewDecision>) {
       const index = events.findIndex((event) => event.id === id)
@@ -160,8 +171,9 @@ effect function admitted(facts: ScoringFacts, windowFrom: number, windowTo: numb
     if (at < scoreV2EffectiveAt) throw new FactsRefused({ reason: "work accepted before Score v2 is replayed by the frozen v2 scorer, never rescored", sourceId: pull.id })
     if (at < windowFrom || at >= windowTo) throw new FactsRefused({ reason: `Detailed pull request ${pull.id} falls outside the verification window`, sourceId: pull.id })
   }
-  for (const pull of facts.contexts) if (mergedIds.has(pull.id)) throw new FactsRefused({ reason: "Joint human context must be an assessed member outside the census", sourceId: pull.id })
   const closed = firstById(facts.closedUnmerged)
+  const closedIds = new Set(closed.map((pull) => pull.id))
+  for (const pull of facts.contexts) if (mergedIds.has(pull.id) || closedIds.has(pull.id)) throw new FactsRefused({ reason: "Joint human context must be an assessed member outside the census", sourceId: pull.id })
   for (const pull of closed) {
     if (facts.projects.get(pull.repository) !== pull.project) throw new FactsRefused({ reason: "score repository is not registered to the source's project", sourceId: pull.id })
     const at = try millisAt(pull.closedAt, pull.id)
@@ -180,17 +192,30 @@ effect function creditRetained(retained: ReadonlyArray<ScoreEvent>, excluded: Re
   }
 }
 
+effect function creditEvaluated(evaluated: ReadonlyArray<ScoreEvent>, ledger: LedgerBook, windowFrom: number, windowTo: number) {
+  const timed: Array<{ readonly event: ScoreEvent; readonly at: number }> = []
+  for (const event of evaluated) timed.push({ event, at: try millisAt(event.occurredAt, event.id) })
+  for (const [index, { event, at }] of timed.sort((left, right) => right.at - left.at || left.event.id.localeCompare(right.event.id)).entries()) {
+    if (event.category !== "evaluated-contribution") throw new FactsRefused({ reason: `evaluatedContributions[${index}] must use the evaluated-contribution category`, sourceId: event.id })
+    if (at < windowFrom || at >= windowTo) throw new FactsRefused({ reason: `Evaluated contribution ${event.id} falls outside the rolling window`, sourceId: event.id })
+    if (ledger.bearing(event)) throw new FactsRefused({ reason: `Evaluated contribution ${event.id} duplicates a score-bearing source`, sourceId: event.id })
+    try ledger.credit(event)
+  }
+}
+
 effect function scoreWith(facts: ScoringFacts, reviewCutoff: number) {
   const windowFrom = try millisAt(facts.windowFrom, "window")
   const windowTo = try millisAt(facts.windowTo, "window")
   if (windowFrom >= windowTo) throw new FactsRefused({ reason: "the window must start before it ends", sourceId: "window" })
   const { merged, closed } = try admitted(facts, windowFrom, windowTo)
-  const actors = actorIndex(actorsOf([...merged, ...closed, ...facts.contexts]))
+  const valueActors: ReadonlyArray<Actor> = [...(facts.valueActors?.values() ?? [])]
+  const actors = actorIndex([...actorsOf([...merged, ...closed, ...facts.contexts]), ...valueActors])
   const bans = new Map<string, number>()
   for (const [actor, at] of facts.bans) bans.set(actor, try millisAt(at, actor))
-  const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, attributionHolds: facts.attributionHolds, windowFrom, windowTo, implementation: implementationHistory(facts) }, actors)
+  const merges = try mergedCredit({ pulls: merged, closed, contexts: facts.contexts, decisions: facts.joint, ...(facts.valueActors === undefined ? {} : { valueActors: facts.valueActors }), attributionHolds: facts.attributionHolds, windowFrom, windowTo, implementation: implementationHistory(facts) }, actors)
   const ledger = ledgerOf(bans, facts.projects)
   for (const event of merges.events) try ledger.credit(event)
+  try creditEvaluated(facts.evaluated ?? [], ledger, windowFrom, windowTo)
   const held = new Set([...merges.held.map((entry) => entry.sourceId), ...facts.heldUnits.flatMap((unit) => unit.sources)])
   const ordered = (try timedPulls(merged)).sort(outcomeOrder).map(({ pull }) => pull)
   const reviewExclusions = try reviewCredit(ordered, closed, { windowFrom, windowTo, reviewCutoff, bans, merges, held, ledger })

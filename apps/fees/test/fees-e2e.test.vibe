@@ -69,6 +69,8 @@ const at = {
   fourth: "2026-11-23T12:45:00.000Z",
 }
 
+const solanaWallet = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
+
 const dust = 4_000_000_000_000_000n
 const quotable = 6_000_000_000_000_000n
 const received = 2_000n * unit
@@ -131,6 +133,7 @@ function baseVars(wallet: Address, rpc: string, tokens: ReadonlyArray<Address>, 
     SLOP_ENVIRONMENT: "production",
     FEE_CONVERTER_NETWORKS: "base",
     FEE_WALLET_BASE: wallet,
+    FEE_WALLET_SOLANA: solanaWallet,
     RPC_URL_BASE: rpc,
     FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: tokens }),
     BUYBACK_MODE: "off",
@@ -249,21 +252,22 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_NETWORKS: "base",
       FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [base.dustToken] }),
       RPC_URL_BASE: base.chain.url,
-      FEE_WALLET_KEY_BASE: stagingKey.key,
       FEE_READY: `base:${stagingWallet}`,
     })
     const stagedOutcome = try ran(staged, at.recovery)
     const stagedRows = (try rowsOf(staged)).map((row) => [...outline(row), row.raw_tx])
+    const keyed = try rerun(staged, { FEE_WALLET_KEY_BASE: stagingKey.key }, [], at.second)
+    const keyedRows = (try rowsOf(staged)).map((row) => [...outline(row), row.raw_tx])
     const stagedChain = try chainFacts(stagingWallet, base.dustToken)
 
     try same({
       off: [offOutcomes, offEvents.map((event) => [event.event, event.trigger, event.results]), offRequests, offRows, offLocks],
       dry: [dryOutcome, dryRows, dryChain.nonce, dryChain.allowance],
-      staging: [staging.FEE_CONVERTER_MODE, stagedOutcome, stagedRows, stagedChain.nonce],
+      staging: [staging.FEE_CONVERTER_MODE, stagedOutcome, stagedRows, keyed, keyedRows, stagedChain.nonce],
     }, {
       off: [["ok", "ok"], [["fee_converter_run", "recovery", []], ["fee_converter_run", "receipts", []]], 0, [], 0],
       dry: ["ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null, null]], 0n, 0n],
-      staging: ["dry_run", "ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], 0n],
+      staging: ["dry_run", "ok", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], "exception", [["conversion", "base", "dry_run", "quoted", quotable.toString(), null]], 0n],
     })
   }))
 
@@ -309,6 +313,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_MODE: "dry_run",
       FEE_CONVERTER_NETWORKS: "robinhood",
       FEE_WALLET_ROBINHOOD: wallet.address,
+      FEE_WALLET_SOLANA: solanaWallet,
       RPC_URL_ROBINHOOD: robinhood.url,
       FEE_CONVERTER_ALLOWLIST: JSON.stringify({ robinhood: [base.dustToken, robinhoodUsdg] }),
       BUYBACK_MODE: "off",
@@ -318,7 +323,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     const quoted = quotes.calls.length
     const outcomes: string[] = []
     for (const mode of ["dry_run", "live"]) {
-      try promise(() => redeploy(retained, { FEE_CONVERTER_MODE: mode }))
+      try promise(() => redeploy(retained, mode === "live" ? { FEE_CONVERTER_MODE: mode, FEE_WALLET_KEY_ROBINHOOD: wallet.key } : { FEE_CONVERTER_MODE: mode }))
       for (const time of [at.receipts, at.recovery]) outcomes.push(try ran(retained, time))
     }
     const runs = try promise(() => settledEvents(retained, 4))
@@ -443,6 +448,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       FEE_CONVERTER_NETWORKS: "base,robinhood",
       FEE_WALLET_BASE: wallet.address,
       FEE_WALLET_ROBINHOOD: wallet.address,
+      FEE_WALLET_SOLANA: solanaWallet,
       RPC_URL_BASE: base.chain.url,
       RPC_URL_ROBINHOOD: robinhood.url,
       BUYBACK_MODE: "dry_run",

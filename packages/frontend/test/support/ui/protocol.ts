@@ -140,6 +140,13 @@ export interface Deployed {
   readonly asset: string;
 }
 
+export type VaultPurpose = "ordinary" | "security-bounty";
+
+export interface Box {
+  readonly top: number;
+  readonly bottom: number;
+}
+
 export type Op =
   | { readonly kind: "start" }
   | { readonly kind: "user"; readonly id: number; readonly login: string }
@@ -150,7 +157,10 @@ export type Op =
   | { readonly kind: "githubFail"; readonly path: string; readonly status: number }
   | { readonly kind: "scanner"; readonly method: Method; readonly path: string; readonly body: string }
   | { readonly kind: "object"; readonly bucket: Bucket; readonly key: string; readonly text: string }
-  | { readonly kind: "vault"; readonly projectId: string }
+  | { readonly kind: "vault"; readonly projectId: string; readonly purpose: VaultPurpose }
+  | { readonly kind: "backendRpc" }
+  | { readonly kind: "finalize"; readonly chainId: number }
+  | { readonly kind: "branch"; readonly repository: string; readonly name: string; readonly files: Readonly<Record<string, string | null>> }
   | { readonly kind: "github"; readonly login: string }
   | { readonly kind: "open"; readonly path: string; readonly tab?: string }
   | { readonly kind: "tab"; readonly tab: string }
@@ -169,6 +179,11 @@ export type Op =
   | { readonly kind: "leaks"; readonly text: string }
   | { readonly kind: "hold"; readonly method: string; readonly path: string }
   | { readonly kind: "release"; readonly method: string; readonly path: string }
+  | { readonly kind: "fail"; readonly method: string; readonly path: string; readonly status: number; readonly body: unknown }
+  | { readonly kind: "unfail"; readonly method: string; readonly path: string }
+  | { readonly kind: "serve"; readonly path: string; readonly status: number; readonly body: unknown }
+  | { readonly kind: "unserve"; readonly path: string }
+  | { readonly kind: "clock"; readonly iso: string }
   | { readonly kind: "sent" }
   | { readonly kind: "verifications" }
   | { readonly kind: "sql"; readonly text: string; readonly params: ReadonlyArray<string | number | null> }
@@ -177,11 +192,15 @@ export type Op =
   | { readonly kind: "enlarge"; readonly target: Target }
   | { readonly kind: "restore" }
   | { readonly kind: "layout" }
+  | { readonly kind: "box"; readonly target: Target }
+  | { readonly kind: "scrollY" }
+  | { readonly kind: "wheel"; readonly dx: number; readonly dy: number }
   | { readonly kind: "allow"; readonly patterns: ReadonlyArray<string> }
   | { readonly kind: "diagnostics" }
   | { readonly kind: "wallets"; readonly setup: WalletSetup }
   | { readonly kind: "walletAccount"; readonly index: number }
   | { readonly kind: "walletReject" }
+  | { readonly kind: "walletFail"; readonly method: string }
   | { readonly kind: "walletAsked" }
   | { readonly kind: "walletAddresses" };
 
@@ -196,6 +215,9 @@ export interface Results {
   readonly scanner: Answered;
   readonly object: null;
   readonly vault: Deployed;
+  readonly backendRpc: null;
+  readonly finalize: number;
+  readonly branch: string;
   readonly github: null;
   readonly open: Loaded;
   readonly tab: null;
@@ -214,6 +236,11 @@ export interface Results {
   readonly leaks: boolean;
   readonly hold: null;
   readonly release: null;
+  readonly fail: null;
+  readonly unfail: null;
+  readonly serve: null;
+  readonly unserve: null;
+  readonly clock: null;
   readonly sent: ReadonlyArray<Sent>;
   readonly verifications: ReadonlyArray<Verification>;
   readonly sql: ReadonlyArray<Row>;
@@ -222,11 +249,15 @@ export interface Results {
   readonly enlarge: null;
   readonly restore: null;
   readonly layout: Layout;
+  readonly box: Box | null;
+  readonly scrollY: number;
+  readonly wheel: null;
   readonly allow: null;
   readonly diagnostics: Diagnostics;
   readonly wallets: null;
   readonly walletAccount: null;
   readonly walletReject: null;
+  readonly walletFail: null;
   readonly walletAsked: ReadonlyArray<WalletAsked>;
   readonly walletAddresses: Addresses;
 }

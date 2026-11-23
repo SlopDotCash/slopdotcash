@@ -9,14 +9,15 @@ import { outbound } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
 import { buybackStart } from "../../gen/fees__buyback.effect.vibe"
 import { type FeeFlow, type KeptFee, type Machine, canAdvanceBuybackClock, initial as flowStart, machineOver } from "../../gen/fees__composition.effect.vibe"
+import type { FeeJournal } from "../../gen/fees__directBountyIncome.effect.vibe"
 import { type RowState, type Trigger, isOpen } from "../../gen/fees__conversion.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
-import { incomeEvidence } from "../buyback/income.vibe"
+import { type BookedDirectFee, incomeEvidence } from "../buyback/income.vibe"
 import type { Leg } from "../buyback/codec.vibe"
 import { arrivals, bridgeLeg } from "../buyback/leg.vibe"
 import { poolInstance } from "../buybackPool/evidence.vibe"
 import { robinhoodPool } from "../buybackPool/run.vibe"
-import { vaultCounters, ownClaims } from "../claims/accrual.vibe"
+import { ownClaims, vaultCounters, withoutOwnClaims } from "../claims/accrual.vibe"
 import { evmVaultDeployments, solanaVaultDeployments } from "../claims/deployments.vibe"
 import { claimsIn, evmVaultClaims, solanaVaultClaims } from "../claims/run.vibe"
 import { feeConverterAnyAny } from "../client/refusals.vibe"
@@ -26,6 +27,9 @@ import { solanaConversionChain } from "../conversion/chainSolana.vibe"
 import { type NetworkRun, type RunResult, type RunStatus, RunIdentityTaken, runNetwork } from "../conversion/run.vibe"
 import { type Session, released, step } from "../conversion/session.vibe"
 import { triggerAt } from "../conversion/trigger.vibe"
+import { directAwards } from "../directIncome/reads.vibe"
+import { type DirectAward, bookedDirectFees, canonical, receivedDirectFees, recognized } from "../directIncome/store.vibe"
+import { evmReceiptTime, unauthenticated } from "../directIncome/times.vibe"
 import { exactNumber } from "../evm/abi.ts"
 import { feeChain } from "../evm/client.vibe"
 import { ExpiryOperators, expiryOperators } from "../expiry/operators.vibe"
@@ -33,11 +37,11 @@ import { type Instance, type Names, ledger, networkNames, runText, stateName } f
 import { journal } from "../journal/store.vibe"
 import type { JupiterSettings } from "../jupiter/quote.vibe"
 import type { KyberSettings } from "../kyber/route.vibe"
-import { type Income, candidateTokens, reviewedVaults } from "../receipts/discover.vibe"
+import { type Income, type Transfer, candidateTokens, reviewedVaults } from "../receipts/discover.vibe"
 import { type BuybackLimits, type ConverterLimits, type Derived, type EnabledNetwork, type Endpoints, type FeeConfig, type NativeLimits, decodeEndpoints, isolateRuntime, presentSecrets } from "../runtime/config.vibe"
 import type { FeeSecrets, FeeVars } from "../runtime/networks.vibe"
-import { circleUsdc, solanaGenesis } from "../runtime/pins.ts"
-import { type ReviewedFacts, decodeReviewed, reviewedFacts } from "../runtime/reviewed.vibe"
+import { circleUsdc, robinhoodUsdg, slopToken, solanaGenesis } from "../runtime/pins.ts"
+import { type ReviewedFacts, type TokenFact, decodeReviewed, reviewedFacts } from "../runtime/reviewed.vibe"
 import { evmFeeWallet } from "../signer/feeWallet.vibe"
 import type { EvmNetwork } from "../signer/intents.ts"
 import { solanaFeeWallet } from "../signer/solana.vibe"
@@ -184,9 +188,9 @@ effect function creditedKept(network: Network, names: Names, wallet: string, fee
   return credited
 }
 
-effect function sourceLeg(run: Run, network: EnabledNetwork, usdc: string, names: Names, journaled: Instance | undefined) {
+effect function sourceLeg(run: Run, network: EnabledNetwork, usdc: string, names: Names, journaled: Instance | undefined, booked: ReadonlyArray<BookedDirectFee>) {
   const kept = try creditedKept(network.network, names, network.feeWallet, try keptOf(network.definition.escrowNetworks), usdc)
-  const evidence = try incomeEvidence({ network: network.network, wallet: network.feeWallet, usdc, scope: "", offset: 0 }, [], kept)
+  const evidence = try incomeEvidence({ network: network.network, wallet: network.feeWallet, usdc, scope: "", offset: 0 }, booked, kept)
   const leg: Leg = { network: network.network, scope: "", offset: 0, held: run.derived.held, names, evidence, income: evidence, cancelling: [], reported: [] }
   return journaled === undefined ? leg : { ...leg, journal: journaled } satisfies Leg
 }
@@ -201,18 +205,19 @@ effect function leased<E, R>(base: Instance, names: Names, program: (instance: I
   try Effect.ensuring(program(session.instance, runText(base.scope, names.text("run", runId) ?? "", "Recovery")), released(session))
 }
 
-effect function bridged(run: Run, network: EnabledNetwork, usdc: string, limits: BuybackLimits, receiver: string, names: Names, instance: Instance, runId: string) {
-  const leg = try sourceLeg(run, network, usdc, names, instance)
+effect function bridged(run: Run, network: EnabledNetwork, usdc: string, limits: BuybackLimits, receiver: string, names: Names, instance: Instance, runId: string, booked: ReadonlyArray<BookedDirectFee>) {
+  const leg = try sourceLeg(run, network, usdc, names, instance, booked)
   const result = try bridgeLeg(leg, { runId, wallet: network.feeWallet, limits, native: network.nativeLimits ?? noBudget, receiver: receiver as Address, kyber: run.kyber })
   try Effect.logInfo("fee_buyback_leg", { network: network.definition.name, records: result.records })
 }
 
-effect function pooled(run: Run, network: EnabledNetwork, facts: ReviewedFacts, limits: BuybackLimits, names: Names, instance: Instance, runId: string) {
+effect function pooled(run: Run, network: EnabledNetwork, facts: ReviewedFacts, limits: BuybackLimits, names: Names, instance: Instance, runId: string, direct: FeeJournal) {
   const legs: Array<Leg> = []
   for (const source of run.derived.config.networks) {
     if (source.definition.family !== "evm" || source.definition.target.kind !== "usdc") continue
-    legs.push(try sourceLeg(run, source, source.definition.target.address, ledger(), undefined))
+    legs.push(try sourceLeg(run, source, source.definition.target.address, ledger(), undefined, []))
   }
+  const booked = (token: string) => bookedDirectFees(direct, network.network, token, network.feeWallet)
   try arrivals(legs, { runId, wallet: network.feeWallet })
   const pool = try poolInstance({
     scope: "",
@@ -221,39 +226,41 @@ effect function pooled(run: Run, network: EnabledNetwork, facts: ReviewedFacts, 
     names,
     wallet: network.feeWallet,
     journal: instance,
-    assets: facts.tokens.map((token) => ({ token: token.address, booked: [] })),
-    bookedSlop: [],
+    assets: [robinhoodUsdg, ...facts.tokens.map((token) => token.address)].map((token) => ({ token, booked: booked(token) })),
+    bookedSlop: booked(slopToken),
     kept: try creditedKept(network.network, names, network.feeWallet, try keptOf(network.definition.escrowNetworks)),
   })
   const result = try robinhoodPool(pool, { runId, wallet: network.feeWallet, limits, native: network.nativeLimits ?? noBudget, kyber: run.kyber })
   try Effect.logInfo("fee_buyback_pool", { network: network.definition.name, records: result.records })
 }
 
-effect function buybackStep(run: Run, network: EnabledNetwork, facts: ReviewedFacts, base: Instance) {
+effect function buybackStep(run: Run, network: EnabledNetwork, facts: ReviewedFacts, base: Instance, awards: ReadonlyArray<DirectAward>) {
   const { buyback: limits, receiver } = run
   if (run.trigger !== "Recovery" || limits === undefined || receiver === undefined) return
   const names = ledger()
   const target = network.definition.target
-  if (target.kind === "usdc") return try leased(base, names, (instance, runId) => bridged(run, network, target.address, limits, receiver, names, instance, runId))
-  if (network.network === "Robinhood") try leased(base, names, (instance, runId) => pooled(run, network, facts, limits, names, instance, runId))
+  if (target.kind !== "usdc" && network.network !== "Robinhood") return
+  const direct = (try recognized(network.network, awards, evmReceiptTime)).journal
+  if (target.kind === "usdc") return try leased(base, names, (instance, runId) => bridged(run, network, target.address, limits, receiver, names, instance, runId, bookedDirectFees(direct, network.network, target.address, network.feeWallet)))
+  try leased(base, names, (instance, runId) => pooled(run, network, facts, limits, names, instance, runId, direct))
 }
 
-effect function evmClaimed(run: Run, network: EnabledNetwork, facts: ReviewedFacts, input: NetworkRun) {
+effect function evmClaimed(run: Run, network: EnabledNetwork, facts: ReviewedFacts, input: NetworkRun, awards: ReadonlyArray<DirectAward>) {
   const claims = try claimsIn(evmVaultClaims({ vaults: facts.vaults, kyber: run.kyber }))
   const result = try runNetwork(input, claims)
-  buybackStep(run, network, facts, input.base) catch effect (error) => {
+  buybackStep(run, network, facts, input.base, awards) catch effect (error) => {
     try Effect.logWarning("fee_buyback_error", { network: network.definition.name, leg: "run", error: reasonOf(error) })
   }
   return result
 }
 
-effect function evmRun(run: Run, network: EnabledNetwork, name: EvmNetwork, facts: ReviewedFacts, input: NetworkRun) {
+effect function evmRun(run: Run, network: EnabledNetwork, name: EvmNetwork, facts: ReviewedFacts, input: NetworkRun, awards: ReadonlyArray<DirectAward>) {
   const key = try signingKey(run, network)
   const chain = feeChain({ network: name, wallet: network.feeWallet, urls: urlsOf(try rpcOf(run, network)) })
   const wallet = Layer.provideMerge(evmFeeWallet({ network: name, wallet: network.feeWallet, key, runtime: run.derived.held.runtime, limits: network.nativeLimits ?? noBudget, gasMultiple: run.converter.gasMultiple, kyber: run.kyber }), chain)
   const deployments = Layer.provideMerge(evmVaultDeployments, wallet)
   const conversion = Layer.provideMerge(evmConversionChain({ epoch: input.base.epoch, limits: network.nativeLimits, maxSlippageBps: run.converter.maxSlippageBps, kyber: run.kyber, vaults: facts.vaults }), deployments)
-  return try Effect.provide(evmClaimed(run, network, facts, input), Layer.mergeAll(conversion, Layer.succeed(ExpiryOperators, noExpiry)))
+  return try Effect.provide(evmClaimed(run, network, facts, input, awards), Layer.mergeAll(conversion, Layer.succeed(ExpiryOperators, noExpiry)))
 }
 
 effect function solanaClaimed(run: Run, facts: ReviewedFacts, input: NetworkRun) {
@@ -296,15 +303,24 @@ effect function chainless(run: Run, network: EnabledNetwork, base: Instance) {
   return !(try journal(base, ledger())).state.rows.some(isOpen)
 }
 
+function directTransfers(network: EnabledNetwork, tokens: ReadonlyArray<TokenFact>, journal: FeeJournal): ReadonlyArray<Transfer> {
+  return receivedDirectFees(journal, network.network, network.feeWallet).map((transfer) => ({ ...transfer, token: tokens.find((token) => canonical(network.network, token.address) === transfer.token)?.address ?? transfer.token }))
+}
+
 effect function networkRun(run: Run, network: EnabledNetwork) {
   const facts = try reviewedOf(network)
   const base: Instance = { network: network.network, scope: "", epoch: 0, held: run.derived.held, tokens: [], receipts: [], vaults: reviewedVaults(facts.vaults) }
-  const income: Income = { transfers: [], topUps: [], counters: vaultCounters(network, facts.vaults, try ownClaims(network, base.scope)) }
-  const input: NetworkRun = { network, base, trigger: run.trigger, tokens: try candidateTokens(network, facts.tokens, base.scope), income }
+  const tokens = try candidateTokens(network, facts.tokens, base.scope)
+  const awards = try directAwards(network)
+  const cash = try recognized(network.network, awards, (receipt) => Effect.succeed(unauthenticated(receipt)))
+  if (cash.unknownCases.length > 0) try Effect.logWarning("fee_direct_income_unknown", { network: network.definition.name, cases: cash.unknownCases.length })
+  const own = try ownClaims(network, base.scope)
+  const income: Income = { transfers: withoutOwnClaims(directTransfers(network, tokens, cash.journal), own), topUps: [], counters: vaultCounters(network, facts.vaults, own) }
+  const input: NetworkRun = { network, base, trigger: run.trigger, tokens, income }
   if (try chainless(run, network, base)) return reported(try Effect.provide(runNetwork(input), idleChain))
   const name = network.network
   if (name === "Solana") return reported(try solanaRun(run, network, facts, input))
-  return reported(try evmRun(run, network, name, facts, input))
+  return reported(try evmRun(run, network, name, facts, input, awards))
 }
 
 effect function converted(trigger: Trigger) {

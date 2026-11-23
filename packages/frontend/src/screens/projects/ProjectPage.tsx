@@ -1,4 +1,4 @@
-// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"
+// spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"
 import { Alert, Button, DataState, NotFound, PageHeader } from "@repo/ui";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
@@ -6,17 +6,20 @@ import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
 import type { PageProps } from "../../app/pages.ts";
 import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
+import { useSession } from "../../app/useSession.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { hasBountyOverview } from "../../kernels/rewardSummary.ts";
 import { pageOrigin } from "../../platform/environment.ts";
+import { actorNumber } from "../../session/session.vibe";
 import { maintainerShareLines } from "../../projections/maintainerShare.ts";
 import { findProject, type RegistryBoot } from "../../reads/registry.vibe";
-import { BountyFunding, BountyIntroduction, bountyProjectOf } from "../funding/awards/index.ts";
+import { BountyFunding, BountyIntroduction, type BountyProject, bountyProjectOf } from "../funding/awards/index.ts";
 import { ProjectStandings } from "../points/index.ts";
 import { FundedMeter } from "../cycles/CycleAllocation.tsx";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
 import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
+import { managementAccess } from "../security/settings/runtime.vibe";
 import { FundsAndAwards } from "./FundsAndAwards.tsx";
 import { useShownRead } from "./hooks.ts";
 import { clearanceOf, InstallPanel } from "./InstallPanel.tsx";
@@ -164,6 +167,19 @@ function History({ runtime, project, reads, networkPays }: Pick<Found, "runtime"
   );
 }
 
+function ManagedBountyFunding({ runtime, project, githubId }: { runtime: PageRuntime; project: BountyProject; githubId: string }) {
+  const access = useMounted(runtime, () => managementAccess(project.id, githubId));
+  const manages = access.status === "done" && access.value.kind === "done";
+  return <BountyFunding project={project} manager={manages ? { account: actorNumber(githubId), githubId } : undefined} />;
+}
+
+function ProjectBountyFunding({ runtime, project }: { runtime: PageRuntime; project: BountyProject }) {
+  const shown = useSession(runtime);
+  if (shown?.view.status !== "signedIn") return <BountyFunding project={project} />;
+  const { githubId } = shown.view.session;
+  return <ManagedBountyFunding key={`${project.id}:${githubId}`} runtime={runtime} project={project} githubId={githubId} />;
+}
+
 function BountyOverview({ runtime, project, boot, reads, networkPays }: Pick<Found, "runtime" | "project" | "boot" | "reads" | "networkPays">) {
   const bounty = bountyProjectOf(project.record);
   if (bounty === undefined) return <ProjectsUnavailable message="This project's security bounty terms could not be read." />;
@@ -181,7 +197,7 @@ function BountyOverview({ runtime, project, boot, reads, networkPays }: Pick<Fou
         origin={pageOrigin()}
         onCopy={(text) => runtime.runPromise(copyText(text))}
       />
-      <BountyFunding project={bounty} />
+      <ProjectBountyFunding runtime={runtime} project={bounty} />
     </main>
   );
 }

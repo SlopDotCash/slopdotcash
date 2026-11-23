@@ -24,7 +24,7 @@ import { type SolanaConnection, connectSolana } from "../core/solana.vibe"
 import { sessionSlots } from "../core/slots.ts"
 import { evmChainIdOf } from "./commitmentCalls.ts"
 import { evmVaultOf } from "./commitments.vibe"
-import { type EvmVault, type TransferReview, reviewTransfer } from "./evmVault.vibe"
+import type { EvmVault, TransferReview } from "./evmVault.vibe"
 import { ownerMonthlyPage } from "./ownerMonthly.vibe"
 import type { VaultCreationPlan } from "./ownerPlans.schema.ts"
 import { readText, slotOfText } from "./flowSlots.ts"
@@ -97,6 +97,7 @@ export interface ProvisionalDeployment {
 export interface ProvisionalChecked {
   readonly state: Setup
   readonly hash: string
+  readonly approval: boolean
 }
 
 export error SetupStopped { message: string; code: string }
@@ -547,7 +548,7 @@ export effect function reviewProvisionalDeposit(connection: EvmConnection, amoun
   const held = try heldProvisional()
   const state = try followedCreation(held, connection)
   if (state.form !== "Provisional") throw stopped(provisionalMessages.closed)
-  return try reviewTransfer(connection, held.vault, "deposit", amount, "latest")
+  return try held.page.review(connection, amount)
 }
 
 export effect function depositProvisional(connection: EvmConnection, amount: string) {
@@ -586,9 +587,20 @@ export effect function watchProvisional(connection: EvmConnection, hidden: () =>
     const checked = checkProvisional(connection) catch () => undefined
     if (checked === undefined) continue
     try report(checked)
-    if (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified") return checked
+    if (checked.state.approval !== "ApprovalSubmitted" && (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified")) return checked
   }
   return undefined
+}
+
+export effect function handOverProvisional(account: number) {
+  const { provisional } = try SetupDesk
+  const known = try Ref.get(provisional)
+  if (known === undefined) return false
+  const { network, vault, asset } = known.deployment
+  const transfer = `${storageKeys.vaultAction.key}${network}:${vault}:${asset}`
+  const moved = try known.page.handOver(account, { transfer, batch: `${transfer}:batch` })
+  if (moved) try Ref.set(provisional, undefined)
+  return moved
 }
 
 export effect function watchSetupOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {

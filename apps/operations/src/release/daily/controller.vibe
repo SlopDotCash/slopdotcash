@@ -366,5 +366,5 @@ export function dailyAccess(access: Access) {
       }
     }
     return githubWith({ authority: githubApi, credential, userAgent, timeoutMs: defaultTimeoutMs })
-  }, githubApp({ appId: app.clientId, privateKey: app.privateKey, userAgent })))
+  }, githubApp({ appId: app.clientId, privateKey: app.privateKey, userAgent, refreshBeforeMillis: 10 * 60_000 })))
 }

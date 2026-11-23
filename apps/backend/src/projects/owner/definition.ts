@@ -871,6 +871,11 @@ export function definitionProblem(value: unknown, trusted: Trusted): string | un
   return problemOf(() => validateProjectDefinition(value, { trusted, historical: false }));
 }
 
+/** @throws {never} */
+export function historicalDefinitionProblem(value: unknown, trusted: Trusted): string | undefined {
+  return problemOf(() => validateProjectDefinition(value, { trusted, historical: true }));
+}
+
 function strictStored(value: unknown): Json {
   return validateProjectDefinition(value, { trusted: ownSections(value), historical: false });
 }

@@ -1,6 +1,7 @@
 // spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"
 import { sha256Hex } from "@repo/platform/crypto"
-import { type Batch, type BatchCapability, type ChainResult, type Event, initial, intentAttempt, machineOver } from "../../../gen/frontend__batchedDeposit.effect.vibe"
+import { type Batch, type BatchCapability, type ChainResult, type Event, chainReader, initial, intentAttempt, machineOver, walletAdapter } from "../../../gen/frontend__batchedDeposit.effect.vibe"
+import { visitor } from "../../../gen/frontend__ownerVault.effect.vibe"
 import { WalletDeclined } from "../core/discovery.vibe"
 import type { EvmConnection } from "../core/evm.vibe"
 import type { SlotStorage } from "../core/slots.ts"
@@ -34,9 +35,13 @@ function live(batch: Batch): boolean {
   return batch.phase === "IntentSaved" || batch.phase === "WalletReference" || batch.phase === "Uncertain" || batch.phase === "HashKnown"
 }
 
+function slotAccount(owner: number): number {
+  return owner === visitor ? 0 : owner
+}
+
 export function storedBatch(start: Batch, account: number, digest: string, plan: EvmBatchPlan): Batch {
   const phase = plan.transaction !== "" ? "HashKnown" : plan.reference !== "" ? "WalletReference" : "Uncertain"
-  return { ...start, phase, capability: "AlreadyAtomic", owner: account, intent: 1, digest, reference: plan.reference, transaction: plan.transaction, requests: 1, evidence: "ChainPending", slot: intentAttempt(digest), storageBlocked: false }
+  return { ...start, phase, capability: "AlreadyAtomic", owner: account === 0 ? visitor : account, intent: 1, digest, reference: plan.reference, transaction: plan.transaction, requests: 1, evidence: "ChainPending", slot: intentAttempt(digest), storageBlocked: false }
 }
 
 export effect function batchFlow(storage: SlotStorage | undefined, key: string) {
@@ -56,8 +61,8 @@ export effect function batchFlow(storage: SlotStorage | undefined, key: string) 
 
   effect function keep(next: Batch) {
     const before = try Ref.get(held)
-    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : next.owner }
-    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : before.owner }, flow)) try keeper.write("intent", flow)
+    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : slotAccount(next.owner) }
+    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : slotAccount(before.owner) }, flow)) try keeper.write("intent", flow)
     try Ref.set(held, next)
   }
 
@@ -86,7 +91,7 @@ export effect function batchFlow(storage: SlotStorage | undefined, key: string) 
   return {
     machine,
     review: effect (owner: number, review: TransferReview) => {
-      try sent({ type: "review", owner, capability: capabilityOf(review) }, owner)
+      try sent({ type: "review", capability: capabilityOf(review) }, owner)
       return try machine.get()
     },
     send: effect (connection: EvmConnection, vault: EvmVault, amount: string, evidence: Evidence) => {
@@ -110,17 +115,17 @@ export effect function batchFlow(storage: SlotStorage | undefined, key: string) 
       const reference: string = sendBatch(connection, vault, amount, evidence, beforePrompt) catch effect (error) => {
         if (!saved) throw error
         if (error._tag === "VaultBatchUnavailable") {
-          try sent({ type: "refuseBatch" }, state.owner)
+          try sent({ type: "refuseBatch" }, walletAdapter)
           throw new BatchStopped({ message: error.message })
         }
         if (error._tag === "WalletDeclined") {
-          try sent({ type: "declineBatch" }, state.owner)
+          try sent({ type: "declineBatch" }, walletAdapter)
           throw new WalletDeclined({ message: batchMessages.declined })
         }
-        try sent({ type: "keepUncertain" }, state.owner)
+        try sent({ type: "keepUncertain" }, walletAdapter)
         throw new BatchStopped({ message: batchMessages.unclear })
       }
-      try sent({ type: "keepWalletReference", reference }, state.owner)
+      try sent({ type: "keepWalletReference", reference }, walletAdapter)
       try annotate((plan) => ({ ...plan, reference }))
       return try machine.get()
     },
@@ -129,12 +134,12 @@ export effect function batchFlow(storage: SlotStorage | undefined, key: string) 
       if (state.phase !== "WalletReference") return state
       const report = batchProgress(connection, vault, state.reference) catch effect (error) => { throw new BatchStopped({ message: error.message }) }
       if (report.kind === "notSent") {
-        try sent({ type: "reportNotSent", reference: state.reference }, state.owner)
+        try sent({ type: "reportNotSent", reference: state.reference }, walletAdapter)
         try stopped(batchMessages.notSent)
       }
       if (report.kind === "landed" && report.hash !== undefined) {
         const transaction = report.hash
-        try sent({ type: "nameTransaction", reference: state.reference, transaction }, state.owner)
+        try sent({ type: "nameTransaction", reference: state.reference, transaction }, walletAdapter)
         try annotate((plan) => ({ ...plan, transaction }))
       }
       return try machine.get()
@@ -152,7 +157,7 @@ export effect function batchFlow(storage: SlotStorage | undefined, key: string) 
       const plan = try savedPlan()
       const check = checkBatchDeposit(connection, vault, gross, plan, state.transaction) catch effect (error) => { throw new BatchStopped({ message: error.message }) }
       const observed: ChainResult = check === "finalized" ? "ChainFinalEvent" : check === "failed" ? "ChainFinalFailed" : check === "noVault" ? "ChainFinalMissingEvent" : check === "received" ? "ChainIncluded" : "ChainPending"
-      try sent({ type: "observeChain", intent: state.intent, expectedDigest: state.digest, transaction: state.transaction, observed }, state.owner)
+      try sent({ type: "observeChain", intent: state.intent, expectedDigest: state.digest, transaction: state.transaction, observed }, chainReader)
       if (observed === "ChainFinalFailed") try stopped(batchMessages.failed)
       if (observed === "ChainFinalMissingEvent") try stopped(batchMessages.noVault)
       return try machine.get()

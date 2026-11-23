@@ -1,0 +1,191 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "A recorded source omitted from the historical search is verified through a census supplement"; spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"
+import { type CensusOutcome, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import type { MergedOutcome } from "../../collect/merged/wire.vibe"
+import { interrupted } from "../../quotaRecovery/run.vibe"
+import { type CollectedEvidence, earlierAcceptedObjectUnavailable } from "../collect/collect.vibe"
+import type { CorrectionCandidate, CorrectionPool } from "../collect/inventory.vibe"
+import { correctionClaimCommit } from "./derive.vibe"
+import type { CorrectionClaim, CorrectionCommit, CorrectionSource } from "./manifest.vibe"
+import { type PullAuthor, groupedOctoberHold, isOctober } from "./october.vibe"
+
+export error GroupedRefused { message: string }
+
+export type GroupedBinding<E, R> = (sources: ReadonlyArray<unknown>, owners: ReadonlyMap<string, string>) => ReadonlyArray<CorrectionSource>!E!R
+
+export type GroupedProof =
+  | { readonly kind: "complete"; readonly candidate: CorrectionCandidate }
+  | { readonly kind: "held"; readonly candidate: CorrectionCandidate; readonly reason: string }
+
+export const groupedFeedUnavailable = "grouped-history-feed-unavailable"
+export const groupedDecisionUnavailable = "grouped-retained-decision-unavailable"
+const groupedPoolMismatch = "grouped-decision-does-not-match-recorded-pool"
+const groupedIncomplete = "grouped-proof-incomplete"
+
+schema ClaimCopy { readonly acceptancePullRequestId: string; readonly acceptedCommitSha: string }
+schema JointClaim { readonly id: string; readonly commitSha: string; readonly path: string; readonly creditPullRequestId: string; readonly retainedCopy?: ClaimCopy }
+schema JointUser { readonly node_id: string; readonly type: string }
+schema JointSource { readonly evidence: { readonly pull: { readonly node_id: string; readonly user: JointUser } } }
+schema JointUnit { readonly workUnitId: string; readonly claimIds: ReadonlyArray<string> }
+schema JointStatus { readonly status: string }
+schema AssessedJoint {
+  readonly latestDigest: string | null
+  readonly record: { readonly units: ReadonlyArray<JointUnit> }
+  readonly evidence: { readonly sources: ReadonlyArray<Schema.Unknown>; readonly claims: ReadonlyArray<JointClaim> }
+}
+
+function refused(message: string) {
+  return new GroupedRefused({ message })
+}
+
+function held(candidate: CorrectionCandidate, reason: string): GroupedProof {
+  return { kind: "held", candidate, reason }
+}
+
+function messageOf(error: unknown) {
+  if (typeof error !== "object" || error === null) return groupedIncomplete
+  if ("message" in error && typeof error.message === "string" && error.message !== "") return error.message
+  return "reason" in error && typeof error.reason === "string" && error.reason !== "" ? error.reason : groupedIncomplete
+}
+
+function censusOutcome(outcome: MergedOutcome): CensusOutcome {
+  return {
+    id: outcome.id,
+    url: outcome.url,
+    number: outcome.number,
+    headRefOid: outcome.headRefOid,
+    updatedAt: outcome.updatedAt,
+    mergedAt: outcome.mergedAt,
+    baseRefName: outcome.baseRefName,
+    commits: outcome.commits === null ? null : outcome.commits.map((commit) => ({ oid: commit.oid, author: commit.author, parentCount: commit.parentCount, additions: commit.additions, deletions: commit.deletions })),
+  }
+}
+
+effect function historyOf(evidence: CollectedEvidence, pools: ReadonlyArray<CorrectionPool>) {
+  const outcomes = new Map<string, CensusOutcome>()
+  for (const { candidate } of pools) {
+    const read = evidence.reads.get(candidate.sourceId)
+    if (read !== undefined) outcomes.set(candidate.sourceId, censusOutcome(read.outcome))
+  }
+  const loaded = (try ValueInputs).load({ value: [...outcomes.values()], attribution: [] }) catch effect (error) => {
+    if (try interrupted()) throw error
+    if (error._tag !== "ValueFeedUnavailable") throw error
+    return undefined
+  }
+  return loaded
+}
+
+effect function restoreCanonicalMergeCounts(sources: ReadonlyArray<CorrectionSource>, outcomes: ReadonlyMap<string, MergedOutcome>) {
+  const restored: CorrectionSource[] = []
+  for (const source of sources) {
+    const outcome = outcomes.get(source.sourceId)
+    const commits: CorrectionCommit[] = []
+    for (const commit of source.commits) {
+      const canonical = commit.parentCount <= 1 ? undefined : outcome?.commits?.find((item) => item.oid === commit.sha)
+      if (canonical === undefined) {
+        commits.push(commit)
+        continue
+      }
+      if (canonical.parentCount !== commit.parentCount || (canonical.author?.id ?? null) !== (commit.author?.id ?? null) || (canonical.author?.kind ?? null) !== (commit.author?.kind ?? null) ||
+        (commit.additions !== null && commit.additions !== canonical.additions) || (commit.deletions !== null && commit.deletions !== canonical.deletions)) {
+        throw refused("Canonical merge identity or counters disagree")
+      }
+      commits.push({ ...commit, additions: canonical.additions, deletions: canonical.deletions })
+    }
+    restored.push({ ...source, commits })
+  }
+  return restored
+}
+
+function carries(commit: CorrectionCommit, path: string) {
+  return commit.files?.some((file) => file.path === path) ?? false
+}
+
+effect function firstAcceptedCorrectionClaims(claims: ReadonlyArray<CorrectionClaim>, sources: ReadonlyArray<CorrectionSource>) {
+  const resolved: CorrectionClaim[] = []
+  for (const claim of claims) {
+    const origin = sources.find((source) => source.sourceId === claim.sourceId)
+    const originalCommit = origin?.commits.find((commit) => commit.sha === claim.commitSha)
+    if (origin === undefined || originalCommit === undefined) throw refused("Grouped claim origin lacks the exact commit")
+    if (!carries(originalCommit, claim.path)) throw refused("Grouped claim origin lacks the exact path")
+    const carriers = sources.filter((source) => source.repositoryNodeId === origin.repositoryNodeId && originalCommit.firstAcceptedSourceId === source.sourceId &&
+      source.commits.some((commit) => commit.sha === claim.commitSha && commit.author?.id === originalCommit.author?.id && commit.author?.kind === originalCommit.author?.kind &&
+        correctionClaimCommit(commit) && commit.firstAcceptedSourceId === source.sourceId && carries(commit, claim.path)))
+    const [carrier] = carriers
+    if (carriers.length !== 1 || carrier === undefined) throw refused("Grouped claim has no unique first acceptance")
+    resolved.push({ ...claim, sourceId: carrier.sourceId })
+  }
+  return resolved
+}
+
+effect function decodedJoint(sourceId: string, decision: unknown) {
+  const malformed = refused(`Joint value decision for ${sourceId} is malformed`)
+  const joint = Schema.decodeUnknownEffect(AssessedJoint)(decision) catch effect () => { throw malformed }
+  const authors = new Map<string, PullAuthor>()
+  const sourceIds: string[] = []
+  for (const source of joint.evidence.sources) {
+    const view = Schema.decodeUnknownEffect(JointSource)(source) catch effect () => { throw malformed }
+    const pull = view.evidence.pull
+    sourceIds.push(pull.node_id)
+    authors.set(pull.node_id, { node_id: pull.user.node_id, type: pull.user.type })
+  }
+  return { joint, authors, sourceIds: sourceIds.sort() }
+}
+
+effect function provedGroup<E, R>(evidence: CollectedEvidence, pool: CorrectionPool, history: ValueInputsRead, outcomes: ReadonlyMap<string, MergedOutcome>, bind: GroupedBinding<E, R>) {
+  const candidate = pool.candidate
+  const known = history.heldWorkUnits.find((unit) => unit.sourceNodeIds.includes(candidate.sourceId))
+  const recorded = known === undefined ? candidate : { ...candidate, sourceIds: [...known.sourceNodeIds].sort() }
+  const decision = history.jointValueDecisions.find((row) => row.sourceId === candidate.sourceId)?.decision
+  const status = Schema.decodeUnknownEffect(JointStatus)(decision) catch () => undefined
+  if (status?.status !== "assessed") return held(recorded, groupedDecisionUnavailable)
+  const { joint, authors, sourceIds } = try decodedJoint(candidate.sourceId, decision)
+  const scoped = { ...candidate, sourceIds }
+  const unit = joint.record.units.find((item) => item.workUnitId === candidate.workUnitId)
+  const digest = joint.latestDigest
+  if (unit === undefined || !pool.predecessors.every((row) => row.decision?.sourceId === `value:${digest}`)) return held(scoped, groupedPoolMismatch)
+  const claimIds = unit.claimIds
+  const proving = effect {
+    if (digest === null) throw refused("Grouped decision digest unavailable")
+    const sources = try restoreCanonicalMergeCounts(try bind(joint.evidence.sources, evidence.owners), outcomes)
+    const selected = joint.evidence.claims.filter((claim) => claimIds.includes(claim.id))
+    if (selected.length !== claimIds.length) throw refused("Grouped claim scope is incomplete")
+    if (!selected.every((claim) => {
+      const id = claim.retainedCopy?.acceptancePullRequestId ?? claim.creditPullRequestId
+      const source = sources.find((item) => item.sourceId === id)
+      return source === undefined || !evidence.unresolved(source.repository, claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha, id)
+    })) throw refused(earlierAcceptedObjectUnavailable)
+    const claims = try firstAcceptedCorrectionClaims(selected.map((claim) => ({
+      id: claim.id,
+      sourceId: claim.retainedCopy?.acceptancePullRequestId ?? claim.creditPullRequestId,
+      commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
+      path: claim.path,
+    })), sources)
+    if (evidence.options.octoberOriginalCredit === true && isOctober(candidate.occurredAt)) {
+      const hold = try groupedOctoberHold({ evidence, candidateSourceId: candidate.sourceId, sources, claims, selected, authors })
+      if (hold !== undefined) return held(scoped, hold)
+    }
+    const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources, decisionDigest: digest, expectedClaimIds: [...claimIds], claims }
+    const proved: GroupedProof = { kind: "complete", candidate: { ...candidate, sourceIds: sources.map((source) => source.sourceId).sort(), proof } }
+    return proved
+  }
+  const result = proving catch effect (error) => {
+    if (try interrupted()) throw error
+    return held(scoped, messageOf(error))
+  }
+  return result
+}
+
+export effect function proveGrouped<E, R>(evidence: CollectedEvidence, bind: GroupedBinding<E, R>) {
+  const results = new Map<string, GroupedProof>()
+  if (!evidence.ownershipComplete) return results
+  const pools = evidence.selected.filter(({ candidate }) => candidate.kind === "work-unit" && evidence.reads.has(candidate.sourceId))
+  if (pools.length === 0) return results
+  const history = try historyOf(evidence, pools)
+  const outcomes = new Map(evidence.outcomes.map((outcome) => [outcome.id, outcome] as const))
+  for (const pool of pools) {
+    const candidate = pool.candidate
+    if (history === undefined) results.set(candidate.id, held(candidate, groupedFeedUnavailable))
+    else results.set(candidate.id, try provedGroup(evidence, pool, history, outcomes, bind))
+  }
+  return results
+}

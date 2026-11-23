@@ -7,7 +7,7 @@ import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
 import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
+import { applySnapshots, batchOwnedKeys, jointHoldReasons, octoberOriginalContributorDecision, verifiedHistoricalAllocationDecision } from "../src/journal/snapshot.vibe"
 import { historyText, legacyHeldReview, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
 
 const recordedAt = "2026-11-17T06:00:00.000Z"
@@ -22,6 +22,7 @@ const holdReasons = [
   "an unchanged debit request appends no revision for new reversal evidence",
   "the recorded history of this award is outside the journal model",
   "the journal refused",
+  ...Object.values(jointHoldReasons),
 ]
 
 const valueDecision = `value:${"b".repeat(64)}`

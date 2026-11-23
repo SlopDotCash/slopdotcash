@@ -1,0 +1,33 @@
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"
+import { isoAt } from "@repo/platform/clock"
+import { type ValueSettingsVars, valueSettings } from "../value/inference/settings.vibe"
+
+export error ValueSettingsInvalid { message: string }
+
+const invalidSettings = "Select alerts-only (November API cutoff), or supply a positive monthly allowance, a positive route reserve and a canonical UTC start. September and October cannot enter API assessment."
+
+export effect function valueBindings(vars: ValueSettingsVars) {
+  const supplied = [vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD, vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD, vars.SLOPBOT_VALUE_START_AT]
+  if (supplied.every((value) => value === undefined || value === "")) return []
+  const settings = try valueSettings(vars)
+  if (settings === undefined) throw new ValueSettingsInvalid({ message: invalidSettings })
+  const bindings = [
+    `SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD=${settings.monthly === null ? "alerts-only" : String(settings.monthly)}`,
+    `SLOPBOT_VALUE_START_AT=${try isoAt(settings.start)}`,
+  ]
+  return settings.maximum === null ? bindings : [...bindings, `SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD=${settings.maximum}`]
+}
+
+effect function setting(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function valueSettingsCommand(args: ReadonlyArray<string>) {
+  if (args.length > 0) throw new ValueSettingsInvalid({ message: "usage: value-settings" })
+  const bindings = try valueBindings({
+    SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: try setting("SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD"),
+    SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: try setting("SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD"),
+    SLOPBOT_VALUE_START_AT: try setting("SLOPBOT_VALUE_START_AT"),
+  })
+  for (const line of bindings) try Console.log(line)
+}

@@ -44,10 +44,13 @@ import type { MergeVerifierBinding } from "../value/workUnits/verifierBinding.ts
 import { type AppVars, appServices } from "./base.vibe"
 import { JobSettings, dispatchJob } from "./jobs.vibe"
 
-export interface Env extends AppVars, WebhookVars, ActivationVars, ValueSettingsVars, ProviderKeys, RoleVars {
+export interface PublisherEnv extends AppVars, ValueSettingsVars, RoleVars {
+  readonly VALUE_MERGE_VERIFIER: MergeVerifierBinding
+}
+
+export interface Env extends PublisherEnv, WebhookVars, ActivationVars, ProviderKeys {
   readonly SLOPBOT_QUEUE: Queue<Job>
   readonly SLOP_NOTIFY: Fetcher
-  readonly VALUE_MERGE_VERIFIER: MergeVerifierBinding
   readonly SUBMISSION_FEE_MODE?: string
 }
 
@@ -82,13 +85,16 @@ const scheduled = byCron<Layer.Success<ReturnType<typeof services>>>({
   ],
 })
 
-function publisherServices(env: Env) {
-  return Layer.merge(Layer.provideMerge(historicalPublication, services(env)), importSettings(env))
+export function publisherLayer(env: PublisherEnv) {
+  const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), Layer.merge(appServices(env), rolesFrom(env)))
+  const backend = Layer.provideMerge(Layer.mergeAll(RegistryLive, RestrictionsLive, EnforcementLive), Layer.provideMerge(EnforcementRowsLive, notices))
+  const ports = Layer.provideMerge(Layer.mergeAll(retention, acceptanceWith(collectRetainedMergeReferences), mergeVerifierVia(env.VALUE_MERGE_VERIFIER)), backend)
+  return Layer.merge(Layer.provideMerge(historicalPublication, Layer.provideMerge(publicationChecks, ports)), importSettings(env))
 }
 
 export const ReportingReadinessRefresher = entrypoint(services, { refreshReportingReadiness, refreshMergeActivity })
 
-export const HistoricalValuePublisher = entrypoint(publisherServices, publisherMethods)
+export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMethods)
 
 export default worker({
   services,

@@ -2,7 +2,7 @@
 import { RegistryLive, RestrictionsLive } from "@repo/backend/ports"
 import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
@@ -20,8 +20,6 @@ import { readinessCommand } from "./readiness.vibe"
 import { reconcileEvents } from "./reconcileEvents.vibe"
 import { referralRoots } from "./referralRoots.vibe"
 import { unsafeDestinations } from "./unsafeDestinations.vibe"
-
-const registryDatabases = { production: "1b453124-2709-45af-8389-151a8105c461", staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a" } as const
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run

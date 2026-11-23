@@ -16,7 +16,7 @@ import { readManifest } from "@repo/platform/testing/frozen"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { internet, type Internet } from "@repo/platform/testing/internet"
 import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
-import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
+import { ClosedMonth, type ProjectMonth, type ValueCensus, ValueFeedUnavailable, ValueInputs } from "@repo/ports/points"
 import type { PublicVaultPayment } from "@repo/ports/settlement"
 import { Request as MiniflareRequest, Response as MiniflareResponse } from "miniflare"
 import { mkdtempSync } from "node:fs"
@@ -28,6 +28,7 @@ import { periodOf as periodOfPointsperiodsEffect } from "../gen/points__periods.
 import { november2026, october2026, periodOf } from "../gen/points__periods.ts"
 import type { Protection } from "../gen/points__protectedMonths.ts"
 import type { Environment } from "../gen/points__recovery.ts"
+import { distinctOrder } from "../gen/points__reviewedHistory.ts"
 import { emptyReview } from "../gen/points__reviews.effect.vibe"
 import { Machine, machine } from "../gen/points__window.effect.vibe"
 import { collectOpen, identities, type OpenReference } from "../src/census/collect.vibe"
@@ -47,11 +48,12 @@ import { valueHistoryPage, valueHistoryRecords, workUnitHistory, workUnitHistory
 import { collectSearchReferences } from "../src/collect/merged/census.vibe"
 import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
 import { commitLineLoader } from "../src/collect/merged/commits.vibe"
-import { AssemblyRefused, type Collection, collectSnapshot, SnapshotAssembly } from "../src/collect/run/pipeline.vibe"
+import { type Collection, collectSnapshot, SnapshotAssembly } from "../src/collect/run/pipeline.vibe"
+import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
 import { applyCorrections } from "../src/corrections/apply/command.vibe"
 import { proveCandidates } from "../src/corrections/apply/prove.vibe"
 import { collectCorrections, type CollectedEvidence, type CollectionInputs, type CollectionOptions, type Provenance } from "../src/corrections/collect/collect.vibe"
-import { decodePacketBytes, type HistoricalPacket } from "../src/corrections/reviewed/packet.vibe"
+import { decodePacketBytes, digestText, type HistoricalPacket } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { evaluationInputs } from "../src/evaluations/check.vibe"
 import { applyEvaluations } from "../src/evaluations/journal.vibe"
@@ -69,7 +71,7 @@ import { holdProtected } from "../src/journal/hold.vibe"
 import { finish, journalOf, openStore, type Repositories, type Store, storeOf } from "../src/journal/ledger.vibe"
 import { reconcilePenalties } from "../src/journal/penalties.vibe"
 import { applyRetainedReviews, retainedAwards, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
-import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
+import { applySnapshots, batchOwnedKeys, jointHoldReasons } from "../src/journal/snapshot.vibe"
 import { type Award, type Coverage, type Journal, journalText, type Penalty, type Revision, type RevisionBody, revisionText, type Revision as Row } from "../src/kernels/records/canonical.ts"
 import { batchDigest, journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
 import { instantOf } from "../src/kernels/records/instants.ts"
@@ -106,7 +108,7 @@ import { restoreLocal } from "../src/snapshot/restoreLocal.vibe"
 import { packTransport } from "../src/snapshot/write.vibe"
 import { observe, publishRefresh, startWindow, type WindowBounds, windowBounds, windowRun } from "../src/window/window.vibe"
 import { answeringAfter, declaredRun, type EvidenceObject, evidenceObject, type QueuedRow, scanResult, serviceKeys, signingKeySha256, skillTemplates, vettingRequest } from "./support/backendRoutes/world.ts"
-import { acceptedReviewHistoryJson, creditlessSnapshot, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 import { historyText as historyTextU1 } from "./support/u1/history.ts"
 import { registry as registryU10, userNodeId } from "./support/u10/actors.ts"
@@ -1948,6 +1950,7 @@ import { seededGithub, slopbotFake } from fakes
     "an unchanged debit request appends no revision for new reversal evidence",
     "the recorded history of this award is outside the journal model",
     "the journal refused",
+    ...Object.values(jointHoldReasons),
   ]
 
   const valueDecision = `value:${"b".repeat(64)}`
@@ -3589,20 +3592,19 @@ import { seededGithub, slopbotFake } from fakes
     try Effect.try(() => assert.deepStrictEqual(actual, expected))
   }
 
-  const read: ValueInputsRead = { valueDecisions: [], jointValueDecisions: [], valueActors: [], retainedCommitCredits: [], attributionHolds: [], heldWorkUnits: [] }
-
-  type Assembly = "refused" | "invalid" | "creditless"
+  const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 
   interface Attempt {
     readonly name: string
     readonly outage?: boolean
-    readonly assembly: Assembly
+    readonly unboundHold?: boolean
     readonly deadlineMs?: number
   }
 
   interface Asked {
     readonly census: Array<ValueCensus>
     readonly collections: Array<Collection>
+    readonly assembled: Array<unknown>
   }
 
   function layers(world: Seeded, attempt: Attempt, asked: Asked) {
@@ -3611,22 +3613,31 @@ import { seededGithub, slopbotFake } from fakes
       load: (census: ValueCensus) => effect {
         asked.census.push(census)
         if (attempt.outage === true) throw new ValueFeedUnavailable({ message: "The hosted value feed is unavailable" })
-        return read
+        return {
+          valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+          jointValueDecisions: [],
+          valueActors: [],
+          retainedCommitCredits: [],
+          attributionHolds: [],
+          heldWorkUnits: attempt.unboundHold === true ? [{ recordDigest: "0".repeat(64), sourceNodeIds: census.value.slice(0, 1).map((outcome) => outcome.id), unavailableNodeIds: [] }] : [],
+        }
       },
     })
-    const assembly = Layer.succeed(SnapshotAssembly, {
-      assemble: (collection: Collection) => effect {
+    const recorded = Layer.effect(SnapshotAssembly, effect {
+      const real = try SnapshotAssembly
+      return { assemble: (collection: Collection) => effect {
         asked.collections.push(collection)
-        if (attempt.assembly === "refused") throw new AssemblyRefused({ message: "assembly refused" })
-        return attempt.assembly === "invalid" ? {} : creditlessSnapshot(collection, leaderboardMethodology)
-      },
+        const raw = try real.assemble(collection)
+        asked.assembled.push(raw)
+        return raw
+      } }
     })
     return Layer.mergeAll(
       outbound,
       Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
       Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
       values,
-      assembly,
+      Layer.provide(recorded, snapshotAssembly),
     )
   }
 
@@ -3649,18 +3660,17 @@ import { seededGithub, slopbotFake } from fakes
       try fs.makeDirectory(`${directory}/data`, { recursive: true })
       try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
       try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
-      const asked: Asked = { census: [], collections: [] }
-      const outage = try collectOnce(world, directory, { name: "outage", outage: true, assembly: "creditless" }, asked)
-      const deferred = try collectOnce(world, directory, { name: "deferred", assembly: "creditless", deadlineMs: 1 }, asked)
-      const refused = try collectOnce(world, directory, { name: "refused", assembly: "refused" }, asked)
-      const invalid = try collectOnce(world, directory, { name: "invalid", assembly: "invalid" }, asked)
-      const published = try collectOnce(world, directory, { name: "published", assembly: "creditless" }, asked)
+      const asked: Asked = { census: [], collections: [], assembled: [] }
+      const outage = try collectOnce(world, directory, { name: "outage", outage: true }, asked)
+      const deferred = try collectOnce(world, directory, { name: "deferred", deadlineMs: 1 }, asked)
+      const refused = try collectOnce(world, directory, { name: "refused", unboundHold: true }, asked)
+      const published = try collectOnce(world, directory, { name: "published" }, asked)
       const collection = asked.collections.at(-1)
       const censuses = collection?.work.collections.flatMap((repository) => [repository.open.census.issues.census, repository.open.census.pullRequests.census]) ?? []
       const ids = (outcomes: ValueCensus["value"]) => outcomes.map((outcome) => outcome.id).sort()
       try same({
-        outcomes: [outage, deferred, refused, invalid].map(({ outcome, written }) => ({ outcome, written })),
-        published: { outcome: published.outcome, written: published.written, bytes: collection === undefined ? "" : `${JSON.stringify(creditlessSnapshot(collection, leaderboardMethodology))}\n` === published.bytes },
+        outcomes: [outage, deferred, refused].map(({ outcome, written }) => ({ outcome, written })),
+        published: { outcome: published.outcome, written: published.written, bytes: `${JSON.stringify(asked.assembled.at(-1))}\n` === published.bytes },
         asked: { loads: asked.census.length, assemblies: asked.collections.length },
         value: asked.census.map((census) => ({ value: ids(census.value), attribution: ids(census.attribution) })).at(-1),
         censuses: censuses.map((census) => ({ phase: census.phase, totalCount: census.totalCount, items: census.items.length })),
@@ -3671,10 +3681,9 @@ import { seededGithub, slopbotFake } from fakes
           { outcome: "ValueFeedUnavailable", written: false },
           { outcome: "CollectDeferred", written: false },
           { outcome: "AssemblyRefused", written: false },
-          { outcome: "SnapshotInvalid", written: false },
         ],
         published: { outcome: "Published", written: true, bytes: true },
-        asked: { loads: 5, assemblies: 3 },
+        asked: { loads: 4, assemblies: 2 },
         value: { value: [world.ids.paired, world.ids.stacked, world.ids.bulk, world.ids.closed].sort(), attribution: [world.ids.paired, world.ids.stacked, world.ids.bulk].sort() },
         censuses: [{ phase: "ReadyForPublication", totalCount: 0, items: 0 }, { phase: "ReadyForPublication", totalCount: 0, items: 0 }],
         counts: { unavailableSources: 0, unavailableMergedPullRequests: 0, heldWorkUnits: 0, mergedPullRequests: 3, detailedMergedPullRequests: 3, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
@@ -4655,13 +4664,18 @@ import { seededGithub, slopbotFake } from fakes
   const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
   const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
 
+  function orderOf(packet: HistoricalPacket) {
+    return new Map((packet.duplicateRetirements ?? []).map((retirement) => [digestText(retirement), [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])].map(() => distinctOrder)] as const))
+  }
+
   effect function same(actual: unknown, expected: unknown) {
     try Effect.try(() => assert.deepStrictEqual(actual, expected))
   }
 
   effect function rebuilt(packet: unknown, baseline: Journal) {
+    const historical = packet as HistoricalPacket
     return try reconstructHistoricalPoints({
-      packet: packet as HistoricalPacket,
+      packet: historical,
       baseline,
       now: time,
       bans: new Map(),
@@ -4669,6 +4683,7 @@ import { seededGithub, slopbotFake } from fakes
       registry,
       repositories: repositoriesOf(registry, {}),
       projectOf: () => "feed",
+      verifiedRetirements: { duplicates: new Set(), order: orderOf(historical) },
     })
   }
 

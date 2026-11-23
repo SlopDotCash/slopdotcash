@@ -36,7 +36,7 @@ export interface MonthlySettingPlan {
   readonly transaction: LockTransaction | null
 }
 
-const settingKind: PlanKind = "DepositPlan"
+const settingKind: PlanKind = "MonthlySettingPlan"
 
 function refused(message: string) {
   return new WalletActionRefused({ message })

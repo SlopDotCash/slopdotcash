@@ -21,7 +21,8 @@ import { commitLineLoader } from "../merged/commits.vibe"
 import type { MemoSession } from "../memo/memo.vibe"
 import { type ImplementationRequest, implementationFacts } from "../implementation/facts.vibe"
 import { valueScoringApprovedHistoryFrom } from "../../client/snapshot/schema.vibe"
-import { type Collection, type CollectionSource, openCollection, penaltyFeeds, unavailableById, valueInputs } from "./pipeline.vibe"
+import { valueContextPullRequests } from "./contexts.vibe"
+import { type Collection, type CollectionSource, censusSourceIds, openCollection, penaltyFeeds, unavailableById, valueInputs, verifiedEvidence } from "./pipeline.vibe"
 
 export error HistoricalCollectionRefused { message: string }
 
@@ -54,6 +55,7 @@ export interface HistoricalRequest {
   readonly baseline: PointsJournal
   readonly closedContexts?: ReadonlyMap<string, HistoricalClosedBinding>
   readonly implementation?: Pick<ImplementationRequest, "proofs" | "memo">
+  readonly evidenceToken?: Redacted.Redacted<string>
 }
 
 export effect function assertCheckpoint(request: HistoricalRequest) {
@@ -110,7 +112,7 @@ export effect function collectHistorical(request: HistoricalRequest) {
   request.implementation?.memo?.beginPass()
   const valuePolicyFromMs = millisOf(approvedHistoryFrom)
   const verificationFromMs = bounds.toMs - verificationWindowDays * dayMs
-  const work = try collectMergedWork({
+  const collected = try collectMergedWork({
     targets: [target],
     nowMs: bounds.toMs,
     windowFromMs: bounds.fromMs,
@@ -119,17 +121,19 @@ export effect function collectHistorical(request: HistoricalRequest) {
     evaluatedReviewKeys: new Set(),
     recollection: firstAttempt,
   }, (repository, reservedCost) => openCollection(repository, reservedCost, bounds, ids, views), commitLineLoader(undefined, request.memo?.commitLines))
-  try assertMergedCensus(mergedScope.sources, work.outcomes)
-  try confirmReviewCensus(work)
+  try assertMergedCensus(mergedScope.sources, collected.outcomes)
+  try confirmReviewCensus(collected)
   const baseline = request.baseline
   const implementation = request.implementation === undefined ? undefined : try implementationFacts({
-    repositories: work.collections,
+    repositories: collected.collections,
     windowFrom: bounds.from,
     recordedThrough: bounds.to,
     request: { ...request.implementation, journal: () => effect { return baseline } },
     historical: true,
   })
+  const { work, evidence } = try verifiedEvidence(collected, { bounds, ids, views }, registry.targets.map((repository) => repository.id), request.evidenceToken)
   const { value, held } = try valueInputs(work, firstAttempt, { valuePolicyFromMs, closedContexts: valueContexts(request.closedContexts ?? new Map()) })
+  const contexts = try valueContextPullRequests(value.jointValueDecisions, censusSourceIds(work))
   const bans = try participationBans()
   const cutoff = bounds.to
   const feeds = try penaltyFeeds([pin.projectId], cutoff)
@@ -184,6 +188,8 @@ export effect function collectHistorical(request: HistoricalRequest) {
     openPullRequests,
     latestPreflightUpdate,
     value,
+    valueContextPullRequests: contexts,
+    evidence,
     bans,
     penalties: feeds.penalties,
     penaltyHistory: feeds.history,

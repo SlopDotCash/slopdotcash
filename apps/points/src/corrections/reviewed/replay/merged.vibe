@@ -122,7 +122,15 @@ export effect function mergedHistoricalReplaySnapshot(request: MergedReplayReque
     return valid
   }
   try holds([...complete.ledger, ...completePayment].every(scored) && !(complete.penalties ?? []).some((row) => closedIds.has(row.source.id)), "scored-work")
-  const projectedCollection: Collection = { ...collection, work: { ...collection.work, closedUnmergedPullRequests: closed.filter((pull) => reviewSources.has(pull.id)) } }
+  const projectedCollection: Collection = {
+    ...collection,
+    work: {
+      ...collection.work,
+      collections: collection.work.collections.map((repository) => ({ ...repository, closedUnmerged: repository.closedUnmerged.filter((pull) => reviewSources.has(pull.id)) })),
+      closedUnmergedPullRequests: closed.filter((pull) => reviewSources.has(pull.id)),
+    },
+    valueContextPullRequests: [...collection.valueContextPullRequests, ...closed.filter((pull) => approved.has(pull.id) && !reviewSources.has(pull.id) && decisions.get(pull.id)?.status === "assessed")],
+  }
   const projected = try createHistoricalSnapshot(projectedCollection, pin, project, request.history)
   const retainedProvenance = (snapshot: LeaderboardSnapshot) => ({
     coverage: (snapshot.valueAssessmentCoverage ?? []).filter((row) => !closedIds.has(row.pullRequestId) || reviewSources.has(row.pullRequestId)),

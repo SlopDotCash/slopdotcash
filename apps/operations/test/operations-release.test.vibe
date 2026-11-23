@@ -550,7 +550,7 @@ import { readCollection, writeCollection } from "../src/release/manifest/release
 import { DataOptionsRefused, releaseCoverage } from "../src/release/coverage/options.vibe"
 import { CollectedDataRefused, restoreCollected } from "../src/release/run/restore.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
-import type { Service } from "../gen/operations__release.effect.vibe"
+import { type Service, reviewedSubmissionFee } from "../gen/operations__release.effect.vibe"
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
 import { runFacts } from "../src/release/run/facts.vibe"
 import { ReleaseRefused } from "../src/release/run/run.vibe"
@@ -615,7 +615,7 @@ effect function git(directory: string, args: ReadonlyArray<string>) {
   return new TextDecoder().decode(bytes).trim()
 }
 
-const recordedOrder: ReadonlyArray<Service> = ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"]
+const recordedOrder: ReadonlyArray<Service> = ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot", "SubmissionFee"]
 
 function recorder(calls: string[], afterFirstWorker?: void!!) {
   effect function refused(stage: string) {
@@ -633,7 +633,7 @@ function recorder(calls: string[], afterFirstWorker?: void!!) {
     publish: (service, target) => afterFirstWorker === undefined ? refused(`publish ${service}`) : published(service, target),
     feeSettings: () => refused("feeSettings"),
     feeVersions: () => refused("feeVersions"),
-    submissionFee: () => refused("submissionFee"),
+    submissionFee: () => afterFirstWorker === undefined ? refused("submissionFee") : Effect.succeed({ config: reviewedSubmissionFee, refusal: undefined }),
     site: () => refused("site"),
     deployments: () => refused("deployments"),
     served: () => refused("served"),

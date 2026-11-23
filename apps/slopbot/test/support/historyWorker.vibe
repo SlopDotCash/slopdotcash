@@ -1,9 +1,10 @@
-// spec/slopbot/publicFeeds.md, "Story: Serve published history from stored records only"; spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/valueHistory.md, "Story: Recover complete history at a fixed sequence boundary"
+// spec/slopbot/publicFeeds.md, "Story: Serve published history from stored records only"; spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/valueHistory.md, "Story: Recover complete history at a fixed sequence boundary"; spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
-import { type D1, d1, sql } from "@repo/platform/d1"
-import { githubApp } from "@repo/platform/github/app"
-import { Caller, Unauthenticated, answered, json, outbound } from "@repo/platform/http"
+import { d1, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp, githubApp } from "@repo/platform/github/app"
+import { Caller, Unauthenticated, answered, body, json, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
 import { RegistryManifestsLive } from "@repo/backend/ports"
@@ -11,15 +12,24 @@ import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { Enforcement } from "@repo/ports/security"
 import { feedRoutes } from "../../src/feeds/routes.vibe"
 import { summaryRoutes } from "../../src/feeds/summary.vibe"
-import { HistoricalPublication, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe"
+import { preparedFacts } from "../../src/import/publication.vibe"
+import { type Admit, type AdmittedImport, HistoricalPublication, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe"
 import { HistoricalValueImport, NotPublished, importRoutes } from "../../src/import/routes.vibe"
+import { Actor, type Evidence, type RegisteredRepository } from "../../src/value/evidence/types.vibe"
 import { appendValueRecord, legacyHeads, readHistory } from "../../src/value/history/store.vibe"
+import { isSubscriptionProvenance } from "../../src/value/inference/publish.vibe"
+import type { FileChange } from "../../src/value/proofs/changes.vibe"
+import { prepareWorkUnitEvidence } from "../../src/value/workUnits/prepare.vibe"
+import { PublicationChecks, type Registration, publishWorkUnitAssessment } from "../../src/value/workUnits/publish.vibe"
+import { Retention, type WorkUnitSource } from "../../src/value/workUnits/types.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
   readonly SLOPBOT_APP_ID: string
   readonly SLOPBOT_APP_PRIVATE_KEY: string
   readonly SLOPBOT_PRODUCER_REVISION: string
+  readonly SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD?: string
+  readonly SLOPBOT_VALUE_START_AT?: string
   readonly ADMIN_GITHUB_IDS: string
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
 }
@@ -84,39 +94,197 @@ const cookieCaller = Layer.succeed(Caller, {
 
 type PublisherServices = Effect.Services<ReturnType<typeof publishSubscription>>
 
-const singleJournalPublication = Layer.effect(HistoricalPublication, effect {
-  const context = try Effect.context<D1 | Experimental.Crypto.Crypto>()
-  const registry = try Registry
+const jointBase = "b".repeat(40)
+const jointPolicy = "# Contributing\n\nPull requests target `main`.\n"
+const jointCollectedAt = "2026-11-12T00:00:00.000Z"
+
+schema JointRef { readonly repository: string; readonly number: number; readonly projectId: string }
+schema JointAsk { readonly installationId: number; readonly sources: ReadonlyArray<JointRef> }
+schema JointRepository { readonly id: number; readonly node_id: string }
+schema JointPull { readonly node_id: string; readonly merged_at: string | null; readonly closed_at: string | null; readonly user: Actor }
+schema JointReview { readonly sourceId: string }
+schema JointAssessment { readonly reviews: ReadonlyArray<JointReview> }
+schema JointUnit { readonly claimIds: ReadonlyArray<string>; readonly assessment: JointAssessment }
+
+const isJointUnits = Schema.is(Schema.Array(JointUnit))
+
+function shaOf(number: number, digit: string) {
+  return `${digit}${String(number).padStart(39, "0")}`
+}
+
+function jointEvidence(ref: typeof JointRef.Type, repository: typeof JointRepository.Type, pull: typeof JointPull.Type): Evidence {
+  const path = `src/joint-${ref.number}.ts`
+  const headSha = shaOf(ref.number, "c")
+  const mergeSha = pull.merged_at === null ? null : shaOf(ref.number, "d")
+  const occurred = pull.merged_at ?? pull.closed_at ?? jointCollectedAt
+  const url = `https://github.com/${ref.repository}/pull/${ref.number}`
+  const file: FileChange = { filename: path, status: "added", additions: 1, deletions: 0, patch: `@@ -0,0 +1 @@\n+export const joint${ref.number} = ${ref.number};`, blob_url: `https://github.com/${ref.repository}/blob/main/${path}` }
   return {
-    publish: (admitted, admit) => effect {
-      const [source] = admitted.sources
-      if (admitted.mode !== "single" || source === undefined) throw new PublicationFailed()
-      try admit(undefined)
-      const project = registry.project(source.projectId) catch effect () => { throw new PublicationFailed() }
-      if (project === undefined) throw new PublicationFailed()
-      const registryFence = try registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] })
-      const record = JSON.stringify({
-        schemaVersion: "slop-value-record:v1",
-        projectId: source.projectId,
-        repository: source.repository,
-        repositoryNodeId: source.repositoryNodeId,
-        repositoryDatabaseId: source.repositoryDatabaseId,
-        pullRequestNodeId: source.pullRequestNodeId,
-        pullRequestNumber: source.number,
-        headSha: recordedHeadSha,
-        mergeSha: null,
-        sourceDigest: admitted.result["sourceDigest"],
-        rubricVersion: admitted.result["rubricVersion"],
-        producerRevision: admitted.producerRevision,
-        assessedAt: admitted.result["assessedAt"],
-        supersedes: null,
-        revisionReason: null,
-        model: admitted.result["provenance"],
-      })
-      const stored = Effect.provide(appendValueRecord(record, { installationId: admitted.installationId, projectId: source.projectId, registryFence }), context) catch effect () => { throw new PublicationFailed() }
-      return { recordDigest: stored.record_digest, sequence: stored.sequence }
+    repository: ref.repository,
+    repositoryNodeId: repository.node_id,
+    repositoryDatabaseId: repository.id,
+    repositoryPolicy: { id: ref.repository, projectId: ref.projectId, integrationBranch: "main", expectedNodeId: repository.node_id },
+    collectedAt: jointCollectedAt,
+    pull: {
+      node_id: pull.node_id,
+      number: ref.number,
+      html_url: url,
+      title: `Pull ${ref.number}`,
+      body: null,
+      user: pull.user,
+      merged_by: pull.merged_at === null ? null : pull.user,
+      state: "closed",
+      merged_at: pull.merged_at,
+      closed_at: pull.closed_at,
+      merge_commit_sha: mergeSha,
+      updated_at: occurred,
+      head: { sha: headSha },
+      base: { sha: jointBase, ref: "main" },
+      changed_files: 1,
+      comments: 0,
+      review_comments: 0,
+      commits: 1,
     },
+    files: [file],
+    mergeCommitEvidence: mergeSha === null ? null : {
+      sha: mergeSha,
+      html_url: `https://github.com/${ref.repository}/commit/${mergeSha}`,
+      parents: [{ sha: jointBase }, { sha: headSha }],
+      stats: { total: 1, additions: 1, deletions: 0 },
+      files: [file],
+    },
+    commits: [{
+      sha: headSha,
+      html_url: `https://github.com/${ref.repository}/commit/${headSha}`,
+      author: pull.user,
+      committer: pull.user,
+      parents: [{ sha: jointBase }],
+      commit: { message: `Add joint ${ref.number}`, author: { date: occurred }, committer: { date: occurred } },
+    }],
+    reviews: [],
+    comments: [],
+    reviewComments: [],
+    limitations: [],
+    evidenceUrls: [url],
+    eligibleReviewIds: [],
+    implementationActorNodeIds: [pull.user.node_id],
+    commitAttribution: [{ sha: headSha, actorNodeIds: [pull.user.node_id], changedPaths: [path], files: [file], limitations: [] }],
+    relatedPullRequests: [],
   }
+}
+
+function jointRepository(evidence: Evidence): RegisteredRepository {
+  return { id: evidence.repository, projectId: evidence.repositoryPolicy?.projectId ?? "", integrationBranch: "main", expectedNodeId: evidence.repositoryNodeId, aliases: [] }
+}
+
+function repositoriesOf(sources: ReadonlyArray<Evidence>) {
+  return [...new Map(sources.map((source) => [source.repository, jointRepository(source)])).values()]
+}
+
+effect function jointSource(ref: typeof JointRef.Type) {
+  const github = try GitHub
+  const repository = try github.json(`/repos/${ref.repository}`, JointRepository)
+  const pull = try github.json(`/repos/${ref.repository}/pulls/${ref.number}`, JointPull)
+  return { evidence: jointEvidence(ref, repository, pull), policy: { sha: jointBase, text: jointPolicy } } satisfies WorkUnitSource
+}
+
+effect function jointPrepared(refs: ReadonlyArray<typeof JointRef.Type>) {
+  const sources: WorkUnitSource[] = []
+  for (const ref of refs) sources.push(try jointSource(ref))
+  return try prepareWorkUnitEvidence(sources, repositoriesOf(sources.map(({ evidence }) => evidence)))
+}
+
+effect function installed<A, E, R>(installationId: number, program: A!E!R) {
+  const scoped = (try GitHubApp).asInstallation(String(installationId))
+  provide scoped {
+    return try program
+  }
+}
+
+effect function jointPublished(admitted: AdmittedImport, admit: Admit) {
+  const [first] = admitted.sources
+  const verdict = admitted.result["verdict"]
+  const units = typeof verdict === "object" && verdict !== null && "units" in verdict ? verdict.units : undefined
+  const provenance = admitted.result["provenance"]
+  const assessedAt = admitted.result["assessedAt"]
+  const sourceDigest = admitted.result["sourceDigest"]
+  const rubricVersion = admitted.result["rubricVersion"]
+  if (first === undefined || !isJointUnits(units) || !isSubscriptionProvenance(provenance) || typeof assessedAt !== "string" || typeof sourceDigest !== "string" || typeof rubricVersion !== "string") throw new PublicationFailed()
+  const prepared = try jointPrepared(admitted.sources)
+  try admit(preparedFacts(prepared))
+  const [owner = "", repo = ""] = first.repository.split("/")
+  const stored = try publishWorkUnitAssessment({
+    job: { installationId: admitted.installationId, repositoryId: first.repositoryDatabaseId, owner, repo, number: first.number, itemKind: "pull_request" },
+    result: { assessedAt, sourceDigest, rubricVersion },
+    provenance,
+    units,
+    model: { ...provenance },
+    evidence: prepared,
+    producerRevision: admitted.producerRevision,
+    supersedes: admitted.supersedes,
+    legacyPredecessors: admitted.legacyPredecessors,
+    revisionReason: admitted.revisionReason,
+  })
+  return { recordDigest: stored.record_digest, sequence: stored.sequence }
+}
+
+effect function singlePublished(admitted: AdmittedImport, admit: Admit) {
+  const [source] = admitted.sources
+  if (source === undefined) throw new PublicationFailed()
+  try admit(undefined)
+  const registry = try Registry
+  const project = registry.project(source.projectId) catch effect () => { throw new PublicationFailed() }
+  if (project === undefined) throw new PublicationFailed()
+  const registryFence = try registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] })
+  const record = JSON.stringify({
+    schemaVersion: "slop-value-record:v1",
+    projectId: source.projectId,
+    repository: source.repository,
+    repositoryNodeId: source.repositoryNodeId,
+    repositoryDatabaseId: source.repositoryDatabaseId,
+    pullRequestNodeId: source.pullRequestNodeId,
+    pullRequestNumber: source.number,
+    headSha: recordedHeadSha,
+    mergeSha: null,
+    sourceDigest: admitted.result["sourceDigest"],
+    rubricVersion: admitted.result["rubricVersion"],
+    producerRevision: admitted.producerRevision,
+    assessedAt: admitted.result["assessedAt"],
+    supersedes: null,
+    revisionReason: null,
+    model: admitted.result["provenance"],
+  })
+  const stored = appendValueRecord(record, { installationId: admitted.installationId, projectId: source.projectId, registryFence }) catch effect () => { throw new PublicationFailed() }
+  return { recordDigest: stored.record_digest, sequence: stored.sequence }
+}
+
+effect function published(admitted: AdmittedImport, admit: Admit) {
+  if (admitted.mode === "work-unit") return try installed(admitted.installationId, jointPublished(admitted, admit))
+  return try singlePublished(admitted, admit)
+}
+
+const journalPublication = Layer.effect(HistoricalPublication, effect {
+  const context = try Effect.context<Effect.Services<ReturnType<typeof published>>>()
+  return {
+    publish: (admitted, admit) => Effect.provide(published(admitted, admit), context),
+  }
+})
+
+const noRetainedCopies = Layer.succeed(Retention, {
+  bindings: () => Effect.succeed({ bindings: new Map(), limitations: [] }),
+  repair: () => Effect.succeed(undefined),
+})
+
+const jointChecks = Layer.succeed(PublicationChecks, {
+  subscribed: (provenance) => Effect.succeed(isSubscriptionProvenance(provenance)),
+  registration: (_job, sources) => effect {
+    const repositories = repositoriesOf(sources)
+    const [first] = repositories
+    if (first === undefined) return undefined
+    return { project: { id: first.projectId, active: true }, repositories, registryFence: sql`1` } satisfies Registration
+  },
+  admitted: () => Effect.void,
+  current: () => Effect.void,
 })
 
 const inProcessImport = Layer.effect(HistoricalValueImport, effect {
@@ -132,9 +300,16 @@ const inProcessImport = Layer.effect(HistoricalValueImport, effect {
 function services(env: Env) {
   const base = Layer.mergeAll(d1(env.SLOPBOT_DB), rolesFrom(env), webCrypto, outbound)
   const app = Layer.provide(githubApp({ appId: env.SLOPBOT_APP_ID, privateKey: Redacted.make(env.SLOPBOT_APP_PRIVATE_KEY), userAgent: "slopbot" }), outbound)
-  const publisher = Layer.mergeAll(base, app, registryPorts, importSettings(env), Layer.provide(singleJournalPublication, Layer.merge(base, registryPorts)))
-  return Layer.mergeAll(base, cookieCaller, Layer.provide(RegistryManifestsLive, base), Layer.provide(inProcessImport, publisher))
+  const joint = Layer.mergeAll(app, noRetainedCopies, jointChecks)
+  const publisher = Layer.mergeAll(base, app, registryPorts, importSettings(env), Layer.provide(journalPublication, Layer.mergeAll(base, registryPorts, joint)))
+  return Layer.mergeAll(base, joint, cookieCaller, Layer.provide(RegistryManifestsLive, base), Layer.provide(inProcessImport, publisher))
 }
+
+const jointEvidenceDecision = HttpRouter.add("POST", "/__test/joint-evidence", answered(effect {
+  const ask = try body(JointAsk, 4)
+  const prepared = try installed(ask.installationId, jointPrepared(ask.sources))
+  return json({ sourceDigest: prepared.sourceDigest, claimIds: prepared.claims.map((claim) => claim.id), limitations: prepared.limitations })
+}))
 
 const historyDecision = HttpRouter.add("GET", "/__test/history", answered(effect {
   const query = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).searchParams
@@ -164,4 +339,4 @@ const legacyDecision = HttpRouter.add("GET", "/__test/legacy", answered(effect {
   }]))
 }))
 
-export default worker({ services, routes: Layer.mergeAll(feedRoutes, summaryRoutes, importRoutes, historyDecision, legacyDecision) })
+export default worker({ services, routes: Layer.mergeAll(feedRoutes, summaryRoutes, importRoutes, historyDecision, legacyDecision, jointEvidenceDecision) })

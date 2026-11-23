@@ -61,7 +61,7 @@ export function PendingCheck({ action, status, amount, hash, explorerUrl, solana
               Check transaction
             </Button>
           )}
-          {onConfirmUnsent ? (
+          {onConfirmUnsent && candidate.trim() === "" ? (
             <Disclosure summary="Nothing was sent?">
               <Button variant="secondary" disabled={busy} onClick={onConfirmUnsent}>
                 Not sent — clear

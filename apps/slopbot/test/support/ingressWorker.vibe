@@ -1,13 +1,14 @@
-// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"
+// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"
 import type { D1Database, Queue } from "@repo/platform/bindings"
 import { jsonVar } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, type D1Error, DatabaseFailure, d1, sql } from "@repo/platform/d1"
-import { Caller, Unauthenticated } from "@repo/platform/http"
+import { Caller, Unauthenticated, answered, json } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
-import { ProjectAudience, ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { ProjectAudience, ProjectStatus, type ProjectView, Registry, RegistryManifests, Restrictions, Retirement } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Enforcement, Restriction } from "@repo/ports/security"
+import { submissionFeeMode } from "../../src/fee/store.vibe"
 import { ingressRoutes } from "../../src/ingress/routes.vibe"
 import { webhookSettings } from "../../src/ingress/webhook.vibe"
 import { type Job, JobQueue, QueueUnavailable, jobQueue } from "../../src/jobs/job.vibe"
@@ -20,8 +21,8 @@ export interface Env {
   readonly SLOPBOT_WEBHOOK_SECRET: string
   readonly SLOPBOT_APP_USER_ID: string
   readonly TEST_REGISTRY: string
+  readonly SLOPBOT_EVIDENCE_CLOSURE_ENABLED?: string
 }
-
 
 schema TestProject {
   projectId: string
@@ -85,6 +86,10 @@ function portsOver(text: string) {
         project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
         fence: () => effect { return sql`1` },
       }),
+      Layer.succeed(RegistryManifests, {
+        current: () => effect { return [] },
+        project: () => effect { return undefined },
+      }),
       Layer.succeed(ProjectAudience, {
         listedBy: (project) => effect { return sql`SELECT json_extract(value, '$.owner') AS recipient FROM json_each(${text}, '$.projects') WHERE json_extract(value, '$.projectId') = ${project}` },
         owners: (project) => effect { return sql`SELECT json_extract(value, '$.owner') AS recipient FROM json_each(${text}, '$.projects') WHERE json_extract(value, '$.projectId') = ${project}` },
@@ -103,19 +108,25 @@ function portsOver(text: string) {
   })
 }
 
+const sentDelays: Array<{ readonly delivery: string; readonly kind: string; readonly delaySeconds: number }> = []
+
 function queueOver(binding: Queue<Job>) {
   return Layer.effect(JobQueue, effect {
     const real = try JobQueue
     return {
-      send: (job: Job) => job.number === lostQueueNumber ? Effect.fail(new QueueUnavailable({ kind: job.kind })) : real.send(job),
+      send: (job: Job, delaySeconds: number) => job.number === lostQueueNumber
+        ? Effect.fail(new QueueUnavailable({ kind: job.kind }))
+        : Effect.tap(real.send(job, delaySeconds), () => Effect.sync(() => { sentDelays.push({ delivery: job.deliveryId, kind: job.kind, delaySeconds }) })),
     }
   }).pipe(Layer.provide(jobQueue(binding)))
 }
 
+const delays = HttpRouter.add("POST", "/test/queue-delays", answered(effect { return json(sentDelays) }))
+
 const callerFixture = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
 
 function services(env: Env) {
-  return Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, queueOver(env.SLOPBOT_QUEUE), webhookSettings(env), portsOver(env.TEST_REGISTRY), callerFixture)
+  return Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, queueOver(env.SLOPBOT_QUEUE), webhookSettings(env), portsOver(env.TEST_REGISTRY), callerFixture, submissionFeeMode(undefined))
 }
 
 function recorded(queue: string) {
@@ -127,4 +138,4 @@ function recorded(queue: string) {
   }
 }
 
-export default worker({ services, routes: ingressRoutes, queue: (message, queue) => settle(message, recorded(queue)) })
+export default worker({ services, routes: Layer.mergeAll(ingressRoutes, delays), queue: (message, queue) => settle(message, recorded(queue)) })

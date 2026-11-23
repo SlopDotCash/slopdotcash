@@ -46,8 +46,8 @@ effect function running(script: string, vars: Readonly<Record<string, string>>, 
   return { mf, seen } satisfies Running
 }
 
-effect function posted(worker: Running, path: string, body: string, method = "POST") {
-  return try promise(() => worker.mf.dispatchFetch(`https://attester.internal${path}`, { method, headers: { "content-type": "application/json", "idempotency-key": "k" }, ...method === "GET" ? {} : { body } })
+effect function posted(worker: Running, path: string, body: string, method = "POST", host = "attester.internal") {
+  return try promise(() => worker.mf.dispatchFetch(`https://${host}${path}`, { method, headers: { "content-type": "application/json", "idempotency-key": "k" }, ...method === "GET" ? {} : { body } })
     .then((response) => response.text().then((text) => ({ status: response.status, text }) satisfies Answer)))
 }
 
@@ -59,9 +59,28 @@ effect function wranglerFile(name: string) {
 
 const zeroPins = { SIGNER_STACK: "production", PAYMENT_DEPLOYMENTS: "[]", PAYMENT_RPC_URLS: "{}", SLOP_ENVIRONMENT: "production" }
 
+const pagesProbe = `export default { fetch: (request, env) => (new URL(request.url).host === "attester.default" ? env.ATTESTER : env.SOLANA_BINDING).fetch(request) };`
+
+effect function behindPages(script: string, vars: Readonly<Record<string, string>>) {
+  const seen: string[] = []
+  const mf = try acquireRelease(sync(() => startWorker({
+    module: pagesProbe,
+    services: { SOLANA_BINDING: { worker: "attester", entrypoint: "SolanaBinding" } },
+    workers: { ATTESTER: { name: "attester", script, vars, d1: { PAYMENTS_DB: "workers-isolation" }, durableObjects: { JOURNAL: "PaymentSignerJournal" } } },
+    outbound: (request: Request) => {
+      seen.push(new URL(request.url).host)
+      return new Response("unreachable", { status: 503 })
+    },
+  })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  return { mf, seen } satisfies Running
+}
+
 layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('A zero-pin attester runs no scheduled work, refuses every signing route and carries only its own signer markers (spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const script = try promise(() => bundle(root, { entry: "attester" }))
+    const source = try (try FileSystem.FileSystem).readFileString(script)
     const solana = try running(script, { ...zeroPins, PAYMENT_NETWORK: "solana-mainnet" }, { objects: true })
     const evm = try running(script, { ...zeroPins, PAYMENT_NETWORK: "base-mainnet" }, { objects: true })
     const solanaCron = try promise(() => scheduled(solana.mf, "*/5 * * * *"))
@@ -88,7 +107,7 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
       outbound: [...solana.seen, ...evm.seen],
       statuses: Object.fromEntries(Object.entries(routes).map(([name, answer]) => [name, answer.status])),
       reconcileBody: routes.reconcile.text,
-      markers: { attester: script.includes(signerMarker), solana: script.includes(solanaSignerMarker), keeper: script.includes(keeperMarker), poster: script.includes(posterMarker) },
+      markers: { attester: source.includes(signerMarker), solana: source.includes(solanaSignerMarker), keeper: source.includes(keeperMarker), poster: source.includes(posterMarker) },
       zeroPinStacksScheduleNothing: triggers.every(([, crons, pins]) => pins !== "[]" || crons.length === 0),
     }, {
       crons: ["ok", "ok"],
@@ -97,6 +116,28 @@ layer(NodeServices.layer, { excludeTestServices: true, timeout: "300 seconds" })
       reconcileBody: JSON.stringify({ error: "binding_recovery_pending_or_rejected" }),
       markers: { attester: true, solana: true, keeper: false, poster: false },
       zeroPinStacksScheduleNothing: true,
+    })
+  })
+
+  it.effect('The Pages-facing Solana binding entrypoint reaches only the binding routes of a production Solana attester and answers 404 for reserve release and binding recovery (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A binding needs the account\'s current intent and the wallet\'s own signature")', () => effect {
+    const script = try promise(() => bundle(root, { entry: "attester" }))
+    const pages = try behindPages(script, { ...zeroPins, PAYMENT_NETWORK: "solana-mainnet", PAYMENT_DEPLOYMENTS: JSON.stringify([{ projectId: "entrypoint-isolation" }]) })
+    const answers = {
+      pay: try posted(pages, "/v1/pay", "{}"),
+      completeBind: try posted(pages, "/v1/complete-bind", "{}"),
+      release: try posted(pages, "/v1/monthly-reserve-release", "{}"),
+      reconcile: try posted(pages, "/v1/reconcile-binding", "{}"),
+      read: try posted(pages, "/v1/pay", "", "GET"),
+      directRelease: try posted(pages, "/v1/monthly-reserve-release", "{}", "POST", "attester.default"),
+    }
+    try same({
+      statuses: Object.fromEntries(Object.entries(answers).map(([name, answer]) => [name, answer.status])),
+      bindingBodies: [answers.pay.text, answers.completeBind.text],
+      outbound: pages.seen,
+    }, {
+      statuses: { pay: 409, completeBind: 409, release: 404, reconcile: 404, read: 404, directRelease: 400 },
+      bindingBodies: [JSON.stringify({ error: "execution_pending_or_rejected" }), JSON.stringify({ error: "execution_pending_or_rejected" })],
+      outbound: [],
     })
   })
 

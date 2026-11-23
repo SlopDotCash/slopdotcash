@@ -1,7 +1,7 @@
 import { expect, fn, screen, userEvent } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import { walletHash } from "./fixtures.ts";
-import type { VaultSetupProps } from "./VaultSetup.tsx";
+import { ProvisionalDeposit, type ProvisionalDepositProps, type VaultSetupProps } from "./VaultSetup.tsx";
 
 const onReview = fn();
 const onCreate = fn();
@@ -9,6 +9,22 @@ const onRegisterExisting = fn();
 const onConfirmUnsent = fn();
 const owner = "0x5e1f0000000000000000000000000000000000b0";
 const summary = { network: "base-mainnet", owner, asset: "USDC", capDisplay: "1,000 USDC", automatic: true };
+const onDeposit = fn();
+const included = "The vault is on Base but its creation is not finalized yet. You can fund it below now. A deposit counts once Base finalizes it.";
+const provisional: ProvisionalDepositProps = {
+  deployment: { network: "base-mainnet", vault: "0x5e1f0000000000000000000000000000000000aa", owner, asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", deploymentTransaction: walletHash },
+  wallets: [{ id: "1", name: "Rabby" }],
+  address: owner,
+  amount: "250",
+  review: { operation: "deposit", gross: 250_000_000n, fee: 0n, net: 250_000_000n, decimals: 6, freeBalance: 0n, approvalNeeded: true, resetAllowance: false, batch: false },
+  onConnect: fn(),
+  onChooseAnother: fn(),
+  onAmount: fn(),
+  onReview: fn(),
+  onDeposit,
+  onCheck: fn(),
+  onEnterHash: fn(),
+};
 
 export const meta: ComponentMeta<VaultSetupProps> = {
   args: {
@@ -49,6 +65,8 @@ export const meta: ComponentMeta<VaultSetupProps> = {
     Unclear: { summary, pending: { hash: "", unclear: true } },
     Unavailable: { networks: [] },
     Unreadable: { unreadable: true },
+    ProvisionalDeposit: { summary, pending: { hash: walletHash, unclear: false }, notice: included, funding: <ProvisionalDeposit {...provisional} /> },
+    ProvisionalApprovalPending: { summary, pending: { hash: walletHash, unclear: false }, funding: <ProvisionalDeposit {...provisional} review={undefined} pending={{ action: "Token approval", hash: walletHash, sent: true }} /> },
   },
   play: {
     // spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"
@@ -67,6 +85,12 @@ export const meta: ComponentMeta<VaultSetupProps> = {
       await userEvent.type(screen.getByRole("textbox", { name: "Creation transaction hash" }), walletHash);
       await userEvent.click(screen.getByRole("button", { name: "Check vault registration" }));
       await expect([onRegisterExisting.mock.calls, screen.queryByRole("button", { name: "Create vault in wallet" })]).toEqual([[[walletHash]], null]);
+    },
+    // spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"
+    ProvisionalDeposit: async () => {
+      onDeposit.mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Approve exact token amount in wallet" }));
+      await expect([onDeposit.mock.calls.length, screen.queryByRole("button", { name: "Confirm deposit in wallet" })]).toEqual([1, null]);
     },
     // spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
     Unclear: async () => {

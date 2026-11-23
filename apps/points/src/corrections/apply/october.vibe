@@ -1,0 +1,298 @@
+// spec/points/corrections.md, "October replacement PRs credit the verified original contributors by their accepted lines"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/corrections.md, "A historical source retains its original carrier and every successor"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub } from "@repo/platform/github"
+import type { MergedOutcome } from "../../collect/merged/wire.vibe"
+import { implementationCreditActors, isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { interrupted } from "../../quotaRecovery/run.vibe"
+import type { Actor } from "../../score/facts.vibe"
+import { canonicalInstant } from "../collect/calendar.vibe"
+import { type CollectedEvidence, type SourceRead, repositoryIdOf } from "../collect/collect.vibe"
+import { discoverRetained, discoveryStale } from "../collect/retained.vibe"
+import type { CorrectionActor, CorrectionClaim, CorrectionSource } from "./manifest.vibe"
+
+export const octoberProofUnavailable = "october-original-contributor-proof-unavailable"
+export const mirroredOctoberDonor = "October replacement shares accepted commits with a merged donor PR"
+export const outcomeMissing = "Complete source outcome missing"
+
+export type OctoberOrdinary = { readonly kind: "plain" } | { readonly kind: "held"; readonly reason: string }
+
+export interface OriginatingClaim {
+  readonly id: string
+  readonly creditPullRequestId: string
+  readonly commitSha: string
+}
+
+export interface PullAuthor {
+  readonly node_id: string
+  readonly type: string
+}
+
+export interface GroupedOctober {
+  readonly evidence: CollectedEvidence
+  readonly candidateSourceId: string
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly claims: ReadonlyArray<CorrectionClaim>
+  readonly selected: ReadonlyArray<OriginatingClaim>
+  readonly authors: ReadonlyMap<string, PullAuthor>
+}
+
+schema PullUser { readonly node_id: string }
+schema ShaRef { readonly sha: string }
+schema PromotionPull {
+  readonly node_id: string
+  readonly html_url: string
+  readonly number: number
+  readonly state: string
+  readonly merged_at: string | null
+  readonly head: ShaRef
+  readonly base: { readonly ref: string }
+  readonly user: PullUser | null
+  readonly updated_at: string
+  readonly commits: number
+  readonly merge_commit_sha: string | null
+}
+schema GitObject { readonly sha: string; readonly parents: ReadonlyArray<ShaRef> }
+schema Ancestry { readonly status: string; readonly behind_by: number; readonly base_commit: ShaRef; readonly merge_base_commit: ShaRef }
+schema NativeCommit { readonly sha: string; readonly parents: ReadonlyArray<ShaRef>; readonly author: PullUser | null }
+
+const plainOrdinary: OctoberOrdinary = { kind: "plain" }
+
+function heldOrdinary(reason: string): OctoberOrdinary {
+  return { kind: "held", reason }
+}
+
+export function isOctober(occurredAt: string) {
+  return occurredAt.startsWith("2026-10-")
+}
+
+export function verifiedHuman<A extends { readonly id: string; readonly kind: string }>(actor: A | null | undefined): actor is A {
+  return actor !== null && actor !== undefined && actor.kind === "User" && isCreditEligibleCommitAuthor(actor)
+}
+
+function correctionActor(actor: Actor | null): CorrectionActor | null {
+  return actor === null ? null : { id: actor.id, login: actor.login, kind: actor.kind }
+}
+
+export effect function ordinarySource(read: SourceRead, owners: ReadonlyMap<string, string>) {
+  const outcome = read.outcome
+  const commits = outcome.commits
+  if (outcome.headRefOid === "" || commits === null) return undefined
+  const repository = repositoryIdOf(outcome.url)
+  return {
+    repository,
+    repositoryNodeId: read.repositoryNodeId,
+    sourceId: outcome.id,
+    sourceUrl: outcome.url,
+    headSha: outcome.headRefOid,
+    occurredAt: try isoAt(millisOf(outcome.mergedAt)),
+    author: correctionActor(outcome.author),
+    complete: true,
+    commitCount: commits.length,
+    commits: commits.map((commit) => ({
+      sha: commit.oid,
+      parentCount: commit.parentCount,
+      author: correctionActor(commit.author),
+      additions: commit.additions,
+      deletions: commit.deletions,
+      firstAcceptedSourceId: owners.get(`${repository.toLowerCase()}\u0000${commit.oid}`) ?? null,
+    })),
+  } satisfies CorrectionSource
+}
+
+function firstAcceptedOrdinary(source: CorrectionSource) {
+  return source.commits.filter((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId)
+}
+
+export function isMergedOriginalContributor(accepted: CorrectionSource, donor: CorrectionSource) {
+  const acceptedAuthor = accepted.author
+  const donorAuthor = donor.author
+  return verifiedHuman(acceptedAuthor) && verifiedHuman(donorAuthor) && acceptedAuthor.id !== donorAuthor.id &&
+    accepted.occurredAt !== null && donor.occurredAt !== null && donor.occurredAt >= accepted.occurredAt && donor.commits.length > 0 &&
+    donor.commits.every((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId &&
+      accepted.commits.some((copy) => copy.sha === commit.sha && copy.author?.id === commit.author?.id && copy.author?.kind === commit.author?.kind))
+}
+
+function isOriginalContributorContext(source: CorrectionSource, accepted: CorrectionSource) {
+  const author = source.author
+  const acceptedAuthor = accepted.author
+  return source.sourceId !== accepted.sourceId && source.occurredAt === null && source.complete && source.repositoryNodeId === accepted.repositoryNodeId &&
+    source.repository.toLowerCase() === accepted.repository.toLowerCase() && verifiedHuman(author) && verifiedHuman(acceptedAuthor) && author.id === acceptedAuthor.id &&
+    source.commits.every((commit) => commit.retainedCopy === undefined && (commit.firstAcceptedSourceId === null || commit.firstAcceptedSourceId === accepted.sourceId))
+}
+
+function soleOriginalPrimary(source: CorrectionSource) {
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1)
+  const actors = implementationCreditActors(source.author, ordinary.map((commit) => commit.author))
+  const [sole] = actors
+  return ordinary.length > 0 && actors.length === 1 && verifiedHuman(sole) ? sole : undefined
+}
+
+effect function nativeOriginalBeforePromotion(larger: MergedOutcome, original: MergedOutcome, owners: ReadonlyMap<string, string>) {
+  const repository = repositoryIdOf(larger.url)
+  const originalUrl = URL.parse(original.url)
+  if (originalUrl === null || originalUrl.hostname !== "github.com" || originalUrl.pathname.split("/").slice(1, 3).join("/").toLowerCase() !== repository.toLowerCase()) return false
+  const commits = original.commits
+  const largerCommits = larger.commits
+  const largerAuthor = larger.author
+  const originalAuthor = original.author
+  const originalMerged = Date.parse(original.mergedAt)
+  const largerMerged = Date.parse(larger.mergedAt)
+  if (!verifiedHuman(largerAuthor) || !verifiedHuman(originalAuthor) || largerAuthor.id === originalAuthor.id || originalMerged > largerMerged ||
+    !Number.isFinite(originalMerged) || !Number.isFinite(largerMerged) || larger.baseRefName === original.baseRefName ||
+    commits === null || commits.length === 0 || largerCommits === null || commits.length >= largerCommits.length || original.headRefOid === "" || larger.headRefOid === "") return false
+  const largerShas = new Set(largerCommits.map((commit) => commit.oid))
+  if (commits.some((commit) => (commit.parentCount !== 1 && commit.parentCount !== 2) || !largerShas.has(commit.oid) ||
+    owners.get(`${repository.toLowerCase()}\u0000${commit.oid}`) !== original.id)) return false
+  const github = try GitHub
+  const pulls: PromotionPull[] = []
+  for (const outcome of [larger, original]) {
+    const pull = try github.json(`/repos/${repository}/pulls/${outcome.number}`, PromotionPull)
+    if (pull.node_id !== outcome.id || pull.html_url !== outcome.url || pull.number !== outcome.number || pull.state !== "closed" ||
+      pull.merged_at !== outcome.mergedAt || pull.head.sha !== outcome.headRefOid || pull.base.ref !== outcome.baseRefName ||
+      pull.user?.node_id !== outcome.author?.id || pull.updated_at !== outcome.updatedAt || pull.commits !== outcome.commits?.length || pull.merge_commit_sha === null || pull.merge_commit_sha === "") return false
+    pulls.push(pull)
+  }
+  const mergeSha = pulls[1]?.merge_commit_sha
+  if (mergeSha === undefined || mergeSha === null) return false
+  const merge = try github.json(`/repos/${repository}/git/commits/${mergeSha}`, GitObject)
+  const [base, head] = merge.parents
+  if (merge.sha !== mergeSha || merge.parents.length !== 2 || head?.sha !== original.headRefOid || base?.sha === head?.sha) return false
+  const ancestry = try github.json(`/repos/${repository}/compare/${mergeSha}...${larger.headRefOid}?per_page=100&page=1`, Ancestry)
+  if (!["ahead", "identical"].includes(ancestry.status) || ancestry.behind_by !== 0 || ancestry.base_commit.sha !== mergeSha || ancestry.merge_base_commit.sha !== mergeSha) return false
+  if (commits.some((commit) => commit.parentCount === 2)) return false
+  const native = new Map<string, NativeCommit>()
+  for (const commit of commits) {
+    const value = try github.json(`/repos/${repository}/commits/${commit.oid}?per_page=100&page=1`, NativeCommit)
+    const author = value.author?.node_id ?? ""
+    if (value.sha !== commit.oid || value.parents.length !== 1 || author !== commit.author?.id || ![originalAuthor.id, largerAuthor.id].includes(author)) return false
+    native.set(value.sha, value)
+  }
+  let current = original.headRefOid
+  const visited = new Set<string>()
+  let originalSeen = false
+  for (let commit = native.get(current); commit !== undefined; commit = native.get(current)) {
+    if (visited.has(current)) return false
+    visited.add(current)
+    if (commit.author?.node_id === originalAuthor.id) originalSeen = true
+    else if (originalSeen) return false
+    current = commit.parents[0]?.sha ?? ""
+  }
+  return originalSeen && visited.size === native.size
+}
+
+effect function promotedNatively(larger: MergedOutcome, original: MergedOutcome, owners: ReadonlyMap<string, string>) {
+  const proven = nativeOriginalBeforePromotion(larger, original, owners) catch effect (error) => {
+    if (try interrupted()) throw error
+    return false
+  }
+  return proven
+}
+
+export effect function mirroredOctoberSources(outcomes: ReadonlyArray<MergedOutcome>, owners: ReadonlyMap<string, string>) {
+  const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome] as const))
+  const held = new Set<string>()
+  const native = new Map<string, boolean>()
+  for (const donor of outcomes) {
+    const donorAuthor = donor.author
+    if (!isOctober(donor.mergedAt) || !verifiedHuman(donorAuthor)) continue
+    const repository = repositoryIdOf(donor.url).toLowerCase()
+    for (const commit of donor.commits ?? []) {
+      if (commit.parentCount !== 1 || commit.author?.id !== donorAuthor.id) continue
+      const ownerId = owners.get(`${repository}\u0000${commit.oid}`)
+      const carrier = ownerId === undefined ? undefined : byId.get(ownerId)
+      if (carrier === undefined || carrier.number <= donor.number || carrier.mergedAt > donor.mergedAt || carrier.author?.id === donorAuthor.id) continue
+      held.add(donor.id)
+      const pair = `${donor.id}\u0000${carrier.id}`
+      let proven = native.get(pair)
+      if (proven === undefined) {
+        proven = try promotedNatively(donor, carrier, owners)
+        native.set(pair, proven)
+      }
+      if (!proven) held.add(carrier.id)
+    }
+  }
+  return held
+}
+
+export effect function octoberOrdinary(plain: CorrectionSource, read: SourceRead) {
+  const ordinary = firstAcceptedOrdinary(plain)
+  const unlinked = ordinary.some((commit) => !isCreditEligibleCommitAuthor(commit.author))
+  const otherAuthor = ordinary.some(({ author }) => verifiedHuman(author) && author.id !== plain.author?.id)
+  if (!unlinked && !otherAuthor) return plainOrdinary
+  const outcome = read.outcome
+  const occurredAt = canonicalInstant(outcome.mergedAt)
+  if (occurredAt === undefined) return heldOrdinary(discoveryStale)
+  const source = {
+    repository: plain.repository,
+    repositoryNodeId: read.repositoryNodeId,
+    sourceId: outcome.id,
+    number: outcome.number,
+    headSha: outcome.headRefOid,
+    occurredAt,
+    ...(read.mergeCommit === undefined ? {} : { mergeCommit: read.mergeCommit }),
+  }
+  const discovery = effect {
+    const found = try discoverRetained(source)
+    return found === "no-retained-original" ? plainOrdinary : heldOrdinary(octoberProofUnavailable)
+  }
+  const result = discovery catch effect (error) => {
+    if (error._tag !== "RetainedRefused") throw error
+    return heldOrdinary(error.message)
+  }
+  return result
+}
+
+export effect function groupedOctoberHold(group: GroupedOctober) {
+  const { evidence, sources, claims } = group
+  const claimedSources = sources.filter((source) => claims.some((claim) => claim.sourceId === source.sourceId))
+    .sort((left, right) => (left.occurredAt ?? "").localeCompare(right.occurredAt ?? "") || left.sourceId.localeCompare(right.sourceId))
+  const [accepted] = claimedSources
+  if (accepted === undefined) return undefined
+  const donors = sources.filter((source) => isMergedOriginalContributor(accepted, source))
+  const mergedDonor = donors.length === 1 ? donors[0] : undefined
+  const closedOriginals = sources.filter((source) => source.occurredAt === null && source.author?.id !== accepted.author?.id)
+  const origin = mergedDonor ?? (closedOriginals.length === 1 ? closedOriginals[0] : undefined)
+  const claimed = new Set(claimedSources.map((source) => source.sourceId))
+  const originalCandidate = (sources.length === 1 || origin !== undefined) &&
+    sources.every((source) => claimed.has(source.sourceId) || source.sourceId === origin?.sourceId || isOriginalContributorContext(source, accepted))
+  if (originalCandidate && (claimed.has(group.candidateSourceId) || group.candidateSourceId === mergedDonor?.sourceId)) {
+    if (origin !== undefined && (mergedDonor !== undefined || claimedSources.length > 1)) return octoberProofUnavailable
+    const outcome = evidence.outcomes.find((item) => item.id === accepted.sourceId)
+    const read = evidence.reads.get(accepted.sourceId) ?? (outcome === undefined ? undefined : { outcome, repositoryNodeId: accepted.repositoryNodeId })
+    if (read === undefined) return "Grouped accepted source disappeared from the complete census"
+    const plain = try ordinarySource(read, evidence.owners)
+    if (plain === undefined) return outcomeMissing
+    const ordinary = try octoberOrdinary(plain, read)
+    if (ordinary.kind === "held") return ordinary.reason
+  }
+  const originalIds = new Set(group.selected.map((claim) => claim.creditPullRequestId))
+  for (const source of claimedSources) originalIds.delete(source.sourceId)
+  const [originalId] = originalIds
+  if (originalIds.size === 1 && originalId !== undefined) {
+    const original = group.authors.get(originalId)
+    if (original === undefined || !group.authors.has(accepted.sourceId)) return "Original unit evidence disappeared"
+    const verifiedOriginal = sources.find((source) => source.sourceId === originalId)
+    if (verifiedOriginal === undefined) return "Verified original source disappeared"
+    const primary = soleOriginalPrimary(verifiedOriginal)
+    const alreadyCredited = primary !== undefined && claims.every((claim) => {
+      const commit = sources.find((source) => source.sourceId === claim.sourceId)?.commits.find((item) => item.sha === claim.commitSha)
+      return commit !== undefined && verifiedHuman(commit.author) && commit.author.id === primary.id
+    })
+    if (!alreadyCredited && original.type === "User" && (primary?.id ?? original.node_id) !== accepted.author?.id) return octoberProofUnavailable
+  }
+  const originals = new Set<string>()
+  for (const claim of group.selected) {
+    const carrierId = claims.find((item) => item.id === claim.id)?.sourceId
+    const carrier = sources.find((source) => source.sourceId === carrierId)
+    if (carrier === undefined) continue
+    let verifiedOriginal = sources.find((source) => source.sourceId === claim.creditPullRequestId)
+    if (verifiedOriginal === undefined || verifiedOriginal.author?.id === carrier.author?.id) {
+      const retained = sources.filter((source) => source.sourceId !== carrier.sourceId && verifiedHuman(source.author) && source.author.id !== carrier.author?.id &&
+        source.commits.some((commit) => commit.sha === claim.commitSha && (commit.author === null || commit.author.id === source.author?.id)))
+      if (retained.length === 1) verifiedOriginal = retained[0]
+    }
+    if (verifiedOriginal === undefined || verifiedOriginal.author?.id === carrier.author?.id || !verifiedOriginal.commits.some((commit) => commit.sha === claim.commitSha)) continue
+    originals.add(verifiedOriginal.sourceId)
+  }
+  return originals.size >= 2 ? octoberProofUnavailable : undefined
+}

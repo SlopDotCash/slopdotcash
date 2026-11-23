@@ -17,11 +17,13 @@ function registry(unavailable: ReadonlyArray<string> = []) {
   return JSON.stringify({ projects: [widgets, retired], unavailable })
 }
 
-const Ingress = areaLayer({
+const footed = "Retries failed fetches.\n\nMade via @slopdotcash"
+
+const ingressArea = (evidenceSwitch: Readonly<Record<string, string>>) => areaLayer({
   ...journeyBuild,
   entry: "ingress",
   d1: { SLOPBOT_DB: "slop-private" },
-  vars: { SLOPBOT_WEBHOOK_SECRET: secret, SLOPBOT_APP_USER_ID: appUserId, TEST_REGISTRY: registry(["ada/flaky"]) },
+  vars: { SLOPBOT_WEBHOOK_SECRET: secret, SLOPBOT_APP_USER_ID: appUserId, TEST_REGISTRY: registry(["ada/flaky"]), ...evidenceSwitch },
   queues: {
     producers: { SLOPBOT_QUEUE: "slopbot-jobs" },
     consumers: { "slopbot-jobs": { maxRetries, deadLetterQueue: "slopbot-jobs-dlq" }, "slopbot-jobs-dlq": { maxRetries: 0 } },
@@ -64,6 +66,16 @@ function pullEvent(action: string, path: string, repositoryId: number, number: n
   }
 }
 
+function bodied(action: string, number: number, body: string) {
+  const event = pullEvent(action, "ada/widgets", 7001, number)
+  return { ...event, pull_request: { ...event.pull_request, body } }
+}
+
+effect function reviewDelays(area: AreaShape, prefix: string) {
+  const sent = (try area.post("/test/queue-delays", {})).body as ReadonlyArray<{ readonly delivery: string; readonly kind: string; readonly delaySeconds: number }>
+  return sent.filter((entry) => entry.kind === "review" && entry.delivery.startsWith(prefix)).map((entry) => [entry.delivery, entry.delaySeconds])
+}
+
 function installationEvent(action: string, updatedAt: unknown, account: unknown = { id: 55, login: "ada", type: "User" }) {
   return { action, installation: { id: 9100, account, updated_at: updatedAt }, repositories: [{ id: 7001 }], sender: { id: 55, type: "User" } }
 }
@@ -86,7 +98,7 @@ effect function prepared(area: AreaShape) {
   try area.sql("CREATE TABLE IF NOT EXISTS ingress_notices (event_key TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, source_at TEXT NOT NULL, PRIMARY KEY (event_key, recipient))")
 }
 
-layer(Ingress, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+layer(ingressArea({ SLOPBOT_EVIDENCE_CLOSURE_ENABLED: "true" }), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
   it.effect('A signed delivery is checked before any write, recorded once and queued only for its registered scope (spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Story: Record the delivery and make independent routing decisions"; spec/slopbot/webhookDelivery.md, "An ordinary pending receipt does not claim exclusive execution"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/repositoryScope.md, "Scope follows registration, status, retirement and restriction in a fixed order"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID")', () => effect {
     const area = try Area
     try prepared(area)
@@ -212,6 +224,20 @@ layer(Ingress, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     })
   })
 
+  it.effect('With the evidence switch on, an opened pull request carrying the Slop participation footer waits 60 seconds in the queue for its receipt, and any other review job is sent at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const sent = [
+      try delivered(area, "pull_request", bodied("opened", 61, footed), { deliveryId: "e-footer" }),
+      try delivered(area, "pull_request", bodied("opened", 62, "Retries failed fetches."), { deliveryId: "e-plain" }),
+      try delivered(area, "pull_request", bodied("edited", 63, footed), { deliveryId: "e-edited" }),
+    ]
+    try same({ sent, delays: try reviewDelays(area, "e-") }, {
+      sent: [[202, "queued"], [202, "queued"], [202, "queued"]],
+      delays: [["e-footer", 60], ["e-plain", 0], ["e-edited", 0]],
+    })
+  })
+
   it.effect('A contended job retries with its bounded delay until the dead-letter queue keeps it, and a malformed copy is retried (spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/jobQueue.md, "A dead-lettered job stays visible and has no recovery route until the owner decides one")', () => effect {
     const area = try Area
     try prepared(area)
@@ -225,5 +251,14 @@ layer(Ingress, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       attempts: [{ n: maxRetries + 1 }],
       direct: [["message-0"], ["message-1"]],
     })
+  })
+})
+
+layer(ingressArea({}), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('With the evidence switch off, an opened pull request carrying the Slop participation footer is queued at once (spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const sent = try delivered(area, "pull_request", bodied("opened", 61, footed), { deliveryId: "e-footer-off" })
+    try same({ sent, delays: try reviewDelays(area, "e-") }, { sent: [202, "queued"], delays: [["e-footer-off", 0]] })
   })
 })

@@ -5,7 +5,7 @@ import { staleAfterMs } from "@repo/settlement/client"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts"
 import { parsePeriod } from "@repo/settlement/kernels/calendar"
 import { type PoolFacts, type PublicFunding, type SavedFunding, owedNow, publicSendAllowed } from "../../../../gen/frontend__projections.ts"
-import { type Answer, Machine as VaultMachine } from "../../../../gen/frontend__ownerVault.effect.vibe"
+import { type Answer, Machine as VaultMachine, actor } from "../../../../gen/frontend__ownerVault.effect.vibe"
 import { type Batch, Machine as BatchMachine } from "../../../../gen/frontend__batchedDeposit.effect.vibe"
 import { zero } from "../../../../gen/settlement__money.ts"
 import { type VaultLocks, pageGuardApplies } from "../../../../gen/frontend__vaultLocks.ts"
@@ -269,7 +269,7 @@ function savedHash(saved: Saved): string {
 }
 
 function plannedFrom(plan: OwnerPlan | undefined): string | undefined {
-  if (plan?.kind === "evmCall" || plan?.kind === "evmBatch") return plan.from
+  if (plan?.kind === "evmCall" || plan?.kind === "evmBatch" || plan?.kind === "evmSetting") return plan.from
   return plan?.kind === "evmDeposit" ? plan.call.from : undefined
 }
 
@@ -343,7 +343,7 @@ effect function publicGuard(funding: PublicFunding | undefined, operation: "depo
   if (funding !== undefined && !publicSendAllowed(funding, operation === "withdraw")) throw stopped(operation === "withdraw" ? fundingMessages.manageWithdrawals : fundingMessages.waiting)
 }
 
-export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean, funding?: PublicFunding) {
+export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, pledgeSupport: boolean, funding?: PublicFunding) {
   try publicGuard(funding, operation)
   const { evm, solana, batch, unreadPool } = try VaultDesk
   const facts = pool ?? unreadPool
@@ -363,9 +363,9 @@ export effect function reviewAction(connection: Connection, operation: "deposit"
   const review = try reviewTransfer(connection.evm, evm, operation, amount, "finalized")
   const locks = operation === "withdraw" ? try walletLocks(connection.evm, evm, pledgeSupport, review.freeBalance) : cached
   try guarded(operation, pool, locks)
-  try recordReview(operation === "withdraw" ? review.gross : 0n, facts, locks, refusal, depositOnly)
+  const recorded = try recordReview(operation === "withdraw" ? review.gross : 0n, facts, locks, refusal, depositOnly)
   let offered = false
-  if (review.batch) offered = (try batch.review(account, review)).phase === "Offered"
+  if (review.batch) offered = (try batch.review(actor(recorded), review)).phase === "Offered"
   return { kind: "evm", review, batch: offered } satisfies ActionReview
 }
 
@@ -489,8 +489,9 @@ export effect function lookupBatch(connection: Connection) {
   return state.phase === "HashKnown" ? try observeBatch(connection) : batchOutcome(state, deployment.network)
 }
 
-export effect function recoverBatch(connection: Connection, candidate: string, account: number) {
-  try (try VaultDesk).batch.recoverHash(candidate, account)
+export effect function recoverBatch(connection: Connection, candidate: string) {
+  const { page, batch } = try VaultDesk
+  try batch.recoverHash(candidate, actor(try page.machine.get()))
   return try observeBatch(connection)
 }
 

@@ -5,7 +5,7 @@ import { type GitHubFailure, GitHubMalformed, GitHubUnavailable } from "./errors
 
 const jwtBackdateSeconds = 60
 const jwtLifetimeSeconds = 540
-const refreshBeforeMillis = 5 * 60 * 1_000
+const defaultRefreshBeforeMillis = 5 * 60 * 1_000
 const answerLimitBytes = 64 * 1024
 const numericId = /^[1-9][0-9]{0,19}$/u
 const repositoryPart = /^[A-Za-z0-9_.-]{1,100}$/u
@@ -26,6 +26,7 @@ export interface AppOptions {
   readonly authority?: string
   readonly userAgent?: string
   readonly timeoutMs?: number
+  readonly refreshBeforeMillis?: number
 }
 
 export service GitHubApp {
@@ -41,6 +42,7 @@ schema Installation { id: number }
 interface Cached {
   readonly token: Redacted.Redacted<string>
   readonly refreshAt: number
+  readonly expiresAt: number
 }
 
 function segment(value: unknown) {
@@ -67,6 +69,7 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
     const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
     const userAgent = options.userAgent ?? "slop.cash"
     const timeoutMs = options.timeoutMs ?? defaultTimeoutMs
+    const refreshBeforeMillis = options.refreshBeforeMillis ?? defaultRefreshBeforeMillis
     const client = try HttpClient.HttpClient
     const exchange: Exchange = { client: manualRedirects(client), authority, userAgent, timeoutMs }
     const cache = new Map<string, Cached>()
@@ -77,6 +80,15 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
       return `${unsigned}.${base64url(try orDie(rs256Sign(options.privateKey, unsigned)))}`
     }
 
+    effect function minted(path: string, scope: Scope | undefined) {
+      const jwt = Redacted.make(try appJwt())
+      const answer = try exchanged(exchange, { method: "POST", url: `${authority}${path}`, accept: githubJson, bearer: jwt, json: scopeBody(scope) }, answerLimitBytes)
+      const issued = try decoded(IssuedToken, try parsed(answer.bytes, path), path)
+      const expiresAt = Date.parse(issued.expires_at)
+      if (!printable.test(issued.token) || !Number.isFinite(expiresAt)) throw new GitHubMalformed({ path, issue: "GitHub answered an unusable installation token" })
+      return { token: Redacted.make(issued.token), refreshAt: expiresAt - refreshBeforeMillis, expiresAt } satisfies Cached
+    }
+
     effect function installationToken(installationId: string, scope?: Scope) {
       const path = tokenPath(installationId)
       if (!numericId.test(installationId)) throw new GitHubMalformed({ path, issue: "an installation id is a positive integer" })
@@ -84,14 +96,12 @@ export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, Ht
       const now = try Clock.currentTimeMillis
       const cached = cache.get(cacheKey)
       if (cached !== undefined && now < cached.refreshAt) return cached.token
-      const jwt = Redacted.make(try appJwt())
-      const answer = try exchanged(exchange, { method: "POST", url: `${authority}${path}`, accept: githubJson, bearer: jwt, json: scopeBody(scope) }, answerLimitBytes)
-      const issued = try decoded(IssuedToken, try parsed(answer.bytes, path), path)
-      const expiresAt = Date.parse(issued.expires_at)
-      if (!printable.test(issued.token) || !Number.isFinite(expiresAt)) throw new GitHubMalformed({ path, issue: "GitHub answered an unusable installation token" })
-      const token = Redacted.make(issued.token)
-      cache.set(cacheKey, { token, refreshAt: expiresAt - refreshBeforeMillis })
-      return token
+      const renewed = minted(path, scope) catch effect (error) => {
+        if (cached === undefined || now >= cached.expiresAt) throw error
+        return cached
+      }
+      cache.set(cacheKey, renewed)
+      return renewed.token
     }
 
     effect function installationFor(owner: string, repository: string, options?: InstallationLookup) {

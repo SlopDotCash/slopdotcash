@@ -1,5 +1,5 @@
 // spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { RegistryManifestsLive } from "@repo/backend/ports"
 import { RepositoryRegistry } from "../client/snapshot/schema.vibe"
 import { evaluatedContributions, maximumEvaluatorAwardFileBytes } from "../collect/feeds/history.vibe"
@@ -11,10 +11,6 @@ import { EvaluationRefused, type ManifestInput, admitManifests } from "./manifes
 export error EvaluationsUsage { message: string }
 
 const usage = "evaluations check <repository registry JSON> production|staging"
-export const databases = {
-  production: "1b453124-2709-45af-8389-151a8105c461",
-  staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
-} as const
 const awardFile = /^award-[a-z0-9][a-z0-9-]*\.json$/u
 const unavailable = "Evaluator award file is unavailable"
 
@@ -55,7 +51,7 @@ export effect function evaluationInputs(root: string) {
   return inputs
 }
 
-export type RegistryEnvironment = keyof typeof databases
+export type RegistryEnvironment = keyof typeof registryDatabases
 
 function isEnvironment(text: string | undefined): text is RegistryEnvironment {
   return text === "production" || text === "staging"
@@ -74,7 +70,7 @@ effect function repositoriesFrom(registryPath: string) {
 effect function admittedFrom(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, environment: RegistryEnvironment) {
   const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
   const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
-  provide Layer.provide(RegistryManifestsLive, d1Http({ accountId, databaseId: databases[environment], token })) {
+  provide Layer.provide(RegistryManifestsLive, d1Http({ accountId, databaseId: registryDatabases[environment], token })) {
     return try admitManifests(inputs, repositories)
   }
 }

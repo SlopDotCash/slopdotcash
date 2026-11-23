@@ -3,10 +3,12 @@ import { entrypoint } from "@repo/platform/entrypoints"
 import { refreshMergeActivity } from "@repo/backend/live"
 import { worker } from "@repo/platform/worker"
 import { repositoryAccessRoutes } from "../access/route.vibe"
+import { publisherMethods } from "../import/publisher.vibe"
 import { refreshReportingReadiness } from "../readiness/reporting.vibe"
 import { type AppVars, appServices } from "./base.vibe"
+import { publisherLayer } from "./slopbot.vibe"
 
-export { HistoricalValuePublisher } from "./slopbot.vibe"
+export const HistoricalValuePublisher = entrypoint(publisherLayer, publisherMethods)
 
 export const ReportingReadinessRefresher = entrypoint((env: AppVars) => appServices(env), { refreshReportingReadiness, refreshMergeActivity })
 

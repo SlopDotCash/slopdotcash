@@ -93,9 +93,8 @@ effect function shown(row: SubmissionRow) {
   }
   if (view.intake === null) return view
   const stored = try storedIntake(row.id)
-  const record = stored === undefined ? undefined : try caseStanding(stored.case_id)
-  if (stored === undefined || record === undefined) return view
-  return withDeposit(view, { row, stored, record }, try depositView(stored.case_id))
+  if (stored === undefined) return view
+  return withDeposit(view, try depositView(stored.case_id))
 }
 
 effect function reportingRepository(id: string) {

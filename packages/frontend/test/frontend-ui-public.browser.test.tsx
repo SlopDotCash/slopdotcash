@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pausedNotice } from "../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../gen/backend__mergeActivity.ts";
 import { promiseNoticeText } from "../gen/frontend__projections.ts";
+import { formatDateTime } from "../src/app/format.ts";
 import { loginPath } from "../src/platform/environment.ts";
 import { FeeSetup, type FeePay, type PayAddress, openPayPage } from "../src/screens/fee/payFlow.vibe";
 import { WalletChoice, walletChoiceServices } from "../src/wallets/core/discovery.vibe";
@@ -187,6 +188,41 @@ describe('Open every product route at its existing address (spec/frontend/naviga
     expect((await site.layout()).mains).toBe(1);
   });
 
+  it('a fragment link aligns its section to the top, a wheel hands the page back to the reader, and a fragment opened while the page renders is aligned once it appears (spec/frontend/routes.md, "A fragment destination opens its section and stays aligned until it settles or the reader takes over")', async () => {
+    const section = named("heading", "Payment stages", { level: 2 });
+    const top = async () => (await site.box(section))?.top ?? Number.POSITIVE_INFINITY;
+    const settled = async () => {
+      let previous = Number.NaN;
+      let steady = 0;
+      await expect
+        .poll(async () => {
+          const current = await site.scrollY();
+          steady = current === previous ? steady + 1 : 0;
+          previous = current;
+          return steady;
+        }, { timeout: journeyMs })
+        .toBeGreaterThanOrEqual(3);
+      return previous;
+    };
+    await site.view(1280, 560, false);
+    await opened("/how-it-works", "How Slop works");
+    await site.click(named("link", "monthly cutoff"));
+    await at("/how-it-works#payments");
+    await expect.poll(async () => Math.abs(await top()), { timeout: journeyMs }).toBeLessThan(1);
+
+    const aligned = await settled();
+    await site.wheel(0, -300);
+    await expect.poll(() => site.scrollY(), { timeout: journeyMs }).toBeLessThan(aligned);
+    const reading = await settled();
+    expect(await top()).toBeGreaterThan(100);
+    expect(await site.scrollY()).toBe(reading);
+    await at("/how-it-works#payments");
+
+    expect((await site.open("/how-it-works#payments")).status).toBe(200);
+    await expect.poll(async () => Math.abs(await top()), { timeout: journeyMs }).toBeLessThan(1);
+    await accessible();
+  });
+
   it('an address that names no route kind, or does not decode, is the not-found page (spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown")', async () => {
     await site.allow("^404 GET /nope$");
     expect((await site.open("/nope")).status).toBe(404);
@@ -314,6 +350,27 @@ describe('Choose the contributor or maintainer journey on Home (spec/frontend/pr
     await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
     await accessible();
   });
+
+  it('with motion the campaign deletes its action and types the next one without changing its accessible name or height, and reduced motion puts the whole heading back (spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion")', async () => {
+    await site.view(1280, 900, false);
+    expect((await site.open("/")).status).toBe(200);
+    const visible = async () => (await textOf(contributorHeading)).replace(/\s+/gu, " ");
+    const height = async () => {
+      const box = await site.box(contributorHeading);
+      return box === null ? 0 : box.bottom - box.top;
+    };
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    const before = await height();
+    expect(before).toBeGreaterThan(0);
+    await expect.poll(visible, { timeout: journeyMs }).toBe("MAKE MONEY SECURING THE WEB.");
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    expect(await height()).toBe(before);
+
+    await site.view(1280, 900, true);
+    await expect.poll(visible, { timeout: journeyMs }).toBe("MAKE MONEY SHIPPING OPEN SOURCE.");
+    await shown(contributorHeading).toMatchObject({ count: 1, visible: true });
+    expect(await height()).toBe(before);
+  });
 });
 
 const directory = Array.from({ length: 26 }, (_, index) => {
@@ -391,6 +448,31 @@ describe('Show a monthly amount only while the vault holds it (spec/frontend/pro
     await shown({ text: "Points only", exact: true }).toMatchObject({ visible: true });
     await shown({ text: promiseNoticeText, exact: true }).toMatchObject({ count: 0 });
   });
+
+  it('a pool whose registered vault held this month\'s amount at the month start and still holds it is tagged Vaulted on Home and in the vault on /sponsors, never Not vaulted (spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', async () => {
+    const funded = pool("j4-pool-vaulted", 1444, "50000000", "$50", { reward: { chain: "base" } });
+    await list(funded);
+    const deployed = await site.vault({ projectId: funded.id });
+    const now = new Date().toISOString();
+    await site.sql("UPDATE vault_snapshots SET total_deposited = '60000000', free_balance = '60000000', observed_at = ? WHERE project_id = ?", now, funded.id);
+    await site.sql(
+      "INSERT OR IGNORE INTO vault_month_starts(project_id,network,vault,period,free_balance,total_gross_withdrawn,block_number,block_time,observed_at) VALUES(?,'base-mainnet',?,?,'60000000','0','1',?,?)",
+      funded.id,
+      deployed.vault,
+      now.slice(0, 7),
+      now,
+      now,
+    );
+
+    expect((await site.open("/")).status).toBe(200);
+    const card = named("link", nameOf(funded), { exact: false, within: projects });
+    await shown(card).toMatchObject({ count: 1, visible: true, href: `/projects/${funded.id}` });
+    const text = await textOf(card);
+    expect(["$50", "Vaulted", "Not vaulted", "Configured", "Promised", "Points only"].filter((part) => text.includes(part))).toEqual(["$50", "Vaulted"]);
+
+    await opened("/sponsors", "Fund a project");
+    await shown({ text: "$50 monthly · in the vault" }).toMatchObject({ visible: true });
+  });
 });
 
 const capped = pool("j4-capped", 1442, "300000000", "$300", { slopbot: { intakeCap: 2, wantedIssues: true } });
@@ -455,6 +537,45 @@ describe('Keep browsing on the last published registry when the live read fails 
     await shown({ text: "Projects unavailable" }).toMatchObject({ count: 0 });
     await at("/sponsors");
   });
+
+  it('a failed live registry read lists the last published projects under a stale label with their sync time, a project page keeps the label, the manage page asks for current data, an account page shows no label, and Try again clears it once the live read answers (spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct")', async () => {
+    const cached = pool("j4-cached", 1445, "75000000", "$75");
+    await list(cached);
+    const syncedAt = "2026-10-16T12:00:00.000Z";
+    const notice = { label: "Project data status" } satisfies Target;
+    const listedCard = named("link", nameOf(cached), { exact: false, within: projects });
+    await site.allow("^503 GET /api/v1/projects$", "^console Failed to load resource: the server responded with a status of 503");
+    await site.fail("GET", "/api/v1/projects", 503, { error: "unavailable", message: "The project registry is unavailable." });
+    await site.serve("/data/project-registry.json", 200, { schemaVersion: "1", syncedAt, projects: [manifestOf(cached)] });
+
+    expect((await site.open("/")).status).toBe(200);
+    await shown(notice).toMatchObject({ visible: true, text: expect.stringContaining(`Projects stale · ${formatDateTime(syncedAt)}`) });
+    await shown(named("button", "Try again", { within: notice })).toMatchObject({ visible: true });
+    await shown(listedCard).toMatchObject({ count: 1, visible: true, href: `/projects/${cached.id}` });
+    await shown(heading("Projects are unavailable")).toMatchObject({ count: 0 });
+    await accessible();
+
+    expect((await site.open(`/projects/${cached.id}`)).status).toBe(200);
+    await shown(named("heading", nameOf(cached), { level: 1, exact: false })).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ visible: true });
+
+    expect((await site.open(`/projects/${cached.id}/manage`)).status).toBe(200);
+    await shown(heading("Projects are unavailable")).toMatchObject({ visible: true });
+    await shown({ text: "This page needs current project data." }).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ count: 0 });
+
+    expect((await site.open("/account")).status).toBe(200);
+    await shown(heading("Settings")).toMatchObject({ visible: true });
+    await shown(notice).toMatchObject({ count: 0 });
+
+    expect((await site.open("/")).status).toBe(200);
+    await shown(notice).toMatchObject({ visible: true });
+    await site.unfail("GET", "/api/v1/projects");
+    await site.click(named("button", "Try again", { within: notice }));
+    await shown(notice).toMatchObject({ count: 0 });
+    await shown(listedCard).toMatchObject({ count: 1, visible: true });
+    await site.unserve("/data/project-registry.json");
+  });
 });
 
 describe('Every part reads the same published fee terms (spec/backend/submissionFeeTerms.md, "Story: Every part reads the same published fee terms"; spec/settlement/maintainerShare.md, "Story: Take the maintainer share out of the monthly amount"; spec/security/reportDeposit.md, "Story: Hold a private report until its refundable deposit is recorded")', () => {
@@ -487,7 +608,8 @@ const allocation = named("region", "Contributor allocation");
 const allocationPath = "/contributor-allocation.json";
 
 describe('See my contributor allocation on Payouts (spec/frontend/projections.md, "Story: See my contributor allocation on Payouts")', () => {
-  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+  it('a timed-out read is Allocation unavailable with Retry, and Retry shows only the signed-in account\'s row, awaiting a wallet, with where to add it, and from the deadline the same row is Unclaimed with no wallet link (spec/frontend/projections.md, "Payouts shows only the signed-in account\'s allocation row, and a failed read is unavailable, never absent"; spec/frontend/projections.md, "The row is Sent with a transfer, Unclaimed after the final batch, Scheduled with a timely wallet, and otherwise Awaiting wallet until the deadline and Unclaimed from it")', async () => {
+    await site.clock(new Date().toISOString());
     await site.user(recipient.id, recipient.login);
     await site.allow(`^failed GET ${allocationPath} `);
     await site.hold("GET", allocationPath);
@@ -502,6 +624,15 @@ describe('See my contributor allocation on Payouts (spec/frontend/projections.md
     const row = await textOf(allocation);
     expect(["1,536", "SLOP", "Awaiting wallet", "9,753", "Scheduled", "Sent"].filter((part) => row.includes(part))).toEqual(["1,536", "SLOP", "Awaiting wallet"]);
     await shown(named("link", "Add Robinhood Chain wallet", { within: allocation })).toMatchObject({ visible: true, href: "/account#wallets" });
+
+    await site.clock("2027-02-08T16:59:45.000Z");
+    expect((await site.open("/earnings")).status).toBe(200);
+    await shown({ text: "Awaiting wallet", within: allocation }).toMatchObject({ visible: true });
+    await shown({ text: "Unclaimed", exact: true, within: allocation }).toMatchObject({ visible: true });
+    await shown({ text: "Awaiting wallet", within: allocation }).toMatchObject({ count: 0 });
+    await shown(named("link", "Add Robinhood Chain wallet", { within: allocation })).toMatchObject({ count: 0 });
+    const missed = await textOf(allocation);
+    expect(["1,536", "SLOP", "Unclaimed", "Scheduled", "Sent"].filter((part) => missed.includes(part))).toEqual(["1,536", "SLOP", "Unclaimed"]);
   });
 });
 

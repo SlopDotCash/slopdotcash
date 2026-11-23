@@ -121,7 +121,7 @@ export effect function dispatchChannel(channel: Channel) {
   const settings = try NotifySettings
   const pilot = channel === "security" ? settings.security : settings.activity
   if (pilot.kind !== "on") return pilot.kind
-  try dispatch(channel, pilot, settings.from, releaseFor(settings))
+  try dispatch(channel, pilot, settings.from, releaseFor(settings, channel))
   return "dispatched" as const
 }
 

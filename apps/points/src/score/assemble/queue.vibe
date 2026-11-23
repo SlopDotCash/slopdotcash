@@ -4,6 +4,7 @@ import type { CensusEntry } from "../../census/collect.vibe"
 import { queueSelection } from "../../census/selection.vibe"
 import type { GitHubActor, WorkItem, WorkItemClaim } from "../../client/snapshot/schema.vibe"
 import type { IssueRecord, PullRequestRecord } from "../../collect/merged/hydrate.vibe"
+import { type VerifiedEvidence, pullRequestEvidenceStatus } from "../../collect/evidence/artifacts.vibe"
 import { AssemblyRefused, type Collection } from "../../collect/run/pipeline.vibe"
 import type { GitHubItem } from "../../kernels/scoring/selection.ts"
 import { compareCodeUnits, sameActor } from "../facts.vibe"
@@ -52,7 +53,7 @@ function claimOf(entry: CensusEntry, record: IssueRecord | PullRequestRecord, li
   }
 }
 
-effect function workItem(entry: CensusEntry, record: IssueRecord | PullRequestRecord, repository: string, linked: ReadonlyArray<PullRequestRecord>, referenceTime: number) {
+effect function workItem(entry: CensusEntry, record: IssueRecord | PullRequestRecord, repository: string, linked: ReadonlyArray<PullRequestRecord>, referenceTime: number, verified: ReadonlyArray<VerifiedEvidence>) {
   const selection = try queueSelection(entry.item)
   if (selection === undefined) throw new AssemblyRefused({ message: `Open census item ${record.id} is not open` })
   const labels = [...new Set(record.labels.map((label) => label.name))].sort(compareCodeUnits)
@@ -79,7 +80,7 @@ effect function workItem(entry: CensusEntry, record: IssueRecord | PullRequestRe
     commentCount: new Set(record.comments.map((comment) => comment.id)).size,
     claim: claimOf(entry, record, linked, referenceTime),
     selection,
-    evidence: noEvidence,
+    evidence: pull === undefined ? noEvidence : pullRequestEvidenceStatus(pull, verified),
     model: noModel,
   } satisfies WorkItem
 }
@@ -109,7 +110,7 @@ export effect function workQueue(collection: Collection) {
   const queued = (record: IssueRecord | PullRequestRecord, linked: ReadonlyArray<PullRequestRecord>) => effect {
     const found = entries.get(record.id)
     if (found === undefined) throw new AssemblyRefused({ message: `Open work item ${record.id} has no census decision` })
-    return try workItem(found.entry, record, found.repository, linked, referenceTime)
+    return try workItem(found.entry, record, found.repository, linked, referenceTime, collection.evidence.artifacts)
   }
   const issues: WorkItem[] = []
   for (const issue of collection.openIssues) {

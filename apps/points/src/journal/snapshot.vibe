@@ -559,7 +559,8 @@ export effect function creditAward(store: Store, repositories: Repositories, ite
   }
   const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
   const effectiveAt = event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
-  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, decision: context.decided ? try scoreDecision(event) : noDecision }])
+  const decision = context.decided ? try scoreDecision(event) : noDecision
+  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence, decision } : { type: "rescoreSource", a: input, e: evidence, decision }])
   if (refused !== "") {
     hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
     return []

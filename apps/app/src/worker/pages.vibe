@@ -1,4 +1,4 @@
-// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"
+// spec/frontend/presentation.md, "Only production slop.cash loads the approved first-party Cloudflare beacon"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"; spec/contributor/publication.md, "Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/settlement/reserveRelease.md, "Only an EVM vault's release reaches service approval"; spec/settlement/vaultSnapshots.md, "A register request answered pending is kept and repeated as the same account until it registers, is refused or is two days old"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import { CallerLive } from "@repo/backend/caller"
 import { type BackendVars, backend, backendServices } from "@repo/backend/live"
 import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
@@ -16,7 +16,8 @@ import { type Area, type Execution, area, later, pages } from "@repo/platform/wo
 import { type ProtectedMonthsVars, contributorAudience, disputeTriage, points, protectedMonthsAccess } from "@repo/points/live"
 import { AccessJournalLive, ClearanceLive, EnforcementLive, PublicSecurityLive, type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
 import { githubApp, unconfiguredGitHubApp } from "@repo/platform/github/app"
-import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, reservedAwardFeedAccess, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
+import { NETWORKS, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { DirectPaymentsLive, DirectRoutesLive, type MonthlyReleaseBindings, type PaymentNetworkVars, type RecoveryBindings, type ReservedAwardFeedVars, bindingRecovery, evmDirectRails, monthlyReleases, paymentNetworks, paymentRpc, reservedAwardFeedAccess, settlement, solanaDirectRails, sweepSavedVaultCreations } from "@repo/settlement/live"
 import { type HistoricalValueBinding, ReportingReadinessLive, historicalValueImport, repositoryAccessReader, slopbot } from "@repo/slopbot/live"
 import { documents } from "./document.vibe"
 import { workerCaches } from "./edgeCaches.ts"
@@ -48,6 +49,18 @@ function intakeGitHubApp(env: PagesEnv) {
   return appId === "" || privateKey === "" ? unconfiguredGitHubApp : Layer.provide(githubApp({ appId, privateKey: Redacted.make(privateKey), userAgent: "slop.cash" }), outbound)
 }
 
+function reviewedGenesis() {
+  const pinned: Record<string, string> = {}
+  for (const [network, definition] of Object.entries(NETWORKS)) if (definition.family === "solana") pinned[network] = definition.genesisHash
+  return JSON.stringify(pinned)
+}
+
+effect function reviewedRpcUrls(text: string | undefined) {
+  const parsed = Effect.try(() => JSON.parse(text ?? "{}") as unknown) catch () => undefined
+  const listed: Readonly<Record<string, unknown>> = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Readonly<Record<string, unknown>> : {}
+  return JSON.stringify(Object.fromEntries(Object.entries(listed).filter(([network, url]) => isNetworkKey(network) && typeof url === "string" && URL.parse(url)?.protocol === "https:")))
+}
+
 function bindings(env: PagesEnv) {
   return Layer.mergeAll(
     backendServices(env),
@@ -63,6 +76,9 @@ function bindings(env: PagesEnv) {
     bindingRecovery(env),
     monthlyReleases(env),
     intakeGitHubApp(env),
+    Layer.unwrap(effect {
+      return paymentRpc(try reviewedRpcUrls(env.PAYMENT_RPC_URLS), reviewedGenesis())
+    }),
     evmDirectRails(env.PAYMENT_RPC_URLS),
     solanaDirectRails({ paymentRpcUrls: env.PAYMENT_RPC_URLS, localSolanaGenesis: env.SLOP_LOCAL_SOLANA_GENESIS, recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL }),
     reservedAwardFeedAccess(env.OPERATOR_FEED_TOKEN),

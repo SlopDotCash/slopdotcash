@@ -15,7 +15,7 @@ import { EvidenceCache, atomicJson, atomicText, metadataDocument, readJson, reta
 import { type CorrectionBaseline, type CorrectionCandidate, type CorrectionManifest, type CorrectionPool, correctionBaseline, correctionRule, digestOf, encoded, hasBaselinePrefix, inventoryCorrectionPools } from "./inventory.vibe"
 import { type CensusMonth, canonicalInstant, censusMonths, historicalCutoff, isCanonicalInstant, isCensusMonth, wholeSecondIso } from "./calendar.vibe"
 import { assertCorrectionRegistry } from "./registry.vibe"
-import { discoverRetained, discoveryStale, hasUnlinkedCommit } from "./retained.vibe"
+import { type RetainedOriginals, discoveryStale, hasUnlinkedCommit, retainedOriginals } from "./retained.vibe"
 
 export const collectorWorkflow = ".github/workflows/points-implementation-corrections.yml"
 export const newCampaignPageSize = 50
@@ -105,7 +105,8 @@ export interface CollectedEvidence {
   readonly reads: ReadonlyMap<string, SourceRead>
   readonly outcomes: ReadonlyArray<MergedOutcome>
   readonly owners: ReadonlyMap<string, string>
-  readonly withoutRetainedOriginals: ReadonlySet<string>
+  readonly retainedOriginals: ReadonlyMap<string, RetainedOriginals>
+  readonly unresolved: UnresolvedOwnership
   readonly ownershipComplete: boolean
   readonly missingMonths: ReadonlyArray<string>
   readonly supplementDigests: ReadonlyArray<string>
@@ -487,7 +488,7 @@ effect function monthlyCensus(options: CollectionOptions, campaign: Campaign, pa
   return { outcomes, missingMonths, partDigests, loaders }
 }
 
-type UnresolvedOwnership = (repository: string, sha: string, id: string) => boolean
+export type UnresolvedOwnership = (repository: string, sha: string, id: string) => boolean
 
 function unresolvedOwnership(unavailable: ReadonlyMap<string, MergedOutcome>, owners: ReadonlyMap<string, string>, byId: ReadonlyMap<string, MergedOutcome>): UnresolvedOwnership {
   return (repository, sha, id) => {
@@ -723,7 +724,7 @@ effect function censusSupplements(directory: string, campaign: Campaign, pools: 
 }
 
 effect function retainedDiscoveries(selected: ReadonlyArray<CorrectionPool>, reads: ReadonlyMap<string, SourceRead>, owners: ReadonlyMap<string, string>, options: CollectionOptions, limitations: Map<string, string>) {
-  const discovered = new Set<string>()
+  const discovered = new Map<string, RetainedOriginals>()
   for (const { candidate } of selected) {
     const read = reads.get(candidate.sourceId)
     const commits = read?.outcome.commits ?? null
@@ -746,12 +747,12 @@ effect function retainedDiscoveries(selected: ReadonlyArray<CorrectionPool>, rea
       occurredAt,
       ...(read.mergeCommit === undefined ? {} : { mergeCommit: read.mergeCommit }),
     }
-    const found = discoverRetained(source) catch effect (error) => {
+    const found = retainedOriginals(source) catch effect (error) => {
       if (error._tag !== "RetainedRefused") throw error
       limitations.set(candidate.id, error.message)
       return undefined
     }
-    if (found === "no-retained-original") discovered.add(candidate.sourceId)
+    if (found !== undefined) discovered.set(candidate.sourceId, found)
   }
   return discovered
 }
@@ -804,7 +805,7 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     if (!ownershipComplete) limitations.set(candidate.id, "repository-ownership-census-incomplete")
     else if (!reads.has(candidate.sourceId)) limitations.set(candidate.id, limitations.get(candidate.sourceId) ?? "source-unavailable")
   }
-  const withoutRetainedOriginals = ownershipComplete ? try retainedDiscoveries(selected, reads, owners, options, limitations) : new Set<string>()
+  const discovered = ownershipComplete ? try retainedDiscoveries(selected, reads, owners, options, limitations) : new Map<string, RetainedOriginals>()
   return {
     options,
     campaign,
@@ -814,7 +815,8 @@ export effect function collectEvidence(options: CollectionOptions, inputs: Colle
     reads,
     outcomes: supplemented.outcomes,
     owners,
-    withoutRetainedOriginals,
+    retainedOriginals: discovered,
+    unresolved,
     ownershipComplete,
     missingMonths: census.missingMonths,
     supplementDigests,

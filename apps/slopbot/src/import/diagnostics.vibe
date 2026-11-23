@@ -185,7 +185,9 @@ interface ErrorFields {
   readonly path?: unknown
   readonly remaining?: unknown
   readonly resetAt?: unknown
-  readonly retryAfter?: unknown
+  readonly retryAfterSeconds?: unknown
+  readonly observedResetAt?: unknown
+  readonly observedRetryAfterSeconds?: unknown
 }
 
 function fieldsOf(error: unknown): ErrorFields {
@@ -211,21 +213,25 @@ function countOrNull(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
-function secondsOf(millis: unknown) {
-  return typeof millis === "number" && Number.isFinite(millis) && millis > 0 ? countOrNull(Math.floor(millis / 1_000)) : null
+function sourceReadCategoryOf(status: 403 | 429, message: string, remaining: number | null): SourceReadRefusal["category"] {
+  if (status === 403 && accessDenied.test(message)) return "access-denied"
+  if (secondaryLimit.test(message)) return "secondary-rate-limit"
+  if (remaining === 0) return "primary-rate-limit"
+  return status === 429 ? "rate-limited" : "unclassified"
 }
 
 function sourceReadRefusalOf(fields: ErrorFields): SourceReadRefusal | undefined {
+  const refused = fields._tag === "GitHubRefused"
+  if (!refused && fields._tag !== "RateLimited") return undefined
+  const status = fields.status
+  if ((status !== 403 && status !== 429) || typeof fields.path !== "string" || !fields.path.startsWith("/repos/")) return undefined
   const remaining = countOrNull(fields.remaining)
-  if (fields._tag === "GitHubRefused") {
-    if (fields.status !== 403 || typeof fields.path !== "string" || !fields.path.startsWith("/repos/")) return undefined
-    const message = typeof fields.message === "string" ? fields.message : ""
-    const category = accessDenied.test(message) ? "access-denied" : secondaryLimit.test(message) ? "secondary-rate-limit" : remaining === 0 ? "primary-rate-limit" : "unclassified"
-    return { category, remaining, resetAt: null, retryAfterSeconds: null }
+  return {
+    category: sourceReadCategoryOf(status, typeof fields.message === "string" ? fields.message : "", remaining),
+    remaining,
+    resetAt: countOrNull(refused ? fields.resetAt : fields.observedResetAt),
+    retryAfterSeconds: countOrNull(refused ? fields.retryAfterSeconds : fields.observedRetryAfterSeconds),
   }
-  if (fields._tag !== "RateLimited" || (fields.status !== 403 && fields.status !== 429)) return undefined
-  const category = remaining === 0 ? "primary-rate-limit" : fields.status === 429 ? "rate-limited" : "secondary-rate-limit"
-  return { category, remaining, resetAt: secondsOf(fields.resetAt), retryAfterSeconds: secondsOf(fields.retryAfter) }
 }
 
 export effect function historicalIntakeFailure(progress: HistoricalIntakeProgress, error: unknown) {

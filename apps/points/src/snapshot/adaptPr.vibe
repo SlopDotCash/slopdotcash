@@ -1,5 +1,5 @@
 // spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
-import { definitionProblem } from "@repo/backend/projects/definition"
+import { historicalDefinitionProblem } from "@repo/backend/projects/definition"
 import { sha256Hex, utf8 } from "@repo/platform/crypto"
 import { at, compareCodeUnits, isRecord, isScoreThirds, isUnavailableModel, pointsOf } from "../client/snapshot/checks.vibe"
 import { leaderboardMethodology } from "../client/snapshot/methodology.vibe"
@@ -58,7 +58,7 @@ function collectedRevision(revisions: ReadonlyArray<Json>, cutoffMs: number): Js
 effect function revisionNames(revision: Json, current: RegisteredRepository, branch: unknown, nodeId: unknown) {
   if ((try sha256Hex(JSON.stringify(revision.manifest))) !== revision.manifestSha256) return false
   const manifest = revision.manifest
-  if (!isRecord(manifest) || definitionProblem(manifest, { escrow: manifest.escrow, securityBounty: manifest.securityBounty }) !== undefined) return false
+  if (!isRecord(manifest) || historicalDefinitionProblem(manifest, { escrow: manifest.escrow, securityBounty: manifest.securityBounty }) !== undefined) return false
   const listed = listedRepository(manifest.repositories, current.id)
   if (manifest.id !== current.projectId || listed === undefined) return false
   const identity = identityNode(manifest, listed)

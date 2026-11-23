@@ -1,11 +1,11 @@
 // spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
 import { GitHub } from "@repo/platform/github"
 import type { Journal } from "../../../kernels/records/canonical.ts"
+import { batchDigest } from "../../../kernels/records/ids.vibe"
 import type { HistoricalClosedBinding } from "../../../collect/run/historical.vibe"
 import { valueReferenceQuery } from "../../collect/cache.vibe"
-import { refusal } from "../packet.vibe"
-import type { Row } from "../audit/catalog.vibe"
-import type { HistoricalAssessmentReceipt } from "../audit/reconcile.vibe"
+import type { HistoricalAssessmentHeads, Row } from "../audit/catalog.vibe"
+import { type HistoricalAssessmentReceipt, InvalidAssessmentJournal } from "../audit/reconcile.vibe"
 import type { AssessmentAudit } from "../../../../gen/points__assessmentAudit.ts"
 import { apply, catalogsComplete, goodClosure, goodRemoval } from "../../../../gen/points__assessmentAudit.effect.vibe"
 import { latestOf } from "./latest.vibe"
@@ -66,7 +66,7 @@ export function isStandaloneHistoricalReview(record: Row) {
 }
 
 effect function unless(holds: boolean) {
-  if (!holds) throw refusal("Historical assessment catalog: removed accepted merge evidence differs")
+  if (!holds) throw new InvalidAssessmentJournal({ message: "Invalid protected assessment journal" })
 }
 
 effect function removedMerges(candidates: ReadonlyArray<JointCandidate>, archive: HistoricalArchiveScope, projectId: string) {
@@ -132,7 +132,7 @@ effect function closedContexts(candidates: ReadonlyArray<JointCandidate>) {
     const batch = candidates.slice(offset, offset + closedBatch)
     const answer = fields(try github.graphql(closedContextQuery, { ids: batch.map(({ source }) => source.pullRequestNodeId) }, Schema.Unknown))
     const nodes = list(answer.nodes)
-    if (!Array.isArray(answer.nodes) || nodes.length !== batch.length) throw refusal("Historical assessment catalog: closed context read is incomplete")
+    try unless(Array.isArray(answer.nodes) && nodes.length === batch.length)
     for (const [index, { source, standalone }] of batch.entries()) {
       if (!closedLifecycle(fields(nodes[index]), source)) continue
       if (standalone || (source.mergeSha ?? null) !== null) {
@@ -145,9 +145,12 @@ effect function closedContexts(candidates: ReadonlyArray<JointCandidate>) {
   return verified
 }
 
-export function historicalEvidence(archive: HistoricalArchiveScope, projectId: string) {
-  return (candidates: ReadonlyArray<JointCandidate>) => effect {
-    const removed = try removedMerges(candidates, archive, projectId)
+export function historicalEvidence(archive: HistoricalArchiveScope | undefined, projectId: string) {
+  return (candidates: ReadonlyArray<JointCandidate>, heads: HistoricalAssessmentHeads) => effect {
+    if (archive !== undefined) {
+      try unless(archive.baseline.revisions.length === heads.d1PointsCount && (try batchDigest(archive.baseline)) === heads.d1PointsDigest)
+    }
+    const removed = archive === undefined ? new Set<string>() : try removedMerges(candidates, archive, projectId)
     const verifiedClosed = try closedContexts(candidates.filter(({ source }) => !removed.has(String(source.pullRequestNodeId))))
     return { removed, verifiedClosed } satisfies HistoricalEvidence
   }

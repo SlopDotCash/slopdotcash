@@ -1,8 +1,7 @@
 // spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"
-import { d1Http } from "@repo/platform/d1Http"
+import { d1Http, registryDatabases } from "@repo/platform/d1Http"
 import { github } from "@repo/platform/github"
 import { githubApp } from "@repo/platform/github/app"
-import { databases } from "../../../evaluations/check.vibe"
 import { actionsToken } from "../../../ingestion/token.vibe"
 
 export error ReviewedPublicationRefused { message: string }
@@ -18,7 +17,7 @@ export effect function reviewedServices<A, E, R>(run: A!E!R) {
   const appId = try environment("SLOPBOT_APP_ID")
   const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
   provide Layer.mergeAll(
-    d1Http({ accountId, databaseId: databases.production, token: apiToken }),
+    d1Http({ accountId, databaseId: registryDatabases.production, token: apiToken }),
     github({ token, userAgent: "slopbot" }),
     githubApp({ appId, privateKey, userAgent: "slop-october-owner-check" }),
   ) {

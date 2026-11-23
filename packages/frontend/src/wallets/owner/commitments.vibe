@@ -169,7 +169,8 @@ export effect function sendEvmSetting<E>(connection: EvmConnection, vault: EvmVa
 }
 
 export effect function checkEvmSetting(connection: EvmConnection, vault: EvmVault, target: MonthlySetting, plan: OwnerPlan | undefined, hash: string) {
-  const planned = try plannedCall(vault, plan, { to: vault.vault, value: "0x0", data: try settingData(target) })
+  const call = { to: vault.vault, value: "0x0", data: try settingData(target) }
+  const planned = plan?.kind === "evmSetting" && BigInt(plan.cap) === target.cap && plan.enabled === target.enabled ? callPlan(plan.from, vault.chainId, call) : try plannedCall(vault, plan, call)
   const read = try readWalletTransaction(connection, vault, hash, expectedOf(planned), true)
   if (read.status === "included" || read.status === "pending" || read.receipt === undefined) return "pending" satisfies ChainStatus
   if (read.status === "failed") return "failed" satisfies ChainStatus

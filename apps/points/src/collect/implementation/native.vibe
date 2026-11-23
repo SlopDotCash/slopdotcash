@@ -1,8 +1,8 @@
 // spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
-import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { ChildProcessSpawner } from "effect/process"
 import { sha256Hex } from "@repo/platform/crypto"
-import { Git, gitBytes, publicGitArguments } from "@repo/platform/git"
-import { concatBytes, lossyText } from "@repo/platform/git/bytes"
+import { Git, gitBytes, publicGitArguments, runGit } from "@repo/platform/git"
+import { lossyText } from "@repo/platform/git/bytes"
 import type { AcceptedImplementationSource } from "./sources.vibe"
 
 export error ImplementationEvidenceUnavailable { message: string }
@@ -115,40 +115,13 @@ export effect function readAcceptedImplementationProofs(directory: string, sourc
   return { digests, unavailable } satisfies AcceptedImplementationProofs
 }
 
-effect function drained<E>(stream: Stream.Stream<Uint8Array, E>) {
-  const chunks: Uint8Array[] = []
-  let size = 0
-  for try (const chunk of stream) {
-    if (size < diagnosticLimit) chunks.push(chunk)
-    size += chunk.length
-  }
-  return concatBytes(chunks)
-}
-
 effect function fetchTips(directory: string, url: string, tips: ReadonlyArray<string>) {
-  const git = try Git
   const args = publicGitArguments(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--depth=2", "--filter=blob:none", url, ...tips])
-  const env = {
-    PATH: git.searchPath,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_NO_REPLACE_OBJECTS: "1",
-    GIT_NO_LAZY_FETCH: "1",
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C",
-    ...publicEnvironment(directory),
+  const output = runGit({ args, env: publicEnvironment(directory), limit: diagnosticLimit, seconds: gitSeconds, stderrLimit: diagnosticLimit }, nativeUnavailable) catch effect () => {
+    return undefined
   }
-  const ran = scoped(effect {
-    const spawner = try ChildProcessSpawner.ChildProcessSpawner
-    const handle = try spawner.spawn(ChildProcess.make(git.binary, args, { env, extendEnv: false, stdin: "ignore", stdout: "ignore" }))
-    const [diagnostics, code] = try.all [drained(handle.stderr), handle.exitCode]
-    return Number(code) === 0 ? undefined : lossyText(diagnostics)
-  })
-  const failure = timeout(ran, Duration.seconds(gitSeconds)) catch effect () => {
-    return ""
-  }
-  return failure
+  if (output === undefined) return ""
+  return output.status === 0 ? undefined : lossyText(output.stderr)
 }
 
 effect function fetchSources(directory: string, url: string, sources: ReadonlyArray<AcceptedImplementationSource>) {

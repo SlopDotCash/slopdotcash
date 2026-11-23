@@ -2,7 +2,7 @@
 import { expect } from "vitest";
 import { commands } from "vitest/browser";
 import { loginPath } from "../../../src/platform/environment.ts";
-import type { Bucket, Diagnostics, InstallationSetup, Method, Op, Permission, RepositorySetup, Result, Role, Roles, Target, Upload, WalletSetup } from "./protocol.ts";
+import type { Bucket, Diagnostics, InstallationSetup, Method, Op, Permission, RepositorySetup, Result, Role, Roles, Target, Upload, VaultPurpose, WalletSetup } from "./protocol.ts";
 
 export const origin = "https://slop.cash";
 const journeyMs = 30_000;
@@ -21,7 +21,10 @@ export const site = {
   githubFail: (path: string, status: number) => ask({ kind: "githubFail", path, status }),
   scanner: (method: Method, path: string, body: string) => ask({ kind: "scanner", method, path, body }),
   object: (bucket: Bucket, key: string, text: string) => ask({ kind: "object", bucket, key, text }),
-  vault: ({ projectId }: { readonly projectId: string }) => ask({ kind: "vault", projectId }),
+  vault: ({ projectId, purpose = "ordinary" }: { readonly projectId: string; readonly purpose?: VaultPurpose }) => ask({ kind: "vault", projectId, purpose }),
+  backendRpc: () => ask({ kind: "backendRpc" }),
+  finalize: (chainId = 8453) => ask({ kind: "finalize", chainId }),
+  branch: (repository: string, name: string, files: Readonly<Record<string, string | null>> = {}) => ask({ kind: "branch", repository, name, files }),
   github: (login: string) => ask({ kind: "github", login }),
   open: (path: string, tab?: string) => ask({ kind: "open", path, ...(tab === undefined ? {} : { tab }) }),
   tab: (tab: string) => ask({ kind: "tab", tab }),
@@ -40,6 +43,11 @@ export const site = {
   leaks: (text: string) => ask({ kind: "leaks", text }),
   hold: (method: string, path: string) => ask({ kind: "hold", method, path }),
   release: (method: string, path: string) => ask({ kind: "release", method, path }),
+  fail: (method: string, path: string, status: number, body: unknown) => ask({ kind: "fail", method, path, status, body }),
+  unfail: (method: string, path: string) => ask({ kind: "unfail", method, path }),
+  serve: (path: string, status: number, body: unknown) => ask({ kind: "serve", path, status, body }),
+  unserve: (path: string) => ask({ kind: "unserve", path }),
+  clock: (iso: string) => ask({ kind: "clock", iso }),
   sent: () => ask({ kind: "sent" }),
   verifications: () => ask({ kind: "verifications" }),
   sql: (text: string, ...params: ReadonlyArray<string | number | null>) => ask({ kind: "sql", text, params }),
@@ -48,11 +56,15 @@ export const site = {
   enlarge: (target: Target) => ask({ kind: "enlarge", target }),
   restore: () => ask({ kind: "restore" }),
   layout: () => ask({ kind: "layout" }),
+  box: (target: Target) => ask({ kind: "box", target }),
+  scrollY: () => ask({ kind: "scrollY" }),
+  wheel: (dx: number, dy: number) => ask({ kind: "wheel", dx, dy }),
   allow: (...patterns: ReadonlyArray<string>) => ask({ kind: "allow", patterns }),
   diagnostics: (): Promise<Diagnostics> => ask({ kind: "diagnostics" }),
   wallets: (setup: WalletSetup) => ask({ kind: "wallets", setup }),
   walletAccount: (index: number) => ask({ kind: "walletAccount", index }),
   walletReject: () => ask({ kind: "walletReject" }),
+  walletFail: (method: string) => ask({ kind: "walletFail", method }),
   walletAsked: () => ask({ kind: "walletAsked" }),
   walletAddresses: () => ask({ kind: "walletAddresses" }),
 };

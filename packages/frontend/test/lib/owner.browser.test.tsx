@@ -45,9 +45,12 @@ import { provisionalVault } from "../../src/wallets/owner/provisionalVault.vibe"
 import { creationOf } from "@repo/settlement/chain/evm/creation";
 import { createVaultCalldata } from "@repo/settlement/chain/evm/factories";
 import { registryProjectDigest } from "@repo/settlement/owner/ownerInstructions";
-import { AwardsDesk, awardsServices, checkSavedRelease, followAwards, reviewRelease } from "../../src/screens/funding/awards/awards.vibe";
+import { releaseMonthlyReserveCalldata } from "@repo/settlement/chain/evm/monthlyRoot";
+import { parsePeriod } from "@repo/settlement/kernels/calendar";
+import { AwardsDesk, awardsServices, checkSavedRelease, connectReleaseOwner, followAwards, reviewRelease, sendRelease } from "../../src/screens/funding/awards/awards.vibe";
 import { frozenMonth } from "../../src/screens/funding/awards/fixtures.ts";
-import { SetupDesk, bountyFundsServices, checkRegistration, readBountyFunds, reviewCreation, setupServices } from "../../src/wallets/owner/vaultSetup.vibe";
+import { OwnerVaultSetup } from "../../src/screens/funding/vault/VaultSetup.tsx";
+import { SetupDesk, bountyFundsServices, checkRegistration, connectSetupWallet, createVault, readBountyFunds, reviewCreation, savedCreation, setupKey, setupServices } from "../../src/wallets/owner/vaultSetup.vibe";
 
 const account = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 const owner = account.address.toLowerCase();
@@ -80,10 +83,10 @@ afterAll(() => {
 
 const cleanups: Array<() => void> = [];
 const networkFetch = globalThis.fetch.bind(globalThis);
-let answering: ((path: string) => Response | undefined) | undefined;
+let answering: ((path: string, method: string) => Response | undefined) | undefined;
 const answeredFetch: typeof globalThis.fetch = (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input), location.origin).pathname;
-  const answer = answering?.(path);
+  const answer = answering?.(path, (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase());
   return answer === undefined ? networkFetch(input, init) : Promise.resolve(answer);
 };
 globalThis.fetch = answeredFetch;
@@ -231,6 +234,26 @@ function started() {
 function announce(uuid: string, provider: unknown) {
   window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info: { uuid, name: "Owner wallet", rdns: "test.owner", icon: "data:image/svg+xml,<svg/>" }, provider }) }));
 }
+
+type Requested = { readonly method: string; readonly params?: ReadonlyArray<unknown> };
+
+function storageFailsOnSend(provider: { readonly request: (asked: Requested) => Promise<unknown> }) {
+  const write = Storage.prototype.setItem;
+  cleanups.push(() => {
+    Storage.prototype.setItem = write;
+  });
+  return {
+    request: (asked: Requested) => {
+      if (asked.method === "eth_sendTransaction")
+        Storage.prototype.setItem = () => {
+          throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        };
+      return provider.request(asked);
+    },
+  };
+}
+
+const ownerWalletId = Effect.map(Effect.flatMap(WalletChoice, (choice) => choice.current()), (offers) => offers.find((offer) => offer.name === "Owner wallet")?.id ?? 0);
 
 function Follower({ runtime, page, account }: { runtime: ReturnType<typeof started>; page: OwnerVaultPage; account: number }) {
   useFollowed(runtime, `follow:${account}`, () => page.follow(account));
@@ -430,10 +453,10 @@ describe('Retain an uncertain deposit through replacement and finality (spec/fro
       const resumed = yield* reloaded.machine.get();
       const again = yield* Effect.match(reloaded.deposit(connection, "2"), { onFailure: (error) => error._tag, onSuccess: ({ state }) => state.phase });
       yield* reloaded.followCreation(connection, creation);
-      const received = yield* reloaded.followDeposit(connection, 2_000_000n);
+      const received = (yield* reloaded.followSaved(connection)).state;
       chain.finalize();
       yield* reloaded.followCreation(connection, creation);
-      const counted = yield* reloaded.followDeposit(connection, 2_000_000n);
+      const counted = (yield* reloaded.followSaved(connection)).state;
       return {
         form: opened.form,
         savedHash: savedHash === sent.hash,
@@ -846,7 +869,7 @@ describe('Let anyone fund a project from its public page and see who funded (spe
       return runtime.runPromise(Effect.gen(function* () {
         announce(uuid, chain.provider);
         const connection = yield* connectWallet(yield* walletId, true);
-        const withdraw = yield* refusal(reviewAction(connection, "withdraw", "1", undefined, actor, false, offered));
+        const withdraw = yield* refusal(reviewAction(connection, "withdraw", "1", undefined, false, offered));
         return { offered, withdraw, held: savedRequestHeld(project, deployment, period), sends: chain.seen.filter((method) => method === "eth_sendTransaction").length };
       }));
     };
@@ -875,7 +898,7 @@ describe('Let anyone fund a project from its public page and see who funded (spe
       const label = yield* savedAction();
       const checking = publicFunding(true, true, savedFundingOf(false, true, label));
       const connection = yield* connectWallet(yield* walletId, true);
-      const deposit = yield* refusal(reviewAction(connection, "deposit", "1", undefined, actor, false, checking));
+      const deposit = yield* refusal(reviewAction(connection, "deposit", "1", undefined, false, checking));
       yield* confirmTransferUnsent();
       const settled = savedRequestHeld(project, deployment, period);
       return { reopened, label, checking, deposit, settled, after: publicFunding(true, true, savedFundingOf(false, settled, label)) };
@@ -1038,6 +1061,42 @@ describe('Sign the owner\'s monthly transactions from a saved attempt (spec/fron
       checks: Array.from({ length: 2 }, () => ({ network: "base-mainnet", manifestSha256: frozenMonth.manifestSha256, planId: ready.planId, transactionId: hash("e") })),
     });
   });
+
+  it('a release the wallet sends while browser storage refuses to record its hash comes back with the hash marked not kept (spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt")', async () => {
+    const deployment = frozenMonth.deployment;
+    const period = parsePeriod(frozenMonth.period);
+    if (deployment === null || period === undefined) throw new Error("the frozen month names its vault and period");
+    const signatureHex = "11".repeat(65);
+    const terms = { allocationDigest: hash("1"), allocationRoot: hash("2"), root: hash("3"), expectedRemaining: "0", releasedGross: "120000000" };
+    const ready = {
+      status: "ready",
+      family: "evm",
+      request: { projectId: "slop", period: frozenMonth.period, network: "base-mainnet", manifestSha256: frozenMonth.manifestSha256 },
+      vault: deployment.vault,
+      signatureHex,
+      transaction: { from: owner, to: deployment.vault, data: releaseMonthlyReserveCalldata(period, { expectedRemaining: 0n, releasedGross: 120_000_000n }, `0x${signatureHex}`), value: "0" },
+      terms,
+      planId: "c".repeat(64),
+    };
+    const { asked, fetch } = replying([{ body: { ...frozenMonth, deployment: { ...deployment, owner } } }, { body: ready }, { body: ready }]);
+    const chain = fakeChain({ atomic: false, send: "mine" });
+    const runtime = ManagedRuntime.make(Layer.provide(awardsServices(lockProject, frozenMonth.period), fetch));
+    cleanups.push(() => void runtime.dispose());
+    const sent = await runtime.runPromise(Effect.gen(function* () {
+      announce("6d7e8f9a-0b1c-4d2e-8f3a-5b6c7d8e9f0a", storageFailsOnSend(chain.provider));
+      yield* followAwards(actor, String(actor));
+      const reviewed = yield* reviewRelease();
+      if (reviewed.kind !== "ready") throw new Error("the release was held");
+      const connection = yield* connectReleaseOwner(yield* ownerWalletId);
+      return yield* sendRelease(connection, reviewed.ready);
+    }));
+    expect({ ...sent, mined: chain.mined.map((entry) => [entry.to, entry.input]), requests: asked.length }).toEqual({
+      hash: chain.mined[0]?.hash,
+      kept: false,
+      mined: [[deployment.vault, ready.transaction.data]],
+      requests: 3,
+    });
+  });
 });
 
 describe('Read the private bounty vault\'s funds under current authority (spec/frontend/ownerMonthly.md, "Story: Read the private bounty vault\'s funds under current authority"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot")', () => {
@@ -1096,5 +1155,76 @@ describe('Create and register the vault from the setup review (spec/frontend/own
       registered: [{ kind: "registered", notice: "Vault registered.", revision: 2 }, "Done", null],
       register: Array.from({ length: 2 }, () => ({ step: "register", expectedRevision: 7, network: "base-mainnet", claimId: "c1", automatic: true, payoutPolicy: "ordinary", transactionId: hash("c") })),
     });
+  });
+
+  const usdc = tokenVault.asset;
+  const setupTerms = (projectId: string) => ({ projectId, purpose: "ordinary" as const, rewardAsset: undefined, rewardDecimals: undefined, monthlyCapMinor: "250000000", monthlyCapDisplay: "250 USDC" });
+  const developmentCreation = (transaction: string) => JSON.stringify({ version: 1, input: { network: "base-mainnet", claimId: "c1", automatic: true, expectedRevision: 7 }, review: { owner, asset: usdc, capDisplay: "250 USDC", payoutPolicy: "ordinary" }, hash: transaction });
+  const registerBody = { step: "register", expectedRevision: 7, network: "base-mainnet", claimId: "c1", automatic: true, payoutPolicy: "ordinary", transactionId: hash("c") };
+
+  it('a creation request development saved before the cut-over resumes as the signed-in owner\'s pending creation and registers from its hash without asking the wallet (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+    const terms = setupTerms("legacy-setup");
+    const key = setupKey(terms.projectId, terms.purpose);
+    sessionStorage.setItem(key, developmentCreation(hash("c")));
+    const { asked, fetch } = replying([{ body: { status: "registered", deployment: {}, project: {}, revision: 2, notice: "Vault registered." } }]);
+    const runtime = ManagedRuntime.make(Layer.provide(setupServices(terms), fetch));
+    cleanups.push(() => void runtime.dispose());
+    const result = await runtime.runPromise(Effect.gen(function* () {
+      const { page } = yield* SetupDesk;
+      const resumed = yield* page.follow(actor);
+      const plan = yield* savedCreation();
+      const registered = yield* checkRegistration();
+      return { resumed: [resumed.creation.phase, resumed.creation.slotOwner, resumed.creation.slot.hash], plan: [plan?.network, plan?.owner, plan?.asset, plan?.expectedRevision], registered: [registered.registration, registered.state.creation.phase, sessionStorage.getItem(key)] };
+    }));
+    expect({ ...result, register: asked.map((entry) => entry.body) }).toEqual({
+      resumed: ["Sent", actor, hash("c")],
+      plan: ["base-mainnet", owner, usdc, 7],
+      registered: [{ kind: "registered", notice: "Vault registered.", revision: 2 }, "Done", null],
+      register: [registerBody],
+    });
+  });
+
+  it('a creation the wallet sends while browser storage refuses to record its hash is reported as sent but not kept in storage (spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission")', async () => {
+    const creation = creationOf({ owner, projectDigest: registryProjectDigest("kept-setup"), asset: usdc, bounty: false, monthlyCap: 250_000_000n, automatic: true });
+    if (creation === undefined) throw new Error("no creation");
+    const review = { payoutPolicy: "ordinary", family: "evm", network: "base-mainnet", owner, asset: usdc, cap: "250000000", capDisplay: "250 USDC", automatic: true, chainId: "8453", existingVault: null, transaction: { from: owner, to: factory, data: createVaultCalldata(creation), value: "0x0" } };
+    const { fetch } = replying([{ body: { review } }, { body: { review } }]);
+    const chain = fakeChain({ atomic: false, send: "mine" });
+    const runtime = ManagedRuntime.make(Layer.provide(setupServices(setupTerms("kept-setup")), fetch));
+    cleanups.push(() => void runtime.dispose());
+    const options = { revision: 7, networks: ["base-mainnet"], claims: [{ chain: "base" as const, claimId: "c1", address: owner, authorized: true, firstAuthorizedAt: null }] };
+    const sent = await runtime.runPromise(Effect.gen(function* () {
+      announce("7e8f9a0b-1c2d-4e3f-9a4b-6c7d8e9f0a1b", storageFailsOnSend(chain.provider));
+      const { page } = yield* SetupDesk;
+      yield* page.follow(actor);
+      const connection = yield* connectSetupWallet(yield* ownerWalletId, "base-mainnet");
+      const shown = yield* reviewCreation(options, "base-mainnet", true, owner);
+      return yield* createVault(connection, shown);
+    }));
+    expect({ ...sent, mined: chain.mined.map((entry) => [entry.to, entry.input]) }).toEqual({ hash: chain.mined[0]?.hash, kept: "storage", mined: [[factory, createVaultCalldata(creation)]] });
+  });
+
+  it('a pending creation whose registration answer names the included vault shows the provisional deposit form under it (spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt")', async () => {
+    const terms = setupTerms("provisional-setup");
+    sessionStorage.setItem(setupKey(terms.projectId, terms.purpose), developmentCreation(hash("c")));
+    const provisional = { network: "base-mainnet", vault: tokenVault.vault, owner, asset: usdc, deploymentTransaction: hash("c") };
+    const asked: Array<readonly [string, string]> = [];
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    answering = (path, method) => {
+      asked.push([method, path]);
+      if (path === `/api/v1/project-vaults/${terms.projectId}`) return json(method === "POST" ? { status: "pending", provisional } : { revision: 7, networks: ["base-mainnet"] });
+      if (path === "/api/v1/payments/me") return json({ githubUserId: String(actor), wallets: [{ chain: "base", claimId: "c1", address: owner, authorized: true, firstAuthorizedAt: null }], payments: [], monthlyAwards: [], balances: [], directTransfers: [], walletObservations: [] });
+      return new Response(JSON.stringify({ error: "not_found", message: "Not found" }), { status: 404, headers: { "content-type": "application/json" } });
+    };
+    cleanups.push(() => {
+      answering = undefined;
+    });
+    const project: FundingProject = { id: terms.projectId, slug: terms.projectId, reward: { kind: "monthly-pool", monthlyCapMinor: terms.monthlyCapMinor, monthlyCapDisplay: terms.monthlyCapDisplay }, escrow: { chain: "base", deployments: [] } };
+    const root = createRoot(document.body.appendChild(document.createElement("div")));
+    cleanups.push(() => root.unmount());
+    await act(() => Promise.resolve(root.render(<OwnerVaultSetup project={project} account={actor} githubId={String(actor)} loginHref="/login" onRegistered={() => undefined} />)));
+    const form = () => document.querySelector<HTMLElement>('[aria-label^="Fund or withdraw ·"]');
+    await expect.poll(() => form()?.textContent ?? "", { timeout: 20_000 }).toContain("Direct transfers are not credited");
+    expect(asked.filter(([method]) => method === "POST")).toContainEqual(["POST", `/api/v1/project-vaults/${terms.projectId}`]);
   });
 });

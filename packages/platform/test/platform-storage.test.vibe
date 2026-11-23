@@ -48,11 +48,16 @@ function page(answer: Answer) {
   return { objects: objects.map((object) => [object.key, object.size, object.uploaded > 0]), more: cursor !== undefined }
 }
 
-function d1Answer(text: string) {
+interface D1Request {
+  readonly sql?: string
+  readonly batch?: ReadonlyArray<{ readonly sql: string }>
+}
+
+function d1Answer(texts: ReadonlyArray<string>) {
   const headers = { "content-type": "application/json" }
-  if (text.startsWith("INSERT")) return new Response(JSON.stringify({ success: false, errors: [{ code: 7500, message: "UNIQUE constraint failed: items.id: SQLITE_CONSTRAINT" }], messages: [], result: [] }), { status: 400, headers })
-  const result = text.startsWith("UPDATE") ? { success: true, results: [], meta: { changes: 1 } } : { success: true, results: [{ id: 1, name: "one" }, { id: 2, name: "two" }], meta: { changes: 0 } }
-  return new Response(JSON.stringify({ success: true, errors: [], messages: [], result: [result] }), { status: 200, headers })
+  if (texts.some((text) => text.startsWith("INSERT"))) return new Response(JSON.stringify({ success: false, errors: [{ code: 7500, message: "UNIQUE constraint failed: items.id: SQLITE_CONSTRAINT" }], messages: [], result: [] }), { status: 400, headers })
+  const result = texts.map((text) => text.startsWith("UPDATE") ? { success: true, results: [], meta: { changes: 1 } } : { success: true, results: [{ id: 1, name: "one" }, { id: 2, name: "two" }], meta: { changes: 0 } })
+  return new Response(JSON.stringify({ success: true, errors: [], messages: [], result }), { status: 200, headers })
 }
 
 const Started = Layer.effect(Storage, effect {
@@ -60,9 +65,9 @@ const Started = Layer.effect(Storage, effect {
   const net = try sync(() => internet({
     hosts: {
       "api.cloudflare.com": async (request) => {
-        const sent = (await request.json()) as { readonly sql: string }
+        const sent = (await request.json()) as D1Request
         api.push({ method: request.method, url: request.url, authorization: request.headers.get("authorization"), contentType: request.headers.get("content-type"), body: sent })
-        return d1Answer(sent.sql)
+        return d1Answer(sent.batch?.map((each) => each.sql) ?? [sent.sql ?? ""])
       },
     },
   }))
@@ -210,7 +215,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     try Effect.try(() => assert.deepStrictEqual(reopened, kept))
   })
 
-  it.effect('Programs reach D1 through the D1 HTTP API and never send a non-atomic batch (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+  it.effect('Programs reach D1 through the D1 HTTP API and send a batch as one atomic request (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
     const storage = try Storage
     const outcomes = try storage.request("/d1http", { method: "POST" })
     const query = "https://api.cloudflare.com/client/v4/accounts/account-1/d1/database/database-1/query"
@@ -219,12 +224,13 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       outcomes: {
         rows: [{ id: 1, name: "one" }, { id: 2, name: "two" }],
         changes: 1,
-        batch: "DatabaseFailure: atomic batch unavailable over HTTP",
+        batch: [{ rows: [{ id: 1, name: "one" }, { id: 2, name: "two" }], changes: 0 }, { rows: [{ id: 1, name: "one" }, { id: 2, name: "two" }], changes: 0 }],
         constraint: "ConstraintViolation",
       },
       api: [
         call({ sql: "SELECT id, name FROM items WHERE id IN (?, ?)", params: [1, 2] }),
         call({ sql: "UPDATE items SET name = ? WHERE id = ?", params: ["renamed", 1] }),
+        call({ batch: [{ sql: "SELECT 1", params: [] }, { sql: "SELECT 2", params: [] }] }),
         call({ sql: "INSERT INTO items (id, name) VALUES (?, ?)", params: [1, "again"] }),
       ],
       unexpected: [],

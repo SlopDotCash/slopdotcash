@@ -36,6 +36,7 @@
     "vibelang": "0.0.13",
     "vibestack": "workspace:*",
     "vite": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "yaml": "2.9.1"
   }
 }

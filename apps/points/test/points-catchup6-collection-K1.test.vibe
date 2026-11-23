@@ -5,13 +5,13 @@ import { github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { settableClock } from "@repo/platform/testing/clock"
 import type { GitHubFake } from "@repo/platform/testing/github"
-import { type ValueCensus, ValueInputs, type ValueInputsRead } from "@repo/ports/points"
-import { leaderboardMethodology } from "../src/client/snapshot/methodology.vibe"
+import { type ValueCensus, ValueInputs } from "@repo/ports/points"
 import { type CollectionMemoFile, type MemoSession, openMemoFromEnv, openSession, readCollectionMemo, writeMemo } from "../src/collect/memo/memo.vibe"
 import { restoreMemo } from "../src/collect/memo/restore.vibe"
 import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
 import { graphqlClient } from "../src/ingestion/graphql.vibe"
-import { acceptedReviewHistoryJson, creditlessSnapshot, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { snapshotAssembly } from "../src/score/assemble/assemble.vibe"
+import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
 import { type ArchivedFile, checkedOutCommit, checkpointOf } from "./support/u3/archive.ts"
 import { fetcherOf, repository, seeded as seededActions, start as actionsStart } from "./support/u3/github.ts"
 import { type Seeded, requestsMatching, seeded, start } from "./support/u5/github.ts"
@@ -20,7 +20,7 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-const read: ValueInputsRead = { valueDecisions: [], jointValueDecisions: [], valueActors: [], retainedCommitCredits: [], attributionHolds: [], heldWorkUnits: [] }
+const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
 const codeDigest = "c".repeat(64)
 const localRun = { actions: false, gitRef: "", eventName: "" }
 const lineQuery = "LeaderboardOutcomeCommitLines"
@@ -33,13 +33,23 @@ function collectionLayers(world: Seeded, collections: Array<Collection>) {
     outbound,
     Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
     Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
-    Layer.succeed(ValueInputs, { load: (_census: ValueCensus) => Effect.succeed(read) }),
-    Layer.succeed(SnapshotAssembly, {
-      assemble: (collection: Collection) => effect {
-        collections.push(collection)
-        return creditlessSnapshot(collection, leaderboardMethodology)
-      },
+    Layer.succeed(ValueInputs, {
+      load: (census: ValueCensus) => Effect.succeed({
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: [],
+      }),
     }),
+    Layer.provide(Layer.effect(SnapshotAssembly, effect {
+      const real = try SnapshotAssembly
+      return { assemble: (collection: Collection) => effect {
+        collections.push(collection)
+        return try real.assemble(collection)
+      } }
+    }), snapshotAssembly),
   )
 }
 

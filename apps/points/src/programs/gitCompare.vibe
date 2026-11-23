@@ -4,11 +4,9 @@ import { GitHub, github, githubApi } from "@repo/platform/github"
 import { localGitObjects } from "../ingestion/localGit.vibe"
 import { transportLimitBytes } from "../ingestion/read.vibe"
 
-error CompareUsage { message: string }
 error CompareToken { message: string }
 error LocalGitMismatch { message: string }
 
-const usage = "usage: git compare-local <root> <owner/repo>"
 const historyLimitBytes = 256 * 1024 * 1024
 const gitSeconds = 600
 const remoteOnly = ["node_id", "verification"]
@@ -35,7 +33,6 @@ effect function gitLines(gitDir: string, args: ReadonlyArray<string>) {
 
 export effect function compareLocal(args: ReadonlyArray<string>) {
   const [root = "", repository = "", commitArg = "40", walkArg = "3"] = args
-  if (root === "" || repository === "") throw new CompareUsage({ message: usage })
   const primary = try Config.withDefault(Config.String("GITHUB_TOKEN"), "")
   const token = primary !== "" ? primary : try Config.withDefault(Config.String("GH_TOKEN"), "")
   if (token === "") throw new CompareToken({ message: "GITHUB_TOKEN is required" })

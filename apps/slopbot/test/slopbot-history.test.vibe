@@ -102,6 +102,8 @@ effect function world(github: GitHubFake) {
     world.addPull({ repo: "ada/bravo", number: 7, author: "bo", state: "closed", mergedAt: "2026-10-15T00:00:00Z" })
     world.addPull({ repo: "ada/bravo", number: 9, author: "bo", state: "closed", mergedAt: "2026-12-05T00:00:00Z" })
     world.addPull({ repo: "ada/bravo", number: 10, author: "bo", state: "closed", mergedAt: "2026-11-15T00:00:00Z" })
+    world.addPull({ repo: "ada/bravo", number: 12, author: "bo", state: "closed", mergedAt: "2026-10-20T00:00:00Z" })
+    world.addPull({ repo: "ada/bravo", number: 13, author: "bo", state: "closed", closedAt: "2026-12-03T00:00:00Z" })
     world.addInstallation({ id: 501, account: "ada", repositories: ["alpha", "bravo"], permissions: { metadata: "read", pull_requests: "read" } })
     world.addInstallation({ id: 502, account: "ada", repositories: ["alpha"], permissions: { metadata: "read", pull_requests: "read" } })
   }))
@@ -179,6 +181,39 @@ function producedBy(base: ReturnType<typeof envelope>, channel: string, provider
 }
 
 const importUrl = `${site}/api/v1/slopbot/value-import`
+
+const jointPulls = [12, 13]
+
+function jointEnvelope(sourceDigest: string, claimIds: ReadonlyArray<string>) {
+  const base = envelope(12)
+  return {
+    installationId: 501,
+    mode: "work-unit",
+    result: {
+      ...base.result,
+      sourceDigest,
+      verdict: {
+        units: [{
+          claimIds,
+          assessment: {
+            status: "unresolved",
+            tier: null,
+            rationale: "The imported verdict stays unresolved.",
+            dimensions: {},
+            evidenceUrls: ["https://github.com/ada/bravo/pull/12"],
+            relatedPullRequests: [],
+            limitations: ["The imported verdict stays unresolved."],
+            reviews: [],
+          },
+        }],
+      },
+    },
+    revisionReason: null,
+    sources: jointPulls.map((pull) => ({ repository: "ada/bravo", pullRequestNumber: pull, contextPaths: [] })),
+    supersedes: [],
+    legacyPredecessors: [],
+  }
+}
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Feeds answer stored penalties and history pages through a fixed sequence (spec/slopbot/publicFeeds.md, "Feeds serve only registered history repositories with strictly validated cursors, 100 items per page and no-store"; spec/slopbot/publicFeeds.md, "Each feed keeps its published schema id: slop-penalties:v1, slop-penalty-history:v1, slop-value-history:v1, slop-work-unit-history:v1"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "The requested source selects one live record in the complete captured lineage")', () => effect {
@@ -277,7 +312,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     })
   })
 
-  it.effect('An administrator imports a pre-November subscription assessment once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
+  it.effect('An administrator imports a pre-November subscription assessment once, and a joint import with a later unmerged context source is published once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
     const journal = "SELECT COUNT(*) AS n FROM slopbot_value_journal"
     const steps = [
       try call(importUrl, { origin: "https://elsewhere.test", cookie: "7", json: envelope(7) }),
@@ -328,6 +363,28 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       feed: ["slop-value-history:v1", "R_bravo02", [receipt.recordDigest]],
       legacy: { legacy: [receipt.recordDigest], verifiedLegacySources: [`R_bravo02/${stored.pullRequestNodeId ?? ""}`] },
       foreign: { legacy: [], verifiedLegacySources: [] },
+    })
+
+    const workUnits = "SELECT COUNT(*) AS n FROM slopbot_work_unit_journal WHERE project_id = 'bravo'"
+    const evidence = try call(`${worker}/__test/joint-evidence`, { json: { installationId: 501, sources: jointPulls.map((number) => ({ repository: "ada/bravo", number, projectId: "bravo" })) } })
+    const prepared = evidence.body as { readonly sourceDigest: string; readonly claimIds: ReadonlyArray<string>; readonly limitations: ReadonlyArray<string> }
+    const joint = try call(importUrl, { origin: site, cookie: "7", json: jointEnvelope(prepared.sourceDigest, prepared.claimIds) })
+    const jointReceipt = joint.body as { readonly recordDigest?: unknown; readonly sequence?: unknown }
+    const jointRepeated = try call(importUrl, { origin: site, cookie: "7", json: jointEnvelope(prepared.sourceDigest, prepared.claimIds) })
+    const context = try call(`${worker}/v1/work-unit-assessments?repository=ada/bravo&pull=13`)
+    const contextPage = context.body as { readonly records?: ReadonlyArray<{ readonly record_digest?: unknown }> }
+    try same({
+      evidence: [evidence.status, prepared.claimIds.length, prepared.limitations],
+      joint: [joint.status, typeof jointReceipt.recordDigest, jointReceipt.sequence],
+      repeated: [jointRepeated.status, jointRepeated.body],
+      rows: try count(workUnits),
+      context: [context.status, contextPage.records?.map((record) => record.record_digest)],
+    }, {
+      evidence: [200, 1, []],
+      joint: [200, "string", 5],
+      repeated: [200, joint.body],
+      rows: 1,
+      context: [200, [jointReceipt.recordDigest]],
     })
   })
 })

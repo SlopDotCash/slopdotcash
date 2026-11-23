@@ -214,6 +214,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     repositories,
     projectOf: projectOfRegistry(project.registry.projects),
     qualified: qualification !== undefined,
+    preview: !invocation.apply,
     closedReviews,
     verifiedRetirements: { duplicates, order },
   })

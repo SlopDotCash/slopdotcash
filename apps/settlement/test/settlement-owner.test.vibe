@@ -155,7 +155,7 @@ const mismatch = "WalletActionRefused: This transaction does not match the pendi
 const lockedFundsRefusal = "WalletActionRefused: These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
 
 layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, a withdrawal of a pledged month\'s funds is refused before the wallet step, and the owner locks three months once, never lower, cannot release an unpledged month and cannot lock a bounty vault (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, a withdrawal of a pledged month\'s funds is refused before the wallet step, and the owner locks three months once, never lower, cannot release an unpledged month and cannot lock a bounty vault or a vault not yet migrated (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthPledges.md, "A lock covers 1, 3, 6 or 12 months from the current UTC month at one positive amount"; spec/settlement/monthPledges.md, "A lock plan refuses a vault that is not ordinary or not migrated and a month it would lower, and plans the months not open or below the amount"; spec/settlement/monthPledges.md, "A release needs an open pledge, and closing a pledge account needs a closed one"; spec/settlement/monthPledges.md, "A withdrawal review refuses to take funds the open pledges hold"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
     const { verified, owner } = try opened("owner-funding-journey")
     const deposit = intentOf("deposit", owner, try amount(1_000_000n))
     const depositPlan = try reviewFunding(verified, deposit, capture, depositFacts)
@@ -193,6 +193,9 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const unpledged = try refusalOf(reviewRelease({ ...planned, period: months[5] ?? 0 }))
     const bounty = try opened("owner-month-lock-bounty", "Bounty")
     const notOrdinary = try refusalOf(reviewLock({ deployment: bounty.record, verified: bounty.verified, wallet: bounty.owner.address, capture, count: 1, amount: 200_000n, nowSeconds }))
+    const { prePledge } = deployment.chain
+    const unmigrated = { projectId: prePledge.projectId, projectPda: prePledge.project, vault: prePledge.vault }
+    const notMigrated = try refusalOf(reviewLock({ ...planned, deployment: { ...locking.record, ...unmigrated }, verified: { ...locking.verified, project: prePledge.project, vault: prePledge.vault }, count: 1, amount: 200_000n, nowSeconds }))
     const takesLocked = try lockedFunds(locking.record, 500_000n)
     const aboveLocked = try lockedFunds(locking.record, 400_000n)
     try same({
@@ -211,6 +214,7 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
         strangerLock,
         unpledged,
         notOrdinary,
+        notMigrated,
         withdrawals: [takesLocked, aboveLocked],
       },
     }, {
@@ -229,6 +233,7 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
         strangerLock: "WalletActionRefused: Only the vault owner can pledge months",
         unpledged: "WalletActionRefused: This month has no open pledge.",
         notOrdinary: "WalletActionRefused: Only an ordinary project vault takes month pledges.",
+        notMigrated: "WalletActionRefused: This vault must be migrated before it can lock months.",
         withdrawals: [true, false],
       },
     })

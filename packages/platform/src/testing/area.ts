@@ -16,6 +16,7 @@ export type AreaWorker = Bindings & { readonly name: string } & AreaSource;
 export interface IdentityOptions {
   readonly binding?: string;
   readonly origin?: string;
+  readonly browserOrigin?: string;
   readonly audience?: string;
 }
 
@@ -27,6 +28,8 @@ export type AreaOptions = AreaSource & Bindings & {
   readonly identity?: IdentityOptions;
   readonly compatibilityDate?: string;
 };
+
+const bindingCookieName = "__Host-slop_oauth_bind_";
 
 export interface Session {
   readonly cookie: string;
@@ -114,6 +117,7 @@ function locationOf(step: string, response: Response): string {
 export function areaLayer(options: AreaOptions): Layer.Layer<Area> {
   const origin = options.origin ?? "https://slop.test";
   const identity = { binding: "SLOP_IDENTITY", origin: "https://identity.slop.test", audience: "slop-points-web", ...options.identity };
+  const browserOrigin = identity.browserOrigin ?? identity.origin;
   return Layer.effect(Area, Effect.gen(function* () {
     const main = yield* Effect.promise(() => scriptOf(options));
     const extras = yield* Effect.promise(async () => Object.fromEntries(await Promise.all(Object.entries(options.workers ?? {}).map(async ([binding, extra]) =>
@@ -162,17 +166,18 @@ export function areaLayer(options: AreaOptions): Layer.Layer<Area> {
       if (bound === undefined) throw new Error(`signIn needs the identity Worker bound as ${identity.binding} in workers`);
       if (options.internet === undefined) throw new Error("signIn needs internet() with the GitHub fake");
       const worker = (await mf.getWorker(bound.name)) as unknown as Fetching;
-      // The identity Worker is reached through Miniflare's platform proxy, which refuses an Origin header whose host is
-      // not a configured route, so the start and poll go without one, as the installed client sends them.
-      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      const started = Schema.decodeUnknownSync(Started)(await (await expect("start", await worker.fetch(`${identity.origin}/v1/oauth/start`, json({ audience: identity.audience })), 201)).json());
-      const authorized = await expect("authorize", await worker.fetch(started.authorizationUrl, { redirect: "manual" }), 302);
+      const json = (body: unknown, cookie?: string) => ({ method: "POST", headers: { "content-type": "application/json", origin: browserOrigin, ...cookie === undefined ? {} : { cookie } }, body: JSON.stringify(body) });
+      const start = await expect("start", await worker.fetch(`${identity.origin}/v1/oauth/start`, json({ audience: identity.audience })), 201);
+      const started = Schema.decodeUnknownSync(Started)(await start.json());
+      const binding = `${bindingCookieName}${started.flowId}`;
+      const browser = `${binding}=${cookieOf("start", start, binding)}`;
+      const authorized = await expect("authorize", await worker.fetch(started.authorizationUrl, { headers: { cookie: browser }, redirect: "manual" }), 302);
       const state = cookieOf("authorize", authorized, "__Host-slop_oauth_state");
       const github = new URL(locationOf("authorize", authorized));
       github.searchParams.set("login", login);
       const consented = await expect("GitHub authorize", await options.internet.handler(new Request(github.toString(), { redirect: "manual" })), 302);
-      await expect("callback", await worker.fetch(locationOf("GitHub authorize", consented), { headers: { cookie: `__Host-slop_oauth_state=${state}` }, redirect: "manual" }), 200);
-      const polled = await expect("poll", await worker.fetch(`${identity.origin}/v1/oauth/poll`, json({ flowId: started.flowId, pollCapability: started.pollCapability, audience: identity.audience })), 200);
+      await expect("callback", await worker.fetch(locationOf("GitHub authorize", consented), { headers: { cookie: `__Host-slop_oauth_state=${state}; ${browser}` }, redirect: "manual" }), 200);
+      const polled = await expect("poll", await worker.fetch(`${identity.origin}/v1/oauth/poll`, json({ flowId: started.flowId, pollCapability: started.pollCapability, audience: identity.audience }, browser)), 200);
       const { assertion } = Schema.decodeUnknownSync(Completed)(await polled.json());
       const joined = await expect("join", await send("/api/v1/points/join", { json: { assertion, public: true } }), 200);
       const token = cookieOf("join", joined, "__Host-slop_points");

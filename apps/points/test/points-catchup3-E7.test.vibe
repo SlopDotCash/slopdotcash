@@ -6,23 +6,29 @@ import type { Journal } from "../src/kernels/records/canonical.ts"
 import { instantOf } from "../src/kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
 import { repositoriesOf } from "../src/journal/build.vibe"
-import { type HistoricalPacket, decodePacketBytes } from "../src/corrections/reviewed/packet.vibe"
+import { type HistoricalPacket, decodePacketBytes, digestText } from "../src/corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../src/corrections/reviewed/reconstruct.vibe"
 import { reviewed } from "../src/programs/reviewed.vibe"
 import { periodOf } from "../gen/points__periods.effect.vibe"
+import { distinctOrder } from "../gen/points__reviewedHistory.ts"
 import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, time } from "./support/catchup3-e7/fixtures.ts"
 
 const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
 const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
 const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
 
+function orderOf(packet: HistoricalPacket) {
+  return new Map((packet.duplicateRetirements ?? []).map((retirement) => [digestText(retirement), [...retirement.earlierSources, ...(retirement.acceptedSquashes ?? [])].map(() => distinctOrder)] as const))
+}
+
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function rebuilt(packet: unknown, baseline: Journal) {
+  const historical = packet as HistoricalPacket
   return try reconstructHistoricalPoints({
-    packet: packet as HistoricalPacket,
+    packet: historical,
     baseline,
     now: time,
     bans: new Map(),
@@ -30,6 +36,7 @@ effect function rebuilt(packet: unknown, baseline: Journal) {
     registry,
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
+    verifiedRetirements: { duplicates: new Set(), order: orderOf(historical) },
   })
 }
 

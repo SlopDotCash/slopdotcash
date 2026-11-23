@@ -196,7 +196,7 @@ function scheduledSteps(state: Binding, record: BindingRecord, proof: Proof, ori
   const block = Number.parseInt(proof.blockNumber.slice(2), 16)
   const attempt = attemptOf(record, original)
   if (proof.outcome === "original_finalized") return state.phase === "Bound" ? [] : [{ event: { type: "finalizeBinding", attempt, height: block }, by: "attester" } satisfies Step]
-  if (proof.outcome === "original_reverted") return [{ event: { type: "retireReverted", receipt: { attempt, reverted: true, block, canonicalBlock: block } }, by: "attester" } satisfies Step]
+  if (proof.outcome === "original_reverted") return [{ event: { type: "retireReverted", receipt: { attempt, reverted: true, block, canonicalBlock: block, bindingLanded: false } }, by: "attester" } satisfies Step]
   const cancellation = attemptOf(record, proof.transactionId)
   return evidence === undefined || !inertSelfTransfer(state, { ...evidence, transaction: cancellation }) ? undefined : [{ event: { type: "finalizeCancellation", attempt: cancellation, height: block }, by: "attester" } satisfies Step]
 }

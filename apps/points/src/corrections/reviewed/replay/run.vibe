@@ -4,6 +4,7 @@ import type { RepositoryRegistry } from "../../../client/snapshot/schema.vibe"
 import type { HistoricalPin, HistoricalProject } from "../../../client/snapshot/validate.vibe"
 import { nativeProofReader } from "../../../collect/implementation/native.vibe"
 import { type HistoricalRequest, collectHistorical } from "../../../collect/run/historical.vibe"
+import { actionsToken } from "../../../ingestion/token.vibe"
 import { repositoriesOf } from "../../../journal/build.vibe"
 import { readRegistry } from "../../../snapshot/adaptPr.vibe"
 import { publishedRegistry } from "../../collect/published.vibe"
@@ -96,6 +97,7 @@ effect function replayed<E, R>(audited: AuditedScope, registryPath: string, valu
     baseline: audited.baseline,
     closedContexts: approved,
     implementation: { proofs, memo: undefined },
+    evidenceToken: try actionsToken(),
   })
   const snapshot = try mergedHistoricalReplaySnapshot({
     collection: collected.collection,

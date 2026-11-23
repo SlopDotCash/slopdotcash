@@ -5,6 +5,7 @@ import { rows } from "@repo/platform/d1"
 import { answered, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { type ProtectedPointMonth, protectedMonthsRoute } from "../client/protectedMonths.vibe"
+import { getOperatorProtectedPointMonths } from "../client/refusals.vibe"
 import { protectedRouteAnswer } from "../../gen/points__protectedMonths.effect.vibe"
 import { monthPattern, protectedMonthsListing, protectedProjectsListing } from "./protection.vibe"
 
@@ -42,16 +43,16 @@ export effect function protectedListing() {
   return { months, everyMonthProjects }
 }
 
-function notFound() {
-  return json({ error: "not_found" }, 404, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
+function refused(row: { readonly status: number; readonly error: string; readonly headers: Readonly<Record<string, string>> }) {
+  return json({ error: row.error }, row.status, Object.fromEntries(Object.entries(row.headers).filter(([name]) => name !== "content-type")))
 }
 
 effect function answer() {
   const request = try HttpServerRequest.HttpServerRequest
   const secret = (try ProtectedMonthsAccess).secret
   const gate = protectedRouteAnswer(secret === undefined ? 0 : Redacted.value(secret).length, operatorBearerAuthorized(request.headers.authorization, secret), request.method === "GET" || request.method === "HEAD", true)
-  if (gate === "RouteNotFound") return notFound()
-  if (gate === "MethodNotAllowed") return json({ error: "method_not_allowed" }, 405, { "cache-control": noStore })
+  if (gate === "RouteNotFound") return refused(getOperatorProtectedPointMonths.notFoundNoStore)
+  if (gate === "MethodNotAllowed") return refused(getOperatorProtectedPointMonths.otherMethods.methodNotAllowedNoStore)
   const listing = { schema: "slop-protected-point-months-v1" as const, generatedAt: try isoNow(), ...(try protectedListing()) }
   const encoded = try orDie(Schema.encodeUnknownEffect(protectedMonthsRoute.answer)(listing))
   return json(encoded, 200, { "cache-control": noStore })

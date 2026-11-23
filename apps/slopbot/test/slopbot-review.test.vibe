@@ -37,7 +37,7 @@ async function seed() {
   const fake = githubFake()
   const world = fake.world
   world.addUser({ id: 100, login: "ada" })
-  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat", "terra", "backstop", "blocked", "capped", "admitted", "restarted", "lapsed"]
+  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat", "terra", "backstop", "blocked", "capped", "admitted", "restarted", "lapsed", "held", "earlier"]
   authors.forEach((login, index) => world.addUser({ id: 300 + index, login }))
   world.addRepo({ id: repositoryId, owner: "ada", name: "widgets", files: policy })
   const items = {
@@ -56,6 +56,9 @@ async function seed() {
     binary: await pullWith(world, "binary", "BINARY-TOKEN logo", { "logo.bin": "\u0000binary" }),
     large: await pullWith(world, "large", "LARGE-TOKEN data", { "big.txt": `${"x".repeat(130_000)}\n` }),
     wide: await pullWith(world, "wide", "WIDE-TOKEN notes", wideFiles),
+    held: await pullWith(world, "held", "HELD-TOKEN cache expiry", { "src/cache.txt": "Cache entries expire after an hour.\n" }),
+    earlier: await pullWith(world, "earlier", "EARLIER-TOKEN retry limit", { "src/retry.txt": "Retry twice before failing.\n" }),
+    own: await pullWith(world, "ada", "OWN-TOKEN owner notes", { "docs/own.txt": "Owner notes.\n" }),
   }
   world.addComment(repo, items.quiet, { author: "copycat", body: `${marker}\nCopied marker from someone else.` })
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
@@ -397,6 +400,76 @@ layer(reviewArea(bothKeys), { excludeTestServices: true, timeout: "240 seconds" 
       ],
       blocks: [[], [], [{ retry_at: resetsAt }], [{ retry_at: pastReset }]],
       published: [1, 1, 0, 0],
+    })
+  })
+
+  it.effect('A paused project skips a new outside pull request before any call, comment or label, while a pull request reviewed before the pause and a maintainer\'s own pull request are not refused by the pause (spec/slopbot/review.md, "A bound review of a paused project\'s new outside pull request, or one whose submission fee is unpaid, is skipped before the monthly cap"; spec/backend/intakeCap.md, "Slopbot skips only a new outside pull request of a paused project, and scoring never reads the cap")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    const monthStarts = (number: number) => effect {
+      const [found] = try area.sql("SELECT COUNT(*) AS n FROM slopbot_review_month_starts WHERE repository_id = ? AND item_kind = 'pull_request' AND item_number = ?", repositoryId, number)
+      return Number(found?.n)
+    }
+    const reviewsOf = (number: number) => effect {
+      return try area.sql("SELECT status, skip_reason, action FROM slopbot_reviews WHERE item_node_id = ? ORDER BY created_at, rowid", try nodeOf(fake, number))
+    }
+    const callsAbout = (start: number, token: string) => providers.calls.slice(start).filter((call) => mentions(call, token)).length
+    try Effect.try(() => {
+      providers.reply(about("EARLIER-TOKEN"), useful)
+      providers.reply(about("EARLIER-TOKEN"), useful)
+      providers.reply(about("HELD-TOKEN"), useful)
+    })
+    const earlier = try reviewed(area, items.earlier, "pull_request")
+    const paused = (try area.post("/test/intake-pause", { paused: true })).body
+    const heldStart = providers.calls.length
+    const held = try reviewed(area, items.held, "pull_request")
+    const heldCalls = callsAbout(heldStart, "HELD-TOKEN")
+    const heldReviews = try reviewsOf(items.held)
+    const heldStarts = try monthStarts(items.held)
+    const heldWrites = try writesOf(fake, items.held)
+    try Effect.try(() => { fake.world.item(repo, items.earlier).body = "Retry twice before failing, then report the error." })
+    const earlierStart = providers.calls.length
+    const earlierAgain = try reviewed(area, items.earlier, "pull_request")
+    const earlierCalls = callsAbout(earlierStart, "EARLIER-TOKEN")
+    const own = try reviewed(area, items.own, "pull_request")
+    const ownReviews = try reviewsOf(items.own)
+    const reopened = (try area.post("/test/intake-pause", { paused: false })).body
+    const heldAfter = try reviewed(area, items.held, "pull_request")
+    try same({
+      earlier,
+      paused,
+      held,
+      heldCalls,
+      heldReviews,
+      heldStarts,
+      heldWrites,
+      earlierAgain,
+      earlierCalls,
+      earlierComments: (try botComments(fake, items.earlier)).length,
+      own,
+      ownReviews,
+      reopened,
+      heldAfter,
+      heldAfterReviews: (try reviewsOf(items.held)).map((row) => [row.status, row.action]),
+      heldAfterStarts: try monthStarts(items.held),
+    }, {
+      earlier: { kind: "settled", result: "review published (no finding)" },
+      paused: true,
+      held: { kind: "settled", result: "intake-cap" },
+      heldCalls: 0,
+      heldReviews: [{ status: "skipped", skip_reason: "intake-cap", action: null }],
+      heldStarts: 0,
+      heldWrites: [0, 0, "open"],
+      earlierAgain: { kind: "settled", result: "review published (no finding)" },
+      earlierCalls: 1,
+      earlierComments: 1,
+      own: { kind: "settled", result: "maintainer or member is exempt" },
+      ownReviews: [{ status: "skipped", skip_reason: "maintainer or member is exempt", action: null }],
+      reopened: false,
+      heldAfter: { kind: "settled", result: "review published (no finding)" },
+      heldAfterReviews: [["completed", "comment"]],
+      heldAfterStarts: 1,
     })
   })
 
