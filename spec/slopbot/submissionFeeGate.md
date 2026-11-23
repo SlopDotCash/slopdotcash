@@ -312,6 +312,7 @@ pure def lawOpenRefundOnlyAfterTheWait(paidAt: int, pull: PullFacts, now: int): 
     (paidAt > 0 and now >= paidAt + T::refundUndecidedDays * daySeconds)
 type LabelEvent = { label: str, added: bool, at: int }
 type ClosingIssue = { ownRepository: bool, events: List[LabelEvent] }
+type LabelScan = { latest: int, labelled: bool }
 pure def labelOnAt(events: List[LabelEvent], opened: int): bool =
   events.foldl({ latest: -1, labelled: false }, (acc, ev) =>
     if (ev.label == M::wantedLabelName and ev.at >= 0 and ev.at <= opened and ev.at >= acc.latest)
