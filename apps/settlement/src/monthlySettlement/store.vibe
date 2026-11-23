@@ -80,11 +80,11 @@ interface PledgeCopy {
 
 // The stored copy of the vault's finalized pledges becomes the vault state's pledges, from which the generated
 // observation holds back every other month's open pledge. A copy whose open rows do not add up to the stored open
-// total, or on which that differs from the stored total less this month's own open pledge, is refused.
-effect function pledgeCopyOf(key: MonthKey, place: VaultPlace | undefined) {
+// total, or on which that differs from the stored total less this month's own open pledge, is refused. The copy is
+// checked against the same snapshot row the free balance is read from, so pledges and free describe one head.
+effect function pledgeCopyOf(key: MonthKey, place: VaultPlace | undefined, snapshot: SnapshotRow | undefined) {
   const none: PledgeCopy = { pledges: [], pledged: amountOf(0n), hold: undefined }
   if (place === undefined || !isNetworkKey(place.network)) return none
-  const snapshot = try snapshotOf(key, place)
   if (snapshot === undefined) return none
   const found = try rows(PledgeRow, sql`SELECT network, vault, period, amount, open, block_number FROM vault_month_pledges WHERE project_id = ${key.projectId} AND network = ${place.network} AND vault = ${place.vault} ORDER BY period`)
   const total = try storedTotalOf(snapshot.open_pledged_gross)
@@ -169,10 +169,9 @@ effect function frozenAssetOf(key: MonthKey, month: Loaded) {
   return found.asset
 }
 
-effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefined, copy: PledgeCopy) {
+effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefined, snapshot: SnapshotRow | undefined, copy: PledgeCopy) {
   const unopened = { escrow: unopenedVault, headTime: 0, reading: undefined }
   if (place === undefined || !isNetworkKey(place.network)) return unopened
-  const snapshot = try snapshotOf(key, place)
   if (snapshot === undefined) return unopened
   const frozenAsset = try frozenAssetOf(key, month)
   if (frozenAsset !== undefined && snapshot.asset_address.toLowerCase() !== frozenAsset.toLowerCase()) return unopened
@@ -216,8 +215,9 @@ effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefi
 export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
   const loaded = try readMonth(key)
   const place = try placeOf(loaded)
-  const copy = try pledgeCopyOf(key, place)
-  const vault = try vaultOf(key, loaded, place, copy)
+  const snapshot = place === undefined || !isNetworkKey(place.network) ? undefined : try snapshotOf(key, place)
+  const copy = try pledgeCopyOf(key, place, snapshot)
+  const vault = try vaultOf(key, loaded, place, snapshot, copy)
   const counts = place === undefined ? { outstanding: 0, reserved: 0 } : try countsOf(place)
   const state = try decodeState({ month: loaded.state, escrow: chain?.escrow ?? vault.escrow, headTime: chain?.headTime ?? vault.headTime, cursor: chain?.cursor ?? noCursor, leaves: [...(chain?.leaves ?? initial.leaves)] })
   return {

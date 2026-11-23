@@ -99,7 +99,9 @@ amount is derived here from the escrow projection itself: its open pledges of
 every other period at that head ([escrow](./escrow.md) `otherOpenPledged`),
 for the obligations and the underfunded notice alike (development
 `backend/payments/monthly.ts`, `heldBack`). The coordinator's vault state
-carries the stored copy of those finalized pledges: the stored rows of this
+carries the stored copy of those finalized pledges, checked against the same
+stored vault snapshot its free balance and head come from, so both describe
+one head: the stored rows of this
 vault as its pledges and the stored open total as its pledged total, and no
 pledge for a vault without pledge support, so nothing is held back. It
 refuses a stored copy whose open rows do not add up to the stored open

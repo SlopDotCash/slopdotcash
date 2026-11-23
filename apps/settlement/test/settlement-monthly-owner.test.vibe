@@ -264,7 +264,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     try same({ owner: owner.status, runs, single: frozen !== (field(owner.body, "run", "trigger") === "owner") }, { owner: 200, runs: 1, single: true })
   })
 
-  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/settlement/monthPledges.md, "Another month\'s open pledge is held back from this month\'s funding"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
+  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/settlement/monthPledges.md, "Another month\'s open pledge is held back from this month\'s funding"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded")', () => effect {
     const { env } = try Journey
     clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
     try proposed(env, "charlie")
@@ -285,7 +285,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     try same({ finalized: finalized.status, unknownFree: waitingOf(unknownFree), noticesAfterUnknownFree, first: waitingOf(first), second: waitingOf(second), stale: waitingOf(stale), funded: funded.created.includes("charlie/2026-11"), notices, obligations }, {
       finalized: 200, unknownFree: ["underfunded"], noticesAfterUnknownFree: 1, first: ["underfunded"], second: ["underfunded"], stale: ["stale-funding"], funded: true, notices: 1, obligations: 3,
     })
-    for (const projectId of ["oscar", "papa", "quebec"]) {
+    for (const projectId of ["oscar", "papa", "quebec", "whiskey"]) {
       try proposed(env, projectId)
       try ask(env, `/${projectId}/monthly/2026-11/finalize`, { as: steward, json: { expectedSequence: 0 } })
     }
@@ -294,7 +294,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     try snapshot(env, "papa", "1000000000", "2026-12-02T11:55:00.000Z", "1000000000")
     try pledge(env, "papa", "2026-11", "1000000000")
     try snapshot(env, "quebec", "500000000", "2026-12-02T11:55:00.000Z")
+    try snapshot(env, "whiskey", "2000000000", "2026-12-02T11:55:00.000Z", "300000000")
+    try pledge(env, "whiskey", "2026-12", "200000000")
     const pledged = try coordinate(env)
+    const whiskeyObligations = try count(env, "SELECT count(*) AS n FROM monthly_payment_obligations WHERE project_id = 'whiskey' AND period = '2026-11'")
     const audience = "SELECT count(*) AS n FROM notifications WHERE event_key = ? AND recipient_github_id = ?"
     const oscarLister = try count(env, audience, "monthly-underfunded:oscar:2026-11", "88")
     const oscarSteward = try count(env, audience, "monthly-underfunded:oscar:2026-11", steward)
@@ -302,12 +305,16 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     const quebecLister = try count(env, audience, "monthly-underfunded:quebec:2026-11", "88")
     try same({
       waiting: pledged.waiting.filter((entry) => ["oscar/2026-11", "papa/2026-11", "quebec/2026-11"].includes(entry.key)),
-      created: pledged.created.filter((key) => ["oscar/2026-11", "papa/2026-11", "quebec/2026-11"].includes(key)),
+      created: pledged.created.filter((key) => ["oscar/2026-11", "papa/2026-11", "quebec/2026-11", "whiskey/2026-11"].includes(key)),
       oscarLister, oscarSteward, quebecSteward, quebecLister,
+      refused: pledged.failures.filter((entry) => entry.key === "whiskey/2026-11"),
+      whiskeyObligations,
     }, {
       waiting: [{ key: "oscar/2026-11", reason: "underfunded" }, { key: "quebec/2026-11", reason: "underfunded" }],
       created: ["papa/2026-11"],
       oscarLister: 1, oscarSteward: 0, quebecSteward: 1, quebecLister: 0,
+      refused: [{ key: "whiskey/2026-11", reason: "RowMismatch" }],
+      whiskeyObligations: 0,
     })
   })
 
