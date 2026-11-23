@@ -25611,7 +25611,7 @@
     },
     {
       "path": "spec/settlement/executorJournal.md",
-      "sha256": "bb8a8bfcd70ad5d502a3054fc6d0b957a6c337cb1780f69cab4d9a36d1670bdf",
+      "sha256": "87630e3ea00c4041803db777025f3fd25d0031f947778662caee2e3ff0041b89",
       "module": "settlement__executorJournal",
       "stories": [
         {
@@ -25702,7 +25702,7 @@
         },
         {
           "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / The journal keeps every attempt, every committed step and every cursor",
-          "line": 202,
+          "line": 217,
           "definitions": [
             "alwaysOneLiveAttemptPerKey",
             "alwaysNoncesIssued",
@@ -25733,7 +25733,7 @@
         },
         {
           "heading": "Story: Keep one exact-byte attempt per monthly step until finalized evidence settles or retires it / Observers of the journal accept only a later journal that keeps these rules",
-          "line": 270,
+          "line": 285,
           "definitions": [
             "wellFormed",
             "follows"
@@ -25754,7 +25754,7 @@
         },
         {
           "target": "./monthlyExecution.md",
-          "line": 272
+          "line": 287
         }
       ]
     },
@@ -27358,7 +27358,7 @@
     },
     {
       "path": "spec/settlement/monthlyCommitment.md",
-      "sha256": "f3df0a347570ced2de9dcaf34098e2bf56eb9b513f9b3a799e5b2bf75504d9ce",
+      "sha256": "fcd4b067e191549e2c8b45155d0c32b68ac82cfa4d0c38acac58929e0389c196",
       "module": "settlement__monthlyCommitment",
       "stories": [
         {
@@ -27371,7 +27371,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation",
-          "line": 359
+          "line": 363
         }
       ],
       "rules": [
@@ -27468,7 +27468,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A retained V1 authorization of the same frozen month may win on EVM",
-          "line": 294,
+          "line": 298,
           "definitions": [
             "canRetainLegacy",
             "retainLegacy",
@@ -27478,7 +27478,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / A finalized root the journal never signed holds the month for investigation",
-          "line": 319,
+          "line": 323,
           "definitions": [
             "unknownRoot",
             "canInvestigate",
@@ -27489,7 +27489,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An admitted month stays resumable after opt-out or the window closes",
-          "line": 338,
+          "line": 342,
           "definitions": [
             "canComplete",
             "complete"
@@ -27497,7 +27497,7 @@
         },
         {
           "heading": "Story: Admission and completion come only from finalized contract state / An unadmitted month whose window closes is refused and funds stay free",
-          "line": 349,
+          "line": 353,
           "definitions": [
             "canCloseWindow",
             "closeWindow"
@@ -27505,7 +27505,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / The first authorization, signed attempts and freeze time are immutable",
-          "line": 361,
+          "line": 365,
           "definitions": [
             "stepFirstAuthorizationImmutable",
             "stepAttemptsAppendOnly",
@@ -27518,7 +27518,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Every attempt is within the frozen allocation and the cap",
-          "line": 382,
+          "line": 386,
           "definitions": [
             "alwaysAuthorizedMonthKept",
             "alwaysViewNamesAuthority",
@@ -27556,7 +27556,7 @@
         },
         {
           "heading": "Story: The journal keeps every signature and never widens the allocation / Simulation samples",
-          "line": 449,
+          "line": 453,
           "definitions": [
             "familyValues",
             "monthSample",
@@ -27609,7 +27609,7 @@
     },
     {
       "path": "spec/settlement/monthlyExecution.md",
-      "sha256": "c5308ece8f5169a508e32e38e0f934756f71aec1b601f5d6c2251b287c2b2f59",
+      "sha256": "db1bf580dcbc79e26c12b3996d06765b53f97c2a1e23a39ad018d617743380ba",
       "module": "settlement__monthlyExecution",
       "stories": [
         {
@@ -27618,7 +27618,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal",
-          "line": 334
+          "line": 391
         }
       ],
       "rules": [
@@ -27655,7 +27655,7 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Each run attempts the least recently attempted rows first",
-          "line": 105,
+          "line": 106,
           "definitions": [
             "windowOpen",
             "selectable",
@@ -27679,28 +27679,32 @@
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / A newer admitting root goes first, so no older leaf reverts it",
-          "line": 181,
+          "line": 183,
           "definitions": [
             "SendResult",
             "resultFits",
             "fresh",
-            "newerRootIncomplete",
+            "admissible",
+            "sameVault",
             "liveAny",
             "inFlight",
-            "olderStepInFlight",
+            "vaultStepInFlight",
             "revertsIfSent",
+            "recordsAwards",
+            "reorderReverts",
             "canSubmit",
             "submit",
             "alwaysNoReorderingRevert",
             "alwaysSentNoncesIssued",
             "stepNoAdmissionWithoutAdmit",
             "stepAdmissionUsesLatestAttempt",
+            "stepAdmissionNeedsCurrentConsent",
             "sendResultValues"
           ]
         },
         {
           "heading": "Story: Execute every published month fairly and in a safe order / Finalized evidence completes a submitted legacy or Solana row, and a dropped submission is retried",
-          "line": 296,
+          "line": 352,
           "definitions": [
             "Landing",
             "landingFits",
@@ -27717,7 +27721,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A row reads only a later, well-formed journal of its own month",
-          "line": 336,
+          "line": 393,
           "definitions": [
             "monthOnly",
             "admissionFits",
@@ -27729,7 +27733,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A version 2 row completes once its root is settled and its cursor reaches the leaf count, or a verified V1 root won",
-          "line": 379,
+          "line": 436,
           "definitions": [
             "v2Total",
             "cursorDone",
@@ -27745,7 +27749,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / The executor uses the latest authorization, and its cursor belongs to that root",
-          "line": 412,
+          "line": 469,
           "definitions": [
             "laterAttempt",
             "canSignAttempt",
@@ -27761,7 +27765,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / A wrong admitted total is held and never completes; only a finalized whole release ends it",
-          "line": 467,
+          "line": 535,
           "definitions": [
             "canObserveWrongTotal",
             "observeWrongTotal",
@@ -27778,7 +27782,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / An EVM month whose window closed unadmitted is refused and leaves the batch",
-          "line": 519,
+          "line": 609,
           "definitions": [
             "canRefuseUnadmitted",
             "refuseUnadmitted",
@@ -27789,7 +27793,7 @@
         },
         {
           "heading": "Story: Complete a version 2 month only from its journal / Simulation samples are finalized journals of each sampled month",
-          "line": 547,
+          "line": 637,
           "definitions": [
             "entryOf",
             "snapshot",
@@ -27822,23 +27826,31 @@
         },
         {
           "target": "./executorJournal.md",
-          "line": 340
+          "line": 397
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 346
+          "line": 403
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 414
+          "line": 471
         },
         {
           "target": "./reserveRelease.md",
-          "line": 475
+          "line": 543
+        },
+        {
+          "target": "./executorJournal.md",
+          "line": 551
+        },
+        {
+          "target": "./monthlySettlement.md",
+          "line": 568
         },
         {
           "target": "./monthlyCommitment.md",
-          "line": 525
+          "line": 615
         }
       ]
     },

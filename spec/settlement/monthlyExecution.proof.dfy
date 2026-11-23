@@ -16,6 +16,7 @@ lemma publish_ensures(e: Execution, key: int, project: int, period: int, network
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepOtherRowsUnchanged(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepNoAdmissionWithoutAdmit(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepAdmissionUsesLatestAttempt(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
+  ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepAdmissionNeedsCurrentConsent(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepJournalFollows(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepSequenceMonotone(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
   ensures (inv(e) ==> canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) ==> stepAdmittedRootFixed(e, publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_)))
@@ -25,7 +26,7 @@ lemma publish_ensures(e: Execution, key: int, project: int, period: int, network
 {
   if inv(e) && canPublish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_) {
     var after := publish(e, key, project, period, network, vault, runVaultPledged, automatic, v2, solana, tree, by_);
-    var nr := Row(key, project, period, network, vault, v2, solana, 0, RowPhase.Pending, false, 0, 0, tree.root, tree.total, tree.count, tree.legacyRoot, 1, settlement__executorJournal_emptyJournal, settlement__money_zero, -1, false, false, tree.whole, tree.digest, tree, 1, sourceOf(e, project, network, vault));
+    var nr := Row(key, project, period, network, vault, v2, solana, 0, RowPhase.Pending, false, 0, 0, tree.root, tree.total, tree.count, tree.legacyRoot, 1, settlement__executorJournal_emptyJournal, settlement__money_zero, -1, false, false, tree.whole, tree.digest, tree, 1, sourceOf(e, project, network, vault), false, false, false);
     assert after.rows == e.rows + [nr];
     KeyIdx(e);
     forall i | 0 <= i < |e.rows|
@@ -62,6 +63,7 @@ lemma startRun_ensures(e: Execution, now: int, by_: string)
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepOtherRowsUnchanged(e, startRun(e, now, by_)))
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepNoAdmissionWithoutAdmit(e, startRun(e, now, by_)))
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepAdmissionUsesLatestAttempt(e, startRun(e, now, by_)))
+  ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepAdmissionNeedsCurrentConsent(e, startRun(e, now, by_)))
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepJournalFollows(e, startRun(e, now, by_)))
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepSequenceMonotone(e, startRun(e, now, by_)))
   ensures (inv(e) ==> canStartRun(e, now, by_) ==> stepAdmittedRootFixed(e, startRun(e, now, by_)))
@@ -80,38 +82,40 @@ lemma startRun_ensures(e: Execution, now: int, by_: string)
   }
 }
 
-lemma markAttempt_ensures(e: Execution, key: int, by_: string)
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysOneRowPerMonth(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysCompleteFinalized(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysRunBounded(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysAttemptRecorded(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysNoReorderingRevert(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysSentNoncesIssued(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysLegacyCompleteSettled(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysAdmittedRootIsRowRoot(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysV2CompleteMeansCursorDone(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysLatestAttemptKnown(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysHeldTotalWrong(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysReleasedUntouched(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> alwaysClosedUnadmitted(markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepCompletionPermanent(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepOtherRowsUnchanged(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepNoAdmissionWithoutAdmit(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepAdmissionUsesLatestAttempt(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepJournalFollows(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepSequenceMonotone(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepAdmittedRootFixed(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepWrongTotalNeverCompletes(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepReleasedPermanent(e, markAttempt(e, key, by_)))
-  ensures (inv(e) ==> canMarkAttempt(e, key, by_) ==> stepRefusalPermanent(e, markAttempt(e, key, by_)))
+lemma markAttempt_ensures(e: Execution, key: int, runVaultPledged: bool, automatic: bool, active: bool, restricted: bool, by_: string)
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysOneRowPerMonth(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysCompleteFinalized(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysRunBounded(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysAttemptRecorded(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysNoReorderingRevert(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysSentNoncesIssued(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysLegacyCompleteSettled(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysAdmittedRootIsRowRoot(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysV2CompleteMeansCursorDone(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysLatestAttemptKnown(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysHeldTotalWrong(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysReleasedUntouched(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> alwaysClosedUnadmitted(markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepCompletionPermanent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepOtherRowsUnchanged(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepNoAdmissionWithoutAdmit(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepAdmissionUsesLatestAttempt(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepAdmissionNeedsCurrentConsent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepJournalFollows(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepSequenceMonotone(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepAdmittedRootFixed(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepWrongTotalNeverCompletes(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepReleasedPermanent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
+  ensures (inv(e) ==> canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) ==> stepRefusalPermanent(e, markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_)))
 {
-  if inv(e) && canMarkAttempt(e, key, by_) {
-    var after := markAttempt(e, key, by_);
+  if inv(e) && canMarkAttempt(e, key, runVaultPledged, automatic, active, restricted, by_) {
+    var after := markAttempt(e, key, runVaultPledged, automatic, active, restricted, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && ((r0.key == key) && r0.phase.Pending?);
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
     forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] { }
-    assert after.rows[t] == r0.(lastAttempt := e.now, attempts := (r0.attempts + 1));
+    assert after.rows[t] == r0.(lastAttempt := e.now, attempts := (r0.attempts + 1),
+      consent := settlement__monthPledges_runConsent(runVaultPledged, automatic), active := active, restricted := restricted);
     AttemptsAfterMark(e, after, key, t);
     KeysFrame(e, after);
     OthersFrame(e, after);
@@ -126,44 +130,47 @@ lemma markAttempt_ensures(e: Execution, key: int, by_: string)
   }
 }
 
-lemma submit_ensures(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by_: string)
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysOneRowPerMonth(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysCompleteFinalized(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysRunBounded(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysAttemptRecorded(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysNoReorderingRevert(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysSentNoncesIssued(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysLegacyCompleteSettled(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysAdmittedRootIsRowRoot(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysV2CompleteMeansCursorDone(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysLatestAttemptKnown(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysHeldTotalWrong(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysReleasedUntouched(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> alwaysClosedUnadmitted(submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepCompletionPermanent(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepOtherRowsUnchanged(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepNoAdmissionWithoutAdmit(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepAdmissionUsesLatestAttempt(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepJournalFollows(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepSequenceMonotone(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepAdmittedRootFixed(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepWrongTotalNeverCompletes(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepReleasedPermanent(e, submit(e, key, sendResult, admit, consent, by_)))
-  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, consent, by_) ==> stepRefusalPermanent(e, submit(e, key, sendResult, admit, consent, by_)))
+lemma submit_ensures(e: Execution, key: int, sendResult: SendResult, admit: bool, by_: string)
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysOneRowPerMonth(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysCompleteFinalized(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysRunBounded(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysAttemptRecorded(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysNoReorderingRevert(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysSentNoncesIssued(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysLegacyCompleteSettled(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysAdmittedRootIsRowRoot(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysV2CompleteMeansCursorDone(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysLatestAttemptKnown(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysHeldTotalWrong(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysReleasedUntouched(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> alwaysClosedUnadmitted(submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepCompletionPermanent(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepOtherRowsUnchanged(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepNoAdmissionWithoutAdmit(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepAdmissionUsesLatestAttempt(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepAdmissionNeedsCurrentConsent(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepJournalFollows(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepSequenceMonotone(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepAdmittedRootFixed(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepWrongTotalNeverCompletes(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepReleasedPermanent(e, submit(e, key, sendResult, admit, by_)))
+  ensures (inv(e) ==> canSubmit(e, key, sendResult, admit, by_) ==> stepRefusalPermanent(e, submit(e, key, sendResult, admit, by_)))
 {
-  if inv(e) && canSubmit(e, key, sendResult, admit, consent, by_) {
-    var after := submit(e, key, sendResult, admit, consent, by_);
+  if inv(e) && canSubmit(e, key, sendResult, admit, by_) {
+    var after := submit(e, key, sendResult, admit, by_);
     KeyIdx(e);
     var r0 :| r0 in e.rows && ((r0.key == key) && r0.phase.Pending?);
     var t :| 0 <= t < |e.rows| && e.rows[t] == r0;
-    assert (((((r0.phase.Pending? && (r0.lastAttempt == e.now)) && !(newerRootPending(e, r0))) && (admit == ((consent && windowOpen(r0.period, e.now)) && fresh_(r0)))) && resultFits(r0, sendResult, admit)) && (!(sendResult.Sent?) || (!(newerRootIncomplete(e, r0)) && !(revertsIfSent(e, r0)))));
+    assert (((((r0.phase.Pending? && (r0.lastAttempt == e.now)) && !(newerRootPending(e, r0))) && (admit == ((admissible(r0) && windowOpen(r0.period, e.now)) && fresh_(r0)))) && resultFits(r0, sendResult, admit)) && (!(sendResult.Sent?) || !(revertsIfSent(e, r0))));
     assert admit ==> fresh_(r0);
+    assert admit ==> (admissible(r0) && windowOpen(r0.period, e.now));
     assert fresh_(r0) ==> r0.root == r0.latest.root;
     assert !r0.invalidated;
     if sendResult.Sent? {
       assert !(revertsIfSent(e, r0));
+      NoReorderRevert(e, r0);
       assert !admit ==> (r0.solana || settlement__executorJournal_admitted(r0.journal, r0.period));
-      SubmitSent(e, key, sendResult, admit, consent, by_, t);
+      SubmitSent(e, key, sendResult, admit, by_, t);
     } else {
       assert after.rows == e.rows;
       KeysFrame(e, after);
@@ -193,6 +200,7 @@ lemma observeFinality_ensures(e: Execution, key: int, landing: Landing, height: 
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepOtherRowsUnchanged(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepNoAdmissionWithoutAdmit(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepAdmissionUsesLatestAttempt(e, observeFinality(e, key, landing, height, by_)))
+  ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepAdmissionNeedsCurrentConsent(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepJournalFollows(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepSequenceMonotone(e, observeFinality(e, key, landing, height, by_)))
   ensures (inv(e) ==> canObserveFinality(e, key, landing, height, by_) ==> stepAdmittedRootFixed(e, observeFinality(e, key, landing, height, by_)))
@@ -241,6 +249,7 @@ lemma observeJournal_ensures(e: Execution, key: int, journal: settlement__execut
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepOtherRowsUnchanged(e, observeJournal(e, key, journal, by_)))
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepNoAdmissionWithoutAdmit(e, observeJournal(e, key, journal, by_)))
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepAdmissionUsesLatestAttempt(e, observeJournal(e, key, journal, by_)))
+  ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepAdmissionNeedsCurrentConsent(e, observeJournal(e, key, journal, by_)))
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepJournalFollows(e, observeJournal(e, key, journal, by_)))
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepSequenceMonotone(e, observeJournal(e, key, journal, by_)))
   ensures (inv(e) ==> canObserveJournal(e, key, journal, by_) ==> stepAdmittedRootFixed(e, observeJournal(e, key, journal, by_)))
@@ -293,6 +302,7 @@ lemma complete_ensures(e: Execution, key: int, by_: string)
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepOtherRowsUnchanged(e, complete(e, key, by_)))
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepNoAdmissionWithoutAdmit(e, complete(e, key, by_)))
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepAdmissionUsesLatestAttempt(e, complete(e, key, by_)))
+  ensures (inv(e) ==> canComplete(e, key, by_) ==> stepAdmissionNeedsCurrentConsent(e, complete(e, key, by_)))
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepJournalFollows(e, complete(e, key, by_)))
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepSequenceMonotone(e, complete(e, key, by_)))
   ensures (inv(e) ==> canComplete(e, key, by_) ==> stepAdmittedRootFixed(e, complete(e, key, by_)))
@@ -342,6 +352,7 @@ lemma reauthorize_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepOtherRowsUnchanged(e, reauthorize(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepNoAdmissionWithoutAdmit(e, reauthorize(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepAdmissionUsesLatestAttempt(e, reauthorize(e, key, sequence, tree, by_)))
+  ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepAdmissionNeedsCurrentConsent(e, reauthorize(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepJournalFollows(e, reauthorize(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepSequenceMonotone(e, reauthorize(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canReauthorize(e, key, sequence, tree, by_) ==> stepAdmittedRootFixed(e, reauthorize(e, key, sequence, tree, by_)))
@@ -394,6 +405,7 @@ lemma observeWrongTotal_ensures(e: Execution, key: int, by_: string)
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepOtherRowsUnchanged(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepNoAdmissionWithoutAdmit(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepAdmissionUsesLatestAttempt(e, observeWrongTotal(e, key, by_)))
+  ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepAdmissionNeedsCurrentConsent(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepJournalFollows(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepSequenceMonotone(e, observeWrongTotal(e, key, by_)))
   ensures (inv(e) ==> canObserveWrongTotal(e, key, by_) ==> stepAdmittedRootFixed(e, observeWrongTotal(e, key, by_)))
@@ -442,6 +454,7 @@ lemma observeReleased_ensures(e: Execution, key: int, receipt: settlement__reser
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepOtherRowsUnchanged(e, observeReleased(e, key, receipt, by_)))
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepNoAdmissionWithoutAdmit(e, observeReleased(e, key, receipt, by_)))
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepAdmissionUsesLatestAttempt(e, observeReleased(e, key, receipt, by_)))
+  ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepAdmissionNeedsCurrentConsent(e, observeReleased(e, key, receipt, by_)))
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepJournalFollows(e, observeReleased(e, key, receipt, by_)))
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepSequenceMonotone(e, observeReleased(e, key, receipt, by_)))
   ensures (inv(e) ==> canObserveReleased(e, key, receipt, by_) ==> stepAdmittedRootFixed(e, observeReleased(e, key, receipt, by_)))
@@ -490,6 +503,7 @@ lemma refuseUnadmitted_ensures(e: Execution, key: int, by_: string)
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepOtherRowsUnchanged(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepNoAdmissionWithoutAdmit(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepAdmissionUsesLatestAttempt(e, refuseUnadmitted(e, key, by_)))
+  ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepAdmissionNeedsCurrentConsent(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepJournalFollows(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepSequenceMonotone(e, refuseUnadmitted(e, key, by_)))
   ensures (inv(e) ==> canRefuseUnadmitted(e, key, by_) ==> stepAdmittedRootFixed(e, refuseUnadmitted(e, key, by_)))
@@ -538,6 +552,7 @@ lemma selectRow_ensures(e: Execution, key: int, prerequisite: bool, by_: string)
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepOtherRowsUnchanged(e, selectRow(e, key, prerequisite, by_)))
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepNoAdmissionWithoutAdmit(e, selectRow(e, key, prerequisite, by_)))
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepAdmissionUsesLatestAttempt(e, selectRow(e, key, prerequisite, by_)))
+  ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepAdmissionNeedsCurrentConsent(e, selectRow(e, key, prerequisite, by_)))
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepJournalFollows(e, selectRow(e, key, prerequisite, by_)))
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepSequenceMonotone(e, selectRow(e, key, prerequisite, by_)))
   ensures (inv(e) ==> canSelectRow(e, key, prerequisite, by_) ==> stepAdmittedRootFixed(e, selectRow(e, key, prerequisite, by_)))
@@ -575,6 +590,7 @@ lemma signAttempt_ensures(e: Execution, key: int, sequence: int, tree: Tree, by_
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepOtherRowsUnchanged(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepNoAdmissionWithoutAdmit(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepAdmissionUsesLatestAttempt(e, signAttempt(e, key, sequence, tree, by_)))
+  ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepAdmissionNeedsCurrentConsent(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepJournalFollows(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepSequenceMonotone(e, signAttempt(e, key, sequence, tree, by_)))
   ensures (inv(e) ==> canSignAttempt(e, key, sequence, tree, by_) ==> stepAdmittedRootFixed(e, signAttempt(e, key, sequence, tree, by_)))
@@ -848,12 +864,22 @@ lemma SubmissionsFrame(e: Execution, after: Execution)
     && ((after.rows[i].phase.Submitted? && !after.rows[i].lastAdmit && e.rows[i].phase.Pending?)
       ==> (after.rows[i].solana || settlement__executorJournal_admitted(after.rows[i].journal, after.rows[i].period)))
     && ((after.rows[i].phase.Submitted? && after.rows[i].lastAdmit && e.rows[i].phase.Pending?)
-      ==> (fresh_(after.rows[i]) && after.rows[i].root == after.rows[i].latest.root)))
+      ==> (fresh_(after.rows[i]) && after.rows[i].root == after.rows[i].latest.root
+        && admissible(after.rows[i]) && windowOpen(after.rows[i].period, after.now))))
   requires forall i, k :: |e.rows| <= i < |after.rows| && 0 <= k < |e.rows| ==> after.rows[i].key != e.rows[k].key
   ensures stepNoAdmissionWithoutAdmit(e, after)
   ensures stepAdmissionUsesLatestAttempt(e, after)
+  ensures stepAdmissionNeedsCurrentConsent(e, after)
 {
   KeyIdx(e);
+  forall r | r in after.rows && r.phase.Submitted? && r.lastAdmit && (exists o :: o in e.rows && o.key == r.key && o.phase.Pending?)
+    ensures admissible(r) && windowOpen(r.period, after.now)
+  {
+    var i :| 0 <= i < |after.rows| && after.rows[i] == r;
+    var o :| o in e.rows && o.key == r.key && o.phase.Pending?;
+    var k :| 0 <= k < |e.rows| && e.rows[k] == o;
+    assert i == k;
+  }
   forall r | r in after.rows && r.phase.Submitted? && r.lastAdmit && (exists o :: o in e.rows && o.key == r.key && o.phase.Pending?)
     ensures fresh_(r) && r.root == r.latest.root
   {
@@ -900,30 +926,33 @@ lemma PhasesFrame(e: Execution, after: Execution)
 }
 
 // A send changes its own pending row only, with the facts its guard gives.
-lemma SubmitSent(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by_: string, t: int)
+lemma SubmitSent(e: Execution, key: int, sendResult: SendResult, admit: bool, by_: string, t: int)
   requires inv(e) && sendResult.Sent?
   requires 0 <= t < |e.rows| && e.rows[t].key == key && e.rows[t].phase.Pending? && e.rows[t].lastAttempt == e.now
   requires attemptedThisRun(e, key) && !(key in e.processed)
   requires forall i :: 0 <= i < |e.rows| && i != t ==> e.rows[i].key != key
   requires !(revertsIfSent(e, e.rows[t])) && !e.rows[t].invalidated
   requires admit ==> (fresh_(e.rows[t]) && e.rows[t].root == e.rows[t].latest.root)
+  requires admit ==> (admissible(e.rows[t]) && windowOpen(e.rows[t].period, e.now))
   requires !admit ==> (e.rows[t].solana || settlement__executorJournal_admitted(e.rows[t].journal, e.rows[t].period))
-  ensures inv(submit(e, key, sendResult, admit, consent, by_))
-  ensures stepCompletionPermanent(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepOtherRowsUnchanged(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepNoAdmissionWithoutAdmit(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepAdmissionUsesLatestAttempt(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepJournalFollows(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepSequenceMonotone(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepAdmittedRootFixed(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepWrongTotalNeverCompletes(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepReleasedPermanent(e, submit(e, key, sendResult, admit, consent, by_))
-  ensures stepRefusalPermanent(e, submit(e, key, sendResult, admit, consent, by_))
+  ensures inv(submit(e, key, sendResult, admit, by_))
+  ensures stepCompletionPermanent(e, submit(e, key, sendResult, admit, by_))
+  ensures stepOtherRowsUnchanged(e, submit(e, key, sendResult, admit, by_))
+  ensures stepNoAdmissionWithoutAdmit(e, submit(e, key, sendResult, admit, by_))
+  ensures stepAdmissionUsesLatestAttempt(e, submit(e, key, sendResult, admit, by_))
+  ensures stepAdmissionNeedsCurrentConsent(e, submit(e, key, sendResult, admit, by_))
+  ensures stepJournalFollows(e, submit(e, key, sendResult, admit, by_))
+  ensures stepSequenceMonotone(e, submit(e, key, sendResult, admit, by_))
+  ensures stepAdmittedRootFixed(e, submit(e, key, sendResult, admit, by_))
+  ensures stepWrongTotalNeverCompletes(e, submit(e, key, sendResult, admit, by_))
+  ensures stepReleasedPermanent(e, submit(e, key, sendResult, admit, by_))
+  ensures stepRefusalPermanent(e, submit(e, key, sendResult, admit, by_))
 {
-  var after := submit(e, key, sendResult, admit, consent, by_);
+  var after := submit(e, key, sendResult, admit, by_);
   var r0 := e.rows[t];
   assert r0 in e.rows;
-  SubmitShape(e, key, sendResult, admit, consent, by_, t);
+  NoReorderRevert(e, r0);
+  SubmitShape(e, key, sendResult, admit, by_, t);
   KeysFrame(e, after);
   OthersFrame(e, after);
   JournalsFrame(e, after);
@@ -938,17 +967,17 @@ lemma SubmitSent(e: Execution, key: int, sendResult: SendResult, admit: bool, co
 }
 
 // A send changes only its own row: no other row was sent at a later nonce.
-lemma SubmitShape(e: Execution, key: int, sendResult: SendResult, admit: bool, consent: bool, by_: string, t: int)
+lemma SubmitShape(e: Execution, key: int, sendResult: SendResult, admit: bool, by_: string, t: int)
   requires alwaysSentNoncesIssued(e) && sendResult.Sent?
   requires 0 <= t < |e.rows| && e.rows[t].key == key
   requires forall i :: 0 <= i < |e.rows| && i != t ==> e.rows[i].key != key
-  requires !(revertsIfSent(e, e.rows[t])) && !e.rows[t].invalidated
-  ensures |submit(e, key, sendResult, admit, consent, by_).rows| == |e.rows|
-  ensures forall i :: 0 <= i < |e.rows| && i != t ==> submit(e, key, sendResult, admit, consent, by_).rows[i] == e.rows[i]
-  ensures submit(e, key, sendResult, admit, consent, by_).rows[t] == e.rows[t].(phase := RowPhase.Submitted, sentNonce := e.sends, lastAdmit := admit, sentWithoutAdmit := (e.rows[t].sentWithoutAdmit || !(admit)))
-  ensures submit(e, key, sendResult, admit, consent, by_).sends == e.sends + 1
+  requires !(revertsIfSent(e, e.rows[t])) && !(reorderReverts(e, e.rows[t])) && !e.rows[t].invalidated
+  ensures |submit(e, key, sendResult, admit, by_).rows| == |e.rows|
+  ensures forall i :: 0 <= i < |e.rows| && i != t ==> submit(e, key, sendResult, admit, by_).rows[i] == e.rows[i]
+  ensures submit(e, key, sendResult, admit, by_).rows[t] == e.rows[t].(phase := RowPhase.Submitted, sentNonce := e.sends, lastAdmit := admit, sentWithoutAdmit := (e.rows[t].sentWithoutAdmit || !(admit)))
+  ensures submit(e, key, sendResult, admit, by_).sends == e.sends + 1
 {
-  var after := submit(e, key, sendResult, admit, consent, by_);
+  var after := submit(e, key, sendResult, admit, by_);
   forall i | 0 <= i < |e.rows| && i != t ensures after.rows[i] == e.rows[i] {
     assert e.rows[i] in e.rows;
   }
@@ -1017,5 +1046,18 @@ lemma AttemptsFrame(e: Execution, after: Execution)
     var r :| r in e.rows && r.key == k;
     var i :| 0 <= i < |e.rows| && e.rows[i] == r;
     assert after.rows[i] in after.rows;
+  }
+}
+
+// The executor's guard covers every reverting send: an award-recording step of the vault is a step in flight.
+lemma NoReorderRevert(e: Execution, row: Row)
+  requires !(revertsIfSent(e, row))
+  ensures !(reorderReverts(e, row))
+{
+  forall o | o in e.rows && sameVault(o, row) && recordsAwards(o) ensures inFlight(o) {
+    if !o.phase.Submitted? {
+      var x :| x in o.journal.entries && x.phase.Live? && !x.key.kind.V2Root?;
+      assert liveAny(o.journal);
+    }
   }
 }

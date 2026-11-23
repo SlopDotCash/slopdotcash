@@ -257,8 +257,12 @@ tree's root (development `apps/settlement/src/keeper/monthly.vibe`
 `submitReserve`, `${key}:${root}:finalized-cursor`). In source, a finalized
 admitted root that differs from that tree is refused there ("Another monthly
 reserve is already admitted") on every run. That executor precondition
-belongs to [monthly execution](./monthlyExecution.md), which does not yet
-model it; this unit models only the journal's side.
+belongs to [monthly execution](./monthlyExecution.md), which models it: a
+row admits only from the latest signed attempt and reads only journals
+whose admitted root is its own (`admissionFits`), and an admitted root of
+the row's tree with another total holds the row as `WrongTotal`
+(`canObserveWrongTotal`) until a whole release. This unit models only the
+journal's side.
 
 The journal admits a V2 or V3 root only when it is the latest attempt's root.
 An older attempt's root is not a root the journal never signed, so it does
