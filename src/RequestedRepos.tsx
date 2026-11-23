@@ -5,13 +5,15 @@
  * flags a repository from `?flag=owner/name`; the click is the operator's OK.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { githubUserIdFromNodeId } from "./lib/github-actor";
 import {
   type MyRepoRequest,
+  parseRepoInput,
   pitchLink,
   pitchText,
+  REPO_INPUT_RULE,
   REPO_PATH_RULE,
   REPO_REQUESTS_API,
   REQUESTED_PAGE,
@@ -102,6 +104,64 @@ function CopyPitch({ text, repo }: { text: string; repo: string }) {
   );
 }
 
+/**
+ * A field to flag a repository by typing or pasting it. A signed-out visitor
+ * goes to the `?flag=` panel, which asks them to sign in first.
+ */
+function FlagField({
+  busy,
+  onFlag,
+}: {
+  busy: boolean;
+  onFlag: (repo: string) => void;
+}) {
+  const [entry, setEntry] = useState("");
+  const [invalid, setInvalid] = useState(false);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const repo = parseRepoInput(entry);
+    setInvalid(repo === null);
+    if (repo === null) return;
+    setEntry("");
+    onFlag(repo);
+  };
+  return (
+    <section className="points-panel" aria-labelledby="flag-field-heading">
+      <h2 id="flag-field-heading">Flag a repo</h2>
+      <form className="email-enrollment" onSubmit={submit}>
+        <label>
+          Repository
+          <input
+            type="text"
+            autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
+            required
+            maxLength={300}
+            placeholder="owner/name"
+            disabled={busy}
+            value={entry}
+            onChange={(event) => {
+              setEntry(event.target.value);
+              setInvalid(false);
+            }}
+          />
+        </label>
+        <div className="handoff-actions">
+          <button
+            className="button primary-button"
+            disabled={busy || entry.trim() === ""}
+            type="submit"
+          >
+            {busy ? "Saving…" : "Flag"}
+          </button>
+        </div>
+        {invalid ? <p role="alert">{REPO_INPUT_RULE}</p> : null}
+      </form>
+    </section>
+  );
+}
+
 /** The `?flag=` repository of this visit, as typed in the address. */
 function flagParameter(): string | null {
   return new URLSearchParams(window.location.search).get("flag");
@@ -175,6 +235,21 @@ function RequestedRepos({
         Repos Slop contributors want to work on. A count is accounts with merged
         work on Slop that flagged the repo in the last 90 days.
       </p>
+
+      {requested === null ? (
+        <FlagField
+          busy={busy}
+          onFlag={(repo) => {
+            if (viewer === null) {
+              window.location.assign(
+                `${REQUESTED_PAGE}?flag=${encodeURIComponent(repo)}`,
+              );
+              return;
+            }
+            act(repo, "flag");
+          }}
+        />
+      ) : null}
 
       {requested !== null ? (
         <section className="points-panel" aria-labelledby="flag-heading">
