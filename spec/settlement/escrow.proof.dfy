@@ -1747,17 +1747,20 @@ lemma EscFilterSplit(p: Award -> bool, q: Award -> bool, xs: seq<Award>)
   }
 }
 
-lemma EscPayAwards(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
-  requires alwaysEvmReleaseWhole(e) && alwaysTouchedMonthsShrink(e) && alwaysReleaseWhole(e)
-  requires alwaysWithdrawalFees(e) && alwaysMonths(e) && alwaysAwards(e) && alwaysReleasedLeavesAdmitted(e)
-  requires canPay(e, source, binding, ev)
-  ensures alwaysEvmReleaseWhole(pay(e, source, binding, ev)) && alwaysTouchedMonthsShrink(pay(e, source, binding, ev))
-  ensures alwaysReleaseWhole(pay(e, source, binding, ev)) && alwaysWithdrawalFees(pay(e, source, binding, ev))
-  ensures alwaysMonths(pay(e, source, binding, ev)) && alwaysAwards(pay(e, source, binding, ev))
-  ensures alwaysReleasedLeavesAdmitted(pay(e, source, binding, ev))
-  ensures stepAwardsRetained(e, pay(e, source, binding, ev)) && stepMonthsRetained(e, pay(e, source, binding, ev))
-  ensures stepWithdrawalsRetained(e, pay(e, source, binding, ev))
-  ensures stepOneRootPerPeriod(e, "pay", pay(e, source, binding, ev))
+// The awards after a payment: the paid award replaces the one award of its source, and every other award is kept.
+lemma EscPayList(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
+  requires alwaysAwards(e) && canPay(e, source, binding, ev)
+  ensures pay(e, source, binding, ev).awards ==
+    ProofLib.Filter((x: Award) => (x.source != source), e.awards) + [markPaid(awardFor(e, source), binding.destination, binding.version, ev.transaction)]
+  ensures |pay(e, source, binding, ev).awards| == |e.awards|
+  ensures awardFor(e, source) in e.awards && validAward(e, awardFor(e, source)) && !awardFor(e, source).paid
+  ensures forall x :: x in e.awards && x.source == source ==> x == awardFor(e, source)
+  ensures forall x :: x in pay(e, source, binding, ev).awards ==>
+    x == markPaid(awardFor(e, source), binding.destination, binding.version, ev.transaction) || (x in e.awards && x.source != source)
+  ensures forall x :: x in e.awards && x.source != source ==> x in pay(e, source, binding, ev).awards
+  ensures pay(e, source, binding, ev).months == e.months && pay(e, source, binding, ev).releasedLeaves == e.releasedLeaves
+  ensures pay(e, source, binding, ev).withdrawals == e.withdrawals && pay(e, source, binding, ev).purpose == e.purpose
+  ensures pay(e, source, binding, ev).asset == e.asset
 {
   var a := pay(e, source, binding, ev);
   var s := source;
@@ -1766,46 +1769,91 @@ lemma EscPayAwards(e: Escrow, source: SourceKey, binding: PayableBinding, ev: Ch
   var y := markPaid(w, binding.destination, binding.version, ev.transaction);
   var kept := ProofLib.Filter((x: Award) => (x.source != s), e.awards);
   assert a.awards == kept + [y];
-  assert a.months == e.months && a.releasedLeaves == e.releasedLeaves && a.withdrawals == e.withdrawals;
-  assert a.asset == e.asset && a.purpose == e.purpose;
   forall x | x in kept ensures x in e.awards && x.source != s {
     ProofLib.FilterMember((x: Award) => (x.source != s), e.awards, x);
   }
   forall x | x in e.awards && x.source != s ensures x in kept {
     ProofLib.FilterMember((x: Award) => (x.source != s), e.awards, x);
   }
-  // Exactly one award has the source, so one fewer is kept and the paid one replaces it.
   ProofLib.FilterSamePredicate((other: Award) => (other.source == w.source), (x: Award) => (x.source == s), e.awards);
   EscFilterSplit((x: Award) => (x.source == s), (x: Award) => (x.source != s), e.awards);
-  assert |a.awards| == |e.awards|;
+}
+
+lemma EscPayRetained(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
+  requires alwaysAwards(e) && canPay(e, source, binding, ev)
+  ensures stepAwardsRetained(e, pay(e, source, binding, ev))
+{
+  var a := pay(e, source, binding, ev);
+  EscPayList(e, source, binding, ev);
+  var w := awardFor(e, source);
+  var y := markPaid(w, binding.destination, binding.version, ev.transaction);
+  assert y in a.awards && sameAwardTerms(w, y);
   forall x | x in e.awards ensures exists z :: z in a.awards && sameAwardTerms(x, z) && (!x.paid || x == z) {
-    if x.source == s { assert x == w && y in a.awards && sameAwardTerms(x, y); } else { assert x in kept && x in a.awards && sameAwardTerms(x, x); }
+    if x.source == source { assert x == w; } else { assert x in a.awards && sameAwardTerms(x, x); }
   }
+}
+
+lemma EscPayMonths(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
+  requires alwaysWithdrawalFees(e) && alwaysMonths(e)
+  ensures stepMonthsRetained(e, pay(e, source, binding, ev))
+  ensures stepWithdrawalsRetained(e, pay(e, source, binding, ev)) && alwaysWithdrawalFees(pay(e, source, binding, ev))
+  ensures alwaysMonths(pay(e, source, binding, ev))
+  ensures stepOneRootPerPeriod(e, "pay", pay(e, source, binding, ev))
+{
+  var a := pay(e, source, binding, ev);
+  assert a.months == e.months && a.withdrawals == e.withdrawals;
   forall x | x in e.months ensures exists z :: z in a.months && sameMonthTerms(x, z) {
     assert x in a.months && sameMonthTerms(x, x);
   }
+}
+
+lemma EscPayLeaves(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
+  requires alwaysEvmReleaseWhole(e) && alwaysTouchedMonthsShrink(e) && alwaysReleaseWhole(e) && alwaysReleasedLeavesAdmitted(e)
+  requires alwaysAwards(e) && canPay(e, source, binding, ev)
+  ensures alwaysEvmReleaseWhole(pay(e, source, binding, ev)) && alwaysTouchedMonthsShrink(pay(e, source, binding, ev))
+  ensures alwaysReleaseWhole(pay(e, source, binding, ev)) && alwaysReleasedLeavesAdmitted(pay(e, source, binding, ev))
+{
+  var a := pay(e, source, binding, ev);
+  EscPayList(e, source, binding, ev);
+  var w := awardFor(e, source);
+  var y := markPaid(w, binding.destination, binding.version, ev.transaction);
+  assert y in a.awards;
   forall m | m in e.months ensures (exists x :: x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period) == (exists x :: x in e.awards && x.origin.MonthlyLeaf? && x.period == m.period) {
     if exists x :: x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period {
       var x :| x in a.awards && x.origin.MonthlyLeaf? && x.period == m.period;
-      if x == y { assert w in e.awards; } else { assert x in kept; }
+      if x == y { assert w in e.awards; } else { assert x in e.awards; }
     }
     if exists x :: x in e.awards && x.origin.MonthlyLeaf? && x.period == m.period {
       var x :| x in e.awards && x.origin.MonthlyLeaf? && x.period == m.period;
-      if x.source == s { assert x == w && y in a.awards; } else { assert x in kept && x in a.awards; }
+      if x.source == source { assert x == w; } else { assert x in a.awards; }
     }
+  }
+}
+
+lemma EscPayValid(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent)
+  requires alwaysAwards(e) && canPay(e, source, binding, ev)
+  ensures alwaysAwards(pay(e, source, binding, ev))
+{
+  var a := pay(e, source, binding, ev);
+  var s := source;
+  EscPayList(e, source, binding, ev);
+  var w := awardFor(e, s);
+  var y := markPaid(w, binding.destination, binding.version, ev.transaction);
+  var kept := ProofLib.Filter((x: Award) => (x.source != s), e.awards);
+  forall x | x in kept ensures x in e.awards && x.source != s {
+    ProofLib.FilterMember((x: Award) => (x.source != s), e.awards, x);
   }
   forall x | x in a.awards ensures validAward(a, x) && |ProofLib.Filter((other: Award) => (other.source == x.source), a.awards)| == 1 {
     var key := x.source;
     ProofLib.FilterAppend((other: Award) => (other.source == key), kept, y);
     if x == y {
-      assert validAward(e, w);
       ProofLib.FilterNone((other: Award) => (other.source == key), kept);
       forall i | 0 <= i < |kept| ensures kept[i].source != key { assert kept[i] in kept; }
     } else {
-      assert x in kept && x in e.awards && validAward(e, x) && key != s;
+      assert x in e.awards && validAward(e, x) && key != s;
       ProofLib.FilterOfFilterLength((z: Award) => (z.source != s), (other: Award) => (other.source == key), (other: Award) => (other.source == key), e.awards);
       ProofLib.FilterMember((other: Award) => (other.source == key), kept, x);
-      assert |ProofLib.Filter((other: Award) => (other.source == key), e.awards)| == 1;
+      assert x in kept;
     }
   }
 }
@@ -1844,7 +1892,10 @@ lemma pay_ensures(e: Escrow, source: SourceKey, binding: PayableBinding, ev: Cha
   if inv(e) && canPay(e, source, binding, ev) {
     var a := pay(e, source, binding, ev);
     EscPayCounters(e, source, binding, ev);
-    EscPayAwards(e, source, binding, ev);
+    EscPayRetained(e, source, binding, ev);
+    EscPayMonths(e, source, binding, ev);
+    EscPayLeaves(e, source, binding, ev);
+    EscPayValid(e, source, binding, ev);
     EscPledgesSame(e, a, "pay");
     EscAdvanceShape(e, a, ev, "pay");
   }
