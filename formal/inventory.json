@@ -5899,7 +5899,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "4d3c19c0ead4150aba1e00044af7e2aec042ee030fe10823891eaf0742635227",
+      "sha256": "2d8180e989b11a238150acbbfbaa863f9801e182aabc6a7a93209be0dd93dda2",
       "models": [
         "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
@@ -5921,14 +5921,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        21, 23, 356, 366, 376, 387, 396, 397, 398, 399, 400, 402, 403, 470, 542,
-        543, 544, 547, 569, 648, 679, 716, 822, 890, 968, 969, 978, 993, 994,
-        1219, 1234, 1252, 1292, 1299, 1302, 1305, 1308, 1377, 1380, 1382, 1386,
-        1387, 1392, 1409, 1413, 1421, 1422, 1425, 1427, 1435, 1466, 1512, 1515,
-        1530, 1531, 1581, 1584, 1588, 1589, 1590, 1591, 1595, 1615, 1617, 1634,
-        1639, 1701, 1702, 1707, 1708, 1713, 1720, 1722, 1762, 1763, 1766, 1767,
-        1770, 1771, 1792, 1793, 1799, 1804, 1806, 1810, 1811, 1850, 1873, 1883,
-        1914, 1916, 1941, 1942, 1958, 1959, 1970, 1972, 1997, 2000
+        21, 23, 357, 367, 377, 388, 397, 398, 399, 400, 401, 403, 404, 471, 543,
+        544, 545, 548, 570, 649, 680, 717, 823, 891, 969, 970, 979, 994, 995,
+        1221, 1236, 1254, 1294, 1301, 1304, 1307, 1310, 1379, 1382, 1384, 1388,
+        1389, 1394, 1411, 1415, 1423, 1424, 1427, 1429, 1437, 1468, 1514, 1517,
+        1532, 1533, 1583, 1586, 1590, 1591, 1592, 1593, 1597, 1617, 1619, 1636,
+        1641, 1703, 1704, 1709, 1710, 1715, 1722, 1724, 1764, 1765, 1768, 1769,
+        1772, 1773, 1794, 1795, 1801, 1806, 1808, 1812, 1813, 1852, 1875, 1885,
+        1916, 1918, 1943, 1944, 1960, 1961, 1972, 1974, 1999, 2002
       ],
       "review": "mapped-abstraction"
     },
@@ -6725,6 +6725,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [2, 56, 57, 58],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/SponsoredPoolsNotice.tsx",
+      "sha256": "430f8035c05f1276c5d115de30be743cc3af83ebf13ff6b5521845fb55f20536",
+      "models": ["formal/models/ui/ui_sponsored_pools_notice.qnt"],
+      "candidateLines": [2, 19],
       "review": "mapped-abstraction"
     },
     {
@@ -8063,6 +8070,13 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Static canonical source repository URL; no transitions."
+    },
+    {
+      "path": "src/lib/sponsored-pools-notice.ts",
+      "sha256": "45ad480f24136a590e93a64f993400ea850a3d43a84d45b4bf5dbd1c23701d08",
+      "models": ["formal/models/ui/ui_sponsored_pools_notice.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/submission-fee-page.ts",
@@ -21424,6 +21438,20 @@
         "replacementIsNotOverwrittenTest",
         "staleCandidateCannotEraseReturnedSignatureTest",
         "untrackedWarningsLeaveOtherFieldsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_sponsored_pools_notice.qnt",
+      "sha256": "591cefcf31f623eafa57cf3f332cf14261da6dc94efc8acec77e8493a884a558",
+      "sources": [
+        "src/SponsoredPoolsNotice.tsx",
+        "src/lib/sponsored-pools-notice.ts"
+      ],
+      "scenarios": [
+        "blockedStorageShowsAgainTest",
+        "dismissalSurvivesReloadTest",
+        "goneAfterEndTest",
+        "shownBeforeEndTest"
       ]
     },
     {
