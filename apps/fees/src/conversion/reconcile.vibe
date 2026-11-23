@@ -9,10 +9,10 @@ import { observeBalance } from "../receipts/discover.vibe"
 import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber } from "./chain.vibe"
 import { type Session, renewed, step } from "./session.vibe"
 
-export error ReceiptUnrepresentable { row: number; field: string }
-export error ImportRefused { network: string; txId: string }
+error ReceiptUnrepresentable { row: number; field: string }
+error ImportRefused { network: string; txId: string }
 
-export interface Reconciled { readonly reconciled: number; readonly blocked: ReadonlySet<number> }
+interface Reconciled { readonly reconciled: number; readonly blocked: ReadonlySet<number> }
 
 function expiredAwaitingReceipt(session: Session, row: Row) {
   return row.state === "Failed" && row.reason === "ExpiredUnlanded" && session.state.gas.some((entry) => entry.row === row.id && entry.state === "Signed" && !entry.settled)

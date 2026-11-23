@@ -1,24 +1,15 @@
 // spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
-import { type Event, type Fee, type NetworkFeeObservation, type Row, canReplace, latestAttempt, pricedWithin, replacementDeadlineMarginMs, replacementFees, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
+import { type Fee, type NetworkFeeObservation, type Row, canReplace, latestAttempt, pricedWithin, replacementDeadlineMarginMs, replacementFees, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
 import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
-import { exactNumber, parsedType2, wholeBig } from "../evm/abi.ts"
+import { type EvmNetwork, exactNumber, parsedType2, wholeBig } from "../evm/abi.ts"
 import { type Broadcast, baseFee, broadcast } from "../evm/client.vibe"
-import type { Facts } from "../journal/store.vibe"
 import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
-import { type EvmSigned, FeeWallet, SignRefused, signedFacts } from "../signer/feeWallet.vibe"
-import type { EvmNetwork, EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../signer/intents.ts"
-
-module verified {
-  import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
-  /** @throws {never} */
-  export function megaweiCeiling(value: bigint): bigint { return units(value, false) }
-  /** @throws {never} */
-  export function weiOfMegawei(value: bigint): bigint { return wei(value, false) }
-}
-import { megaweiCeiling, weiOfMegawei } from verified
+import { type EvmSigned, FeeWallet, SignRefused } from "../signer/feeWallet.vibe"
+import type { EvmReplacement, FirstEvmIntent, PreparationAttempt } from "../signer/intents.ts"
+import { megaweiCeiling, weiOfMegawei } from "../kernels/verified.vibe"
 
 export interface ReplacementInput {
   readonly fee: Fee
@@ -37,11 +28,11 @@ export interface ReplacementSettings {
   readonly kyber: KyberSettings
 }
 
-export type ReplacementPlan =
+type ReplacementPlan =
   | { readonly kind: "Wait"; readonly reason: string }
   | { readonly kind: "Replace"; readonly intent: EvmReplacement; readonly networkFee: NetworkFeeObservation }
 
-export interface Replaced { readonly kind: "Replaced"; readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation; readonly broadcast: Broadcast }
+interface Replaced { readonly kind: "Replaced"; readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation; readonly broadcast: Broadcast }
 
 function wait(reason: string): ReplacementPlan {
   return { kind: "Wait", reason }
@@ -111,14 +102,6 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   } satisfies ReplacementPlan
 }
 
-export function replaceEvent(input: ReplacementInput, tx: number, networkFee: NetworkFeeObservation): Event {
-  return { type: "replace", runId: input.runId, id: input.rowId, tx, networkFee }
-}
-
-export function replaceFacts(signed: EvmSigned): Facts {
-  return signedFacts(signed)
-}
-
 export effect function replaceSend<E, R, CE, CR>(input: ReplacementInput, settings: ReplacementSettings, verifyClaim: ClaimCheck<CE, CR>, journal: (replaced: { readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation }) => void!E!R) {
   const plan = try replacementPlan(input, settings, verifyClaim)
   if (plan.kind === "Wait") return plan
@@ -126,9 +109,4 @@ export effect function replaceSend<E, R, CE, CR>(input: ReplacementInput, settin
   if (signed.family !== "evm") throw new SignRefused({ step: "sign", issue: "an EVM replacement was not signed as an EVM send" })
   try journal({ signed, networkFee: plan.networkFee })
   return { kind: "Replaced", signed, networkFee: plan.networkFee, broadcast: try broadcast(signed.rawTx) } satisfies Replaced
-}
-
-export effect function resendLatest<E, R>(recorded: FirstEvmIntent, attempts: readonly [Hex, ...Hex[]], verifyClaim: ClaimCheck<E, R>) {
-  try claimVerified(recorded, verifyClaim)
-  return try broadcast(attempts[attempts.length - 1] ?? attempts[0])
 }

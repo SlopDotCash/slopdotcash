@@ -30,14 +30,9 @@ export interface ContractProbe {
 
 export const zeroOrderProbe: ContractProbe = { to: dln.destination, data: zeroOrderCalldata(), answers: takeOrdersAnswer }
 
-export type FinalizedRpcWire =
-  | { readonly status: "verified"; readonly chainId: number; readonly blockNumber: string; readonly blockHash: string }
-  | { readonly status: "unavailable" }
-
-export const FinalizedRpcWire = Schema.Union([
-  Schema.Struct({ status: Schema.Literal("verified"), chainId: Schema.Number, blockNumber: Schema.String, blockHash: Schema.String }),
-  Schema.Struct({ status: Schema.Literal("unavailable") }),
-])
+schema VerifiedRpcWire { readonly status: "verified"; readonly chainId: number; readonly blockNumber: string; readonly blockHash: string }
+schema UnavailableRpcWire { readonly status: "unavailable" }
+export schema FinalizedRpcWire = VerifiedRpcWire | UnavailableRpcWire
 
 const noBlock: FinalizedBlock = { height: "", hash: "", exactHeight: false, canonicalHash: false }
 

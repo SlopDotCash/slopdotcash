@@ -37,6 +37,7 @@ export schema ProjectRepository {
   readonly fullName: string
   readonly integrationBranch: string
   readonly aliases: ReadonlyArray<string>
+  readonly currentPath?: string
 }
 
 export schema StewardAccount = "UserSteward" | "OrganizationSteward"

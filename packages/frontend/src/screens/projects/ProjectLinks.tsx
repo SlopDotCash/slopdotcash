@@ -74,7 +74,7 @@ export function ProjectLinks({ record }: ProjectLinksProps) {
   const parts = linkParts(record);
   if (parts.length === 0) return null;
   return (
-    <p className="text-muted-foreground">
+    <p className="text-foreground">
       {parts.map((part, index) => (
         <Fragment key={part.key}>
           {index > 0 ? " · " : null}

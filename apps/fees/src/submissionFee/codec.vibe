@@ -78,7 +78,7 @@ const textStates: Readonly<Record<StateText, DepositState>> = {
   reclaimed: "Reclaimed",
 }
 
-export function stateOf(text: StateText): DepositState {
+function stateOf(text: StateText): DepositState {
   return textStates[text]
 }
 
@@ -91,7 +91,7 @@ export function refusalOf(text: string | null): Refusal {
   return found ?? "NoRefusal"
 }
 
-export function itemOutcomeOf(outcome: FeeOutcome | null): ItemOutcome {
+function itemOutcomeOf(outcome: FeeOutcome | null): ItemOutcome {
   return outcome === null ? "Undecided" : outcomes[outcome]
 }
 

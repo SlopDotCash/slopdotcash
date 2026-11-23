@@ -25,8 +25,8 @@ const arrows = { ascending: ArrowUp, descending: ArrowDown, none: ArrowUpDown };
 /** Rows of values in columns. A wide table scrolls sideways within a region a keyboard can reach. */
 export function Table({ label, className, ...props }: TableProps) {
   return (
-    <div role="region" aria-label={label} tabIndex={0} className={cn(focusRing, "w-full overflow-x-auto rounded-md")}>
-      <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
+    <div role="region" aria-label={label} tabIndex={0} className={cn(focusRing, "w-full overflow-x-auto border-y border-border")}>
+      <table className={cn("w-full caption-top text-sm", className)} {...props} />
     </div>
   );
 }
@@ -50,7 +50,7 @@ export function TableRow({ className, ...props }: TableRowProps) {
 export function TableHead({ sort, onSort, scope = "col", className, children, ...props }: TableHeadProps) {
   const Arrow = arrows[sort ?? "none"];
   return (
-    <th scope={scope} aria-sort={sort ?? (onSort && "none")} className={cn(onSort ? "h-11" : "h-10", "px-3 text-left font-medium whitespace-nowrap text-muted-foreground", className)} {...props}>
+    <th scope={scope} aria-sort={sort ?? (onSort && "none")} className={cn(onSort ? "h-11 py-0" : "py-3.75", "px-2.5 text-left font-bold whitespace-nowrap text-foreground", className)} {...props}>
       {onSort ? (
         <button type="button" onClick={onSort} className={cn(focusRing, target, "inline-flex items-center gap-1 rounded-sm hover:text-foreground")}>
           {children}
@@ -65,10 +65,10 @@ export function TableHead({ sort, onSort, scope = "col", className, children, ..
 
 /** A cell of a `Table`. */
 export function TableCell({ className, ...props }: TableCellProps) {
-  return <td className={cn("px-3 py-2 align-middle", className)} {...props} />;
+  return <td className={cn("px-2.5 py-3.75 align-middle", className)} {...props} />;
 }
 
 /** The table's title, read first by assistive technology. */
 export function TableCaption({ visuallyHidden = false, className, ...props }: TableCaptionProps) {
-  return <caption className={cn(visuallyHidden ? "sr-only" : "mt-3 text-sm text-muted-foreground", className)} {...props} />;
+  return <caption className={cn(visuallyHidden ? "sr-only" : "pb-3 text-left text-ui font-semibold tracking-caps text-muted-foreground uppercase", className)} {...props} />;
 }

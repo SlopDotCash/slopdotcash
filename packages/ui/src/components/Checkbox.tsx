@@ -16,13 +16,13 @@ export function Checkbox({ invalid = false, className, ...props }: CheckboxProps
         focusRing,
         inactive,
         target,
-        "peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background aria-invalid:border-destructive data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+        "peer inline-flex size-5 shrink-0 items-center justify-center rounded-sm border border-input bg-background aria-invalid:border-destructive data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
         className,
       )}
       {...props}
     >
       <CheckboxPrimitive.Indicator>
-        <svg aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3">
+        <svg aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5">
           <path d="m3 8.5 3.5 3.5 6.5-8" />
         </svg>
       </CheckboxPrimitive.Indicator>

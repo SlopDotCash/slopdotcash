@@ -1,0 +1,31 @@
+import { assert } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { D1, type Statement, d1 } from "@repo/platform/d1"
+import type { Instance, Names } from "../../src/journal/codec.vibe"
+import { runText } from "../../src/journal/codec.vibe"
+import { journal, send } from "../../src/journal/store.vibe"
+
+export effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+export effect function direct(world: { readonly db: D1Database }, statement: Statement) {
+  return Effect.as(Effect.provide(effect { return try (try D1).run(statement) }, d1(world.db)), "changed") catch (error) => error._tag
+}
+
+export effect function logged<A, E, R>(program: A!E!R) {
+  const events: Array<Readonly<Record<string, unknown>>> = []
+  const capture = Logger.layer([Logger.make((options) => {
+    const message: unknown = options.message
+    const [event, fields] = Array.isArray(message) ? message : [message, undefined]
+    if (typeof event === "string") events.push({ event, ...(typeof fields === "object" && fields !== null ? fields : {}) })
+  })], { mergeWithExisting: true })
+  const value = try Effect.provide(program, capture)
+  return { value, events }
+}
+
+export effect function recoveryLease(instance: Instance, names: Names) {
+  const runId = (try journal(instance, names)).state.nextRun
+  try send(instance, names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker")
+  return runText(instance.scope, names.text("run", runId) ?? "", "Recovery")
+}

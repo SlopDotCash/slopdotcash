@@ -62,8 +62,8 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
       ? [...(branches.includes(p.integrationBranch) ? [] : [["", "Select a branch"] as const]), ...branches.map((branch) => [branch, branch] as const)]
       : [["", branchesLoading ? "Loading branches…" : "Choose a repository"] as const];
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+    <div className="flex flex-col gap-4">
+      <div className="grid items-start gap-4 sm:grid-cols-[2fr_1fr]">
         {picker}
         <SelectField
           label="Integration branch"
@@ -75,7 +75,7 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
           onChange={(value) => onChange("integrationBranch", value)}
         />
       </div>
-      <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-end">
+      <div className="grid grid-cols-[auto_1fr] items-center gap-4">
         <ProjectImageField key={imageKey} ownerLogin={p.stewardLogin} value={p.image} onChange={(value) => onChange("image", value)} />
         {text({ field: "name", label: "Project name" })}
       </div>
@@ -86,7 +86,7 @@ export function ProjectStep({ proposal: p, picker, branches, branchesLoading, ex
         <TextField label="X account (optional)" name="x" placeholder="@handle" value={p.x} error={shown("x")} onChange={(value) => onChange("x", value)} />
       </div>
       <TextField label="Acceptance criteria" name="criteria" multiline value={p.criteria} error={shown("criteria")} onChange={(value) => onChange("criteria", value)} />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-4">
         {(["requiredTests", ...extraRuleFields] as const).map((field) => (
           <TextField key={field} label={contributionLabels[field].label} name={field} multiline value={p[field]} error={shown(field)} onChange={(value) => onChange(field, value)} />
         ))}

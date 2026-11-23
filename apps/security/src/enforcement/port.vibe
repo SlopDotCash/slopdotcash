@@ -9,7 +9,7 @@ import { type Action, type Recorded, send } from "@repo/backend/projects/store"
 import { type ReadFailure, Registry, RegistryManifests } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { ContributorAudience } from "@repo/ports/points"
-import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRecord, EnforcementRows, type EvidenceObservation, PublicSecurity, type ReinstatementRead, type RestrictionFacts, type VettingState } from "@repo/ports/security"
+import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRecord, EnforcementRows, type EvidenceObservation, PublicSecurity, type ReinstatementRead, type RestrictionFacts, type VettingClearance, type VettingState } from "@repo/ports/security"
 import type { ClearanceState, Enforcement as EnforcementState, PinRead } from "../../gen/security__enforcement.ts"
 import { basis, basisLabel, clearanceState, decidingAt, latestOf, mayContribute } from "../../gen/security__enforcement.effect.vibe"
 import { SkillTemplate } from "../admission/livePin.vibe"
@@ -193,6 +193,14 @@ export function projectClearance(state: EnforcementState): VettingState {
   return each.find((repository) => repository.state !== "cleared")?.state ?? "cleared"
 }
 
+function publicClearance(each: ReturnType<typeof repositoryClearances>): VettingClearance {
+  const [only] = each
+  if (each.length === 1 && only !== undefined) return { state: only.state }
+  const deciding = each.find((repository) => repository.state === "banned") ?? each.find((repository) => repository.state !== "cleared")
+  if (deciding === undefined) return { state: "cleared" as const }
+  return deciding.state === "banned" ? { state: deciding.state } : { state: deciding.state, repository: deciding.repositoryId }
+}
+
 effect function clearanceOf(loaded: Loaded, revision: number, templateSha256: string) {
   if (!loaded.found || loaded.mirror.revision !== revision || loaded.state.restriction !== "Clear") return "ClearanceRefused" satisfies ClearanceRead
   const state = try withRetainedEvidence(loaded.state)
@@ -227,9 +235,8 @@ export const PublicSecurityLive = Layer.effect(PublicSecurity, effect {
     }, services),
     vetting: (project) => Effect.provide(effect {
       const loaded = try loadEnforcement(project.projectId)
-      if (!loaded.found || loaded.mirror.revision < project.revision) return { state: "unscanned" as const, repositories: [] }
-      const state = try withRetainedEvidence(loaded.state)
-      return { state: projectClearance(state), repositories: repositoryClearances(state) }
+      if (!loaded.found || loaded.mirror.revision < project.revision) return { state: "unscanned" as const }
+      return publicClearance(repositoryClearances(try withRetainedEvidence(loaded.state)))
     }, services),
   } satisfies PublicSecurity.Shape
 })

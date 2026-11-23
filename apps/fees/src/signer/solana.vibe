@@ -1,7 +1,6 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
 import { SolanaRpc, base58Encode, base64Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
-import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Runtime, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { Facts } from "../journal/store.vibe"
 import { type JupiterRefused, type JupiterSettings, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
@@ -19,12 +18,7 @@ import { FeeWallet, KeyMismatch, type Prepared, SignRefused, type SolanaPrepared
 import type { FeeIntent, JupiterSwap, SolanaIntent } from "./intents.ts"
 import { type SolanaKey, controlsWallet, feeWalletSolanaMarker, solanaKey } from "./solanaKey.ts"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-}
-import { errorText } from verified
+import { errorText } from "../kernels/verified.vibe"
 
 export interface SolanaWalletOptions {
   readonly key: Redacted.Redacted<string> | undefined
@@ -40,7 +34,7 @@ export interface SolanaReviewed extends SolanaPrepared {
   readonly messageOffset: number
 }
 
-export interface SolanaSent extends SolanaSigned {
+interface SolanaSent extends SolanaSigned {
   readonly prepared: SolanaReviewed
 }
 
@@ -202,27 +196,6 @@ export function solanaFeeWallet(options: SolanaWalletOptions) {
     }
     return shape
   })
-}
-
-export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number): SignedSend | undefined {
-  const ready = signed.prepared
-  if (ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue) || ready.pricedFeeMicro > wideOf(maximumSafeValue)) return undefined
-  return {
-    kind: "Conversion",
-    tx,
-    nonce,
-    gasLimit: 1,
-    fees: { maxFee: ready.maximumUnits, priority: 0 },
-    inspection: "Inspected",
-    outputToFeeWallet: true,
-    minimumOutput: Number(ready.minimumOutput),
-    deadline: maximumSafeValue,
-    blockhashSlot: ready.blockhashSlot,
-    toPinnedRouter: true,
-    approvedAmount: 0,
-    allowance: 0,
-    pricedFeeMicro: Number(ready.pricedFeeMicro),
-  }
 }
 
 export function solanaReservationFacts(ready: SolanaPrepared): Facts {

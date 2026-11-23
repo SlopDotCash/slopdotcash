@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "../lib/cn.ts";
 import { Identity } from "./Identity.tsx";
 import { Table, TableBody, TableCell, TableHead, TableHeader, type TableProps, TableRow } from "./Table.tsx";
 
@@ -31,20 +32,20 @@ export function Leaderboard({ rows, headings = { rank: "Rank", actor: "Contribut
     <Table {...props}>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-16 text-right">{headings.rank}</TableHead>
-          <TableHead>{headings.actor}</TableHead>
+          <TableHead className="w-18 text-sm font-medium text-muted-foreground">{headings.rank}</TableHead>
+          <TableHead className="text-sm font-medium text-muted-foreground">{headings.actor}</TableHead>
           <TableHead className="text-right">{headings.points}</TableHead>
           {shares && <TableHead className="text-right">{headings.share}</TableHead>}
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={row.actor.login}>
-            <TableCell className="text-right font-mono text-muted-foreground tabular-nums">{row.rank}</TableCell>
-            <TableCell>
-              <Identity login={row.actor.login} href={row.actor.href} avatarUrl={row.actor.avatarUrl} detail={row.detail} size="sm" />
+          <TableRow key={row.actor.login} className="text-prompt font-bold">
+            <TableCell className={cn("py-4 font-extrabold tabular-nums", row.rank === 1 && "text-primary")}>{row.rank}</TableCell>
+            <TableCell className="py-4">
+              <Identity login={row.actor.login} href={row.actor.href} avatarUrl={row.actor.avatarUrl} detail={row.detail} />
             </TableCell>
-            <TableCell className="text-right font-mono font-medium tabular-nums">{row.points}</TableCell>
+            <TableCell className="py-4 text-right font-mono tabular-nums">{row.points}</TableCell>
             {shares && <TableCell className="text-right font-mono tabular-nums">{row.share}</TableCell>}
           </TableRow>
         ))}

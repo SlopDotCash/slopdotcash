@@ -3,13 +3,13 @@ import type { JsonRpc } from "@repo/platform/chain/rpc"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type PriorWitness, independentPair } from "../../gen/fees__solanaRpcRotation.effect.vibe"
 import type { Names } from "../journal/codec.vibe"
-import { expiryBlocksPerRun } from "../kernels/expiryCoverage.ts"
+import { expiryBlocksPerRun } from "@repo/settlement/kernels/expiryCoverage"
 import { ScanJson } from "../journal/codec.vibe"
 import { solanaGenesis } from "../runtime/pins.ts"
 import { jsonValue } from "../solana/bytes.ts"
 import { type ExpiryProvider, expiryProvider, recoveryOperator } from "../expiry/operators.vibe"
 import { type CoverageStore, type Proven, proveExpiry } from "../expiry/prove.vibe"
-import { CoverageBlock, type Cursor, type Target, advanced, initialCursor, slotNumber } from "../expiry/scan.vibe"
+import { type CoverageBlock, type Cursor, PageRecord, type Target, advanced, initialCursor, slotNumber } from "../expiry/scan.vibe"
 
 export const solanaPublicPair = ["https://api.mainnet-beta.solana.com", "https://public.rpc.solanavibestation.com"] as const
 
@@ -35,8 +35,6 @@ const signaturesDigest = /^[a-f0-9]{64}$/u
 
 export error WitnessInconsistent
 export error PairUnqualified { issue: string }
-
-schema PageRecord { operator: string; blocks: ReadonlyArray<CoverageBlock> }
 
 const ProofRecord = Schema.Struct({ schemaVersion: Schema.Literal(1), coverage: Schema.Array(ScanJson), pages: Schema.Array(PageRecord), proof: Schema.Unknown })
 

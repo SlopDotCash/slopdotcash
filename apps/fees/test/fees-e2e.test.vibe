@@ -1,4 +1,4 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
 import { database, bundle, migrate, scheduled, workerOptions } from "@repo/platform/testing"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type Anvil, anvil, forward } from "@repo/platform/testing/chains"
@@ -13,7 +13,8 @@ import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
 import { EVM_NATIVE_ASSET } from "@repo/settlement/kernels/networks"
 import { feeConversionsPath } from "../src/client/report.vibe"
 import { type FeeTokens, allowanceOf, balanceOf, feeTokens, finalize, fixtureBuild, kyberRoutes, landed, mint, nonceOf, router, simpleModeRouter, unit, zeroFeeSource } from "./support/chains/evm.ts"
-import { type Converter, type JournalRow, answered, buybackLimits, bundledText, converterBinding, converterDatabase, converterLimits, execute, heldLocks, journal, redeploy, runAt, sessionHash, settledEvents, signedWithoutReservation, signerMarkers, stagingVars, startConverter } from "./support/scenarios/feeConverter.ts"
+import { type Converter, type JournalRow, answered, buybackLimits, bundledText, converterBinding, converterEvents, converterDatabase, converterLimits, execute, heldLocks, journal, redeploy, runAt, sessionHash, signedWithoutReservation, signerMarkers, stagingVars, startConverter } from "./support/scenarios/feeConverter.ts"
+import { same } from "./support/checks.vibe"
 
 service Bundled { readonly submissionFee: string; readonly converter: string }
 
@@ -76,10 +77,6 @@ const dust = 4_000_000_000_000_000n
 const quotable = 6_000_000_000_000_000n
 const received = 2_000n * unit
 
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
-}
-
 effect function started(vars: Readonly<Record<string, string>>) {
   const { submissionFee } = try Bundled
   const logs: string[] = []
@@ -117,9 +114,13 @@ function events(worker: Started) {
   return worker.logs.filter((line) => line.startsWith('{"event":"submission_fee_'))
 }
 
+effect function polled<T>(read: () => ReadonlyArray<T>, expected: number) {
+  for (let attempt = 0; attempt < 100 && read().length < expected; attempt++) try sleep("20 millis")
+  return read()
+}
+
 effect function logged(worker: Started, expected: number) {
-  for (let attempt = 0; attempt < 100 && events(worker).length < expected; attempt++) try sleep("20 millis")
-  return events(worker)
+  return try polled(() => events(worker), expected)
 }
 
 effect function walletAt(index: number) {
@@ -265,7 +266,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
     const requested = net.requests.length
     const unset = try converter({ SLOP_ENVIRONMENT: "production", FEE_CONVERTER_NETWORKS: "base" })
     const offOutcomes = [try ran(unset, at.recovery), try rerun(unset, { FEE_CONVERTER_MODE: "off" }, [], at.receipts)]
-    const offEvents = try promise(() => settledEvents(unset, 2))
+    const offEvents = try polled(() => converterEvents(unset), 2)
     const offRequests = net.requests.length - requested
     const offRows = try rowsOf(unset)
     const offLocks = try promise(() => heldLocks(unset))
@@ -317,7 +318,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       RPC_URL_ETHEREUM: "https://ethereum.rpc.test",
     })
     const failed = try ran(running, at.recovery)
-    const errors = (try promise(() => settledEvents(running, 1))).map((event) => [event.event, event.network])
+    const errors = (try polled(() => converterEvents(running), 1)).map((event) => [event.event, event.network])
     const kept = (try rowsOf(running)).map(outline)
     const locks = try promise(() => heldLocks(running))
     const requested = net.requests.length
@@ -360,7 +361,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       try promise(() => redeploy(retained, mode === "live" ? { FEE_CONVERTER_MODE: mode, FEE_WALLET_KEY_ROBINHOOD: wallet.key } : { FEE_CONVERTER_MODE: mode }))
       for (const time of [at.receipts, at.recovery]) outcomes.push(try ran(retained, time))
     }
-    const runs = try promise(() => settledEvents(retained, 4))
+    const runs = try polled(() => converterEvents(retained), 4)
     try same({
       outcomes,
       results: runs.map((event) => (event.results as ReadonlyArray<{ readonly network: string; readonly status: string; readonly claimed: number }>).map((result) => [result.network, result.status, result.claimed])),
@@ -400,7 +401,7 @@ layer(Layer.mergeAll(BundledLive, FeeWorldLive), { excludeTestServices: true, ti
       const onChain = try promise(() => row.tx_id === null ? Promise.resolve(false) : landed(base.chain, row.tx_id))
       proofs.push(onChain && row.landed_tx_id === row.tx_id)
     }
-    const runs = try promise(() => settledEvents(live, 4))
+    const runs = try polled(() => converterEvents(live), 4)
     try same({
       outcomes,
       approved: [approved.allowance, approved.token, approved.nonce],

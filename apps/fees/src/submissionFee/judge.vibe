@@ -11,7 +11,7 @@ import { type ReportDeposit as ReportModel, type ReportFacts, apply as applyRepo
 import { type DepositRow, depositView, paidByOf, reasonText } from "./codec.vibe"
 import { setJudgement, unjudged } from "./store.vibe"
 
-export interface Judged {
+interface Judged {
   readonly judged: number
   readonly paid: number
 }

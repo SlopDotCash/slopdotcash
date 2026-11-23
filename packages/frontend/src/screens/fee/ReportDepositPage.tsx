@@ -1,7 +1,7 @@
 // spec/frontend/feePages.md, "Story: Pay a refundable deposit for a pull request or a private report from any wallet"; spec/frontend/feePages.md, "A pay page offers a way to pay only from a record that equals the published terms"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"
 import { reclaimDays } from "@repo/backend/client";
 import { REPORT_DEPOSIT_KEPT_AFTER_CLOSED_DAYS, REPORT_DEPOSIT_REFUND_SILENT_DAYS } from "@repo/security/client";
-import { Alert, Button, PageHeader, Spinner } from "@repo/ui";
+import { Alert, Button, cn, PageHeader, shell, Spinner } from "@repo/ui";
 import type { Layer } from "effect";
 import { ShieldCheck } from "lucide-react";
 import { useState } from "react";
@@ -13,16 +13,16 @@ import type { FeePay, FeeSetup, FeeWay } from "./payFlow.vibe";
 import { type FeeRuntime, feeRuntime } from "./runtime.vibe";
 import { useOpened, usePay } from "./usePay.ts";
 
-const page = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-8";
-const section = "flex flex-col gap-3";
-const heading = "text-xl font-semibold text-foreground";
+const page = cn(shell, "grid max-w-190 flex-1 content-start justify-items-start gap-4.5 pt-9 pb-18 *:max-w-full *:min-w-0");
+const section = "grid gap-2.5";
+const heading = "text-lg leading-page font-extrabold tracking-amount uppercase";
 
 function Terms({ way }: { way: FeeWay }) {
   const network = networkLabel(way.network);
   return (
     <section aria-label="What happens to the deposit" className={section}>
       <h2 className={heading}>What happens to the deposit</h2>
-      <ul className="flex list-disc flex-col gap-2 pl-5 text-muted-foreground">
+      <ul className="grid list-disc gap-2 pl-5">
         <li>
           It is sent back to the wallet that paid it when the report gets its first response that is not one of the closes named next, or if {REPORT_DEPOSIT_REFUND_SILENT_DAYS} days pass after the deposit with no response, or if the project turns the deposit off.
         </li>
@@ -44,27 +44,27 @@ function Terms({ way }: { way: FeeWay }) {
 function Opened({ runtime, pay }: { runtime: FeeRuntime; pay: FeePay }) {
   const { state, shown } = usePay(runtime, pay);
   const [open, setOpen] = useState(false);
-  if (state?.page === "NotAddressed") return <p className="text-muted-foreground">This address does not name a report.</p>;
+  if (state?.page === "NotAddressed") return <p>This address does not name a report.</p>;
   const record = shown?.record;
   const [way] = record?.due ?? [];
   const recorded = state !== undefined && (state.page === "SwitchedOff" || state.page === "Due" || state.page === "Recorded");
   return (
     <>
-      <p className="text-muted-foreground">The refundable deposit on one private security report.</p>
+      <p>The refundable deposit on one private security report.</p>
       {state !== undefined && !state.switchedOn ? (
         <Alert variant="info">The report deposit is not switched on. No deposit is due for any report, and this page offers no way to pay.</Alert>
       ) : null}
       <RecordState state={state} shown={shown} loading="Loading the deposit record" onRetry={() => void runtime.runPromise(pay.reload())} />
-      {state?.page === "NothingAsked" ? <p className="text-muted-foreground">Slop has not asked a deposit for this report. No deposit is due.</p> : null}
+      {state?.page === "NothingAsked" ? <p>Slop has not asked a deposit for this report. No deposit is due.</p> : null}
       {recorded && record && shown ? (
         <>
           <PaidRecord record={record} held="The deposit is held by the deposit contract until the report gets a response." />
-          {state.page === "SwitchedOff" ? <p className="text-muted-foreground">Slop recorded this report for a deposit, but the deposit is not switched on, so nothing is asked for it now.</p> : null}
+          {state.page === "SwitchedOff" ? <p>Slop recorded this report for a deposit, but the deposit is not switched on, so nothing is asked for it now.</p> : null}
           {state.switchedOn && way ? (
             <>
               <section aria-label="Deposit due" className={section}>
                 <h2 className={heading}>Deposit due</h2>
-                <p className="text-muted-foreground">
+                <p>
                   <strong className="font-semibold text-foreground">{amountText(way)}</strong> on {networkLabel(way.network)}. The report is already stored. It is screened once this deposit is recorded.
                 </p>
               </section>
@@ -89,7 +89,7 @@ export function ReportDepositPage({ route, setup }: Pick<PageProps, "route"> & {
   const opened = useOpened(runtime, { kind: "report", caseId: route.caseId });
   return (
     <main className={page}>
-      <PageHeader title="Report deposit" icon={<ShieldCheck className="size-6 text-primary" />} />
+      <PageHeader title="Report deposit" icon={<ShieldCheck />} />
       {opened.status === "running" ? <Spinner label="Loading the deposit record" /> : null}
       {opened.status === "failed" ? <Alert variant="destructive">{opened.message}</Alert> : null}
       {opened.status === "done" ? <Opened runtime={runtime} pay={opened.value} /> : null}

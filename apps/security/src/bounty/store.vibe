@@ -123,6 +123,7 @@ export effect function commitment(request: AwardRequest) {
   const route = full ? { asset: "", qualified: false, observedAt: 0 } satisfies RouteObservation : try routeOf(identity, asset)
   const { bounty, index } = projected(self, caseId, competitor, held, funds, route, try Clock.currentTimeMillis)
   const clearance = clearanceFor(bounty, index, limbsOf(request.grossMinor))
+  try Effect.logError("DBGX " + JSON.stringify({ clearance, funds: bounty.funds, reserved: bounty.reserved, asset, route: bounty.route, clock: bounty.clockMs, terms: request.terms }))
   try unclearedRefusal(clearance, bounty, asset, full)
   const pin = try pinOf(projectId)
   const restrictions = try Restrictions

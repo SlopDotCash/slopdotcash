@@ -71,8 +71,8 @@ function ClearanceState({ project, clearance, listing, held }: Pick<InstallPanel
 export function InstallPanel({ project, clearance, listing, held, origin, onCopy }: InstallPanelProps) {
   const ready = clearance === "ready";
   return (
-    <div id="start" className="flex min-w-0 flex-col gap-3">
-      <h2 className="text-xl font-semibold text-foreground">Start</h2>
+    <div id="start" className="flex min-w-0 flex-col gap-2 pt-4">
+      <h2 className="text-lg font-extrabold tracking-amount text-gold uppercase">Start</h2>
       {ready ? null : (
         <p className="flex flex-wrap items-center gap-1">
           <ClearanceState project={project} clearance={clearance} listing={listing} held={held} />

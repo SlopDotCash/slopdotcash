@@ -19,11 +19,6 @@ export interface DurableObjectStorage {
   transactionSync<T>(closure: () => T): T;
 }
 
-export interface DurableObjectState {
-  readonly storage: DurableObjectStorage;
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>;
-}
-
 export interface DurableObjectId {
   toString(): string;
 }

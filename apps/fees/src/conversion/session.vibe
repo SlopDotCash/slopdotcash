@@ -3,7 +3,7 @@ import { type Event, type Fee, lockMs } from "../../gen/fees__conversion.effect.
 import type { Instance, Names } from "../journal/codec.vibe"
 import { type Facts, send } from "../journal/store.vibe"
 
-export const renewalMs = lockMs / 2
+const renewalMs = lockMs / 2
 
 export interface Session {
   instance: Instance

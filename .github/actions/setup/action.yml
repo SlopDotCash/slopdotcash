@@ -1,5 +1,5 @@
 name: setup
-description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3 and the spec cache; with solana, the pinned Agave CLI and program builder, their platform tools and the reviewed validator image; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
+description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3, the pinned merge Git built where the Git journeys look for it, and the spec cache; with solana, the pinned Agave CLI and program builder, their platform tools and the reviewed validator image; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
 inputs:
   job:
     description: Names the caches this job saves. The contracts job installs only the native contract tools and pinned package runner.
@@ -79,6 +79,56 @@ runs:
         cargo --version
         rustc --version
         python3 --version
+    - name: Read the pinned merge Git release
+      id: merge-git
+      if: inputs.verification == 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-')
+      shell: bash
+      run: |
+        set -euo pipefail
+        installer=packages/platform/src/git/install.vibe
+        source="$(sed -n 's/^export const PINNED_GIT_SOURCE = "\(https:\/\/www\.kernel\.org\/pub\/software\/scm\/git\/git-[0-9.]\+\.tar\.xz\)"$/\1/p' "$installer")"
+        sha="$(sed -n 's/^export const PINNED_GIT_SHA256 = "\([0-9a-f]\{64\}\)"$/\1/p' "$installer")"
+        version="$(sed -n 's/^export const MERGE_GIT_VERSION = "git version \([0-9]\+\.[0-9]\+\.[0-9]\+\)"$/\1/p' packages/platform/src/git/model.vibe)"
+        [[ -n $source && -n $sha && -n $version && $source == */git-$version.tar.xz ]] || { echo "::error::$installer and the merge profile name no single pinned Git release."; exit 1; }
+        printf 'source=%s\nsha=%s\nversion=%s\ntarget=%s\nkey=merge-git-%s-%s-%s\n' "$source" "$sha" "$version" "$PWD/packages/platform/.cache/merge-git-$version" "$RUNNER_OS" "$RUNNER_ARCH" "$sha" >> "$GITHUB_OUTPUT"
+    - id: restore-merge-git
+      if: steps.merge-git.outputs.key != ''
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ steps.merge-git.outputs.target }}
+        key: ${{ steps.merge-git.outputs.key }}
+    - name: Build the pinned merge Git where the Git journeys look for it
+      if: steps.merge-git.outputs.key != '' && steps.restore-merge-git.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SOURCE: ${{ steps.merge-git.outputs.source }}
+        SHA: ${{ steps.merge-git.outputs.sha }}
+        TARGET: ${{ steps.merge-git.outputs.target }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+        work="$RUNNER_TEMP/merge-git-build"
+        mkdir -p "$work"
+        curl --fail --location --retry 3 -o "$work/git.tar.xz" "$SOURCE"
+        echo "$SHA  $work/git.tar.xz" | sha256sum --check --strict
+        tar -xJf "$work/git.tar.xz" --strip-components=1 -C "$work"
+        rm -rf "$TARGET"
+        make -C "$work" -j"$(nproc)" prefix="$TARGET" NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_PERL=YesPlease NO_RUST=YesPlease install
+    - name: Check the pinned merge Git
+      if: steps.merge-git.outputs.key != ''
+      shell: bash
+      env:
+        VERSION: ${{ steps.merge-git.outputs.version }}
+        TARGET: ${{ steps.merge-git.outputs.target }}
+      run: '[[ $("$TARGET/bin/git" --version) == "git version $VERSION" ]] || { echo "::error::$TARGET/bin/git is not git version $VERSION."; exit 1; }'
+    - if: steps.merge-git.outputs.key != '' && steps.restore-merge-git.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ steps.merge-git.outputs.target }}
+        key: ${{ steps.merge-git.outputs.key }}
     - name: Read the pinned Agave and platform tools versions
       id: solana-tools
       if: inputs.solana == 'true' && inputs.publication != 'true'

@@ -43,6 +43,7 @@ service Screened {
 
 const surplusKey = "surplus-screening-key"
 const project = "intake-fixture"
+const scopedProject = "intake-full"
 const triager = "703"
 const stranger = "49999"
 
@@ -70,7 +71,7 @@ const retiredFixture: ProjectView = { ...fixture, listingTier: "Retired", retire
 
 const portsOf = (view: ProjectView) => Layer.mergeAll(
   Layer.succeed(Registry, {
-    project: (projectId) => succeed(projectId === project ? view : undefined),
+    project: (projectId) => succeed(projectId === project || projectId === scopedProject ? { ...view, projectId } : undefined),
     byRepository: () => succeed(undefined),
     byPath: () => succeed(undefined),
     active: () => succeed([view]),
@@ -198,10 +199,12 @@ function reportOf(summary: string, description: string): Report {
   return { summary, description, severity: "high" }
 }
 
-effect function submit(world: World, as: string, key: string, report: Report) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+effect function submit(world: World, as: string, key: string, report: Report, projectId = project) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId, idempotencyKey: key, origin: "slop", report } }))
   if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
-  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+  const submission = (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+  try promise(() => receiptScreened(world, submission.id))
+  return submission
 }
 
 effect function screen(screened: Screened.Shape, as: string, id: string, expectedRevision: number, handler: WebHandler = screened.keyed) {
@@ -211,6 +214,14 @@ effect function screen(screened: Screened.Shape, as: string, id: string, expecte
 async function intakeRow(world: World, id: string): Promise<Record<string, unknown> | undefined> {
   const [found] = await rows(world, "SELECT report_version AS version, screening_state AS state, screening_reason AS reason, screening_provider AS provider, screening_model AS model, review_decision AS review, routed_at IS NOT NULL AS routed, revision FROM security_submission_intake WHERE submission_id=?", id)
   return found
+}
+
+async function receiptScreened(world: World, id: string): Promise<void> {
+  for (let polls = 0; polls < 200; polls += 1) {
+    const found = await intakeRow(world, id)
+    if (!["queued", "running"].includes(String(found?.state))) return
+  }
+  throw new Error(`the receipt's screening of ${id} did not settle`)
 }
 
 effect function intakeOf(world: World, id: string) {
@@ -248,42 +259,42 @@ effect function outcomes(screened: Screened.Shape) {
   const a = try submit(world, "41001", "screening-case-a-0001", reportA)
   fake.reply(screeningOf(reportA.summary), decided("legitimate", "The report names the oracle module and gives a safe reproduction."))
   fake.reply(analysisOf(reportA.summary), assessed("Stale oracle reads let borrowers over-withdraw."))
-  const screenedA = try screen(screened, "41001", a.id, 1)
+  const screenedA = try screen(screened, "41001", a.id, 3)
   const sentA = fake.calls.find(screeningOf(reportA.summary))
 
   const b = try submit(world, "41002", "screening-case-b-0001", reportB)
   fake.reply(screeningOf(reportB.summary), decided("needs-information", "Name the affected vault function."))
-  try screen(screened, "41002", b.id, 1)
+  try screen(screened, "41002", b.id, 3)
   const sentB = fake.calls.find(screeningOf(reportB.summary))
 
   const c = try submit(world, "41003", "screening-case-c-0001", reportC)
   fake.reply(screeningOf(reportC.summary), decided("spam", "Generic scanner output with no concrete target."))
-  try screen(screened, "41003", c.id, 1)
+  try screen(screened, "41003", c.id, 3)
   const d = try submit(world, "41004", "screening-case-d-0001", reportD)
   fake.reply(screeningOf(reportD.summary), decided("legitimate", "Looks like the earlier oracle report.", [a.caseId, "sc_not_supplied"]))
-  try screen(screened, "41004", d.id, 1)
+  try screen(screened, "41004", d.id, 3)
   const e = try submit(world, "41005", "screening-case-e-0001", reportE)
   fake.reply(screeningOf(reportE.summary), { text: JSON.stringify({ decision: "legitimate", reason: "Cut short.", duplicateCaseIds: [] }), truncated: true })
-  try screen(screened, "41005", e.id, 1)
+  try screen(screened, "41005", e.id, 3)
   const f = try submit(world, "41006", "screening-case-f-0001", reportF)
   fake.reply(screeningOf(reportF.summary), { text: "I will not assess this report.", stopReason: "refusal" })
-  try screen(screened, "41006", f.id, 1)
+  try screen(screened, "41006", f.id, 3)
   const g = try submit(world, "41007", "screening-case-g-0001", reportG)
   fake.reply(screeningOf(reportG.summary), { failure: "timeout" })
-  try screen(screened, "41007", g.id, 1)
+  try screen(screened, "41007", g.id, 3)
   const h = try submit(world, "41008", "screening-case-h-0001", reportH)
   fake.reply(screeningOf(reportH.summary), { text: "The report looks legitimate to me." })
-  try screen(screened, "41008", h.id, 1)
+  try screen(screened, "41008", h.id, 3)
   const callsBeforeKeyless = fake.calls.length
   const i = try submit(world, "41009", "screening-case-i-0001", reportI)
-  try screen(screened, "41009", i.id, 1, screened.keyless)
+  try screen(screened, "41009", i.id, 3, screened.keyless)
   const j = try submit(world, "41010", "screening-case-j-0001", reportA)
-  try screen(screened, "41010", j.id, 1)
+  try screen(screened, "41010", j.id, 3)
   const callsWithoutSpend = fake.calls.length - callsBeforeKeyless
 
   fake.reply(screeningOf(reportE.summary), decided("legitimate", "Concrete reentrancy with a safe reproduction."))
   fake.reply(analysisOf(reportE.summary), assessed("Claims pay before they are marked spent."))
-  const retriedE = try screen(screened, "41005", e.id, 3)
+  const retriedE = try screen(screened, "41005", e.id, 5)
 
   const priorSummary = { id: a.caseId, rootCauseKey: null, summary: "Stale oracle reads let borrowers over-withdraw." }
   try same({
@@ -315,18 +326,18 @@ effect function outcomes(screened: Screened.Shape) {
       message: { report: { summary: reportA.summary, description: reportA.description, reporterSeverity: "high", cvss: null, cweIds: [], packages: [] }, programScope: null, earlierReports: [] },
     },
     earlierForB: [priorSummary],
-    a: intake(1, "legitimate", "The report names the oracle module and gives a safe reproduction.", 4, { routed: 1 }),
-    eventsA: ["receive", "screen-start", "screen-finish", "routed"],
+    a: intake(1, "legitimate", "The report names the oracle module and gives a safe reproduction.", 6, { routed: 1 }),
+    eventsA: ["receive", "screen-start", "screen-finish", "screen-start", "screen-finish", "routed"],
     noticesA: [routeNotice(a.id, a.caseId, 1, maintainer)],
-    b: intake(1, "needs-information", evidenceReason, 3),
-    c: intake(1, "spam", evidenceReason, 3),
-    d: intake(1, "needs-information", overlapReason, 3),
-    e: intake(1, "legitimate", "Concrete security evidence merits private human review.", 6, { routed: 1 }),
-    f: intake(1, "unavailable", unavailableReason, 3),
-    g: intake(1, "unavailable", unavailableReason, 3),
-    h: intake(1, "unavailable", unavailableReason, 3),
-    i: intake(1, "unavailable", unavailableReason, 3, { provider: null, model: null }),
-    j: intake(1, "needs-information", duplicateReason, 3),
+    b: intake(1, "needs-information", evidenceReason, 5),
+    c: intake(1, "spam", evidenceReason, 5),
+    d: intake(1, "needs-information", overlapReason, 5),
+    e: intake(1, "legitimate", "Concrete security evidence merits private human review.", 8, { routed: 1 }),
+    f: intake(1, "unavailable", unavailableReason, 5),
+    g: intake(1, "unavailable", unavailableReason, 5),
+    h: intake(1, "unavailable", unavailableReason, 5),
+    i: intake(1, "unavailable", unavailableReason, 5, { provider: null, model: null }),
+    j: intake(1, "needs-information", duplicateReason, 3, { provider: null, model: null }),
     callsWithoutSpend: 0,
     retriedE: 200,
     unanswered: 0,
@@ -342,43 +353,45 @@ effect function lateResults(screened: Screened.Shape) {
   const whileLost: Array<unknown> = []
   screened.beforeReply.push(async () => {
     clock.advance(899_999)
-    const early = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 2 })
+    const early = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 4 })
     await drained(screened.pending)
     whileLost.push(early.status, await intakeRow(world, k.id))
     clock.advance(1)
-    const recovered = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 2 })
+    const recovered = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 4 })
     await drained(screened.pending)
     whileLost.push(recovered.status, await intakeRow(world, k.id))
   })
   fake.reply(screeningOf(reportK.summary), decided("legitimate", "Concrete fallback flaw."))
   fake.reply(analysisOf(reportK.summary), assessed("The fallback feed returns zero on revert."))
   fake.reply(screeningOf(reportK.summary), decided("spam", "Late answer to the lost claim."))
-  const lost = try screen(screened, "42001", k.id, 1)
+  const lost = try screen(screened, "42001", k.id, 3)
+  const callsK = fake.calls.length - callsBeforeK
 
   const reportL = reportOf("Withdrawal queue skips the pause flag", "Queued withdrawals still settle while the protocol is paused by the guardian.")
   const revisedL = reportOf("Withdrawal queue skips the pause flag, revised", "Queued withdrawals still settle while paused; the attached test drains 10 percent of the pool.")
   const l = try submit(world, "42002", "screening-case-l-0001", reportL)
   const duringCall: Array<number> = []
   screened.beforeReply.push(async () => {
-    const asked = await posted(screened, screened.keyed, `/api/v1/security-submissions/${l.id}/review`, maintainer, { expectedRevision: 2, decision: "request-information", reason: "Attach the failing test." })
-    const revised = await request(world, `/api/v1/security-submissions/${l.id}/report`, { as: "42002", json: { expectedRevision: 3, report: revisedL } })
+    const asked = await posted(screened, screened.keyed, `/api/v1/security-submissions/${l.id}/review`, maintainer, { expectedRevision: 4, decision: "request-information", reason: "Attach the failing test." })
+    const revised = await request(world, `/api/v1/security-submissions/${l.id}/report`, { as: "42002", json: { expectedRevision: 5, report: revisedL } })
     duringCall.push(asked.status, revised.status)
   })
   fake.reply(screeningOf(reportL.summary), decided("legitimate", "Late legitimate result."))
-  try screen(screened, "42002", l.id, 1)
+  try screen(screened, "42002", l.id, 3)
+  try promise(() => receiptScreened(world, l.id))
   const afterLate = try intakeOf(world, l.id)
   const eventsAfterLate = try eventsOf(world, l.id)
   const noticesAfterLate = try noticesOf(world, l.id)
   fake.reply(screeningOf(revisedL.summary), decided("legitimate", "The revised report attaches a failing test."))
   fake.reply(analysisOf(revisedL.summary), assessed("Queued withdrawals ignore the pause flag."))
-  try screen(screened, "42002", l.id, 4)
+  try screen(screened, "42002", l.id, 8)
 
   try same({
     lost: lost.status,
     whileLost,
     k: try intakeOf(world, k.id),
     eventsK: try eventsOf(world, k.id),
-    callsK: fake.calls.length - callsBeforeK,
+    callsK,
     duringCall,
     afterLate,
     eventsAfterLate,
@@ -387,16 +400,16 @@ effect function lateResults(screened: Screened.Shape) {
     noticesL: try noticesOf(world, l.id),
   }, {
     lost: 200,
-    whileLost: [200, intake(1, "running", null, 2), 200, intake(1, "legitimate", "Concrete security evidence merits private human review.", 5, { routed: 1 })],
-    k: intake(1, "legitimate", "Concrete security evidence merits private human review.", 5, { routed: 1 }),
-    eventsK: ["receive", "screen-start", "screen-start", "screen-finish", "routed"],
+    whileLost: [200, intake(1, "running", null, 4), 200, intake(1, "legitimate", "Concrete security evidence merits private human review.", 7, { routed: 1 })],
+    k: intake(1, "legitimate", "Concrete security evidence merits private human review.", 7, { routed: 1 }),
+    eventsK: ["receive", "screen-start", "screen-finish", "screen-start", "screen-start", "screen-finish", "routed"],
     callsK: 3,
     duringCall: [200, 200],
-    afterLate: intake(2, "queued", null, 4, { provider: privateProvider, model: privateModel }),
-    eventsAfterLate: ["receive", "screen-start", "review", "report-revised"],
-    noticesAfterLate: [{ key: `security-information:${l.id}:3`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }],
-    l: intake(2, "legitimate", "Concrete security evidence merits private human review.", 7, { routed: 1 }),
-    noticesL: [{ key: `security-information:${l.id}:3`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }, routeNotice(l.id, l.caseId, 2, maintainer)],
+    afterLate: intake(2, "unavailable", unavailableReason, 8, { provider: null, model: null }),
+    eventsAfterLate: ["receive", "screen-start", "screen-finish", "screen-start", "review", "report-revised", "screen-start", "screen-finish"],
+    noticesAfterLate: [{ key: `security-information:${l.id}:5`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }],
+    l: intake(2, "legitimate", "Concrete security evidence merits private human review.", 11, { routed: 1 }),
+    noticesL: [{ key: `security-information:${l.id}:5`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }, routeNotice(l.id, l.caseId, 2, maintainer)],
   })
 }
 
@@ -408,29 +421,29 @@ effect function routing(screened: Screened.Shape) {
   try promise(() => rows(world, "INSERT INTO security_case_members(case_id, github_id, github_login, role, added_by_github_id, added_at) VALUES(?, ?, 'triager', 'triager', ?, ?), (?, ?, 'reporter', 'triager', ?, ?)", m.caseId, triager, maintainer, now, m.caseId, "43001", maintainer, now))
   fake.reply(screeningOf(reportM.summary), decided("legitimate", "Concrete forged-proof path."))
   fake.reply(analysisOf(reportM.summary), assessed("Forged deposit proofs mint on the bridge."))
-  try screen(screened, "43001", m.id, 1)
+  try screen(screened, "43001", m.id, 3)
   const routedOnce = try noticesOf(world, m.id)
   const callsBeforeRepeat = fake.calls.length
-  const repeated = try screen(screened, "43001", m.id, 4)
+  const repeated = try screen(screened, "43001", m.id, 6)
   const repeatCalls = fake.calls.length - callsBeforeRepeat
 
   const reportO = reportOf("Heartbeat check skipped after a retired listing", "The keeper stops checking the oracle heartbeat, so stale prices settle positions.")
   const o = try submit(world, "43003", "screening-case-o-0001", reportO)
   fake.reply(screeningOf(reportO.summary), decided("legitimate", "Concrete stale heartbeat path."))
   fake.reply(analysisOf(reportO.summary), assessed("Stale heartbeats settle positions."))
-  try screen(screened, "43003", o.id, 1, screened.retired)
+  try screen(screened, "43003", o.id, 3, screened.retired)
   const pendingO = try intakeOf(world, o.id)
   const callsBeforeJob = fake.calls.length
-  try screen(screened, "43003", o.id, 3)
-  try screen(screened, "43003", o.id, 3)
+  try screen(screened, "43003", o.id, 5)
+  try screen(screened, "43003", o.id, 5)
   const jobCalls = fake.calls.length - callsBeforeJob
 
   const reportN = reportOf("Liquidation bonus exceeds the seized collateral", "A rounding error pays the liquidator a bonus larger than the collateral it seizes.")
   const n = try submit(world, "43002", "screening-case-n-0001", reportN)
   fake.reply(screeningOf(reportN.summary), { failure: "unavailable" })
-  try screen(screened, "43002", n.id, 1)
+  try screen(screened, "43002", n.id, 3)
   const reviewPath = `/api/v1/security-submissions/${n.id}/review`
-  const forward = { expectedRevision: 3, decision: "forward", reason: "Reviewed privately; route it to the owners." }
+  const forward = { expectedRevision: 5, decision: "forward", reason: "Reviewed privately; route it to the owners." }
   const byReporter = try post(screened, screened.keyed, reviewPath, "43002", forward)
   const byStranger = try post(screened, screened.keyed, reviewPath, stranger, forward)
   const stale = try post(screened, screened.keyed, reviewPath, maintainer, { ...forward, expectedRevision: 1 })
@@ -459,17 +472,17 @@ effect function routing(screened: Screened.Shape) {
     routedOnce: [routeNotice(m.id, m.caseId, 1, maintainer), routeNotice(m.id, m.caseId, 1, triager)],
     repeated: 200,
     repeatCalls: 0,
-    pendingO: intake(1, "legitimate", "Concrete security evidence merits private human review.", 3),
-    o: intake(1, "legitimate", "Concrete security evidence merits private human review.", 4, { routed: 1 }),
+    pendingO: intake(1, "legitimate", "Concrete security evidence merits private human review.", 5),
+    o: intake(1, "legitimate", "Concrete security evidence merits private human review.", 6, { routed: 1 }),
     noticesO: [routeNotice(o.id, o.caseId, 1, maintainer)],
     jobCalls: 0,
-    m: intake(1, "legitimate", "Concrete security evidence merits private human review.", 4, { routed: 1 }),
+    m: intake(1, "legitimate", "Concrete security evidence merits private human review.", 6, { routed: 1 }),
     noticesM: [routeNotice(m.id, m.caseId, 1, maintainer), routeNotice(m.id, m.caseId, 1, triager)],
     refusals: [[403, "forbidden"], [404, "not_found"], [409, "stale_revision"], [400, "invalid_request"], [400, "invalid_request"]],
     refusalHeaders: ["private, no-store", "noindex"],
     forwarded: 200,
-    n: intake(1, "unavailable", unavailableReason, 5, { review: "forward", routed: 1 }),
-    eventsN: ["receive", "screen-start", "screen-finish", "review", "routed"],
+    n: intake(1, "unavailable", unavailableReason, 7, { review: "forward", routed: 1 }),
+    eventsN: ["receive", "screen-start", "screen-finish", "screen-start", "screen-finish", "review", "routed"],
     noticesN: [],
   })
 }
@@ -488,7 +501,10 @@ effect function scopedRevision(world: World, revision: number, status: string, l
   const createdAt = new Date(Date.now() - 2000 + revision * 300).toISOString()
   const manifest = line === undefined ? "json_set(manifest, '$.securityBounty.status', ?)" : "json_set(manifest, '$.securityBounty.status', ?, '$.securityBounty.scope', json(?))"
   const scope = line === undefined ? [] : [JSON.stringify(scopeWith(line))]
-  try promise(() => rows(world, `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, ${manifest}, ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1`, revision, status, ...scope, String(revision).repeat(64), createdAt, project))
+  try promise(() => rows(world, `INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, ${manifest}, ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1`, revision, status, ...scope, String(revision).repeat(64), createdAt, scopedProject))
+  for (let step = 1; step < revision; step += 1) {
+    try promise(() => rows(world, "UPDATE projects SET revision = revision + 1, manifest = (SELECT r.manifest FROM project_revisions r WHERE r.project_id = projects.id AND r.revision = projects.revision + 1), manifest_sha256 = (SELECT r.manifest_sha256 FROM project_revisions r WHERE r.project_id = projects.id AND r.revision = projects.revision + 1) WHERE id = ? AND revision < ?", scopedProject, revision))
+  }
 }
 
 effect function storedExclusions(world: World, id: string) {
@@ -497,19 +513,19 @@ effect function storedExclusions(world: World, id: string) {
 
 effect function exclusionsSent(screened: Screened.Shape) {
   const { world, fake } = screened
-  try scopedRevision(world, 3, "paused", undefined)
-  const w = try submit(world, "41019", "screening-case-w-0001", reportW)
+  try scopedRevision(world, 2, "paused", undefined)
+  const w = try submit(world, "41019", "screening-case-w-0001", reportW, scopedProject)
   fake.reply(screeningOf(reportW.summary), decided("needs-information", "Name the rounding function."))
-  const screenedW = try screen(screened, "41019", w.id, 1)
-  try scopedRevision(world, 4, "open", ownerLine)
-  const x = try submit(world, "41020", "screening-case-x-0001", reportX)
+  const screenedW = try screen(screened, "41019", w.id, 3)
+  try scopedRevision(world, 3, "open", ownerLine)
+  const x = try submit(world, "41020", "screening-case-x-0001", reportX, scopedProject)
   fake.reply(screeningOf(reportX.summary), decided("legitimate", "The report names the withdrawal queue and gives a safe reproduction."))
   fake.reply(analysisOf(reportX.summary), assessed("Paused vaults keep settling queued withdrawals."))
-  const screenedX = try screen(screened, "41020", x.id, 1)
-  try scopedRevision(world, 5, "paused", pausedLine)
-  const y = try submit(world, "41021", "screening-case-y-0001", reportY)
+  const screenedX = try screen(screened, "41020", x.id, 3)
+  try scopedRevision(world, 4, "paused", pausedLine)
+  const y = try submit(world, "41021", "screening-case-y-0001", reportY, scopedProject)
   fake.reply(screeningOf(reportY.summary), decided("needs-information", "Name the fee path that skips the cap."))
-  const screenedY = try screen(screened, "41021", y.id, 1)
+  const screenedY = try screen(screened, "41021", y.id, 3)
   const scopeOf = (call: ProviderCall | undefined) => (jsonValue(said(call)) as { readonly programScope?: unknown } | undefined)?.programScope
   const scopeFor = (line: string) => ({ includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, line] })
   try same({
@@ -527,7 +543,7 @@ effect function exclusionsSent(screened: Screened.Shape) {
     analysis: scopeFor(ownerLine),
     paused: scopeFor(pausedLine),
     stored: [{ defaults: 0, owner: [] }, { defaults: 10, owner: [ownerLine.length] }, { defaults: 10, owner: [pausedLine.length] }],
-    x: intake(1, "legitimate", "The report names the withdrawal queue and gives a safe reproduction.", 4, { routed: 1 }),
+    x: intake(1, "legitimate", "The report names the withdrawal queue and gives a safe reproduction.", 6, { routed: 1 }),
   })
 }
 

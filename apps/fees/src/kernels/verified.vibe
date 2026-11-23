@@ -1,0 +1,34 @@
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"
+module verified {
+  import { errorText as sanitized } from "./errorText.ts"
+  import { minimumOutput as floor } from "./arithmetic.ts"
+  import { jsonValue } from "../solana/bytes.ts"
+  import { nativeUnits as units, nativeWei as wei, withinReservation as within } from "../journal/amounts.ts"
+  import type { Amount } from "../../gen/settlement__money.ts"
+  import { toAmount } from "@repo/settlement/kernels/amounts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
+  /** @throws {never} */
+  export function parsedJson(text: string): unknown { return jsonValue(text) }
+  /** @throws {never} */
+  export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigint): boolean { return within(gas, feePerGas, maximum) }
+  /** @throws {never} */
+  export function megaweiCeiling(value: bigint): bigint { return units(value, false) }
+  /** @throws {never} */
+  export function weiOfMegawei(value: bigint): bigint { return wei(value, false) }
+  /** @throws {never} */
+  export function amountOfBig(value: bigint): Amount { return toAmount(value < 0n ? 0n : value) }
+  /** @throws {never} */
+  export function amountOfDecimal(text: string): Amount {
+    if (!/^(?:0|[1-9]\d*)$/u.test(text)) return [-1]
+    try {
+      return toAmount(BigInt(text))
+    } catch {
+      return [-1]
+    }
+  }
+}
+import { amountOfBig, amountOfDecimal, errorText, megaweiCeiling, minimumOutput, parsedJson, weiOfMegawei, withinReservation } from verified
+export { amountOfBig, amountOfDecimal, errorText, megaweiCeiling, minimumOutput, parsedJson, weiOfMegawei, withinReservation }

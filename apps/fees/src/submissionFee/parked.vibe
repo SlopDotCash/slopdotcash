@@ -7,7 +7,7 @@ import type { GasLimits } from "./config.vibe"
 
 export type ParkReason = "payout_failed" | "reverted_alone"
 
-export interface Probed {
+interface Probed {
   readonly through: ReadonlyArray<SendEntry>
   readonly parked: number
 }

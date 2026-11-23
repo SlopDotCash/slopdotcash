@@ -1,5 +1,5 @@
 // spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/views.md, "A project card shows one reward variant per registry policy, and a paid bounty-only program replaces ordinary work on cards"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"
-import { Alert, Button, DataState, NotFound, PageHeader } from "@repo/ui";
+import { Alert, Button, cn, DataState, NotFound, PageHeader, shell } from "@repo/ui";
 import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
@@ -52,7 +52,7 @@ type Found = {
   repositoryRegistry: RepositoryRegistryOf;
 };
 
-const pageClass = "mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-12 px-4 py-12";
+const pageClass = cn(shell, "flex flex-1 flex-col gap-16 pt-10 pb-8");
 
 function Loading() {
   return (
@@ -209,7 +209,7 @@ function ProjectOverview({ section, ...found }: Found & { section: ProjectRuntim
   const budget = project.reward.reviewBudget;
   return (
     <main className={pageClass}>
-      <section className="flex flex-col gap-6">
+      <section className="flex flex-col gap-4">
         <ProjectHeader project={project} />
         <PoolSummary project={project} boot={boot} reads={reads} networkPays={networkPays} />
         <ProjectLinks record={project.record} />

@@ -2,7 +2,6 @@
 import { type NonEmpty, type Statement, chunked, list, sql } from "@repo/platform/d1"
 
 export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
-export type SendKindName = "conversion" | "approval" | "claim" | "bridge" | "buyback" | "burn"
 export type StateName = "quoted" | "pending" | "skipped" | "no_route" | "submitted" | "finalized" | "failed" | "unknown"
 export type RouteName = "kyberswap" | "jupiter" | "debridge"
 export type Purpose = "fees" | "bridge"

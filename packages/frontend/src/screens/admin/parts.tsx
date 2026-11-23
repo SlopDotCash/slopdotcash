@@ -104,7 +104,7 @@ const chipTones: Readonly<Record<ChipTone, string>> = {
 /** A short state or count in its tone, with what it stands for in its title. */
 export function Chip({ tone = "Neutral", icon, title, children }: { tone?: ChipTone; icon?: ReactNode; title?: string; children: ReactNode }) {
   return (
-    <span title={title} className={cn("inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs font-medium [&_svg]:size-3.5 [&_svg]:shrink-0", chipTones[tone])}>
+    <span title={title} className={cn("inline-flex items-center gap-1.5 rounded-md border border-current/25 bg-current/7 px-2 py-1 align-middle text-xs leading-snug font-bold [&_svg]:size-3.5 [&_svg]:shrink-0", chipTones[tone])}>
       {icon}
       {children}
     </span>

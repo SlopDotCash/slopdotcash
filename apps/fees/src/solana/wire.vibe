@@ -40,7 +40,7 @@ export interface ParsedTransaction {
   readonly staticKeys: ReadonlyArray<string>
   readonly blockhashOffset: number
   readonly programs: ReadonlyArray<string>
-  readonly legacy: boolean
+  readonly unversioned: boolean
   readonly lookups: ReadonlyArray<WireLookup>
   readonly instructions: ReadonlyArray<WireInstruction>
 }
@@ -79,7 +79,7 @@ export effect function parsedTransaction(raw: Uint8Array) {
     staticKeys,
     blockhashOffset: wire.blockhashOffset,
     programs: instructions.map((instruction) => instruction.program),
-    legacy: wire.legacy,
+    unversioned: wire.unversioned,
     lookups: wire.lookups.map((lookup) => ({
       address: base58Encode(raw.slice(lookup.address.start, lookup.address.end)),
       writable: [...raw.slice(lookup.writable.start, lookup.writable.end)],

@@ -1,11 +1,11 @@
 // spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"; spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"
 import type { Statement } from "@repo/platform/d1"
 import { route } from "@repo/platform/route"
-import { type Json, Network, type ReadFailure } from "./backend.vibe"
+import type { Json, Network, ReadFailure } from "./backend.vibe"
 
 export schema VaultPurpose = "Ordinary" | "PrivateBounty"
 
-export schema VaultTotalsView {
+export interface VaultTotalsView {
   readonly network: Network
   readonly vault: string
   readonly asset: string
@@ -22,7 +22,7 @@ export schema DirectLane = "Researcher" | "Fee"
 
 export schema LegState = "Unsent" | "Submitted" | "PaidExact" | "Reverted" | "Inexact"
 
-export schema DirectLeg {
+export interface DirectLeg {
   readonly lane: DirectLane
   readonly state: LegState
   readonly network: Network
@@ -32,7 +32,7 @@ export schema DirectLeg {
   readonly finalizedAt?: string
 }
 
-export schema DirectFeeAward {
+export interface DirectFeeAward {
   readonly caseId: string
   readonly network: Network
   readonly asset: string

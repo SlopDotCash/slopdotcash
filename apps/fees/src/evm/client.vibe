@@ -2,17 +2,11 @@
 import { type Address, type BlockRef, EvmRpc, type Hex, type Receipt, type Transaction, evmRpc } from "@repo/platform/chain/evm"
 import { type JsonRpc, RpcMalformed, type RpcFailure, WrongChain, jsonRpc } from "@repo/platform/chain/rpc"
 import { executionGasCost, nativeFeeTotal } from "@repo/settlement/kernels/budget"
-import type { EvmNetwork } from "../signer/intents.ts"
 import { definitions } from "../runtime/networks.vibe"
 import { baseGasPriceOracle } from "../runtime/pins.ts"
-import { allowanceCalldata, balanceCalldata, creditedTo, oracleCalldata, quantity, wholeBig, word } from "./abi.ts"
+import { type EvmNetwork, allowanceCalldata, balanceCalldata, creditedTo, oracleCalldata, quantity, wholeBig, word } from "./abi.ts"
 
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-}
-import { errorText } from verified
+import { errorText } from "../kernels/verified.vibe"
 
 export error ChainRefused { issue: string }
 
@@ -79,7 +73,7 @@ export effect function freeNonce(floor: bigint) {
   return latest
 }
 
-export interface FeesPerGas { readonly baseFee: bigint; readonly maxFeePerGas: bigint; readonly maxPriorityFeePerGas: bigint }
+interface FeesPerGas { readonly baseFee: bigint; readonly maxFeePerGas: bigint; readonly maxPriorityFeePerGas: bigint }
 
 export effect function baseFee() {
   const head = try (try EvmRpc).head("latest")
@@ -130,7 +124,7 @@ export effect function nativeBalance(block: BlockRef) {
   return try (try EvmRpc).balance(chain.wallet, block)
 }
 
-export interface DataOperatorFee { readonly data: bigint; readonly operator: bigint }
+interface DataOperatorFee { readonly data: bigint; readonly operator: bigint }
 
 export effect function dataOperatorFee(unsignedBytes: number, gas: bigint) {
   const chain = try FeeChain
@@ -169,7 +163,7 @@ export effect function broadcast(raw: Hex) {
 
 export interface Landed { readonly kind: "Landed"; readonly tx: Hex; readonly receipt: Receipt; readonly transaction: Transaction }
 export interface Unlanded { readonly kind: "Unlanded"; readonly seen: ReadonlyArray<Hex>; readonly latestSeen: boolean; readonly finalizedNonce: bigint; readonly latestNonce: bigint }
-export type AttemptStatus = Landed | { readonly kind: "Mined" } | Unlanded
+type AttemptStatus = Landed | { readonly kind: "Mined" } | Unlanded
 
 export effect function attemptStatus(attempts: ReadonlyArray<Hex>) {
   const chain = try FeeChain

@@ -17,7 +17,7 @@ export interface EvmOrderProposal {
   readonly estimatedTakeAmount: bigint
 }
 
-export type EvmProposed = { readonly kind: "Proposed"; readonly proposal: EvmOrderProposal } | { readonly kind: "NoRoute"; readonly detail: string }
+type EvmProposed = { readonly kind: "Proposed"; readonly proposal: EvmOrderProposal } | { readonly kind: "NoRoute"; readonly detail: string }
 
 const takeChainId = wholeBig(chainIds.robinhood) ?? 0n
 

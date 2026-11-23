@@ -1,7 +1,7 @@
 // spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/rankedSnapshot.md, "Open counts are exact and processed counts are maximum distinct source counts"; spec/frontend/rankedSnapshot.md, "Explicit payment differences and an omission marker are exclusive"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"
 import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateSnapshot } from "@repo/points/client"
+import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateScoreAndPayment } from "@repo/points/client"
 import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
 import { fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Deployment } from "../platform/config.vibe"
@@ -12,6 +12,7 @@ export const leaderboardPath = "/data/leaderboard.json"
 
 export interface Leaderboard {
   readonly snapshot: LeaderboardSnapshot
+  readonly payment?: LeaderboardSnapshot
   readonly sha256: string
   readonly payable: boolean
 }
@@ -116,11 +117,11 @@ effect function readLeaderboard(ranked: Machine.Shape, registry: RepositoryRegis
     try: (): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
     catch: () => new Unreadable({ message: "snapshot is not UTF-8 JSON" }),
   })
-  const snapshot = validateSnapshot(raw, registry) catch effect (failed) => { throw new Unreadable({ message: failed.message }) }
+  const { snapshot, payment } = validateScoreAndPayment(raw, registry) catch effect (failed) => { throw new Unreadable({ message: failed.message }) }
   const sha256 = try sha256Hex(bytes)
   const checked = ranked.send({ type: "inspect", digest: sha256, sample: sampleOf(snapshot) }) catch effect () => { throw new Unreadable({ message: refusedCoverage }) }
   if (checked.result === "SnapshotRefused") throw new Unreadable({ message: refusedCoverage })
-  return { snapshot, sha256, payable: checked.result === "ScoreAndPayment" } satisfies Leaderboard
+  return { snapshot, payment, sha256, payable: checked.result === "ScoreAndPayment" } satisfies Leaderboard
 }
 
 export effect function rankedChecks() {

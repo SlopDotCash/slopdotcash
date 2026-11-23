@@ -1,43 +1,22 @@
 // spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
-import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { type Statement, sql } from "@repo/platform/d1"
 import { isoAt } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
-import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
-import { type BridgeOrder, type Buyback, type Event, NotAState, apply, decodeEvent } from "../../gen/fees__buyback.effect.vibe"
+import { type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type BridgeOrder, type Buyback, type Event, apply } from "../../gen/fees__buyback.effect.vibe"
 import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted } from "../../gen/fees__buybackBinding.effect.vibe"
-import { NotAState as JournalNotAState, nonceFloor, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
+import { nonceFloor, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
 import type { Sender } from "../../gen/fees__runtime.effect.vibe"
-import { type Instance, type Journal, amountOf, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
-import { verifiedEvmSend } from "../journal/signedSend.ts"
-import { aggregate as journalAggregate } from "../journal/store.vibe"
+import { type Instance, type Journal, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
 import * as W from "../journal/writes.vibe"
-import type { NativeLimits } from "../runtime/config.vibe"
+import { errorText } from "../kernels/verified.vibe"
 import { robinhoodUsdg } from "../runtime/pins.ts"
-import { type IncomeEntry, type Leg, type Ledger, type SendRecord, type Terms, decisionStateName, decodeLedger, legReads, legVersion, reasonText } from "./codec.vibe"
-
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  import { withinReservation as within } from "../journal/amounts.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-  /** @throws {never} */
-  export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigint): boolean { return within(gas, feePerGas, maximum) }
-}
-import { errorText, withinReservation } from verified
+import { type ReceiptFacts as SettledReceipt, type Loaded as Bound, type SignedFacts, bound as boundTo, checkedBytes, plain as plainOf, reservation, settlement } from "./send.vibe"
+import { type IncomeEntry, type Leg, type Ledger, type SendRecord, type Terms, decisionStateName, decodeLedger, legReads, legVersion, matchesIncome, reasonText } from "./codec.vibe"
 
 export error BuybackRefused { event: string; issue: string }
 
-export interface SignedFacts {
-  readonly txId: string
-  readonly rawTx: string
-  readonly nonce: number
-  readonly maximumWei: string
-  readonly intentHash: string
-  readonly limits: NativeLimits
-}
-
-export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string; readonly paid?: string }
+export interface ReceiptFacts extends SettledReceipt { readonly paid?: string }
 
 export interface Facts {
   readonly runId?: string
@@ -53,32 +32,20 @@ export interface Facts {
   readonly blockHash?: string
 }
 
-export interface Loaded { readonly ledger: Ledger; readonly journal: Journal | undefined }
+type Loaded = Bound<Ledger>
 
-export interface Sent { readonly state: Buyback; readonly leg: Leg }
+interface Sent { readonly state: Buyback; readonly leg: Leg }
 
-function named(leg: Leg) {
-  return `buyback leg of ${networkNames[leg.network]}`
+function own(leg: Leg) {
+  return { name: `buyback leg of ${networkNames[leg.network]}`, version: legVersion(leg), reads: legReads(leg), decode: effect (rows: ReadonlyArray<Rows>) => try decodeLedger(leg, rows) }
 }
 
-function plain(leg: Leg): Aggregate<Loaded, RowMismatch | NotAState, never> {
-  return {
-    name: named(leg),
-    version: sql`SELECT ${legVersion(leg)} AS version`,
-    reads: legReads(leg),
-    decode: effect (rows: ReadonlyArray<Rows>) => ({ ledger: try decodeLedger(leg, rows), journal: undefined }) satisfies Loaded,
-  }
+function plain(leg: Leg) {
+  return plainOf(own(leg))
 }
 
-function bound(leg: Leg, instance: Instance): Aggregate<Loaded, RowMismatch | NotAState | JournalNotAState, never> {
-  const fee = journalAggregate(instance, leg.names)
-  const count = fee.reads.length
-  return {
-    name: named(leg),
-    version: sql`SELECT (${fee.version}) || '#' || ${legVersion(leg)} AS version`,
-    reads: [...fee.reads, ...legReads(leg)],
-    decode: effect (rows: ReadonlyArray<Rows>) => ({ journal: try fee.decode(rows.slice(0, count)), ledger: try decodeLedger(leg, rows.slice(count)) }) satisfies Loaded,
-  }
+function bound(leg: Leg, instance: Instance) {
+  return boundTo(own(leg), instance, leg.names)
 }
 
 effect function need<T>(value: T | undefined, event: Event, issue: string) {
@@ -86,8 +53,12 @@ effect function need<T>(value: T | undefined, event: Event, issue: string) {
   return value
 }
 
+function refusal(event: Event, issue: string) {
+  return new BuybackRefused({ event: event.type, issue })
+}
+
 effect function refuse(event: Event, issue: string) {
-  throw new BuybackRefused({ event: event.type, issue })
+  throw refusal(event, issue)
 }
 
 function sendByTx(leg: Leg, ledger: Ledger, tx: number) {
@@ -114,28 +85,7 @@ effect function sameTx(leg: Leg, txId: string, tx: number, event: Event) {
 
 effect function verifiedBytes(leg: Leg, signed: SignedFacts, wallet: string, event: Event) {
   if (leg.network === "Solana") return try refuse(event, "a Solana bridge send has no check against its signed intent")
-  const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => new BuybackRefused({ event: event.type, issue: "the signed bytes cannot be checked" }) })
-  if (checked.kind === "refused") return try refuse(event, checked.issue)
-  if (checked.send.nonce !== signed.nonce) return try refuse(event, "the signed nonce is not the reserved one")
-  if (!withinReservation(checked.send.gas, checked.send.maxFeePerGas, try amountOf(signed.maximumWei, "the reserved maximum"))) return try refuse(event, "the signed worst-case fee exceeds the reserved maximum")
-}
-
-function reservation(leg: Leg, gasId: string, wallet: string, runId: string, signed: SignedFacts, now: string): W.Reservation {
-  return {
-    id: gasId,
-    network: networkNames[leg.network],
-    wallet,
-    nonce: signed.nonce,
-    intentHash: signed.intentHash,
-    runId,
-    maximumWei: signed.maximumWei,
-    perTransactionWei: signed.limits.perTransaction.toString(),
-    perDayWei: signed.limits.perDay.toString(),
-    createdAt: now,
-    blockhashSlot: null,
-    accountProof: null,
-    purpose: "fees",
-  }
+  try checkedBytes(signed, wallet, (issue) => refusal(event, issue))
 }
 
 interface SendRow {
@@ -184,13 +134,6 @@ function decisionRow(leg: Leg, next: Buyback, facts: Facts, id: string, runId: s
   return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, quote, token_balance_before, state, reason, created_at, updated_at) VALUES ('bridge', ${id}, ${runId}, ${networkNames[leg.network]}, ${decided?.live === true ? "live" : "dry_run"}, ${wallet}, ${token}, ${robinhoodUsdg}, ${String(amount)}, 'debridge', ${take}, ${take}, ${amount}, ${facts.summary ?? null}, ${facts.balance ?? null}, ${state}, ${reason}, ${now}, ${now})`
 }
 
-effect function settlement(leg: Leg, record: SendRecord, facts: Facts, event: Event, now: string) {
-  const receipt = try need(facts.receipt, event, "the finalized receipt's evidence is missing")
-  if (!record.txs.includes(receipt.landedTxId)) return try refuse(event, "the receipt is of none of the journaled attempts")
-  const ids = record.gas.filter((gas) => gas.state === "signed" && gas.actualWei === null).map((gas) => gas.id)
-  return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
-}
-
 effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback, facts: Facts) {
   const { ledger } = loaded
   const current = ledger.state
@@ -209,7 +152,7 @@ effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback,
     case "recordIncome": {
       const text = try need(leg.names.text("receipt", event.key.id), event, "the income key names no owning record")
       const found = leg.evidence.find((entry) => `${entry.kind}:${entry.text}` === text && entry.kind === event.key.kind)
-      if (found === undefined || event.key.network !== leg.network || !equalAmounts(found.amount, event.incomeAmount) || found.chainTime !== event.chainTime)
+      if (event.key.network !== leg.network || !matchesIncome(found, event.incomeAmount, event.chainTime))
         return try refuse(event, "the income is not a finalized record of the owning journals")
       return []
     }
@@ -238,13 +181,13 @@ effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback,
         return try refuse(event, "the signed order terms differ from the order")
       const gasId = `fee-gas-${try randomId()}`
       return [
-        W.reserve(reservation(leg, gasId, wallet, runId, signed, now)),
+        W.reserve(reservation(network, gasId, wallet, runId, signed, now)),
         sendRow({ kind: approval ? "approval" : "bridge", id: try randomId(), runId, network, wallet, token, amount: request.amount, takeAmount: request.takeAmount, quote: terms === undefined ? facts.summary ?? "{}" : JSON.stringify(terms), signed, gasId, now }),
       ]
     }
     case "settleApproval": {
       const record = try need(sendByTx(leg, ledger, event.receipt.tx), event, "the receipt is of no journaled approval")
-      const settled = try settlement(leg, record, facts, event, now)
+      const settled = try settlement(record, facts.receipt, now, (issue) => refusal(event, issue))
       return [
         event.receipt.succeeded
           ? W.finalized({ id: record.id, amountOut: "0", reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now })
@@ -254,7 +197,7 @@ effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback,
     }
     case "settleOrder": {
       const record = try need(sendByTx(leg, ledger, event.receipt.tx), event, "the receipt is of no journaled order")
-      const settled = try settlement(leg, record, facts, event, now)
+      const settled = try settlement(record, facts.receipt, now, (issue) => refusal(event, issue))
       if (!event.receipt.succeeded) return [W.reverted(record.id, leg.network === "Solana" ? "bridge order transaction failed on chain" : "bridge order transaction reverted", settled.receipt.landedTxId, now), ...settled.statements]
       const paid = try need(settled.receipt.paid, event, "the order's finalized debit is missing")
       if (paid !== record.amountIn) return try refuse(event, "Bridge receipt debit differs from the recorded amount")
@@ -328,7 +271,7 @@ export effect function ledgerOf(leg: Leg) {
   return (try load(plain(leg))).state.ledger
 }
 
-export interface Floors { readonly evm: number; readonly solana: number; readonly ledger: Ledger }
+interface Floors { readonly evm: number; readonly solana: number; readonly ledger: Ledger }
 
 export effect function sendFloors(leg: Leg, instance: Instance) {
   const loaded = try load(bound(leg, instance))
@@ -344,8 +287,4 @@ export effect function send(leg: Leg, event: Event, by: Sender, facts: Facts = {
     return try update(bound(leg, instance), (loaded) => decide(loaded, leg, event, by, facts))
   }
   return try update(plain(leg), (loaded) => decide(loaded, leg, event, by, facts))
-}
-
-export effect function receive(leg: Leg, input: unknown, by: Sender, facts: Facts = {}) {
-  return try send(leg, try decodeEvent(input), by, facts)
 }

@@ -25,7 +25,7 @@ export function MergeActivity({ project, merge, nowMs }: MergeActivityProps) {
   return (
     <>
       {projectHeld(project, merge, nowMs) ? <p className="text-lg font-medium text-foreground">{pausedNotice}</p> : null}
-      {line ? <p className="text-sm text-muted-foreground">{line}</p> : null}
+      {line ? <p className="text-foreground">{line}</p> : null}
     </>
   );
 }

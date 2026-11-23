@@ -2,22 +2,13 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { isoNow, nowSeconds } from "@repo/platform/clock"
 import type { Address, Hex } from "@repo/platform/chain/evm"
-import type { EvmNetwork } from "../signer/intents.ts"
+import type { EvmNetwork } from "../evm/abi.ts"
 import { definitions } from "../runtime/networks.vibe"
 import { kyberswap } from "../runtime/pins.ts"
 import { decimal, wholeBig } from "../evm/abi.ts"
 import { noteProviderFailure } from "../kernels/providerFailure.ts"
 import { type SwapDescription, buildSlippage, decodedSwap, hopsOf, impactBps, usdMicro } from "./swap.ts"
-
-module verified {
-  import { errorText as sanitized } from "../kernels/errorText.ts"
-  import { minimumOutput as floor } from "../kernels/arithmetic.ts"
-  /** @throws {never} */
-  export function errorText(text: string): string { return sanitized(text) }
-  /** @throws {never} */
-  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
-}
-import { errorText, minimumOutput } from verified
+import { errorText, minimumOutput } from "../kernels/verified.vibe"
 
 export error KyberUnavailable { path: string; detail: string }
 export error KyberRefused { path: string; status: number; message: string }
@@ -33,8 +24,8 @@ export interface KyberSettings {
   readonly buyback: BuybackSigning | undefined
 }
 
-export const responseLimitBytes = 2_000_000
-export const deadlineSeconds = 20 * 60
+const responseLimitBytes = 2_000_000
+const deadlineSeconds = 20 * 60
 
 const Envelope = Schema.Struct({ code: Schema.optionalKey(Schema.Unknown), message: Schema.optionalKey(Schema.Unknown), data: Schema.optionalKey(Schema.Unknown) })
 const Routed = Schema.Struct({ routeSummary: Schema.Unknown, routerAddress: Schema.String })
@@ -50,7 +41,6 @@ const Summary = Schema.Struct({
   l1FeeUsd: Schema.optionalKey(Schema.Unknown),
   route: Schema.optionalKey(Schema.Unknown),
 })
-type Summary = typeof Summary.Type
 schema Built { data: string; routerAddress: string; transactionValue: string }
 
 effect function kyber(network: EvmNetwork, path: string, settings: KyberSettings, body?: unknown) {
@@ -76,7 +66,7 @@ effect function kyber(network: EvmNetwork, path: string, settings: KyberSettings
   return envelope.data
 }
 
-interface Route { readonly raw: unknown; readonly summary: Summary; readonly amountOut: bigint }
+interface Route { readonly raw: unknown; readonly summary: typeof Summary.Type; readonly amountOut: bigint }
 
 effect function route(network: EvmNetwork, token: Address, amount: bigint, target: Address, settings: KyberSettings) {
   const query = new URLSearchParams({ tokenIn: token.toLowerCase(), tokenOut: target.toLowerCase(), amountIn: amount.toString(), gasInclude: "true" })
@@ -100,7 +90,7 @@ export interface KyberQuote {
   readonly summary: string
 }
 
-export type Quoted = { readonly kind: "Quoted"; readonly quote: KyberQuote } | { readonly kind: "NoRoute"; readonly detail: string }
+type Quoted = { readonly kind: "Quoted"; readonly quote: KyberQuote } | { readonly kind: "NoRoute"; readonly detail: string }
 
 export effect function quote(network: EvmNetwork, token: Address, amount: bigint, target: Address, slippageBps: number, settings: KyberSettings) {
   if (!Number.isSafeInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) throw new RouteMismatch({ issue: "slippage is outside 0..10000 basis points" })
@@ -166,7 +156,7 @@ export interface SwapRequest {
   readonly settings: KyberSettings
 }
 
-export interface BuiltSwap { readonly data: Hex; readonly value: bigint; readonly description: SwapDescription; readonly deadline: number }
+interface BuiltSwap { readonly data: Hex; readonly value: bigint; readonly description: SwapDescription; readonly deadline: number }
 
 const hexData = /^0x(?:[0-9a-fA-F]{2})+$/u
 

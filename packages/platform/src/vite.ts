@@ -9,6 +9,7 @@ export interface Deployables {
   readonly nodeCompat?: ReadonlyArray<string>;
   readonly outDir?: string;
   readonly emptyOutDir?: boolean;
+  readonly minify?: boolean;
 }
 
 interface Target {
@@ -41,7 +42,7 @@ function single(entry: string): UserConfig {
   };
 }
 
-function environment(target: Target, outDir: string, emptyOutDir: boolean): EnvironmentOptions {
+function environment(target: Target, outDir: string, emptyOutDir: boolean, minify: boolean): EnvironmentOptions {
   return {
     consumer: "server",
     resolve: { conditions: [...target.conditions], externalConditions: [...target.conditions], noExternal: true },
@@ -49,7 +50,7 @@ function environment(target: Target, outDir: string, emptyOutDir: boolean): Envi
       outDir,
       emptyOutDir,
       target: "es2024",
-      minify: false,
+      minify,
       sourcemap: false,
       copyPublicDir: false,
       rolldownOptions: { input: target.input, external: [...target.external], output: { entryFileNames: target.file, format: "es", codeSplitting: false } },
@@ -60,12 +61,12 @@ function environment(target: Target, outDir: string, emptyOutDir: boolean): Envi
 /** @throws {never} */
 export function workerBuild(entry: string | Deployables): UserConfig {
   if (typeof entry === "string") return single(entry);
-  const { workers = {}, programs = {}, nodeCompat = [], outDir = "dist", emptyOutDir = true } = entry;
+  const { workers = {}, programs = {}, nodeCompat = [], outDir = "dist", emptyOutDir = true, minify = false } = entry;
   const targets: ReadonlyArray<readonly [string, Target]> = [
     ...Object.entries(workers).map(([name, input]) => [`worker_${name}`, { input, file: `${name}.js`, conditions: workerConditions, external: nodeCompat.includes(name) ? nodeCompatExternal : workerExternal }] as const),
     ...Object.entries(programs).map(([name, input]) => [`program_${name}`, { input, file: `programs/${name}.js`, conditions: nodeConditions, external: nodeExternal }] as const),
   ];
-  const environments = Object.fromEntries(targets.map(([name, target], index) => [name, environment(target, outDir, emptyOutDir && index === 0)]));
+  const environments = Object.fromEntries(targets.map(([name, target], index) => [name, environment(target, outDir, emptyOutDir && index === 0, minify)]));
   return {
     plugins: [vibelang()],
     environments,

@@ -20,13 +20,6 @@ export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint {
 }
 
 //@ pure
-export function acceptableMinimum(amountOut: bigint, minAmountOut: bigint, slippageBps: bigint): boolean {
-  //@ requires slippageBps >= 0 && slippageBps <= 10000
-  //@ ensures \result <==> amountOut > 0 && minAmountOut >= minimumOutput(amountOut, slippageBps) && minAmountOut <= amountOut
-  return amountOut > 0n && minAmountOut >= minimumOutput(amountOut, slippageBps) && minAmountOut <= amountOut;
-}
-
-//@ pure
 export function remainingBudget(runCap: bigint, runUsed: bigint, dayCap: bigint, dayUsed: bigint): bigint {
   //@ ensures \result <= runCap - runUsed && \result <= dayCap - dayUsed
   //@ ensures \result == runCap - runUsed || \result == dayCap - dayUsed

@@ -1,26 +1,13 @@
 // spec/fees/directBountyIncome.md, "Only an exact durable journal receipt identifies received cash"; spec/fees/directBountyIncome.md, "Booking uses the exact completed journal and both canonical timestamps"; spec/fees/directBountyIncome.md, "One immutable receipt contributes its full amount to only its original asset and wallet"
 import { millisOf } from "@repo/platform/clock"
-import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { RowMismatch, decodedJson, rows, sql, wholeNumber } from "@repo/platform/d1"
 import { type DirectBounty, type Intent, type Terms, type Transfer, type Wallet, initial, noIntent, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import type { Network } from "../../gen/fees__runtime.effect.vibe"
 import type { EnabledNetwork } from "../runtime/config.vibe"
 import { type DirectAward, canonical } from "./store.vibe"
 
-module limbs {
-  import type { Amount } from "../../gen/settlement__money.ts"
-  import { toAmount } from "@repo/settlement/kernels/amounts"
-  /** @throws {never} */
-  export function amountOf(text: string): Amount {
-    if (!/^(?:0|[1-9]\d*)$/u.test(text)) return [-1]
-    try {
-      return toAmount(BigInt(text))
-    } catch {
-      return [-1]
-    }
-  }
-}
-import { amountOf } from limbs
+import { amountOfDecimal } from "../kernels/verified.vibe"
 
 schema StoredWallet { readonly id: string; readonly address: string; readonly digest: string }
 schema StoredAsset { readonly address: string }
@@ -48,17 +35,6 @@ schema RevisionRow { case_id: string; generation: number; intent: string }
 schema LegRow { case_id: string; leg_index: number; evidence: string }
 
 const decimal = /^(?:0|[1-9]\d*)$/u
-
-function wholeNumber(text: string | undefined): number {
-  if (text === undefined) return -1
-  const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
-  return Number.isSafeInteger(value) ? value : -1
-}
-
-effect function parsed<S extends Schema.Constraint>(schema: S, text: string, label: string) {
-  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "stored JSON is malformed" }) })
-  return Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "stored JSON does not match its shape" }) }
-}
 
 effect function checkedFee(intent: typeof StoredIntent.Type, label: string) {
   if (!decimal.test(intent.feeBase)) throw new RowMismatch({ text: label, issue: "Direct fee has an invalid amount" })
@@ -101,8 +77,8 @@ function transferOf(network: Network, stored: typeof StoredIntent.Type, intent: 
     payerAddress: canonical(network, stored.payer.address),
     researcherAddress: both || researcher ? canonical(network, toResearcher?.recipient ?? "") : "",
     feeAddress: both || !researcher ? canonical(network, toFees?.recipient ?? "") : "",
-    principal: both || researcher ? amountOf(toResearcher?.amountBase ?? "0") : zero,
-    fee: both || !researcher ? amountOf(toFees?.amountBase ?? "0") : zero,
+    principal: both || researcher ? amountOfDecimal(toResearcher?.amountBase ?? "0") : zero,
+    fee: both || !researcher ? amountOfDecimal(toFees?.amountBase ?? "0") : zero,
     transaction: canonical(network, leg.transactionId),
     nonce: both ? -1 : researcher ? intent.researcherNonce : intent.feeNonce,
     message: both ? leg.message ?? "" : "",
@@ -123,14 +99,14 @@ function termsOf(network: Network, caseId: number, stored: typeof StoredIntent.T
     network,
     asset: canonical(network, stored.asset.address),
     feeWallet: canonical(network, stored.transfers[1]?.recipient ?? ""),
-    gross: amountOf(stored.grossBase),
+    gross: amountOfDecimal(stored.grossBase),
     split: "StandardSplit",
   }
 }
 
 effect function legOf(network: Network, stored: typeof StoredIntent.Type, intent: Intent, found: typeof LegRow.Type | undefined, label: string) {
   if (found === undefined) return noTransfer
-  return transferOf(network, stored, intent, found.leg_index, try parsed(StoredLeg, found.evidence, `${label} receipt`))
+  return transferOf(network, stored, intent, found.leg_index, try decodedJson(StoredLeg, found.evidence, `${label} receipt`))
 }
 
 export effect function directAwards(network: EnabledNetwork) {
@@ -142,10 +118,10 @@ export effect function directAwards(network: EnabledNetwork) {
   const awards: Array<DirectAward> = []
   for (const [index, payment] of payments.entries()) {
     const label = `direct payment ${payment.case_id}`
-    const original = try parsed(StoredIntent, payment.intent, label)
+    const original = try decodedJson(StoredIntent, payment.intent, label)
     if (payment.verified_at !== null) try checkedFee(original, label)
     const latest = revisions.filter((row) => row.case_id === payment.case_id).at(-1)
-    const stored = latest === undefined ? original : try parsed(StoredIntent, latest.intent, `${label} successor`)
+    const stored = latest === undefined ? original : try decodedJson(StoredIntent, latest.intent, `${label} successor`)
     const intent = intentOf(model, stored, latest?.generation ?? 0)
     const paidLegs = legs.filter((row) => row.case_id === payment.case_id)
     const researcherReceipt = try legOf(model, stored, intent, paidLegs.find((row) => row.leg_index === 0), label)

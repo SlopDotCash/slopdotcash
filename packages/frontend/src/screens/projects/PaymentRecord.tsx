@@ -1,7 +1,7 @@
 // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/presentation.md, "Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros"
 import type { PublicVaultPayment } from "@repo/settlement/client";
 import { isNetworkKey, NETWORKS } from "@repo/settlement/kernels/networks";
-import { Button, ExternalLink, NetworkMark, Spinner, Status, StatusIcon } from "@repo/ui";
+import { Button, cn, ExternalLink, NetworkMark, Spinner, Status, StatusIcon } from "@repo/ui";
 import { ExternalLink as ExternalLinkIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
@@ -22,18 +22,16 @@ export type PaymentRecordProps = {
   action?: ReactNode;
 };
 
-const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
-
 /** One public payment record in a list: a common layout only; the caller keeps its record's amount and state. */
 export function PaymentRecord({ name, detail, amount, action }: PaymentRecordProps) {
   return (
-    <li className="flex flex-wrap items-start gap-x-6 gap-y-2 py-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <strong className="font-medium text-foreground">{name}</strong>
-        <small className="text-sm text-muted-foreground">{detail}</small>
+    <li className="grid grid-cols-[minmax(0,1fr)_minmax(8rem,auto)_auto] items-center gap-x-6 gap-y-3 border-b border-border py-4 last:border-b-0 max-md:grid-cols-1">
+      <div className="grid min-w-0 gap-1">
+        <strong className="font-bold text-foreground">{name}</strong>
+        <small className="mt-1.25 text-ui leading-page text-muted-foreground">{detail}</small>
       </div>
-      <div className="flex min-w-0 flex-col gap-1">{amount}</div>
-      {action ? <div className="text-sm">{action}</div> : null}
+      <div className="grid min-w-0 justify-items-end gap-1 max-md:justify-items-start">{amount}</div>
+      {action ? <div className="min-w-0">{action}</div> : null}
     </li>
   );
 }
@@ -51,7 +49,7 @@ function testnet(network: string): boolean {
 }
 
 function Chip({ label }: { label: string }) {
-  return <Status presentation={{ tone: "Neutral", icon: "Dot", label }} />;
+  return <Status badge presentation={{ tone: "Neutral", icon: "Dot", label }} />;
 }
 
 /** A finalized vault payment: the project, the network, the work month as recorded, and the exact net amount in the vault's asset. */
@@ -61,8 +59,8 @@ export function VaultPaymentRecord({ payment, projectName }: VaultPaymentRecordP
     <PaymentRecord
       name={projectName ?? payment.projectId}
       detail={
-        <span className="inline-flex flex-wrap items-center gap-1.5">
-          <Chip label="Vault" /> <NetworkMark network={CHAIN_NAMES[payment.chain]} showName={false} size="sm" /> {payment.contributionMonth ? formatMonth(payment.contributionMonth) : "—"}
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <Chip label="Vault" /> <NetworkMark network={CHAIN_NAMES[payment.chain]} showName={false} size="sm" className="[&>svg]:size-4.5" /> {payment.contributionMonth ? formatMonth(payment.contributionMonth) : "—"}
           {testnet(payment.network) ? (
             <>
               {" "}
@@ -73,13 +71,13 @@ export function VaultPaymentRecord({ payment, projectName }: VaultPaymentRecordP
       }
       amount={
         <>
-          <small className="text-xs text-muted-foreground">Net</small>
+          <small className="mt-1.25 text-ui leading-page text-muted-foreground">Net</small>
           <PayoutAmount amount={payment.netBase} decimals={payment.assetDecimals} symbol={knownAssetSymbol(payment)} token={payment.assetAddress} />
         </>
       }
       action={
         href ? (
-          <ExternalLink href={href} label="View transaction" title="View transaction" className={linkClass}>
+          <ExternalLink href={href} label="View transaction" title="View transaction" className="inline-grid size-8 place-items-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground">
             <ExternalLinkIcon aria-hidden className="size-4" />
           </ExternalLink>
         ) : (
@@ -95,6 +93,8 @@ export type VaultPaymentHistoryProps = {
   payments: Shown<ReadonlyArray<PublicVaultPayment>>;
   /** The listed name of a project, when the registry lists it. */
   nameOf: (projectId: string) => string | undefined;
+  /** The section's own spacing on the page that shows it. */
+  className?: string;
 };
 
 const recentPayments = 5;
@@ -104,12 +104,12 @@ const pending: ReadonlySet<ReadStatus> = new Set(["Idle", "Loading"]);
 const settled: ReadonlySet<ReadStatus> = new Set(["Current", "Empty", "Stale"]);
 
 /** Finalized ordinary vault payments only, each in its own asset's base units: the recent five, or all of them. */
-export function VaultPaymentHistory({ payments, nameOf }: VaultPaymentHistoryProps) {
+export function VaultPaymentHistory({ payments, nameOf, className }: VaultPaymentHistoryProps) {
   const [showAll, setShowAll] = useState(false);
   const rows = payments.value ?? [];
   return (
-    <section aria-label="Finalized project payments" className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold text-foreground">Payments</h2>
+    <section aria-label="Finalized project payments" className={cn("flex flex-col items-start", className)}>
+      <h2 className="mb-4 text-name leading-page font-extrabold tracking-tight text-foreground uppercase">Payments</h2>
       {pending.has(payments.status) ? (
         <p>
           <Spinner size="sm" label="Loading project payments" />
@@ -125,13 +125,13 @@ export function VaultPaymentHistory({ payments, nameOf }: VaultPaymentHistoryPro
         <p className="text-muted-foreground">No payments yet</p>
       ) : (
         <>
-          <ul className="flex flex-col divide-y divide-border">
+          <ul className="flex w-full flex-col">
             {(showAll ? rows : rows.slice(0, recentPayments)).map((payment) => (
               <VaultPaymentRecord key={payment.id} payment={payment} projectName={nameOf(payment.projectId)} />
             ))}
           </ul>
           {rows.length > recentPayments ? (
-            <Button variant="outline" size="sm" className="self-start" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+            <Button variant="outline" size="sm" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
               {showAll ? "Show less" : `All ${rows.length}`}
             </Button>
           ) : null}

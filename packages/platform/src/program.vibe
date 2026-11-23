@@ -5,9 +5,9 @@ import { exitWithCode, failureLine } from "./programExit.ts"
 
 type Platform = NodeServices.NodeServices
 
-export const temporaryFailure: 75 = 75
+export const temporaryFailure = 75 as const
 
-export const usageFailure: 2 = 2
+export const usageFailure = 2 as const
 
 export type Command<E, R> = (args: ReadonlyArray<string>) => (void | typeof temporaryFailure | typeof usageFailure)!E!R
 
@@ -39,4 +39,10 @@ export function program<S, LE, E>(spec: Program<S, LE, E>) {
     run: (argv: ReadonlyArray<string>) => run(spec, argv),
     runMain: () => NodeRuntime.runMain(Effect.provide(main(spec), NodeServices.layer), { teardown: exitWithCode, disableErrorReporting: true }),
   }
+}
+
+export effect function privateFile(directory: string, name: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
 }

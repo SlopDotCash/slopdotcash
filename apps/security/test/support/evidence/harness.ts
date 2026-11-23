@@ -88,6 +88,11 @@ export async function session(world: World, githubId: string): Promise<string> {
   return token;
 }
 
+export async function holdPartUntilSessionEnds(world: World, githubId: string, part: number): Promise<void> {
+  const answer = await request(world, "/api/v1/test/evidence-faults", { method: "POST", body: JSON.stringify({ githubId, part }), json: true });
+  if (answer.status !== 200) throw new Error(`hold plan refused: ${answer.status}`);
+}
+
 export async function endSession(world: World, githubId: string): Promise<void> {
   const token = tokens.get(githubId);
   if (token === undefined) return;

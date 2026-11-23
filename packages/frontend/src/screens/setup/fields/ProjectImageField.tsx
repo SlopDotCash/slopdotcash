@@ -36,8 +36,8 @@ export function ProjectImageField({ value, onChange, ownerLogin = "" }: ProjectI
   };
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label htmlFor="project-image" title="Project image" className={cn("flex size-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-md border border-border bg-muted *:size-full *:object-cover has-focus-visible:ring-2 has-focus-visible:ring-ring", busy && "cursor-progress opacity-60")}>
-        {value !== "" ? <img src={value} alt="Project avatar preview" width={64} height={64} /> : ownerLogin ? <Avatar name={ownerLogin} src={projectImage(value, ownerAvatar(ownerLogin))} size="lg" /> : <ImagePlus aria-hidden className="size-8! text-muted-foreground" />}
+      <label htmlFor="project-image" title="Project image" className={cn("flex size-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-input bg-card *:size-full *:object-cover has-focus-visible:ring-2 has-focus-visible:ring-ring", busy && "cursor-progress opacity-60")}>
+        {value !== "" ? <img src={value} alt="Project avatar preview" width={64} height={64} /> : ownerLogin ? <Avatar name={ownerLogin} src={projectImage(value, ownerAvatar(ownerLogin))} size="lg" /> : <ImagePlus aria-hidden className="size-6! text-foreground" />}
         <span className="sr-only">Project image (optional)</span>
         <input
           id="project-image"

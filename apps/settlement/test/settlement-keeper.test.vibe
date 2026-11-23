@@ -54,6 +54,8 @@ service Bench {
   readonly scratch: string
   readonly journalPath: string
   readonly clock: SettableClock
+  readonly program: string
+  readonly keeperScript: string
 }
 
 const project = "33333333-4444-4555-8666-777777777777"
@@ -142,8 +144,10 @@ const Started = Layer.effect(Bench, effect {
     return authorization === undefined ? new Response("missing", { status: 404 }) : json(authorization)
   })), (server) => promise(() => server.close()))
   const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
+  const program = try keeperProgram(scratch.root)
+  const keeperScript = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "keeper" }))
   chain.setFinalized(try promise(() => escrow.head()))
-  return { escrow, vault, reserveVault, legacyVault, published, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)) }
+  return { escrow, vault, reserveVault, legacyVault, published, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)), program, keeperScript }
 })
 
 interface Budget {
@@ -228,7 +232,7 @@ effect function settled() {
 }
 
 effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+  try sync(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function signedBy(account: Account, digest: Bytes32) {
@@ -365,8 +369,7 @@ effect function objectTick(mf: StartedWorker, name: string, method: string, path
   }).then((response) => response.text().then((text) => ({ status: response.status, text }) satisfies Ticked)))
 }
 
-effect function keeperProgram() {
-  const { scratch } = try Bench
+effect function keeperProgram(scratch: string) {
   const outDir = `${scratch}/dist`
   const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir })
   try promise(() => createBuilder({ root: new URL("..", import.meta.url).pathname, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
@@ -413,11 +416,10 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
   })
 
   it.effect('A keeper CLI killed after the journal commit and before the broadcast answers sends the same bytes once on the next run (spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance")', () => effect {
-    const { escrow } = try Bench
+    const { escrow, program: main } = try Bench
     const id = try award(103n, 0xa103n, 3_000n)
     try bind(103n, escrow.roles.donor)
     try finalize()
-    const main = try keeperProgram()
     const before = try operatorNonce()
     const gate = try sync(() => {
       let open: () => void = () => undefined
@@ -458,8 +460,7 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
   })
 
   it.effect('The operator Worker answers only the internal tick, coalesces concurrent ticks into one run and reports a failed run with a fixed answer (spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"; spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint")', () => effect {
-    const { operator } = try Bench
-    const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "keeper" }))
+    const { operator, keeperScript: script } = try Bench
     const name = JSON.stringify(["base-mainnet", operator.address.toLowerCase()])
     const config = try operatorConfig(`https://${CONFIGURED_RPC}`, {}, `https://${REGISTRY_HOST}`)
     const dry = try keeperWorker(script, { KEEPER_MODE: "dry_run", KEEPER_CONFIG: config, KEEPER_RPC_URL: `https://${OVERRIDE_RPC}` })

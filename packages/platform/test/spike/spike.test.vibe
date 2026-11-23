@@ -1,4 +1,5 @@
-import { assert, layer } from "@effect/vitest"
+import { layer } from "@effect/vitest"
+import { eventually, same } from "../support/checks.vibe"
 import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
 import type { D1Database } from "../../src/bindings.ts"
 import { buildDeployables, buildSite, type SiteFiles } from "./build.ts"
@@ -23,19 +24,6 @@ const Started = Layer.effect(Spike, effect {
 
 function rowsOf(db: D1Database, sql: string) {
   return Effect.map(promise(() => db.prepare(sql).all()), (result) => result.results)
-}
-
-effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const value = try probe
-    if (done(value)) return value
-    try Effect.sleep("100 millis")
-  }
-  return try probe
-}
-
-effect function same(actual: unknown, expected: unknown) {
-  try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "240 seconds" })((it) => {

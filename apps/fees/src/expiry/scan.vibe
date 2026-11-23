@@ -1,11 +1,11 @@
 // spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
 import type { JsonRpc } from "@repo/platform/chain/rpc"
-import { expiryBlocksPerRun } from "../kernels/expiryCoverage.ts"
-import { ScanJson } from "../journal/codec.vibe"
+import { expiryBlocksPerRun } from "@repo/settlement/kernels/expiryCoverage"
+import type { ScanJson } from "../journal/codec.vibe"
 import { jsonText, sha256Hex } from "../solana/bytes.ts"
 
 module verified {
-  import { type TraversalStep, expiryTraversalStep } from "../kernels/expiryCoverage.ts"
+  import { type TraversalStep, expiryTraversalStep } from "@repo/settlement/kernels/expiryCoverage"
   /** @throws {never} */
   export function traversalStep(txId: string, anchorHash: string, anchorSlot: number, current: number, expectedHash: string, block: { readonly blockhash: string; readonly previousBlockhash: string; readonly parentSlot: number; readonly signatures: ReadonlyArray<string> }): TraversalStep {
     return expiryTraversalStep(txId, anchorHash, anchorSlot, current, expectedHash, { ...block, signatures: [...block.signatures] })
@@ -16,6 +16,8 @@ import { traversalStep } from verified
 export type Cursor = typeof ScanJson.Type
 
 export schema CoverageBlock { slot: number; blockhash: string; previousBlockhash: string; parentSlot: number; signatureCount: number; signaturesSha256: string }
+
+export schema PageRecord { operator: string; blocks: ReadonlyArray<CoverageBlock> }
 
 schema HistoryBlock { blockhash: string; previousBlockhash: string; parentSlot: number; signatures: ReadonlyArray<string> }
 

@@ -18,22 +18,22 @@ export type JoinPointsProps = {
 export function JoinPoints({ session, attempt, elsewhere, onStart }: JoinPointsProps) {
   if (elsewhere) {
     return (
-      <Button asChild className="self-start">
+      <Button asChild className="w-full">
         <a href={elsewhere.href} aria-label={`Continue with GitHub on ${elsewhere.host}`}>
-          <LogIn aria-hidden className="size-4" />
+          <LogIn aria-hidden className="size-4.5" />
           Continue with GitHub
         </a>
       </Button>
     );
   }
   return (
-    <div className="flex flex-col items-start gap-4">
-      {session === "failed" ? <p role="status">Could not check your session. Sign in again.</p> : null}
-      <p className="flex items-center gap-2">
-        <Eye aria-hidden className="size-4" /> Membership and X link are public
+    <div className="flex flex-col">
+      {session === "failed" ? <p role="status" className="mb-4">Could not check your session. Sign in again.</p> : null}
+      <p className="mb-4">
+        <Eye aria-hidden className="inline size-4" /> Membership and X link are public
       </p>
-      <Button loading={attempt.waiting} disabled={session === "checking"} onClick={() => onStart(attempt.closedAccount)}>
-        {attempt.waiting ? null : <LogIn aria-hidden className="size-4" />}
+      <Button className="w-full" loading={attempt.waiting} disabled={session === "checking"} onClick={() => onStart(attempt.closedAccount)}>
+        {attempt.waiting ? null : <LogIn aria-hidden className="size-4.5" />}
         {attempt.waiting ? "Waiting for GitHub…" : attempt.closedAccount ? "Reopen account" : "Continue with GitHub"}
       </Button>
       <p role="status">{attempt.message}</p>

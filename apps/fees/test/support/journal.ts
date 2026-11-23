@@ -2,23 +2,30 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base58, base64 } from "@scure/base";
+import { Effect, Exit, Layer, ManagedRuntime } from "effect";
 import type { D1Database } from "@repo/platform/bindings";
+import { webCrypto } from "@repo/platform/crypto";
+import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { type Hex, keccak256, serializeTransaction, type TransactionSerializableEIP1559 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { type Event, type Fee, type RecordedSend, additionalReserve, replacementFees } from "../../gen/fees__conversion.ts";
-import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.ts";
-import type { Instance, NameKind, Names } from "../../src/journal/codec.vibe";
-import type { Facts } from "../../src/journal/store.vibe";
+import type { Driver, Outcome } from "../../gen/_conformance.ts";
+import { type Network, type Sender, transactionCeilingOf } from "../../gen/fees__runtime.ts";
+import { type Instance, type NameKind, type Names, runText } from "../../src/journal/codec.vibe";
+import { type Facts, journal, send } from "../../src/journal/store.vibe";
 import { unpublished } from "../../src/runtime/config.vibe";
 
 export const dayMs = 86_400_000;
 const foreignBase = 1_000_000;
 const megawei = 1_000_000n;
+const gwei = 1_000_000_000n;
+const senders: ReadonlyArray<Sender> = ["ReleaseWorkflow", "Owner", "Worker", "Other"];
 const solanaProgram = new Uint8Array(32).fill(7);
 
-function hex(value: number, width: number): string {
+export function hex(value: number, width: number): string {
   return value.toString(16).padStart(width, "0");
 }
 
@@ -186,4 +193,67 @@ export async function journalDatabase(name: string): Promise<JournalDatabase> {
   }
   const db = await database(mf, "FEE_DB");
   return { db, [Symbol.asyncDispose]: () => mf.dispose() };
+}
+
+export function senderOf(by: unknown): Sender {
+  return senders.find((sender) => sender === by) ?? "Other";
+}
+
+export async function gweiSigned(generation: number, chainId: number, nonce: number, maximumUnits: number) {
+  const account = privateKeyToAccount(evmKey(generation));
+  const unsigned: TransactionSerializableEIP1559 = { type: "eip1559", chainId, nonce, gas: 1n, maxFeePerGas: BigInt(maximumUnits) * gwei, maxPriorityFeePerGas: 0n, to: account.address, value: 0n };
+  const rawTx = await account.signTransaction(unsigned);
+  return { rawTx, intentHash: keccak256(serializeTransaction(unsigned)) };
+}
+
+function journalRuntime(db: D1Database, clock: SettableClock) {
+  return ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer));
+}
+
+export interface JournalHarness extends AsyncDisposable {
+  readonly db: D1Database;
+  readonly clock: SettableClock;
+  readonly runtime: ReturnType<typeof journalRuntime>;
+}
+
+export async function journalHarness(name: string): Promise<JournalHarness> {
+  const started = await journalDatabase(name);
+  const clock = settableClock(0);
+  const runtime = journalRuntime(started.db, clock);
+  return {
+    db: started.db,
+    clock,
+    runtime,
+    [Symbol.asyncDispose]: async () => {
+      await runtime.dispose();
+      await started[Symbol.asyncDispose]();
+    },
+  };
+}
+
+export async function heldLease(harness: JournalHarness, instance: Instance, names: GenerationNames): Promise<string | undefined> {
+  const { state } = await harness.runtime.runPromise(journal(instance, names));
+  const runId = state.lease.holder !== 0 && state.lease.expiresAt >= state.clock ? state.lease.holder : state.nextRun;
+  if (runId === state.nextRun) {
+    const acquired = await harness.runtime.runPromise(Effect.exit(send(instance, names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker")));
+    if (!Exit.isSuccess(acquired)) return undefined;
+  }
+  const text = names.text("run", runId);
+  return text === undefined ? undefined : runText(instance.scope, text, "Recovery");
+}
+
+export interface JournalApplication<E, V> {
+  reset(): void;
+  dispatch(event: E, by: unknown): Promise<Outcome>;
+  observe(): Promise<V>;
+}
+
+export function journalDriver<E, V>(harness: JournalHarness, application: JournalApplication<E, V>): Driver<E, V> & AsyncDisposable {
+  application.reset();
+  return {
+    reset: () => application.reset(),
+    dispatch: (_key, event, by) => application.dispatch(event, by),
+    observe: () => application.observe(),
+    [Symbol.asyncDispose]: () => harness[Symbol.asyncDispose](),
+  };
 }

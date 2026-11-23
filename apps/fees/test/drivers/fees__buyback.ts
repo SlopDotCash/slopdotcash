@@ -1,47 +1,27 @@
-import { Effect, Exit, Layer, ManagedRuntime } from "effect";
-import { type Hex, keccak256, serializeTransaction, type TransactionSerializableEIP1559 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { webCrypto } from "@repo/platform/crypto";
-import { d1 } from "@repo/platform/d1";
+import { Effect } from "effect";
+import { type Hex, keccak256 } from "viem";
 import { outcome } from "@repo/platform/testing/area";
-import { settableClock } from "@repo/platform/testing/clock";
-import type { Driver, Options } from "../../gen/fees__buyback.conformance.ts";
+import type { Options } from "../../gen/fees__buyback.conformance.ts";
 import type { Buyback, Event } from "../../gen/fees__buyback.ts";
-import type { Network, Sender } from "../../gen/fees__runtime.ts";
+import type { Network } from "../../gen/fees__runtime.ts";
 import type { IncomeEntry, Leg } from "../../src/buyback/codec.vibe";
 import { type Facts, ledgerOf, send, sendFloors } from "../../src/buyback/store.vibe";
-import { runText } from "../../src/journal/codec.vibe";
-import { journal, send as journalSend } from "../../src/journal/store.vibe";
-import { type GenerationNames, dayMs, generationInstance, generationNames, journalDatabase } from "../support/journal.ts";
+import { type GenerationNames, generationInstance, generationNames, gweiSigned, heldLease, hex, journalDriver, journalHarness, senderOf } from "../support/journal.ts";
 
-const senders: ReadonlyArray<Sender> = ["ReleaseWorkflow", "Owner", "Worker", "Other"];
 const buybackStart = 1_794_441_600_000;
 const gwei = 1_000_000_000n;
 const kinds = ["ConversionOutput", "UsdcClaim", "DirectFee", "KeptSubmissionFee", "RobinhoodFee"] as const;
-const started = await journalDatabase("fee-buyback-conformance");
-const clock = settableClock(0);
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(started.db), webCrypto, clock.layer));
+const harness = await journalHarness("fee-buyback-conformance");
+const { clock, runtime } = harness;
 
 let generation = 0;
 let names: GenerationNames = generationNames(generation);
 let leg: Leg = legOf(generation, names);
 const incomeIds = new Map<number, number>();
 
-function hex(value: number, width: number): string {
-  return value.toString(16).padStart(width, "0");
-}
-
-function offsetOf(at: number): number {
-  return at * 1_000 * dayMs;
-}
-
 function legOf(at: number, named: GenerationNames): Leg {
   const instance = generationInstance(at, "Base");
-  return { network: "Base", scope: instance.scope, offset: offsetOf(at), held: instance.held, names: named, journal: instance, evidence: [], income: [], cancelling: [], reported: [] };
-}
-
-function senderOf(by: unknown): Sender {
-  return senders.find((sender) => sender === by) ?? "Other";
+  return { network: "Base", scope: instance.scope, offset: instance.epoch, held: instance.held, names: named, journal: instance, evidence: [], income: [], cancelling: [], reported: [] };
 }
 
 function begin() {
@@ -56,17 +36,8 @@ function journalOf(network: Network) {
   return { ...generationInstance(generation, network), held: leg.held };
 }
 
-async function leaseOn(network: Network): Promise<string | undefined> {
-  const instance = journalOf(network);
-  const { state } = await runtime.runPromise(journal(instance, names));
-  const now = state.clock;
-  const runId = state.lease.holder !== 0 && state.lease.expiresAt >= now ? state.lease.holder : state.nextRun;
-  if (runId === state.nextRun) {
-    const acquired = await runtime.runPromise(Effect.exit(journalSend(instance, names, { type: "acquireLease", runId, trigger: "Recovery" }, "Worker")));
-    if (!Exit.isSuccess(acquired)) return undefined;
-  }
-  const text = names.text("run", runId);
-  return text === undefined ? undefined : runText(instance.scope, text, "Recovery");
+function leaseOn(network: Network): Promise<string | undefined> {
+  return heldLease(harness, journalOf(network), names);
 }
 
 function shellIncome(event: Extract<Event, { type: "recordIncome" }>): Event {
@@ -91,13 +62,6 @@ function txText(tx: number, rawTx: string): string {
   return txId;
 }
 
-async function evmSigned(nonce: number, maximumUnits: number) {
-  const account = privateKeyToAccount(`0x${hex(generation + 1, 64)}`);
-  const unsigned: TransactionSerializableEIP1559 = { type: "eip1559", chainId: 8453, nonce, gas: 1n, maxFeePerGas: BigInt(maximumUnits) * gwei, maxPriorityFeePerGas: 0n, to: account.address, value: 0n };
-  const rawTx = await account.signTransaction(unsigned);
-  return { rawTx, intentHash: keccak256(serializeTransaction(unsigned)) };
-}
-
 async function sendFacts(event: Extract<Event, { type: "approveOrder" | "order" }>): Promise<Facts> {
   const runId = await leaseOn(leg.network);
   if (runId === undefined) return {};
@@ -106,7 +70,7 @@ async function sendFacts(event: Extract<Event, { type: "approveOrder" | "order" 
   const solana = leg.network === "Solana";
   const nonce = solana ? floors.solana : floors.evm;
   const maximum = solana ? event.request.nativeFee : 50_000;
-  const bytes = solana ? { rawTx: `g${generation}-solana-order-${event.request.tx}`, intentHash: `g${generation}-intent-${event.request.tx}` } : await evmSigned(nonce, maximum);
+  const bytes = solana ? { rawTx: `g${generation}-solana-order-${event.request.tx}`, intentHash: `g${generation}-intent-${event.request.tx}` } : await gweiSigned(generation, 8453, nonce, maximum);
   const txId = txText(event.request.tx, bytes.rawTx);
   const limits = solana ? { perTransaction: 50_000_000n, perDay: 100_000_000n, additionalFeeReserve: 0n } : { perTransaction: 100_000n * gwei, perDay: 1_000_000n * gwei, additionalFeeReserve: 50_000n * gwei };
   const signed = { txId, rawTx: bytes.rawTx, nonce, maximumWei: solana ? String(maximum) : (BigInt(maximum) * gwei).toString(), intentHash: bytes.intentHash, limits };
@@ -152,16 +116,6 @@ async function observe(): Promise<Buyback> {
   return { ...state, sources: state.sources.map((key) => ({ ...key, id: incomeIds.get(key.id) ?? key.id })) };
 }
 
-begin();
-
-export const driver: Driver & AsyncDisposable = {
-  reset: () => begin(),
-  dispatch: (_key, event, by) => dispatch(event, by),
-  observe: () => observe(),
-  [Symbol.asyncDispose]: async () => {
-    await runtime.dispose();
-    await started[Symbol.asyncDispose]();
-  },
-};
+export const driver = journalDriver<Event, Buyback>(harness, { reset: begin, dispatch, observe });
 
 export const options: Options = { keys: ["leg"], walks: 5, steps: 12 };

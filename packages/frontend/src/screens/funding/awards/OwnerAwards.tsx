@@ -1,5 +1,5 @@
 // spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
-import { Alert, Button } from "@repo/ui";
+import { Alert, Button, cn, sectionTitle } from "@repo/ui";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useMachine as useMonthly } from "../../../../gen/frontend__ownerMonthly.react.ts";
@@ -139,8 +139,8 @@ export function OwnerAwards({ runtime, project, awardMonths, networkPays }: Owne
   const elsewhere = saved.filter((month) => month !== period);
   return (
     <section id="monthly-awards" aria-labelledby="monthly-awards-heading" className="flex flex-col gap-4">
-      <h2 id="monthly-awards-heading" className="flex items-center gap-2 text-xl font-semibold text-foreground">
-        <CalendarDays aria-hidden="true" className="size-6" /> Monthly awards
+      <h2 id="monthly-awards-heading" className={cn(sectionTitle, "flex items-center gap-2")}>
+        <CalendarDays aria-hidden="true" className="size-6 text-primary-hover" /> Monthly awards
       </h2>
       {elsewhere.map((month) => (
         <Alert

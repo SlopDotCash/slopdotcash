@@ -1,0 +1,107 @@
+// spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { type RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import type { Aggregate, Rows } from "@repo/platform/stored"
+import type { NotAState as JournalNotAState } from "../../gen/fees__conversion.effect.vibe"
+import { type Instance, type Journal, type Names, amountOf } from "../journal/codec.vibe"
+import { verifiedEvmSend } from "../journal/signedSend.ts"
+import { aggregate as journalAggregate } from "../journal/store.vibe"
+import * as W from "../journal/writes.vibe"
+import { withinReservation } from "../kernels/verified.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+
+export interface SignedFacts {
+  readonly txId: string
+  readonly rawTx: string
+  readonly nonce: number
+  readonly maximumWei: string
+  readonly intentHash: string
+  readonly limits: NativeLimits
+}
+
+export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string }
+
+export interface Loaded<L> { readonly ledger: L; readonly journal: Journal | undefined }
+
+export interface Ledgered<L, E> {
+  readonly name: string
+  readonly version: Statement
+  readonly reads: ReadonlyArray<Statement>
+  readonly decode: (rows: ReadonlyArray<Rows>) => L!E
+}
+
+export function plain<L, E>(own: Ledgered<L, E>): Aggregate<Loaded<L>, E, never> {
+  return {
+    name: own.name,
+    version: sql`SELECT ${own.version} AS version`,
+    reads: own.reads,
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ ledger: try own.decode(rows), journal: undefined }) satisfies Loaded<L>,
+  }
+}
+
+export function bound<L, E>(own: Ledgered<L, E>, instance: Instance, names: Names): Aggregate<Loaded<L>, E | RowMismatch | JournalNotAState, never> {
+  const fee = journalAggregate(instance, names)
+  const count = fee.reads.length
+  return {
+    name: own.name,
+    version: sql`SELECT (${fee.version}) || '#' || ${own.version} AS version`,
+    reads: [...fee.reads, ...own.reads],
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ journal: try fee.decode(rows.slice(0, count)), ledger: try own.decode(rows.slice(count)) }) satisfies Loaded<L>,
+  }
+}
+
+export function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
+}
+
+export effect function big(text: string) {
+  return try orDie(Effect.try(() => BigInt(text)))
+}
+
+interface Signed {
+  readonly txId: string
+  readonly rawTx: string
+  readonly prepared: { readonly nonce: number; readonly maximumWei: bigint; readonly unsigned: { readonly intentHash: string } }
+}
+
+export function signedFacts(native: NativeLimits, signed: Signed) {
+  const { prepared } = signed
+  return { txId: signed.txId, rawTx: signed.rawTx, nonce: prepared.nonce, maximumWei: prepared.maximumWei.toString(), intentHash: prepared.unsigned.intentHash, limits: native } satisfies SignedFacts
+}
+
+export effect function checkedBytes<E>(signed: SignedFacts, wallet: string, refused: (issue: string) => E) {
+  const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => refused("the signed bytes cannot be checked") })
+  if (checked.kind === "refused") throw refused(checked.issue)
+  if (checked.send.nonce !== signed.nonce) throw refused("the signed nonce is not the reserved one")
+  if (!withinReservation(checked.send.gas, checked.send.maxFeePerGas, try amountOf(signed.maximumWei, "the reserved maximum"))) throw refused("the signed worst-case fee exceeds the reserved maximum")
+}
+
+export function reservation(network: W.NetworkName, gasId: string, wallet: string, runId: string, signed: SignedFacts, now: string): W.Reservation {
+  return {
+    id: gasId,
+    network,
+    wallet,
+    nonce: signed.nonce,
+    intentHash: signed.intentHash,
+    runId,
+    maximumWei: signed.maximumWei,
+    perTransactionWei: signed.limits.perTransaction.toString(),
+    perDayWei: signed.limits.perDay.toString(),
+    createdAt: now,
+    blockhashSlot: null,
+    accountProof: null,
+    purpose: "fees",
+  }
+}
+
+interface Settling {
+  readonly txs: ReadonlyArray<string>
+  readonly gas: ReadonlyArray<{ readonly id: string; readonly state: string; readonly actualWei: string | null }>
+}
+
+export effect function settlement<R extends ReceiptFacts, E>(record: Settling, found: R | undefined, now: string, refused: (issue: string) => E) {
+  if (found === undefined) throw refused("the finalized receipt's evidence is missing")
+  const receipt: R = found
+  if (!record.txs.includes(receipt.landedTxId)) throw refused("the receipt is of none of the journaled attempts")
+  const ids = record.gas.filter((gas) => gas.state === "signed" && gas.actualWei === null).map((gas) => gas.id)
+  return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
+}

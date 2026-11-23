@@ -21,7 +21,7 @@ export type VaultFundersProps = {
 type Deposit = ProjectDeposits["deposits"][number];
 
 const shownRows = 5;
-const linkClass = "text-primary underline underline-offset-4 hover:decoration-2";
+const linkClass = "font-bold text-foreground underline-offset-4 hover:underline";
 
 function shortAddress(address: string): string {
   return `${address.slice(0, address.startsWith("0x") ? 6 : 4)}…${address.slice(-4)}`;
@@ -85,7 +85,7 @@ export function VaultFunders({ view, funders, onRetry }: VaultFundersProps) {
   const deposits = funders?.deposits ?? [];
   return (
     <section aria-label="Funded by" className="flex flex-col gap-3">
-      <h3 className="text-base font-semibold text-foreground">Funded by</h3>
+      <h3 className="text-lg font-bold text-foreground">Funded by</h3>
       {view === "FundersError" ? (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           Funders unavailable ·

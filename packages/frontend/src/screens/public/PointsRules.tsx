@@ -22,6 +22,8 @@ const penaltyRows: ReadonlyArray<PenaltyRow> = [
   { label: "Out of scope", category: "OutOfScope" },
 ];
 
+const figure = "font-mono tabular-nums";
+
 const points = (value: number) => value.toLocaleString("en-US");
 
 /** @throws {never} */
@@ -37,16 +39,16 @@ export function ContributionPointTiers() {
       <TableHeader>
         <TableRow>
           <TableHead>Tier</TableHead>
-          <TableHead className="text-right">Points</TableHead>
+          <TableHead>Points</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {scoreTiers.map((tier) => (
           <TableRow key={tier}>
-            <TableHead scope="row" className="text-foreground">
+            <TableHead scope="row" className="whitespace-normal">
               {tierLabels[tier]}
             </TableHead>
-            <TableCell className="text-right font-mono tabular-nums">{points(pointsOf(scoreTierThirds(tier)))}</TableCell>
+            <TableCell className={figure}>{points(pointsOf(scoreTierThirds(tier)))}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -62,17 +64,17 @@ export function PenaltyPointTable() {
         <TableRow>
           <TableHead>Category</TableHead>
           <TableHead>Action</TableHead>
-          <TableHead className="text-right">Points</TableHead>
+          <TableHead>Points</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {penaltyRows.map((row) => (
           <TableRow key={row.category}>
-            <TableHead scope="row" className="text-foreground">
+            <TableHead scope="row" className="whitespace-normal">
               {row.label}
             </TableHead>
-            <TableCell>{penaltyAction(row.category)}</TableCell>
-            <TableCell className="text-right font-mono tabular-nums">{points(debitFor(currentTableVersion, row.category))}</TableCell>
+            <TableCell className={figure}>{penaltyAction(row.category)}</TableCell>
+            <TableCell className={figure}>{points(debitFor(currentTableVersion, row.category))}</TableCell>
           </TableRow>
         ))}
       </TableBody>

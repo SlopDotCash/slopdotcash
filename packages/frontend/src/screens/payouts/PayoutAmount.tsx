@@ -38,14 +38,14 @@ function Part({ label, children }: { label: string; children: ReactNode }) {
 export function PayoutAmount({ amount, decimals, symbol, token, gross, fee }: PayoutAmountProps) {
   return (
     <span className="flex min-w-0 flex-col items-end gap-1">
-      <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+      <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
         <Part label="Exact amount">
-          <strong className="font-semibold text-foreground">{exactAmount(amount, decimals)}</strong>
+          <strong className="font-mono text-lg leading-data font-bold text-foreground">{exactAmount(amount, decimals)}</strong>
         </Part>
         {symbol !== undefined ? (
-          <span className="text-muted-foreground">{symbol}</span>
+          <span className="text-ui leading-page font-bold text-muted-foreground">{symbol}</span>
         ) : (
-          <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
+          <span className="inline-flex min-w-0 items-center gap-1 text-ui leading-page font-bold text-muted-foreground">
             <Coins aria-hidden className="size-4 shrink-0" />
             {token !== undefined ? (
               <span className={exact}>

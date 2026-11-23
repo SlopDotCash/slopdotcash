@@ -2,6 +2,8 @@
 import { describedBy, Input, Label, RadioGroup, type RadioOption, Select, StatusIcon, Textarea } from "@repo/ui";
 import type { ReactNode } from "react";
 
+const fieldLabel = "text-xs font-bold";
+
 /** @throws {never} */
 export function fieldId(name: string): string {
   return `field-${name}`;
@@ -47,10 +49,12 @@ export type TextFieldProps = {
 export function TextField({ label, name, value, onChange, error, hint, multiline = false, inputMode, placeholder, type = "text" }: TextFieldProps) {
   const { control, messages } = description(name, error, hint);
   return (
-    <div className="flex flex-col gap-2">
-      <Label htmlFor={control.id}>{label}</Label>
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={control.id} className={fieldLabel}>
+        {label}
+      </Label>
       {multiline ? (
-        <Textarea {...control} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+        <Textarea {...control} className="h-20 min-h-20 px-3 py-2.5 text-sm" value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
       ) : (
         <Input {...control} type={type} inputMode={inputMode} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
       )}
@@ -73,8 +77,10 @@ export type SelectFieldProps = {
 export function SelectField({ label, name, value, options, onChange, error, disabled = false }: SelectFieldProps) {
   const { control, messages } = description(name, error, undefined);
   return (
-    <div className="flex flex-col gap-2">
-      <Label htmlFor={control.id}>{label}</Label>
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={control.id} className={fieldLabel}>
+        {label}
+      </Label>
       <Select {...control} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {options.map(([option, text]) => (
           <option key={option} value={option}>

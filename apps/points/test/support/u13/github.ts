@@ -1,4 +1,5 @@
 // spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"
+import { createHook } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,11 @@ export const collectorPath = ".github/workflows/points-implementation-correction
 export interface QuotaWindow {
   readonly after: number;
   readonly until: number;
+}
+
+export interface Traffic {
+  readonly inFlight: number;
+  readonly changes: number;
 }
 
 export interface FastClock {
@@ -59,8 +65,35 @@ function operationOf(body: string): string {
   return /query\s+(\w+)/u.exec(query)?.[1] ?? "anonymous";
 }
 
+const quietTurns = 20;
+const eventLoopTurn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+const ioRequest = /(REQ|REQUEST|REQWRAP|JOB)$/u;
+const pendingIo = new Set<number>();
+const ioWatch = createHook({
+  init: (id, type) => {
+    if (ioRequest.test(type)) pendingIo.add(id);
+  },
+  after: (id) => {
+    pendingIo.delete(id);
+  },
+  destroy: (id) => {
+    pendingIo.delete(id);
+  },
+});
+let sleepers = 0;
+const watching = Effect.sync(() => {
+  sleepers += 1;
+  if (sleepers === 1) ioWatch.enable();
+});
+const unwatching = Effect.sync(() => {
+  sleepers -= 1;
+  if (sleepers > 0) return;
+  ioWatch.disable();
+  pendingIo.clear();
+});
+
 /** @throws {never} */
-export function fastClock(begin: number): FastClock {
+export function fastClock(begin: number, traffic: () => Traffic = () => ({ inFlight: 0, changes: 0 })): FastClock {
   let now = begin;
   const slept: number[] = [];
   const nanos = () => BigInt(now) * 1_000_000n;
@@ -74,7 +107,14 @@ export function fastClock(begin: number): FastClock {
     monotonicTimeNanos: Effect.sync(nanos),
     sleep: (duration) => {
       const millis = Duration.toMillis(duration);
-      return Effect.andThen(live.sleep(Duration.millis(millis / 1000)), Effect.sync(() => {
+      const quiet = (seen: number, turns: number): Effect.Effect<boolean> => {
+        const current = traffic();
+        if (current.inFlight !== 0 || current.changes !== seen || pendingIo.size > 0) return Effect.succeed(false);
+        return turns === 0 ? Effect.succeed(true) : Effect.flatMap(eventLoopTurn, () => quiet(seen, turns - 1));
+      };
+      const settled = (seen: number): Effect.Effect<void> => Effect.flatMap(live.sleep(Duration.millis(millis / 1000)), () => Effect.flatMap(quiet(seen, quietTurns), (idle) => (idle ? Effect.void : settled(traffic().changes))));
+      const watched = Effect.acquireUseRelease(watching, () => settled(traffic().changes), () => unwatching);
+      return Effect.andThen(watched, Effect.sync(() => {
         now += millis;
         slept.push(millis);
       }));
@@ -172,7 +212,8 @@ function publishedPoints(path: string, journal: { readonly generatedAt: string }
 
 /** @throws {Error} */
 export function campaign(): Campaign {
-  const clock = fastClock(start - 50 * day);
+  const traffic = { inFlight: 0, changes: 0 };
+  const clock = fastClock(start - 50 * day, () => traffic);
   const fake = githubFake({ now: () => clock.now() });
   fake.world.addUser({ id: 101, login: "ada" });
   fake.world.addUser({ id: 102, login: "grace" });
@@ -193,31 +234,43 @@ export function campaign(): Campaign {
   const runReads: string[] = [];
   let window: QuotaWindow | undefined;
   let answered = 0;
+  const answerOf = async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    if (url.origin === "https://slop.cash") {
+      if (url.pathname === "/api/v1/projects") return answer({ schemaVersion: "1", projects, restrictions: [] }, { "x-slop-project-api-contract": "1" });
+      if (url.pathname === "/api/v1/project-revisions") return answer({ schemaVersion: "1", revisions }, { "x-slop-project-api-contract": "1" });
+      return publishedPoints(url.pathname, journal) ?? new Response("not found", { status: 404 });
+    }
+    const run = /^\/repos\/slopdotcash\/slop\/actions\/runs\/(\d+)$/u.exec(url.pathname)?.[1];
+    if (url.origin === "https://api.github.com" && run !== undefined) {
+      runReads.push(run);
+      return Object.hasOwn(runs, run) ? answer(runs[run]) : new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    }
+    const graphql = request.method === "POST" && url.pathname === "/graphql";
+    if (!graphql) return fake.fetch(request);
+    const body = await request.clone().text();
+    operations.push(operationOf(body));
+    const open = window === undefined || answered < window.after || clock.now() >= window.until;
+    if (open) {
+      answered += 1;
+      return fake.fetch(request);
+    }
+    refused.push(clock.now());
+    const reset = Math.ceil((window?.until ?? 0) / 1000);
+    return new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } });
+  };
   const fetcher: Fetcher = {
     fetch: async (request) => {
-      const url = new URL(request.url);
-      if (url.origin === "https://slop.cash") {
-        if (url.pathname === "/api/v1/projects") return answer({ schemaVersion: "1", projects, restrictions: [] }, { "x-slop-project-api-contract": "1" });
-        if (url.pathname === "/api/v1/project-revisions") return answer({ schemaVersion: "1", revisions }, { "x-slop-project-api-contract": "1" });
-        return publishedPoints(url.pathname, journal) ?? new Response("not found", { status: 404 });
+      traffic.inFlight += 1;
+      traffic.changes += 1;
+      try {
+        const reply = await answerOf(request);
+        if (reply.body === null) return reply;
+        return new Response(await reply.arrayBuffer(), { status: reply.status, statusText: reply.statusText, headers: reply.headers });
+      } finally {
+        traffic.inFlight -= 1;
+        traffic.changes += 1;
       }
-      const run = /^\/repos\/slopdotcash\/slop\/actions\/runs\/(\d+)$/u.exec(url.pathname)?.[1];
-      if (url.origin === "https://api.github.com" && run !== undefined) {
-        runReads.push(run);
-        return Object.hasOwn(runs, run) ? answer(runs[run]) : new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-      }
-      const graphql = request.method === "POST" && url.pathname === "/graphql";
-      if (!graphql) return fake.fetch(request);
-      const body = await request.clone().text();
-      operations.push(operationOf(body));
-      const open = window === undefined || answered < window.after || clock.now() >= window.until;
-      if (open) {
-        answered += 1;
-        return fake.fetch(request);
-      }
-      refused.push(clock.now());
-      const reset = Math.ceil((window?.until ?? 0) / 1000);
-      return new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } });
     },
   };
   return {

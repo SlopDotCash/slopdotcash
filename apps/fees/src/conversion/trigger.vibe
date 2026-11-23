@@ -1,7 +1,7 @@
 // spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
 import type { Trigger } from "../../gen/fees__conversion.effect.vibe"
 
-export const recoveryScanMinutes = 15
+const recoveryScanMinutes = 15
 
 export function triggerAt(scheduledTime: number): Trigger {
   return new Date(scheduledTime).getUTCMinutes() % recoveryScanMinutes === 0 ? "Recovery" : "Receipts"

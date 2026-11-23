@@ -22,10 +22,10 @@ export function Identity({ login, href, avatarUrl, detail, size = "md", classNam
     <div className={cn("flex min-w-0 items-center", href && "relative", size === "lg" ? "gap-4" : "gap-2", className)} {...props}>
       <Avatar name={login} src={avatarUrl} size={size} />
       <div className="flex min-w-0 flex-col">
-        <Name className={cn("truncate", size === "lg" ? "text-2xl font-semibold" : "font-medium")}>
+        <Name className={cn("min-w-0 wrap-anywhere", size === "lg" ? "text-2xl font-semibold" : "font-bold")}>
           {href ? (
             // The link is hit anywhere on the row, picture included, and in at least a 44px square (spec/ui/index.md): its
-            // box is the row's, which the truncated name would otherwise clip.
+            // box is the row's, which the name would otherwise clip.
             <a href={href} className={cn(focusRing, "rounded-sm hover:underline after:absolute after:top-1/2 after:left-0 after:h-full after:min-h-11 after:w-full after:min-w-11 after:-translate-y-1/2")}>
               {login}
             </a>
