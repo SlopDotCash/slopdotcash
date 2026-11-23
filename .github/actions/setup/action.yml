@@ -14,7 +14,7 @@ inputs:
     description: A job that builds a release bundle, publishes or holds deployment secrets restores no cache and installs without lifecycle scripts; it sets verification to "false".
     default: "false"
   solana:
-    description: Pull the reviewed Solana test validator image by its digest.
+    description: Install the pinned program builder and pull the reviewed Solana test validator image by its digest.
     default: "false"
 outputs:
   spec-cache-path:
@@ -66,7 +66,7 @@ runs:
         chmod 0755 "$target"
         "$target" --version
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends z3
+        sudo apt-get install -y --no-install-recommends z3 libcurl4-openssl-dev
         z3 --version
         forge --version
     - name: Check Rust and Python 3
@@ -76,6 +76,20 @@ runs:
         cargo --version
         rustc --version
         python3 --version
+    - name: Install the pinned Solana program builder
+      if: inputs.solana == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=2.1.21
+        target="$RUNNER_TEMP/agave-$version"
+        mkdir -p "$target/bin"
+        curl --fail --location --retry 3 -o "$target/release.tar.bz2" "https://github.com/anza-xyz/agave/releases/download/v$version/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+        echo "5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397  $target/release.tar.bz2" | sha256sum --check --strict
+        tar -xjf "$target/release.tar.bz2" -C "$target" --no-same-owner
+        "$target/solana-release/bin/cargo-build-sbf" --version
+        ln -sfn "$target/solana-release/bin/cargo-build-sbf" "$target/bin/cargo-build-sbf"
+        echo "$target/bin" >> "$GITHUB_PATH"
     - name: Pull the reviewed Solana validator image
       if: inputs.solana == 'true'
       shell: bash

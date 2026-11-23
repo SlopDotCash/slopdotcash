@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v7
       - id: setup
         uses: ./.github/actions/setup
+        with:
+          solana: "true"
       - id: verify-tasks
         run: pnpm verify --continue=dependencies-successful --summarize
       - name: Report Turbo task timings
