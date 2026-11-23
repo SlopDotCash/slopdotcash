@@ -6,8 +6,8 @@ import { type CardReward, cardLines, cardReward, homeDescription, imageOf, type 
 
 /** The look of Home's section heading row, its title, a tier's title and a tier's note. */
 export const sectionHeading = "mb-12 flex flex-wrap items-center justify-between gap-6";
-export const sectionTitle = "m-0 max-w-200 text-5xl leading-display font-extrabold tracking-tighter text-foreground uppercase md:text-7xl lg:text-8xl";
-export const tierTitle = "mb-5 text-copy font-bold tracking-normal text-muted-foreground normal-case";
+export const sectionTitle = "m-0 max-w-200 text-title font-extrabold tracking-tighter text-foreground uppercase lg:text-title-lg xl:text-title-xl";
+export const tierTitle = "mb-5 text-copy leading-page font-bold tracking-normal text-muted-foreground normal-case";
 export const tierNote = "-mt-3 mb-5 text-sm text-muted-foreground";
 
 /** Development's project grid: as many 340px columns as fit, one on a narrow screen. */

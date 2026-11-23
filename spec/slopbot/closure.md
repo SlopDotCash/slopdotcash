@@ -128,8 +128,9 @@ pure def lawFileOptOutWins(sampleObservation: SourceObservation): bool =
 
 Source `parseRepositoryConfig`, `configProblem` and `labelOnlyConfig` in
 `workers/slopbot/contracts.ts`, and `loadContext` in `review.ts`. The
-adapter reads `.github/slopbot.json` from the default branch at the
-recorded base commit, at most 16 KiB. A file that exists but is truncated,
+adapter reads `.github/slopbot.json` from the default branch tip, at most
+16 KiB, also for a pull request into another branch, whose guides are read
+at its target commit ([review](./review.md)). A file that exists but is truncated,
 unreadable or not JSON is invalid, never a reason to use the defaults. A
 valid file is one JSON object whose keys are among `version`, `audience`,
 `issues`, `pullRequests`, `closure`, `reviewExempt`, `dailyCloseCap` and

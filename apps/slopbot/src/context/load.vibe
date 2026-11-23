@@ -6,7 +6,7 @@ import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import type { SavedConsent } from "../../gen/backend__closureConsent.effect.vibe"
 import type { Coverage, PolicyRead } from "../../gen/slopbot__closure.effect.vibe"
 import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
-import { type ComparedFile, type GuidanceRead, type GuidanceStatus, comparisonFileLimit, guidanceOf, maxDiffChars, maxGuidanceBytes, unreviewedContent } from "../../gen/slopbot__review.effect.vibe"
+import { type ComparedFile, type GuidanceRead, type GuidanceStatus, comparisonFileLimit, digestTargetSha, guidanceOf, maxDiffChars, maxGuidanceBytes, unreviewedContent } from "../../gen/slopbot__review.effect.vibe"
 import type { Observed } from "../scope/facts.vibe"
 import { type FileText, type PolicyFileRead, type RepositoryConfig, configLimitBytes, configPath, parsePolicyFile, projectConfig } from "./policyFile.vibe"
 
@@ -238,10 +238,11 @@ export effect function loadContext(target: ReviewTarget, current: Observed) {
   if (target.itemKind === "pull_request" && pull === undefined) return undefined
   const policyFile = try parsePolicyFile(try fileText(target.repositoryId, configPath, defaultSha, configLimitBytes))
   const config = projectConfig(policyFile, target.consent)
-  const { files, guidance } = try loadPolicy(target.repositoryId, defaultSha)
   const comparison: Comparison = pull === undefined
     ? { diff: "", limitations: [], unreviewed: 0, changedFiles: 0, baseSha: defaultSha, mergeBaseSha: defaultSha, targetRef: repository.default_branch }
     : try compareDiff(repository.id, pull)
+  const { files, guidance } = try loadPolicy(target.repositoryId, comparison.baseSha)
+  const targetSha = digestTargetSha(defaultSha, comparison.baseSha)
   const itemText = reviewedItemText(issue, pull, comparison)
   return {
     repository,
@@ -254,7 +255,7 @@ export effect function loadContext(target: ReviewTarget, current: Observed) {
     config,
     policy: files,
     guidance,
-    policyDigest: try sha256Hex(JSON.stringify({ baseSha: defaultSha, config, files: files.map((file) => [file.path, file.text]) })),
+    policyDigest: try sha256Hex(JSON.stringify({ baseSha: defaultSha, ...(targetSha === "" ? {} : { targetSha }), config, files: files.map((file) => [file.path, file.text]) })),
     baseSha: comparison.baseSha,
     mergeBaseSha: comparison.mergeBaseSha,
     targetRef: comparison.targetRef,

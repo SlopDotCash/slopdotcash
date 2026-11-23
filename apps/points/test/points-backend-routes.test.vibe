@@ -598,7 +598,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       stewardLabel: { automaticClosure: true, readyLabel: ready },
       unconsentedSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
       unconsentedLabelled: [200, { presentation: ["slopbot"], executable: [], financial: [] }, 3, "active", "community"],
-      unconsentedLabel: { automaticClosure: false, readyLabel: ready },
+      unconsentedLabel: { readyLabel: ready },
       bounds: [
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],

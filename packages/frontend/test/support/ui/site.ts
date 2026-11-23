@@ -334,7 +334,7 @@ function watch(opened: BrowserContext, into: Session) {
   });
 }
 
-async function reset(context: BrowserCommandContext) {
+export async function close() {
   const previous = session;
   session = undefined;
   if (previous !== undefined) {
@@ -345,6 +345,10 @@ async function reset(context: BrowserCommandContext) {
   const replaced = started;
   started = undefined;
   await replaced?.dispose();
+}
+
+async function reset(context: BrowserCommandContext) {
+  await close();
   started = await open(await prepare());
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");

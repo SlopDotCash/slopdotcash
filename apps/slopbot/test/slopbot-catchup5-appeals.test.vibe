@@ -33,7 +33,9 @@ const proofOfChange = "- Proof of change: a failed fetch is now retried and logg
 const runtimeLogs = "- Runtime logs: https://logs.slop.test/runs/42"
 const complete = ["- Change types: non-ui", testResults, proofOfChange, runtimeLogs]
 const withoutProof = ["- Change types: non-ui", testResults, runtimeLogs]
-const pulls = { rep: complete, mid: complete, val: complete, fix: complete, gap: withoutProof } as const
+const withoutScreenshots = ["- Change types: ui.", testResults, proofOfChange, "- UI video: https://videos.slop.test/clips/7"]
+const pulls = { rep: complete, mid: complete, val: complete, fix: complete, gap: withoutProof, rel: withoutScreenshots } as const
+const releaseGuide = `${guide}- \`UI screenshots:\` screenshot links for a ui change\n`
 const before = { opened: "2026-01-01T00:00:00.000Z", due: "2026-01-08T00:00:00.000Z", resolved: "2026-01-02T00:00:00.000Z" }
 
 type Author = keyof typeof pulls
@@ -49,11 +51,14 @@ async function seed() {
   world.addUser({ id: 100, login: "ada" })
   authors.forEach((login, index) => world.addUser({ id: 801 + index, login }))
   world.addRepo({ id: repositoryId, owner: "ada", name: "repeat-appeals", files: { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": guide } })
+  const releaseRoot = world.addCommit(path, { message: "Default tip before the release branch" })
+  world.addCommit(path, { branch: "release", parents: [releaseRoot], files: { "CONTRIBUTING.md": releaseGuide } })
   const items: Record<string, number> = {}
   for (const login of authors) {
-    const base = world.addCommit(path, { message: `Target tip for ${login}` })
+    const baseRef = login === "rel" ? "release" : undefined
+    const base = world.addCommit(path, { branch: baseRef, message: `Target tip for ${login}` })
     const head = world.addCommit(path, { branch: `contribution-${login}`, parents: [base], files: { [`notes/${login}.txt`]: `${login}\n` } })
-    items[login] = world.addPull({ repo: path, author: login, title: `${login.toUpperCase()}-TOKEN change`, body: bodyOf(login), headRef: `contribution-${login}`, headSha: head })
+    items[login] = world.addPull({ repo: path, author: login, title: `${login.toUpperCase()}-TOKEN change`, body: bodyOf(login), headRef: `contribution-${login}`, headSha: head, baseRef })
   }
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
   const providers = providerFake()
@@ -164,7 +169,7 @@ effect function noticeCount(area: AreaShape, login: Author) {
 }
 
 layer(Repeating, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('A repeat appeal after a denied one goes to a moderator at triage, a sibling denied before the appellant accepts an uphold draft sends it to a moderator, a value dispute holds nothing, and a missing-evidence appeal drafts from the current body at full confidence (spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates")', () => effect {
+  it.effect('A repeat appeal after a denied one goes to a moderator at triage, a sibling denied before the appellant accepts an uphold draft sends it to a moderator, a value dispute holds nothing, and a missing-evidence appeal drafts from the current body at full confidence under the guide of the pull request\'s target branch (spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates")', () => effect {
     const area = try Area
     const { net } = try World
     try installed(area)
@@ -172,16 +177,16 @@ layer(Repeating, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       try found(area, login, "spam")
       try answers(login)
     }
-    for (const login of ["fix", "gap"] as const) try found(area, login, "missing_evidence")
+    for (const login of ["fix", "gap", "rel"] as const) try found(area, login, "missing_evidence")
     try deniedSibling(area, "rep", "appeal")
     try deniedSibling(area, "val", "value-appeal")
-    const triaged = { rep: try appealed(area, "rep"), mid: try appealed(area, "mid"), val: try appealed(area, "val"), fix: try appealed(area, "fix"), gap: try appealed(area, "gap") }
+    const triaged = { rep: try appealed(area, "rep"), mid: try appealed(area, "mid"), val: try appealed(area, "val"), fix: try appealed(area, "fix"), gap: try appealed(area, "gap"), rel: try appealed(area, "rel") }
     try deniedSibling(area, "mid", "appeal")
     const answered = { mid: try accepted(area, "mid"), val: try accepted(area, "val") }
     try same({
       triaged,
       answered,
-      rows: { rep: try appealRow(area, "rep"), mid: try appealRow(area, "mid"), val: try appealRow(area, "val"), fix: try appealRow(area, "fix"), gap: try appealRow(area, "gap") },
+      rows: { rep: try appealRow(area, "rep"), mid: try appealRow(area, "mid"), val: try appealRow(area, "val"), fix: try appealRow(area, "fix"), gap: try appealRow(area, "gap"), rel: try appealRow(area, "rel") },
       notices: { rep: try noticeCount(area, "rep"), mid: try noticeCount(area, "mid"), val: try noticeCount(area, "val") },
       unexpected: [net.unexpected.length, area.outboundErrors.length],
     }, {
@@ -191,6 +196,7 @@ layer(Repeating, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         val: { result: "appeal drafted (uphold)" },
         fix: { result: "appeal drafted (uphold)" },
         gap: { result: "appeal drafted (deny)" },
+        rel: { result: "appeal drafted (deny)" },
       },
       answered: {
         mid: { result: "a Slop moderator decides this appeal" },
@@ -202,6 +208,7 @@ layer(Repeating, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
         val: { draft: "uphold", draft_confidence: 0.95, escalation: null, resolution: "upheld", resolved_by: "appellant" },
         fix: { draft: "uphold", draft_confidence: 1, escalation: null, resolution: null, resolved_by: null },
         gap: { draft: "deny", draft_confidence: 1, escalation: null, resolution: null, resolved_by: null },
+        rel: { draft: "deny", draft_confidence: 1, escalation: null, resolution: null, resolved_by: null },
       },
       notices: { rep: 2, mid: 2, val: 0 },
       unexpected: [0, 0],

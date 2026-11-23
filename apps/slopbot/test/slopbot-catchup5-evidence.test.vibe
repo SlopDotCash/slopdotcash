@@ -21,6 +21,7 @@ interface Target {
 const installationId = 9700
 const consented: Target = { id: 8301, owner: "ada", name: "evidence", projectId: "evidence-project", consent: true }
 const unconsented: Target = { id: 8302, owner: "ada", name: "unconsented", projectId: "unconsented-project", consent: false }
+const released: Target = { id: 8303, owner: "ada", name: "released", projectId: "released-project", consent: true }
 const guide = [
   "# Contributing",
   "",
@@ -37,6 +38,8 @@ const guide = [
   "",
 ].join("\n")
 const policy = { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": guide }
+const unshotGuide = guide.replace("- `UI screenshots:` screenshot links for a ui change\n", "")
+const targetGuides = { release: guide, bare: null, train: guide }
 const release = JSON.stringify({ sequence: 1, branch: "main", workflow: "production-release", reviewedPullRequest: 77, sourceSha: "release-1" })
 const footer = "Made via @slopdotcash"
 const testResults = "- Test results: pnpm test passed all forty retry cases"
@@ -57,11 +60,15 @@ const pulls = {
   full: { target: consented, body: complete("FULL-TOKEN") },
   edit: { target: consented, body: withoutProof("EDIT-TOKEN") },
   nocon: { target: unconsented, body: withoutProof("NOCON-TOKEN") },
+  rel: { target: released, body: uiWithoutScreenshots("REL-TOKEN") },
+  bare: { target: released, body: withoutProof("BARE-TOKEN") },
+  moved: { target: released, body: uiWithoutScreenshots("MOVED-TOKEN") },
 }
 type Author = keyof typeof pulls
+const targetBranches: Partial<Record<Author, keyof typeof targetGuides>> = { rel: "release", bare: "bare", moved: "train" }
 const authors = Object.keys(pulls) as ReadonlyArray<Author>
 const pathOf = (target: Target) => `${target.owner}/${target.name}`
-const projects = [consented, unconsented].map((target) => ({ projectId: target.projectId, path: pathOf(target), repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: target.consent }))
+const projects = [consented, unconsented, released].map((target) => ({ projectId: target.projectId, path: pathOf(target), repositoryId: String(target.id), rowStatus: "Active", retirement: "NotRetired", restriction: "Clear", closureConsent: target.consent }))
 const noFinding = JSON.stringify({ category: "none", confidence: 0.95, rule_refs: [], evidence: [], summary: "The change is supported by its evidence.", limitations: [], objective_defect: null })
 
 async function seed() {
@@ -70,11 +77,15 @@ async function seed() {
   world.addUser({ id: 100, login: "ada" })
   authors.forEach((login, index) => world.addUser({ id: 701 + index, login }))
   for (const target of [consented, unconsented]) world.addRepo({ id: target.id, owner: target.owner, name: target.name, files: policy })
+  world.addRepo({ id: released.id, owner: released.owner, name: released.name, files: { ...policy, "CONTRIBUTING.md": unshotGuide } })
+  const releaseRoot = world.addCommit(pathOf(released), { message: "Default tip before the target branches" })
+  for (const [branch, text] of Object.entries(targetGuides)) world.addCommit(pathOf(released), { branch, parents: [releaseRoot], files: { "CONTRIBUTING.md": text } })
   const items = Object.fromEntries(authors.map((login) => {
     const { target, body } = pulls[login]
-    const base = world.addCommit(pathOf(target), { message: `Target tip for ${login}` })
+    const baseRef = targetBranches[login]
+    const base = world.addCommit(pathOf(target), { branch: baseRef, message: `Target tip for ${login}` })
     const head = world.addCommit(pathOf(target), { branch: `evidence-${login}`, parents: [base], files: { [`src/${login}.ts`]: `export const ${login} = 1\n` } })
-    return [login, world.addPull({ repo: pathOf(target), author: login, title: `Retry ${login}`, body, headRef: `evidence-${login}`, headSha: head })]
+    return [login, world.addPull({ repo: pathOf(target), author: login, title: `Retry ${login}`, body, headRef: `evidence-${login}`, headSha: head, baseRef })]
   })) as Record<Author, number>
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
   const providers = providerFake()
@@ -177,15 +188,20 @@ function evidenceReview(fields: string) {
 }
 
 layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Close a Slop submission that lacks required evidence: on the evidence switch alone a signed pull request missing proof of change is closed with a version-2 debit of 10 Points and no model call, a ui change without the guide\'s UI screenshots names them, complete evidence goes to the model, a body edited before the close refuses it, and without saved closure consent nothing closes (spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model\'s missing-evidence finding is a label"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closeAttempt.md, "Only GitHub\'s own close event confirms and only a definitive refusal releases"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded")', () => effect {
+  it.effect('Close a Slop submission that lacks required evidence: on the evidence switch alone a signed pull request missing proof of change is closed with a version-2 debit of 10 Points and no model call, a ui change without the guide\'s UI screenshots names them, complete evidence goes to the model, a body edited before the close refuses it, without saved closure consent nothing closes, and a pull request into another branch is held to that branch\'s guide: its screenshots requirement closes, a target branch with no guide does not, and a target tip that moves before the close refuses it (spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB"; spec/slopbot/closure.md, "Closing also needs current production activation, a qualified category and every independent gate"; spec/slopbot/closure.md, "The evidence finding names a field that the declared change types of a signed Slop submission require"; spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope is label-only and a model\'s missing-evidence finding is a label"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closeAttempt.md, "Only GitHub\'s own close event confirms and only a definitive refusal releases"; spec/slopbot/closureActivation.md, "The missing-evidence closure has its own reviewed switch, which needs no model qualification"; spec/slopbot/categories.md, "Debits are whole Points fixed by the table version in force when the debit is recorded")', () => effect {
     const area = try Area
     const { fake, items, net, providers } = try World
     try installed(area)
     for (const login of authors) try eligible(area, login)
     providers.reply(about("FULL-TOKEN"), { text: noFinding })
+    providers.reply(about("BARE-TOKEN"), { text: noFinding })
     const edited = try itemOf("edit")
     try Effect.try(() => fake.alterNext(`POST /repositories/${consented.id}/issues/${items.edit}/labels`, (response) => {
       edited.body = complete("EDIT-TOKEN")
+      return response
+    }))
+    try Effect.try(() => fake.alterNext(`POST /repositories/${released.id}/issues/${items.moved}/labels`, async (response) => {
+      fake.world.addCommit(pathOf(released), { branch: "train", message: "Target tip moved", files: { "CONTRIBUTING.md": unshotGuide } })
       return response
     }))
     const results = {
@@ -194,6 +210,9 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       full: try closeOf(area, "full"),
       edit: try closeOf(area, "edit"),
       nocon: try closeOf(area, "nocon"),
+      rel: try closeOf(area, "rel"),
+      bare: try closeOf(area, "bare"),
+      moved: try closeOf(area, "moved"),
     }
     const kinds = Object.fromEntries(Object.entries(results).map(([login, result]) => [login, (result as { readonly kind: string }).kind]))
     const outcomes = {
@@ -202,6 +221,9 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       full: try outcomeOf(area, "full"),
       edit: try outcomeOf(area, "edit"),
       nocon: try outcomeOf(area, "nocon"),
+      rel: try outcomeOf(area, "rel"),
+      bare: try outcomeOf(area, "bare"),
+      moved: try outcomeOf(area, "moved"),
     }
     try same({
       kinds,
@@ -211,9 +233,12 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       full: { state: outcomes.full.state, closeRequests: outcomes.full.closeRequests, modelCalls: outcomes.full.modelCalls, category: outcomes.full.reviews.map((review) => (review as { readonly category: string }).category) },
       edit: { state: outcomes.edit.state, closeRequests: outcomes.edit.closeRequests, modelCalls: outcomes.edit.modelCalls, penalties: outcomes.edit.penalties },
       nocon: { state: outcomes.nocon.state, closeRequests: outcomes.nocon.closeRequests, modelCalls: outcomes.nocon.modelCalls, penalties: outcomes.nocon.penalties, labels: outcomes.nocon.labels },
+      rel: outcomes.rel,
+      bare: { state: outcomes.bare.state, closeRequests: outcomes.bare.closeRequests, modelCalls: outcomes.bare.modelCalls, penalties: outcomes.bare.penalties, category: outcomes.bare.reviews.map((review) => (review as { readonly category: string }).category) },
+      moved: { state: outcomes.moved.state, closeRequests: outcomes.moved.closeRequests, modelCalls: outcomes.moved.modelCalls, penalties: outcomes.moved.penalties },
       unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
     }, {
-      kinds: { gap: "close", shot: "close", full: "settled", edit: "close", nocon: "settled" },
+      kinds: { gap: "close", shot: "close", full: "settled", edit: "close", nocon: "settled", rel: "close", bare: "settled", moved: "close" },
       gap: {
         state: "closed",
         labels: ["slopbot: missing evidence"],
@@ -227,6 +252,16 @@ layer(Evidence, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       full: { state: "open", closeRequests: 0, modelCalls: 1, category: ["none"] },
       edit: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [] },
       nocon: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [], labels: ["slopbot: missing evidence"] },
+      rel: {
+        state: "closed",
+        labels: ["slopbot: missing evidence"],
+        closeRequests: 1,
+        modelCalls: 0,
+        penalties: [{ category: "missing_evidence", table_version: "slopbot-penalties-v2", debit_thirds: 1 }],
+        reviews: [evidenceReview("UI screenshots")],
+      },
+      bare: { state: "open", closeRequests: 0, modelCalls: 1, penalties: [], category: ["none"] },
+      moved: { state: "open", closeRequests: 0, modelCalls: 0, penalties: [] },
       unexpected: [0, 0, 0],
     })
   })

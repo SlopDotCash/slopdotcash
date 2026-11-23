@@ -755,8 +755,10 @@ function validateSlopbot(value: unknown): void {
   const field = "project.slopbot";
   const slopbot = record(value, field);
   const settings = slopbotSettings.filter((key) => slopbot[key] !== undefined);
-  exactKeys(slopbot, ["automaticClosure", ...settings], field);
-  if (typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
+  const consent = slopbot.automaticClosure === undefined ? [] : ["automaticClosure"];
+  if (consent.length + settings.length === 0) fail(`${field} has unexpected or missing fields`);
+  exactKeys(slopbot, [...consent, ...settings], field);
+  if (slopbot.automaticClosure !== undefined && typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
   const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, `${field}.readyLabel`);
   if (readyLabel !== undefined) fail(readyLabel);
   const { intakeCap } = slopbot;

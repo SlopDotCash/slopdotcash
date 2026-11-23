@@ -415,7 +415,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const capZero = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 0 }), expectedRevision: 1 })
     const capHigh = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 501 }), expectedRevision: 1 })
     const capWithoutConsent = try revise(steward, id, { manifest: { ...fresh.manifest, slopbot: { intakeCap: 25 } }, expectedRevision: 1 })
-    const capped = try revise(steward, id, { manifest: withSlopbot(fresh.manifest, { intakeCap: 25 }), expectedRevision: 1 })
     const afterCap = try stored(id)
     const wanted = try revise(steward, id, { manifest: withSlopbot(afterCap.manifest, { wantedIssues: true }), expectedRevision: 2 })
     const afterWanted = try stored(id)
@@ -431,8 +430,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       created: [created.status, fresh.revision, field(field(fresh.manifest, "reward"), "maintainerShare"), Object.hasOwn((field(fresh.manifest, "reward") ?? {}) as object, "maintainerShareHistory")],
       capZero: refusedNaming(capZero, "intakeCap"),
       capHigh: refusedNaming(capHigh, "intakeCap"),
-      capWithoutConsent: refusedNaming(capWithoutConsent, "project.slopbot"),
-      capped: [capped.status, field(capped.body, "changes"), afterCap.revision],
+      capWithoutConsent: field(afterCap.manifest, "slopbot"),
+      capped: [capWithoutConsent.status, field(capWithoutConsent.body, "changes"), afterCap.revision],
       wanted: [wanted.status, field(wanted.body, "changes"), afterWanted.revision],
       feeHigh: refusedNaming(feeHigh, "submissionFee"),
       feeShape: refusedNaming(feeShape, "submissionFee"),
@@ -446,13 +445,13 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       created: [201, 1, 2000, false],
       capZero: [422, "invalid_manifest", true],
       capHigh: [422, "invalid_manifest", true],
-      capWithoutConsent: [422, "invalid_manifest", true],
+      capWithoutConsent: { intakeCap: 25 },
       capped: [200, changes, 2],
       wanted: [200, changes, 3],
       feeHigh: [422, "invalid_manifest", true],
       feeShape: [422, "invalid_manifest", true],
       fee: [200, changes, 4],
-      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "boolean"],
+      slopbot: [25, true, { enabled: true, amountMinor: "2500000" }, "undefined"],
       unexpected: [],
       outboundErrors: [],
     })

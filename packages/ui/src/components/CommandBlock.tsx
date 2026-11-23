@@ -46,7 +46,7 @@ export function CommandBlock({ command, label = "Command", copyLabel = "Copy com
             labels={copyLabels}
             tone="primary"
             restAfter={restAfter}
-            className="min-w-28 px-5 max-md:min-w-11 max-md:px-0 max-md:[&_svg]:size-5 max-md:not-data-[copy=CopyFailed]:w-11 max-md:not-data-[copy=CopyFailed]:[&_[data-copy-label]]:sr-only max-md:data-[copy=CopyFailed]:px-3"
+            className="h-11 min-w-28 gap-1.75 px-5 [&_svg]:size-3.5 max-md:min-w-11 max-md:px-0 max-md:[&_svg]:size-5 max-md:not-data-[copy=CopyFailed]:w-11 max-md:not-data-[copy=CopyFailed]:[&_[data-copy-label]]:sr-only max-md:data-[copy=CopyFailed]:px-3"
           />
         </span>
       </div>

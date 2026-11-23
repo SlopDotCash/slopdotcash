@@ -29,7 +29,7 @@ export function SiteFooter({ label = "Community", brand, compact = false, classN
             childFocusRing,
             childTarget,
             "ml-auto flex min-w-0 max-w-full flex-col items-end gap-3 font-semibold *:w-fit *:max-w-full *:rounded-sm *:wrap-anywhere *:underline-offset-4 *:hover:underline",
-            compact ? "text-sm" : "text-base *:focus-visible:ring-primary-foreground",
+            compact ? "text-sm" : "text-base leading-page *:focus-visible:ring-primary-foreground",
           )}
         >
           {children}

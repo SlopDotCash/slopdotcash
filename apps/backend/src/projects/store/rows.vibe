@@ -57,7 +57,7 @@ export schema Authority { repositoryId: string | number; repositoryNodeId: strin
 export schema RepositoryLicense { state: string; spdx: string | null; url: string | null; commitSha: string | null; fileSha256: string | null }
 export schema Terms { repositoryLicense: RepositoryLicense }
 export schema Participation { state: string }
-export schema Slopbot { automaticClosure: boolean }
+export schema Slopbot { automaticClosure?: boolean }
 export schema Contribution {
   approvedScope?: string
   contributionGuide?: string

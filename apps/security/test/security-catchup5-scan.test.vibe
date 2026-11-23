@@ -117,6 +117,62 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
     )
   })
 
+  it("Ordinary shell syntax around an install helper is read as if it runs, and a cd that may not run leaves a later local launch uncovered", () => {
+    const text = (path: string, body: string): ScanInputFile => ({ path, bytes: utf8(body) })
+    const postinstall = (command: string) => text("package.json", JSON.stringify({ scripts: { postinstall: command } }))
+    const scan = (files: ReadonlyArray<ScanInputFile>) => {
+      const result = inspectRepository({ files })
+      return { downloads: result.downloads, installScripts: result.coverage.installScripts.state }
+    }
+    const hidden = text("hidden", "curl https://example.com/root")
+    const followed = { downloads: ["https://example.com/root"], installScripts: "complete" }
+    const ownDirectory = { downloads: ["https://example.com/tools"], installScripts: "complete" }
+    const setupDb = [
+      "#!/bin/bash",
+      "# creates the d1 db and adds it to wrangler.toml (run once)",
+      "set -e",
+      'cd "$(dirname "$0")"',
+      'grep -q "d1_databases" wrangler.toml && { echo "db already set up"; exit 0; }',
+      "npx -y wrangler@latest d1 create app > .d1.txt 2>&1 || true",
+      "ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}' .d1.txt | head -1)",
+      '[ -z "$ID" ] && ID=$(npx -y wrangler@latest d1 list 2>/dev/null | grep -w app | head -1)',
+      "rm -f .d1.txt",
+      '[ -z "$ID" ] && { echo "d1 create failed"; exit 1; }',
+      'printf \'\\n[[d1_databases]]\\nbinding = "DB"\\n\' "$ID" >> wrangler.toml',
+      'echo "db: $ID"',
+      "",
+    ].join("\n")
+    assert.deepStrictEqual(
+      {
+        followed: ["echo $(sh hidden)", "v=`sh hidden`", 'v="$(printf %s "$(sh hidden)")"', "if [ -f hidden ]; then sh hidden; fi", "test -f hidden && { sh hidden; exit 0; }", "if ! command -v node >/dev/null; then sh hidden; fi"].map((command) => scan([postinstall(command), hidden])),
+        uncovered: [
+          ". change; sh hidden",
+          "(cd sub; sh first); sh hidden",
+          "false && cd sub; sh hidden",
+          "cd sub | true; sh hidden",
+          "test -d sub && { cd sub; }; sh hidden",
+          "if true; then cd sub; fi; sh hidden",
+          "echo $(cd sub && sh hidden)",
+          "echo $(sh hidden",
+          "echo $((1 + $(sh hidden)))",
+          "case x in a) sh hidden;; esac",
+        ].map((command) => scan([postinstall(command), text("change", "cd sub"), hidden, text("sub/hidden", "curl https://example.com/sub"), text("sub/first", "echo safe")]).installScripts),
+        ownDirectory: ['cd "$(dirname "$0")"', "cd $(dirname $0)", 'cd "$(dirname "${BASH_SOURCE[0]}")"'].map((line) =>
+          scan([text("tools/setup.sh", `#!/bin/sh\n${line}\nsh ./run.sh\n`), text("tools/run.sh", "curl https://example.com/tools\n"), text("run.sh", "curl https://example.com/root\n")]),
+        ),
+        packageScriptDirectory: scan([postinstall('cd "$(dirname "$0")"; sh ./run.sh'), text("run.sh", "curl https://example.com/root\n")]).installScripts,
+        setupDbHelperGaps: inspectRepository({ files: [text("setup-db.sh", setupDb), text("wrangler.toml", 'name = "app"\n')] }).visibilityGaps.filter((gap) => gap.startsWith("Local install helper")),
+      },
+      {
+        followed: [followed, followed, followed, followed, followed, followed],
+        uncovered: ["partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial"],
+        ownDirectory: [ownDirectory, ownDirectory, ownDirectory],
+        packageScriptDirectory: "partial",
+        setupDbHelperGaps: [],
+      },
+    )
+  })
+
   it.effect('A well-formed image or font is media, one with appended bytes or another format under its name is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
     const pastEnd = sfnt()
     new DataView(pastEnd.buffer).setUint32(12 + 16 + 12, 4096)

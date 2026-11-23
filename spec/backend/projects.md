@@ -262,7 +262,9 @@ and wanted issues, each published at once), executable skill inputs (appended
 repositories and `contribution`) and financial policy (reward, among it the
 maintainer share below, reward asset, escrow, funding, security bounty). The
 registry parses each of those settings with development's limits and texts
-(`src/lib/project-schema.mjs`); what a setting means is its owner's rule. A
+(`src/lib/project-schema.mjs`), except `slopbot.automaticClosure`, which the
+[closure consent](./closureConsent.md) rule lets a saved `slopbot` omit; what
+a setting means is its owner's rule. A
 save that names `integrationBranch` instead of `manifest` is the
 integration-branch change below, not an owner revision of this kind.
 The project's website and X account (`links.website`,

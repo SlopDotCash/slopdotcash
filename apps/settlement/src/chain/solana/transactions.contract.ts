@@ -59,10 +59,13 @@ const signsSlotBySlot = (_: ReadonlyArray<Instruction>, compiled: Compiled) => {
   const signatures = signers.map((signer) => ed25519.sign(compiled.bytes, seedOf(signer)));
   let wire = empty;
   for (const [at, signer] of signers.entries()) {
-    const another = signers.length > 1 ? signatures[(at + 1) % signers.length] as Uint8Array : ed25519.sign(sha256(compiled.bytes), seedOf(signer));
-    const forged = withSignature(empty, signer, another);
+    const wrongKey = signers.length > 1 ? [signatures[(at + 1) % signers.length] as Uint8Array] : [];
+    const forgeries = at === 0 ? [ed25519.sign(sha256(compiled.bytes), seedOf(signer)), ...wrongKey] : wrongKey;
     const next = withSignature(wire, signer, signatures[at] as Uint8Array);
-    if (forged === undefined || completesPrepared(empty, forged, signer)) return false;
+    if (forgeries.some((forgery) => {
+      const forged = withSignature(empty, signer, forgery);
+      return forged === undefined || completesPrepared(empty, forged, signer);
+    })) return false;
     if (next === undefined || !completesPrepared(wire, next, signer) || missingSigners(next)?.length !== signers.length - at - 1) return false;
     wire = next;
   }

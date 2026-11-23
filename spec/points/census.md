@@ -61,14 +61,20 @@ pure def stepWindowNeverRegresses(before: Census, after: Census): bool = after.l
 ### Pages follow the cursor chain and a changed count stops the pass
 
 A repeated cursor, a cursor out of sequence and overlapping pages cannot
-invent a count. The first changed `totalCount` restarts collection once; a
-second change leaves the census incomplete. The terminal page is required
-even when the count already matches.
+invent a count. The last page is the one without a next page (`next` 0); a
+listing whose first page is also its last, an empty one included, is a
+complete census. Every page that is not the last must advance: its next
+cursor is neither its own cursor nor one already followed, or the pass stops
+(development `collectOpenReferences`, "cursor did not advance"). The first
+changed `totalCount` restarts collection once; a second change leaves the
+census incomplete. The terminal page is required even when the count already
+matches.
 
 ```quint
 pure def canRecordPage(c: Census, page: Page): bool =
   c.phase == Collecting and not(c.terminalSeen) and page.cursor == c.expectedCursor and
-  not(c.cursorsSeen.includes(page.cursor)) and page.next != page.cursor and page.totalCount >= 0 and
+  not(c.cursorsSeen.includes(page.cursor)) and
+  (page.next == 0 or (page.next != page.cursor and not(c.cursorsSeen.includes(page.next)))) and page.totalCount >= 0 and
   (c.totalCount == -1 or page.totalCount == c.totalCount) and page.items.every(i => i.id > 0)
 pure def addItem(items: List[Item], i: Item): List[Item] = if (items.some(o => o.id == i.id)) items else items.append(i)
 pure def recordPage(c: Census, page: Page): Census =
@@ -84,6 +90,9 @@ pure def recordFailure(c: Census): Census = { ...c, phase: Incomplete }
 pure def canFinish(c: Census): bool =
   c.phase == Collecting and c.terminalSeen and c.items.length() == c.totalCount
 pure def finish(c: Census): Census = { ...c, phase: ReadyForPublication }
+pure def sometimesOnePageReady(c: Census): bool =
+  c.phase == ReadyForPublication and c.cursorsSeen.length() == 1 and c.items.length() > 0
+pure def sometimesEmptyReady(c: Census): bool = c.phase == ReadyForPublication and c.totalCount == 0
 ```
 
 ### Every retained item has a deterministic, fail-closed selection decision with all its reasons
@@ -381,12 +390,18 @@ pure val deadlineValues = Set(1000, 2000000000)
 pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, hasAssignee: false,
   claimed: false, draft: false, reviewRequested: false, approved: false, changesRequested: false,
   securityLabel: false, humanGated: false, epic: false, contributorReady: true, blockedLabel: false }
+pure val emptyPage: Page = { cursor: 0, next: 0, totalCount: 0, items: List() }
+pure val collectedProject: ProjectView = { registered: true, paused: false, retired: false, legacy: false, quarantined: false }
+pure val eval_witness_sometimesEmptyReady = (("begin", collectedProject, 0), ("recordPage", emptyPage), "finish")
+pure val eval_witness_sometimesOnePageReady = (("begin", collectedProject, 0),
+  ("recordPage", { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) }), "finish")
 pure val pageValues = Set(
   { cursor: 0, next: 5, totalCount: 2, items: List(human) },
   { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },
   { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) },
   { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) },
-  { cursor: 5, next: 5, totalCount: 2, items: List(human) })
+  { cursor: 5, next: 5, totalCount: 2, items: List(human) },
+  emptyPage)
 pure val projectValues = Set({ registered: true, paused: false, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: true, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: false, retired: false, legacy: true, quarantined: false })

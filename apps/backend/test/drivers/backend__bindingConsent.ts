@@ -171,13 +171,13 @@ async function walletStep(track: Track, side: Partition, event: WalletEvent, by:
   return "accepted";
 }
 
-async function authorizedSample(track: Track, side: Partition, wallet: string): Promise<void> {
+async function launchSample(track: Track, side: Partition, wallet: string, authorized: boolean): Promise<void> {
   const steps: WalletEvent[] = [
     { type: "register", registration: { wallet, digest: "digest-a", predecessor: 0 } },
     { type: "issue", claim: 1, challengeId: 1, messageDigest: "message-a" },
     { type: "readProof", proof: { requestId: 1, challengeId: 1, claim: 1, recoveredSigner: wallet, messageDigest: "message-a" } },
     { type: "consume", requestId: 1 },
-    { type: "commitAuthorization", requestId: 1, storageSucceeded: true },
+    ...(authorized ? [{ type: "commitAuthorization", requestId: 1, storageSucceeded: true } satisfies WalletEvent] : []),
   ];
   for (const event of steps) {
     if ((await walletStep(track, side, event, track.actor)) !== "accepted") throw new Error(`the launch sample refused ${event.type}`);
@@ -190,8 +190,8 @@ async function trackOf(key: string): Promise<Track> {
   const actor = String(nextActor++);
   const track: Track = { key, actor, evm: partition("Base"), solana: partition("Solana"), outside: { payments: [], generations: [], lastGeneration: 0, finalizedHeight: 1000 }, made: 0 };
   tracks.set(key, track);
-  await authorizedSample(track, track.evm, "wallet-a");
-  await authorizedSample(track, track.solana, "wallet-s");
+  await launchSample(track, track.evm, "wallet-a", true);
+  await launchSample(track, track.solana, "wallet-s", false);
   track.outside = {
     ...track.outside,
     payments: [

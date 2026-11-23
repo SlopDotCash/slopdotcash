@@ -125,7 +125,7 @@ effect function seeded(base: Journal) {
 effect function planned(journal: string, collection: Collected, recordedAt: string, bans: ReadonlyArray<{ readonly actor: string; readonly at: string }> = [], registryBytes = registry) {
   const answer = try (try Area).post("/api/v1/test/points/corrections/plan", { journal, manifest: collection.manifest, receipt: collection.receipt, registry: registryBytes, bans, recordedAt, mode: "apply", reviewed: collection.digest })
   const body = fields(answer)
-  return { status: answer.status, plan: body as unknown as Plan }
+  return { status: answer.status, body, plan: body as unknown as Plan }
 }
 
 effect function recorded(journal: string) {
@@ -208,7 +208,7 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
       const held = []
       for (const invalid of cases) {
         const outcome = try planned(baseline, try collected(base, [pool], octoberRegistry, invalid), when, [], octoberRegistry)
-        held.push(outcome.status === 200 ? [outcome.plan.dispositions[0]?.status, outcome.plan.journal === baseline] : [outcome.status, (outcome.plan as unknown as Body).message])
+        held.push(outcome.status === 200 ? [outcome.plan.dispositions[0]?.status, outcome.plan.journal === baseline] : [outcome.status, outcome.body.message])
       }
       try same({
         status: result.plan.dispositions[0]?.status,

@@ -23,7 +23,11 @@ the current revision and checks its own review, production and scope gates
 The standard setup control appears for non-bounty funding modes. Switching
 to a bounty-only setup suppresses automatic closure from the new project's
 payload. An existing edit reflects the approved registry revision. Proceeding
-through setup or installing the App supplies no consent on its own.
+through setup or installing the App supplies no consent on its own. A saved
+`slopbot` settings object may omit `automaticClosure` while it carries any of
+the other Slopbot settings (ready label, intake cap, submission fee, wanted
+issues); the omitted field is the absent consent, never a given one, so a
+project without consent can still save every other Slopbot setting.
 
 ```quint
 type SavedConsent = Absent | Enabled | Disabled

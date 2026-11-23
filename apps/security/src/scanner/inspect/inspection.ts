@@ -155,13 +155,13 @@ export function inspectRepository(input: { readonly files: ReadonlyArray<ScanInp
       if (text === null || text === undefined) return [];
       const surfaces = surfacesOf(file.logicalPath ?? file.path);
       const directory = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
-      const commands = installHookCommands(file.path, text);
+      const hooks = installHookCommands(file.path, text).map((command) => ({ path: file.path, text: command, directory }));
       if (
         (surfaces.includes("installScripts") || (surfaces.length === 0 && declaresInterpreter(file.bytes)) || gyp.included.has(file.path) || cmakeIncludes.has(file.path)) &&
         (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) || /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
       )
-        commands.push(text);
-      return commands.map((command) => ({ path: file.path, text: command, directory }));
+        return [...hooks, { path: file.path, text, directory, file: true }];
+      return hooks;
     }),
   );
   if (helpers.unacquired.length > 0) {

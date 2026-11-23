@@ -18,7 +18,7 @@ export function AccountControl({ view, loginHref, onLoginPage, signingOut, signO
   if (view.status === "checking") return <Spinner label="Checking login" />;
   if (view.status !== "signedIn") {
     return (
-      <Button asChild variant="inverse" size="sm">
+      <Button asChild variant="inverse" size="sm" className="max-md:h-11">
         <a href={loginHref}>Log in</a>
       </Button>
     );

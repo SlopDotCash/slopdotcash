@@ -24,7 +24,7 @@ export function AgentPrompt({ prompt, origin, onCopy, openIn = false, skillPath 
     <div className="w-full min-w-0 max-w-220">
       <CommandBlock layout="inline" command={prompt} label="Agent prompt" copyLabel="Copy agent prompt" copyLabels={copyLabels} restAfter={1600} onCopy={onCopy} />
       {openIn ? (
-        <div className="mt-4.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-copy text-muted-foreground">
+        <div className="mt-4.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-copy leading-page text-muted-foreground">
           <span>Open in</span>
           <ul className="flex flex-wrap gap-1.5">
             {agentLinks(prompt, origin, skillPath).map((link) => (

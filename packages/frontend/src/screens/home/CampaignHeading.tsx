@@ -21,10 +21,10 @@ export function CampaignHeading({ journey, className }: CampaignHeadingProps) {
   const frame = useCampaignFrame(journey, campaignAnimationEnabled(motion));
   const visible = campaignVisibleText(motion, campaign.accessibleHeading, animatedHeading(campaign, frame));
   return (
-    <h1 aria-label={campaignAccessibleHeading(campaign.accessibleHeading, visible)} className={cn("m-0 w-full max-w-280 text-6xl leading-display font-extrabold tracking-tighter text-foreground uppercase sm:text-7xl md:text-8xl lg:text-9xl", className)}>
+    <h1 aria-label={campaignAccessibleHeading(campaign.accessibleHeading, visible)} className={cn("m-0 w-full max-w-280 text-hero leading-hero font-extrabold tracking-tighter text-foreground uppercase md:text-7xl lg:text-hero-lg xl:text-hero-xl", className)}>
       <span aria-hidden className="flex flex-col">
         <span>{campaign.lead}</span>
-        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)] text-5xl leading-display text-balance text-primary max-md:mt-[0.08em] max-md:min-h-[1.8em] md:text-6xl lg:text-8xl">
+        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)] text-title leading-display tracking-tighter text-balance text-primary max-md:mt-[0.08em] max-md:min-h-[1.8em] md:text-5xl md:leading-title lg:text-7xl xl:text-action-xl">
           {campaign.actions.map((action) => (
             <span key={action} className="invisible col-start-1 row-start-1">
               {action}
