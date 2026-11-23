@@ -13,6 +13,13 @@ export const STATIC_PAGE_TITLES = new Map([
   ["/points", "Contributors"],
   ["/projects/new", "Add a project"],
   ["/requested", "Requested repos"],
+  ["/record", "Record"],
+  ["/receipts", "Receipts"],
+  ["/referrals", "Referral program"],
+  ["/buyback", "SLOP buyback"],
+  ["/october-allocation", "October allocation"],
+  ["/sponsored-pools", "Sponsored pools"],
+  ["/privacy", "Privacy policy"],
 ]);
 
 export function pageTitle(name: string): string {

@@ -126,5 +126,12 @@
   "wrangler.toml": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability.",
   "scripts/quint-verification-step.mjs": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior.",
   "scripts/formal-report.mjs": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO.",
-  "workers/slopbot/value-reference-query.ts": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit."
+  "workers/slopbot/value-reference-query.ts": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit.",
+  "src/record-terms/buyback.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/october-allocation.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/privacy.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/referrals.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/sponsored-pools.tsx": "Fixed terms text rendered as JSX (title, dated stamp, status box, sections, links); no state, effect, I/O, timer or transition. Edited by hand when a program's status changes.",
+  "src/record-terms/terms.ts": "Type declaration of one terms page; no runtime code or state transition.",
+  "src/RecordTermsPage.tsx": "Pure render of the fixed terms page named by the route; no state, effect, I/O, timer or transition. Routing is modeled in ui_navigation."
 }
