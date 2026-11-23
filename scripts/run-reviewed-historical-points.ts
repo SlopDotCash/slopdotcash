@@ -12,7 +12,7 @@ import {
 } from "../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
-import { GitHubClient } from "../workers/slopbot/github";
+import { GitHubClient, GitHubError } from "../workers/slopbot/github";
 import { mergedTimeRangeQualifier } from "../workers/slopbot/value-accepted-commit-census";
 import { pullCommits } from "../workers/slopbot/value-evidence";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
@@ -71,6 +71,7 @@ import { loadParticipationBans } from "./value-ingestion";
 import {
   type PublicMergeRepository,
   publicGitProcess,
+  runPublicGit,
   withPublicGitObjects,
 } from "./value-merge-ingestion";
 
@@ -555,11 +556,8 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         if (survivingCarrier) await verifyOriginalAuthor();
       },
       async verifyNative(directory) {
-        const nativeGit = async (...args: string[]) => {
-          const command = publicGitProcess(directory, args);
-          return (await execute(command.file, command.args, command.options))
-            .stdout;
-        };
+        const nativeGit = async (...args: string[]) =>
+          (await runPublicGit(directory, args)).stdout;
         if (branchTip) {
           const base = checked[0].pull.base.sha;
           const [submitted, integrated, trees] = await Promise.all([
@@ -910,7 +908,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             timeout: 1_800_000,
           });
         }
-        const command = publicGitProcess(directory, [
+        const { stdout } = await runPublicGit(directory, [
           "rev-list",
           "--parents",
           "--first-parent",
@@ -918,11 +916,6 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           current,
           `^${tip}`,
         ]);
-        const { stdout } = await execute(
-          command.file,
-          command.args,
-          command.options,
-        );
         const added = stdout
           .trim()
           .split("\n")
@@ -1156,15 +1149,8 @@ export async function verifyHistoricalAcceptedSquashes(
         1024 * 1024,
       );
       await withObjects(repository, [mergeSha], async (directory) => {
-        const git = async (...args: string[]) => {
-          const command = publicGitProcess(directory, args);
-          return (
-            await execute(command.file, command.args, {
-              ...command.options,
-              maxBuffer,
-            })
-          ).stdout.trim();
-        };
+        const git = async (...args: string[]) =>
+          (await runPublicGit(directory, args, maxBuffer)).stdout.trim();
         const [parentLine, acceptedTree] = await Promise.all([
           git("show", "--no-patch", "--format=%P", mergeSha),
           git("rev-parse", `${mergeSha}^{tree}`),
@@ -1486,6 +1472,12 @@ type PublicationPhase =
   | "reviewed packet validation"
   | "enforcement checkpoint read"
   | "project and repository verification"
+  | "historical registry pair read"
+  | "historical project manifest binding"
+  | "historical repository identity"
+  | "historical repository credential"
+  | "historical GitHub repository read"
+  | "historical GitHub repository binding"
   | "owner authority verification"
   | "historical census verification"
   | "duplicate acceptance order verification"
@@ -1553,6 +1545,39 @@ export function historicalAssessmentAuditInputs(
   };
 }
 
+export function historicalRepositoryReadDiagnostic(error: unknown) {
+  if (!(error instanceof GitHubError))
+    return {
+      code:
+        error instanceof SyntaxError
+          ? "invalid-json"
+          : "transport-or-response-failure",
+    };
+  const { status } = error;
+  if (!Number.isInteger(status) || status < 100 || status > 599)
+    return { code: "invalid-http-status" };
+  switch (error.sourceReadRefusal?.category) {
+    case "primary-rate-limit":
+    case "secondary-rate-limit":
+    case "rate-limited":
+    case "access-denied":
+      return { code: error.sourceReadRefusal.category, status };
+  }
+  switch (status) {
+    case 401:
+      return { code: "unauthenticated", status };
+    case 403:
+      return { code: "forbidden-unclassified", status };
+    case 404:
+      return { code: "not-found", status };
+    case 204:
+    case 302:
+      return { code: "repository-metadata-unavailable", status };
+    default:
+      return { code: "http-refusal", status };
+  }
+}
+
 async function auditHistoricalAssessments(
   setPhase: (phase: PublicationPhase) => void,
   verifyMain: () => Promise<void>,
@@ -1561,8 +1586,9 @@ async function auditHistoricalAssessments(
   const { projectId, sourceDigest, expectedPointsDigest, stageReview } =
     historicalAssessmentAuditInputs(process.env, replay);
 
-  setPhase("project and repository verification");
+  setPhase("historical registry pair read");
   const registry = await fetchProjectRegistry();
+  setPhase("historical project manifest binding");
   const project = registry.projects
     .map(assertProjectDefinition)
     .find((row) => row.id === projectId);
@@ -1585,14 +1611,24 @@ async function auditHistoricalAssessments(
     JSON.stringify(project) !== JSON.stringify(revision.manifest)
   )
     throw Error("Assessment audit requires the complete current project scope");
+  setPhase("historical repository identity");
   const repository = project.repositories[0].id;
   const identity = repositoryIdentity(project, repository);
   if (!identity) throw Error("Historical repository identity unavailable");
+  setPhase("historical repository credential");
   const token = await resolveGitHubToken();
   const github = GitHubClient.forToken(token);
-  const liveRepository = await github.get<PublicMergeRepository>(
-    `/repos/${repository}`,
-  );
+  setPhase("historical GitHub repository read");
+  const metadata = await GitHubClient.forToken(token, undefined, {
+    observeSourceReadRefusal: true,
+  }).request<PublicMergeRepository>("GET", `/repos/${repository}`);
+  if (metadata.data === null && metadata.status !== 200)
+    throw new GitHubError(
+      metadata.status,
+      "Historical repository metadata unavailable",
+    );
+  setPhase("historical GitHub repository binding");
+  const liveRepository = metadata.data;
   if (
     liveRepository?.node_id !== identity.nodeId ||
     String(liveRepository.id) !== String(identity.githubId) ||
@@ -2150,6 +2186,12 @@ if (import.meta.main) {
         JSON.stringify({
           historicalClosedOutcome: error.reason,
           check: error.check,
+        }),
+      );
+    if (phase === "historical GitHub repository read")
+      console.error(
+        JSON.stringify({
+          historicalRepositoryRead: historicalRepositoryReadDiagnostic(error),
         }),
       );
     // Error messages can contain command arguments or private responses.

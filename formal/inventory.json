@@ -5517,15 +5517,16 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "7f81d8814297be876094bd7271e28ceff892370be40b2068e7193ffc3e420636",
+      "sha256": "ed25a05a1d85ca1cd3380caad3111af474844cfdc3d46a82e9f0007fe10dd2aa",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/historical_net_outcome_retirement.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 249, 250, 251, 252, 254, 259, 302, 317, 318, 324, 325, 460, 1184,
-        1413, 1433, 1647, 1665, 1672, 1804, 1899, 2070
+        3, 250, 251, 252, 253, 255, 260, 303, 318, 319, 325, 326, 461, 1170,
+        1399, 1419, 1556, 1557, 1558, 1564, 1566, 1568, 1570, 1572, 1575, 1577,
+        1625, 1627, 1683, 1701, 1708, 1840, 1935, 2106
       ],
       "review": "mapped-abstraction"
     },
@@ -5714,9 +5715,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
+      "sha256": "f38f2ba7eafb17a79f3577891aa1b31a7c0d83dfb66f256a5b280ee3a97647a7",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [289, 290],
+      "candidateLines": [315, 316],
       "review": "mapped-abstraction"
     },
     {
@@ -16523,7 +16524,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "aadaca864fad7f3bb87856ce9d26ac5154ca0718bb09bdc3cf84d02083f92ba7",
+      "sha256": "a22926af6631a18131ba306f4c179a997784d2781fc6e6e84261a35f3b08b5fb",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
