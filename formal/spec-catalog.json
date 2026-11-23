@@ -7245,7 +7245,7 @@
     },
     {
       "path": "spec/designSystem/index.md",
-      "sha256": "348f4d7d782515491a7e9330a4467d352cad2db943fe0ab0e33e79021965c86c",
+      "sha256": "b0251bbaf2d46565c9efecac2cabe1df718be022ddec91de7db9a20662db1bc8",
       "module": "designSystem",
       "stories": [
         {
@@ -29970,7 +29970,7 @@
     },
     {
       "path": "spec/settlement/referralWatch.md",
-      "sha256": "cfd6448505966bb1e4de70b42d36e043e33878c4e81a25897715be7d20d3badc",
+      "sha256": "483c5ef24ab4c00d61f25d083ad09ffe7679d5c403341124f187e0805a2df9d5",
       "module": "settlement__referralWatch",
       "stories": [
         {
@@ -30005,7 +30005,7 @@
             "keyedAmount",
             "withKeyed",
             "capLeft",
-            "least",
+            "smallerAmount",
             "replayAccrual",
             "pinnedWallet",
             "replayReferrer",
@@ -31053,7 +31053,7 @@
     },
     {
       "path": "spec/settlement/vaultSnapshots.md",
-      "sha256": "57d6b48b05b6fc4c09137ccaaa75dad241f6cdb7b0874184942e702ca8aabb2d",
+      "sha256": "2f78c24fc047a856dd807b1c93d1bb383776167463654cdb1c6d82459fad7c33",
       "module": "settlement__vaultSnapshots",
       "stories": [
         {

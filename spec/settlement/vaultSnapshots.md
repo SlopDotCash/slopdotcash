@@ -365,11 +365,11 @@ conditional write can return older or unavailable as appropriate. A write
 that succeeded with a lost reply may still be confirmed by reading the row.
 
 ```quint
-pure def countersAdvance(newer: Counters, older: Counters): bool =
-  M::compareAmounts(newer.deposits, older.deposits) >= 0 and M::compareAmounts(newer.payments, older.payments) >= 0
-    and M::compareAmounts(newer.payoutFees, older.payoutFees) >= 0
-    and M::compareAmounts(newer.withdrawals, older.withdrawals) >= 0
-    and M::compareAmounts(newer.withdrawalFees, older.withdrawalFees) >= 0
+pure def countersAdvance(newer: Counters, previous: Counters): bool =
+  M::compareAmounts(newer.deposits, previous.deposits) >= 0 and M::compareAmounts(newer.payments, previous.payments) >= 0
+    and M::compareAmounts(newer.payoutFees, previous.payoutFees) >= 0
+    and M::compareAmounts(newer.withdrawals, previous.withdrawals) >= 0
+    and M::compareAmounts(newer.withdrawalFees, previous.withdrawalFees) >= 0
 pure def isOlder(incoming: Observation, prior: Observation): bool = prior.exists and
   (M::compareAmounts(incoming.block, prior.block) < 0 or
     (M::equalAmounts(incoming.block, prior.block) and incoming.observedAt < prior.observedAt))
