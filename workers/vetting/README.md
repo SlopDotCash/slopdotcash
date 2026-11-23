@@ -277,7 +277,13 @@ is reported for that assessment alone, as `retry` at step `assessment` with
 the error name and never its message; the assessment stays pending and the
 pass continues with the next queued assessment (each repository of a project is
 queued as its own assessment), so one repository cannot hold
-back every project queued behind it. It
+back every project queued behind it. A retry names its step and a safe
+label only: a failed acquisition read gives the read and its HTTP status or
+error class (for example `github-identity-http-403`), one of the scanner's
+own fixed failure sentences gives its slug, and any other error gives only its
+class. The scan step reads GitHub with the scan dispatch App's token when that
+token can read a public repository outside this one, else with
+`GITHUB_TOKEN`, and logs how many shared `GITHUB_TOKEN` requests were left. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.
 
