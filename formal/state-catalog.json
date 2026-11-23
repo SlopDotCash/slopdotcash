@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a4640214d76e79cb7583ec53486c7f6372e5f3788b934d1ed6d60ebc93ccfdca",
+  "inventorySha256": "70c58ca8a361e7a2a086b89ca05e7c38d7a1722709131ef0f0bcb900186cba34",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2838,11 +2838,17 @@
         "duplicate acceptance order verification",
         "enforcement checkpoint read",
         "financial protection verification",
+        "historical GitHub repository binding",
+        "historical GitHub repository read",
         "historical Points reconstruction",
         "historical assessment replay",
         "historical census verification",
         "historical closed review verification",
+        "historical project manifest binding",
+        "historical registry pair read",
         "historical replay qualification",
+        "historical repository credential",
+        "historical repository identity",
         "historical value projection",
         "import preparation",
         "main source verification",

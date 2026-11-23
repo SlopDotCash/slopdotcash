@@ -12,7 +12,7 @@ import {
 } from "../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
-import { GitHubClient } from "../workers/slopbot/github";
+import { GitHubClient, GitHubError } from "../workers/slopbot/github";
 import { mergedTimeRangeQualifier } from "../workers/slopbot/value-accepted-commit-census";
 import { pullCommits } from "../workers/slopbot/value-evidence";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
@@ -1471,6 +1471,12 @@ type PublicationPhase =
   | "reviewed packet validation"
   | "enforcement checkpoint read"
   | "project and repository verification"
+  | "historical registry pair read"
+  | "historical project manifest binding"
+  | "historical repository identity"
+  | "historical repository credential"
+  | "historical GitHub repository read"
+  | "historical GitHub repository binding"
   | "owner authority verification"
   | "historical census verification"
   | "duplicate acceptance order verification"
@@ -1538,6 +1544,39 @@ export function historicalAssessmentAuditInputs(
   };
 }
 
+export function historicalRepositoryReadDiagnostic(error: unknown) {
+  if (!(error instanceof GitHubError))
+    return {
+      code:
+        error instanceof SyntaxError
+          ? "invalid-json"
+          : "transport-or-response-failure",
+    };
+  const { status } = error;
+  if (!Number.isInteger(status) || status < 100 || status > 599)
+    return { code: "invalid-http-status" };
+  switch (error.sourceReadRefusal?.category) {
+    case "primary-rate-limit":
+    case "secondary-rate-limit":
+    case "rate-limited":
+    case "access-denied":
+      return { code: error.sourceReadRefusal.category, status };
+  }
+  switch (status) {
+    case 401:
+      return { code: "unauthenticated", status };
+    case 403:
+      return { code: "forbidden-unclassified", status };
+    case 404:
+      return { code: "not-found", status };
+    case 204:
+    case 302:
+      return { code: "repository-metadata-unavailable", status };
+    default:
+      return { code: "http-refusal", status };
+  }
+}
+
 async function auditHistoricalAssessments(
   setPhase: (phase: PublicationPhase) => void,
   verifyMain: () => Promise<void>,
@@ -1546,8 +1585,9 @@ async function auditHistoricalAssessments(
   const { projectId, sourceDigest, expectedPointsDigest, stageReview } =
     historicalAssessmentAuditInputs(process.env, replay);
 
-  setPhase("project and repository verification");
+  setPhase("historical registry pair read");
   const registry = await fetchProjectRegistry();
+  setPhase("historical project manifest binding");
   const project = registry.projects
     .map(assertProjectDefinition)
     .find((row) => row.id === projectId);
@@ -1570,14 +1610,24 @@ async function auditHistoricalAssessments(
     JSON.stringify(project) !== JSON.stringify(revision.manifest)
   )
     throw Error("Assessment audit requires the complete current project scope");
+  setPhase("historical repository identity");
   const repository = project.repositories[0].id;
   const identity = repositoryIdentity(project, repository);
   if (!identity) throw Error("Historical repository identity unavailable");
+  setPhase("historical repository credential");
   const token = await resolveGitHubToken();
   const github = GitHubClient.forToken(token);
-  const liveRepository = await github.get<PublicMergeRepository>(
-    `/repos/${repository}`,
-  );
+  setPhase("historical GitHub repository read");
+  const metadata = await GitHubClient.forToken(token, undefined, {
+    observeSourceReadRefusal: true,
+  }).request<PublicMergeRepository>("GET", `/repos/${repository}`);
+  if (metadata.data === null && metadata.status !== 200)
+    throw new GitHubError(
+      metadata.status,
+      "Historical repository metadata unavailable",
+    );
+  setPhase("historical GitHub repository binding");
+  const liveRepository = metadata.data;
   if (
     liveRepository?.node_id !== identity.nodeId ||
     String(liveRepository.id) !== String(identity.githubId) ||
@@ -2126,6 +2176,12 @@ if (import.meta.main) {
         JSON.stringify({
           historicalClosedOutcome: error.reason,
           check: error.check,
+        }),
+      );
+    if (phase === "historical GitHub repository read")
+      console.error(
+        JSON.stringify({
+          historicalRepositoryRead: historicalRepositoryReadDiagnostic(error),
         }),
       );
     // Error messages can contain command arguments or private responses.

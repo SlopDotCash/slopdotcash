@@ -5477,14 +5477,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "6b6a04da68e73c27d21144ee5f131addd074f106b6ff81412b5031020854cc19",
+      "sha256": "72444fcefeb8712ec945604cea5355a55b6478186622f1706e0ca041fc3918c7",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
         3, 249, 250, 251, 252, 254, 259, 302, 317, 318, 324, 325, 460, 1169,
-        1398, 1418, 1632, 1650, 1657, 1789, 1884, 2046
+        1398, 1418, 1555, 1556, 1557, 1563, 1565, 1567, 1569, 1571, 1574, 1576,
+        1624, 1626, 1682, 1700, 1707, 1839, 1934, 2096
       ],
       "review": "mapped-abstraction"
     },
@@ -16399,7 +16400,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "aadaca864fad7f3bb87856ce9d26ac5154ca0718bb09bdc3cf84d02083f92ba7",
+      "sha256": "a22926af6631a18131ba306f4c179a997784d2781fc6e6e84261a35f3b08b5fb",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
