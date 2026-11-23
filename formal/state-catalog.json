@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f9cc025c34acd4b2a8e30bea159e744cada78075a5d6f24467996244e2dc45da",
+  "inventorySha256": "18c81f8b5bb943fa10bb406bb913f471309f6398fbb3036cf4e93a897c027109",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2326,7 +2326,7 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["licensed", "withdrawn"],
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "lexicallyUnmentionedValues": ["licensed", "withdrawn"],
       "review": "candidate-only"
     },
@@ -2336,7 +2336,7 @@
       "name": "reason",
       "kind": "sql-check",
       "values": ["account_closed", "opt_in", "setting_off", "upload"],
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "lexicallyUnmentionedValues": [
         "account_closed",
         "opt_in",

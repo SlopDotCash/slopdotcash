@@ -658,6 +658,7 @@
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/api_points_session_lifetime.qnt",
+        "formal/models/api/api_trace_licensing.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/slopbot/bot_closure_membership.qnt",
@@ -1354,12 +1355,12 @@
     {
       "path": "backend/trace-licensing/handler.ts",
       "sha256": "5969fa9a2335a9157f95250743867bd0e1c1497b21067d7a4b79147423142ecf",
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
         3, 8, 9, 10, 61, 66, 68, 165, 172, 195, 196, 249, 266, 272, 274, 284,
         286, 292, 295, 300, 301, 306, 385, 391, 414, 420, 431, 440, 442
       ],
-      "review": "pending"
+      "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/auth.ts",
@@ -1380,6 +1381,7 @@
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
+        "formal/models/api/api_trace_licensing.qnt",
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/operator_intake_renewal.qnt",
         "formal/models/api/trace_event_finalization.qnt",
@@ -1419,6 +1421,7 @@
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
+        "formal/models/api/api_trace_licensing.qnt",
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_bearer_tokens.qnt",
@@ -3852,12 +3855,12 @@
     {
       "path": "migrations/0148_trace_licensing.sql",
       "sha256": "6cd16553e70ebfe376025cd9f8835fa4f72fd798bc6321e3b472cceadcb1ddb5",
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
         8, 31, 35, 48, 50, 52, 54, 62, 105, 118, 119, 120, 131, 132, 141, 144,
         152, 157
       ],
-      "review": "pending"
+      "review": "mapped-abstraction"
     },
     {
       "path": "package.json",
@@ -6713,12 +6716,12 @@
     {
       "path": "src/TraceLicensing.tsx",
       "sha256": "1b80120a9d9d2ea19e5eaf4cf29bb4281be6aa1bdc5778853d97b4b75708bfde",
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
         5, 8, 38, 39, 40, 160, 162, 181, 182, 183, 194, 198, 206, 233, 240, 312,
         365
       ],
-      "review": "pending"
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/VaultActions.tsx",
@@ -8053,9 +8056,9 @@
     {
       "path": "src/lib/trace-licensing.ts",
       "sha256": "3a3c3788f2e21a1d9943d2916456e7a04ff11be5e08826f86d05f28e86365014",
-      "models": [],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [],
-      "review": "pending"
+      "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/use-action.ts",
@@ -11923,6 +11926,29 @@
         "renewalRefusesDifferentConcurrentAttachmentTest",
         "usedCapabilityReplayDoesNotRenewTest",
         "wrongActorCannotBeginTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_trace_licensing.qnt",
+      "sha256": "85fdd5afd405770e1b1586a4d75e4038e7fb2ae51771c72f1f253f7921e90662",
+      "sources": [
+        "backend/points/handler.ts",
+        "backend/trace-licensing/handler.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/handler.ts",
+        "migrations/0148_trace_licensing.sql",
+        "src/TraceLicensing.tsx",
+        "src/lib/trace-licensing.ts"
+      ],
+      "scenarios": [
+        "bannedTurnsOffTest",
+        "closeNothingToWithdrawTest",
+        "closeWithLicenceWritesTest",
+        "closeWithdrawsTest",
+        "noopWritesNothingTest",
+        "staleCountRefusedTest",
+        "turnOffWithdrawsTest",
+        "uploadWhileOnTest"
       ]
     },
     {
