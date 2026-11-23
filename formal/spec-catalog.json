@@ -2999,7 +2999,7 @@
     },
     {
       "path": "spec/backend/submissionFeeTerms.md",
-      "sha256": "f30d0415d2e7aa067da30822d5a329134298cc8b11acb9b820ffe65482870f88",
+      "sha256": "ffbee38419c7eac60f74c3724b8f5f196b009cec8ae7e8b61d6d13860452db25",
       "module": "backend__submissionFeeTerms",
       "stories": [
         {
@@ -3027,6 +3027,7 @@
             "slopShareBps",
             "refundUndecidedDays",
             "keptAfterClosedDays",
+            "keepFeeLabel",
             "reclaimDays",
             "unknownItemGraceMs",
             "rateGraceMs",
@@ -3052,7 +3053,7 @@
         },
         {
           "heading": "Story: Every part reads the same published fee terms / A SLOP rate is in force from its own hour, and the previous one still counts for 48 hours",
-          "line": 105,
+          "line": 109,
           "definitions": [
             "FeeRate",
             "RatesInForce",
@@ -5695,7 +5696,7 @@
     },
     {
       "path": "spec/contributor/publication.md",
-      "sha256": "963e6afd833d6fa9431ce93b5b5220448bd42bf9c19ecd8635c9468e43628a14",
+      "sha256": "47fcfd11d9bf3e6658e8f54fd8aa002a34f990fd3a96a43fcd50203b4e05f604",
       "module": "contributor__publication",
       "stories": [
         {
@@ -5905,7 +5906,7 @@
         },
         {
           "heading": "Story: Publish the three global skills and agent discovery files from one source / Simulation samples cover listed, paused, restricted and unverified projects and committed and working-tree builds",
-          "line": 531,
+          "line": 538,
           "definitions": [
             "servedFacts",
             "knownValues",
@@ -15903,7 +15904,7 @@
     },
     {
       "path": "spec/operations/releaseCoverage.md",
-      "sha256": "aa518e9e18f4a76c2ddad5aabedb71c033ff0cc76057181264e4bb828a162d45",
+      "sha256": "0d19182291c9b25fc0ce3caeaca5ed92e2fb8bcd482f78b9f4c18267b22b0ac3",
       "module": "operations__releaseCoverage",
       "stories": [
         {
@@ -15912,7 +15913,7 @@
         },
         {
           "heading": "Story: Retain independent verification coverage outside releases",
-          "line": 131
+          "line": 158
         }
       ],
       "rules": [
@@ -15952,8 +15953,18 @@
           ]
         },
         {
-          "heading": "Story: Resolve the exact coverage for a trusted release / Source-bound receipts satisfy only the lanes they actually ran",
+          "heading": "Story: Resolve the exact coverage for a trusted release / A fresh trusted main collection reuses its memo run's discussion reads only when no explicit resume names a run",
           "line": 107,
+          "definitions": [
+            "reusesMemoDiscussions",
+            "lawMemoDiscussionsOnlyFreshMain",
+            "lawExplicitResumeTakesPrecedence",
+            "lawPushMayReuseMemoDiscussions"
+          ]
+        },
+        {
+          "heading": "Story: Resolve the exact coverage for a trusted release / Source-bound receipts satisfy only the lanes they actually ran",
+          "line": 134,
           "definitions": [
             "CheckReceipts",
             "releaseReceiptsPass",
@@ -15964,7 +15975,7 @@
         },
         {
           "heading": "Story: Retain independent verification coverage outside releases / Pull requests select affected work and nightly verification always runs in full",
-          "line": 133,
+          "line": 160,
           "definitions": [
             "Affected",
             "RequestChecks",
@@ -15977,7 +15988,7 @@
         },
         {
           "heading": "Story: Retain independent verification coverage outside releases / Simulation includes default, manual, pull request and nightly inputs",
-          "line": 166,
+          "line": 193,
           "definitions": [
             "defaultReleaseRequest",
             "requestValues",
@@ -15994,6 +16005,10 @@
         {
           "target": "./release.md",
           "line": 14
+        },
+        {
+          "target": "../points/collectionMemo.md",
+          "line": 111
         }
       ]
     },
@@ -16534,13 +16549,115 @@
       "references": []
     },
     {
+      "path": "spec/points/assessmentAudit.md",
+      "sha256": "afe8d2fb8b1d12c934e32c72a3b4d3801f969a4fae306cfacde482bf3d34b042",
+      "module": "points__assessmentAudit",
+      "stories": [
+        {
+          "heading": "Story: Audit the assessments of a historical scope before owner review",
+          "line": 21
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Audit the assessments of a historical scope before owner review / A read-only assessment audit reports a conclusion only at a complete, current journal cut",
+          "line": 27,
+          "definitions": [
+            "AuditPhase",
+            "AuditStatus",
+            "AuditDispatch",
+            "AssessmentAudit",
+            "initial",
+            "catalogsComplete",
+            "bindingRejected",
+            "sealedStatus",
+            "canCapture",
+            "capture",
+            "canObserve",
+            "observe",
+            "canChangeCheckpoint",
+            "changeCheckpoint",
+            "canSeal",
+            "seal",
+            "alwaysReadsBounded",
+            "alwaysIdleUnread",
+            "alwaysStatusOnlyWhenSealed",
+            "alwaysConclusionAtCompleteCut",
+            "sometimesNothingScoped",
+            "sometimesValueReplayRequired",
+            "sometimesIncompleteCut",
+            "sometimesStaleCut",
+            "scopedValues",
+            "applyRequestedValues",
+            "jointCountValues",
+            "legacyCountValues",
+            "byValues"
+          ]
+        },
+        {
+          "heading": "Story: Audit the assessments of a historical scope before owner review / A closed review and a removed accepted merge bind only from exact public evidence",
+          "line": 99,
+          "definitions": [
+            "ClosureEvidence",
+            "RemovedMergeEvidence",
+            "closureBinds",
+            "removedMergeBinds",
+            "canBindClosureReview",
+            "bindClosureReview",
+            "canBindRemovedMerge",
+            "bindRemovedMerge",
+            "alwaysBindingsAtCompleteRelevantCut",
+            "alwaysRejectedBindingNeverQualifies",
+            "sometimesClosureReviewBound",
+            "sometimesRemovedMergeRetained",
+            "sometimesRejectedBindingIncomplete",
+            "goodClosure",
+            "goodRemoval",
+            "lawPostCloseReviewRefused",
+            "lawStandaloneRecordAnchorsAReview",
+            "lawChangedHeldGroupRefused",
+            "closureValues",
+            "removalValues"
+          ]
+        },
+        {
+          "heading": "Story: Audit the assessments of a historical scope before owner review / A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback",
+          "line": 159,
+          "definitions": [
+            "canStageReview",
+            "stageReview",
+            "alwaysStagedAtCompleteCut",
+            "alwaysReviewOnlyFromCurrentCompleteCut",
+            "stepSealedRunFixed",
+            "sometimesReviewAvailable",
+            "sometimesStagedThenStale",
+            "explicitValues",
+            "qualifiedValues",
+            "verifiedReadbackValues",
+            "eval_witness_sometimesClosureReviewBound"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./reviewedHistory.md",
+          "line": 18
+        }
+      ]
+    },
+    {
       "path": "spec/points/authorship.md",
-      "sha256": "c5d1994750fa9c1eb78936e5a2db62a04c550a87e214e6f12f035c11c8306830",
+      "sha256": "dfadfd494edf84b5567eb36d2544053642c5922e088ee638b630d0dfac62795a",
       "module": "points__authorship",
       "stories": [
         {
           "heading": "Story: Credit the implementation author without rewarding a carrier PR",
           "line": 34
+        },
+        {
+          "heading": "Story: Hold fresh implementation credit the census cannot prove",
+          "line": 306
         }
       ],
       "rules": [
@@ -16690,6 +16807,42 @@
             "aValues",
             "unitsValues"
           ]
+        },
+        {
+          "heading": "Story: Hold fresh implementation credit the census cannot prove / A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census",
+          "line": 313,
+          "definitions": [
+            "CreditSelection",
+            "freshCreditHeld",
+            "scoredDigestsAfter",
+            "lawLegacyScoringNeverHeld",
+            "lawAssessedOrRatifiedSourceNotFreshHeld",
+            "lawEmptyRollingCensusHeld",
+            "lawScoredDigestHoldsItsRepeat"
+          ]
+        },
+        {
+          "heading": "Story: Hold fresh implementation credit the census cannot prove / Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review",
+          "line": 354,
+          "definitions": [
+            "ownsAcceptedOrdinaryCommit",
+            "usesEarlierOwners",
+            "standaloneOverlapHeld",
+            "implementationHeld",
+            "heldRecordDigest",
+            "reviewAssessmentDigestOf",
+            "ownedChangeRow",
+            "lawHeldCoverageHasNoRecordDigest",
+            "lawStandaloneHoldKeepsReviewBinding",
+            "lawHistoricalScoringHasNoRollingHolds",
+            "lawHistoricalOwnsNoAcceptedCommit",
+            "freshSelection",
+            "selectionValues",
+            "digestValues",
+            "acceptedCommitValues",
+            "parentsKnownValues",
+            "singleParentValues"
+          ]
         }
       ],
       "imports": [
@@ -16719,7 +16872,7 @@
     },
     {
       "path": "spec/points/census.md",
-      "sha256": "3256e884bdc1955f5ede5e176151cfb575e8d093a228aee5b512925e1aa76112",
+      "sha256": "444cfa371d1ef778ca9fa60fe63b021c8296501186cdfa8ba8b539f281383b96",
       "module": "points__census",
       "stories": [
         {
@@ -16728,7 +16881,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only",
-          "line": 372
+          "line": 392
         }
       ],
       "rules": [
@@ -16840,6 +16993,12 @@
             "budgetDecision",
             "afterReset",
             "recollects",
+            "confirmationProbes",
+            "confirmationDelayMs",
+            "holdsJointMember",
+            "lawFirstAttemptHoldNeedsEveryProbe",
+            "lawRecollectionHoldsOnOneProbe",
+            "lawUnprobedMemberNeverHeld",
             "lawSpendKeepsCapAndReserve",
             "lawWaitsOnceForAReset",
             "lawResetStillShortStops",
@@ -16848,12 +17007,13 @@
             "budgetValues",
             "costValues",
             "remainingValues",
-            "attemptValues"
+            "attemptValues",
+            "agreeingProbesValues"
           ]
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / A split Search range whose children disagree with the parent count is repeated once",
-          "line": 270,
+          "line": 290,
           "definitions": [
             "searchSafeResultLimit",
             "minimumSearchSliceMs",
@@ -16874,7 +17034,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / An optional discussion probe starts only with two available points and never waits for quota to probe",
-          "line": 311,
+          "line": 331,
           "definitions": [
             "probeCost",
             "ProbeAnswer",
@@ -16893,7 +17053,7 @@
         },
         {
           "heading": "Story: Collect a complete inventory and a decision for every item / Simulation samples include repeated cursors, count changes and blocked items",
-          "line": 351,
+          "line": 371,
           "definitions": [
             "human",
             "pageValues",
@@ -16904,7 +17064,7 @@
         },
         {
           "heading": "Story: Reapply the current bands to eligible unpaid September and October work only / The band reapplication touches only eligible unpaid work from 1 September through 31 October 2026",
-          "line": 378,
+          "line": 398,
           "definitions": [
             "AwardStage",
             "BandedWork",
@@ -16942,9 +17102,157 @@
         },
         {
           "target": "./ingestion.md",
-          "line": 230
+          "line": 240
         }
       ]
+    },
+    {
+      "path": "spec/points/collectionMemo.md",
+      "sha256": "5cead74b9f24fbc5d7e093baff9a438603b985c2f9c35274f3677687bcdf761b",
+      "module": "points__collectionMemo",
+      "stories": [
+        {
+          "heading": "Story: Reach the same collection with fewer reads",
+          "line": 30
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Reach the same collection with fewer reads / Only a trusted main collection may use a collection memo, and a memo produced after now fails the collection",
+          "line": 36,
+          "definitions": [
+            "auditOneIn",
+            "fullIntervalMs",
+            "maxMemoBytes",
+            "maxCommitLines",
+            "maxAttributions",
+            "CollectionMode",
+            "ModeReason",
+            "MemoPhase",
+            "MemoRefusal",
+            "RunContext",
+            "PriorAnswer",
+            "MemoFile",
+            "Answer",
+            "MemoRun",
+            "initial",
+            "trustedMemoUse",
+            "memoWithinBounds",
+            "memoWellFormed",
+            "lawUntrustedActionsRunNeverUsesMemo",
+            "lawOversizedMemoUnusable"
+          ]
+        },
+        {
+          "heading": "Story: Reach the same collection with fewer reads / A collection runs in full without a usable memo, when forced, a week after the last full run or when the attribution code changed",
+          "line": 85,
+          "definitions": [
+            "modeReason",
+            "modeFor",
+            "canOpenMemo",
+            "openMemo",
+            "lawForcedRunIsFull",
+            "lawWeekOldMemoIsFull",
+            "lawChangedCodeIsFull",
+            "lawIncrementalNeedsMatchingMemo",
+            "alwaysRefusedOnlyWithReason",
+            "alwaysFullNeverReuses",
+            "stepRefusalIsFinal",
+            "sometimesWeeklyFull",
+            "sometimesFutureMemoFails",
+            "sometimesUntrustedRunFails"
+          ]
+        },
+        {
+          "heading": "Story: Reach the same collection with fewer reads / Commit statistics are reused only for the same repository node, commit node and object id",
+          "line": 132,
+          "definitions": [
+            "CommitLine",
+            "commitLineFor",
+            "lawOtherObjectReadLive",
+            "rowValues",
+            "repositoryNodeIdValues",
+            "commitNodeIdValues",
+            "oidValues"
+          ]
+        },
+        {
+          "heading": "Story: Reach the same collection with fewer reads / A collection reuses an earlier answer only while every input it was derived from is unchanged",
+          "line": 152,
+          "definitions": [
+            "audited",
+            "answered",
+            "candidate",
+            "priorResult",
+            "recordedOf",
+            "withAnswer",
+            "canAudit",
+            "audit",
+            "canFinishAudit",
+            "finishAudit",
+            "canReuse",
+            "reuse",
+            "alwaysPriorDistinct",
+            "alwaysAnswersDistinct",
+            "alwaysReuseWithinFence",
+            "alwaysAuditsPrecedeReuse",
+            "alwaysAuditedIsRecomputed",
+            "lawSampledEveryFiftieth",
+            "sometimesAuditMismatchDiscardsReuse",
+            "sometimesReusedAfterCleanAudit"
+          ]
+        },
+        {
+          "heading": "Story: Reach the same collection with fewer reads / The next memo records exactly the live version of every fenced answer and is written only after the snapshot",
+          "line": 207,
+          "definitions": [
+            "canComputeLive",
+            "computeLive",
+            "canWriteSnapshot",
+            "writeSnapshot",
+            "canWriteMemo",
+            "writeMemo",
+            "canFailMemoWrite",
+            "failMemoWrite",
+            "alwaysNextMemoIsRecorded",
+            "alwaysHoldNeverRecorded",
+            "alwaysFullRunRestartsWeek",
+            "alwaysLastFullNotAfterOpen",
+            "alwaysNothingAnsweredUnopened",
+            "stepMemoOnlyAfterSnapshot",
+            "sometimesReusedAndWritten",
+            "sometimesHoldNotRecorded",
+            "sometimesMemoNotWritten"
+          ]
+        },
+        {
+          "heading": "Story: Reach the same collection with fewer reads / Simulation samples include a matching, a week-old, a changed-code and a future memo",
+          "line": 254,
+          "definitions": [
+            "matchingMemo",
+            "trustedRun",
+            "memoValues",
+            "contextValues",
+            "nowValues",
+            "outcomeIdValues",
+            "versionValues",
+            "sampleValues",
+            "resultValues",
+            "producedAtValues",
+            "bytesValues",
+            "eval_witness_sometimesReusedAndWritten",
+            "eval_witness_sometimesReusedAfterCleanAudit",
+            "eval_witness_sometimesAuditMismatchDiscardsReuse",
+            "eval_witness_sometimesFutureMemoFails",
+            "eval_witness_sometimesWeeklyFull",
+            "eval_witness_sometimesUntrustedRunFails",
+            "eval_witness_sometimesHoldNotRecorded",
+            "eval_witness_sometimesMemoNotWritten"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/points/collectorToken.md",
@@ -17022,7 +17330,7 @@
     },
     {
       "path": "spec/points/corrections.md",
-      "sha256": "0e50ab0b7edbc39a7e3547ff909dffc0ffecbf0f222b665e6105c436d6cf2ceb",
+      "sha256": "40a40fa727a27f1eea5299344eabd759414afb7bdf4eedfc9e278bd16773b811",
       "module": "points__corrections",
       "stories": [
         {
@@ -17031,7 +17339,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest",
-          "line": 180
+          "line": 262
         }
       ],
       "rules": [
@@ -17054,12 +17362,23 @@
             "emptyManifest",
             "initial",
             "predecessorMatches",
-            "completeCorrection"
+            "completeCorrection",
+            "CensusCommit",
+            "ZeroLineScan",
+            "scanCommit",
+            "unprovedZeroLinePromotion",
+            "emptyMarkerRow",
+            "carriedChangeRow",
+            "lawMergeRowsLeaveTheMarkerUnproved",
+            "lawOwnedChangeProvesWork",
+            "lawUnknownParentsProveNothing",
+            "lawEmptyPromotionNeverPrepared",
+            "censusRowValues"
           ]
         },
         {
           "heading": "Story: Reassign the existing pool while preserving funded history / October replacement PRs credit the verified original contributors by their accepted lines",
-          "line": 72,
+          "line": 115,
           "definitions": [
             "octoberProjects",
             "octoberReplacementScope",
@@ -17078,7 +17397,7 @@
         },
         {
           "heading": "Story: Reassign the existing pool while preserving funded history / Preparation is the plan: it captures the current predecessor and never appends an allocation",
-          "line": 109,
+          "line": 152,
           "definitions": [
             "classify",
             "canPrepare",
@@ -17089,7 +17408,7 @@
         },
         {
           "heading": "Story: Reassign the existing pool while preserving funded history / The atomic import rechecks current protection, bans and the captured predecessor",
-          "line": 138,
+          "line": 181,
           "definitions": [
             "canCommit",
             "commit",
@@ -17109,8 +17428,24 @@
           ]
         },
         {
+          "heading": "Story: Reassign the existing pool while preserving funded history / An already-correct pool records its earlier-acceptance proof once",
+          "line": 224,
+          "definitions": [
+            "noEntry",
+            "lastShares",
+            "noShareChange",
+            "confirmsAcceptance",
+            "canApplyUnchanged",
+            "applyUnchanged",
+            "alwaysConfirmationApplied",
+            "stepConfirmationKept",
+            "sometimesConfirmed",
+            "sometimesUnchangedAppendsNothing"
+          ]
+        },
+        {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest",
-          "line": 182,
+          "line": 264,
           "definitions": [
             "noChunk",
             "canStageChunk",
@@ -17127,7 +17462,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / A recorded source omitted from the historical search is verified through a census supplement",
-          "line": 217,
+          "line": 299,
           "definitions": [
             "canRequireSupplement",
             "requireSupplement",
@@ -17144,7 +17479,7 @@
         },
         {
           "heading": "Story: Apply a reviewed private packet only in full and only under its reviewed digest / Directed witnesses check protection races, stale predecessors, October attribution and replay",
-          "line": 250,
+          "line": 332,
           "definitions": [
             "readyManifest",
             "carrier",
@@ -17178,7 +17513,7 @@
       "references": [
         {
           "target": "./periods.md",
-          "line": 115
+          "line": 158
         }
       ]
     },
@@ -17520,7 +17855,7 @@
     },
     {
       "path": "spec/points/index.md",
-      "sha256": "7fed992392e30ea82de7885c64de8fb3254e0054299b4b46334c56ace2f42268",
+      "sha256": "350e05b6224db423f24ffc4ac9071b233a5ef53eccb7c4aab7ea182e456f5dcd",
       "module": "points",
       "stories": [],
       "rules": [],
@@ -17587,77 +17922,89 @@
           "line": 22
         },
         {
-          "target": "./quotaRecovery.md",
+          "target": "./assessmentAudit.md",
           "line": 23
         },
         {
-          "target": "./evaluations.md",
+          "target": "./quotaRecovery.md",
           "line": 24
         },
         {
-          "target": "./disputes.md",
+          "target": "./evaluations.md",
           "line": 25
         },
         {
-          "target": "./census.md",
+          "target": "./disputes.md",
           "line": 26
         },
         {
-          "target": "./window.md",
+          "target": "./census.md",
           "line": 27
         },
         {
-          "target": "./ingestion.md",
+          "target": "./window.md",
           "line": 28
         },
         {
-          "target": "./collectorToken.md",
+          "target": "./ingestion.md",
           "line": 29
         },
         {
-          "target": "./recovery.md",
+          "target": "./localGitObjects.md",
           "line": 30
         },
         {
-          "target": "./projectionTransport.md",
+          "target": "./collectionMemo.md",
           "line": 31
         },
         {
-          "target": "./publication.md",
+          "target": "./collectorToken.md",
           "line": 32
         },
         {
-          "target": "./protectedMonths.md",
+          "target": "./recovery.md",
           "line": 33
         },
         {
-          "target": "./modelAttribution.md",
+          "target": "./projectionTransport.md",
           "line": 34
         },
         {
-          "target": "./profiles.md",
+          "target": "./publication.md",
           "line": 35
         },
         {
-          "target": "./retainedFreshness.md",
+          "target": "./protectedMonths.md",
           "line": 36
+        },
+        {
+          "target": "./modelAttribution.md",
+          "line": 37
+        },
+        {
+          "target": "./profiles.md",
+          "line": 38
+        },
+        {
+          "target": "./retainedFreshness.md",
+          "line": 39
         }
       ]
     },
     {
       "path": "spec/points/ingestion.md",
-      "sha256": "67d8d02da7a792b0997eb187444385c3c2a03c6d743724930d96f6b90417f57b",
+      "sha256": "f8f0ffe87f1d052a3b01dbfe5f19e68473c84cf92dfb20e414062efcda2ccbd2",
       "module": "points__ingestion",
       "stories": [
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success",
-          "line": 34
+          "line": 37
         }
       ],
       "rules": [
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / A read classifies each response and waits only for a rate limit",
-          "line": 36,
+          "line": 39,
           "definitions": [
             "Method",
             "Origin",
@@ -17672,6 +18019,7 @@
             "pageRetryStatus",
             "pageRetried",
             "pageDelay",
+            "gatewayStatus",
             "gatewayRetryLimit",
             "gatewayRetried",
             "gatewayDelay",
@@ -17703,13 +18051,14 @@
             "lawOtherPageServerErrorReturned",
             "lawGatewayRetryKeepsAttempt",
             "lawThirdGatewayErrorReturned",
-            "lawGatewayRetryOnlyOnCommitFiles",
+            "lawGatewayRetryNeedsExactGet",
+            "lawEveryExactGetRetriesGateway",
             "sometimesGatewayRetriedThenReturned"
           ]
         },
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / A multi-part leaderboard is read as one content-addressed generation",
-          "line": 143,
+          "line": 151,
           "definitions": [
             "Part",
             "PartsManifest",
@@ -17724,7 +18073,7 @@
         },
         {
           "heading": "Story: Read GitHub without retrying writes or inventing success / Simulation samples include limits, authorization refusals and generations",
-          "line": 173,
+          "line": 181,
           "definitions": [
             "xValues",
             "atValues",
@@ -17750,7 +18099,7 @@
     },
     {
       "path": "spec/points/journal.md",
-      "sha256": "ab2c4ade03a47e7f95bd426d9d26abe32621875f5815e492aacdbab8127f2208",
+      "sha256": "998d5587d98e112a7ee89a4e802504c971bc0b61b541ae0044bd00bdd0b450f5",
       "module": "points__journal",
       "stories": [
         {
@@ -17930,6 +18279,8 @@
             "SourceCoverage",
             "ReviewOmission",
             "Supersession",
+            "exactSourceUnassessed",
+            "replayKeepsPool",
             "inWindow",
             "coverageAllowsZero",
             "omissionAgrees",
@@ -17939,14 +18290,51 @@
             "zeroSuperseded",
             "lawPolicyOmissionNeverZeroes",
             "lawMissingValuationNeverZeroes",
+            "lawHeldImplementationReviewOnlyZeroesReviews",
+            "lawReplayKeepsUnassessedMergePool",
+            "verifiedAllocationReason",
+            "carriesVerifiedAllocation",
+            "snapshotMayReallocate",
+            "sometimesHeldImplementationReviewZeroed",
             "sometimesSupersededZeroed",
             "sometimesReviewSupersededZeroed",
             "sometimesJointAbsorbedOwnRecord"
           ]
         },
         {
+          "heading": "Story: Preserve accepted work and correct unpaid attribution / A later assessment that reaches an October-protected source holds the overlapping work and records each hold",
+          "line": 627,
+          "definitions": [
+            "octoberOriginalContributorReason",
+            "octoberDuplicateRetirementReason",
+            "octoberProtected",
+            "ReviewedUnit",
+            "AssessedSource",
+            "DecidedMerge",
+            "JointHoldInput",
+            "JointHoldReason",
+            "protectedGroups",
+            "protectedMemberships",
+            "heldRecords",
+            "sharedRecordHeld",
+            "reviewedUnitHeld",
+            "reviewedSourceHeld",
+            "knownReviewedUnit",
+            "unassessedSourceHeld",
+            "implementationPoolHeld",
+            "jointHoldReason",
+            "protectedUnit",
+            "holdSample",
+            "lawProtectedGroupHeld",
+            "lawIndependentReviewedUnitScores",
+            "lawWithoutMembershipTheRecordIsHeld",
+            "lawNothingProtectedHoldsNothing",
+            "priorOrdinaryPoolValues"
+          ]
+        },
+        {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed duplicate retirement zeroes the October pool it covers",
-          "line": 598,
+          "line": 706,
           "definitions": [
             "canRetireDuplicate",
             "retireDuplicate",
@@ -17955,7 +18343,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / An owner-reviewed recipient correction redivides the October pool it covers",
-          "line": 627,
+          "line": 735,
           "definitions": [
             "canCorrectRecipients",
             "correctRecipients",
@@ -17964,7 +18352,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Payout recognition is appended once per recipient, project and cycle",
-          "line": 657,
+          "line": 765,
           "definitions": [
             "recognitionKey",
             "recognizedIn",
@@ -17978,7 +18366,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / A frozen reward period, a removed PR and a ban never rewrite recorded Points",
-          "line": 694,
+          "line": 802,
           "definitions": [
             "canFreeze",
             "freeze",
@@ -17994,7 +18382,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / History is append-only, chained and never moves an occurrence time",
-          "line": 722,
+          "line": 830,
           "definitions": [
             "stepAppendOnly",
             "chainsTo",
@@ -18007,7 +18395,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Public totals are views of the latest revisions, with penalties bounded by the month's credit",
-          "line": 756,
+          "line": 864,
           "definitions": [
             "isLatest",
             "shareOf",
@@ -18035,7 +18423,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Credited, corrected, penalized, recognized and frozen states are reachable",
-          "line": 822,
+          "line": 930,
           "definitions": [
             "sometimesUnitCredited",
             "sometimesRescored",
@@ -18058,7 +18446,7 @@
         },
         {
           "heading": "Story: Preserve accepted work and correct unpaid attribution / Simulation samples bind matching and mismatched evidence",
-          "line": 846,
+          "line": 954,
           "definitions": [
             "gValues",
             "unitValues",
@@ -18162,19 +18550,81 @@
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 600
+          "line": 708
         },
         {
           "target": "./reviewedHistory.md",
-          "line": 629
+          "line": 737
         },
         {
           "target": "./payoutRecognition.md",
-          "line": 659
+          "line": 767
         },
         {
           "target": "./allocation.md",
-          "line": 665
+          "line": 773
+        }
+      ]
+    },
+    {
+      "path": "spec/points/localGitObjects.md",
+      "sha256": "ffa134b188c00bff566054445528a26fedac064780176015032b612495dfe573",
+      "module": "points__localGitObjects",
+      "stories": [
+        {
+          "heading": "Story: Read immutable Git objects without spending the GitHub allowance",
+          "line": 15
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Read immutable Git objects without spending the GitHub allowance / A Git tree or commit read is answered from a local clone only when the answer is certain to equal GitHub's",
+          "line": 22,
+          "definitions": [
+            "maxTreeEntries",
+            "maxLocalBytes",
+            "ReaderState",
+            "GitObjectKind",
+            "GitQuery",
+            "GitRead",
+            "LocalObject",
+            "LocalReads",
+            "initial",
+            "offeredLocally",
+            "certain",
+            "canOffer",
+            "offer",
+            "canAnswer",
+            "answer",
+            "canCrash",
+            "crash",
+            "alwaysAccounted",
+            "alwaysOnlyRunningReaderWaits",
+            "stepAnswersNeverWithdrawn",
+            "lawOnlyExactReadsOffered",
+            "lawUncertainObjectDeclined",
+            "sometimesServedLocally",
+            "sometimesCrashDeclinedWaiting",
+            "sometimesRestartedAfterCrash"
+          ]
+        },
+        {
+          "heading": "Story: Read immutable Git objects without spending the GitHub allowance / Simulation samples include exact, conditional and recursive commit reads and uncertain objects",
+          "line": 94,
+          "definitions": [
+            "treeRead",
+            "gitReadValues",
+            "qValues",
+            "heldObject",
+            "foundValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./ingestion.md",
+          "line": 13
         }
       ]
     },
@@ -18709,7 +19159,7 @@
     },
     {
       "path": "spec/points/projectionTransport.md",
-      "sha256": "dbc726a78a25f108b006e5b48c48cebcb1ef38238329b3d2c938e4e7c50cca19",
+      "sha256": "5c82d018de82ef8a4e0c032d809cfe146d1850a78ec4d648cbccca4a4f74446c",
       "module": "points__projectionTransport",
       "stories": [
         {
@@ -18730,12 +19180,15 @@
             "initial",
             "resetsOf",
             "reading",
+            "shardFailed",
             "canResetIndex",
             "resetIndex",
             "canResetShard",
             "resetShard",
             "canRefuseRead",
             "refuseRead",
+            "canSettleShard",
+            "settleShard",
             "canReadIndex",
             "readIndex",
             "shardsMatch",
@@ -18744,6 +19197,8 @@
             "alwaysResetsBounded",
             "alwaysVerifiedNamesItsIndex",
             "alwaysShardsAfterIndex",
+            "alwaysPendingOnlyWhileShardsRead",
+            "stepDrainingEndsRefused",
             "stepFinalStays",
             "stepOneRollover",
             "stepVerifiedOnlyFromMatchingShards",
@@ -18751,6 +19206,10 @@
             "sometimesVerifiedAfterRollover",
             "sometimesRefusedOnThirdReset",
             "sometimesUnchangedIndexRefused",
+            "sometimesSiblingRetriesWhileDraining",
+            "sometimesRefusedAfterDraining",
+            "eval_witness_sometimesRefusedAfterDraining",
+            "eval_witness_sometimesSiblingRetriesWhileDraining",
             "generationValues",
             "generationsValues",
             "shardValues"
@@ -18767,7 +19226,7 @@
     },
     {
       "path": "spec/points/protectedMonths.md",
-      "sha256": "96f9f7bc4d8c0bbaa9e4ae9447e5395606ebf609c01b0b201d9916e2246f9521",
+      "sha256": "c9cf887288cb44f8aeca8726b7dc470a9255f5f7b332b0ad8a8088fecb5f04c6",
       "module": "points__protectedMonths",
       "stories": [
         {
@@ -18782,7 +19241,12 @@
           "definitions": [
             "ProtectedMonth",
             "Protection",
+            "PoolKind",
+            "PoolKey",
             "CandidateRevision",
+            "ReviewedMembership",
+            "MergePoolAward",
+            "mergePoolKeys",
             "ProtectionReadResult",
             "PrivateProtectionRead",
             "noRevision",
@@ -18791,6 +19255,10 @@
             "isPublished",
             "publishedPredecessor",
             "holdsRevision",
+            "poolEligible",
+            "heldPools",
+            "joinsHeldPool",
+            "holdPass",
             "heldRevisions",
             "publishedCandidates",
             "lawUnionKeepsCommitted",
@@ -18800,12 +19268,16 @@
             "lawUnchangedEconomicIdentityPublishes",
             "lawUnprotectedCandidatePublishes",
             "lawEveryCandidateHeldOrPublished",
-            "lawPublishedCandidatesPassTheImportGuard"
+            "lawPublishedCandidatesPassTheImportGuard",
+            "lawSharedPoolHeld",
+            "lawNothingHeldWithoutProtection",
+            "lawOnlyAMergeHasPools",
+            "lawMembershipReplacesTheDecisionRecord"
           ]
         },
         {
           "heading": "Story: Publish a fresh collection without changing a paid month / The generator reads the protected months only from this site's own route, once, with a bounded answer",
-          "line": 103,
+          "line": 153,
           "definitions": [
             "protectedMonthsPath",
             "protectedMonthsSchema",
@@ -18821,7 +19293,7 @@
         },
         {
           "heading": "Story: Publish a fresh collection without changing a paid month / The protected-months route answers only the configured operator secret and names months and projects only",
-          "line": 141,
+          "line": 191,
           "definitions": [
             "ProtectedRouteAnswer",
             "ProtectedListingBody",
@@ -18834,7 +19306,7 @@
         },
         {
           "heading": "Story: Publish a fresh collection without changing a paid month / Simulation samples include paid months, whole projects and chained revisions",
-          "line": 186,
+          "line": 236,
           "definitions": [
             "paidMonth",
             "otherMonth",
@@ -18845,6 +19317,14 @@
             "payoutAward",
             "unchangedAward",
             "freshAward",
+            "pullPool",
+            "unitPool",
+            "otherGroupPool",
+            "frozenRetirement",
+            "laterReplacement",
+            "independentUnit",
+            "replacementSuccessor",
+            "lawFrozenRetirementHoldsItsReplacement",
             "committedValues",
             "monthValues",
             "privateReadValues",
@@ -18853,6 +19333,9 @@
             "heldValues",
             "rValues",
             "candidatesValues",
+            "reviewedGroup",
+            "poolAward",
+            "mValues",
             "goodAnswer",
             "answerValues",
             "secretLengthValues"
@@ -18874,7 +19357,7 @@
         },
         {
           "target": "../settlement/reservedAwardsFeed.md",
-          "line": 146
+          "line": 196
         }
       ]
     },
@@ -19290,7 +19773,7 @@
     },
     {
       "path": "spec/points/retainedFreshness.md",
-      "sha256": "25be504efe59b0060faf187276a71365c513d483e81478836e7eca29b630db4f",
+      "sha256": "bfa35a52bbbe02c49a3c03dcb0019e9ba0515a13fe51d639de306d83aa2c22f7",
       "module": "points__retainedFreshness",
       "stories": [
         {
@@ -19321,10 +19804,14 @@
           "definitions": [
             "PrepLane",
             "preparationLane",
+            "collectorRunner",
             "cancelsRunningPreparation",
             "lawOnlyRetainedMainSeparates",
             "lawFreshMainCollectionsShareOneLane",
             "lawRetainedNeverSharesFreshLane",
+            "lawParallelLaneOnlyForParallelFreshMain",
+            "lawParallelOrRetainedNeverUsesCollectorRunner",
+            "lawCollectorRunnerOnlyInCollectLane",
             "lawOnlyPullRequestLaneCancels",
             "branchValues"
           ]
@@ -19343,7 +19830,7 @@
     },
     {
       "path": "spec/points/reviewedHistory.md",
-      "sha256": "8a1279af4e1139961d85569315725d5e6311e3278ae5d39bc933a3a9cbc9f9ea",
+      "sha256": "9a0d2bad4146284886c55f01d7e4acb42a9e80b1a6a4e71c10f73e5b13f140e5",
       "module": "points__reviewedHistory",
       "stories": [
         {
@@ -19378,11 +19865,16 @@
           "line": 67,
           "definitions": [
             "PacketRun",
+            "packetPreviews",
             "packetApplies",
             "canValidate",
             "validate",
             "lawChangedBaselineRefused",
             "lawChangedCandidateRefused",
+            "lawRelevantAppendRefused",
+            "lawChangedCheckpointRefused",
+            "lawUnqualifiedApplyRefused",
+            "lawPreviewNeedsNoQualification",
             "readyRun",
             "rValues",
             "packetRunValues"
@@ -19390,7 +19882,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / An owner recipient correction redistributes an unchanged October pool by the reviewed weights",
-          "line": 97,
+          "line": 123,
           "definitions": [
             "RecipientCorrection",
             "positiveWeights",
@@ -19405,7 +19897,7 @@
         },
         {
           "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers",
-          "line": 136,
+          "line": 162,
           "definitions": [
             "AcceptedPromotion",
             "promotionKeepsContent",
@@ -19425,8 +19917,17 @@
             "jointCompletes",
             "ClaimCover",
             "claimRetained",
+            "CarriedMergeEdge",
+            "mergeEdgeCovers",
+            "AcceptanceOrder",
+            "orderAllows",
+            "IdenticalKind",
+            "IdenticalChange",
+            "identicalChangeApplies",
             "Retirement",
             "coveringSource",
+            "claimCoverageApplies",
+            "identicalRetirementApplies",
             "retirementApplies",
             "lawPromotionMustKeepContent",
             "lawChangedPromotionIsNotUnchanged",
@@ -19451,10 +19952,41 @@
             "secondValues",
             "claimCover",
             "claimValues",
+            "noIdentical",
+            "distinctOrder",
             "readyRetirement",
+            "sharedChange",
+            "identicalRetirement",
+            "carriedEdge",
+            "lawEarlierCarrierOfTheMergeRefused",
+            "lawUnknownAncestryRefused",
+            "lawIdenticalChangeNeedsOneEarlierRewardedSource",
+            "lawSurvivingCarrierNeedsPinnedTip",
+            "lawCarriedMergeEdgeNeedsTheEarlierHeadSecond",
+            "changeValues",
+            "edgeValues",
             "lawUncoveredClaimRefused",
             "lawSquashNeedsKeptPromotion",
             "retirementValues"
+          ]
+        },
+        {
+          "heading": "Story: Apply a reviewed historical packet only as the owner reviewed it / A historical replay scores only the pinned project's one repository",
+          "line": 418,
+          "definitions": [
+            "HistoricalScope",
+            "HistoricalInput",
+            "ScoringMode",
+            "historicalScopePinned",
+            "historicalInputAdmitted",
+            "sitePublishable",
+            "lawSecondRepositoryRefused",
+            "lawOutsideJointRecordRefused",
+            "lawHistoricalReplayNeverPublished",
+            "pinnedScope",
+            "pinnedInput",
+            "scopeValues",
+            "inputValues"
           ]
         }
       ],
@@ -19473,7 +20005,11 @@
         },
         {
           "target": "./allocation.md",
-          "line": 105
+          "line": 131
+        },
+        {
+          "target": "./authorship.md",
+          "line": 430
         }
       ]
     },
@@ -19870,7 +20406,7 @@
     },
     {
       "path": "spec/points/window.md",
-      "sha256": "61bc1b2af2131fbe53b4518c9ecb0d6e4f70442ed7ba3d19d4c605898296aa5d",
+      "sha256": "342af19615f60c419fdc5d648eba673767a82266cebee802e345090eca35f55f",
       "module": "points__window",
       "stories": [
         {
@@ -19936,8 +20472,26 @@
           ]
         },
         {
-          "heading": "Story: Publish one complete window with exact counts / Simulation samples include duplicates and every exclusion",
+          "heading": "Story: Publish one complete window with exact counts / A hosted feed outage is read again on the configured delays; any other failure stops at once",
           "line": 112,
+          "definitions": [
+            "maxFeedDelays",
+            "feedDelaysValid",
+            "feedAttempts",
+            "feedRetried",
+            "feedDelayBefore",
+            "lawRefusedFeedAnswerNeverRetried",
+            "lawNoDelaysIsOneAttempt",
+            "lawFeedRetriesBounded",
+            "lawEveryConfiguredDelayIsUsed",
+            "lawInvalidDelaysRefused",
+            "delaysValues",
+            "feedAttemptValues"
+          ]
+        },
+        {
+          "heading": "Story: Publish one complete window with exact counts / Simulation samples include duplicates and every exclusion",
+          "line": 153,
           "definitions": [
             "base",
             "eValues",
@@ -23713,18 +24267,18 @@
     },
     {
       "path": "spec/settlement/asiNovemberCloseout.md",
-      "sha256": "9c38faed829cdf806ca7eb396abdd07ea63ae33079aeff4fa5b7f85b5a3956e0",
+      "sha256": "ee2b8550119b216fb152bee274b2bd2809cf6258626d035341d7a274e8ab874d",
       "module": "settlement__asiNovemberCloseout",
       "stories": [
         {
           "heading": "Story: Close ASI's November pool early from one reviewed import",
-          "line": 21
+          "line": 24
         }
       ],
       "rules": [
         {
           "heading": "Story: Close ASI's November pool early from one reviewed import / The closeout is exactly ASI's November 2026 pool up to its cutoff",
-          "line": 27,
+          "line": 30,
           "definitions": [
             "Packet",
             "closeoutProject",
@@ -23744,26 +24298,34 @@
         },
         {
           "heading": "Story: Close ASI's November pool early from one reviewed import / Only an apply run under the reviewed packet and preview digests writes the closeout base, once",
-          "line": 66,
+          "line": 69,
           "definitions": [
             "BaseKind",
+            "HeldWork",
             "Closeout",
             "noPacket",
             "initial",
+            "trustedDispatch",
+            "lawOnlyTrustedDispatch",
+            "canObserveDispatch",
+            "observeDispatch",
             "canAdvance",
             "advance",
             "canPreviewCloseout",
             "previewCloseout",
             "canImportCloseout",
             "importCloseout",
+            "stepCloseoutBaseOnlyFromTrustedVerifiedRun",
             "canImportOrdinary",
             "importOrdinary"
           ]
         },
         {
           "heading": "Story: Close ASI's November pool early from one reviewed import / The closeout base binds the cutoff-specific source, the Points checkpoint and the registry revision",
-          "line": 107,
+          "line": 128,
           "definitions": [
+            "heldSourcesAdmitted",
+            "lawUnprovedHeldRefused",
             "canObserveSources",
             "observeSources",
             "canOwnerFinalize",
@@ -23778,10 +24340,11 @@
         },
         {
           "heading": "Story: Close ASI's November pool early from one reviewed import / A month freezes before its calendar end only from a reviewed closeout base, and a written base never changes",
-          "line": 137,
+          "line": 180,
           "definitions": [
             "alwaysCloseoutBaseReviewed",
             "alwaysOrdinaryBaseAfterMonth",
+            "alwaysVerifiedOnlyAdmittedHeld",
             "alwaysFrozenHasBase",
             "alwaysEarlyFreezeOnlyFromCloseout",
             "alwaysReservedOnlyFrozen",
@@ -23791,12 +24354,19 @@
             "sometimesOwnerClosesEarly",
             "sometimesOrdinaryCalendar",
             "sometimesPreviewedNotApplied",
+            "sometimesClosedWithOtherProjectsHeld",
             "reviewedPacket",
             "packetValues",
             "previewValues",
             "packetDigestValues",
             "byValues",
-            "weight_importCloseout"
+            "repositoryValues",
+            "gitRefValues",
+            "dispatchEventValues",
+            "weight_importCloseout",
+            "eval_witness_sometimesOwnerClosesEarly",
+            "eval_witness_sometimesClosedWithOtherProjectsHeld",
+            "eval_witness_sometimesPreviewedNotApplied"
           ]
         }
       ],
@@ -23806,11 +24376,11 @@
       "references": [
         {
           "target": "./monthly.md",
-          "line": 16
+          "line": 18
         },
         {
           "target": "./octoberImport.md",
-          "line": 19
+          "line": 22
         }
       ]
     },
@@ -32473,8 +33043,103 @@
       ]
     },
     {
+      "path": "spec/slopbot/historyReadAhead.md",
+      "sha256": "97610afc8d3820c7f1403f8bd5ec101ba58a84dbfe6a4c9734a71fb918c8d4ad",
+      "module": "slopbot__historyReadAhead",
+      "stories": [
+        {
+          "heading": "Story: Save waiting on the first history pages without changing a decision",
+          "line": 23
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Save waiting on the first history pages without changing a decision / First history pages may be read ahead, a bounded number at once, and decide nothing",
+          "line": 30,
+          "definitions": [
+            "ReadAheadPhase",
+            "ReadAhead",
+            "maxConcurrency",
+            "initial",
+            "validConcurrency",
+            "readsAhead",
+            "canBegin",
+            "begin",
+            "workerFree",
+            "canStartRead",
+            "startRead",
+            "canSkipRead",
+            "skipRead",
+            "canFinishRead",
+            "finishRead",
+            "canDropRead",
+            "dropRead",
+            "canEndReadAhead",
+            "endReadAhead",
+            "alwaysConcurrencyInRange",
+            "alwaysReadsWithinConcurrency",
+            "alwaysReadsOnlyWhileWarming",
+            "alwaysStartedInOrder",
+            "alwaysNoReadAheadWithoutConcurrency",
+            "stepNoReadStartsAfterADrop",
+            "lawInvalidConcurrencyReadsNothing",
+            "sometimesReadAheadFull",
+            "sometimesReadAheadDropped"
+          ]
+        },
+        {
+          "heading": "Story: Save waiting on the first history pages without changing a decision / The in-order reader takes each warmed page once and reads every other page itself",
+          "line": 96,
+          "definitions": [
+            "decidedOutcomes",
+            "inOrder",
+            "canTakeWarmed",
+            "takeWarmed",
+            "canReadLive",
+            "readLive",
+            "canFailRead",
+            "failRead",
+            "canFinishAll",
+            "finishAll",
+            "alwaysWarmingDecidesNothing",
+            "alwaysDecidedInOrder",
+            "alwaysEachPageReadOnce",
+            "alwaysOnlyTheLoopReportsAFailure",
+            "alwaysAllReadDecidesEvery",
+            "stepReadAheadDecidesNothing",
+            "sometimesSequentialOnly",
+            "sometimesEveryPageTaken",
+            "sometimesDroppedPageReadAgain",
+            "sometimesFailureAfterWarmedPage",
+            "sometimesWarmedOutcomeFailsLater"
+          ]
+        },
+        {
+          "heading": "Story: Save waiting on the first history pages without changing a decision / Simulation samples cover no read-ahead, a full read-ahead and a dropped one",
+          "line": 147,
+          "definitions": [
+            "concurrencyValues",
+            "outcomeCountValues",
+            "positionValues",
+            "eval_witness_sometimesDroppedPageReadAgain",
+            "eval_witness_sometimesFailureAfterWarmedPage",
+            "eval_witness_sometimesEveryPageTaken",
+            "eval_witness_sometimesWarmedOutcomeFailsLater",
+            "eval_witness_sometimesSequentialOnly"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./valueHistory.md",
+          "line": 14
+        }
+      ]
+    },
+    {
       "path": "spec/slopbot/index.md",
-      "sha256": "254bf6de62816c4159a78d5e19b7f1dbb11e7804bd93dd2b584fbfe46cac1f32",
+      "sha256": "b3e161a0fcc6f2e1008fc2b57f5116a5532de6709521f1b9ef16031023b30b36",
       "module": "slopbot",
       "stories": [],
       "rules": [],
@@ -32541,72 +33206,76 @@
           "line": 21
         },
         {
-          "target": "./workUnits.md",
+          "target": "./historyReadAhead.md",
           "line": 22
         },
         {
-          "target": "./historicalImport.md",
+          "target": "./workUnits.md",
           "line": 23
         },
         {
-          "target": "./assessmentInbox.md",
+          "target": "./historicalImport.md",
           "line": 24
         },
         {
-          "target": "./valueEvidence.md",
+          "target": "./assessmentInbox.md",
           "line": 25
         },
         {
-          "target": "./categories.md",
+          "target": "./valueEvidence.md",
           "line": 26
         },
         {
-          "target": "./closure.md",
+          "target": "./categories.md",
           "line": 27
         },
         {
-          "target": "./closureActivation.md",
+          "target": "./closure.md",
           "line": 28
         },
         {
-          "target": "./closeCapacity.md",
+          "target": "./closureActivation.md",
           "line": 29
         },
         {
-          "target": "./closeAttempt.md",
+          "target": "./closeCapacity.md",
           "line": 30
         },
         {
-          "target": "./maintainerHold.md",
+          "target": "./closeAttempt.md",
           "line": 31
         },
         {
-          "target": "./appeals.md",
+          "target": "./maintainerHold.md",
           "line": 32
         },
         {
-          "target": "./composition.md",
+          "target": "./appeals.md",
           "line": 33
         },
         {
-          "target": "./valueDisputes.md",
+          "target": "./composition.md",
           "line": 34
         },
         {
-          "target": "./pointsDisputes.md",
+          "target": "./valueDisputes.md",
           "line": 35
         },
         {
-          "target": "./reportingReadiness.md",
+          "target": "./pointsDisputes.md",
           "line": 36
         },
         {
-          "target": "./publicFeeds.md",
+          "target": "./reportingReadiness.md",
           "line": 37
         },
         {
-          "target": "./intakeHistory.md",
+          "target": "./publicFeeds.md",
           "line": 38
+        },
+        {
+          "target": "./intakeHistory.md",
+          "line": 39
         }
       ]
     },
@@ -34187,7 +34856,7 @@
     },
     {
       "path": "spec/slopbot/submissionFeeGate.md",
-      "sha256": "ce9c983c788d570e8b44d86158e143ca8c90dcc250cb5de1c727a23e0a99e758",
+      "sha256": "8528277be3db140897c232947d01e0521128076a120b4f8e3934c75179c989a5",
       "module": "slopbot__submissionFeeGate",
       "stories": [
         {
@@ -34207,6 +34876,7 @@
             "FeeStep",
             "FeeFacts",
             "FeeItem",
+            "WantedLink",
             "PullFacts",
             "FeeGate",
             "askLeaseSeconds",
@@ -34235,7 +34905,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / One job asks under a lease, and a failed write hands the lease back",
-          "line": 130,
+          "line": 132,
           "definitions": [
             "canClaimAsk",
             "claimAsk",
@@ -34252,7 +34922,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Record-only mode notes the ask and writes nothing else",
-          "line": 166,
+          "line": 168,
           "definitions": [
             "canRecord",
             "record",
@@ -34263,7 +34933,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / An ask that stops applying is taken back and its unpaid item removed",
-          "line": 185,
+          "line": 187,
           "definitions": [
             "canRelease",
             "release",
@@ -34277,7 +34947,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / A paid fee runs the held review, and Slopbot sets only a due outcome on a paid row",
-          "line": 217,
+          "line": 219,
           "definitions": [
             "FeeDecision",
             "settlementFor",
@@ -34296,6 +34966,19 @@
             "lawMergedIsRefundDue",
             "lawKeptOnlyAfterTheWait",
             "lawOpenRefundOnlyAfterTheWait",
+            "LabelEvent",
+            "ClosingIssue",
+            "LabelScan",
+            "labelOnAt",
+            "invitedOf",
+            "keepMarkedOf",
+            "lawInvitedWorkIsKeptOnlyOnTheMark",
+            "lawClosedRefundOnlyForUnmarkedInvitedWork",
+            "lawUnreadLinkDecidesNoClosedFee",
+            "lawLabelAfterOpeningDoesNotInvite",
+            "lawOtherLabelDoesNotInvite",
+            "lawLatestLabelEventDecides",
+            "lawOtherRepositoryDoesNotInvite",
             "sometimesPaidReviewQueued",
             "sometimesRefundDue",
             "sometimesKeptDue",
@@ -34304,7 +34987,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / A withdrawn payment asks again",
-          "line": 298,
+          "line": 349,
           "definitions": [
             "canObserveWithdrawn",
             "observeWithdrawn",
@@ -34317,7 +35000,7 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Due checks are claimed before they are sent, 20 every five minutes",
-          "line": 323,
+          "line": 374,
           "definitions": [
             "feeDispatchBatch",
             "feeDispatchSeconds",
@@ -34330,12 +35013,16 @@
         },
         {
           "heading": "Story: Ask an outside contributor's deposit before the review, and never close for it / Simulation samples cover every mode, exemption, setting and pull request state",
-          "line": 353,
+          "line": 404,
           "definitions": [
             "liveFacts",
             "factsValues",
             "openPull",
             "pullValues",
+            "wantedAdded",
+            "eValues",
+            "openedValues",
+            "issueValues",
             "commentIdValues",
             "paidAtValues",
             "secondsValues",
@@ -34351,7 +35038,8 @@
       ],
       "imports": [
         "backend__submissionFeeTerms",
-        "backend__submissionFeeSettings"
+        "backend__submissionFeeSettings",
+        "backend__mergeActivity"
       ],
       "references": [
         {

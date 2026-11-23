@@ -149,8 +149,8 @@ effect function visitSource(visit: Visit, startAt: number) {
     evidence.repositoryNodeId !== identity.node_id || evidence.pull.state !== "closed"
   ) return undefined
   const occurred = millis(evidence.pull.merged_at ?? evidence.indirectAcceptance?.observedOnBranchAt ?? evidence.pull.closed_at)
-  const join = joins(selected.discovery, true, Number.isFinite(occurred) ? occurred : 0, startAt)
-  if (join !== "Joins") return join
+  const joined = joins(selected.discovery, true, Number.isFinite(occurred) ? occurred : 0, startAt)
+  if (joined !== "Joins") return joined
   if (!deferredOnly(evidence)) return undefined
   const previous = try currentWorkUnitRecord(evidence.repositoryNodeId, evidence.pull.node_id)
   const retained = retainedSelections(previous?.record_json, evidence.pull.node_id)

@@ -184,8 +184,6 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "rec") return `({ ${record(t).join(", ")} })`;
     if (t.kind === "fun") {
       const entries = `Object.fromEntries(Object.entries(${v}).map(([k${depth}, ${x}]: [string, any]) => [k${depth}, ${copy(x, t.res, depth + 1)}]))`;
-      // A map keyed by an enumeration is a Record over its variants, which Object.fromEntries cannot type; the
-      // validator has already checked every key is one of them.
       return keyOf(t).kind === "sum" ? `(${entries} as ${tsType(t)})` : entries;
     }
     return v;

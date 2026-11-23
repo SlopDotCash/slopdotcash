@@ -135,7 +135,8 @@ test("Tailwind compiles each scale into its utility, and design.md lists each pa
   const doc = syncDoc(readFileSync(join(dir, "design.md"), "utf8"), scaled)
   expect(check(scaled, doc)).toEqual([])
   expect(doc).toContain("| `text.body` | 1rem |\n| `text.display.size` | 3rem |\n| `text.display.leading` | 1 |\n| `text.display.tracking` | -0.04em |\n")
-  expect(doc).toContain("| `z.10` | 10 |\n| `z.overlay` | 40 |\n| `focus.width` | 3px |\n| `focus.offset` | -2px |\n")
+  for (const row of ["| `z.10` | 10 |", "| `z.overlay` | 40 |", "| `focus.width` | 3px |", "| `focus.offset` | -2px |"])
+    expect(doc).toContain(row + "\n")
 })
 
 test("a token name Tailwind's utilities already give another meaning is refused, as is one name in two groups that share a utility", async () => {
@@ -208,7 +209,7 @@ test("a build that changes nothing rewrites nothing, and the ESLint config flags
     mkdirSync(join(copy, name))
     writeFileSync(join(copy, name, "tokens.json"), json)
     cpSync(join(dir, "design.md"), join(copy, name, "design.md"))
-    execFileSync("node", [here("../cli.ts"), "build"], { cwd: join(copy, name) })
+    buildTokenProject(join(copy, name))
     const config = designSystem({ tailwind, tokens: parseTokens(JSON.parse(json)), entryPoint: join(copy, name, "generated/theme.css") })
     return new ESLint({ cwd: dir, overrideConfigFile: true, overrideConfig: [{ files: ["**/*.tsx"], languageOptions: { parser } }, ...config] })
   }
@@ -217,17 +218,14 @@ test("a build that changes nothing rewrites nothing, and the ESLint config flags
     linter("project", readFileSync(join(dir, "tokens.json"), "utf8")), linter("scaled", JSON.stringify(scaled)),
     linter("empty", JSON.stringify({ ...tokens, text: {}, weight: {}, leading: {}, tracking: {}, z: {} })),
   ]
-  const lint = async (name: string, using = eslint) => (await using.lintText(readFileSync(here(`fixtures/${name}`), "utf8"), { filePath: name }))[0]!.messages
+  const lint = async (name: string, using = eslint, text = readFileSync(here(`fixtures/${name}`), "utf8")) => (await using.lintText(text, { filePath: name }))[0]!.messages
   const [restricted, literal] = ["better-tailwindcss/no-restricted-classes", "design-system/no-literal-colors"]
   expect((await lint("bad.tsx")).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId])).toEqual([
     [1, literal], [3, restricted], [4, restricted], [5, literal], [6, literal],
     ...Array.from({ length: 10 }, (_, i) => [8 + i, restricted]), [18, literal], [19, literal],
   ])
-  const good = readFileSync(here("fixtures/good.tsx"), "utf8")
-  const [layer = "50"] = Object.keys(tokens.z)
-  const withProjectLayer = await eslint.lintText(good.replace("z-50", `z-${layer}`), { filePath: "good.tsx" })
-  expect(withProjectLayer[0]!.messages).toEqual([])
-  expect(await lint("good.tsx", empty)).toEqual([])
+  expect(await lint("good.tsx")).toEqual([])
+  expect(await lint("good.tsx", empty, readFileSync(here("fixtures/good.tsx"), "utf8").replace("z-modal", "z-50"))).toEqual([])
   expect((await lint("scales.tsx", withScales)).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId]))
     .toEqual(Array.from({ length: 12 }, (_, i) => [3 + i, restricted]))
 }, 60_000)
