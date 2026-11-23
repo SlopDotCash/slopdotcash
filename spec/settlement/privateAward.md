@@ -40,6 +40,16 @@ claims a second vault award. A case received through a reporter's claim, a
 technical approver's attestation or link verification, or the GitHub receipt
 service settling a claim enters the award the same way as one Slop received.
 
+Discovered by proof: the award rules alone were not inductive. Without a
+nonnegative revision, a verified link could leave a case at revision zero;
+without the shown case being received, a later receipt could change the
+terms of the amounts shown; without committed amounts within terms, a shown
+committed amount need not split exactly; without an observed snapshot, a new
+vault hold need not record a positive observation time; and without the paid
+notice and admission rules, a new obligation could start beside an earlier
+paid notice or paid direct legs. Each added rule states what every reachable
+state already keeps, and simulation checks it too.
+
 ```quint
 import money as M from "./money"
 import terms as T from "../security/terms"

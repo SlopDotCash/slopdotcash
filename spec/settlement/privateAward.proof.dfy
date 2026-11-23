@@ -448,6 +448,13 @@ lemma decideAward_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: int,
     settlement__money_lawAdditionValid_ensures(b.reserved, amount);
     settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, amount);
     settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, amount);
+    settlement__money_lawEqualReflexive_ensures(amount);
+    assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
+    if after.commitment.VaultReservation? {
+      assert security__bounty_fundsCover(b, amount);
+      assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
+      ReservedCoverStaysVaultFree(b.funds.free, b.reserved, amount, s.settlement.vault.free);
+    }
     NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
     PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
     assert s.vaultCase > 0 ==> s.vaultCase != id;
@@ -513,6 +520,13 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
     settlement__money_lawAdditionValid_ensures(b.reserved, gross);
     settlement__money_lawAdditionValid_ensures(s.settlement.vault.reserved, gross);
     settlement__money_lawSubtractionValid_ensures(s.settlement.vault.free, gross);
+    settlement__money_lawEqualReflexive_ensures(gross);
+    assert lastDecider(security__bounty_caseOf(nb, id)) == by_;
+    if approve && after.commitment.VaultReservation? {
+      assert security__bounty_fundsCover(b, gross);
+      assert !(settlement__money_compareAmounts(b.reserved, b.funds.free) > 0);
+      ReservedCoverStaysVaultFree(b.funds.free, b.reserved, gross, s.settlement.vault.free);
+    }
     NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id));
     PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardCommitted, id), security__bounty_caseOf(nb, id)));
     assert s.vaultCase > 0 ==> s.vaultCase != id;
@@ -548,8 +562,26 @@ lemma reconcile_ensures(s: PrivateAward, evidence: settlement__composition_Final
     var gross := evidence.amounts.gross;
     assert settlement__money_validAmount(gross);
     settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, gross);
-    settlement__money_lawSubtractionValid_ensures(s.settlement.vault.reserved, gross);
+    var paid := s.settlement.payment.gross;
+    var chosen := caseOf(s, s.vaultCase).grossChosen;
+    settlement__money_lawSubtractionValid_ensures(s.settlement.vault.reserved, paid);
     settlement__money_lawSubtractionValid_ensures(s.bounty.funds.free, gross);
+    settlement__money_lawSubtractionValid_ensures(s.bounty.reserved, paid);
+    assert s.vaultCase in security__bounty_caseIds;
+    CaseRulesOf(s.bounty, s.vaultCase);
+    assert security__cases_alwaysApprovedWithinTerms(caseOf(s, s.vaultCase));
+    assert settlement__money_validAmount(chosen) && settlement__money_validAmount(paid);
+    settlement__money_lawEqualSymmetric_ensures(gross, chosen);
+    settlement__money_lawEqualOrder_ensures(paid, chosen, gross);
+    settlement__money_lawEqualOrder_ensures(chosen, gross, paid);
+    settlement__money_lawEqualReflexive_ensures(paid);
+    settlement__money_lawEqualSymmetric_ensures(gross, paid);
+    assert settlement__money_equalAmounts(paid, gross);
+    settlement__money_lawEqualOrder_ensures(paid, gross, s.bounty.reserved);
+    settlement__money_lawEqualOrder_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
+    settlement__money_lawSubtractCongruence_ensures(s.settlement.vault.reserved, s.bounty.reserved, paid);
+    settlement__money_lawSubtractCongruence_ensures(paid, gross, s.bounty.reserved);
+    settlement__money_lawEqualOrder_ensures(settlement__money_subtractAmounts(s.settlement.vault.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, paid), settlement__money_subtractAmounts(s.bounty.reserved, gross));
     NotifyCaseFacts(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase));
     PrefixKeepsNotices(s.inbox, notifyCase(s.inbox, noticeKey(AwardNotice.AwardPaid, s.vaultCase), caseOf(s, s.vaultCase)));
     assert s.directCase > 0 ==> s.directCase != s.vaultCase;
@@ -1174,4 +1206,52 @@ lemma DroppedHoldKeepsRules(b: security__bounty_Bounty, id: int, by_: int, check
       }
     }
   }
+}
+
+// A reservation the snapshot covers keeps the cover within the vault's free amount: both sides lose the award.
+lemma ReservedCoverStaysVaultFree(funds: seq<int>, reserved: seq<int>, award: seq<int>, free: seq<int>)
+  requires settlement__money_validAmount(funds) && settlement__money_validAmount(reserved)
+  requires settlement__money_validAmount(award) && settlement__money_validAmount(free)
+  requires settlement__money_compareAmounts(reserved, funds) <= 0
+  requires settlement__money_compareAmounts(settlement__money_subtractAmounts(funds, reserved), award) >= 0
+  requires settlement__money_compareAmounts(settlement__money_subtractAmounts(funds, reserved), free) <= 0
+  ensures settlement__money_compareAmounts(settlement__money_subtractAmounts(funds, settlement__money_addAmounts(reserved, award)), settlement__money_subtractAmounts(free, award)) <= 0
+{
+  var cover := settlement__money_subtractAmounts(funds, reserved);
+  var sum := settlement__money_addAmounts(reserved, award);
+  settlement__money_lawNumericOrderTotal_ensures(reserved, funds);
+  settlement__money_lawSubtractionValid_ensures(funds, reserved);
+  settlement__money_lawSubtractionReconstructs_ensures(funds, reserved);
+  settlement__money_lawAdditionValid_ensures(reserved, award);
+  settlement__money_lawAdditionValid_ensures(cover, reserved);
+  settlement__money_lawAdditionValid_ensures(award, reserved);
+  settlement__money_lawAddOrder_ensures(cover, award, reserved);
+  settlement__money_lawAddCommutative_ensures(award, reserved);
+  settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(cover, reserved), funds, sum);
+  assert settlement__money_compareAmounts(funds, sum) >= 0;
+  var rest := settlement__money_subtractAmounts(funds, sum);
+  settlement__money_lawSubtractionValid_ensures(funds, sum);
+  settlement__money_lawSubtractionReconstructs_ensures(funds, sum);
+  settlement__money_lawAdditionValid_ensures(rest, award);
+  settlement__money_lawAdditionValid_ensures(rest, sum);
+  settlement__money_lawAddAssociative_ensures(rest, award, reserved);
+  var restAward := settlement__money_addAmounts(rest, award);
+  settlement__money_lawAdditionValid_ensures(restAward, reserved);
+  settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(restAward, reserved), settlement__money_addAmounts(rest, sum), settlement__money_addAmounts(cover, reserved));
+  settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(rest, sum), funds, settlement__money_addAmounts(cover, reserved));
+  settlement__money_lawEqualSymmetric_ensures(settlement__money_addAmounts(cover, reserved), funds);
+  settlement__money_lawAddOrder_ensures(restAward, cover, reserved);
+  assert settlement__money_compareAmounts(restAward, cover) == 0;
+  settlement__money_lawNumericOrderTotal_ensures(cover, award);
+  settlement__money_lawNumericOrderTransitive_ensures(award, cover, free);
+  settlement__money_lawNumericOrderTotal_ensures(award, free);
+  assert settlement__money_compareAmounts(free, award) >= 0;
+  var left := settlement__money_subtractAmounts(free, award);
+  settlement__money_lawSubtractionValid_ensures(free, award);
+  settlement__money_lawSubtractionReconstructs_ensures(free, award);
+  settlement__money_lawAdditionValid_ensures(left, award);
+  settlement__money_lawEqualOrder_ensures(restAward, cover, settlement__money_addAmounts(left, award));
+  settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(left, award), free, cover);
+  settlement__money_lawAddOrder_ensures(rest, left, award);
+  assert settlement__money_compareAmounts(restAward, settlement__money_addAmounts(left, award)) <= 0;
 }
