@@ -34,7 +34,7 @@ type Settled = Fetched | "failed" | "exhausted"
 
 type JsonObject = Readonly<Record<string, unknown>>
 
-export const origins: Readonly<Record<Environment, string>> = { Production: "https://slop.cash", Staging: "https://staging.slop.cash" }
+export const origins = { Production: "https://slop.cash", Staging: "https://staging.slop.cash" } as const satisfies Readonly<Record<Environment, string>>
 
 const readTimeoutMs = 30_000
 const unavailableWaitMs = 15_000

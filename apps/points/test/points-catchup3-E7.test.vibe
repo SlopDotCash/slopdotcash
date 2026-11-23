@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { sha256Of, textBytes } from "@repo/platform/git/bytes"
+import { outbound } from "@repo/platform/http"
 import type { Journal } from "../src/kernels/records/canonical.ts"
 import { instantOf } from "../src/kernels/records/instants.ts"
 import type { RepositoryRegistry } from "../src/client/snapshot/schema.vibe"
@@ -15,18 +17,20 @@ import { actor, batchDigestOf, mixedSubmittedAndSquashFixture, protectionFor, ti
 const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
 const october = periodOf(instantOf("2026-10-15T00:00:00.000Z") ?? -1)
 const changes = ["merge", "author", "kind", "head", "repo", "date", "url", "submitted-output", "output-path", "wrong-commit-path", "absent-context"] as const
+error InvalidFixture { message: string }
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
 effect function rebuilt(packet: unknown, baseline: Journal) {
+  const protection = try Effect.try(() => protectionFor(october))
   return try reconstructHistoricalPoints({
     packet: packet as HistoricalPacket,
     baseline,
     now: time,
     bans: new Map(),
-    protection: protectionFor(october),
+    protection,
     registry,
     repositories: repositoriesOf(registry, {}),
     projectOf: () => "feed",
@@ -35,13 +39,13 @@ effect function rebuilt(packet: unknown, baseline: Journal) {
 
 effect function outcome(packet: unknown, baseline: Journal) {
   const result = rebuilt(packet, baseline) catch (error) => error._tag
-  return typeof result === "string" ? result : batchDigestOf(result)
+  return typeof result === "string" ? result : try Effect.try(() => batchDigestOf(result))
 }
 
-function changed(change: (typeof changes)[number]) {
-  const f = mixedSubmittedAndSquashFixture()
+effect function changed(change: (typeof changes)[number]) {
+  const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
   const squash = f.retirement.acceptedSquashes?.[0]
-  if (squash === undefined || squash.author === null) throw Error("fixture squash")
+  if (squash === undefined || squash.author === null) throw new InvalidFixture({ message: "Missing fixture squash" })
   if (change === "merge") f.context.mergeSha = f.prior.headSha
   if (change === "author") squash.author = { ...squash.author, id: "U_other" }
   if (change === "kind") squash.author = { ...squash.author, kind: "Bot" }
@@ -57,30 +61,31 @@ function changed(change: (typeof changes)[number]) {
   const [first] = f.retirement.coverage
   if (change === "wrong-commit-path" && first !== undefined) first.commitSha = f.prior.headSha
   if (change === "absent-context" && f.retirement.earlierAcceptanceProof !== undefined) f.retirement.earlierAcceptanceProof.contextSources = []
-  f.bind()
+  try Effect.try(() => f.bind())
   return f
 }
 
 describe('Apply a reviewed historical packet only as reviewed (spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A reviewed source\'s submitted commits and accepted squash bind one live source"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/journal.md, "An owner-reviewed duplicate retirement zeroes the October pool it covers")', () => {
   it.effect("one prior pull request covers its exact submitted commit and a different squash output", () => effect {
     provide webCrypto {
-      const f = mixedSubmittedAndSquashFixture()
-      const expected = f.bind()
+      const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
+      const expected = try Effect.try(() => f.bind())
       try same(try rebuilt(f.packet, f.baseline), expected)
     }
   })
 
   it.effect("path coverage keeps the submitted and accepted squash roles separate and refuses a changed submitted path", () => effect {
     provide webCrypto {
-      const f = mixedSubmittedAndSquashFixture(true)
-      const expected = f.bind()
-      try same(try outcome(f.packet, f.baseline), batchDigestOf(expected))
+      const f = try Effect.try(() => mixedSubmittedAndSquashFixture(true))
+      const expected = try Effect.try(() => f.bind())
+      const expectedDigest = try Effect.try(() => batchDigestOf(expected))
+      try same(try outcome(f.packet, f.baseline), expectedDigest)
       const submitted = f.retirement.source.commits.find((commit) => commit.files?.some((file) => file.path === "submitted.ts") === true)
       const [file] = submitted?.files ?? []
-      if (submitted === undefined || file === undefined) throw Error("fixture submitted path")
+      if (submitted === undefined || file === undefined) throw new InvalidFixture({ message: "Missing fixture submitted path" })
       file.additions = 2
       submitted.additions = 2
-      f.bind()
+      try Effect.try(() => f.bind())
       try same(try outcome(f.packet, f.baseline), "ReviewedRefused")
     }
   })
@@ -88,7 +93,7 @@ describe('Apply a reviewed historical packet only as reviewed (spec/points/revie
   it.effect("a mixed submitted and squash proof refuses every changed binding", () => effect {
     provide webCrypto {
       for (const change of changes) {
-        const f = changed(change)
+        const f = try changed(change)
         const found = try outcome(f.packet, f.baseline)
         try same([change, found === f.packet.candidateDigest], [change, false])
       }
@@ -97,8 +102,8 @@ describe('Apply a reviewed historical packet only as reviewed (spec/points/revie
 
   it.effect("the reviewed packet is read only under its exact digest", () => effect {
     provide webCrypto {
-      const f = mixedSubmittedAndSquashFixture()
-      f.bind()
+      const f = try Effect.try(() => mixedSubmittedAndSquashFixture())
+      try Effect.try(() => f.bind())
       const bytes = textBytes(JSON.stringify(f.packet))
       const decoded = try decodePacketBytes(bytes, sha256Of(bytes))
       try same(try outcome(decoded, f.baseline), f.packet.candidateDigest)
@@ -111,7 +116,8 @@ describe('Apply a reviewed historical packet only as reviewed (spec/points/revie
   })
 
   it.effect("an untrusted publication is refused before any private input is read", () => effect {
-    provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+    const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_REF: "refs/heads/main" }))
+    provide Layer.mergeAll(NodeServices.layer, webCrypto, outbound, systemGit), environment {
       const digest = sha256Of(actor.id)
       const failure = try Effect.flip(reviewed(["registry.json", "--reviewed-sha256", digest]))
       try same([failure._tag, failure.message.includes(digest)], ["ReviewedPublicationRefused", false])

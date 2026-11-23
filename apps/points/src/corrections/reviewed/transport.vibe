@@ -2,7 +2,7 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { base64url, randomBytes } from "@repo/platform/crypto"
 import { parsedJson, sha256Of, textBytes, utf8Text } from "@repo/platform/git/bytes"
-import { type Compression, base64Bytes, base64urlKey, concatenated, hexBytes, inflated, openedFrame, packetNonce, sameBytes, sealedFrame } from "./bytes.ts"
+import { type Compression, base64Bytes, base64urlKey, concatenated, hexBytes, inflated, openedFrame, packetNonce, previewUploadForm, sameBytes, sealedFrame } from "./bytes.ts"
 import { gitBytes } from "@repo/platform/git"
 import { type ReviewedRefused, digestPattern, require } from "./packet.vibe"
 
@@ -30,6 +30,9 @@ export interface PacketStorage<E, R> {
   readonly get: (manifest: PacketManifest, suffix: string) => (Uint8Array | null)!E!R
   readonly putExact: (manifest: PacketManifest, suffix: string, bytes: Uint8Array) => void!E!R
 }
+
+export type ReviewedStorageError = StorageRefused | PreviewRefused | ReviewedRefused
+export type ReviewedStorageServices = HttpClient.HttpClient | Experimental.Crypto.Crypto
 
 interface Exchanged {
   readonly status: number
@@ -310,14 +313,8 @@ effect function previewSession(account: string, token: Redacted.Redacted<string>
   if (typeof sessionToken !== "string" || sessionToken === "") throw new PreviewRefused({ operation: "session", status: null })
   const uploadToken: string = sessionToken
   const auth = base64url(try randomBytes(32))
-  const form = new FormData()
-  form.set("metadata", JSON.stringify({
-    main_module: "packet.js",
-    bindings: [{ name: "PACKET_STORE", type: "r2_bucket", bucket_name: previewBucket }, { name: "PACKET_AUTH", type: "secret_text", text: auth }],
-    compatibility_date: "2026-10-01",
-  }))
-  form.set("packet.js", new File([try previewWorker(text, key)], "packet.js", { type: "application/javascript+module" }))
-  form.set("wrangler-session-config", JSON.stringify({ workers_dev: true, minimal_mode: true }))
+  const worker = try previewWorker(text, key)
+  const form = try Effect.try({ try: () => previewUploadForm(worker, previewBucket, auth), catch: () => new PreviewRefused({ operation: "upload", status: null }) })
   const upload = (url: string) => HttpClientRequest.bodyFormData(HttpClientRequest.setHeader(HttpClientRequest.post(url), "cf-preview-upload-config-token", uploadToken), form)
   const previewToken = fieldOf(try previewApi(base, token, `/workers/scripts/${previewName}/edge-preview`, "upload", upload), "preview_token")
   if (typeof previewToken !== "string" || previewToken === "") throw new PreviewRefused({ operation: "upload", status: null })
@@ -353,8 +350,9 @@ effect function previewBound() {
 }
 
 export effect function previewStorage(account: string, token: Redacted.Redacted<string>, secret: Redacted.Redacted<string>) {
-  const key = base64urlKey(Redacted.value(secret))
-  if (key === null) throw new PreviewRefused({ operation: "binding", status: null })
+  const parsedKey = base64urlKey(Redacted.value(secret))
+  if (parsedKey === null) throw new PreviewRefused({ operation: "binding", status: null })
+  const key: Uint8Array = parsedKey
   try previewBound()
   const sessions = new Map<string, PreviewCall>()
   effect function session(manifest: PacketManifest) {
@@ -378,7 +376,7 @@ export effect function previewStorage(account: string, token: Redacted.Redacted<
     if (stored === null || stored.length !== bytes.length || sha256Of(stored) !== sha256Of(bytes)) throw new PreviewRefused({ operation: "object", status: null })
   }
   effect function check(_create: boolean) {}
-  return { check, get, putExact } satisfies PacketStorage<PreviewRefused | ReviewedRefused, HttpClient.HttpClient>
+  return { check, get, putExact } satisfies PacketStorage<ReviewedStorageError, ReviewedStorageServices>
 }
 
 export effect function reviewedStorage(account: string, token: Redacted.Redacted<string>) {
@@ -425,11 +423,11 @@ effect function staged(setPhase: (phase: StagingPhase) => void) {
   const manifest = try parsePacketManifest(manifestText)
   const index = Number(try environment("PRIVATE_PACKET_CHUNK_INDEX"))
   setPhase("chunk-stage")
-  const result = try stageChunk(storage, manifestText, index, parts.join(""))
+  const result = try stageChunk<ReviewedStorageError, ReviewedStorageServices>(storage, manifestText, index, parts.join(""))
   const complete = index === manifest.chunks.length - 1
   if (complete) {
     setPhase("completion-read")
-    try readPacket(storage, manifestText)
+    try readPacket<ReviewedStorageError, ReviewedStorageServices>(storage, manifestText)
   }
   return { ...result, complete }
 }
