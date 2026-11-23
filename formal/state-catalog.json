@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f4e78b1edf4ce0293fdd43f51e7889e4858857c35122b0385ed6e1dd27f8e003",
+  "inventorySha256": "ee217d918b92ed52ae59fcf175a745bd94caf9f2a5dd2c237d09a5361d14c021",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,11 +19,12 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 684,
+      "line": 715,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/points_dispute_decision.qnt",
@@ -150,11 +151,12 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2886,
+      "line": 2927,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -187,11 +189,12 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 3090,
+      "line": 3131,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -240,11 +243,12 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 37,
+      "line": 38,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
@@ -256,11 +260,12 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 49,
+      "line": 50,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
@@ -2938,11 +2943,12 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 538,
+      "line": 544,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -2966,11 +2972,12 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1287,
+      "line": 1306,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -3197,11 +3204,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1213,
+      "line": 1223,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
@@ -3225,11 +3233,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1712,
+      "line": 1722,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
@@ -3253,11 +3262,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2730,
+      "line": 2801,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
@@ -3281,11 +3291,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2735,
+      "line": 2806,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
@@ -3309,11 +3320,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2742,
+      "line": 2813,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
@@ -3337,11 +3349,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2745,
+      "line": 2816,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
       "models": [
+        "formal/models/api/api_backlog_rule.qnt",
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_submission_fee_setting.qnt",
