@@ -1,7 +1,7 @@
 // spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"
 import type { Fetcher } from "@repo/platform/bindings"
 import { byCron, worker } from "@repo/platform/worker"
-import { type PaymentsRun, runPayments } from "../jobs/payments.vibe"
+import { type PaymentsRun, paymentsCron, runPayments } from "../jobs/payments.vibe"
 import { type LedgerVars, ledgerServices } from "../jobs/services.vibe"
 import type { NetworkKey } from "../kernels/networks.ts"
 import { type ExecutorBindings, executors } from "../payments/dispatch.vibe"
@@ -13,8 +13,6 @@ export interface Env extends LedgerVars {
   readonly EVM_PAYMENT_EXECUTOR?: Fetcher
   readonly SOLANA_PAYMENT_EXECUTOR?: Fetcher
 }
-
-export const paymentsCron = "*/5 * * * *"
 
 service PaymentsConfig {
   readonly run: PaymentsRun

@@ -320,7 +320,7 @@ describe('Replay a historical scope only from a trusted dispatch (spec/points/as
   it.live("reviewed-replay refuses a push run and a dispatch without its registry before any read", () => effect {
     const net = internet()
     const outbound = outboundVia({ fetch: async (request) => asFetch(net.handler)(request) })
-    const main = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_TOKEN: "replay-token" }
+    const main = { PATH: try Config.String("PATH"), GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_TOKEN: "replay-token" }
     const runs: ReadonlyArray<readonly [Readonly<Record<string, string>>, ReadonlyArray<string>]> = [
       [{ ...main, GITHUB_EVENT_NAME: "push" }, ["registry.json"]],
       [{ ...main, GITHUB_EVENT_NAME: "workflow_dispatch" }, []],

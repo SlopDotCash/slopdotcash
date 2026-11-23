@@ -18,6 +18,7 @@ import { valueRubricVersion } from "../src/value/inference/assessment.vibe"
 import { prepareWorkUnitEvidence } from "../src/value/workUnits/prepare.vibe"
 import { type SourceBinding, type WorkUnitRecord, workUnitRecordVersion } from "../src/value/workUnits/record.vibe"
 import type { WorkUnitSource } from "../src/value/workUnits/types.vibe"
+import { historyIdentity } from "./support/collectWorld.vibe"
 import { type Seeded, acceptanceRecorder, githubOver, mergedAt, patchCommitPages, policyOf, repository, requested, seeded } from "./support/evidenceWorker.vibe"
 import { evidenceOf, githubOver as githubOverStack, noRetainedCopies, policyText, registered as registeredStack, repository as stackRepository, seeded as seededStack } from "./support/workUnitsWorker.vibe"
 
@@ -43,8 +44,7 @@ function feedHandler(feed: Feed): Handler {
     const records = (joint ? feed.joint : feed.single).get(pull) ?? []
     return WebResponse.json({
       schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
-      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
-      repository: url.searchParams.get("repository"),
+      ...historyIdentity(url),
       pullRequestNumber: pull,
       records: url.searchParams.get("after") === "0" ? records : [],
       nextAfter: null,

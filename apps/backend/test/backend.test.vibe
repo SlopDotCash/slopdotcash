@@ -215,19 +215,28 @@ const Built = Layer.effect(World, effect {
   return { github, net, access, slopbot }
 })
 
-const Backend = Layer.provideMerge(Layer.unwrap(effect {
-  const world = try World
-  const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
-  return areaLayer({
-    root: new URL("../../points", import.meta.url).pathname,
-    config: "test/support/backendRoutes/vite.config.ts",
-    entry: "backendRoutes",
-    d1: { SLOP_DB: "slop-private" },
-    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl },
-    services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: () => new Response("Not found", { status: 404 }) },
-    internet: world.net,
-  })
-}), Built)
+const localOrigin = "http://localhost:8787"
+
+function backendAt(site: { readonly origin?: string; readonly vars?: Readonly<Record<string, string>> }) {
+  return Layer.provideMerge(Layer.unwrap(effect {
+    const world = try World
+    const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
+    return areaLayer({
+      root: new URL("../../points", import.meta.url).pathname,
+      config: "test/support/backendRoutes/vite.config.ts",
+      entry: "backendRoutes",
+      ...site.origin === undefined ? {} : { origin: site.origin },
+      d1: { SLOP_DB: "slop-private" },
+      vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader, REWARD_RPC_BASE: rpcUrl, ...site.vars },
+      services: { SLOPBOT: (request) => world.slopbot(request), ASSETS: () => new Response("Not found", { status: 404 }) },
+      internet: world.net,
+    })
+  }), Built)
+}
+
+const Backend = backendAt({})
+
+const LocalSite = backendAt({ origin: localOrigin, vars: { SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: localOrigin, TRACE_AUTH_SECRET: "trace-auth-secret-for-the-member-journey-0001" } })
 
 function field(value: unknown, name: string): unknown {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined
@@ -240,8 +249,9 @@ function outcome(answer: Answer) {
 effect function member(githubId: number) {
   const area = try Area
   const session = `owner-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  const expiresAt = new Date((try Clock.currentTimeMillis) + 24 * 60 * 60 * 1000).toISOString()
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, expiresAt)
   return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
 }
 
@@ -654,7 +664,7 @@ const payoutWallet = {
   address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
 }
 
-layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+layer(Layer.merge(LocalSite, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('A signed-in member creates a project, chooses a referral name, registers a payout wallet and closes the account (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history"; spec/backend/accounts.md, "Every account outcome is reachable from the launch state"; spec/backend/projects.md, "Reachable registry outcomes"; spec/backend/projectComposition.md, "Reachable composed outcomes")', () => effect {
     const area = try Area
     const world = try World

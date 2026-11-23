@@ -662,7 +662,7 @@ effect function loaded(options: ValueInputsOptions, input: ValueCensus) {
 }
 
 function messageOf(error: { readonly _tag: string }) {
-  const fields: Readonly<Record<string, unknown>> = { ...error }
+  const fields: Readonly<Record<string, unknown>> = error
   for (const key of ["reason", "message", "issue"]) {
     const value = fields[key]
     if (typeof value === "string" && value !== "") return value

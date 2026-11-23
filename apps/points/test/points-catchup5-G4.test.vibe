@@ -140,7 +140,7 @@ it.effect('A withheld joint member without attribution proof holds its Points an
     held: [["PR_502", "synchronization-only"]],
   }))
 
-  const twoAuthors = group(true, [commit("b1", bob, 10), commit("e1", erin, 10, { parentCount: -1 })])
+  const twoAuthors = group(true, [commit("b1", bob, 10, { parentCount: -1 }), commit("e1", erin, 10, { parentCount: -1 })])
   const twoAuthorsScored = try outcome(facts([twoAuthors.first, twoAuthors.member, twoAuthors.third], [decision([twoAuthors.first, twoAuthors.member, twoAuthors.third], [twoAuthors.pair, twoAuthors.alone])]))
   try Effect.try(() => assert.deepStrictEqual(twoAuthorsScored, {
     merged: [["PR_501:merged", 9], ["PR_503:joint:wu_slop_third:merged:U_alice", 1]],

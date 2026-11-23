@@ -192,7 +192,7 @@ function deployedLedger(branch: string, nodeId: string, description: string = re
       repositoryId: nodeId,
       repositories: [{ id: repository.id, repositoryId: nodeId }],
       requestCount: 1,
-      searchSliceCount: 0,
+      searchSliceCount: 1,
       rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: generatedAt },
       counts: { mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
       verificationWindow: { days: verificationWindowDays, from: windowFrom, to: cutoff },

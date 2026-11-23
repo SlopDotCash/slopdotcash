@@ -35,8 +35,9 @@ const Published = areaLayer({
   config: "test/support/u11/vite.config.ts",
   entry: "journal",
   d1: { SLOP_DB: "slop-private" },
-  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788" },
   services: { SLOP_IDENTITY: absentService() },
+  origin: "http://localhost:8788",
 })
 
 function fields(answer: Answer): Body {

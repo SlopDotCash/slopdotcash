@@ -90,6 +90,7 @@ export interface AcceptedSource {
   readonly id: string
   readonly repository: string
   readonly acceptedAt: string
+  readonly merged: boolean
 }
 
 export interface Assessed {
@@ -102,9 +103,11 @@ const unassessed: Assessed = { assessment: null, reviewValues: [] }
 export effect function assessmentOf(found: ValueDecision | undefined, source: AcceptedSource, assessmentSource: AssessmentSource) {
   const record = found?.record
   if (found === undefined || record === undefined || found.latestDigest === null) return unassessed
-  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt || record.assessment.tier === null) {
+  if (record.repository.toLowerCase() !== source.repository.toLowerCase() || record.occurredAt !== source.acceptedAt || (source.merged && record.assessment.tier === null)) {
     throw new AssemblyRefused({ message: decisionMismatch })
   }
+  const reviewValues: ReadonlyArray<ReviewValue> = record.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome }))
+  if (record.assessment.tier === null) return { assessment: null, reviewValues } satisfies Assessed
   const assessment: Assessment = {
     tier: record.assessment.tier,
     source: assessmentSource,
@@ -115,7 +118,6 @@ export effect function assessmentOf(found: ValueDecision | undefined, source: Ac
     recordedAt: found.history.at(-1)?.recorded_at ?? source.acceptedAt,
     rationale: record.assessment.rationale,
   }
-  const reviewValues: ReadonlyArray<ReviewValue> = record.assessment.reviews.map((review) => ({ reviewId: review.sourceId, tier: review.tier, finding: review.finding, outcome: review.outcome }))
   return { assessment, reviewValues } satisfies Assessed
 }
 

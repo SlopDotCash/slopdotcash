@@ -164,7 +164,6 @@ const Closure = Layer.unwrap(effect {
         GITHUB_API: seeded.fake.authority,
         GITHUB_TOKEN: seeded.token,
         ORBIO_API_KEY: "orbio-test-credential",
-        SURPLUS_API_KEY: "surplus-test-credential",
         SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
         SLOPBOT_CLOSURE_ENABLED: "true",
         SLOPBOT_RELEASE: release(1),
@@ -353,7 +352,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       shadows: try area.sql("SELECT COUNT(*) AS n FROM slopbot_quality_shadow"),
       unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
     }, {
-      launch: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false }, enabled: false, journal: 0 },
+      launch: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false, evidenceEnabled: false }, enabled: false, journal: 0 },
       forged: { kind: "settled", result: "labeled (spam)" },
       forgedWrites: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
       forgedReason: "_This item was not closed: author is not eligible for automatic closure._",
@@ -365,7 +364,7 @@ layer(Closure, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       off: { kind: "settled", result: "labeled (spam)" },
       offWrites: { comments: ["**Slopbot review:** `spam`"], labels: ["slopbot: spam"], state: "open" },
       offReason: "_This item was not closed: closure is disabled for Slopbot (pending production activation)._",
-      launchAfter: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false }, enabled: false, journal: 0 },
+      launchAfter: { spam: { enabled: false, category: "Spam", categoryQualified: false, verifierQualified: false, evidenceEnabled: false }, enabled: false, journal: 0 },
       shadows: [{ n: 0 }],
       unexpected: [0, 0, 0],
     })

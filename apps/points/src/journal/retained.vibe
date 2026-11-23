@@ -6,7 +6,7 @@ import type { Revision as Row } from "../kernels/records/canonical.ts"
 import { retiredAwards } from "../evaluations/retired.vibe"
 import { type Repositories, type Store, advanceTo, command, hold, projectOf } from "./ledger.vibe"
 import { appended, commit, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
-import { type Credited, UnregisteredRepository, awardFor, batchOwnedKeys, creditAward } from "./snapshot.vibe"
+import { type Credited, UnregisteredRepository, awardFor, batchOwnedKeys, creditAward, decisionRecorded } from "./snapshot.vibe"
 
 export error RetainedEventInvalid { position: number }
 
@@ -80,7 +80,7 @@ export effect function applyRetainedReviews(store: Store, repositories: Reposito
   const covered = new Set(store.coverage.map((entry) => entry.digest))
   const changes: Row[] = []
   const confirmations: Credited[] = []
-  const recorded = { digest, recordedAt, rule: "ScoreV2" as const, projectCollected: true, decided: false }
+  const recorded = { digest, recordedAt, rule: "ScoreV2" as const, projectCollected: true, decided: true }
   const omitted = (try omittedKeys(store, repositories, events)).map((key) => ({ key, item: undefined }))
   const supplied = (try retainedAwards(repositories, events.filter((event) => event.category !== "evaluated-contribution"))).map((item) => ({ key: item.award.key, item }))
   for (const { key, item } of [...supplied, ...omitted].sort((left, right) => left.key.localeCompare(right.key))) {
@@ -89,7 +89,7 @@ export effect function applyRetainedReviews(store: Store, repositories: Reposito
       continue
     }
     const prior = store.latest.get(item.award.key)
-    if (prior !== undefined && sameAward(prior.award, item.award)) {
+    if (prior !== undefined && sameAward(prior.award, item.award) && (try decisionRecorded(prior, item.event))) {
       if (item.award.amount > 0 && item.award.category === "substantive-review" && covered.has(prior.sourceDigest)) confirmations.push(item)
       continue
     }

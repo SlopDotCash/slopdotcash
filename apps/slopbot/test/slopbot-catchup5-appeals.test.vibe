@@ -23,6 +23,9 @@ const guide = [
   "- Test results: the command you ran and its output",
   "- Proof of change: what the change does, before and after",
   "- Runtime logs: logs for a non-ui change",
+  "- UI video: before and after video for a ui change",
+  "- Benchmarks: the matched workload and its measured outcome",
+  "- On-device testing: the physical device, build and result",
   "",
 ].join("\n")
 const testResults = "- Test results: pnpm test passed all forty retry cases"

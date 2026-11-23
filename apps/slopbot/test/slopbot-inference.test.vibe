@@ -129,7 +129,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     outcomes.push(try consumed(2))
     const routes = try callsAbout(2)
     const resetsAt = "2099-01-01T00:00:00.000Z"
-    try batch([...requested("inference-4", 4, "2026-11-10T00:15:00.000Z"), ...requested("inference-5", 5, "2026-11-10T00:16:00.000Z")])
+    try batch(requested("inference-4", 4, "2026-11-10T00:15:00.000Z"))
     try Effect.try(() => {
       world.providers.reply((call) => sonnet(call) && about(4)(call), { failure: "spendDenied", resetsAt })
       world.providers.reply((call) => orbio(call) && about(4)(call), { text: unresolvedVerdict(4), model: "anthropic/claude-sonnet-5.5" }, { input: 90, output: 50, costMicro: 1100 })
@@ -137,6 +137,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       world.providers.reply((call) => orbio(call) && about(5)(call), { failure: "unavailable" })
     })
     const served = try consumed(4)
+    try batch(requested("inference-5", 5, "2026-11-10T00:16:00.000Z"))
     const waiting = try consumed(5)
     try same({ outcomes, calls: routes.length, journal: try journalOf(2), served, waiting, denied: [try callsAbout(4), try callsAbout(5)], published: try journalOf(4), unpublished: try journalOf(5) }, {
       outcomes: [["Retry"], ["Retry"], ["Retry"], ["AttemptsExhausted"]],

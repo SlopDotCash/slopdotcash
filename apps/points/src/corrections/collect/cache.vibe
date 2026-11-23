@@ -258,37 +258,39 @@ effect function acceptable(cache: EvidenceCache.Shape, status: number, url: URL,
 }
 
 effect function liveRead(base: HttpClient.HttpClient, cache: EvidenceCache.Shape, request: HttpClientRequest.HttpClientRequest, url: URL, method: string, body: string, key: string) {
-  const attempt = try beginRead(key)
-  if (attempt === undefined) throw transportError(request, stopMessage)
-  const exchange = effect {
-    const response = try base.execute(request)
-    const bytes = boundedBytes(response, evidenceLimitBytes, "Historical evidence") catch effect () => {
-      throw transportError(request, `Historical evidence response exceeds ${evidenceLimitBytes} bytes or is unreadable`)
+  return try Effect.uninterruptibleMask((restore) => effect {
+    const attempt = try beginRead(key)
+    if (attempt === undefined) throw transportError(request, stopMessage)
+    const exchange = effect {
+      const response = try base.execute(request)
+      const bytes = boundedBytes(response, evidenceLimitBytes, "Historical evidence") catch effect () => {
+        throw transportError(request, `Historical evidence response exceeds ${evidenceLimitBytes} bytes or is unreadable`)
+      }
+      return { status: response.status, headers: Object.fromEntries(Object.entries(response.headers)) as Readonly<Record<string, string>>, bytes }
     }
-    return { status: response.status, headers: Object.fromEntries(Object.entries(response.headers)) as Readonly<Record<string, string>>, bytes }
-  }
-  const answer = Effect.onInterrupt(exchange, () => orDie(failAttempt(attempt))) catch effect (error) => {
-    try orDie(failAttempt(attempt))
-    throw error
-  }
-  const bodyDigest = try sha256Hex(answer.bytes)
-  const headers = Object.fromEntries(retainedHeaders.flatMap((name) => {
-    const value = answer.headers[name]
-    return value === undefined ? [] : [[name, value]]
-  })) as Readonly<Record<string, string>>
-  const now = try Clock.currentTimeMillis
-  try orDie(immutableBytes(objectPath(cache.directory, bodyDigest), answer.bytes))
-  try orDie(immutableBytes(`${cache.directory}/attempts/${now}-${attempt.number}-${key}-${try randomId()}.json`, utf8(encoded({ url: url.href, method, body, status: answer.status, headers, bodyDigest }))))
-  const payload = try parsedJson(answer.bytes)
-  const graphql = url.pathname === "/graphql"
-  const rateLimit = objectOf(objectOf(objectOf(payload)?.data)?.rateLimit)
-  const cost = typeof rateLimit?.cost === "number" ? rateLimit.cost : 0
-  const hint = hintOf({ status: answer.status, headers: answer.headers, graphql, payload }, now)
-  const accepted = try acceptable(cache, answer.status, url, method, body, payload)
-  const state = try observeReply({ attempt, bodyDigest, cost, hint, ...accepted })
-  if (state.passSaved.includes(attempt.key)) try atomicJson(requestPath(cache.directory, key), { status: answer.status, headers, bodyDigest })
-  if (quotaRefusal(hint, state.now).kind !== "None") throw transportError(request, stopMessage)
-  return try orDie(Effect.try(() => replayed(request, answer.status, answer.headers, answer.bytes)))
+    const answer = Effect.onInterrupt(restore(exchange), () => orDie(failAttempt(attempt))) catch effect (error) => {
+      try orDie(failAttempt(attempt))
+      throw error
+    }
+    const bodyDigest = try sha256Hex(answer.bytes)
+    const headers = Object.fromEntries(retainedHeaders.flatMap((name) => {
+      const value = answer.headers[name]
+      return value === undefined ? [] : [[name, value]]
+    })) as Readonly<Record<string, string>>
+    const now = try Clock.currentTimeMillis
+    try orDie(immutableBytes(objectPath(cache.directory, bodyDigest), answer.bytes))
+    try orDie(immutableBytes(`${cache.directory}/attempts/${now}-${attempt.number}-${key}-${try randomId()}.json`, utf8(encoded({ url: url.href, method, body, status: answer.status, headers, bodyDigest }))))
+    const payload = try parsedJson(answer.bytes)
+    const graphql = url.pathname === "/graphql"
+    const rateLimit = objectOf(objectOf(objectOf(payload)?.data)?.rateLimit)
+    const cost = typeof rateLimit?.cost === "number" ? rateLimit.cost : 0
+    const hint = hintOf({ status: answer.status, headers: answer.headers, graphql, payload }, now)
+    const accepted = try acceptable(cache, answer.status, url, method, body, payload)
+    const state = try observeReply({ attempt, bodyDigest, cost, hint, ...accepted })
+    if (state.passSaved.includes(attempt.key)) try atomicJson(requestPath(cache.directory, key), { status: answer.status, headers, bodyDigest })
+    if (quotaRefusal(hint, state.now).kind !== "None") throw transportError(request, stopMessage)
+    return try orDie(Effect.try(() => replayed(request, answer.status, answer.headers, answer.bytes)))
+  })
 }
 
 effect function evidenceRead(base: HttpClient.HttpClient, request: HttpClientRequest.HttpClientRequest) {

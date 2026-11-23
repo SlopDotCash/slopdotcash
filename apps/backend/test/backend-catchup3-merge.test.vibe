@@ -34,6 +34,8 @@ module fakes {
 }
 import { membersGithub, quietNotify } from fakes
 
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+
 const hour = 3_600_000
 const start = 1_794_916_800_000
 const t0 = "2026-11-17T12:00:00.000Z"
@@ -92,7 +94,9 @@ const Shell = Layer.unwrap(effect {
 
 effect function project(id: string, paths: ReadonlyArray<string>) {
   const text = try orDie(Effect.try(() => JSON.stringify({ id, status: "active", listingTier: "community", repositories: paths.map((path) => ({ id: path, githubUrl: `https://github.com/${path}` })) })))
-  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, ${text}, ${"a".repeat(64)}, ${t0}, ${t0})`)
+  const digest = "a".repeat(64)
+  try (try D1).run(sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${digest}, 'Seeded', '1', 'member-1', ${t0})`)
+  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, ${text}, ${digest}, ${t0}, ${t0})`)
 }
 
 effect function refreshed(clock: SettableClock) {
@@ -186,7 +190,7 @@ effect function historicMember() {
   const area = try Area
   const token = "participation-early-session-".padEnd(48, "x")
   try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES ('U_early', '9201', 'early', '2026-10-01T00:00:00.000Z', 1, 5)")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, 'U_early', '2099-01-01T00:00:00.000Z')", try sha256Hex(token))
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, 'U_early', ?)", try sha256Hex(token), sessionExpiry)
   try area.sql("INSERT INTO points_x_claims (x_id, actor_id, claimed_at) VALUES ('x-early', 'U_early', '2026-10-20T00:00:00.000Z')")
   try area.sql("INSERT INTO points_x_awards (actor_id, x_id, awarded_at, points) VALUES ('U_early', 'x-early', '2026-10-20T00:00:00.000Z', 10)")
   try area.sql("INSERT INTO points_x_links (actor_id, x_id, username, verified_at, public) VALUES ('U_early', 'x-early', 'early_x', '2026-10-20T00:00:00.000Z', 1)")

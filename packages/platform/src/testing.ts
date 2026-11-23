@@ -55,6 +55,7 @@ export interface Bindings {
   readonly email?: Readonly<Record<string, true | MailSink | MailBinding>>;
   readonly durableObjects?: Readonly<Record<string, string>>;
   readonly assets?: string;
+  readonly routes?: ReadonlyArray<string>;
 }
 
 export type ExtraWorker = Bindings & { readonly name: string } & ({ readonly script: string } | { readonly module: string });
@@ -308,14 +309,17 @@ function bindingsOf(worker: string, options: Bindings, namespaces: { next: numbe
     ...options.assets === undefined ? {} : { ASSETS: { type: "assets" as const } },
     ...email,
   };
-  const triggers = Object.entries(options.queues?.consumers ?? {}).map(([name, consumer]) => ({
-    type: "queue" as const,
-    name,
-    maxBatchTimeout: 0,
-    retryDelay: 0,
-    maxRetries: consumer.maxRetries,
-    ...consumer.deadLetterQueue === undefined ? {} : { deadLetterQueue: consumer.deadLetterQueue },
-  }));
+  const triggers = [
+    ...Object.entries(options.queues?.consumers ?? {}).map(([name, consumer]) => ({
+      type: "queue" as const,
+      name,
+      maxBatchTimeout: 0,
+      retryDelay: 0,
+      maxRetries: consumer.maxRetries,
+      ...consumer.deadLetterQueue === undefined ? {} : { deadLetterQueue: consumer.deadLetterQueue },
+    })),
+    ...(options.routes ?? []).map((pattern) => ({ type: "fetch" as const, pattern })),
+  ];
   const exports = Object.fromEntries(Object.values(options.durableObjects ?? {}).map((className) => [className, { type: "durable-object" as const, storage: "sqlite" as const }]));
   return { env, triggers, exports, mailers };
 }

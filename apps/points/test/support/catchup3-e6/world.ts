@@ -3,8 +3,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Fetcher } from "@repo/platform/bindings";
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock";
 import { githubFake } from "@repo/platform/testing/github";
-import { type FastClock, day, fastClock, repository, start } from "../u13/github.ts";
+import { day, repository, start } from "../u13/github.ts";
 
 export const project = "widgets";
 export const missingSource = "PR_kwDOmissing";
@@ -18,7 +19,7 @@ export interface Recorded {
 }
 
 export interface SupplementWorld {
-  readonly clock: FastClock;
+  readonly clock: SettableClock;
   readonly fetcher: Fetcher;
   readonly recorded: ReadonlyArray<Recorded>;
   readonly acceptedObjectReads: ReadonlyArray<string>;
@@ -61,7 +62,7 @@ function omittedSearch(text: string, omitted: ReadonlySet<string>): string {
 }
 
 export function supplementWorld(): SupplementWorld {
-  const clock = fastClock(start - 50 * day);
+  const clock = settableClock(start - 50 * day);
   const fake = githubFake({ now: () => clock.now() });
   fake.world.addUser({ id: 101, login: "ada" });
   fake.world.addUser({ id: 102, login: "grace" });

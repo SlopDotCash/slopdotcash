@@ -19,7 +19,7 @@ export const buttonVariants = cva(
         inverse: "bg-foreground text-background hover:bg-foreground/90",
         ghost: "hover:bg-accent hover:text-accent-foreground",
       },
-      size: { sm: "h-10 px-4.5 text-control max-md:h-11 max-md:px-3 max-md:text-sm", md: "h-12 px-5.5", icon: "size-12" },
+      size: { sm: "h-10 px-4.5 text-control max-md:px-3 max-md:text-sm", md: "h-12 px-5.5", icon: "size-12" },
     },
     compoundVariants: [{ variant: "link", class: "h-auto px-0 font-medium" }],
     defaultVariants: { variant: "primary", size: "md" },

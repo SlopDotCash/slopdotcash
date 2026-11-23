@@ -5,6 +5,8 @@ import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testi
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+
 const moderatorA = "18633264"
 const moderatorB = "202660855"
 const administrator = "7"
@@ -49,22 +51,55 @@ effect function member(githubId: string) {
   const area = try Area
   const token = `enforcement-session-${githubId}-`.padEnd(48, "x")
   try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, sessionExpiry)
   return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
 }
 
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
 function manifest(id: string, status: string, listingTier: string, repositoryId: string) {
+  const repository = `owner/${id}`
   return {
+    schemaVersion: "1",
     id,
+    slug: id,
     name: `Project ${id}`,
-    status,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
     listingTier,
-    steward: { github: { actorId: steward, nodeId: "U_steward", login: "member-51" } },
-    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
-    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.test/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
-    repositories: [{ id: `owner/${id}`, integrationBranch: "main" }],
-    reward: { chain: "base", fundingState: "unfunded", committedMinor: "0", paymentMode: "disabled" },
-    funding: {},
+    status,
+    steward: { displayName: "member-51", kind: "individual", github: { actorId: steward, nodeId: "U_steward", login: "member-51", type: "User", profileUrl: "https://github.com/member-51" }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId, repositoryNodeId: `R_${repositoryId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
   }
 }
 
@@ -154,7 +189,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       refused: [[401, "unauthorized"], [403, "forbidden"], [403, "forbidden"], [400, "invalid_request"], [400, "invalid_request"], [409, "stale_enforcement"]],
       preview: [200, "clear", "quarantined", "retired"],
       decided: [[200, null], "quarantine", [200, null], "banned"],
-      appeals: [[200, null], "requested", [403, "forbidden"], [409, "rejected"], [200, null]],
+      appeals: [[200, null], "requested", [403, "forbidden"], [403, "independent_review_required"], [200, null]],
       rows: [
         { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
         { sequence: 2, action: "ban", state_after: "banned", appeal_after: "none", actor_role: "project-moderator" },
@@ -216,9 +251,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     const stale = try revise(1, { ...base, status: "paused" })
     const unchanged = try revise(4, { ...base, listingTier: "community", status: "paused", name: "Renamed" })
     const reordered = try revise(4, Object.fromEntries(Object.entries({ ...base, listingTier: "community", status: "paused", name: "Renamed" }).toReversed()))
-    const steward52 = { github: { actorId: "52", nodeId: "U_next", login: "member-52" } }
-    const stewarded = try revise(4, { ...base, listingTier: "community", status: "paused", name: "Renamed", steward: steward52 })
-    const delisted = try revise(5, { ...base, listingTier: "retired", status: "paused", name: "Renamed", steward: steward52 })
+    const steward52 = { displayName: "member-52", kind: "individual", github: { actorId: "52", nodeId: "U_next", login: "member-52", type: "User", profileUrl: "https://github.com/member-52" }, website: null }
+    const terms = { ...base.terms, revision: "draft-2" }
+    const stewarded = try revise(4, { ...base, listingTier: "community", status: "paused", name: "Renamed", steward: steward52, terms })
+    const delisted = try revise(5, { ...base, listingTier: "retired", status: "paused", name: "Renamed", steward: steward52, terms })
     const kinds = try area.sql("SELECT revision, kind FROM project_revision_kinds WHERE project_id = 'admin-demo' ORDER BY revision")
     try area.redeploy({ vars: { ...roles, ADMIN_GITHUB_IDS: `${roles.ADMIN_GITHUB_IDS},8`, PROJECT_MODERATOR_GITHUB_IDS: "" } })
     const closed = try act(a, "admin-demo", "quarantine")

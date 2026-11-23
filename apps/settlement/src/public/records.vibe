@@ -355,8 +355,9 @@ effect function pagedAll<S extends Schema.Constraint>(schema: S, table: "payment
   const found: Array<S["Type"]> = []
   let after = 0
   while (true) {
-    const batch = try rows(Schema.Struct({ sequence: Schema.Number }), page(after, through))
-    const items = try decoded(schema, batch, table)
+    const fetched = try (try D1).all(page(after, through))
+    const batch = try decoded(Schema.Struct({ sequence: Schema.Number }), fetched, table)
+    const items = try decoded(schema, fetched, table)
     const last = batch.at(-1)
     if (last === undefined) return found
     found.push(...items)

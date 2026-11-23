@@ -348,7 +348,7 @@ function activityOf(collection: Collection, reviewed: ReadonlyArray<ReviewRecord
   }
   for (const pull of collection.work.mergedPullRequests.filter((record) => detailed.has(record.id))) {
     for (const comment of pull.comments) count(raw, comment.author, "comments", 1)
-    count(raw, pull.author, "commits", collection.work.outcomes.find((outcome) => outcome.id === pull.id)?.commits?.length ?? 0)
+    count(raw, pull.author, "commits", pull.commitCount)
   }
   for (const pull of [...reviewed, ...collection.work.closedUnmergedPullRequests]) for (const review of pull.reviews) count(raw, review.author, "reviews", 1)
   return new Map([...raw].map(([id, rawActivity]) => [id, { rawActivity, models: [] }] as const))
@@ -434,7 +434,7 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
       if (repositoryOf.has(outcome.id)) continue
       repositoryOf.set(outcome.id, repository.target.id)
       const found = underValuePolicy(outcome.mergedAt) ? decisions.get(outcome.id) : undefined
-      const { assessment, reviewValues } = try assessmentOf(found, { id: outcome.id, repository: repository.target.id, acceptedAt: outcome.mergedAt }, assessmentSourceAt(outcome.mergedAt))
+      const { assessment, reviewValues } = try assessmentOf(found, { id: outcome.id, repository: repository.target.id, acceptedAt: outcome.mergedAt, merged: true }, assessmentSourceAt(outcome.mergedAt))
       const evidence = jointCommits.get(outcome.id)
       const record = records.get(outcome.id)
       const textSources = record === undefined ? [] : pullRequestTextSources(record)
@@ -471,7 +471,7 @@ export effect function assemblyInputs(collection: Collection, mode: ScoringMode,
       repositoryOf.set(pull.id, repository.target.id)
       closedRecords.push(pull)
       const found = underValuePolicy(closedAt) ? decisions.get(pull.id) : undefined
-      const { assessment, reviewValues } = try assessmentOf(found, { id: pull.id, repository: repository.target.id, acceptedAt: closedAt }, assessmentSourceAt(closedAt))
+      const { assessment, reviewValues } = try assessmentOf(found, { id: pull.id, repository: repository.target.id, acceptedAt: closedAt, merged: false }, assessmentSourceAt(closedAt))
       closed.push({ id: pull.id, number: pull.number, repository: repository.target.id, project: repository.target.projectId, url: pull.url, title: pull.title, closedAt, author: pull.author, headRefOid: pull.headRefOid, commits: evidenceCommits(jointCommits.get(pull.id), valueActors), reviews: reviewsOf(pull.reviews, untraced), assessment, reviewValues, externalPrize })
     }
   }

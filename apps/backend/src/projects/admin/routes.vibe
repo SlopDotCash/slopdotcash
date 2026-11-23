@@ -157,7 +157,8 @@ effect function revise(actor: Actor, projectId: string) {
   if (same(previous, next)) throw refused(manifestRows.noChange)
   const now = try isoNow()
   try reviewBudgetFits(previous, next, now)
-  const problem = definitionProblem(next, { escrow: next.escrow, securityBounty: next.securityBounty }) ?? transitionProblem(previous, next, now)
+  const submittedSections = { escrow: next.escrow, securityBounty: next.securityBounty }
+  const problem = definitionProblem(next, submittedSections) ?? transitionProblem(previous, next, now, submittedSections)
   if (problem !== undefined) throw invalid(problem)
   const text = JSON.stringify(next)
   const manifest = manifestOf(text, `administrator revision of ${projectId}`) catch effect () => { throw invalid("Project manifest is invalid") }

@@ -8,7 +8,7 @@ import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "
 import { apply, canRecordAttested, heldFor, initial, mayRequestReceiptCheck } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
 import { analyze, scheduleReceiptAnalysis } from "../assessment/routes.vibe"
-import { AuthorityUnavailable, caseAuthority, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
+import { AuthorityUnavailable, caseAuthority, repositoryAuthorityOf } from "../caseAuthority/snapshot.vibe"
 import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { depositAsk } from "../deposit/ask.vibe"
@@ -95,19 +95,20 @@ effect function rememberedAuthority() {
 }
 
 effect function visibleProjects(actor: Actor) {
-  const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') = 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
+  const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') IS 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
   const reporting = try ReportingPrograms
   const roles = new Map<string, Set<string>>()
   const scoped: string[] = []
   let authorityUnavailable = false
+  const reads = new Map(try Effect.forEach(programs.filter((program) => program.bounty !== 1), (program) => repositoryAuthorityOf(program.id, actor.githubId), { concurrency: "unbounded" }))
   for (const program of programs) {
     const held = new Set<string>()
-    if (program.bounty === 1) {
+    const read = reads.get(program.id)
+    if (read === undefined) {
       const approvers = (try reporting.current(program.id))?.approvers
       if (approvers?.technical.includes(actor.githubId) === true) held.add("security-maintainer")
       if (approvers?.financial.includes(actor.githubId) === true) held.add("financial")
     } else {
-      const read = try repositoryAuthority({ projectId: program.id, viewerGithubId: actor.githubId })
       if (read === "unavailable") authorityUnavailable = true
       if (read === "granted") held.add("security-maintainer")
     }

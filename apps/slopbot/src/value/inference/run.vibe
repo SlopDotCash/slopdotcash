@@ -289,7 +289,7 @@ export effect function runValueInference<T, E, R>(prompt: Prompt, output: ValueO
     throw error
   }
   const state = try settleAttempt(session, id, routed.answer)
-  if (state.retained !== noRetained) return (try retainedAnswer(session, output)) ?? { kind: "failed", session } satisfies InferenceOutcome<T>
+  if (state.retained.attempt !== noRetained.attempt) return (try retainedAnswer(session, output)) ?? { kind: "failed", session } satisfies InferenceOutcome<T>
   const settled = attempt(state, id)
   const denied = settled.allCalls.some((charge) => charge.result === "BudgetDenial")
   if (routed.checkFailed || settled.allCalls.length === 0 || settled.stage === "HeldBudget") return { kind: "authority", session } satisfies InferenceOutcome<T>

@@ -501,7 +501,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       spaced: outcome(try flagAs(aliceAs, "not a repo")),
     }
     const rowsBeforeOutage = try area.sql("SELECT count(*) AS n FROM repo_requests")
-    try orDie(Effect.try(() => github.failNext(/\/repos\//, { disconnect: true })))
+    try orDie(Effect.try(() => { github.failNext(/\/repos\//, { disconnect: true }); github.failNext(/\/repos\//, { disconnect: true }) }))
     const down = full(try flagAs(aliceAs, "acme/gadgets"))
     const rowsAfterOutage = try area.sql("SELECT count(*) AS n FROM repo_requests")
     try same({ facts, down, rowsAfterOutage }, {

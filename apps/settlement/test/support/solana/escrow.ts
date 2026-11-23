@@ -240,7 +240,7 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
   await journal.send("admit", chain.payer, built(admitMonth({ payer: chain.payer.address, authority: identity.address, signature, attestation })));
   const leaf = (entry: MonthlyEntry): LeafArguments => {
     const index = entries.indexOf(entry);
-    return { period, source: entry.source, actor: entry.actor, gross: entry.gross, index, count: tree.count, proof: tree.proof(index) ?? [] };
+    return { period, source: entry.source, actor: entry.actor, gross: entry.gross, index, count: tree.count, proof: tree.proofs[index] ?? [] };
   };
   const awardOf = (entry: MonthlyEntry) => awardAddress(program, project, awardId(project, entry.source));
   await journal.send("commit leaf", chain.payer, [built(commitMonthlyAward({ program, project, payer: chain.payer.address, leaf: leaf(committed) }))]);

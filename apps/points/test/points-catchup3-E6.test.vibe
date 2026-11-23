@@ -52,7 +52,7 @@ effect function collected(world: SupplementWorld, restoring: boolean) {
   )
   provide services, world.clock.layer {
     const inputs = try inputsOf(world)
-    return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sleep(Duration.millis(millis)), false)
+    return try resumeAcrossQuota(() => collectCorrections(options, inputs, provenanceOf(restoring), proveCandidates), (millis) => Effect.sync(() => world.clock.advance(millis)), false)
   }
 }
 

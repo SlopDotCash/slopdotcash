@@ -307,6 +307,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const resent = try run(world, "Receipts")
     const afterResent = try states(world)
     world.stand.status = (send) => landed(send, true, 450000000n, "40000000000000")
+    world.stand.balances = new Map([[tokenA, 0n], [tokenB, 4000000000n]])
     const finalized = try run(world, "Receipts")
 
     const expiring = try opened(107, "Live")
@@ -333,6 +334,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
 
   it.effect('The rolling 24-hour value cap skips a token once finalized live sends reach it (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it")', () => effect {
     const world = try opened(108, "Live")
+    world.tokens = [{ address: tokenA, asset: "ProjectToken" }]
     world.stand.quote = (_token, amount) => found(amount, 1000000000n)
     world.stand.status = (send) => landed(send, true, 1000000000n, "40000000000000")
     const results: Array<Readonly<Record<RowState, number>>> = []

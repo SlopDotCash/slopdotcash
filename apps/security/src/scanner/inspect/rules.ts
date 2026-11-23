@@ -186,7 +186,7 @@ export const RULE_POLICY_SHA256 = sha256Of(
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
     localInstallHelpers: "literal-shell-exec-wrapper-closure-v2",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
-    imageFormats: "png-jpeg-gif-webp-whole-structure-v1",
+    imageFormats: "png-jpeg-gif-webp-sfnt-woff-woff2-whole-structure-v2",
     templateReview: "queued-canonical-template-deterministic-only-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,

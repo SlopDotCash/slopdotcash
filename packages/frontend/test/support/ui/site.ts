@@ -13,7 +13,6 @@ import { Request, Response } from "miniflare";
 import type { Browser, BrowserContext, Download, Locator, Page, Route } from "playwright";
 import { encodeFunctionData, parseAbi } from "viem";
 import { createBuilder } from "vite";
-import type { ViteUserConfig } from "vitest/config";
 import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
 import { feeNetworks } from "@repo/backend/client";
 import { escrowStack, word } from "@repo/settlement/testing/evm";
@@ -34,11 +33,7 @@ const mintAbi = parseAbi(["function mint(address to, uint256 amount)"]);
 const backendRpcHost = "rpc.base-mainnet.test";
 const zeroWordCode = "0x600060005260206000f3";
 const fundedWordCode = `0x6f${"ff".repeat(16)}60005260206000f3`;
-const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#777"/></svg>')}`;
-
-interface Fetching {
-  fetch(request: Request): Promise<Response>;
-}
+const placeholder = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#777"/></svg>';
 
 interface Deployment {
   readonly roles: Roles;
@@ -57,6 +52,14 @@ interface Started {
   readonly deploy: (deployment: Deployment) => Promise<void>;
   readonly scanner: (method: Method, path: string, body: string) => Promise<Answered>;
   readonly replace: (bucket: Bucket, key: string, text: string) => Promise<void>;
+  readonly dispose: () => Promise<void>;
+}
+
+interface Built {
+  readonly assets: string;
+  readonly script: string;
+  readonly identityScript: string;
+  readonly slopbotScript: string;
 }
 
 interface Held {
@@ -131,11 +134,20 @@ async function builtSite(): Promise<string> {
   return outDir;
 }
 
-async function start(): Promise<Started> {
-  const assets = await builtSite();
-  const script = await bundle(appRoot, { entry: "_worker" });
-  const identityScript = await bundle(backendRoot, { entry: "identity" });
-  const slopbotScript = await bundle(slopbotRoot, { entry: "repositoryAccess" });
+async function build(): Promise<Built> {
+  return {
+    assets: await builtSite(),
+    script: await bundle(appRoot, { entry: "_worker" }),
+    identityScript: await bundle(backendRoot, { entry: "identity" }),
+    slopbotScript: await bundle(slopbotRoot, { entry: "repositoryAccess" }),
+  };
+}
+
+let built: Promise<Built> | undefined;
+
+export const prepare = () => (built ??= build());
+
+async function open({ assets, script, identityScript, slopbotScript }: Built): Promise<Started> {
   const github = githubFake();
   github.world.addUser(reader);
   const net = internet({ github: github.handler, hosts: { [backendRpcHost]: sessionRpc } });
@@ -172,6 +184,7 @@ async function start(): Promise<Started> {
       SLOP_IDENTITY: {
         name: "identity",
         script: identityScript,
+        routes: [`${new URL(identityOrigin).host}/*`],
         d1: { IDENTITY_DB: "slop-private" },
         ratelimits: { IDENTITY_START_LIMITER: { limit: 600, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 6000, period: 60 } },
         vars: {
@@ -191,7 +204,7 @@ async function start(): Promise<Started> {
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
   return {
     site: (request) => mf.dispatchFetch(request),
-    identity: async (request) => ((await mf.getWorker("identity")) as unknown as Fetching).fetch(request),
+    identity: (request) => mf.dispatchFetch(request),
     github,
     rows: async (text, params) => (await (await mf.getD1Database("SLOP_DB", "worker")).prepare(text).bind(...params).all<Row>()).results,
     verifications,
@@ -214,10 +227,11 @@ async function start(): Promise<Started> {
       if (found === null) throw new Error(`site: no ${bucket} object ${key}`);
       await objects.put(key, new TextEncoder().encode(text), { ...(found.httpMetadata === undefined ? {} : { httpMetadata: found.httpMetadata }), ...(found.customMetadata === undefined ? {} : { customMetadata: found.customMetadata }) });
     },
+    dispose: () => mf.dispose(),
   };
 }
 
-let started: Promise<Started> | undefined;
+let started: Started | undefined;
 let session: Session | undefined;
 
 async function sessionRpc(request: Request): Promise<Response> {
@@ -226,7 +240,10 @@ async function sessionRpc(request: Request): Promise<Response> {
   return forward((await chain).url)(request);
 }
 
-const backend = () => (started ??= start());
+function backend(): Started {
+  if (started === undefined) throw new Error("site: start the site first");
+  return started;
+}
 
 function current(): Session {
   if (session === undefined) throw new Error("site: start the site first");
@@ -259,6 +276,12 @@ async function answer(route: Route, worker: (request: Request) => Promise<Respon
   });
   const cookies = url.origin === identityOrigin && current().cookiesBlocked ? [] : response.headers.getSetCookie();
   if (cookies.length > 0) shown["set-cookie"] = cookies.join("\n");
+  const location = response.headers.get("location");
+  if (asked.isNavigationRequest() && location !== null && response.status >= 300 && response.status < 400) {
+    const replaced = `<!doctype html><script>location.replace(${JSON.stringify(new URL(location, url).href)})</script>`;
+    const kept: Record<string, string> = cookies.length > 0 ? { "set-cookie": cookies.join("\n") } : {};
+    return route.fulfill({ status: 200, headers: { ...kept, "content-type": "text/html; charset=utf-8" }, body: replaced }).catch(() => undefined);
+  }
   await route.fulfill({ status: response.status, headers: shown, body: bytes }).catch(() => undefined);
 }
 
@@ -268,7 +291,7 @@ function cannedFor(method: string, path: string): Canned | undefined {
 }
 
 async function routed(route: Route) {
-  const backendNow = await backend();
+  const backendNow = backend();
   const url = new URL(route.request().url());
   const canned = url.origin === site ? cannedFor(route.request().method(), url.pathname) : undefined;
   if (canned !== undefined) {
@@ -283,7 +306,7 @@ async function routed(route: Route) {
       next.searchParams.set("login", current().consenting);
       return next;
     });
-  if (url.hostname === "avatars.githubusercontent.com") return route.fulfill({ status: 302, headers: { location: placeholder } });
+  if (url.hostname === "avatars.githubusercontent.com") return route.fulfill({ status: 200, contentType: "image/svg+xml", body: placeholder });
   if (url.hostname === "static.cloudflareinsights.com") return route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
   current().failed.push(`unexpected ${route.request().method()} ${url.origin}${url.pathname}`);
   return route.abort("blockedbyclient");
@@ -319,7 +342,10 @@ async function reset(context: BrowserCommandContext) {
     await previous.context.close();
     for (const chain of previous.chains.values()) await (await chain).close();
   }
-  await (await backend()).deploy(defaultDeployment);
+  const replaced = started;
+  started = undefined;
+  await replaced?.dispose();
+  started = await open(await prepare());
   const browser: Browser | null = context.context.browser();
   if (browser === null) throw new Error("site: the Vitest browser has no Playwright browser");
   const opened = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -386,7 +412,7 @@ function registered(manifest: Fields, deployment: Fields, purpose: VaultPurpose,
 }
 
 async function vault(projectId: string, purpose: VaultPurpose): Promise<Deployed> {
-  const started = await backend();
+  const started = backend();
   const chain = await walletChain(current(), homeChainId);
   const [depositor, owner] = [chain.accounts[0], chain.accounts[6]];
   const ownerAddress = owner === undefined ? undefined : evmAddress(owner.address);
@@ -515,39 +541,39 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       await reset(context);
       return null;
     case "user": {
-      const { world } = (await backend()).github;
+      const { world } = backend().github;
       if (world.accountById(op.id) === undefined) world.addUser({ id: op.id, login: op.login, nodeId: `U_${op.login}` });
       return null;
     }
     case "deploy": {
-      const started = await backend();
+      const started = backend();
       await started.deploy({ ...started.deployed(), roles: op.roles });
       return null;
     }
     case "repository": {
       const { id, owner, name, fork, archived, license, files } = op.setup;
-      (await backend()).github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
+      backend().github.world.addRepo({ id, owner, name, fork, archived, license: { spdx: license }, files });
       return null;
     }
     case "permission":
-      (await backend()).github.world.setPermission(op.repository, op.login, op.level);
+      backend().github.world.setPermission(op.repository, op.login, op.level);
       return null;
     case "installation":
-      (await backend()).github.world.addInstallation({ ...op.setup, permissions: { contents: "read", issues: "write", pull_requests: "write" } });
+      backend().github.world.addInstallation({ ...op.setup, permissions: { contents: "read", issues: "write", pull_requests: "write" } });
       return null;
     case "githubFail":
-      (await backend()).github.failNext(op.path, { status: op.status });
+      backend().github.failNext(op.path, { status: op.status });
       return null;
     case "scanner":
-      return (await backend()).scanner(op.method, op.path, op.body);
+      return backend().scanner(op.method, op.path, op.body);
     case "object":
-      await (await backend()).replace(op.bucket, op.key, op.text);
+      await backend().replace(op.bucket, op.key, op.text);
       return null;
     case "vault":
       return vault(op.projectId, op.purpose);
     case "backendRpc": {
       await walletChain(current(), homeChainId);
-      const started = await backend();
+      const started = backend();
       await started.deploy({ ...started.deployed(), rpc: true });
       return null;
     }
@@ -558,7 +584,7 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
       return Number(head);
     }
     case "branch": {
-      const { world } = (await backend()).github;
+      const { world } = backend().github;
       const repository = world.repo(op.repository);
       const head = repository.branches.get(op.name) ?? repository.branches.get(repository.defaultBranch);
       return world.addCommit(op.repository, { branch: op.name, files: op.files, parents: head === undefined ? [] : [head] });
@@ -658,9 +684,9 @@ async function run(context: BrowserCommandContext, op: Op): Promise<unknown> {
     case "sent":
       return [...current().sent];
     case "verifications":
-      return [...(await backend()).verifications];
+      return [...backend().verifications];
     case "sql":
-      return (await backend()).rows(op.text, op.params);
+      return backend().rows(op.text, op.params);
     case "popups":
       return current().context.pages().filter((opened) => ![...current().tabs.values()].includes(opened)).length;
     case "view":
@@ -742,8 +768,4 @@ function wallets(): Wallets {
   return injected;
 }
 
-const command: BrowserCommand<[Op], Result<Op>> = (context, op) => run(context, op) as Promise<Result<Op>>;
-
-export function siteCommands() {
-  return { name: "slop:site-commands", config: (): ViteUserConfig => ({ test: { browser: { commands: { site: command } } } }) };
-}
+export const command: BrowserCommand<[Op], Result<Op>> = (context, op) => run(context, op) as Promise<Result<Op>>;

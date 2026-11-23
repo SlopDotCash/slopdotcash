@@ -318,7 +318,7 @@ layer(ExperimentalNodeFileSystem.layer)((it) => {
     const production = (try reviewed("production")).vars
     const token = "0x2222222222222222222222222222222222222222"
     const listed = "0x3333333333333333333333333333333333333333"
-    const config = try derived({ ...production, FEE_CONVERTER_MODE: "dry_run", FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [listed] }) }, [])
+    const config = try derived({ ...production, FEE_CONVERTER_MODE: "dry_run", BUYBACK_MODE: "off", FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [listed] }) }, [])
     const base = config?.config.networks.find((entry) => entry.network === "Base")
     const deployment = { network: "base-mainnet", vault: "0x4444444444444444444444444444444444444444", asset: token }
     const snapshot = try decodeReviewed({

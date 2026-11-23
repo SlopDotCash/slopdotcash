@@ -254,6 +254,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
     chain.sendFails = false
     const resent = try pass()
     const resentRow = (try sends()).at(-1)
+    const resentRaw = chain.sent[chain.sent.length - 1]
     mine(chain, true)
     try nextDay()
     try deposit(6, 1, 2_000_000n)
@@ -282,7 +283,7 @@ layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
       merged: [sendOf(merged), recorded.map((row) => [row.deposits, row.state]), recorded[0]?.raw === chain.sent[0], idsOf(chain.sent[0])],
       confirmed: [sendOf(confirmed), finalized[0]?.state],
       kept: [sendOf(kept), idsOf(keptRaw)],
-      lost: [sendOf(lost), unknown?.state, sendOf(resent), resentRow?.state, resentRow?.raw === chain.sent[chain.sent.length - 1]],
+      lost: [sendOf(lost), unknown?.state, sendOf(resent), resentRow?.state, resentRow?.raw === resentRaw],
       reverted: [sendOf(again), firstTry === secondTry, all.filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 6, refund: true }])).map((row) => [row.state, row.reason])],
       consumed: [sendOf(consumed), all.filter((row) => JSON.stringify(row.deposits) === JSON.stringify([{ id: 7, refund: true }])).map((row) => [row.state, row.reason])],
       racing: [racing.map(sendOf).sort(), racedRows.length, new Set(chain.sent.slice(before)).size],

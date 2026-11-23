@@ -3,9 +3,9 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { byteOrder } from "../manifest/inventory.vibe"
 import { ConfigRefused } from "./config.vibe"
 
-export const pinnedMigrations = 136
+export const pinnedMigrations = 156
 
-export const pinnedLedgerSha256 = "77a119abc90103253f006a3269bf70df6dc9f7760c2eb9ab4d0cb072cde23e9e"
+export const pinnedLedgerSha256 = "b901803d4b12ff45f246e76b2cf164c53ff3018301b7ac0ebdb5d16d027b0883"
 
 const appended = /^(?:0[2-9][0-9]{2}|[1-9][0-9]{3})_[a-z0-9_]+\.sql$/u
 const fileBytesLimit = 4 * 1024 * 1024

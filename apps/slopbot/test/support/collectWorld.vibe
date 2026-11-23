@@ -47,6 +47,13 @@ function pageKey(url: URL) {
   return `${url.pathname === workUnitHistoryPath ? "joint" : "single"}:${url.searchParams.get("pull")}`
 }
 
+export function historyIdentity(url: URL) {
+  return Object.fromEntries(["repositoryNodeId", "repository"].flatMap((name) => {
+    const value = url.searchParams.get(name)
+    return value === null ? [] : [[name, value]]
+  }))
+}
+
 export function emptyHistory(feed: Feed): Handler {
   return async (request) => {
     const url = new URL(request.url)
@@ -64,8 +71,7 @@ export function emptyHistory(feed: Feed): Handler {
     const joint = url.pathname === workUnitHistoryPath
     return WebResponse.json({
       schemaVersion: joint ? "slop-work-unit-history:v1" : "slop-value-history:v1",
-      repositoryNodeId: url.searchParams.get("repositoryNodeId"),
-      repository: url.searchParams.get("repository"),
+      ...historyIdentity(url),
       pullRequestNumber: Number(url.searchParams.get("pull")),
       records: [],
       nextAfter: null,
@@ -138,6 +144,7 @@ export effect function collectWorld() {
   const snapshotPath = `${outputDirectory}/registry-snapshot.json`
   try fs.writeFileString(snapshotPath, `${JSON.stringify(try registrySnapshot(github))}\n`)
   const env = {
+    PATH: try Config.String("PATH"),
     GITHUB_ACTIONS: "true",
     GITHUB_REF: "refs/heads/main",
     GITHUB_EVENT_NAME: "push",

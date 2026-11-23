@@ -201,8 +201,8 @@ effect function registryFits(manifest: Json, replaces: boolean) {
   if (problem !== undefined) throw refusal(putProjectsById.registryConflict, problem)
 }
 
-effect function transitionFits(previous: Json, next: Json, now: string) {
-  const problem = transitionProblem(previous, next, now)
+effect function transitionFits(previous: Json, next: Json, now: string, trusted?: Trusted) {
+  const problem = transitionProblem(previous, next, now, trusted)
   if (problem !== undefined) throw refusal(putProjectsById.invalidManifest, problem)
 }
 
@@ -473,7 +473,7 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   const counts = { presentation: ownerChanges.presentation.length, executable: ownerChanges.executable.length, financial: ownerChanges.financial.length, restricted: ownerChanges.restricted.length }
   const step = try ownerStep({ current: current.manifest, prospective, added, consent, consentChanged, changes: counts, stored: stored !== undefined, actor: accessActor(actor), projectId, now, by, expectedRevision, authority, fieldsComplete: try fieldsComplete(prospective), clearance })
   try decodedManifest(step.manifest, trusted)
-  try transitionFits(current.manifest, step.manifest, now)
+  try transitionFits(current.manifest, step.manifest, now, trusted)
   try registryFits(step.manifest, true)
   const stale = refusal(putProjectsById.staleRevisionNoStore, "The project changed since you loaded it")
   send({ projectId, event: step.event, by, revision: { manifestText: JSON.stringify(step.manifest), reason: summary, actor: revisionActor(actor) } }) catch effect (error) => {

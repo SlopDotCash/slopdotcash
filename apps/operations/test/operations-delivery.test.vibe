@@ -232,7 +232,7 @@ const World = Layer.mergeAll(
   webCrypto,
   clock.layer,
   mailVia({ send: providerSend }, (mail) => mail),
-  rolesFrom({ ADMIN_GITHUB_IDS: "9200000099", PROJECT_MODERATOR_GITHUB_IDS: reviewer }),
+  rolesFrom({ ADMIN_GITHUB_IDS: `9200000099,${reviewer}`, PROJECT_MODERATOR_GITHUB_IDS: reviewer }),
 )
 
 function payoutView(projectId: string, stewardGithubId: string, stewardAccount: ProjectView["stewardAccount"], listing: ProjectView["listing"]): ProjectView {
@@ -533,6 +533,7 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
           ${steward ? owner : first}, ${steward ? "steward" : "placer"}, NULL, ${steward ? "project-steward" : "project-moderator"}, ${steward ? "owner-request" : "admin-panel"}, 1, ${manifestSha}, NULL, NULL, 'no_revision_needed', ${seededAt})`
     const reviewVersion = "9".repeat(64)
     try db.batch([
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('delivery-open', 1, '{"id":"delivery-open"}', ${manifestSha}, 'Listed', ${seededAt})`,
       sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('delivery-open', 'paused', 1, '{"id":"delivery-open"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
       record("delivery-open", "enf_delivery_open_pause", 1, "quarantine", "quarantined", "none", false),
       record("delivery-open", "enf_delivery_open_request", 2, "request_reinstatement", "quarantined", "requested", true),
@@ -560,7 +561,7 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       sql`INSERT INTO monthly_allocation_cut_reasons (project_id, period, sequence, github_user_id, proposed_gross_base, gross_base, reason, actor_id, created_at)
         VALUES ('payout-user', '2030-01', 1, ${member}, '1000', '400', 'The pull request was reverted after review.', ${userSteward}, ${seededAt})`,
     ])
-    const cutRecipients = [member, second] as const
+    const cutRecipients = [member, owner] as const
     try save(cutRecipients.map((recipientGithubId) => ({ eventKey: cutKey, recipientGithubId, kind: "PayoutException", subject: "payout-user", actionPath: "/cycles/payout-user/2030-01", sourceAt: seededAt })))
     try dispatch("activity", pilot, from, release)
     const cutRows: OutboxState[] = []

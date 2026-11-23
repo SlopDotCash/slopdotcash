@@ -115,7 +115,7 @@ export effect function submitSolanaMonthly(context: SolanaContext, authorization
       obligation = pointer.value.obligation
       release = true
     }
-    const proof = try Effect.try({ try: () => tree.proof(index) ?? [], catch: () => refused("Monthly allocation mismatch") })
+    const proof = tree.proofs[index] ?? []
     const leaf: LeafArguments = { period, source: entry.source, actor: entry.actor, gross: entry.gross, index, count: tree.count, proof }
     const instruction = release
       ? releaseMonthlyAward({ program: verified.program, project: verified.project, payer: config.signer, leaf, obligation })

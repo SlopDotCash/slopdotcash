@@ -109,11 +109,77 @@ function wellFormedWebp(bytes: Uint8Array): boolean {
   return chunks > 0 && offset === bytes.length;
 }
 
+const uint16 = (bytes: Uint8Array, index: number) => (at(bytes, index) << 8) | at(bytes, index + 1);
+const align4 = (value: number) => Math.ceil(value / 4) * 4;
+const printableTag = (bytes: Uint8Array, index: number) => bytes.subarray(index, index + 4).every((byte) => byte >= 0x20 && byte <= 0x7e);
+
+interface FontTable {
+  readonly tag: string;
+  readonly offset: number;
+  readonly length: number;
+}
+
+function tablesEnd(bytes: Uint8Array, directoryEnd: number, tables: ReadonlyArray<FontTable>): number | null {
+  const tags = new Set<string>();
+  let end = directoryEnd;
+  for (const table of tables) {
+    if (tags.has(table.tag) || table.offset < directoryEnd || table.offset % 4 !== 0 || table.offset + table.length > bytes.length) return null;
+    tags.add(table.tag);
+    end = Math.max(end, table.offset + table.length);
+  }
+  return end;
+}
+
+function directory(bytes: Uint8Array, start: number, count: number, size: number, read: (index: number) => FontTable | null): FontTable[] | null {
+  const tables: FontTable[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const index = start + size * i;
+    const table = printableTag(bytes, index) ? read(index) : null;
+    if (table === null) return null;
+    tables.push(table);
+  }
+  return tables;
+}
+
+function wellFormedSfnt(bytes: Uint8Array): boolean {
+  if (bytes.length < 12 || ![0x00010000, 0x4f54544f, 0x74727565].includes(uint32(bytes, 0))) return false;
+  const count = uint16(bytes, 4);
+  const directoryEnd = 12 + 16 * count;
+  if (count === 0 || directoryEnd > bytes.length) return false;
+  const tables = directory(bytes, 12, count, 16, (index) => ({ tag: ascii(bytes, index, 4), offset: uint32(bytes, index + 8), length: uint32(bytes, index + 12) }));
+  const end = tables === null ? null : tablesEnd(bytes, directoryEnd, tables);
+  const head = tables?.findLast((table) => table.tag === "head" || table.tag === "bhed");
+  return end !== null && head !== undefined && head.length >= 12 && bytes.length <= align4(end);
+}
+
+function wellFormedWoff(bytes: Uint8Array): boolean {
+  if (bytes.length < 44 || uint32(bytes, 0) !== 0x774f4646 || uint32(bytes, 8) !== bytes.length || uint16(bytes, 14) !== 0) return false;
+  const count = uint16(bytes, 12);
+  const directoryEnd = 44 + 20 * count;
+  if (count === 0 || directoryEnd > bytes.length) return false;
+  const tables = directory(bytes, 44, count, 20, (index) => (uint32(bytes, index + 8) > uint32(bytes, index + 12) ? null : { tag: ascii(bytes, index, 4), offset: uint32(bytes, index + 4), length: uint32(bytes, index + 8) }));
+  let end = tables === null ? null : tablesEnd(bytes, directoryEnd, tables);
+  for (const [offsetAt, lengthAt] of [[24, 28], [36, 40]] as const) {
+    const offset = uint32(bytes, offsetAt);
+    const length = uint32(bytes, lengthAt);
+    if (end === null || length === 0) continue;
+    end = offset < directoryEnd || offset + length > bytes.length ? null : Math.max(end, offset + length);
+  }
+  return end !== null && bytes.length <= align4(end);
+}
+
+function wellFormedWoff2(bytes: Uint8Array): boolean {
+  return bytes.length >= 48 && uint32(bytes, 0) === 0x774f4632 && uint32(bytes, 8) === bytes.length && uint16(bytes, 12) > 0 && uint16(bytes, 14) === 0;
+}
+
 const IMAGE_FORMATS = [
   { extension: /\.png$/iu, format: "png", check: wellFormedPng },
   { extension: /\.jpe?g$/iu, format: "jpeg", check: wellFormedJpeg },
   { extension: /\.gif$/iu, format: "gif", check: wellFormedGif },
   { extension: /\.webp$/iu, format: "webp", check: wellFormedWebp },
+  { extension: /\.(?:ttf|otf)$/iu, format: "sfnt", check: wellFormedSfnt },
+  { extension: /\.woff$/iu, format: "woff", check: wellFormedWoff },
+  { extension: /\.woff2$/iu, format: "woff2", check: wellFormedWoff2 },
 ] as const;
 
 export type ImageFormat = (typeof IMAGE_FORMATS)[number]["format"];

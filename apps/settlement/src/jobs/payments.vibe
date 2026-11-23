@@ -14,6 +14,8 @@ import { syncRegistryVaults } from "../vault/sync.vibe"
 import { runMonthlyCommitments } from "./commitments.vibe"
 import { isolated, reported } from "./steps.vibe"
 
+export const paymentsCron = "*/5 * * * *"
+
 export error CoordinatorFailed { failures: ReadonlyArray<string> }
 export error DispatchUnavailable
 

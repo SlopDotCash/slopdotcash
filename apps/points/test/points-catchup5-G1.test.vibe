@@ -151,7 +151,7 @@ it.live('Per-item list pages retry two server errors and an exact commit file pa
         ],
         persistent: { outcome: { status: 502, body: finalBody }, statuses: [502, 502, 502], waits: [1_000, 2_000] },
         quotaKept: { outcome: { status: 429, body: "limited" }, statuses: [502, 429, 422, 502, 429, 429, 429, 429], waits: [1_000, 3_000, 1_000, 2_000, 3_000, 3_000, 3_000] },
-        notCanonical: [once, once, once, once, once, once, once, once],
+        notCanonical: [200, 404, 200, 200, 422, 200, 200].map((status) => ({ statuses: [502, status], waits: [1_000] })).concat([once]),
         elsewhere: [once, once],
       },
       checkpoint: undefined,

@@ -5,6 +5,8 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 import { Request, Response } from "miniflare"
 
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+
 const stewardId = 41
 const primaryId = 9001
 const appendedId = 9002
@@ -88,8 +90,8 @@ function honorRefusal(answer: Answer) {
 effect function member(githubId: number) {
   const area = try Area
   const session = `owner-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, sessionExpiry)
   return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
 }
 

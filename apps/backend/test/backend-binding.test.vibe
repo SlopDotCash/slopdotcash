@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { secp256k1 } from "@noble/curves/secp256k1.js"
-import { type Hex, checksum, personalMessageDigest, recoverDigest, typedDataDigest } from "@repo/platform/chain/evm"
+import { type Hex, personalMessageDigest, recoverDigest, typedDataDigest } from "@repo/platform/chain/evm"
 import { address, base64Encode, encodeMessage, encodeTransaction, isBlockhash } from "@repo/platform/chain/solana"
 import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
 import type { Handler } from "@repo/platform/testing"
@@ -8,6 +8,8 @@ import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testi
 import { internet } from "@repo/platform/testing/internet"
 import { Response } from "miniflare"
 import { BindingChallenge } from "../src/client/bindingConsent.vibe"
+
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
 
 const evmVault = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
 const solanaVault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
@@ -121,8 +123,8 @@ effect function evmAddressOf(key: string) {
 effect function signIn(githubId: string) {
   const area = try Area
   const token = `binding-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, sessionExpiry)
   return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
 }
 
@@ -142,7 +144,7 @@ effect function seedRegistry() {
 }
 
 effect function evmWallet(member: Session, key: string) {
-  const registered = try pay(member, "register", { chain: "base", address: checksum(try evmAddressOf(key)) ?? "" })
+  const registered = try pay(member, "register", { chain: "base", address: try evmAddressOf(key) })
   const claimId = text(registered, "claimId")
   const challenged = try pay(member, "challenge", { claimId })
   const signature = try evmSign(key, personalMessageDigest(text(challenged, "message")))

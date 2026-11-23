@@ -124,7 +124,7 @@ export effect function publishCycleIndex(out: string, index: CycleIndex) {
     return try done
   })
   if (Exit.isFailure(outcome) && Cause.squash(outcome.cause) instanceof PublicationUnrecovered) return try outcome
-  try attempt(fs.remove(lock), `${lock} could not be released`)
+  try attempt(fs.remove(lock, { recursive: true }), `${lock} could not be released`)
   return try outcome
 }
 

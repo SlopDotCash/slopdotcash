@@ -19,7 +19,7 @@ const sum = (values: readonly bigint[]) => values.reduce((total, value) => total
 const expected = ({ total, recipients }: Input): bigint[] | undefined => {
   const denominator = sum(recipients.map((r) => r.weight));
   if (recipients.length === 0) return total === 0n ? [] : undefined;
-  if (denominator === 0n) return undefined;
+  if (recipients.some((r) => r.weight === 0n)) return undefined;
   if (recipients.length === 1) return [total];
   const floors = recipients.map((r) => (total * r.weight) / denominator);
   const remainders = recipients.map((r) => (total * r.weight) % denominator);

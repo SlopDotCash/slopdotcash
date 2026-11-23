@@ -388,11 +388,11 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
   const modelRows: Array<Row> = []
   for (const [index, carrier] of carriers.entries()) {
     const label = `fee journal row ${carrier.id}`
-    const state = stateOf[carrier.state]
+    const approvalOnly = carrier.tx_id === null && carrier.approval_tx_id !== null
+    const state = approvalOnly && carrier.mode === "live" && carrier.state === "pending" ? "Submitted" : stateOf[carrier.state]
     const reason = reasonOf(state, carrier.reason)
     if (reason === undefined) throw new RowMismatch({ text: label, issue: `reason ${carrier.reason ?? "missing"} does not fit state ${carrier.state}` })
     const later = replacements.filter((entry) => entry.conversion_id === carrier.id)
-    const approvalOnly = carrier.tx_id === null && carrier.approval_tx_id !== null
     const firstTx = carrier.tx_id ?? (carrier.mode === "live" ? carrier.approval_tx_id : null)
     const signed = firstTx === null ? undefined : try firstAttempt(carrier, network, epoch)
     const attempts: Array<Attempt> = signed === undefined || firstTx === null ? [] : [

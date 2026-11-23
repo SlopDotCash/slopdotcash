@@ -203,8 +203,8 @@ export effect function readDistributor(deployment: Deployment) {
   const { distributor } = deployment
   const token = try addressAt(distributor, "token")
   if (token !== deployment.token) throw mismatch(`distributor token ${token} is not ${deployment.token}`)
-  const decimals = small(try big(token, tokenAbi, "decimals"))
-  if (decimals === undefined || decimals > 36) throw mismatch("token decimals are out of range")
+  const decimals = try finalizedRead(token, tokenAbi, "decimals", [])
+  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw mismatch("token decimals are out of range")
   let tokenUnit = 1n
   for (let digit = 0; digit < decimals; digit++) tokenUnit *= 10n
   const owner = try addressAt(distributor, "owner")

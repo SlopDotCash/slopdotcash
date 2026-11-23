@@ -10,7 +10,7 @@ export const origin = "https://slop.test";
 export const author = { githubId: "7101", login: "trace-author" } as const;
 export const other = { githubId: "7102", login: "trace-other" } as const;
 
-const identityOrigin = "https://identity.slop.test";
+const identityOrigin = "http://localhost:8790";
 const root = new URL("../..", import.meta.url).pathname;
 const backendRoot = new URL("../../../backend", import.meta.url).pathname;
 
@@ -95,6 +95,8 @@ export async function startSite(assets: string): Promise<Site> {
         ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
         vars: {
           SLOP_ENVIRONMENT: "local",
+          IDENTITY_ALLOW_LOOPBACK: "1",
+          IDENTITY_PUBLIC_ORIGIN: identityOrigin,
           GITHUB_APP_CLIENT_ID: github.app.clientId,
           GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
           IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -109,16 +111,19 @@ export async function startSite(assets: string): Promise<Site> {
 
   const assertion = async (login: string, audience = "private-trace-api") => {
     const identity = (await mf.getWorker("identity")) as unknown as Fetching;
-    const post = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const flow = Schema.decodeUnknownSync(Flow)(await (await expected("start", await identity.fetch(`${identityOrigin}/v1/oauth/start`, post({ audience })), 201)).json());
-    const authorized = await expected("authorize", await identity.fetch(flow.authorizationUrl, { redirect: "manual" }), 302);
+    const website: Readonly<Record<string, string>> = audience === "private-trace-api" ? {} : { origin: identityOrigin };
+    const post = (body: unknown, headers: Readonly<Record<string, string>> = {}) => ({ method: "POST", headers: { "content-type": "application/json", ...website, ...headers }, body: JSON.stringify(body) });
+    const started = await expected("start", await identity.fetch(`${identityOrigin}/v1/oauth/start`, post({ audience })), 201);
+    const binding = /(__Host-slop_oauth_bind_[^=]+=[^;,\s]+)/u.exec(started.headers.get("set-cookie") ?? "")?.[1];
+    const flow = Schema.decodeUnknownSync(Flow)(await started.json());
+    const authorized = await expected("authorize", await identity.fetch(flow.authorizationUrl, { redirect: "manual", headers: binding === undefined ? {} : { cookie: binding } }), 302);
     const state = /__Host-slop_oauth_state=([^;,\s]+)/u.exec(authorized.headers.get("set-cookie") ?? "")?.[1];
     if (state === undefined) throw new Error("identity authorize set no state cookie");
     const consent = new URL(located("authorize", authorized));
     consent.searchParams.set("login", login);
     const consented = await expected("GitHub authorize", await net.handler(new Request(consent.toString(), { redirect: "manual" })), 302);
-    await expected("callback", await identity.fetch(located("GitHub authorize", consented), { headers: { cookie: `__Host-slop_oauth_state=${state}` }, redirect: "manual" }), 200);
-    const polled = await expected("poll", await identity.fetch(`${identityOrigin}/v1/oauth/poll`, post({ flowId: flow.flowId, pollCapability: flow.pollCapability, audience })), 200);
+    await expected("callback", await identity.fetch(located("GitHub authorize", consented), { headers: { cookie: [`__Host-slop_oauth_state=${state}`, ...binding === undefined ? [] : [binding]].join("; ") }, redirect: "manual" }), 200);
+    const polled = await expected("poll", await identity.fetch(`${identityOrigin}/v1/oauth/poll`, post({ flowId: flow.flowId, pollCapability: flow.pollCapability, audience }, binding === undefined ? {} : { cookie: binding })), 200);
     return Schema.decodeUnknownSync(Issued)(await polled.json()).assertion;
   };
 

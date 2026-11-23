@@ -95,7 +95,7 @@ export effect function storedReview(reviewKey: string, route: Route) {
     FROM slopbot_reviews r WHERE r.review_key = ${reviewKey}`)
   if (prior === undefined || (prior.status !== "failed" && prior.status !== "running")) return try decodeState({ ...initial, now })
   const retryAt = prior.retry_at === null ? 0 : Math.floor(millisOf(prior.retry_at) / 1000)
-  return try decodeState({ ...initial, status: retryAt > 0 ? "BudgetBlocked" : "RetryableFailure", bound: true, scope: routeScope(route), calls: try storedCalls(reviewKey), attempts: 1, now, retryAt } satisfies Review)
+  return try decodeState({ ...initial, status: retryAt > 0 ? "BudgetBlocked" : "RetryableFailure", bound: true, scope: routeScope(route), calls: try storedCalls(reviewKey), attempts: 1, now, retryAt, capAdmitted: true } satisfies Review)
 }
 
 export effect function openAttempt(row: ReviewRow, job: ReviewJob, request: ClaimRequest) {

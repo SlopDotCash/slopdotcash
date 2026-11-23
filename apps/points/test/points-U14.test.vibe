@@ -31,6 +31,7 @@ interface Plan {
 
 const root = new URL("..", import.meta.url).pathname
 const notVerified = "Historical correction import was not verified; retain the run for reconciliation"
+const unbound = "Implementation correction: original-contributor proof does not bind verified accepted work"
 
 const Corrections = areaLayer({
   root,
@@ -207,7 +208,7 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
       const held = []
       for (const invalid of cases) {
         const outcome = try planned(baseline, try collected(base, [pool], octoberRegistry, invalid), when, [], octoberRegistry)
-        held.push([outcome.plan.dispositions[0]?.status, outcome.plan.journal === baseline])
+        held.push(outcome.status === 200 ? [outcome.plan.dispositions[0]?.status, outcome.plan.journal === baseline] : [outcome.status, (outcome.plan as unknown as Body).message])
       }
       try same({
         status: result.plan.dispositions[0]?.status,
@@ -219,7 +220,7 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
         status: "applied",
         allocations: [[0, carrier.id, pool.occurredAt, octoberOriginalContributorDecision], [30, author.id, pool.occurredAt, octoberOriginalContributorDecision]],
         marker: ["applied", alreadyAllocated.revisions[0]?.id, alreadyAllocated.revisions[0]?.award, 0, octoberOriginalContributorDecision],
-        held: [["held", true], ["held", true], ["held", true]],
+        held: [["held", true], [409, unbound], [409, unbound]],
         replay: ["already-applied", true], writes: false,
       })
     }
@@ -310,10 +311,6 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
     const nextTime = "2026-11-13T00:00:00.000Z"
     const replay = try planned(corrected.plan.journal, collection, nextTime)
     const fresh = try planned(corrected.plan.journal, try collected(journal, [beta], registry, proof), nextTime)
-    try seeded(base)
-    const priorRevisions = try revisionCount()
-    try (try Area).sql(transferSql(beta))
-    const raced = try recorded(corrected.plan.journal)
     const split = { ...base, revisions: [try carried(beta, author, 18), try carried(beta, carrier, 12)] }
     const splitText = `${journalText(split)}\n`
     const empty = { ...head, additions: 0, deletions: 0 }
@@ -325,6 +322,10 @@ layer(Layer.merge(Corrections, webCrypto), { excludeTestServices: true, timeout:
     const actualPath = { ...empty, files: [{ path: "picture.png", additions: 0, deletions: 0 }] }
     const rebalanced = try planned(splitText, try collected(split, [beta], registry, proved([earlier, actualPath])), time)
     const positive = (try journalFile(rebalanced.plan.journal)).revisions.slice(2).filter((row) => row.award.amount > 0)
+    try seeded(base)
+    const priorRevisions = try revisionCount()
+    try (try Area).sql(transferSql(beta))
+    const raced = try recorded(corrected.plan.journal)
     try same({
       marker: [corrected.plan.dispositions[0]?.status, journal.revisions.length, last?.previous, last?.award, last?.decision?.delta, last?.decision?.reason],
       replay: [replay.plan.dispositions[0]?.status, replay.plan.journal === corrected.plan.journal],

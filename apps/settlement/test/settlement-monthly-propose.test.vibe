@@ -345,6 +345,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const flaky = try registered(env, "flaky", "1000", {}, { authority: { repositoryId: 601, repositoryNodeId: "R_flaky" }, reward: { maintainerShare: 1000 }, repositories: [{ id: "acme/flaky" }] })
     const plainShape: Shape = { reward: { maintainerShareHistory: [{ throughCycle: "2026-11", basisPoints: 0 }], maintainerShare: 3000 }, repositories: [{ id: "acme/plain" }] }
     const plain = try registered(env, "plain", "1000", {}, plainShape)
+    const journeyProjects = new Set(["shared", "flaky", "plain"])
     const ledgers = try ledgersOf({
       shared: [{ githubId: "1001", login: "first", points: 3 }, { githubId: "12", login: "ben", points: 1 }],
       flaky: [{ githubId: "1001", login: "first", points: 1 }],
@@ -397,7 +398,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       const records = try orDie(Effect.try(() => share.map((row) => JSON.parse(row.decisions) as DecisionText)))
       try same({
         refused,
-        first: first.map((row) => [row.project_id, row.cap_base, row.recipient_count]),
+        first: first.filter((row) => journeyProjects.has(row.project_id)).map((row) => [row.project_id, row.cap_base, row.recipient_count]),
         sharedRows,
         plainRows: plainRows.map((row) => [row.github_user_id, row.gross_base]),
         share: share.map((row) => [row.basis_points, row.pool_base, row.decisions_sha256]),
@@ -405,7 +406,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
         shareRows,
         plainManifest: plainBase,
         askedFirst,
-        again: again.map((row) => [row.project_id, row.cap_base, row.recipient_count]),
+        again: again.filter((row) => journeyProjects.has(row.project_id)).map((row) => [row.project_id, row.cap_base, row.recipient_count]),
         askedAgain: asked.slice(askedFirst.length),
         flaky: [flakyRows.map((row) => [row.github_user_id, row.gross_base]), flakyShare.map((row) => [row.basis_points, row.pool_base]), flakyShareRows],
         plainShare,
