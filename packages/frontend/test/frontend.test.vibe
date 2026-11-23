@@ -23,6 +23,7 @@ import { pages } from "@repo/platform/worker"
 import { encodeParts, leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, pointRevisionId, api as pointsApi, type RepositoryRegistry, type RevisionBody, ruleVersion, schemaVersion, scoreWindowDays, validatePaymentSnapshot, verificationWindowDays } from "@repo/points/client"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
 import { SecurityNoticeAccess } from "@repo/ports/security"
+import { AssessmentQueue } from "@repo/ports/slopbot"
 import { api as securityApi } from "@repo/security/client"
 import { security, securityBindings } from "@repo/security/live"
 import { api as settlementApi } from "@repo/settlement/client"
@@ -89,8 +90,8 @@ module sessionWorld {
   import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
   import { asFetch } from "@repo/platform/testing/quotes"
 
-  export const site = "https://slop.test"
-  export const identity = "https://identity.slop.test"
+  export const site = "https://slop.cash"
+  export const identity = "https://identity.slop.cash"
   const backendRoot = `${repoRoot}/apps/backend`
   const address = "203.0.113.41"
 
@@ -172,17 +173,18 @@ module sessionWorld {
     const mf: StartedWorker = startWorker({
       script: await bundle(backendRoot, { entry: "worker" }),
       d1: { SLOP_DB: "slop-private" },
-      vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-session-journey-0001" },
+      vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "production", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-session-journey-0001" },
       services: { SLOP_NOTIFY: notify(sent) },
       outbound: net.handler,
       workers: {
         SLOP_IDENTITY: {
           name: "identity",
           script: await bundle(backendRoot, { entry: "identity" }),
+          routes: [`${new URL(identity).host}/*`],
           d1: { IDENTITY_DB: "slop-private" },
           ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
           vars: {
-            SLOP_ENVIRONMENT: "local",
+            SLOP_ENVIRONMENT: "production",
             GITHUB_APP_CLIENT_ID: github.app.clientId,
             GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
             IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -193,7 +195,7 @@ module sessionWorld {
     })
     const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
     if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
-    const identityWorker = async () => (await mf.getWorker("identity")) as unknown as Fetching
+    const identityWorker = async (): Promise<Fetching> => ({ fetch: (url, init) => mf.dispatchFetch(url, init) })
 
     const toSite = async (request: WebRequest, url: URL) => {
       const route = `${request.method} ${url.pathname}`
@@ -952,10 +954,12 @@ const deployment = Layer.succeed(Deployment, {
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),
 })
 
-const onSite = Layer.effect(HttpClient.HttpClient, effect {
-  const client = try HttpClient.HttpClient
-  return HttpClient.mapRequest(client, (request) => request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, pageSite) : request)
-})
+function onSite(origin: string) {
+  return Layer.effect(HttpClient.HttpClient, effect {
+    const client = try HttpClient.HttpClient
+    return HttpClient.mapRequest(client, (request) => request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, origin) : request)
+  })
+}
 
 function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
   return Layer.effect(HttpClient.HttpClient, effect {
@@ -1533,7 +1537,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       deployment,
       Layer.succeed(SessionStore, stores.session),
       Layer.succeed(LocalStore, stores.local),
-      Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+      Layer.provide(onSite(site), Layer.provide(routedTo(world), FetchHttpClient.layer)),
     )
     return Layer.provideMerge(sessionServices, platform)
   }
@@ -2284,12 +2288,14 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
     },
   })
 
+  const noAssessments = Layer.succeed(AssessmentQueue, { bundled: () => Effect.succeed(null) })
+
   const Started = Layer.effect(Browser, effect {
     const started = try acquireRelease(promise(() => startWorld()), (opened) => promise(() => opened.dispose()))
     const env = { SLOP_DB: started.db, ASSETS: assets }
     const operationsSite = pages({
       areas: [operations],
-      services: (bound: typeof env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }), caseNoticeAccess)),
+      services: (bound: typeof env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" }), caseNoticeAccess, noAssessments)),
       assets: "ASSETS",
     })
     started.serveOperations((request) => operationsSite.fetch(request, env, context))
@@ -2307,7 +2313,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       deployment,
       Layer.succeed(SessionStore, stores.session),
       Layer.succeed(LocalStore, stores.local),
-      Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+      Layer.provide(onSite(pageSite), Layer.provide(routedTo(world), FetchHttpClient.layer)),
     )
     return Layer.provideMerge(Layer.mergeAll(inboxLayer, emailLayer, referralLayer, emailActionLayer), Layer.provideMerge(sessionServices, platform))
   }
@@ -2718,7 +2724,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       Layer.succeed(LocalStore, durable(try storeOver("local", undefined))),
       locks,
       webCrypto,
-      Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+      Layer.provide(onSite(pageSite), Layer.provide(routedTo(world), FetchHttpClient.layer)),
     )
     return Layer.provideMerge(sessionServices, platform)
   }
@@ -3113,7 +3119,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       Layer.succeed(LocalStore, { ...(try storeOver("local", undefined)), durable: true }),
       locks,
       webCrypto,
-      Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+      Layer.provide(onSite(pageSite), Layer.provide(routedTo(world), FetchHttpClient.layer)),
     )
     return Layer.provideMerge(Layer.mergeAll(draftMachine, reportTextErasure), Layer.provideMerge(sessionServices, platform))
   }
@@ -3416,7 +3422,7 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       webCrypto,
       Layer.succeed(SessionStore, stores.session),
       Layer.succeed(LocalStore, stores.local),
-      Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+      Layer.provide(onSite(pageSite), Layer.provide(routedTo(world), FetchHttpClient.layer)),
     )
     return Layer.provideMerge(sessionServices, platform)
   }

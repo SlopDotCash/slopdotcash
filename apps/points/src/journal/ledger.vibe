@@ -2,7 +2,7 @@
 import { millisOf } from "@repo/platform/clock"
 import { type Registry, compareCodeUnits, findRepository } from "../client/snapshot/checks.vibe"
 import { type Award, type Coverage, type Revision as Row, journalText } from "../kernels/records/canonical.ts"
-import { journalFile, pointKey } from "../kernels/records/ids.vibe"
+import { journalFile, keyDigest } from "../kernels/records/ids.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
 import { type AwardKey, type Category, type Decision, type Event, type FrozenPeriod, type Ledger, type Revision, type SourceRule, Machine, decodeState, initial, inv, machineOver, noDecision } from "../../gen/points__journal.effect.vibe"
 import type { FreezeEvidence } from "../../gen/points__periods.ts"
@@ -159,9 +159,13 @@ function add<K, V>(map: Map<K, Set<V>>, key: K, value: V) {
   else found.add(value)
 }
 
-export effect function unitNameOf(award: Award) {
-  const own = try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId })
+function unitName(award: Award) {
+  const own = keyDigest({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId })
   return own === award.key ? ownUnit(award.projectId, award.sourceId) : jointUnit(award.projectId, award.workUnitId)
+}
+
+export effect function unitNameOf(award: Award) {
+  return unitName(award)
 }
 
 export effect function index(store: Store, row: Row) {
@@ -169,7 +173,7 @@ export effect function index(store: Store, row: Row) {
   store.latest.set(award.key, row)
   add(store.keysBySource, award.sourceId, award.key)
   if (award.category !== "merged-pull-request") return
-  const name = store.unitOfKey.get(award.key) ?? (try unitNameOf(award))
+  const name = store.unitOfKey.get(award.key) ?? unitName(award)
   store.unitOfKey.set(award.key, name)
   const unit = store.units.get(name) ?? { project: award.projectId, sources: new Set<string>(), keys: new Set<string>() }
   unit.sources.add(award.sourceId)

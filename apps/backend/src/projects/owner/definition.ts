@@ -755,8 +755,10 @@ function validateSlopbot(value: unknown): void {
   const field = "project.slopbot";
   const slopbot = record(value, field);
   const settings = slopbotSettings.filter((key) => slopbot[key] !== undefined);
-  exactKeys(slopbot, ["automaticClosure", ...settings], field);
-  if (typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
+  const consent = slopbot.automaticClosure === undefined ? [] : ["automaticClosure"];
+  if (consent.length + settings.length === 0) fail(`${field} has unexpected or missing fields`);
+  exactKeys(slopbot, [...consent, ...settings], field);
+  if (slopbot.automaticClosure !== undefined && typeof slopbot.automaticClosure !== "boolean") fail(`${field}.automaticClosure must be a boolean`);
   const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, `${field}.readyLabel`);
   if (readyLabel !== undefined) fail(readyLabel);
   const { intakeCap } = slopbot;
@@ -964,12 +966,62 @@ function bindingTerms(terms: Json): string {
   });
 }
 
-function assertPolicyTransition(previousValue: unknown, nextValue: unknown): void {
+const evmImplementationReviewKeys = ["authority", "vaultImplementation", "vaultImplementationCodeSha256", "factoryImplementation", "factoryImplementationCodeSha256"];
+const offChainDeploymentKeys = ["maxNativeCostWei", "bindingConsentNonceLimit"];
+
+function implementationReview(review: unknown): string {
+  const fields = isRecord(review) ? review : {};
+  return JSON.stringify(evmImplementationReviewKeys.map((key) => String(fields[key] ?? "").toLowerCase()));
+}
+
+function assertEvmUpgradeHistory(previous: Json, next: Json): void {
+  const before = list(previous.history);
+  const after = list(next.history);
+  const changed = implementationReview(previous) !== implementationReview(next);
+  if (after.length !== before.length + (changed ? 1 : 0) || before.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(after[index])) || (changed && implementationReview(after[before.length]) !== implementationReview(previous))) fail("Reviewed EVM upgrade history must append the outgoing implementation");
+}
+
+function deploymentKeyChanged(deployment: Json, successor: Json, key: string): boolean {
+  if (offChainDeploymentKeys.includes(key)) return false;
+  if (isRecord(deployment.evmUpgrade) && isRecord(successor.evmUpgrade) && ["evmUpgrade", "sourceCommit", "deploymentTransaction"].includes(key)) return false;
+  if (Boolean(deployment.programId) && deployment.upgradeAuthority !== null && ["codeSha256", "upgradeAuthority", "sourceCommit", "deploymentTransaction"].includes(key)) return false;
+  return key === "evmUpgrade" ? JSON.stringify(deployment[key]) !== JSON.stringify(successor[key]) : deployment[key] !== successor[key];
+}
+
+function assertEscrowTransition(previousValue: unknown, nextValue: unknown, allowUnfundedChange: boolean): void {
+  const previous = isRecord(previousValue) ? previousValue : undefined;
+  const next = isRecord(nextValue) ? nextValue : undefined;
+  const before = list(previous?.deployments).filter(isRecord);
+  for (const deployment of list(next?.deployments).filter(isRecord))
+    if (isRecord(deployment.evmUpgrade) && deployment.evmUpgrade.history !== undefined && !before.some((candidate) => candidate.network === deployment.network)) fail("A new escrow deployment cannot carry reviewed EVM upgrade history");
+  if (previous === undefined) return;
+  if (next === undefined || ((!allowUnfundedChange || before.length > 0) && (previous.chain !== next.chain || previous.effectiveCycle !== next.effectiveCycle)) || previous.feeMode !== next.feeMode || previous.feeBasisPoints !== next.feeBasisPoints || previous.withdrawalFeeBasisPoints !== next.withdrawalFeeBasisPoints) fail("An escrow project's settlement chain and fee policy cannot change");
+  const after = list(next.deployments).filter(isRecord);
+  for (const deployment of before) {
+    const successor = after.find((candidate) => candidate.network === deployment.network);
+    if (successor === undefined || isRecord(deployment.evmUpgrade) !== isRecord(successor.evmUpgrade) || Object.keys(deployment).some((key) => deploymentKeyChanged(deployment, successor, key))) fail("Historical escrow deployments are immutable");
+    if (isRecord(deployment.evmUpgrade) && isRecord(successor.evmUpgrade)) assertEvmUpgradeHistory(deployment.evmUpgrade, successor.evmUpgrade);
+  }
+}
+
+function assertSecurityBountyTransition(previousValue: unknown, nextValue: unknown): void {
+  const previous = isRecord(previousValue) ? previousValue : undefined;
+  const next = isRecord(nextValue) ? nextValue : undefined;
+  const settlement = isRecord(previous?.settlement) ? previous.settlement : undefined;
+  if (!(settlement !== undefined && list(settlement.deployments).length === 0 && next?.settlement === undefined)) assertEscrowTransition(settlement, next?.settlement, false);
+  if (previous !== undefined && next === undefined) fail("a security bounty program cannot be removed; close it instead");
+}
+
+function assertPolicyTransition(previousValue: unknown, nextValue: unknown, trusted: Trusted): void {
   const previous = validateProjectDefinition(previousValue, { trusted: ownSections(previousValue), historical: true });
-  const next = validateProjectDefinition(nextValue, { trusted: ownSections(previousValue), historical: false });
+  const next = validateProjectDefinition(nextValue, { trusted, historical: false });
   if (previous.id !== next.id) fail("project id cannot change");
   const previousFunding = record(previous.funding, "project.funding");
   const nextFunding = record(next.funding, "project.funding");
+  const previousReward = record(previous.reward, "project.reward");
+  const unfundedMonthly = previousReward.kind === "monthly-pool" && previousReward.fundingState !== "committed" && BigInt(String(previousReward.committedMinor)) === 0n && previousReward.paymentMode !== "enabled" && list(isRecord(previous.escrow) ? previous.escrow.deployments : undefined).length === 0 && list(previousFunding.addresses).length === 0 && list(previousFunding.commitments).length === 0;
+  assertEscrowTransition(previous.escrow, next.escrow, unfundedMonthly);
+  assertSecurityBountyTransition(previous.securityBounty, next.securityBounty);
   assertFundingRouteTransition(list(previousFunding.addresses).filter(isRecord), list(nextFunding.addresses).filter(isRecord));
   const previousAuthority = record(previous.authority, "project.authority");
   const nextAuthority = record(next.authority, "project.authority");
@@ -1021,9 +1073,9 @@ function assertPayoutExclusionTransition(previous: unknown, next: unknown, nowIs
 }
 
 /** @throws {never} */
-export function transitionProblem(previous: unknown, next: unknown, nowIso: string): string | undefined {
+export function transitionProblem(previous: unknown, next: unknown, nowIso: string, trusted: Trusted = ownSections(previous)): string | undefined {
   return problemOf(() => {
-    assertPolicyTransition(previous, next);
+    assertPolicyTransition(previous, next, trusted);
     assertPayoutExclusionTransition(previous, next, nowIso);
   });
 }

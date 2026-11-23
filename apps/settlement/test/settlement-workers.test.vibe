@@ -7,7 +7,7 @@ import { keeperMarker } from "../src/keeper/signer.vibe"
 import { signerMarker } from "../src/signer/evm.vibe"
 import { posterMarker } from "../src/signer/rootPoster.vibe"
 import { solanaSignerMarker } from "../src/signer/solana.vibe"
-import { paymentsCron } from "../src/workers/payments.vibe"
+import { paymentsCron } from "../src/jobs/payments.vibe"
 
 const root = new URL("..", import.meta.url).pathname
 

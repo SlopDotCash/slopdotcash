@@ -48,7 +48,7 @@ const Conflict = Schema.Struct({ route: Schema.String, reason: Schema.String });
 
 const Conflicts = Schema.Struct({ conflicts: Schema.Array(Conflict) });
 
-const CaseRequest = Schema.Struct({ method: Schema.String, url: Schema.String, headers: Headers, body: Schema.optionalKey(Schema.String) });
+const CaseRequest = Schema.Struct({ method: Schema.String, url: Schema.String, headers: Headers, body: Schema.optionalKey(Schema.NullOr(Schema.String)) });
 
 const CaseResponse = Schema.Struct({ status: Schema.Number, headers: Headers, body: Schema.String });
 
@@ -294,7 +294,7 @@ export function replayDifference(replay: ReplayCase, seen: Seen): ReadonlyArray<
 /** @throws {TypeError} */
 export function replayRequest(replay: ReplayCase): Probe {
   const url = new URL(replay.request.url);
-  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body === undefined ? {} : { body: replay.request.body } };
+  return { path: `${url.pathname}${url.search}`, method: replay.request.method, headers: replay.request.headers, ...replay.request.body == null ? {} : { body: replay.request.body } };
 }
 
 function rowOrigin(row: Row, successor: WorkerSuccessor): string {

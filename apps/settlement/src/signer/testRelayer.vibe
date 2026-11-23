@@ -212,7 +212,7 @@ export effect function commitSolanaMonth(authorization: SignedPlan, admit: boole
         }
         obligation = pointer.value.obligation
       }
-      const proof = try Effect.try({ try: () => tree.proof(index) ?? [], catch: () => held("Monthly allocation mismatch") })
+      const proof = tree.proofs[index] ?? []
       const leaf: LeafArguments = { period, source: entry.source, actor: entry.actor, gross: entry.gross, index, count: tree.count, proof }
       const instruction = obligation === undefined
         ? commitMonthlyAward({ program: verified.program, project: verified.project, payer: relayer.address, leaf })

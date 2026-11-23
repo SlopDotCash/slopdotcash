@@ -30,10 +30,8 @@ export function signedFees(raw: string): EvmSend | undefined {
   if (!raw.startsWith("0x")) return undefined;
   try {
     const parsed = parseTransaction(raw as Hex);
-    const maxFeePerGas = parsed.maxFeePerGas ?? parsed.gasPrice;
-    const maxPriorityFeePerGas = parsed.maxPriorityFeePerGas ?? parsed.gasPrice;
-    if (parsed.nonce === undefined || parsed.gas === undefined || maxFeePerGas === undefined || maxPriorityFeePerGas === undefined) return undefined;
-    return { nonce: parsed.nonce, gas: parsed.gas, maxFeePerGas, maxPriorityFeePerGas };
+    const gasPrice = parsed.gasPrice ?? 0n;
+    return { nonce: parsed.nonce ?? 0, gas: parsed.gas ?? 0n, maxFeePerGas: parsed.maxFeePerGas ?? gasPrice, maxPriorityFeePerGas: parsed.maxPriorityFeePerGas ?? gasPrice };
   } catch {
     return undefined;
   }

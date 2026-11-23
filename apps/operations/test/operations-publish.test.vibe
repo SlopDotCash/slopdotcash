@@ -204,6 +204,12 @@ effect function routed<A, E, R>(program: A!E!R, fetch: typeof globalThis.fetch) 
   }
 }
 
+effect function existingWorker(served: Served, name: string) {
+  const target = HttpClientRequest.put(`${served.url}/client/v4/accounts/${accountId}/workers/scripts/${name}`, { headers: { authorization: "Bearer journey" } })
+  const answer = try HttpClient.execute(HttpClientRequest.bodyFormDataRecord(target, { metadata: JSON.stringify({ main_module: "worker.js" }) }))
+  try Effect.try(() => assert.strictEqual(answer.status, 200))
+}
+
 effect function secret(served: Served, method: "PUT" | "DELETE", name: string, script = "slop-notify") {
   const base = `${served.url}/client/v4/accounts/${accountId}/workers/scripts/${script}/secrets`
   const authorized = { authorization: "Bearer journey" }
@@ -220,6 +226,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     const files = try Path.Path
     const api = cloudflareFake({ accountId })
     const served: Served = try acquireRelease(promise(() => serve(api.handler)), (server) => promise(() => server.close()))
+    for (const name of ["slop-notify", attesterName]) try existingWorker(served, name)
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-publish-" })
     const root = files.join(directory, "checkout")
     const bundle = files.join(directory, "bundle")
@@ -322,7 +329,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         schedules: [...api.state.schedules[attesterName] ?? []],
         unpinnedUploads: (api.state.versions["slop-payments-ethereum-attester"] ?? []).length,
       }
-      const since = (try Clock.currentTimeMillis) - 60_000
+      const since = Math.max(...Object.values(api.state.versions).flat().map((version) => Date.parse(version.createdOn)))
       api.loseNext({ method: "POST", path: `/accounts/${accountId}/pages/projects/${siteProject}/deployments` })
       try settled(publishing.site(target))
       const lost = api.calls.filter((call) => call.lost).map((call) => `${call.method} ${call.path}`)
@@ -360,6 +367,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       const live = { SUBMISSION_FEE_MODE: "live" }
       const keyedBase = "https://base.rpc.example/journey-key"
       const feeOrder = publishing.order.indexOf("SubmissionFee") - publishing.order.indexOf("Referral")
+      try existingWorker(served, feeWorker)
       const liveWithoutKey = try feeRelease(live)
       const dryRun = try feeRelease({})
       const otherDatabase = try feeRelease(live, { d1_databases: [{ binding: "SUBMISSION_FEE_DB", database_name: "slop-private", database_id: stagingDatabase }] })
@@ -464,5 +472,5 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         liveStray: { outcome: "Submission fee resolver secret inventory is not ready", uploads: 0 },
       },
     }))
-  }))
+  }), 600_000)
 })

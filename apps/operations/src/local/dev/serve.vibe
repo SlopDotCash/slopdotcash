@@ -106,7 +106,7 @@ export effect function localVars(root: string, directory: string, origin: string
   const text = fs.readFileString((try Path.Path).join(root, ".dev.vars")) catch () => ""
   const merged: Record<string, string> = { ...(try keptSecrets(directory)), ...parsedVars(text) }
   for (const name of Object.keys(merged)) merged[name] = (try setting(name)) ?? merged[name] ?? ""
-  return { ...merged, SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: origin, NOTIFY_GENERAL_EMAIL_ENABLED: "true" }
+  return { ...merged, SLOP_ENVIRONMENT: "local", IDENTITY_PUBLIC_ORIGIN: origin, IDENTITY_ALLOW_LOOPBACK: "1", PAYMENTS_ALLOWED_ORIGIN: origin, NOTIFY_GENERAL_EMAIL_ENABLED: "true" }
 }
 
 effect function built(root: string) {

@@ -252,7 +252,7 @@ effect function storeConfig(store: Store, root: string, workspace: string) {
 effect function migrated(store: Store, config: string, root: string) {
   const cloudflare = try Cloudflare
   try migrationLedger(root)
-  try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds })
+  try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds, quiet: true })
 }
 
 effect function disclosed(store: Store, root: string, bundle: string) {

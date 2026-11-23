@@ -2312,8 +2312,8 @@ import { seededGithub, slopbotFake } from fakes
       ]
       const later = [
         try revision({ actor: ada, login: "ada", category: "resolved-issue", source: "105", amount: 10, occurredAt: "2026-10-08T09:00:00.000Z", recordedAt: november, previous: issue }),
-        try revision({ actor: grace, login: "grace", category: "slopbot-penalty", source: "penalty-1", amount: -30, occurredAt: "2026-10-20T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
-        try revision({ actor: idle, login: "idle", category: "slopbot-penalty", source: "penalty-2", amount: -30, occurredAt: "2026-10-21T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
+        try revision({ actor: grace, login: "grace", category: "slopbot-penalty", source: "penalty-1", amount: -30, occurredAt: "2026-10-20T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 30, reversedAt: null, reversal: null } }),
+        try revision({ actor: idle, login: "idle", category: "slopbot-penalty", source: "penalty-2", amount: -30, occurredAt: "2026-10-21T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 30, reversedAt: null, reversal: null } }),
       ]
       try registered(widgets, 1, { payoutExclusions: [{ actorId: String(owner), relationship: "owner", fromCycle: "2026-09", untilCycle: null }] })
       try imported("1".repeat(64), "2026-10-31T23:30:00.000Z", first)
@@ -2466,8 +2466,9 @@ import { seededGithub, slopbotFake } from fakes
     config: "test/support/u11/vite.config.ts",
     entry: "journal",
     d1: { SLOP_DB: "slop-private" },
-    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local" },
+    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: "http://localhost:8788" },
     services: { SLOP_IDENTITY: absentService() },
+    origin: "http://localhost:8788",
   })
 
   function fields(answer: Answer): Body {
@@ -4022,7 +4023,7 @@ import { seededGithub, slopbotFake } from fakes
         persistentPulls: { outcome: { status: 500, body: "{incomplete upstream failure" }, statuses: [500, 500, 500], waits: [1_000, 2_000] },
         outOfScope: Array.from({ length: 10 }, () => once),
         otherRequests: Array.from({ length: 5 }, () => once),
-        otherStatuses: [{ statuses: [403], waits: [] }, { statuses: [404], waits: [] }, { statuses: [422], waits: [] }, { statuses: [502], waits: [] }],
+        otherStatuses: [{ statuses: [403], waits: [] }, { statuses: [404], waits: [] }, { statuses: [422], waits: [] }, { statuses: [502, 404], waits: [1_000] }],
         live: [{ statuses: [500, 200], waits: [1_000] }, { statuses: [500, 200], waits: [1_000] }, { statuses: [200], waits: [] }],
         quotaKept: { statuses: [500, 429, 500, 429, 429, 429, 429], waits: [1_000, 3_000, 2_000, 3_000, 3_000, 3_000] },
         missing: { outcome: { status: 404, body: "missing" }, statuses: [404], waits: [] },
@@ -6525,7 +6526,7 @@ import { seededGithub, slopbotFake } from fakes
         stewardLabel: { automaticClosure: true, readyLabel: ready },
         unconsentedSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
         unconsentedLabelled: [200, { presentation: ["slopbot"], executable: [], financial: [] }, 3, "active", "community"],
-        unconsentedLabel: { automaticClosure: false, readyLabel: ready },
+        unconsentedLabel: { readyLabel: ready },
         bounds: [
           [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
           [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],

@@ -387,25 +387,25 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "30
     const { env } = try Journey
     clock.set(Date.parse("2026-11-18T12:00:00.000Z"))
     try proposed(env, "asi", true)
-    try proposed(env, "papa")
+    try proposed(env, "victor")
     const beforeClose = try ask(env, "/asi/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
     const change = try ask(env, "/asi/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "70000000", expectedSequence: 0 } })
     const cut = try ask(env, "/asi/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "60000000", expectedSequence: 0, reason: "Half of the reviewed work was reverted upstream." } })
     clock.set(Date.parse("2026-11-20T00:00:00.000Z"))
     const view = try ask(env, "/asi/monthly/2026-11", { as: steward })
     const frozen = try ask(env, "/asi/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
-    const ordinary = try ask(env, "/papa/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    const ordinary = try ask(env, "/victor/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
     const changes = try count(env, "SELECT count(*) AS n FROM monthly_allocation_changes WHERE project_id = 'asi'")
     const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'asi' AND trigger = 'owner' AND actor_id = '77'")
-    const papaRuns = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'papa'")
+    const victorRuns = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'victor'")
     try same({
       beforeClose: errorOf(beforeClose), change: errorOf(change), cut: errorOf(cut),
       view: [view.status, field(view.body, "proposal", "earlyCloseAt"), field(view.body, "proposal", "capBase")],
-      frozen: [frozen.status, field(frozen.body, "run", "trigger")], ordinary: errorOf(ordinary), changes, runs, papaRuns,
+      frozen: [frozen.status, field(frozen.body, "run", "trigger")], ordinary: errorOf(ordinary), changes, runs, victorRuns,
     }, {
       beforeClose: [409, "month_open"], change: [409, "closeout_allocations_fixed"], cut: [409, "closeout_allocations_fixed"],
       view: [200, "2026-11-19T00:00:00.000Z", "150000000"],
-      frozen: [200, "owner"], ordinary: [409, "month_open"], changes: 0, runs: 1, papaRuns: 0,
+      frozen: [200, "owner"], ordinary: [409, "month_open"], changes: 0, runs: 1, victorRuns: 0,
     })
   })
 

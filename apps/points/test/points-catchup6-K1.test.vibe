@@ -25,9 +25,9 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-effect function revision(previous: Revision | null, award: Award, decision?: RevisionBody["decision"]) {
+effect function revision(previous: Revision | null, award: Award, decision?: RevisionBody["decision"], recordedAt = "2026-11-20T00:00:00.000Z") {
   const body: RevisionBody = {
-    previous: previous?.id ?? null, recordedAt: "2026-11-20T00:00:00.000Z", sourceDigest: snapshotDigest, sourceRule: "slop-score-v2", award,
+    previous: previous?.id ?? null, recordedAt, sourceDigest: snapshotDigest, sourceRule: "slop-score-v2", award,
     ...(decision === undefined ? {} : { decision }),
   }
   return { id: try pointRevisionId(body), ...body } satisfies Revision
@@ -128,7 +128,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     const sourceId = "PR_kwDOoriginal"
     const accepted = try revision(null, try merge(sourceId, "wu_eliza_eliza_pr_1", 30, occurredAt, false), {
       sourceId, effectiveAt: decidedAt, reason: verifiedHistoricalAllocationDecision, delta: 30,
-    })
+    }, decidedAt)
     const store = try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: decidedAt, coverage: [], revisions: [accepted] })}\n`, null, [])
     const fallback = {
       ...base, generatedAt: decidedAt, reviewExclusions: [],

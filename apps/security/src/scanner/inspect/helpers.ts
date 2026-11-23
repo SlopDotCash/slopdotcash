@@ -16,6 +16,7 @@ export interface CommandSource {
   readonly path: string;
   readonly text: string;
   readonly directory: string;
+  readonly file?: boolean;
 }
 
 export interface LocalHelpers {
@@ -23,22 +24,114 @@ export interface LocalHelpers {
   readonly unacquired: ReadonlyArray<string>;
 }
 
+interface ParsedCommands {
+  readonly commands: ReadonlyArray<Word[]>;
+  readonly subshell: ReadonlySet<Word[]>;
+  readonly conditional: ReadonlySet<Word[]>;
+  readonly unresolved: boolean;
+}
+
+const BACKGROUND_OR_PIPE = /^(?:\|(?!\|)|&(?!&))/u;
+
 /** @throws {never} */
-function commands(text: string) {
+function doubleQuoteEnd(text: string, start: number): number {
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") i += 2;
+    else if (c === '"') return i + 1;
+    else if (c === "$" && text[i + 1] === "(") {
+      const end = substitutionEnd(text, i + 2);
+      if (end < 0) return -1;
+      i = end;
+    } else if (c === "`") {
+      const end = backtickEnd(text, i + 1);
+      if (end < 0) return -1;
+      i = end;
+    } else i += 1;
+  }
+  return -1;
+}
+
+/** @throws {never} */
+function backtickEnd(text: string, start: number): number {
+  let i = start;
+  while (i < text.length) {
+    if (text[i] === "\\") i += 2;
+    else if (text[i] === "`") return i + 1;
+    else i += 1;
+  }
+  return -1;
+}
+
+/** @throws {never} */
+function substitutionEnd(text: string, start: number): number {
+  let depth = 1;
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") i += 2;
+    else if (c === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end < 0) return -1;
+      i = end + 1;
+    } else if (c === '"') {
+      const end = doubleQuoteEnd(text, i + 1);
+      if (end < 0) return -1;
+      i = end;
+    } else if (c === "`") {
+      const end = backtickEnd(text, i + 1);
+      if (end < 0) return -1;
+      i = end;
+    } else if (c === "$" && text[i + 1] === "(") {
+      const end = substitutionEnd(text, i + 2);
+      if (end < 0) return -1;
+      i = end;
+    } else {
+      if (c === "(") depth += 1;
+      else if (c === ")" && --depth === 0) return i + 1;
+      i += 1;
+    }
+  }
+  return -1;
+}
+
+/** @throws {never} */
+function commands(text: string): ParsedCommands {
   const result: Word[][] = [];
+  const subshell = new Set<Word[]>();
+  const conditional = new Set<Word[]>();
   let command: Word[] = [];
+  let run = "";
+  let previous: Word[] | undefined;
   let word: Word | undefined;
   let quote = "";
   let unresolved = false;
-  let branched = false;
+  let depth = 0;
   const endWord = () => {
     if (word) command.push(word);
     word = undefined;
   };
   const endCommand = () => {
     endWord();
-    if (command.length) result.push(command);
+    if (command.length > 0) {
+      result.push(command);
+      if (depth > 0) subshell.add(command);
+      if (/[&|]/u.test(run)) conditional.add(command);
+      if (previous && BACKGROUND_OR_PIPE.test(run)) conditional.add(previous);
+      previous = command;
+      run = "";
+    }
     command = [];
+  };
+  const nested = (body: string) => {
+    const inner = commands(body);
+    for (const words of inner.commands) {
+      result.push(words);
+      subshell.add(words);
+      if (inner.conditional.has(words)) conditional.add(words);
+    }
+    unresolved ||= inner.unresolved;
   };
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i] ?? "";
@@ -99,33 +192,51 @@ function commands(text: string) {
       continue;
     }
     if (!quote && /[\s;|&()]/u.test(c)) {
-      if (c === "(" || c === ")") unresolved = true;
-      if (c === "&" || c === "|") branched = true;
-      if (/[\n;|&()]/u.test(c)) endCommand();
-      else endWord();
+      if (/[\n;|&()]/u.test(c)) {
+        endCommand();
+        run += c;
+      } else endWord();
+      if (c === "(") depth += 1;
+      else if (c === ")") {
+        if (depth === 0) unresolved = true;
+        else depth -= 1;
+      }
       continue;
     }
     word ??= { value: "", dynamic: false };
     if (!quote && ((c === "~" && word.value === "") || c === "{" || c === "}")) word.dynamic = true;
     if (quote !== "'" && (c === "$" || c === "`")) {
       word.dynamic = true;
-      if (c === "`" || text[i + 1] === "(") {
-        unresolved = true;
-        const closing = c === "`" ? "`" : ")";
-        word.value += c;
-        if (c === "$") word.value += text[++i];
-        while (++i < text.length) {
-          word.value += text[i];
-          if (text[i] === closing) break;
+      if (c === "$" && text[i + 1] === "(" && text[i + 2] === "(") {
+        const end = text.indexOf("))", i + 3);
+        if (end < 0) {
+          unresolved = true;
+          break;
         }
+        if (/\$\(|`/u.test(text.slice(i + 3, end))) unresolved = true;
+        word.value += text.slice(i, end + 2);
+        i = end + 1;
+        continue;
+      }
+      if (c === "`" || text[i + 1] === "(") {
+        const end = c === "`" ? backtickEnd(text, i + 1) : substitutionEnd(text, i + 2);
+        if (end < 0) {
+          unresolved = true;
+          break;
+        }
+        nested(text.slice(c === "`" ? i + 1 : i + 2, end - 1));
+        word.value += text.slice(i, end);
+        i = end - 1;
         continue;
       }
     }
     word.value += c;
   }
   if (quote && word) word.dynamic = true;
+  if (depth !== 0) unresolved = true;
   endCommand();
-  return { commands: result, unresolved, branched };
+  if (previous && BACKGROUND_OR_PIPE.test(run)) conditional.add(previous);
+  return { commands: result, subshell, conditional, unresolved };
 }
 
 /** @throws {never} */
@@ -195,6 +306,8 @@ const SU: Wrapper = {
   split: "c command session-command",
   dash: true,
 };
+
+const SCRIPT_DIRECTORY = /^\$\(dirname (?:"\$0"|\$0|"\$\{BASH_SOURCE(?:\[0\])?\}"|\$\{BASH_SOURCE(?:\[0\])?\})\)$/u;
 
 const INTERPRETER_NAME = /^(?:(?:ba|da|k|z)?sh|node(?:js)?|python[0-9.]*|ruby|perl|php)$/u;
 
@@ -272,8 +385,12 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
     if (seen.has(identity)) continue;
     seen.add(identity);
     let directory: string | null = source.directory;
+    let subshellCd = false;
+    let inSubshell = false;
+    let blocks = 0;
+    let braces = 0;
     const include = (word: Word, shell: boolean | "direct") => {
-      const cwd = directory;
+      const cwd = inSubshell && subshellCd ? null : directory;
       const path = localPath(cwd, word);
       const file = path === null ? undefined : byPath.get(path);
       if (!file || file.text === null || cwd === null) {
@@ -284,25 +401,33 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
       const shellShebang = /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(file.text);
       const nonShell =
         !shellShebang && (/^#![^\n]*\b(?:node|python[0-9.]*|ruby|perl|php)\b/u.test(file.text) || /\.(?:[cm]?[jt]sx?|py|rb|pl|php)$/u.test(file.path));
-      if (shell === true || (shell === "direct" && !nonShell)) queue.push({ path: file.path, text: file.text, directory: cwd });
+      if (shell === true || (shell === "direct" && !nonShell)) queue.push({ path: file.path, text: file.text, directory: cwd, file: true });
     };
     const parsed = commands(source.text);
     if (parsed.unresolved) missing(source.path);
     for (let words of parsed.commands) {
       let offset = 0;
+      inSubshell = parsed.subshell.has(words);
       const first = words[0];
-      if (first && !first.quoted && /^(?:if|elif|else|then|fi|for|while|until|do|done|case|esac|select|function|\{|\})$/u.test(first.value))
-        missing(source.path);
+      for (const word of words)
+        if (!word.quoted && word.value === "{") braces += 1;
+        else if (!word.quoted && word.value === "}") braces = Math.max(0, braces - 1);
+      if (first && !first.quoted) {
+        if (/^(?:case|esac|select)$/u.test(first.value)) missing(source.path);
+        if (/^(?:if|while|until|for)$/u.test(first.value)) blocks += 1;
+        else if (/^(?:fi|done)$/u.test(first.value)) blocks = Math.max(0, blocks - 1);
+        if (/^(?:for|function|fi|done|\})$/u.test(first.value)) continue;
+      }
       let wrapper = false;
       for (;;) {
         const current = words[offset];
         if (current === undefined) break;
-        if (!((!current.quoted && /^(?:then|do|else|!)$/u.test(current.value)) || /^(?:exec|command|[A-Za-z_][A-Za-z0-9_]*=.*)$/u.test(current.value))) break;
+        if (!((!current.quoted && /^(?:if|elif|while|until|then|do|else|!|\{)$/u.test(current.value)) || /^(?:exec|command|[A-Za-z_][A-Za-z0-9_]*=.*)$/u.test(current.value))) break;
         if (/^(?:exec|command)$/u.test(current.value)) wrapper = true;
         offset += 1;
       }
       if (wrapper && words[offset]?.value.startsWith("-")) {
-        missing(source.path);
+        if (words[offset - 1]?.value !== "command" || !/^-[vV]$/u.test(words[offset]?.value ?? "")) missing(source.path);
         continue;
       }
       let command: Word | undefined = words[offset++];
@@ -388,9 +513,20 @@ export function localInstallHelpers(files: ReadonlyArray<HelperInput>, roots: Re
         continue;
       }
       if (name === "cd") {
-        if (parsed.branched) missing(source.path);
+        if (inSubshell) {
+          subshellCd = true;
+          continue;
+        }
         const target = words[offset];
-        directory = target ? localPath(directory, target, true) : null;
+        const scriptDirectory = posix.dirname(source.path) === "." ? "" : posix.dirname(source.path);
+        directory =
+          parsed.conditional.has(words) || blocks > 0 || braces > 0
+            ? null
+            : target && source.file === true && SCRIPT_DIRECTORY.test(target.value)
+              ? scriptDirectory
+              : target
+                ? localPath(directory, target, true)
+                : null;
         const entered = directory;
         if (entered !== null && entered !== "" && !files.some((file) => file.path.startsWith(`${entered}/`))) directory = null;
         continue;

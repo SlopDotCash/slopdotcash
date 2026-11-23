@@ -2,7 +2,7 @@
 import { burnAddress, networkTerms, slopDecimals, slopRatesAt, slopShareBps, submissionFeeOptions } from "@repo/backend/client"
 import { isoNow } from "@repo/platform/clock"
 import { RowMismatch, first, sql } from "@repo/platform/d1"
-import { answered, fixedHeaders, json } from "@repo/platform/http"
+import { answerSubtree, fixedHeaders, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { SubmissionFeeRates } from "@repo/ports/backend"
 import { ReportDeposits } from "@repo/ports/security"
@@ -150,7 +150,4 @@ effect function answer() {
   return json(served.body, served.status, { "cache-control": served.cache })
 }
 
-export const SubmissionFeeRoutes = Layer.mergeAll(
-  HttpRouter.add("*", "/api/v1/submission-fee", answered(answer())),
-  HttpRouter.add("*", "/api/v1/submission-fee/*", answered(answer())),
-)
+export const SubmissionFeeRoutes = answerSubtree(submissionFeePath, answer())

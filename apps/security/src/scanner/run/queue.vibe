@@ -4,7 +4,8 @@ import { sha256Hex } from "@repo/platform/crypto"
 import type { FetchOutcome } from "../../../gen/security__admission.effect.vibe"
 import { type QueuedScan, ScanQueue } from "../../client/admission.vibe"
 import { AcquisitionFailed, AcquisitionRefused, acquireRepository } from "../acquire/git.vibe"
-import { ScanService, decodedAnswer, signedJson } from "./service.vibe"
+import { HttpClientError } from "effect/http"
+import { ScanService, ServiceUnavailable, decodedAnswer, signedJson } from "./service.vibe"
 
 export const queuePath = "/api/v1/vetting/requests"
 const pinnedLimit = 1024 * 1024
@@ -27,6 +28,8 @@ export interface Assignment {
 export error QueueInvalid
 export error AssessmentNotPending
 export error PinUnavailable { reason: string }
+export type AcquisitionRead = "revision" | "github-identity" | "template-index" | "template-file"
+export error AcquisitionReadFailed { read: AcquisitionRead; detail: string }
 export error QueuedRefusal { reason: string; fetched: FetchOutcome; repository: string }
 
 export service ScanAcquisition {
@@ -98,18 +101,66 @@ export effect function readPendingAssessments() {
   return assignments
 }
 
-effect function pinned(url: string, headers: Readonly<Record<string, string>> = {}) {
-  const client = try HttpClient.HttpClient
-  const request = HttpClientRequest.get(url, { headers })
-  const sent = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" })
-  const response = timeoutOrElse(sent, { duration: Duration.seconds(15), orElse: () => Effect.fail(new PinUnavailable({ reason: "Pinned input unavailable" })) }) catch effect () => {
-    throw new PinUnavailable({ reason: "Pinned input unavailable" })
-  }
-  return response
+const FIXED_FAILURES: ReadonlySet<string> = new Set([
+  "A review read another inventory",
+  "Acquired link bytes changed",
+  "Acquired object bytes changed",
+  "Acquired symlink target changed",
+  "Blob bytes do not match the Git object",
+  "Commit pin mismatch",
+  "Conflicting template input digests",
+  "Incomplete Git object stream",
+  "Incomplete commit tree",
+  "Invalid accepted template revisions",
+  "Invalid acquired link",
+  "Invalid acquired object digest",
+  "Invalid immutable blob",
+  "Invalid immutable link blob",
+  "Invalid input path",
+  "Invalid source coverage",
+  "Invalid template file inventory",
+  "Manifest pin mismatch",
+  "Manifest project mismatch",
+  "Pinned input unavailable",
+  "Repository identity unavailable",
+  "Source acquisition failed",
+  "Source entry is disconnected from its Git tree",
+  "Source inventory changed",
+  "Template file bytes changed",
+  "Template input digest mismatch",
+  "Template pin is stale or uncommitted",
+  "Tree bytes do not match the Git object",
+  "Unexpected Git object data",
+  "Unknown source inventory",
+])
+
+function sentenceOf(error: object) {
+  return "reason" in error && typeof error.reason === "string" ? error.reason : error instanceof Error ? error.message : ""
 }
 
-effect function pinnedBytes(response: HttpClientResponse.HttpClientResponse) {
-  if (response.status !== 200) throw new PinUnavailable({ reason: "Pinned input unavailable" })
+export function failureLabel(error: unknown): string {
+  if (error instanceof AcquisitionReadFailed) return `${error.read}-${error.detail}`
+  if (error instanceof ServiceUnavailable) return error.status === 0 ? `${error.step}-request-unknown` : `${error.step}-http-${error.status}`
+  if (typeof error !== "object" || error === null) return "unknown"
+  const sentence = sentenceOf(error)
+  if (FIXED_FAILURES.has(sentence)) return sentence.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "")
+  return "_tag" in error && typeof error._tag === "string" ? error._tag : error instanceof Error ? error.name : "unknown"
+}
+
+function requestClass(error: unknown) {
+  const cause = error instanceof HttpClientError.HttpClientError && "cause" in error.reason ? error.reason.cause : error
+  return cause instanceof Error && /^[A-Za-z]{1,40}$/u.test(cause.name) ? cause.name : "unknown"
+}
+
+effect function pinned(read: AcquisitionRead, url: string, headers: Readonly<Record<string, string>> = {}) {
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.get(url, { headers })
+  const sent = Effect.mapError(provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" }), (error) => new AcquisitionReadFailed({ read, detail: `request-${requestClass(error)}` }))
+  return try timeoutOrElse(sent, { duration: Duration.seconds(15), orElse: () => Effect.fail(new AcquisitionReadFailed({ read, detail: "request-TimeoutError" })) })
+}
+
+effect function pinnedBytes(read: AcquisitionRead, response: HttpClientResponse.HttpClientResponse) {
+  if (response.status !== 200) throw new AcquisitionReadFailed({ read, detail: `http-${response.status}` })
   const bytes = boundedBytes(response, pinnedLimit, "pinned input") catch effect () => {
     throw new PinUnavailable({ reason: "Pinned input unavailable" })
   }
@@ -172,7 +223,7 @@ export effect function acquireQueued(assessmentId: string, workDirectory: string
   const settings = try ScanAcquisition
   const queued = (try readPendingAssessments()).find((item) => item.assessmentId === assessmentId)
   if (queued === undefined) throw new AssessmentNotPending()
-  const revision = try pinnedJson(try pinnedBytes(try pinned(`${origin}/api/v1/project-revisions/${queued.projectId}/${queued.revision}`)), Revision, "Manifest pin mismatch")
+  const revision = try pinnedJson(try pinnedBytes("revision", try pinned("revision", `${origin}/api/v1/project-revisions/${queued.projectId}/${queued.revision}`)), Revision, "Manifest pin mismatch")
   if (revision.projectId !== queued.projectId || revision.revision !== queued.revision || revision.manifestSha256 !== queued.manifestSha256 || (try sha256Hex(revision.manifestText)) !== queued.manifestSha256) throw new PinUnavailable({ reason: "Manifest pin mismatch" })
   const manifest = try pinnedJson(new TextEncoder().encode(revision.manifestText), Manifest, "Manifest pin mismatch")
   if (manifest.id !== queued.projectId) throw new PinUnavailable({ reason: "Manifest project mismatch" })
@@ -182,14 +233,14 @@ export effect function acquireQueued(assessmentId: string, workDirectory: string
   const identity = identityOf(manifest, found)
   if (identity === undefined) throw new QueuedRefusal({ reason: "Immutable repository identity mismatch", fetched: "FetchIdentityMismatch", repository })
   const currentPath = currentPathOf(found.repository.githubUrl)
-  const identityResponse = try pinned(`https://api.github.com/repos/${currentPath}`, githubHeaders(settings.githubToken))
+  const identityResponse = try pinned("github-identity", `https://api.github.com/repos/${currentPath}`, githubHeaders(settings.githubToken))
   if (identityResponse.status === 404) throw new QueuedRefusal({ reason: "Repository not found on GitHub", fetched: "FetchMissing", repository })
   if (identityResponse.status >= 300 && identityResponse.status < 400) throw new QueuedRefusal({ reason: "Repository moved on GitHub", fetched: "FetchMoved", repository })
-  const github = try pinnedJson(try pinnedBytes(identityResponse), GitHubRepository, "Repository identity unavailable")
+  const github = try pinnedJson(try pinnedBytes("github-identity", identityResponse), GitHubRepository, "Repository identity unavailable")
   if (!Number.isSafeInteger(github.id) || String(github.id) !== identity.githubId || github.node_id !== identity.nodeId || github.full_name.toLowerCase() !== currentPath.toLowerCase() || github.private) {
     throw new QueuedRefusal({ reason: "Immutable repository identity mismatch", fetched: "FetchIdentityMismatch", repository })
   }
-  const index = try pinnedJson(try pinnedBytes(try pinned(`${origin}/skill-templates/index.json`)), TemplateIndex, "Template pin is stale or uncommitted")
+  const index = try pinnedJson(try pinnedBytes("template-index", try pinned("template-index", `${origin}/skill-templates/index.json`)), TemplateIndex, "Template pin is stale or uncommitted")
   if (index.schemaVersion !== "1" || index.templateSha256 !== queued.templateSha256 || index.revisionStatus !== "committed" || index.renderer.revisionStatus !== "committed" || !commitPattern.test(index.commit) || !repositoryPattern.test(index.repository) || !safePath(index.repository)) {
     throw new QueuedRefusal({ reason: "Template pin is stale or uncommitted", fetched: "FetchStaleTemplate", repository })
   }
@@ -204,7 +255,7 @@ export effect function acquireQueued(assessmentId: string, workDirectory: string
   if ((try sha256Hex(JSON.stringify(templateInputs))) !== queued.templateSha256) throw new QueuedRefusal({ reason: "Template input digest mismatch", fetched: "FetchStaleTemplate", repository })
   const acquired = acquireRepository({ repository: currentPath, commitSha: queued.commitSha, directory: workDirectory, ...(settings.testRemote === undefined ? {} : { testRemote: settings.testRemote(currentPath) }) }) catch effect (error) => match (error) {
     when AcquisitionRefused: throw new QueuedRefusal({ reason: error.reason, fetched: "FetchPathRefused", repository });
-    when AcquisitionFailed: throw new PinUnavailable({ reason: "Source acquisition failed" });
+    when AcquisitionFailed: throw error;
     default: throw new PinUnavailable({ reason: "Source acquisition failed" });
   }
   const fs = try FileSystem.FileSystem
@@ -221,7 +272,7 @@ export effect function acquireQueued(assessmentId: string, workDirectory: string
     ]
     let templateBytes = 0
     for (const item of sources) {
-      const content = try pinnedBytes(try pinned(item.url))
+      const content = try pinnedBytes("template-file", try pinned("template-file", item.url))
       templateBytes += content.byteLength
       if (templateBytes > templateLimit) throw new QueuedRefusal({ reason: "Template acquisition size limit", fetched: "FetchPathRefused", repository })
       if ((try sha256Hex(content)) !== item.sha256) throw new PinUnavailable({ reason: "Template file bytes changed" })

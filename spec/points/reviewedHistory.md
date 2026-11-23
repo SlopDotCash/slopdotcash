@@ -180,7 +180,12 @@ each earlier source accepted no later than the retired one. The retirement
 zeroes the source's October pool, unchanged since review, with the decision
 `owner_duplicate_<dossier digest>`, only when every claimed commit path is
 covered exactly once, by an earlier source or an accepted squash of the
-dossier, and every accepted squash covers a claim. The runner supplies each
+dossier, and every accepted squash covers a claim. A retirement with no
+claimed path rests on an earlier native acceptance instead: it applies only
+when the earlier acceptance proof covers at least one commit of the source
+(development: `identical || expected.length > 0 || acceptedCommits.size > 0`);
+with no claim, no covered commit, no identical accepted change and no net
+outcome it is refused ("Duplicate retirement has extra or empty coverage"). The runner supplies each
 verified record below, and the retirement applies only when every one of them
 meets its condition:
 
@@ -367,7 +372,7 @@ pure def claimCoverageApplies(retirement: Retirement): bool =
   retirement.mergeEdges.every(e => mergeEdgeCovers(e, retirement.occurredAt)) and
   retirement.order.length() == retirement.earlier.length() + retirement.squashes.length() and
   retirement.order.every(o => orderAllows(o)) and
-  retirement.claims.length() > 0 and retirement.claims.length() == retirement.claimedPaths and
+  (retirement.claims.length() > 0 or retirement.covers.length() > 0) and retirement.claims.length() == retirement.claimedPaths and
   retirement.claims.every(c => claimRetained(c) and coveringSource(retirement, c.owner)) and
   retirement.squashes.every(s => retirement.claims.some(c => c.owner == s.source))
 pure def identicalRetirementApplies(retirement: Retirement): bool =
@@ -481,6 +486,11 @@ pure val edgeValues = Set(carriedEdge, { ...carriedEdge, originHeadSecond: false
   { ...carriedEdge, rangeFromFirstParent: false })
 pure def lawUncoveredClaimRefused(retirement: Retirement): bool =
   retirement.claims.length() != retirement.claimedPaths implies not(retirementApplies(retirement))
+pure def lawEmptyRetirementRefused(retirement: Retirement): bool =
+  (retirement.claims.length() == 0 and retirement.covers.length() == 0 and retirement.identical.kind == NoIdenticalChange and
+    not(retirement.net.present)) implies not(retirementApplies(retirement))
+pure val nativeRetirement: Retirement = { ...readyRetirement, claimedPaths: 0, squashes: List(), covers: List(nativeCover),
+  claims: List(), mergeEdges: List(carriedEdge), order: List(distinctOrder) }
 pure def lawSquashNeedsKeptPromotion(retirement: Retirement): bool =
   (retirement.squashes.length() > 0 and not(promotionKeepsContent(retirement.promotion))) implies
     not(retirementApplies(retirement))
@@ -491,6 +501,7 @@ pure val retirementValues = Set(readyRetirement, { ...readyRetirement, claimedPa
   { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, carriesRetiringMerge: true }) },
   { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, ancestryKnown: false }) },
   { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, sameMerge: true, ancestryKnown: false }) },
+  nativeRetirement, { ...nativeRetirement, covers: List(), mergeEdges: List() },
   identicalRetirement, { ...identicalRetirement, identical: { ...sharedChange, sameHead: false } },
   { ...identicalRetirement, squashes: List(squash) },
   netRetirement, { ...netRetirement, net: { ...netChange, allPaths: false } },

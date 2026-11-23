@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { manifestFor, revisionA } from "../installer/harness.ts";
 import { servePublication } from "../installer/publication.ts";
-import { fetchRedirect, node, removeRoot, scriptRoot } from "./fixture.ts";
+import { fetchRedirect, node, nodeAsync, removeRoot, scriptRoot } from "./fixture.ts";
 import { serveGitHub } from "./github.ts";
 
 type Policy = Record<string, unknown> & { readonly terms: Record<string, unknown> };
@@ -120,7 +120,7 @@ export async function termsPreflightAcknowledgesTheServedTerms(): Promise<void> 
     expect(await module.preflight(projectId, { testAuthority: pathToFileURL(fileAuthority).href })).toMatchObject(acknowledged);
 
     const redirected = { NODE_OPTIONS: `--import=${fetchRedirect}`, SLOP_TEST_REDIRECTS: JSON.stringify({ "https://slop.cash": authority }), XDG_CACHE_HOME: join(f.root, "cache") };
-    const cli = node([script, "--project", projectId, "--json"], redirected);
+    const cli = await nodeAsync([script, "--project", projectId, "--json"], redirected);
     expect(cli.status, cli.stderr).toBe(0);
     expect(JSON.parse(cli.stdout)).toMatchObject(acknowledged);
     const forbidden = node([script, "--project", projectId, "--authority", "file:///tmp"], redirected);
@@ -262,7 +262,7 @@ export async function theLiveReportRunsThroughGhAndRetriesAChangedInventory(): P
       Object.assign(world.item(liveRepo, vanishing), { state: "closed", stateReason: "completed", closedAt: at });
       return response;
     });
-    const ran = node([f.entry, "--json"], github.environment(f.bin, "runner"), { timeout: 60_000 });
+    const ran = await nodeAsync([f.entry, "--json"], github.environment(f.bin, "runner"), { timeout: 60_000 });
     expect(ran.status, ran.stderr).toBe(0);
     expect(ran.stderr).toContain("open-item inventory changed during snapshot attempt 1; retrying one complete read");
     const report: unknown = JSON.parse(ran.stdout);

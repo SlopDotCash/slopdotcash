@@ -303,6 +303,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
     try refreshed(kept, t0 + 3000)
     try closed(kept, t0 + 4000, false)
     const early = try refreshed(kept, t0 + 5000)
+    const earlyOutcome = (try seen(kept)).item?.outcome ?? null
     const late = try refreshed(kept, t0 + 4000 + 7 * day)
     try refreshed(withdrawn, t0 + 3000)
     try Effect.promise(() => fees.db.prepare("UPDATE submission_fee_items SET paid_at = NULL, paid_network = NULL, paid_deposit_id = NULL WHERE repository_id = ? AND pull_number = ?").bind(repositoryId, withdrawn).run())
@@ -351,7 +352,7 @@ layer(World, { timeout: "240 seconds" })((it) => {
       paid: { review: paid.review, held: feeReviewJob({ kind: "submission_fee", deliveryId: "x", installationId, repositoryId, owner: "ada", repo: "widgets", itemKind: "pull_request", number: merged }, iso(t0)).kind },
       paidState: { gate: paidState.gate, labels: paidState.labels },
       refund: (try seen(merged)).item,
-      early: (try seen(kept)).item?.outcome ?? null,
+      early: earlyOutcome,
       late: (try seen(kept)).item,
       lateReview: late.review,
       askedAgain: askedAgain.review,

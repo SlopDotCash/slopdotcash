@@ -348,24 +348,24 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
       try posted("solana-month-lock", release, site),
       try posted("solana-month-lock", check, site),
     ]
-    const invalidLock = { status: 400, body: { error: "invalid_month_lock", message: "" } }
+    const invalidLock = { status: 400, body: { error: "invalid_month_lock" } }
     try same({ answers, lockAnswers, routeOutbound }, {
       answers: [
-        { status: 403, body: { error: "origin_forbidden", message: "" } },
-        { status: 400, body: { error: "invalid_funding_action", message: "" } },
-        { status: 503, body: { error: "payments_unavailable", message: "" } },
-        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 403, body: { error: "origin_forbidden" } },
+        { status: 400, body: { error: "invalid_funding_action" } },
+        { status: 503, body: { error: "payments_unavailable" } },
+        { status: 503, body: { error: "payments_unavailable" } },
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
       ],
       lockAnswers: [
-        { status: 403, body: { error: "origin_forbidden", message: "" } },
+        { status: 403, body: { error: "origin_forbidden" } },
         invalidLock,
         invalidLock,
         invalidLock,
         invalidLock,
         invalidLock,
         invalidLock,
-        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 503, body: { error: "payments_unavailable" } },
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
         { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
       ],

@@ -215,12 +215,13 @@ interface PointsDispute {
   readonly statement: string
   readonly openedAt: number
   readonly lease?: { readonly token: string; readonly until: number }
+  readonly unreadable?: true
 }
 
 effect function filed(area: AreaShape, dispute: PointsDispute) {
   const body = { previous: null, recordedAt: "2026-10-30T14:00:00.000Z", sourceDigest: "a".repeat(64), sourceRule: "slop-score-v2", award: award(dispute.projectId, dispute.sourceId) } satisfies RevisionBody
   const id = try pointRevisionId(body)
-  try area.sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, NULL, ?, ?)", id, body.award.key, body.recordedAt, JSON.stringify({ id, ...body }))
+  try area.sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, NULL, ?, ?)", id, body.award.key, body.recordedAt, dispute.unreadable ? "{}" : JSON.stringify({ id, ...body }))
   const appealKey = `points-dispute:${try sha256Hex(`${id}:${recipient}`)}`
   try area.sql(`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, claim_token, claim_until)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, appealKey, id, id, String(recipient), dispute.statement, try isoAt(dispute.openedAt), try isoAt(dispute.openedAt + week),
@@ -360,9 +361,8 @@ layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => 
       restricted: try filed(area, { projectId: locked.projectId, sourceId: "points-award-3", statement: "P3-CLAIM", openedAt: now - 3 * hour }),
       held: try filed(area, { projectId: values.projectId, sourceId: "points-award-5", statement: "P5-CLAIM", openedAt: now - 2 * hour, lease: { token: "busy-worker", until: now + hour } }),
       intake: try filed(area, { projectId: values.projectId, sourceId: "points-award-4", statement: "P4-CLAIM wrong category", openedAt: now - hour }),
-      unreadable: try filed(area, { projectId: values.projectId, sourceId: "points-award-7", statement: "P7-CLAIM unreadable evidence", openedAt: now - hour / 2 }),
+      unreadable: try filed(area, { projectId: values.projectId, sourceId: "points-award-7", statement: "P7-CLAIM unreadable evidence", openedAt: now - hour / 2, unreadable: true }),
     }
-    try area.sql("UPDATE points_revisions SET payload = '{}' WHERE id = (SELECT revision_id FROM points_disputes WHERE appeal_key = ?)", keys.unreadable)
     const calls = providers.calls.length
     try answers("P1-CLAIM", JSON.stringify({ draft: "uphold", confidence: 0.95 }))
     try answers("P4-CLAIM", JSON.stringify({ draft: "deny", confidence: 0.4 }))

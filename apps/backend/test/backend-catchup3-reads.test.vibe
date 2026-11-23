@@ -8,8 +8,10 @@ import { Response } from "miniflare"
 const projectsPath = "/api/v1/referrals/projects"
 const sessionsPath = "/api/v1/points/sessions"
 const origin = "http://localhost:8787"
-const later = "2099-01-01T00:00:00.000Z"
-const latest = "2099-02-01T00:00:00.000Z"
+const minute = 60_000
+const started = Math.floor(Date.now() / 1000) * 1000
+const later = new Date(started + 30 * minute).toISOString()
+const latest = new Date(started + 50 * minute).toISOString()
 const past = "2020-01-01T00:00:00.000Z"
 
 service World {
@@ -167,15 +169,17 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const closing = try session("71", "closing", later)
     const version = "d".repeat(64)
     const at = "2026-11-02T00:00:00.000Z"
+    const asked = new Date(started - 5 * minute).toISOString()
     try area.sql("INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES ('71', 'member-71@example.test', ?, ?)", version, at)
     try area.sql("INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES ('71', 1, 1, ?, ?)", version, at)
-    try area.sql("INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at) VALUES ('reads-verification', '71', 'reads-request', 'member-71@example.test', 'reads-address', ?, 1, 1, 'queued', ?, ?)", "e".repeat(64), at, later)
+    try area.sql("INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at, consumed_at, destination_version) VALUES ('reads-verified', '71', 'reads-first', 'member-71@example.test', 'reads-address', ?, 1, 1, 'sent', ?, '2026-11-02T00:30:00.000Z', ?, ?)", "f".repeat(64), at, at, version)
+    try area.sql("INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at) VALUES ('reads-verification', '71', 'reads-request', 'member-71@example.test', 'reads-address', ?, 1, 1, 'queued', ?, ?)", "e".repeat(64), asked, new Date(started + 25 * minute).toISOString())
     try area.sql("INSERT INTO activity_notification_outbox (event_key, recipient_github_id, essential, destination_version, next_attempt_at, created_at, updated_at) VALUES ('reads-activity', '71', 0, ?, ?, ?, ?)", version, at, at, at)
     try area.sql("INSERT INTO activity_notification_outbox (event_key, recipient_github_id, essential, destination_version, next_attempt_at, created_at, updated_at) VALUES ('reads-essential', '71', 1, ?, ?, ?, ?)", version, at, at, at)
 
     const closed = try area.request("/api/v1/points/account/close", { json: { login: "member-71" }, as: closing.session })
     const preferences = (try area.sql("SELECT enabled, security_enabled, destination_version FROM notification_email_preferences WHERE github_id = '71'")).map((row) => [row.enabled, row.security_enabled, row.destination_version])
-    const verifications = (try area.sql("SELECT cancelled_at IS NOT NULL AS cancelled FROM notification_email_verifications WHERE github_id = '71'")).map((row) => row.cancelled)
+    const verifications = (try area.sql("SELECT cancelled_at IS NOT NULL AS cancelled FROM notification_email_verifications WHERE id = 'reads-verification'")).map((row) => row.cancelled)
     const outbox = (try area.sql("SELECT event_key, state FROM activity_notification_outbox WHERE recipient_github_id = '71' ORDER BY event_key")).map((row) => [row.event_key, row.state])
 
     try same({

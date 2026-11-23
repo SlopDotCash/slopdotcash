@@ -8,7 +8,7 @@ import { maxReplyBytes } from "../src/scanner/providers/route.vibe"
 import { ScanSettings, runScanPass } from "../src/scanner/run/pass.vibe"
 import { ScanAcquisition } from "../src/scanner/run/queue.vibe"
 import { ScanService } from "../src/scanner/run/service.vibe"
-import { type Workspace, workspace } from "./support/git/fixtures.ts"
+import { type Workspace, entriesOf, workspace } from "./support/git/fixtures.ts"
 import { type ScanWorld, assessmentId, cleanReview, largeSourceFixture, origin, reviewedItemIds, scanWorld, smallFixture } from "./support/scan/world.ts"
 
 const rate = { uncachedInputNanoUsdPerToken: "3000", cachedInputNanoUsdPerToken: "300", cacheCreationNanoUsdPerToken: "3750", outputNanoUsdPerToken: "15000" }
@@ -82,10 +82,24 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto), { excludeTestSer
     )
   }))
 
-  it.effect('A provider outage leaves the assessment pending and publishes nothing; the next pass clears it (spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication")', () => scoped(effect {
+  it.effect('A refused or failed GitHub identity read, a stale template pin and a provider outage leave the assessment pending, name only the read and its status or a fixed scanner sentence, and publish nothing; the next pass clears it (spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication")', () => scoped(effect {
     const space = try opened()
     const fixture = try orDie(Effect.try(() => smallFixture(space.root)))
     const world = try orDie(Effect.try(() => scanWorld({ repositoryPath: fixture.repository.path, commit: fixture.commit })))
+    const unread = (setUp: () => void) => effect {
+      setUp()
+      const report = try pass(world, space)
+      return { assessments: report.assessments, results: publishedPaths(world), attempts: world.provider.calls.length, leftovers: try orDie(Effect.try(() => entriesOf(space.output))) }
+    }
+    try same(
+      { limited: try unread(() => world.identity("limited")), offline: try unread(() => world.identity("offline")), stale: try unread(() => { world.identity("answer"); world.template("uncommitted") }) },
+      {
+        limited: { assessments: [{ assessmentId, state: "retry", step: "acquire", reason: "github-identity-http-403" }], results: 0, attempts: 0, leftovers: [] },
+        offline: { assessments: [{ assessmentId, state: "retry", step: "acquire", reason: "github-identity-request-TypeError" }], results: 0, attempts: 0, leftovers: [] },
+        stale: { assessments: [{ assessmentId, state: "retry", step: "acquire", reason: "template-pin-is-stale-or-uncommitted" }], results: 0, attempts: 0, leftovers: [] },
+      },
+    )
+    world.template("committed")
     const first = try pass(world, space)
     try same(
       { assessments: first.assessments, results: publishedPaths(world), journal: world.journal.get(assessmentId), attempts: world.provider.calls.length, evidence: world.calls.filter((call) => call.path.startsWith("/api/v1/vetting/evidence/")).length },

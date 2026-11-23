@@ -145,7 +145,7 @@ const evmVault = {
 const evmKey = { projectId: "acme", network: "base-mainnet", chain: "base", vault: VAULT } satisfies DepositKey
 
 effect function recordedOf(projectId: string) {
-  return try rows(DepositRow, sql`SELECT transaction_id, event_index, depositor, amount, block_number, block_time FROM vault_deposits WHERE project_id = ${projectId} ORDER BY block_number, event_index`)
+  return try rows(DepositRow, sql`SELECT transaction_id, event_index, depositor, amount, block_number, block_time FROM vault_deposits WHERE project_id = ${projectId} ORDER BY length(block_number), block_number, event_index`)
 }
 
 effect function shell(url: string, genesis: string) {

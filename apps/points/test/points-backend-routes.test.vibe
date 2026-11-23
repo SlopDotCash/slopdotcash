@@ -403,8 +403,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const latest = (try stored(id)).manifest
     const extra = `member-${stewardId}/extra`
     const appendedEntry = { id: extra, displayName: extra, githubUrl: `https://github.com/${extra}`, description: "Additional research tooling.", integrationBranch: "main", githubId: String(appendedId), nodeId: `R_${appendedId}`, countsFrom: nextMonthStart(try Clock.currentTimeMillis) }
-    const combined = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
-    const appended = try revise(steward, id, { manifest: { ...latest, repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
+    const appended = try revise(steward, id, { manifest: { ...latest, headline: "Combined change.", repositories: [...(latest.repositories as ReadonlyArray<unknown>), appendedEntry] }, expectedRevision: 4 })
     world.access.missing = [appendedId]
     const uninstalled = try area.request(`/api/v1/project-setup/${id}/check`, { json: {}, as: steward })
     world.access.missing = []
@@ -438,7 +437,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       presented: [presented.status, field(field(presented.body, "changes"), "presentation"), ...project(presented)],
       retokened: [retokened.status, field(field(retokened.body, "changes"), "financial")],
       asset,
-      combined: refused(combined),
       appended: [appended.status, ...project(appended)],
       uninstalled: [uninstalled.status, nextActionOf(uninstalled), installationOf(uninstalled)],
       revoked: outcome(revoked),
@@ -467,7 +465,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       presented: [200, ["headline"], 3, "active", "community"],
       retokened: [200, ["reward", "rewardAsset"]],
       asset: [{ decimals: 18, symbol: "SLOP", status: "active" }],
-      combined: [422, "invalid_manifest", "Publish one change at a time: content and policy edits, each added repository and the automatic-closure setting are separate revisions."],
       appended: [200, 5, "paused", "community"],
       uninstalled: [200, { kind: "install_slopbot", message: `Not installed on member-${stewardId}/extra. On GitHub, choose "Only select repositories" and pick member-${stewardId}/extra.`, href: "https://github.com/apps/slopdotcash/installations/new" }, { state: "missing", message: `Not installed on member-${stewardId}/extra.` }],
       revoked: [403, "authority_required"],
@@ -541,48 +538,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     })
   })
 
-  it.effect('Every registered project with complete referral attribution is listed in registry order, retired rows included (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
-    const area = try Area
-    const projectsPath = "/api/v1/referrals/projects"
-    const empty = try area.request(projectsPath)
-    try registered("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
-    try registered("referred-active", "active", "featured", "2026-10-01T00:00:00.000Z", 7001, ["41", "member-41"])
-    try registered("referred-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 7003, ["42", "member-42"])
-    try registered("unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 7004, undefined)
-    try registered("referred-tie", "active", "community", "2026-11-01T00:00:00.000Z", 7005, ["41", "member-41"])
-
-    const referred = try area.request(projectsPath)
-    const slash = try area.request(`${projectsPath}/`)
-    const head = try area.request(projectsPath, { method: "HEAD" })
-    const child = try area.request(`${projectsPath}/referred-active`)
-    const write = try area.request(projectsPath, { method: "POST", json: {} })
-
-    const expected = {
-      schema: "slop-referred-projects-v1",
-      projects: [
-        { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
-        { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
-        { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
-        { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
-      ],
-    }
-    try same({
-      empty: [empty.status, empty.body, empty.headers["cache-control"]],
-      listed: [referred.status, referred.body, referred.headers["cache-control"]],
-      slash: [slash.status, slash.body],
-      head: [head.status, head.body, head.headers["cache-control"]],
-      child: [child.status, child.body, child.headers["cache-control"]],
-      write: [write.status, write.body, write.headers["cache-control"]],
-    }, {
-      empty: [200, { schema: "slop-referred-projects-v1", projects: [] }, "public, max-age=300"],
-      listed: [200, expected, "public, max-age=300"],
-      slash: [200, expected],
-      head: [200, "", "public, max-age=300"],
-      child: [404, { error: "not_found" }, "public, max-age=300"],
-      write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
-    })
-  })
-
   it.effect('Owner website and X links publish as presentation, validate and clear, and ready-label settings publish within their bounds (spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/readyLabelSettings.md, "Ready-label settings are bounded, off when absent or disabled, and only add protected paths"; spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting")', () => effect {
     const area = try Area
     const steward = try member(stewardId)
@@ -643,7 +598,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       stewardLabel: { automaticClosure: true, readyLabel: ready },
       unconsentedSetup: [201, 1, "paused", "community", 200, "ready", "none", "Contributors can find this project and its skills.", 2, "active"],
       unconsentedLabelled: [200, { presentation: ["slopbot"], executable: [], financial: [] }, 3, "active", "community"],
-      unconsentedLabel: { automaticClosure: false, readyLabel: ready },
+      unconsentedLabel: { readyLabel: ready },
       bounds: [
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
         [422, "invalid_manifest", `${label}.approvals must be a whole number from 1 to 10`],
@@ -682,11 +637,11 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
         {
           projectId: "merge-demo",
           repositories: [
-            { repository: "member-41/merge-failed", observedAt: observed, lastAttemptFailed: true, lastMergedAt: "2026-11-10T08:00:00.000Z", waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 12.5 },
-            { repository: "member-41/merge-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: "2026-11-14T09:30:00.000Z", waitingOutside: 0, waitingCapped: true, mergedOutsideLast30Days: 0, medianHoursToMerge: null },
+            { repository: "member-41/merge-failed", observedAt: observed, lastAttemptFailed: true, lastMergedAt: "2026-11-10T08:00:00.000Z", waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 12.5, openOutside: null, openOutsideCapped: false },
+            { repository: "member-41/merge-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: "2026-11-14T09:30:00.000Z", waitingOutside: 0, waitingCapped: true, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside: null, openOutsideCapped: false },
           ],
         },
-        { projectId: "merge-other", repositories: [{ repository: "member-41/other-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null }] },
+        { projectId: "merge-other", repositories: [{ repository: "member-41/other-read", observedAt: observed, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null, openOutside: null, openOutsideCapped: false }] },
       ],
     }
     try same({
@@ -859,6 +814,50 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       ],
       listing: [{ revision: 3, status: "paused", tier: "community" }],
       review: [{ assessment_id: deciding.rows[0]?.id ?? "" }],
+    })
+  })
+})
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Every registered project with complete referral attribution is listed in registry order, retired rows included (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Every registered project with complete immutable attribution appears, in registry order")', () => effect {
+    const area = try Area
+    const projectsPath = "/api/v1/referrals/projects"
+    const empty = try area.request(projectsPath)
+    try registered("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
+    try registered("referred-active", "active", "featured", "2026-10-01T00:00:00.000Z", 7001, ["41", "member-41"])
+    try registered("referred-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 7003, ["42", "member-42"])
+    try registered("unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 7004, undefined)
+    try registered("referred-tie", "active", "community", "2026-11-01T00:00:00.000Z", 7005, ["41", "member-41"])
+
+    const referred = try area.request(projectsPath)
+    const slash = try area.request(`${projectsPath}/`)
+    const head = try area.request(projectsPath, { method: "HEAD" })
+    const child = try area.request(`${projectsPath}/referred-active`)
+    const write = try area.request(projectsPath, { method: "POST", json: {} })
+
+    const expected = {
+      schema: "slop-referred-projects-v1",
+      projects: [
+        { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        { projectId: "referred-retired", status: "paused", listedAt: "2026-10-15T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+        { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+        { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+      ],
+    }
+    try same({
+      empty: [empty.status, empty.body, empty.headers["cache-control"]],
+      listed: [referred.status, referred.body, referred.headers["cache-control"]],
+      slash: [slash.status, slash.body],
+      head: [head.status, head.body, head.headers["cache-control"]],
+      child: [child.status, child.body, child.headers["cache-control"]],
+      write: [write.status, write.body, write.headers["cache-control"]],
+    }, {
+      empty: [200, { schema: "slop-referred-projects-v1", projects: [] }, "public, max-age=300"],
+      listed: [200, expected, "public, max-age=300"],
+      slash: [200, expected],
+      head: [200, "", "public, max-age=300"],
+      child: [404, { error: "not_found" }, "public, max-age=300"],
+      write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
     })
   })
 })

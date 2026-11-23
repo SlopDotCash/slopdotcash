@@ -185,7 +185,7 @@ export effect function answered(response: HttpClientResponse.HttpClientResponse,
     throw refused(status, path, headers, message)
   }
   if (kind !== "ok") throw new GitHubUnavailable({ status, path })
-  return { status, headers, bytes: try bounded(response, limitBytes, path) } satisfies Answer
+  return { status, headers, bytes: status === 204 || status === 205 ? new Uint8Array(0) : try bounded(response, limitBytes, path) } satisfies Answer
 }
 
 effect function reached(response: HttpClientResponse.HttpClientResponse, path: string) {

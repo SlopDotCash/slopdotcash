@@ -56,7 +56,7 @@ function JourneySwitch({ journey, onJourney }: Pick<HomeViewProps, "journey" | "
 function Projects({ projects, funding }: HomeReads) {
   const { featured, community } = homeSections(projects.value ?? []);
   return (
-    <section id="projects" aria-labelledby="home-projects-title" className="pb-24 max-md:pb-16">
+    <section id="projects" aria-labelledby="home-projects-title" className="py-24">
       <div className={sectionHeading}>
         <h2 id="home-projects-title" className={sectionTitle}>
           Projects
@@ -89,10 +89,10 @@ function Projects({ projects, funding }: HomeReads) {
 export function HomeView({ projects, funding, origin, journey, onJourney, onCopy }: HomeViewProps) {
   return (
     <main className={cn(shell, "flex-1")}>
-      <section className="flex flex-col items-start pt-12 pb-18 lg:pt-18 lg:pb-32">
+      <section className="flex flex-col items-start pt-12 pb-18 lg:pt-13 lg:pb-23 xl:pt-18 xl:pb-32">
         <JourneySwitch journey={journey} onJourney={onJourney} />
-        <CampaignHeading key={journey} journey={journey} />
-        <InstallPanel key={journey} journey={journey} origin={origin} onCopy={onCopy} />
+        <CampaignHeading key={`heading ${journey}`} journey={journey} />
+        <InstallPanel key={`install ${journey}`} journey={journey} origin={origin} onCopy={onCopy} />
       </section>
       <SecurityOffers projects={projects} />
       <Projects projects={projects} funding={funding} />

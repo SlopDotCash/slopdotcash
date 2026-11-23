@@ -16,6 +16,7 @@ import { webhookSettings } from "../../src/ingress/webhook.vibe"
 import { type Job, JobQueue, QueueUnavailable, ReadyLabelJob, ReviewJob } from "../../src/jobs/job.vibe"
 import { queueReadyAfterReview, refreshReadyLabel } from "../../src/ready/refresh.vibe"
 import { dispatchReadyChecks } from "../../src/ready/store.vibe"
+import { lostQueueNumber } from "./ingressNumbers.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -25,8 +26,6 @@ export interface Env {
   readonly SLOPBOT_APP_USER_ID: string
   readonly TEST_PROJECTS: string
 }
-
-export const lostQueueNumber = 4040
 
 schema TestProject {
   readonly projectId: string

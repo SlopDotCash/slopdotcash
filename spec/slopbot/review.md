@@ -377,7 +377,10 @@ pure val weight_start = 3
 
 Source `loadPolicy`, `pullDiff` and `loadContext` in
 `workers/slopbot/review.ts` and `fileText` in `github.ts`. Guidance is read
-from the default branch at the recorded base commit: the first present file
+at the commit the review compares against: for a pull request the current
+target branch tip that GitHub selected and the comparison with the head
+used, so a pull request into another branch is held to that branch's
+guides; for an issue the default branch tip. It is the first present file
 of each group `AGENTS.md`/`agents.md`; `CONTRIBUTING.md`/`contributing.md`/
 `.github/CONTRIBUTING.md`/`docs/CONTRIBUTING.md`; `README.md`/`readme.md`. A
 present file over 64 KiB, or one GitHub returns without base64 file
@@ -394,7 +397,13 @@ Each omitted file is one named limitation, and a comparison of 300 or more
 files adds one more. Coverage is complete only when nothing was omitted,
 and `unreviewedContent` is the `unreviewed` count `finish` receives, so a
 limited result can never label, close or penalize. An issue has no diff
-and its coverage is its text.
+and its coverage is its text. The policy digest is SHA-256 of the default
+branch tip, the repository file and the guides read; when the compared
+target commit is not the default branch tip, `digestTargetSha` adds it as
+`targetSha`, and when the two are one commit the digest keeps the form of
+reviews recorded before guides were read at the target, so their stored
+digests stay valid. A target tip that moves after the review therefore
+changes the digest, and the current-source check refuses the close.
 
 ```quint
 type ComparedFile = { chunkChars: int, patched: bool }
@@ -422,6 +431,10 @@ pure def guidanceOf(reads: List[GuidanceRead]): GuidanceStatus =
   if (reads.every(g => not(g.found))) GuidanceMissing
   else if (reads.some(g => g.found and guidanceTruncated(g))) GuidanceTruncated
   else GuidanceComplete
+pure def digestTargetSha(defaultTip: str, targetTip: str): str = if (targetTip == defaultTip) "" else targetTip
+pure def lawOneCommitKeepsTheDigest(sampleTip: str): bool = digestTargetSha(sampleTip, sampleTip) == ""
+pure def lawAnotherTargetIsBound(sampleTip: str, sampleTarget: str): bool =
+  sampleTarget != sampleTip implies digestTargetSha(sampleTip, sampleTarget) == sampleTarget
 pure def lawFileLimitNeverComplete(sampleDiff: List[ComparedFile]): bool =
   sampleDiff.length() >= comparisonFileLimit implies not(coverageComplete(sampleDiff))
 pure def lawMissingPatchNeverComplete(sampleDiff: List[ComparedFile]): bool =
@@ -438,6 +451,8 @@ pure val sampleDiffValues = Set(List(), List(smallPatch), List(smallPatch, { chu
 pure val sampleGuidanceValues = Set(List(), List({ found: false, bytes: 0, readable: false }),
   List({ found: true, bytes: 900, readable: true }, { found: true, bytes: 65537, readable: true }),
   List({ found: true, bytes: 0, readable: false }), List({ found: true, bytes: 65536, readable: true }))
+pure val sampleTipValues = Set("main-tip", "release-tip")
+pure val sampleTargetValues = Set("main-tip", "release-tip", "moved-tip")
 ```
 
 ### Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized

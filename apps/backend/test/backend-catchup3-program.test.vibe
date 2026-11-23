@@ -5,6 +5,8 @@ import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 import { Request, Response } from "miniflare"
 
+const sessionExpiry = new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 60_000).toISOString()
+
 const stewardId = 41
 const writerId = 42
 const primaryId = 9101
@@ -48,7 +50,7 @@ const Composed = Layer.provideMerge(Layer.unwrap(effect {
   const reader = try orDie(Effect.try(() => world.github.tokens.user("slop-reader")))
   return areaLayer({
     root: new URL("../../app", import.meta.url).pathname,
-    entry: "pages",
+    entry: "_worker",
     d1: { SLOP_DB: "slop-private" },
     r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"],
     vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader },
@@ -72,8 +74,8 @@ function outcome(answer: Answer) {
 effect function member(githubId: number) {
   const area = try Area
   const session = `program-session-${githubId}-`.padEnd(48, "x")
-  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
-  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, String(githubId), `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(session), `actor-${githubId}`, sessionExpiry)
   return { cookie: `__Host-slop_points=${session}`, actorId: `actor-${githubId}`, githubId: String(githubId), login: `member-${githubId}` } satisfies Session
 }
 
@@ -122,7 +124,7 @@ effect function manifest(id: string) {
     reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
     rewardAsset: usdc,
     contribution,
-    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "0", monthlyCapDisplay: "$0", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
     funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
     modelPolicy: { mode: "open-declared", disclosureRequired: true },
     links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
@@ -180,7 +182,7 @@ layer(Layer.merge(Composed, webCrypto), { excludeTestServices: true, timeout: "1
     const opened = try revise(steward, id, { manifest: { ...fresh.manifest, securityBounty: bounty("paused", contact(stewardId)) }, expectedRevision: 1, bountyAmount: "250" })
     const program = try stored(id)
     const terms = programOf(program.manifest)
-    const split = try revise(steward, id, { manifest: { ...program.manifest, securityBounty: { ...terms, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 } } }, expectedRevision: 2 })
+    const split = try revise(steward, id, { manifest: { ...program.manifest, securityBounty: { ...terms, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 }, fundingPolicy: "after-approval" } }, expectedRevision: 2 })
     const opening = try revise(steward, id, { manifest: { ...program.manifest, securityBounty: { ...terms, status: "open" } }, expectedRevision: 2 })
     const contacts = try revise(writer, id, { manifest: { ...program.manifest, securityBounty: { ...terms, approvers: { technical: [contact(writerId)], financial: [contact(writerId)], dispute: [contact(writerId)] } } }, expectedRevision: 2 })
     const { securityBounty: _program, ...withoutProgram } = program.manifest

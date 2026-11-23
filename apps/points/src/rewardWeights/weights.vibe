@@ -99,6 +99,8 @@ export effect function projectionOf(project: string, rows: ReadonlyArray<Row>, n
       recipients: merged ? [{ actor, lines: row.award.amount }] : [],
       completeLines: merged,
       shares: merged ? [{ actor, points: row.award.amount }] : [],
+      debit: row.penalty?.debit ?? 0,
+      reversed: row.penalty !== undefined && row.penalty.reversedAt !== null,
     })
     const known = logins.get(actor)
     if (known === undefined || known.recordedAt <= row.recordedAt) logins.set(actor, { login: row.award.actor.login, recordedAt: row.recordedAt })

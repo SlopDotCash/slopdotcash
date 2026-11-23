@@ -331,7 +331,7 @@ effect function capturedSources(world: Seeded) {
     repository,
     repositoryNodeId: world.nodeId,
     pull: { head: { sha: world.head } },
-    files: [{ filename: "app.ts", status: "modified", additions: 0, deletions: 0, blob_url: null }],
+    files: listedFiles,
   }
   provide capture.layer {
     const pullReads = [try issueOf(pullPath)]

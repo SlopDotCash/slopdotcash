@@ -148,6 +148,14 @@ effect function readAt(eventKey: string, recipient: string) {
   return row?.read_at ?? null
 }
 
+function project(id: string, manifestSha: string) {
+  const manifest = JSON.stringify({ id })
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${id}, 1, ${manifest}, ${manifestSha}, 'Seeded revision', ${seededAt})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'paused', 1, ${manifest}, ${manifestSha}, ${seededAt}, ${seededAt})`,
+  ]
+}
+
 function at(minute: number) {
   return `2030-01-02T00:${String(minute).padStart(2, "0")}:00.000Z`
 }
@@ -227,7 +235,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       readIsNotAcknowledgment: [afterReading?.readAt !== null, afterReading?.acknowledgedAt],
       besideLegacy: [besideLegacy.status, besideLegacy.body],
     }, {
-      signedOut: [401, { error: "not_signed_in", message: "" }],
+      signedOut: [401, { error: "not_signed_in" }],
       cache: "private, no-store",
       private: [],
       listed: {
@@ -251,20 +259,20 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
         ],
       },
       paging: [100, 13, null, 113, 113],
-      invalidCursor: [400, { error: "invalid_cursor", message: "" }],
+      invalidCursor: [400, { error: "invalid_cursor" }],
       marks: [{ marked: 1 }, { marked: 0 }, { marked: 0 }, { marked: 1 }],
       readAt: [true, null, null],
       refusals: [
-        [403, { error: "origin_forbidden", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [400, { error: "invalid_request", message: "" }],
-        [403, { error: "actor_changed", message: "" }],
-        [400, { error: "invalid_expected_actor", message: "" }],
-        [401, { error: "not_signed_in", message: "" }],
-        [403, { error: "actor_changed", message: "" }],
-        [405, { error: "method_not_allowed", message: "" }],
+        [403, { error: "origin_forbidden" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [400, { error: "invalid_request" }],
+        [403, { error: "actor_changed" }],
+        [400, { error: "invalid_expected_actor" }],
+        [401, { error: "not_signed_in" }],
+        [403, { error: "actor_changed" }],
+        [405, { error: "method_not_allowed" }],
       ],
       readIsNotAcknowledgment: [true, null],
       besideLegacy: [200, { marked: 1 }],
@@ -340,16 +348,16 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
       opened: [
         [302, "https://github.com/acme/widgets/pull/7", null],
         [302, "https://github.com/acme/widgets/pull/8", null],
-        [403, null, { error: "not_authorized", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
-        [404, null, { error: "not_found", message: "" }],
-        [400, null, { error: "invalid_request", message: "" }],
-        [404, null, { error: "not_found", message: "" }],
-        [401, null, { error: "not_signed_in", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
-        [403, null, { error: "not_authorized", message: "" }],
+        [403, null, { error: "not_authorized" }],
+        [403, null, { error: "not_authorized" }],
+        [404, null, { error: "not_found" }],
+        [400, null, { error: "invalid_request" }],
+        [404, null, { error: "not_found" }],
+        [401, null, { error: "not_signed_in" }],
+        [403, null, { error: "not_authorized" }],
+        [403, null, { error: "not_authorized" }],
       ],
-      reversed: [404, { error: "not_found", message: "" }],
+      reversed: [404, { error: "not_found" }],
       listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
     })
   })
@@ -366,7 +374,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     const reviewKey = "reinstatement-review:enf_inbox_request"
     const baseline = (try inbox(moderator)).unread
     try save([notice(reviewKey, "ReinstatementReview", at(45), moderator, projectId, "/admin")], [
-      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'paused', 1, '{"id":"inbox-reinstatement"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
+      ...project(projectId, manifestSha),
       record("enf_inbox_quarantine", 1, "quarantine", "quarantined", "none", "project-moderator", "admin-panel", 41),
       record("enf_inbox_request", 2, "request_reinstatement", "quarantined", "requested", "project-steward", "owner-request", 42),
     ])
@@ -397,7 +405,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     const accountKey = (account: string) => `reinstatement-review:enf_inbox_account_${account}`
     const accountBaseline = (try inbox(moderator)).unread
     try save([released, kept].map((account) => notice(accountKey(account), "ReinstatementReview", at(52), moderator, bannedProject, "/admin")), [
-      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${bannedProject}, 'paused', 1, '{"id":"inbox-account-requests"}', ${manifestSha}, ${seededAt}, ${seededAt})`,
+      ...project(bannedProject, manifestSha),
       entry("enf_inbox_signed_ban", 1, "ban", "none", null, "vetting-service", "standing-rule", 48),
       entry("enf_inbox_account_ban", 2, "ban", "none", listedModerator, "project-moderator", "admin-panel", 49),
       sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES ('enf_inbox_account_ban', ${released}, ${`login-${released}`}), ('enf_inbox_account_ban', ${kept}, ${`login-${kept}`})`,

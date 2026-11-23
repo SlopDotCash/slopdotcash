@@ -256,13 +256,14 @@ it.live('A pinned repository uses the real historical scoring and snapshot valid
     const other = { ...registry.registered[0], id: "ada/gadgets", name: "gadgets", githubUrl: "https://github.com/ada/gadgets", nodeId: "R_gadgets" }
     const wider = { ...registry, registered: [...registry.registered, other], targets: [...registry.targets, other] }
     const ordinary = validatePublishable(historical, wider, start) catch (error) => message(error)
-    const censusless = { ...collection, work: { ...collection.work, outcomes: collection.work.outcomes.map((outcome) => ({ ...outcome, commits: [] })), collections: collection.work.collections.map((entry) => ({ ...entry, outcomes: entry.outcomes.map((outcome) => ({ ...outcome, commits: [] })) })) } }
+    const uncensused = <T extends { readonly id: string }>(outcome: T) => outcome.id === world.ids.stacked ? { ...outcome, commits: [] } : outcome
+    const censusless = { ...collection, work: { ...collection.work, outcomes: collection.work.outcomes.map(uncensused), collections: collection.work.collections.map((entry) => ({ ...entry, outcomes: entry.outcomes.map(uncensused) })) } }
     const replay = try createHistoricalSnapshot(censusless, pin, project)
     const owners = new Map(collection.work.outcomes.flatMap((outcome) => (outcome.commits ?? []).map((commit) => [`${repository.toLowerCase()}\u0000${commit.oid}`, "PR_earlier_accepted"] as const)))
     const owned = try createHistoricalSnapshot(collection, pin, project, { previousAcceptedOrdinaryOwners: owners })
     const manifest = createHistoricalSnapshot(collection, { ...pin, manifestSha256: "a".repeat(64) }, project) catch (error) => message(error)
     const moved = { ...historical, source: { ...historical.source, repositoryId: "R_wrong", repositories: historical.source.repositories.map((row) => ({ ...row, repositoryId: "R_wrong" })) } }
-    const wrongNode = validateHistoricalSnapshot(moved, registry, pin, project, start) catch (error) => message(error)
+    const wrongNode = validateHistoricalSnapshot(moved, registry, pin, project, try Clock.currentTimeMillis) catch (error) => message(error)
     const foreign = createHistoricalSnapshot({ ...collection, source: { ...collection.source, repositories: [...collection.source.repositories, { id: "ada/gadgets", repositoryId: "R_gadgets" }] } }, pin, project) catch (error) => message(error)
     try same({
       repositories: historical.repositories.map(({ id, role }) => ({ id, role })),

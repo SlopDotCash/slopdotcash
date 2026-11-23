@@ -34,10 +34,10 @@ function CommunityRow({ project }: { project: ListedProject }) {
       >
         <RowImage project={project} />
         <span className="grid min-w-0 flex-1 gap-0.5">
-          <strong className="text-lg font-bold text-foreground">{project.name}</strong>
-          <small className="text-sm wrap-anywhere text-muted-foreground">{homeDescription(project.description)}</small>
+          <strong className="text-lg leading-page font-bold text-foreground">{project.name}</strong>
+          <small className="mt-1.25 text-sm leading-page wrap-anywhere text-muted-foreground">{homeDescription(project.description)}</small>
         </span>
-        <span className="grid max-w-[36%] gap-1 font-mono text-copy font-bold wrap-anywhere text-foreground max-md:col-start-2 max-md:max-w-none">
+        <span className="grid max-w-[36%] gap-1 font-mono text-copy leading-data font-bold wrap-anywhere text-foreground max-md:col-start-2 max-md:max-w-none">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1.5">
             <span className="min-w-0">
               <strong className="font-bold">{reward.amount}</strong>

@@ -13,6 +13,7 @@ const contributorSite = join(import.meta.dirname, ".cache/contributor-site");
 
 export default defineConfig({
   plugins: [vibelang(), react(), tailwindcss()],
+  build: { assetsInlineLimit: (file) => (/\.(?:woff2?|ttf|otf)$/u.test(file) ? false : undefined) },
   environments,
   builder: {
     buildApp: async (builder) => {

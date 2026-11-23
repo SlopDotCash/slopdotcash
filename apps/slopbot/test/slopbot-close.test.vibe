@@ -101,7 +101,6 @@ const Closing = Layer.unwrap(effect {
         GITHUB_API: seeded.fake.authority,
         GITHUB_TOKEN: seeded.token,
         ORBIO_API_KEY: "orbio-test-credential",
-        SURPLUS_API_KEY: "surplus-test-credential",
         SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
         SLOPBOT_CLOSURE_ENABLED: "true",
         SLOPBOT_RELEASE: release,
@@ -393,7 +392,7 @@ layer(Closing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }, {
       closes: [{ kind: "close", result: "closed (spam)" }, { kind: "close", result: "closed (spam)" }],
       reversals: [{ cleaned: true, reversed: true }, { cleaned: true, reversed: false }],
-      disputedClose: { kind: "close", result: "maintainer reopened this revision; finding removed" },
+      disputedClose: { kind: "settled", result: "maintainer reopened this revision; finding removed" },
       dis: {
         written: { header: "**Slopbot review:** `spam`", blocked: null, penalty: null, labels: [], state: "open" },
         attempts: [],

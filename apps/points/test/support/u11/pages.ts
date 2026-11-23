@@ -47,7 +47,7 @@ export function site(options: SiteOptions): Site {
       return answer(served.status, served.body);
     }
     const file = options.files[url.pathname];
-    return file === undefined ? new Response(null, { status: 404 }) : new Response(file, { status: 200 });
+    return file === undefined ? new Response("", { status: 404 }) : new Response(file, { status: 200 });
   };
   return { fetch: fetch as typeof globalThis.fetch, requests };
 }

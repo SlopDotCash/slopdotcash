@@ -370,7 +370,7 @@ export effect function hostedQualification(hosted: Hosted) {
   effect function qualified() {
     try provision()
     const config = try configured()
-    for (const database of owned.databases) try wrangler("schema", ["d1", "migrations", "apply", database.name, "--remote", "--config", config], migrationSeconds)
+    for (const database of owned.databases) try cloudflare.wrangler("schema", { args: ["d1", "migrations", "apply", database.name, "--remote", "--config", config], cwd: hosted.workspace, seconds: migrationSeconds, quiet: true })
     stage = "deploy-worker"
     uncertain.add(run)
     try wrangler("deploy", ["deploy", "--config", config, "--tag", source, "--message", `Disposable recovery qualification ${run}`])

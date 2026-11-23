@@ -10,21 +10,25 @@ import type { Handler } from "@repo/platform/testing"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
 import { ProjectParticipationLive, SubmissionFeeRatesLive } from "@repo/backend/ports"
+import { Request as WorkerRequest } from "miniflare"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { jsonValue } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { planned } from "../src/cases/actions.vibe"
 import { AwardClearances } from "../src/cases/clearance.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
-import { acted, created, opened } from "../src/cases/routes.vibe"
+import { acted, caseRoutes, created, opened } from "../src/cases/routes.vibe"
 import { committed, observedCase } from "../src/cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../src/client/refusals.vibe"
 import { reportDepositSettings } from "../src/deposit/settings.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
 import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
-import { type World, maintainer, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { intakeSettings } from "../src/intake/availability.vibe"
+import { submissionReadRoutes } from "../src/intake/list.vibe"
+import { type World, digest, maintainer, origin, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 import { receiptNotices } from "./support/intake/notices.vibe"
 
 service Cases {
@@ -48,6 +52,7 @@ const secondImported = "406"
 const claimant = "407"
 const mismatched = "408"
 const advisoryList = "GET /repos/slop-test/intake/security-advisories?"
+const registered = ["registered-a", "registered-b", "registered-c", "registered-d"]
 let keys = 0
 
 function loginOf(githubId: string) {
@@ -78,12 +83,16 @@ function fixture(projectId: string): ProjectView {
     stewardGithubId: "900",
     stewardAccount: "UserSteward",
     listing: { fromApplication: false },
-    repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+    repositories: [registered.includes(projectId) ? { id: `2${registered.indexOf(projectId)}01`, nodeId: `R_${projectId}`, fullName: `slop-test/${projectId}`, integrationBranch: "main", aliases: [] } : { id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }
 }
 
-function portsOf(bans: ReadonlySet<string>) {
+const deniedAuthority: Authority.Shape = {
+  repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+}
+
+function portsOf(bans: ReadonlySet<string>, authority: Authority.Shape) {
   return Layer.mergeAll(
     Layer.succeed(Registry, {
       project: (projectId) => succeed(fixture(projectId)),
@@ -94,9 +103,7 @@ function portsOf(bans: ReadonlySet<string>) {
       appendVaultRegistration: () => Effect.die(new Error("this test registers no vault")),
       fence: () => succeed(sql`1`),
     } satisfies Registry.Shape),
-    Layer.succeed(Authority, {
-      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
-    } satisfies Authority.Shape),
+    Layer.succeed(Authority, authority),
     Layer.succeed(Restrictions, {
       account: (id) => succeed({ banned: bans.has(id) }),
       project: () => succeed({ restricted: false }),
@@ -115,7 +122,7 @@ const directClearances = Layer.succeed(AwardClearances, {
   }),
 } satisfies AwardClearances.Shape)
 
-function shellOf(cases: Cases.Shape) {
+function shellOf(cases: Cases.Shape, authority: Authority.Shape = deniedAuthority) {
   const viaFake: Fetcher = {
     fetch: (sent) => cases.fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]>,
   }
@@ -124,7 +131,7 @@ function shellOf(cases: Cases.Shape) {
     webCrypto,
     reportBucket(cases.world.reports),
     rolesFrom({ ADMIN_GITHUB_IDS: `${moderator},${secondModerator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${secondModerator}` }),
-    portsOf(cases.bans),
+    portsOf(cases.bans, authority),
     receiptNotices,
     directClearances,
     reportDepositSettings("off"),
@@ -408,6 +415,70 @@ effect function legacyReceipts(cases: Cases.Shape) {
   })
 }
 
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface AuthorityReads {
+  readonly repositories: string[]
+  inFlight: number
+  peak: number
+}
+
+function slowAuthority(reads: AuthorityReads): Authority.Shape {
+  return {
+    repository: (read) => effect {
+      reads.repositories.push(read.repositoryId)
+      reads.inFlight += 1
+      reads.peak = Math.max(reads.peak, reads.inFlight)
+      try Effect.sleep(Duration.millis(50))
+      reads.inFlight -= 1
+      return { ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }
+    },
+  }
+}
+
+async function listedBy(cases: Cases.Shape, handler: WebHandler, path: string, as: string) {
+  keys += 1
+  const token = `c${as.padStart(20, "0")}${String(keys).padStart(8, "0")}${"x".repeat(35)}`
+  await cases.world.db.batch([
+    cases.world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${as}`, as, loginOf(as), new Date().toISOString()),
+    cases.world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${as}`, new Date(Date.now() + 3_600_000).toISOString()),
+  ])
+  const response = await handler(new WorkerRequest(`${origin}${path}`, { method: "GET", headers: { cookie: `__Host-slop_points=${token}`, "x-slop-expected-github-id": as } }) as unknown as globalThis.Request, Context.make(Execution, { context: { waitUntil: (work) => { cases.pending.push(work) } } }))
+  return response.status
+}
+
+effect function listedAtOnce(cases: Cases.Shape) {
+  const { world } = cases
+  const own = try submit(world, reporter, paid, "Withdrawal queue skips the pause check")
+  const at = new Date(Date.now() - 86_400_000).toISOString()
+  const [ownRow] = try promise(() => rows(world, "SELECT * FROM security_cases WHERE id = ?", own))
+  const columns = Object.keys(ownRow ?? {})
+  for (const id of registered) {
+    const manifest = JSON.stringify({ id, status: "active", repositories: [{ id: `slop-test/${id}` }] })
+    try promise(() => world.db.batch([
+      world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Fixture',?)").bind(id, manifest, "c".repeat(64), at),
+      world.db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(id, manifest, "c".repeat(64), at, at),
+      world.db.prepare(`INSERT INTO security_cases(${columns.join(",")}) SELECT ${columns.map((column) => column === "id" ? "?1" : column === "project_id" ? "?2" : column).join(",")} FROM security_cases WHERE id = ?3`).bind(`sc_${id.replace("-", "_")}_fixture0001`, id, own),
+    ]))
+  }
+  const reads: AuthorityReads = { repositories: [], inFlight: 0, peak: 0 }
+  const routes = Layer.mergeAll(caseRoutes, submissionReadRoutes) as Layer.Layer<never, never, HttpRouter.HttpRouter>
+  const services = Layer.provideMerge(Layer.mergeAll(CallerLive, intakeSettings({ mode: "on", automatic: true })), shellOf(cases, slowAuthority(reads)))
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(routes, services), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  const handler = web.handler as WebHandler
+  const listing = (path: string) => effect {
+    reads.repositories.length = 0
+    reads.peak = 0
+    const status = try promise(() => listedBy(cases, handler, path, reporter))
+    const perProject = registered.map((id) => reads.repositories.filter((repository) => repository === `2${registered.indexOf(id)}01`).length)
+    return { status, eachRegisteredProjectOnce: perProject, allAtOnce: reads.peak === reads.repositories.length }
+  }
+  try same(
+    { cases: try listing("/api/v1/security-cases"), submissions: try listing("/api/v1/security-submissions") },
+    { cases: { status: 200, eachRegisteredProjectOnce: [1, 1, 1, 1], allAtOnce: true }, submissions: { status: 200, eachRegisteredProjectOnce: [1, 1, 1, 1], allAtOnce: true } },
+  )
+}
+
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Receipt-time terms stay frozen and an unpaid receipt creates no award (spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance")', () => effect {
     const cases = try Cases
@@ -442,4 +513,9 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       try legacyReceipts(cases)
     }
   })
+
+  it.effect('The case and report lists read every registered project\'s GitHub authority at once (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision")', () => scoped(effect {
+    const cases = try Cases
+    try listedAtOnce(cases)
+  }))
 })

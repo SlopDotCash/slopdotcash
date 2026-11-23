@@ -55,18 +55,21 @@ export function ProjectCard({ children, name, image, icon, lazy = false, descrip
         ) : (
           <span aria-hidden className={cn(avatar, "grid place-items-center text-2xl font-extrabold")}>{name.slice(0, 1)}</span>
         )}
-        <CardTitle className="min-w-0 flex-1 text-2xl leading-none font-extrabold tracking-tight break-words uppercase lg:text-3xl [&_svg]:inline-block [&_svg]:align-baseline [&_svg]:text-primary-hover">
+        <CardTitle className="min-w-0 flex-1 text-name leading-none font-extrabold tracking-tight break-words uppercase lg:text-2xl xl:text-3xl [&_svg]:inline-block [&_svg]:align-baseline [&_svg]:text-primary-hover">
           {icon ? <>{icon}{" "}</> : null}
           {name}
         </CardTitle>
         {link ? <ArrowRight aria-hidden className="size-6 shrink-0 text-muted-foreground group-hover:text-primary" /> : null}
       </div>
       <div className="flex min-w-0 flex-col gap-4">
-        {description ? <p className="max-w-165 text-base leading-summary text-muted-foreground max-md:text-copy lg:text-xl">{description}</p> : null}
+        {description ? <p className="max-w-165 text-base leading-summary text-muted-foreground max-md:text-copy xl:text-xl">{description}</p> : null}
         {amount || tags ? (
-          <p className="mt-auto flex flex-wrap items-baseline gap-2">
-            {amount ? <strong className="font-sans text-3xl font-extrabold tracking-tight lg:text-4xl">{amount}</strong> : null}
-            {unit ? <span className="text-copy font-bold text-muted-foreground">{unit}</span> : null}
+          <p className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-1.5">
+            {amount || unit ? <span className="min-w-0 wrap-anywhere">
+              {amount ? <strong className="font-sans text-amount font-bold tracking-amount lg:text-amount-lg xl:text-4xl">{amount}</strong> : null}
+              {amount && unit ? " " : null}
+              {unit ? <span className="text-copy leading-page font-bold text-muted-foreground">{unit}</span> : null}
+            </span> : null}
             {tags}
           </p>
         ) : null}

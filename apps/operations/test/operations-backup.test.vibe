@@ -366,7 +366,7 @@ layer(Services, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
           `retention-held:legacy:${expired}`,
           `retention-held:unreleased:${backed.key}`,
           `retention-held:unreleased:${missing.key}`,
-          `retention-missing:${dayText(dayOfMillis(released))}:${missing.key}`,
+          `retention-missing:${dayText(dayOfMillis(proven))}:${missing.key}`,
         ],
         deleted: ["vet_generation_backed"],
         generations: ["retired", "retired"],

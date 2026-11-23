@@ -118,7 +118,7 @@ function manifestOf(fixture: Fixture) {
       retroactive: false,
       receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
       copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
-      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/main/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${"a".repeat(40)}/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
       inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
       assignment: null,
       externalPrize: null,
@@ -127,7 +127,7 @@ function manifestOf(fixture: Fixture) {
     skill: { id: `contribute-to-${fixture.id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${fixture.id}/skill.md` },
     reviewSkill: { id: `review-${fixture.id}-contributions`, sourcePath: "skills/project-reviewer-template" },
     // A stored reward asset carries its chain-read decimals (spec/backend/rewardAsset.md).
-    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 },
+    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" },
     contribution: {
       approvedScope: "Bug fixes and documented features in the toolkit.",
       contributionGuide: "Branch from main and keep one change per pull request.",
@@ -139,7 +139,7 @@ function manifestOf(fixture: Fixture) {
       maintainerNotes: "",
     },
     reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
-    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet.", recordsPath: `funding/${fixture.id}`, addresses: [] },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${fixture.id}`, addresses: [] },
     modelPolicy: { mode: "open-declared", disclosureRequired: true },
     links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
   }
@@ -265,7 +265,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       published: [200, "Unrelated tooling, revised."],
       revisions: [
         { status: 200, cache: "miss", control: listCache, cors: "*", contract, keys: ["schemaVersion", "revisions"] },
-        [[1, "Unrelated tooling.", "Revision 1"], [2, "Unrelated tooling, revised.", "Clearer headline"]],
+        [[1, "Unrelated tooling.", "Revision 1"], [2, "Unrelated tooling, revised.", `Owner update by @member-${stewardId}: presentation (headline) published. Clearer headline`]],
       ],
       quarantined: 200,
       closed: [

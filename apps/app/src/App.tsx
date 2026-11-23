@@ -86,9 +86,9 @@ export function App({ runtime, hostname, content, account, registry }: AppProps)
     <div className="flex min-h-dvh flex-col">
       {head === undefined && registry ? registry((boot) => <Head head={documentHead(route, boot)} />) : <Head head={head} />}
       <SiteHeader
-        brand={<a href="/" aria-label="Slop home" className={cn(focusRing, "rounded-sm")}><Logo size="header" wordmark label={domainOf(hostname)} /></a>}
-        nav={<Button asChild variant="outline" size="sm"><a href="/how-it-works" aria-label="How it works">How It Works</a></Button>}
-        account={account ?? <Button asChild variant="inverse" size="sm"><a href="/login">Log in</a></Button>}
+        brand={<a href="/" aria-label="Slop home" className={cn(focusRing, "flex rounded-sm")}><Logo size="header" wordmark label={domainOf(hostname)} /></a>}
+        nav={<Button asChild variant="outline" size="sm" className="max-md:h-11"><a href="/how-it-works" aria-label="How it works">How It Works</a></Button>}
+        account={account ?? <Button asChild variant="inverse" size="sm" className="max-md:h-11"><a href="/login">Log in</a></Button>}
       />
       <div id="main" className="flex flex-1 flex-col">
         {route.kind === "Unknown" ? <NotFound className={page} /> : (content ?? headingOnly)(route, framing(route.kind === "Home" ? undefined : headings[route.kind](route)))}

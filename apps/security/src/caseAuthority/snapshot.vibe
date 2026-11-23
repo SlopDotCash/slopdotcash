@@ -52,6 +52,10 @@ export effect function repositoryAuthority(scope: Pick<CaseScope, "projectId" | 
   return granted ? "granted" as const : "denied" as const
 }
 
+export effect function repositoryAuthorityOf(projectId: string, viewerGithubId: string) {
+  return [projectId, try repositoryAuthority({ projectId, viewerGithubId })] as const
+}
+
 export effect function caseAuthority(scope: CaseScope, epoch: number) {
   const viewer = scope.viewerGithubId
   const triagers = try activeTriagers(scope.caseId)

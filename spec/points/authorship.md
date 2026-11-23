@@ -277,6 +277,55 @@ pure val creditedActorsValues = Set(0, 1, 2)
 pure val resolutionsValues = Set(0, 1, 2)
 ```
 
+### A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair
+
+A claim that a retained copy carries into a joint assessment is credited by
+the commit its evidence names, never by the carrier as such. An ordinary
+copy credits the original commit's recipient, chosen by the rule above: its
+linked primary author, else the original pull request's creator. An
+original merge commit credits only when it has exactly one recorded merge
+resolution and that resolution names the claimed path. A verified
+original-contributor repair credits the accepted copy's commit the same way:
+its linked author, else the accepted pull request's creator. An unverified
+repair, or an original merge without that one resolution, leaves the
+claim's actor set unknown, which holds the unit. In every case the claim's
+lines are counted from the accepted copy's commit and file (the line rule
+above). Development: `workUnitCreditActorIds`, `workUnitLineWeights`.
+
+```quint
+type RetainedCopy = OrdinaryCopy | VerifiedRepair | UnverifiedRepair
+type CopyCredit = CreditsOriginal | CreditsAccepted | CopyCreditUnknown
+pure def copyCredit(retained: RetainedCopy, merge: bool, resolutions: int, namesPath: bool): CopyCredit =
+  match retained {
+  | OrdinaryCopy => if (not(merge) or (resolutions == 1 and namesPath)) CreditsOriginal else CopyCreditUnknown
+  | VerifiedRepair => CreditsAccepted
+  | UnverifiedRepair => CopyCreditUnknown }
+pure def copyClaimRecipient(credit: CopyCredit, original: CommitAttribution, accepted: CommitAttribution): int =
+  match credit { | CreditsOriginal => recipientFor(original) | CreditsAccepted => recipientFor(accepted) | CopyCreditUnknown => 0 }
+pure val carrierCommit: CommitAttribution = { ...initial, primary: Seen({ actor: 1, kind: User, linked: true }) }
+pure def lawOrdinaryCopyCreditsOriginal(resolutions: int, namesPath: bool): bool =
+  copyCredit(OrdinaryCopy, false, resolutions, namesPath) == CreditsOriginal
+pure def lawMergedOriginalNeedsOneResolutionNamingPath(resolutions: int, namesPath: bool): bool =
+  (copyCredit(OrdinaryCopy, true, resolutions, namesPath) == CreditsOriginal) iff (resolutions == 1 and namesPath)
+pure def lawVerifiedRepairCreditsAccepted(merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(VerifiedRepair, merge, resolutions, namesPath) == CreditsAccepted
+pure def lawUnverifiedRepairHolds(merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(UnverifiedRepair, merge, resolutions, namesPath) == CopyCreditUnknown
+pure def lawCarrierCreditedOnlyThroughRepair(retained: RetainedCopy, merge: bool, resolutions: int, namesPath: bool): bool =
+  copyCredit(retained, merge, resolutions, namesPath) == CreditsAccepted implies retained == VerifiedRepair
+pure def sometimesCopyCreditsOriginal(a: CommitAttribution): bool = a.phase == Credited and acceptedAs(a.acceptance, false, false)
+  and copyClaimRecipient(copyCredit(OrdinaryCopy, false, 0, true), a, carrierCommit) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure def sometimesMergedOriginalCopyCredited(a: CommitAttribution): bool = a.phase == Credited and acceptedAs(a.acceptance, true, false)
+  and copyClaimRecipient(copyCredit(OrdinaryCopy, true, 1, true), a, carrierCommit) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure def sometimesRepairCreditsAccepted(a: CommitAttribution): bool = a.phase == Credited
+  and copyClaimRecipient(copyCredit(VerifiedRepair, false, 0, true), carrierCommit, a) == a.recipient
+  and a.recipient != recipientFor(carrierCommit)
+pure val retainedValues = Set(OrdinaryCopy, VerifiedRepair, UnverifiedRepair)
+pure val namesPathValues = Set(true, false)
+```
+
 ### Simulation samples exercise linked, unlinked, conflicting and ineligible evidence
 
 These input sets bound simulation only.

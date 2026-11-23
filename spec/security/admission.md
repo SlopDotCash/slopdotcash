@@ -193,7 +193,14 @@ and no entry is counted twice. Batch size follows the provider token budget.
 Deterministic checks run over every file and every match goes to contextual
 model review; a match the checks cannot resolve is ambiguous. Executable
 content that no check, isolated execution or specialist review covers is
-counted and prevents a pass.
+counted and prevents a pass. Install-time shell helpers are followed through
+ordinary shell syntax: the commands inside substitutions, subshells,
+conditionals, loops and braces are read as if they run, and `cd "$(dirname
+"$0")"` in a script file enters that file's directory. A `cd` that may not
+run leaves the directory unknown, so a later local launch stays uncovered;
+`eval`, `case`, `select`, dynamic commands, arithmetic that runs a command
+and unclosed substitutions keep install coverage partial (operator decision,
+23 November 2026).
 
 ```quint
 pure def canReviewBatch(s: Scan, count: int): bool = s.phase == Reviewing and count > 0 and count <= s.inventory - s.reviewed

@@ -225,7 +225,11 @@ remembers under the programs installed now. Each tool runs in a process group
 of its own, and a check that is interrupted, or that exits, ends each group
 still running and the group of each process a tool started outside its own, as
 a browser is: no verifier, simulation or browser outlives it. A tool stopped
-for its time or its output is ended the same way. A run
+for its time or its output is ended the same way. An unreached simulation goal
+or an event its guard never allows cancels the queued proofs started alongside
+the simulations. On systems with process groups, it also stops their running
+tools. The check reports every simulation and waits for the tools to close
+before it releases the project lock. A run
 of a tool is remembered when it reached its answer, a refusal of its input
 included, never when it was stopped, timed out or failed for want of a file or
 program: an unchanged unit whose proof failed runs neither again, and an edit
@@ -273,12 +277,13 @@ actions to verify the whole project.
 For a transfer between trusted runners, call `prepareSimulationReceipts` with
 the same three arguments and an existing private scratch directory as the
 fourth. It returns `results` and, when all requested simulations passed and
-their receipts are complete, `seedDirectory`. Transfer only the files in that
-returned directory. They hold the model typechecks and simulation results the
-ordinary check can reuse. Copy them into the receiving project's `.spec-cache`
-before the full normal check. Match the checkout and toolchain, and keep the
-seed within the same trust boundary as other spec cache entries. The check
-computes its own keys and recomputes a missing or unreadable result.
+their receipts are complete, `seedDirectory`. Otherwise `partialDirectory`
+can hold the certified model typechecks and simulation results available from
+the run, including reproducible failures. Transfer only the files in the
+returned directory. Copy them into the receiving project's `.spec-cache`
+before the full normal check and keep them within the same trust boundary as
+other spec cache entries. The check computes its own keys and recomputes a
+missing or unreadable result.
 
 Turborepo caches `gen`, `build`, `typecheck`, tests, selftest and lint according
 to `turbo.json`. The task entry point fingerprints Node, VibeLang, Dafny, Z3
@@ -358,6 +363,10 @@ typechecks reusable before and after installation. Turbo passes `QUINT_HOME`
 to tasks so they use the selected evaluator. Its bytes determine the fingerprint.
 In CI, a Turborepo cache entry is
 kept for seven days after its last hit, which the run summary names.
+
+The shared Dafny library is a direct input of the tool package build and the
+Studio tests that run proofs. An edit to that library leaves application build
+keys unchanged.
 
 ### Seeds and budgets
 
@@ -451,9 +460,10 @@ requests can read it.
 Turborepo shares task results through the private Cloudflare/R2 cache.
 The task entry point disables Turbo telemetry. Each `selftest:tools` task waits for the root and
 Studio test tasks so those integration journeys do not compete with it.
-Verification installs the headless shell for Playwright and full Chromium for
-Bombadil. A hosted isolated shard A can defer full Chromium until its Bombadil
-journey runs; the nightly check installs it during setup.
+Canonical hosted verification installs the headless shell for Playwright.
+In that job, Bombadil installs full Chromium on its first exploration or saved
+replay. The nightly check and other setup paths that need both browsers install them during
+setup.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
 policy. A pull request keeps its own Turborepo results in the GitHub cache
@@ -468,6 +478,9 @@ depends on generated models. Settlement and fee bundles keep their workspace
 build dependencies without compiling the native contracts. Their tests
 still build the native artifacts and track the contracts workspace inputs.
 A job restores only the Turborepo results a job of its name saved.
+Attempt-one pull requests that GitHub confirms are closed skip late spec and
+Turbo cache uploads. Open requests, reruns, branch pushes and inconclusive
+lookups keep the ordinary publication path.
 Pushes to one branch run one at a time. A run that has started finishes and
 shares its completed tasks through the cache, and the newest pushed commit
 replaces any run still waiting. Re-run a specific commit when you need the

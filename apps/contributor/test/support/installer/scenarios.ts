@@ -774,7 +774,7 @@ export async function thePublicationRouteArchiveInstalls(): Promise<void> {
   const served = await servePublication({ commit: revisionA, projectId: manifest.id, revision: binding.revision, manifestText: JSON.stringify(manifest) });
   try {
     const installRoot = join(root, "install");
-    succeeded(run(generatedCommand(served.origin, generatedAuthority(root), root), installRoot));
+    succeeded(await runAsync(generatedCommand(served.origin, generatedAuthority(root), root), installRoot));
     expect(currentLink(installRoot, generatedSkill)).toBe(versionLink(`${revisionA}-r5`, generatedSkill));
     installedFiles(join(skillsDirectory(installRoot), generatedSkill), rendered(manifest, binding));
   } finally {

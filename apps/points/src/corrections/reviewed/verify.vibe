@@ -352,12 +352,12 @@ effect function found<S extends Schema.ConstraintDecoder<unknown>>(path: string,
 
 export effect function verifyHistoricalDuplicateAcceptanceOrder(packet: RetirementScope) {
   const orders = new Map<string, ReadonlyArray<AcceptanceOrder>>()
-  const retirements = (packet.duplicateRetirements ?? []).filter((item) => item.identicalAcceptedChange === undefined)
+  const retirements = (packet.duplicateRetirements ?? []).filter((item) => item.identicalAcceptedChange === undefined && item.netOutcome === undefined)
   if (retirements.length === 0) return orders
   const audit = packet.sourceAudit
   const root = `/repos/${audit.repository}`
   const repository = try found(root, PublicRepository)
-  try require(repository?.node_id === audit.repositoryNodeId && repository.full_name.toLowerCase() === audit.repository.toLowerCase(), "Duplicate acceptance repository changed")
+  try require(repository?.node_id === audit.repositoryNodeId && !repository.private && repository.full_name.toLowerCase() === audit.repository.toLowerCase(), "Duplicate acceptance repository changed")
   const audited = new Map(audit.sources.map((row) => [row.id, row] as const))
   const pulls = new Map<number, ReviewedPull | undefined>()
   const checked = new Set<string>()

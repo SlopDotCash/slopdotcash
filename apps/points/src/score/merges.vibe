@@ -1,5 +1,5 @@
-// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
-import { type CommitAttribution, type CopyBinding, type CreditSelection, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, contributes, eligibleKind, freshCreditHeld, initial as attributionInitial, ownsAcceptedOrdinaryCommit, recipientFor, recipientLines, scoredDigestsAfter, standaloneOverlapHeld, usesEarlierOwners } from "../../gen/points__authorship.effect.vibe"
+// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over claimed commit paths"; spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/allocation.md, "Source eligibility and fixed financial history are checked before any allocation is written"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A joint member that a sibling's ratification withholds keeps the accepted-merge minimum"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/authorship.md, "A joint assessment credits a retained copy to its original author, a verified repair to its accepted author, and holds an unverified repair"
+import { type CommitAttribution, type CopyBinding, type CreditSelection, type PathClaim, canAttribute, canCreditCommit, canObserveCopy, completeLines, copyCredit, contributes, eligibleKind, freshCreditHeld, initial as attributionInitial, ownsAcceptedOrdinaryCommit, recipientFor, recipientLines, scoredDigestsAfter, standaloneOverlapHeld, usesEarlierOwners } from "../../gen/points__authorship.effect.vibe"
 import type { CensusCommit } from "../../gen/points__corrections.effect.vibe"
 import { type PointShare, type Recipient, allocatePoints, canWriteAllocation, eligibleAllocation, lineTotal } from "../../gen/points__allocation.effect.vibe"
 import { periodOf } from "../../gen/points__periods.effect.vibe"
@@ -217,11 +217,18 @@ effect function pathClaim(claim: JointClaim, number: number, book: ClaimBook) {
   const oid = claim.copy?.commitOid ?? claim.commitOid
   const pull = book.byId.get(sourceId)
   const commits = (pull?.commits ?? []).filter((commit) => commit.oid === oid)
-  const credited = (book.byId.get(claim.sourceId)?.commits ?? []).filter((commit) => commit.oid === claim.commitOid)
-  const commit = commits[0]
-  if (pull === undefined || commit === undefined || commits.length !== 1 || credited.length !== 1 || claim.copy?.verified === false) return unknownClaim(number)
-  const key = `${book.scope}\u0000${sourceId}\u0000${oid}`
-  const state = book.states.get(key) ?? (try attributed(key, pull, commit, unitsInitial, book.actors))
+  const credited = book.byId.get(claim.sourceId)
+  const originals = (credited?.commits ?? []).filter((commit) => commit.oid === claim.commitOid)
+  const [commit] = commits
+  const [original] = originals
+  if (pull === undefined || commit === undefined || commits.length !== 1 || commit.parentCount < 0 ||
+    credited === undefined || original === undefined || originals.length !== 1) return unknownClaim(number)
+  const credit = claim.copy === null ? "CreditsOriginal" : copyCredit(claim.copy.kind, original.parentCount > 1, original.resolutions.length,
+    original.resolutions[0]?.some((file) => file.filename === claim.path) === true)
+  if (credit === "CopyCreditUnknown") return unknownClaim(number)
+  const [creditPull, creditCommit] = credit === "CreditsOriginal" ? [credited, original] : [pull, commit]
+  const key = `${book.scope}\u0000${creditPull.id}\u0000${creditCommit.oid}`
+  const state = book.states.get(key) ?? (try attributed(key, creditPull, creditCommit, unitsInitial, book.actors))
   book.states.set(key, state)
   if (state.phase === "ConflictHeld" || state.acceptance.tag !== "AcceptedCommit") return unknownClaim(number)
   const actor = recipientFor(state)

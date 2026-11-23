@@ -19,8 +19,15 @@ not force.
   height: `text-ui` (13px) is the dense interface size, `text-copy` (15px) running copy, `text-control`
   (15px, tight) a header control, `text-prompt` (17px) the agent prompt, `text-wordmark` (22px, 19px under `md`
   as `text-wordmark-sm`) the header's wordmark, and `xs` to `4xl` keep Tailwind's steps, `3xl` (32px) and
-  `4xl` (40px) being a project card's name and amount; `5xl` (48px) to `9xl` (128px) are the home page's display
-  sizes, each with a line height of 1, as a section title and the hero; `leading-summary` (1.45) is a card's description. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
+  `4xl` (40px) being a project card's name and amount on a wide screen, `name` (22px), `amount` (28px) and
+  `amount-lg` (31px) the same on narrower ones; `5xl` (48px) to `9xl` (128px) are display sizes with a line height of
+  1. Development sizes the home page's display type with the viewport; the tokens step it at `md`, `lg` and `xl` to
+  development's size at 390, 1024 and 1440px: `hero` (56px), `hero-lg` (92px) and `hero-xl` (130px) the campaign
+  heading at `leading-hero` (0.86), its action from `title` to `action-xl` (94px), and `title` (44px), `title-lg` (61px)
+  and `title-xl` (86px) a section title at `leading-title` (0.88); `lead` (22px) is the hero's line under the
+  heading. `leading-summary` (1.45) is a card's description. `leading-page` (1.2) is the page's own line height, as
+  development's `normal`, and `leading-data` (1.32) the same for JetBrains Mono; `tracking-amount` (-0.03em) is a
+  card's amount. `leading-*` and `tracking-*` set a heading's or label's own rhythm: `display` for
   the large headings, `label` for small capitals. Development's headings are 800 (12 rules), `font-extrabold`;
   `font-strong` (650) and `font-heavy` (750) sit between Tailwind's weights.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
@@ -38,7 +45,8 @@ not force.
 - **Layers.** `z-raised` lifts a cell over its neighbours, `z-header` is the sticky header (over the page
   behind `backdrop-blur-header`, 16px), and `z-modal`
   holds menus, dialogs and the backdrop behind them, above the header.
-- **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout. `shell` (1180px)
+- **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout, `xl` (1280px) the wide
+  screen where the display type takes its largest step. `shell` (1180px)
   is the one content width of the header, the home page and the footer, as development's `.shell`: 24px of
   gutter each side, 14px under `md`.
 
@@ -135,6 +143,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `breakpoint.md` | 42.5rem |
 | `breakpoint.lg` | 56.25rem |
 | `breakpoint.shell` | 73.75rem |
+| `breakpoint.xl` | 80rem |
 | `rounded.chip` | 0.6rem |
 | `rounded.card` | 16px |
 | `rounded.avatar` | 10px |
@@ -178,6 +187,28 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `text.8xl.leading` | 1 |
 | `text.9xl.size` | 8rem |
 | `text.9xl.leading` | 1 |
+| `text.name.size` | 22px |
+| `text.name.leading` | 1 |
+| `text.amount.size` | 28px |
+| `text.amount.leading` | 0.95 |
+| `text.amount-lg.size` | 31px |
+| `text.amount-lg.leading` | 0.95 |
+| `text.lead.size` | 22px |
+| `text.lead.leading` | 1.6 |
+| `text.title.size` | 44px |
+| `text.title.leading` | 0.88 |
+| `text.title-lg.size` | 61px |
+| `text.title-lg.leading` | 0.88 |
+| `text.title-xl.size` | 86px |
+| `text.title-xl.leading` | 0.88 |
+| `text.action-xl.size` | 94px |
+| `text.action-xl.leading` | 0.88 |
+| `text.hero.size` | 56px |
+| `text.hero.leading` | 0.86 |
+| `text.hero-lg.size` | 92px |
+| `text.hero-lg.leading` | 0.86 |
+| `text.hero-xl.size` | 130px |
+| `text.hero-xl.leading` | 0.86 |
 | `weight.medium` | 500 |
 | `weight.semibold` | 600 |
 | `weight.strong` | 650 |
@@ -185,6 +216,10 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `weight.heavy` | 750 |
 | `weight.extrabold` | 800 |
 | `leading.display` | 0.9 |
+| `leading.hero` | 0.86 |
+| `leading.title` | 0.88 |
+| `leading.page` | 1.2 |
+| `leading.data` | 1.32 |
 | `leading.none` | 1 |
 | `leading.tight` | 1.15 |
 | `leading.snug` | 1.3 |
@@ -192,6 +227,7 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `leading.body` | 1.6 |
 | `tracking.display` | -0.055em |
 | `tracking.tighter` | -0.04em |
+| `tracking.amount` | -0.03em |
 | `tracking.tight` | -0.02em |
 | `tracking.label` | 0.08em |
 | `z.raised` | 1 |

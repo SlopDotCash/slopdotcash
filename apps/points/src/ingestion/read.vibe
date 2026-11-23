@@ -109,6 +109,8 @@ function transportError(request: HttpClientRequest.HttpClientRequest, descriptio
   return new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description }) })
 }
 
+const nullBodyStatuses: ReadonlyArray<number> = [204, 205, 304]
+
 function opaqueTag(etag: string | undefined) {
   return etag?.replace(/^W\//u, "")
 }
@@ -159,6 +161,7 @@ export function ingestion(options: TransportOptions = {}) {
     effect function exchanged(request: HttpClientRequest.HttpClientRequest) {
       const fetched = effect {
         const response = try base.execute(request)
+        if (nullBodyStatuses.includes(response.status)) return { status: response.status, headers: plainHeaders(response.headers), bytes: new Uint8Array(0) } satisfies Answer
         const bytes = boundedBytes(response, transportLimitBytes, "GitHub read") catch effect (error) => {
           throw transportError(request, error._tag === "BodyTooLarge" ? `GitHub answered more than ${transportLimitBytes} bytes` : "GitHub returned no readable body")
         }

@@ -19,7 +19,7 @@ const everyLeafProves = (entries: ReadonlyArray<MonthlyEntry>, allocation: Alloc
   if (allocation.kind === "refused") return false;
   const { tree } = allocation;
   return tree.total === sum(entries) && tree.count === entries.length && entries.every((entry, index) => {
-    const proof = tree.proof(index);
+    const proof = tree.proofs[index];
     const node = proof && provenRoot(entry, index, entries.length, proof);
     return node?.hash === tree.root && node.total === tree.total;
   });
@@ -27,7 +27,7 @@ const everyLeafProves = (entries: ReadonlyArray<MonthlyEntry>, allocation: Alloc
 
 const anotherPositionFails = (entries: ReadonlyArray<MonthlyEntry>, allocation: Allocation) =>
   allocation.kind === "refused" || entries.length === 1 || entries.every((entry, index) => {
-    const proof = allocation.tree.proof(index) ?? [];
+    const proof = allocation.tree.proofs[index] ?? [];
     const moved = provenRoot(entry, (index + 1) % entries.length, entries.length, proof);
     return moved?.hash !== allocation.tree.root;
   });

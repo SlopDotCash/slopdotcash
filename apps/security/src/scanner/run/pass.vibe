@@ -14,7 +14,7 @@ import { inspectIsolatedArtifacts } from "../sandboxClient/client.vibe"
 import { attemptMachine, fetched, interrupted, publishedDigest, receiptOf, reusedOrigin } from "./attempt.vibe"
 import { type QueuedScan, composeAcquisitionRefusal, composeScanResult, coveredByBoundedScan, primaryOutcome, specialistOutcome } from "./compose.ts"
 import { type EvidenceObject, retainEvidence } from "./evidence.vibe"
-import { type Assignment, QueuedRefusal, acquireQueued, readPendingAssessments } from "./queue.vibe"
+import { type Assignment, QueuedRefusal, acquireQueued, failureLabel, readPendingAssessments } from "./queue.vibe"
 import { ScanService, signedCall, signedJson } from "./service.vibe"
 
 export service ScanSettings {
@@ -47,10 +47,6 @@ schema QueuedInputs { schema: "slop-queued-inputs-v1"; repository: string; input
 
 function retry(assessmentId: string, step: RetryStep, reason?: string): AssessmentOutcome {
   return { assessmentId, state: "retry", step, ...(reason === undefined ? {} : { reason }) }
-}
-
-function errorName(error: unknown) {
-  return typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : error instanceof Error ? error.name : "unknown"
 }
 
 effect function refresh() {
@@ -176,7 +172,7 @@ effect function scanAcquired(machine: Machine.Shape, assignment: Assignment, dir
   }
   const isolated = inspectIsolatedArtifacts(files, inspected) catch effect (error) => {
     try machine.send(interrupted("ReadinessUnavailable"))
-    return errorName(error)
+    return failureLabel(error)
   }
   if (typeof isolated === "string") return retry(assessmentId, "isolated-execution", isolated)
   const inspection = isolated.inspection
@@ -270,13 +266,13 @@ export effect function scanOne(assignment: Assignment, machine: Machine.Shape) {
   if (acquired instanceof QueuedRefusal) {
     if (acquired.fetched === "FetchStaleTemplate") {
       try machine.send({ type: "acquire", fetch: fetched("FetchStaleTemplate", 0) })
-      return retry(assessmentId, "acquire", "QueuedRefusal")
+      return retry(assessmentId, "acquire", failureLabel(acquired))
     }
     return try publishRefusal(machine, assignment, acquired, acquisitionStartedAt)
   }
   if (!("directory" in acquired)) {
     try machine.send({ type: "acquire", fetch: fetched("FetchUnavailable", 0) })
-    return retry(assessmentId, "acquire", errorName(acquired))
+    return retry(assessmentId, "acquire", failureLabel(acquired))
   }
   const fs = try FileSystem.FileSystem
   return try Effect.ensuring(scanAcquired(machine, acquired.assignment, acquired.directory), Effect.ignore(fs.remove(acquired.directory, { recursive: true, force: true })))
@@ -296,7 +292,7 @@ export effect function runScanPass() {
     }
     const machine = try attemptMachine()
     const outcome = try exit(scanOne(assignment, machine))
-    assessments.push(Exit.isSuccess(outcome) ? outcome.value : retry(assignment.assessmentId, "assessment", errorName(Cause.squash(outcome.cause))))
+    assessments.push(Exit.isSuccess(outcome) ? outcome.value : retry(assignment.assessmentId, "assessment", failureLabel(Cause.squash(outcome.cause))))
   }
   return { refreshed, assessments } satisfies ScanPassReport
 }

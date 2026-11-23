@@ -1,5 +1,5 @@
 {
-  "source": "f3f2725e0789b6bb19b3fe5606023d69ea18dd81",
+  "source": "856bd48925460fd9b571fdd481b18ce488e26fdb",
   "ignore": [
     "migrations/**",
     "skills/**",
@@ -48,7 +48,7 @@
     "disclosures/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "docs/implementation-points-rebalance.md": "6597ccf41e78762f1b47d2014454f8bf705ba0694b4a0cba7fb4a1cbe4727e1b",
     "docs/october-payout-proposal-import.md": "05d70c88c94fe5026481b098f845fe445580b18d78af3996d77b4a73a9b28aab",
-    "docs/reviewed-historical-points.md": "002a4d6fb6524a4d48043243c3f4061a1180a79fa28aef3d013943d9354600af",
+    "docs/reviewed-historical-points.md": "945b99a15fb684f2c50e70e947a409a273abbcb2bde99f7aadf0884f6093fe9b",
     "docs/slop-buyback.md": "1dc343a629afbd4b8acb06e422fd59ddd1aac8dc76912f80cc52a1c903e08d40",
     "funding/preparations/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "migrations/0001_private_trace_backend.sql": "947da3f407ce20472a8a1be34bb5b6c2c3f2ccff117b32bd1ff6f6fe9c9a5f04",

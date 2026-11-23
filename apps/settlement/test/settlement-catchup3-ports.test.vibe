@@ -29,8 +29,12 @@ const bountyVault = "Vau1t11111111111111111111111111111111111111"
 const bountyAsset = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 const directMint = "So1anaMint1111111111111111111111111111111111"
 
-function project(id: string): Statement {
-  return sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, '{}', ${"a".repeat(64)}, ${at}, ${at})`
+function project(id: string): ReadonlyArray<Statement> {
+  const manifest = JSON.stringify({ id })
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${id}, 1, ${manifest}, ${"a".repeat(64)}, 'Listed', ${at})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, 'active', 1, ${manifest}, ${"a".repeat(64)}, ${at}, ${at})`,
+  ]
 }
 
 function securityCase(id: string, projectId: string, terms: string): Statement {
@@ -65,18 +69,18 @@ const seed = [
   sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', '0xt1', 0, 'block', 'paid', 'o1', ${paidEvent}, '2026-11-10T00:00:00.000Z')`,
   sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
     VALUES ('o3', 'eliza', '101', 'base-mainnet', 'base', ${evmVault}, ${usdc}, 6, '500000', '10000', ${"3".repeat(64)}, 'reserved', '2026-11-01T00:00:00.000Z', NULL)`,
-  project("funded"),
-  project("unreadable"),
-  project("direct"),
-  securityCase("case-funded", "funded", JSON.stringify({ currency: "USDC", decimals: 6, network: "solana" })),
-  securityCase("case-unreadable", "unreadable", "{}"),
-  reservation("case-funded", "funded", "2000000"),
-  reservation("case-unreadable", "unreadable", "1000000"),
+  ...project("funded"),
+  ...project("unreadable"),
+  ...project("direct"),
+  securityCase("sc_case_funded", "funded", JSON.stringify({ currency: "USDC", decimals: 6, network: "solana" })),
+  securityCase("sc_case_unreadable", "unreadable", "{}"),
+  reservation("sc_case_funded", "funded", "2000000"),
+  reservation("sc_case_unreadable", "unreadable", "1000000"),
   bountySnapshot("funded"),
   bountySnapshot("unreadable"),
-  ...directPayment("direct-1", "base", "0xABCDEF0000000000000000000000000000000001", "1", "0xFee0000000000000000000000000000000000001", true),
-  ...directPayment("direct-2", "base", "0xabcdef0000000000000000000000000000000001", "1", "0xfee0000000000000000000000000000000000001", false),
-  ...directPayment("direct-3", "solana", directMint, "2", "FeeWa11et111111111111111111111111111111111", true),
+  ...directPayment("sc_direct_0001", "base", "0xABCDEF0000000000000000000000000000000001", "1", "0xFee0000000000000000000000000000000000001", true),
+  ...directPayment("sc_direct_0002", "base", "0xabcdef0000000000000000000000000000000001", "1", "0xfee0000000000000000000000000000000000001", false),
+  ...directPayment("sc_direct_0003", "solana", directMint, "2", "FeeWa11et111111111111111111111111111111111", true),
 ]
 
 service Ledger {
@@ -142,9 +146,9 @@ layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it)
           total: 1,
         },
         direct: {
-          base: [{ caseId: "direct-1", network: "Base", asset: "0xABCDEF0000000000000000000000000000000001", feeBaseUnits: "1", feeRecipient: "0xFee0000000000000000000000000000000000001", feeTransferBaseUnits: "1", preparedAt: "2026-11-11T00:00:00.000Z", verifiedAt: at }],
+          base: [{ caseId: "sc_direct_0001", network: "Base", asset: "0xABCDEF0000000000000000000000000000000001", feeBaseUnits: "1", feeRecipient: "0xFee0000000000000000000000000000000000001", feeTransferBaseUnits: "1", preparedAt: "2026-11-11T00:00:00.000Z", verifiedAt: at }],
           solanaOtherCase: [],
-          solana: [{ caseId: "direct-3", network: "Solana", asset: directMint, feeBaseUnits: "2", feeRecipient: "FeeWa11et111111111111111111111111111111111", feeTransferBaseUnits: "2", preparedAt: "2026-11-13T00:00:00.000Z", verifiedAt: at }],
+          solana: [{ caseId: "sc_direct_0003", network: "Solana", asset: directMint, feeBaseUnits: "2", feeRecipient: "FeeWa11et111111111111111111111111111111111", feeTransferBaseUnits: "2", preparedAt: "2026-11-13T00:00:00.000Z", verifiedAt: at }],
         },
         funds: {
           funded: { currency: "USDC", decimals: 6, network: "solana", freeMinor: "5000000", snapshotAt: at, availableMinor: "3000000", assetAddress: bountyAsset, deploymentNetwork: "solana-mainnet" },

@@ -7,7 +7,7 @@ import { Roles } from "@repo/platform/roles"
 import type { Authority } from "../../gen/security__cases.ts"
 import { heldFor, moderatorNow, noAuthority, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
-import { AuthorityUnavailable, repositoryAuthority } from "../caseAuthority/snapshot.vibe"
+import { AuthorityUnavailable, repositoryAuthorityOf } from "../caseAuthority/snapshot.vibe"
 import { caseRecord } from "../cases/rows.vibe"
 import { type Observed, observedAs } from "../cases/store.vibe"
 import { getSecuritySubmissions as listRows, getSecuritySubmissionsById as readRows } from "../client/refusals.vibe"
@@ -102,9 +102,15 @@ effect function scopedProjects(actor: Actor) {
   const authority = new Map<string, ProjectAuthority>()
   const scoped: string[] = []
   let authorityUnavailable = false
+  const approved = new Map<string, NonNullable<ReportingProgram["approvers"]>>()
   for (const project of projects) {
     const approvers = (try programs.current(project.id))?.approvers
-    const repository = approvers === undefined ? try repositoryAuthority({ projectId: project.id, viewerGithubId: actor.githubId }) : "denied"
+    if (approvers !== undefined) approved.set(project.id, approvers)
+  }
+  const reads = new Map(try Effect.forEach(projects.filter((project) => !approved.has(project.id)), (project) => repositoryAuthorityOf(project.id, actor.githubId), { concurrency: "unbounded" }))
+  for (const project of projects) {
+    const approvers = approved.get(project.id)
+    const repository = reads.get(project.id) ?? "denied"
     authority.set(project.id, { approvers, repository })
     if (repository === "unavailable") authorityUnavailable = true
     if (approvers === undefined ? repository === "granted" : approvers.technical.includes(actor.githubId)) scoped.push(project.id)

@@ -1,5 +1,5 @@
 name: setup
-description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3 and the spec cache; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
+description: Node 26, pnpm from packageManager and its cache; with verification, Dafny from its pinned release, Quint's evaluator, Chromium, Foundry with solc and z3, Rust and Python 3 and the spec cache; with solana, the pinned Agave CLI and program builder, their platform tools and the reviewed validator image; Turborepo's local cache for pull requests and local-only branch pushes; for publication, a locked install without lifecycle scripts or any cache.
 inputs:
   job:
     description: Names the caches this job saves. The contracts job installs only the native contract tools and pinned package runner.
@@ -14,7 +14,7 @@ inputs:
     description: A job that builds a release bundle, publishes or holds deployment secrets restores no cache and installs without lifecycle scripts; it sets verification to "false".
     default: "false"
   solana:
-    description: Install the pinned program builder and pull the reviewed Solana test validator image by its digest.
+    description: Put the pinned Agave solana CLI and program builder on PATH with the platform tools its tests build with, cached by their versions, and pull the reviewed Solana test validator image by its digest.
     default: "false"
 outputs:
   spec-cache-path:
@@ -41,7 +41,7 @@ runs:
     - id: setup-pnpm
       uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
     - name: Install Dafny
-      if: inputs.verification == 'true' && inputs.job != 'contracts'
+      if: inputs.verification == 'true' && inputs.job != 'contracts' && !startsWith(inputs.job, 'simulate-')
       shell: bash
       run: |
         version=4.11.0
@@ -79,22 +79,56 @@ runs:
         cargo --version
         rustc --version
         python3 --version
-    - name: Install the pinned Solana program builder
-      if: inputs.solana == 'true'
+    - name: Read the pinned Agave and platform tools versions
+      id: solana-tools
+      if: inputs.solana == 'true' && inputs.publication != 'true'
       shell: bash
       run: |
         set -euo pipefail
-        version=2.1.21
-        target="$RUNNER_TEMP/agave-$version"
+        fixture=packages/platform/src/testing/chains/validator.ts
+        agave="$(sed -n 's/^export const SOLANA_TEST_VERSION = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)";$/\1/p' "$fixture")"
+        tools="$(sed -n 's/^const sbfTools = "\(v[0-9]\+\.[0-9]\+\)";$/\1/p' "$fixture")"
+        [[ $agave == 2.1.21 ]] || { echo "::error::$fixture pins Agave '$agave'; this action verifies only the 2.1.21 release archive."; exit 1; }
+        [[ -n $tools ]] || { echo "::error::$fixture names no platform tools version."; exit 1; }
+        printf 'agave=%s\ntools=%s\nkey=solana-tools-%s-%s-agave-%s-%s\n' "$agave" "$tools" "$RUNNER_OS" "$RUNNER_ARCH" "$agave" "$tools" >> "$GITHUB_OUTPUT"
+    - id: restore-solana-tools
+      if: steps.solana-tools.outputs.key != ''
+      continue-on-error: true
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/solana
+        key: ${{ steps.solana-tools.outputs.key }}
+    - name: Install the pinned Agave CLI, its program builder and platform tools
+      if: steps.solana-tools.outputs.key != ''
+      shell: bash
+      env:
+        AGAVE_VERSION: ${{ steps.solana-tools.outputs.agave }}
+        SBF_TOOLS: ${{ steps.solana-tools.outputs.tools }}
+      run: |
+        set -euo pipefail
+        target="$RUNNER_TEMP/agave-$AGAVE_VERSION"
         mkdir -p "$target/bin"
-        curl --fail --location --retry 3 -o "$target/release.tar.bz2" "https://github.com/anza-xyz/agave/releases/download/v$version/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+        curl --fail --location --retry 3 -o "$target/release.tar.bz2" "https://github.com/anza-xyz/agave/releases/download/v$AGAVE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
         echo "5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397  $target/release.tar.bz2" | sha256sum --check --strict
         tar -xjf "$target/release.tar.bz2" -C "$target" --no-same-owner
-        "$target/solana-release/bin/cargo-build-sbf" --version
+        ln -sfn "$target/solana-release/bin/solana" "$target/bin/solana"
         ln -sfn "$target/solana-release/bin/cargo-build-sbf" "$target/bin/cargo-build-sbf"
+        export PATH="$target/bin:$PATH"
         echo "$target/bin" >> "$GITHUB_PATH"
+        [[ $(solana --version) == "solana-cli $AGAVE_VERSION "* ]]
+        [[ $(cargo-build-sbf --version) == "solana-cargo-build-sbf $AGAVE_VERSION"* ]]
+        if command -v solana-test-validator; then echo "::error::A solana-test-validator on PATH would shadow the reviewed validator image."; exit 1; fi
+        mkdir -p "$HOME/.cache/solana"
+        cd packages/contracts/solana
+        CARGO_TARGET_DIR="$PWD/.cache/target" cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version "$SBF_TOOLS" --sbf-out-dir "$RUNNER_TEMP/sbf-tools-check" -- --locked
+    - if: steps.solana-tools.outputs.key != '' && steps.restore-solana-tools.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/solana
+        key: ${{ steps.solana-tools.outputs.key }}
     - name: Pull the reviewed Solana validator image
-      if: inputs.solana == 'true'
+      if: steps.solana-tools.outputs.key != ''
       shell: bash
       run: |
         set -euo pipefail
@@ -138,6 +172,7 @@ runs:
       env:
         JOB: ${{ inputs.job }}
       run: |
+        [[ $JOB != simulate-* ]] || JOB=verify
         lock='${{ hashFiles('.nvmrc', 'pnpm-lock.yaml') }}'
         named="spec-${{ runner.os }}-${{ runner.arch }}-${JOB}-"
         prefix="${named}${lock}-"
@@ -368,13 +403,16 @@ runs:
         path: ~/.quint/rust-evaluator-${{ steps.quint-evaluator.outputs.version }}
         key: ${{ steps.quint-cache.outputs.cache-primary-key }}
     - name: Install Chromium
-      if: inputs.verification == 'true' && inputs.job != 'contracts' && inputs.job != 'selftest-b' && inputs.job != 'selftest-rest'
+      if: inputs.verification == 'true' && inputs.job != 'contracts' && inputs.job != 'selftest-b' && inputs.job != 'selftest-rest' && !startsWith(inputs.job, 'simulate-')
       run: |
-        node --input-type=module - "${{ inputs.job == 'selftest-a' }}" "${{ inputs.cache-verification == 'true' }}" <<'JS'
-        import { hostedCachedFixture, installChromium } from "./vibestack/selftests/install.ts";
-        const [fullOnly, cacheVerification] = process.argv.slice(2);
-        if (fullOnly !== "true" || cacheVerification !== "true" || !hostedCachedFixture()) {
-          await installChromium(fullOnly === "true");
+        node --input-type=module - "${{ inputs.job == 'selftest-a' }}" "${{ inputs.job == 'verify' }}" "${{ inputs.cache-verification == 'true' }}" <<'JS'
+        import { installChromium, prepareChromiumShell } from "./vibestack/chromium.ts";
+        import { hostedCachedFixture } from "./vibestack/selftests/install.ts";
+        const [fullOnly, verify, cacheVerification] = process.argv.slice(2);
+        if (fullOnly === "true") {
+          if (cacheVerification !== "true" || !hostedCachedFixture()) await installChromium("full");
+        } else if (verify !== "true" || cacheVerification !== "true" || !await prepareChromiumShell()) {
+          await installChromium("both");
         }
         JS
       shell: bash

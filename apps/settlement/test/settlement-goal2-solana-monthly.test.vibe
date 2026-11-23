@@ -210,11 +210,11 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
       try posted(read, site),
       try posted(check, site),
     ]
-    const invalid = { status: 400, body: { error: "invalid_monthly_setting", message: "" } }
+    const invalid = { status: 400, body: { error: "invalid_monthly_setting" } }
     const missing = { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } }
     try same({ answers, routeOutbound }, {
       answers: [
-        { status: 403, body: { error: "origin_forbidden", message: "" } },
+        { status: 403, body: { error: "origin_forbidden" } },
         invalid,
         invalid,
         invalid,
@@ -222,7 +222,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => 
         invalid,
         invalid,
         invalid,
-        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 503, body: { error: "payments_unavailable" } },
         missing,
         missing,
       ],

@@ -312,6 +312,11 @@ function feedObligation(id: string, actor: string, project: string, network: "ba
   return obligation(id, project, network, feedVault, network === "base-mainnet" ? usdc : sepoliaUsdc, actor, gross, fee, state, state === "paid" ? `transaction-${id}` : null)
 }
 
+function solanaFeedObligation(id: string, gross: string, fee: string, seed: string): Statement {
+  return sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
+    VALUES (${id}, 'solana-feed', '109', 'solana-mainnet', 'solana', ${"V".repeat(44)}, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 6, ${gross}, ${fee}, ${digest(seed)}, 'reserved', '2026-11-02T00:00:00.000Z', NULL)`
+}
+
 function feedWallet(actor: string, suffix: string, confirmed: boolean): ReadonlyArray<Statement> {
   const claim = `feed-claim-${suffix}`
   const challenge = `feed-challenge-${suffix}`
@@ -537,9 +542,12 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         feedObligation("feed-obligation-g", "106", "feed", "base-mainnet", "reserved", "777777777", "1234567"),
         feedObligation("feed-obligation-h", "107", "feed", "base-mainnet", "reserved", "777777778", "1234568"),
         feedObligation("feed-obligation-i", "108", "test-feed", "base-sepolia", "reserved", "777777779", "1234569"),
-        feedObligation("feed-obligation-j", "109", "feed", "base-mainnet", "reserved", "777777780", "1234570"),
-        sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
-          VALUES ('feed-obligation-k', 'feed', '109', 'solana-mainnet', 'solana', ${"V".repeat(44)}, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 6, '777777781', '1234571', ${digest("k")}, 'reserved', '2026-11-02T00:00:00.000Z', NULL)`,
+        sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at)
+          VALUES ('solana-feed', 1, '{"id":"solana-feed","name":"Solana Feed"}', ${"c".repeat(64)}, 'feed fixture', '2026-11-17T00:00:00.000Z')`,
+        sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at)
+          VALUES ('solana-feed', 'active', 1, '{"id":"solana-feed","name":"Solana Feed"}', ${"c".repeat(64)}, '2026-11-17T00:00:00.000Z', '2026-11-17T00:00:00.000Z')`,
+        solanaFeedObligation("feed-obligation-j", "777777780", "1234570", "j"),
+        solanaFeedObligation("feed-obligation-k", "777777781", "1234571", "k"),
         sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome)
           VALUES ('feed-actor-101', '101', 'alice', '2026-11-17T00:00:00.000Z', 0, 5)`,
         sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome, closed_at)

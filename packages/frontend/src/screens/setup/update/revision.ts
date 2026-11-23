@@ -444,7 +444,7 @@ function slopbotOf(raw: Json, manifest: ManagedManifest, value: UpdateDraft, ent
     ...(entries.fee ? { submissionFee: entries.fee } : {}),
     ...(value.wantedIssues === "true" ? { wantedIssues: true } : {}),
   };
-  return Object.keys(slopbot).length === 0 ? {} : { slopbot };
+  return { slopbot: Object.keys(slopbot).length === 0 ? undefined : slopbot };
 }
 
 function securityOf(raw: Json, value: UpdateDraft): Json {

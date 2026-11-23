@@ -2,13 +2,14 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { settableClock } from "@repo/platform/testing/clock";
 import { githubFake } from "@repo/platform/testing/github";
-import { day, fastClock, repository, start } from "../u13/github.ts";
+import { day, repository, start } from "../u13/github.ts";
 
 const iso = (millis: number) => new Date(millis).toISOString();
 
 export function acceptanceWorld() {
-  const clock = fastClock(start - 50 * day);
+  const clock = settableClock(start - 50 * day);
   const fake = githubFake({ now: () => clock.now() });
   fake.world.addUser({ id: 101, login: "ada" });
   const created = fake.world.addRepo({ id: 7001, owner: "ada", name: "widgets" });

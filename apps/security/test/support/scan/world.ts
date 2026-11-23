@@ -1,5 +1,5 @@
 // spec/security/admission.md, "Story: Review every acquired item before granting admission"
-import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { Request as WorkerRequest } from "miniflare";
 import { type ProviderFake, providerFake } from "@repo/platform/testing/providers";
 import { type WorkingRepository, workingRepository } from "../git/fixtures.ts";
@@ -19,6 +19,8 @@ export interface ServiceCall {
 }
 
 export type PublicationMode = "answer" | "lose";
+export type IdentityMode = "answer" | "limited" | "offline";
+export type TemplateMode = "committed" | "uncommitted";
 
 export interface ScanWorld {
   readonly key: string;
@@ -29,6 +31,10 @@ export interface ScanWorld {
   readonly published: ReadonlyArray<unknown>;
   /** @throws {never} */
   publication(mode: PublicationMode): void;
+  /** @throws {never} */
+  identity(mode: IdentityMode): void;
+  /** @throws {never} */
+  template(mode: TemplateMode): void;
   /** @throws {never} */
   fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
 }
@@ -68,7 +74,7 @@ function json(value: unknown, status = 200): Response {
 export function scanWorld(input: { readonly repositoryPath: string; readonly commit: string }): ScanWorld {
   const pair = generateKeyPairSync("ed25519");
   const jwk = pair.privateKey.export({ format: "jwk" });
-  const publicKey = createPublicKey(pair.publicKey);
+  const publicKey = pair.publicKey;
   const rawPublic = Buffer.from(String(pair.publicKey.export({ format: "jwk" }).x), "base64url");
   const keyId = sha256(rawPublic);
   const provider = providerFake();
@@ -76,6 +82,8 @@ export function scanWorld(input: { readonly repositoryPath: string; readonly com
   const journal = new Map<string, string[]>();
   const published: unknown[] = [];
   let publication: PublicationMode = "answer";
+  let identity: IdentityMode = "answer";
+  let template: TemplateMode = "committed";
   const manifestText = JSON.stringify({ id: projectId, repositories: [{ id: repositoryId, githubUrl: `https://github.com/${repositoryId}` }], authority: { repositoryId: githubId, repositoryNodeId: nodeId } });
   const manifestSha256 = sha256(manifestText);
   const group = (entry: (typeof templates)["contributor"]) => ({ sourcePath: entry.sourcePath, files: entry.files.map((file) => ({ path: file.path, sha256: sha256(file.content) })) });
@@ -132,11 +140,13 @@ export function scanWorld(input: { readonly repositoryPath: string; readonly com
       const answered = await provider.handler(new WorkerRequest(incoming.url, { method: incoming.method, headers: Object.fromEntries(incoming.headers), body }));
       return new Response(await answered.arrayBuffer(), { status: answered.status, headers: Object.fromEntries(answered.headers) });
     }
+    if (url.href === `https://api.github.com/repos/${repositoryId}` && identity === "limited") return new Response("API rate limit exceeded for installation", { status: 403 });
+    if (url.href === `https://api.github.com/repos/${repositoryId}` && identity === "offline") throw new TypeError(`connect ECONNREFUSED 10.0.0.1:443 ${repositoryId}`);
     if (url.href === `https://api.github.com/repos/${repositoryId}`) return json({ id: Number(githubId), node_id: nodeId, full_name: repositoryId, private: false });
     const file = files.get(url.href);
     if (file !== undefined) return new Response(file);
     if (url.href === `${origin}/skill-templates/index.json`) {
-      return json({ schemaVersion: "1", templateSha256, revisionStatus: "committed", commit: templateCommit, repository: "slopdotcash/templates", contributor: templateInputs.contributor, reviewer: templateInputs.reviewer, renderer: { revisionStatus: "committed", sources: templateInputs.rendererSources }, acceptedRevisions: templateInputs.acceptedRevisions });
+      return json({ schemaVersion: "1", templateSha256, revisionStatus: template, commit: templateCommit, repository: "slopdotcash/templates", contributor: templateInputs.contributor, reviewer: templateInputs.reviewer, renderer: { revisionStatus: "committed", sources: templateInputs.rendererSources }, acceptedRevisions: templateInputs.acceptedRevisions });
     }
     if (url.href === `${origin}/api/v1/project-revisions/${projectId}/1`) return json({ projectId, revision: 1, manifestSha256, manifestText });
     if (url.origin === origin && url.pathname.startsWith("/api/v1/vetting/")) {
@@ -157,6 +167,12 @@ export function scanWorld(input: { readonly repositoryPath: string; readonly com
     published,
     publication: (mode) => {
       publication = mode;
+    },
+    identity: (mode) => {
+      identity = mode;
+    },
+    template: (mode) => {
+      template = mode;
     },
     fetch,
   };

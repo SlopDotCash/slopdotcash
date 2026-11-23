@@ -343,6 +343,12 @@ These events forward to the EVM and Solana wallet registries unchanged, so
 the consent and generation rules above are checked against every
 authorization, replacement and operator recovery of either partition,
 including a Solana destination change while a generation is prepared.
+Both partitions are the same actor's, the Solana one on Solana and the
+other on an EVM chain. A member needs no Solana authorization to consent on
+an EVM chain or to be refused a Solana binding as not ready (Slop
+development `backend/payments/handler.ts`, `/wallets/bind-challenge`,
+`/wallets/bind-authorize` and `/wallets/solana-bind/prepare`); once a
+Solana generation exists, a Solana claim is authorized.
 
 ```quint
 pure def canObserveTime(b: Binding, timestamp: int): bool = W::canObserveTime(b.wallet, timestamp)
@@ -381,7 +387,8 @@ pure def canSolanaCommitAuthorization(b: Binding, requestId: int, storageSucceed
 pure def solanaCommitAuthorization(b: Binding, requestId: int, storageSucceeded: bool): Binding =
   { ...b, solanaWallet: W::commitAuthorization(b.solanaWallet, requestId, storageSucceeded) }
 pure def alwaysSolanaPartitionAuthorized(b: Binding): bool =
-  b.solanaWallet.chain == W::Solana and solanaClaim(b) > 0 and b.solanaWallet.actor == b.wallet.actor and evmChain(b)
+  b.solanaWallet.chain == W::Solana and b.solanaWallet.actor == b.wallet.actor and evmChain(b)
+    and (b.generations.length() > 0 implies solanaClaim(b) > 0)
 pure def partitionValid(w: W::WalletRegistration): bool = W::alwaysPartitionValid(w) and W::alwaysPredecessors(w)
   and W::alwaysClaimsAdmitted(w) and W::alwaysAuthorizationAdmitted(w) and W::alwaysOneAuthorization(w)
   and W::alwaysAuthorizationIncreases(w) and W::alwaysOneConsumption(w)
@@ -390,18 +397,23 @@ pure def alwaysWalletValid(b: Binding): bool = partitionValid(b.wallet) and part
 
 ### Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable
 
-The launch sample starts with claim 1 authorized on Base and on Solana, and
-the settlement service's report of one public and one private reserved
-Solana obligation with open attempts on that claim. The deployment list and
-the samples bound simulation only. Clock values are milliseconds.
+The launch sample starts with claim 1 authorized on Base, claim 1 on Solana
+proved and consumed but not yet authorized, and the settlement service's
+report of one public and one private reserved Solana obligation with open
+attempts on that claim. So the member first has no Solana authorization:
+EVM consent and a refused private request are reachable for that member,
+and every Solana generation follows the Solana authorization. The
+deployment list and the samples bound simulation only. Clock values are
+milliseconds.
 
 ```quint
-pure def authorizedSample(chain: W::WalletChain, wallet: str): W::WalletRegistration =
+pure def consumedSample(chain: W::WalletChain, wallet: str): W::WalletRegistration =
   val registered = W::register(W::selectChain(W::initial, chain), { wallet: wallet, digest: "digest-a", predecessor: 0 }, "1")
   val issued = W::issue(registered, 1, 1, "message-a", "1")
-  val read = W::readProof(issued, { requestId: 1, challengeId: 1, claim: 1, recoveredSigner: wallet, messageDigest: "message-a" }, "1")
-  W::commitAuthorization(W::consume(read, 1), 1, true)
-pure val initial: Binding = { wallet: authorizedSample(W::Base, "wallet-a"), solanaWallet: authorizedSample(W::Solana, "wallet-s"),
+  W::consume(W::readProof(issued, { requestId: 1, challengeId: 1, claim: 1, recoveredSigner: wallet, messageDigest: "message-a" }, "1"), 1)
+pure def authorizedSample(chain: W::WalletChain, wallet: str): W::WalletRegistration =
+  W::commitAuthorization(consumedSample(chain, wallet), 1, true)
+pure val initial: Binding = { wallet: authorizedSample(W::Base, "wallet-a"), solanaWallet: consumedSample(W::Solana, "wallet-s"),
   consents: List(), generations: List(), lastGeneration: 0, finalizedHeight: 1000, caseAccessLog: List(),
   payments: List({ obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1,
       attemptOpen: true, privateCase: 0, outboxReady: true },
@@ -427,6 +439,16 @@ pure def sometimesRegeneratedForNewClaim(b: Binding): bool =
   b.generations.some(g => g.status == SolanaExpired and g.claim != solanaClaim(b))
     and b.generations.some(g => g.status != SolanaExpired and g.claim == solanaClaim(b) and g.claim > 1)
 pure def sometimesRefusedPrivateLogged(b: Binding): bool = b.caseAccessLog.length() > 0 and b.generations.length() == 0
+pure def sometimesConsentWithoutSolanaClaim(b: Binding): bool = b.consents.length() > 0 and solanaClaim(b) == 0
+pure def sometimesRefusedWithoutSolanaClaim(b: Binding): bool = b.caseAccessLog.length() > 0 and solanaClaim(b) == 0
+pure val eval_witness_sometimesRegeneratedForNewClaim = (("solanaCommitAuthorization", 1, true, "1"), ("solanaPrepare", "1", 1),
+  ("solanaRegister", { wallet: "wallet-b", digest: "digest-b", predecessor: 1 }, "1"), ("solanaIssue", 2, 2, "message-b", "1"),
+  ("solanaReadProof", { requestId: 2, challengeId: 2, claim: 2, recoveredSigner: "wallet-b", messageDigest: "message-b" }, "1"),
+  ("solanaConsume", 2, "1"), ("solanaCommitAuthorization", 2, true, "1"), ("observeHeight", "scanner", 1151),
+  ("solanaExpire", "scanner", 1, 1),
+  ("observePayment", "settlement", { obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true, attemptClaim: 2,
+    attemptOpen: true, privateCase: 0, outboxReady: true }),
+  ("solanaPrepare", "1", 1))
 pure val byValues = Set("1", "other", "operator", "settlement", "scanner")
 pure val vaultValues = Set("vault-a", "vault-b")
 pure val discoveredVersionValues = Set(-1, 0)
@@ -454,10 +476,11 @@ pure val walletSignatureValues = Set({ recoveredSigner: "wallet-s", transaction:
 pure val generationValues = Set(1, 2, 3)
 pure val obligationValues = Set(1, 2, 3, 4, 5, 6)
 pure val cValues = Set({ claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, signer: "wallet-a", createdAt: 0 })
-pure val bValues = Set(initial)
-  .union(Set({ ...initial, payments: initial.payments.append({ obligation: 4, owner: "1", network: "solana", vault: "vault-s",
+pure val solanaAuthorized: Binding = { ...initial, solanaWallet: authorizedSample(W::Solana, "wallet-s") }
+pure val bValues = Set(initial, solanaAuthorized)
+  .union(Set({ ...solanaAuthorized, payments: initial.payments.append({ obligation: 4, owner: "1", network: "solana", vault: "vault-s",
     reserved: true, attemptClaim: 0, attemptOpen: false, privateCase: 0, outboxReady: true }) }))
-  .union(Set({ ...initial, payments: List({ obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true,
+  .union(Set({ ...solanaAuthorized, payments: List({ obligation: 1, owner: "1", network: "solana", vault: "vault-s", reserved: true,
     attemptClaim: 2, attemptOpen: true, privateCase: 0, outboxReady: true }) }))
 pure val weight_bindAuthorize = 12
 pure val weight_register = 6

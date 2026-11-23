@@ -81,6 +81,7 @@ export error ProviderFailure {
   category: FailureCategory
   reason: string
   status?: number
+  errorCode?: string
   retryAfterSeconds?: number
   resetAt?: number
   receipt: Receipt
@@ -186,14 +187,19 @@ function errorDetail(body: unknown): string | undefined {
   return typeof error.type === "string" && /^[a-z][a-z_]{0,47}$/u.test(error.type) ? error.type : undefined
 }
 
+function errorCodeOf(body: unknown) {
+  const code = recordOf(recordOf(body)?.error)?.code
+  return typeof code === "string" && /^[a-z][a-z_]{0,47}$/u.test(code) ? { errorCode: code } : {}
+}
+
 function refusedByStatus(route: Route, status: number, headers: Headers, body: unknown, receipt: Receipt) {
   const resetAt = route === "surplus-anthropic" ? spendResetAt(status, body) : undefined
   if (resetAt !== undefined) return new ProviderFailure({ route, category: "SpendDenied", reason: "spend-denied", status, resetAt, receipt })
   const detail = errorDetail(body)
   const reason = detail === undefined ? `provider-http-${status}` : `provider-http-${status}-${detail}`
   const seconds = retryAfter(headers)
-  if (status === 429) return new ProviderFailure({ route, category: "RateLimited", reason, status, ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }), receipt })
-  return new ProviderFailure({ route, category: "Unavailable", reason, status, receipt })
+  if (status === 429) return new ProviderFailure({ route, category: "RateLimited", reason, status, ...errorCodeOf(body), ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }), receipt })
+  return new ProviderFailure({ route, category: "Unavailable", reason, status, ...errorCodeOf(body), receipt })
 }
 
 effect function readText(response: HttpClientResponse.HttpClientResponse, limit: number) {

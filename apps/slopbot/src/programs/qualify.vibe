@@ -153,7 +153,7 @@ function boundOf(purpose: QualificationPurpose, call: ModelCall, bytes: number) 
 }
 
 function quotaRejected(failure: ProviderFailure) {
-  return failure.route === "orbio" && failure.status === 402 && failure.reason === "provider-http-402-insufficient_quota"
+  return failure.route === "orbio" && failure.status === 402 && failure.reason === "provider-http-402-insufficient_quota" && (failure.errorCode === undefined || failure.errorCode === "insufficient_quota")
 }
 
 function spendingDenied(failure: ProviderFailure) {

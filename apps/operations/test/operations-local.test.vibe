@@ -117,7 +117,7 @@ effect function devRouteHolders() {
         for (const file of try fs.readDirectory(directory, { recursive: true })) {
           if (!/\.(?:vibe|ts|tsx|js|mjs)$/u.test(file) || (part === "dist" && file.split(path.sep)[0] === "programs")) continue
           const text = try fs.readFileString(path.join(directory, file))
-          if (text.includes("/__dev")) holders.push(path.join(top, owner, part, file))
+          if (/["'`]\/__dev/u.test(text)) holders.push(path.join(top, owner, part, file))
         }
       }
     }

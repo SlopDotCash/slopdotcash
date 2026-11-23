@@ -334,7 +334,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }, {
       off: { status: "off" },
       filesWhenOff: 0,
-      refused: ["REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_TOKEN_DECIMALS", "REFERRAL_RATE_BASE_PER_MICRO", "REFERRAL_FIRST_PERIOD"],
+      refused: ["REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_RATE_BASE_PER_MICRO", "REFERRAL_RATE_BASE_PER_MICRO", "REFERRAL_FIRST_PERIOD"],
       dryRun: { status: "ran", filed: [{ period: "2026-11", epoch: 0, rows: 1, leafCount: 0 }] },
       modes: [{ period: "2026-11", mode: "dry_run" }],
       posts: 0,

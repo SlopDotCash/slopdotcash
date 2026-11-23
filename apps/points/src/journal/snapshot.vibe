@@ -541,7 +541,7 @@ effect function decidedAt(event: ScoreEvent, recordedAt: string) {
   return event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt))
 }
 
-effect function decisionRecorded(prior: Row, event: ScoreEvent) {
+export effect function decisionRecorded(prior: Row, event: ScoreEvent) {
   if (event.scoreDecisionSourceId === undefined || event.scoreDecisionAt === undefined) return true
   return prior.decision?.sourceId === event.scoreDecisionSourceId && prior.decision.reason === event.reason &&
     prior.decision.effectiveAt === (try isoAt(millisOf(event.scoreDecisionAt)))

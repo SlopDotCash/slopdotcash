@@ -246,7 +246,7 @@ module actionsSimulation {
           if (current !== undefined) runs.set(id, { ...current, status: "in_progress", conclusion: null })
           pending.set(id, { conclusion: "failure", published })
           jobs.set(id, actionJobs({ collect: "skipped", published }))
-          return new Response(null, { status: 201 })
+          return new Response("", { status: 201 })
         }
         const listed = /^\/actions\/workflows\/([\w.-]+)\/runs$/u.exec(path)
         if (listed !== null) {

@@ -16,6 +16,7 @@ export interface Call {
   readonly args: ReadonlyArray<string>
   readonly cwd?: string
   readonly seconds?: number
+  readonly quiet?: boolean
 }
 
 export interface ReadBound { readonly seconds?: number }
@@ -122,13 +123,13 @@ export function cloudflare(options: CloudflareOptions) {
       CI: "true",
       NO_COLOR: "1",
       WRANGLER_SEND_METRICS: "false",
-      WRANGLER_LOG: "error",
+      WRANGLER_LOG: "log",
       WRANGLER_WRITE_LOGS: "false",
     }
 
     effect function execute(tool: string, command: string, step: string, call: Call) {
       const ran = scoped(effect {
-        const handle = try spawner.spawn(ChildProcess.make(command, call.args, { cwd: call.cwd ?? options.root, env, extendEnv: false, stdin: "ignore" }))
+        const handle = try spawner.spawn(ChildProcess.make(command, call.args, { cwd: call.cwd ?? options.root, env: call.quiet === true ? { ...env, WRANGLER_LOG: "error" } : env, extendEnv: false, stdin: "ignore" }))
         const [stdout, stderr, code] = try.all [collected(handle.stdout, outputLimit), collected(handle.stderr, errorLimit), handle.exitCode]
         return { stdout, stderr, code: Number(code) }
       })
