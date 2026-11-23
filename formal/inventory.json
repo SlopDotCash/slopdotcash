@@ -49,7 +49,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "887e6eeac08c40a915c007eafe737c113ab3e75c2142ae19d750925240f9df22",
+      "sha256": "fe580091c558de8e15e070f766e192cf4a174f136967f7e5d14c2242be590572",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
