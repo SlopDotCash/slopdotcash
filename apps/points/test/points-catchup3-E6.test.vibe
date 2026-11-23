@@ -103,11 +103,13 @@ it.live('A recorded pull request the historical search omitted fences its accept
 
   const first = try collected(world, false)
   const binaryProof = first.manifest.candidates.find((candidate) => candidate.sourceId === binary)?.proof
+  const emptyCandidateId = first.manifest.candidates.find((candidate) => candidate.sourceId === empty)?.id ?? empty
+  const unknownCandidateId = first.manifest.candidates.find((candidate) => candidate.sourceId === unknown)?.id ?? unknown
   try same({
     ownershipComplete: first.receipt.ownershipComplete,
     supplements: first.receipt.supplementDigests?.length,
     proofs: proofsOf(first),
-    unavailable: first.receipt.limitations.filter((entry) => [held, missingSource, empty, unknown].includes(entry.id)).sort(byId),
+    unavailable: first.receipt.limitations.filter((entry) => [held, missingSource, emptyCandidateId, unknownCandidateId].includes(entry.id)).sort(byId),
     acceptedObjectReads: [...world.acceptedObjectReads].sort(),
     supplementedMerge: first.supplementedMerge,
     zeroLineReads: [...world.zeroLineReads].sort(),
@@ -128,7 +130,7 @@ it.live('A recorded pull request the historical search omitted fences its accept
     },
     unavailable: [
       { id: held, reason: "accepted-object-unavailable" }, { id: missingSource, reason: "source-unavailable" },
-      { id: empty, reason: "unproved-zero-line-promotion" }, { id: unknown, reason: "zero-line-promotion-paths-unavailable" },
+      { id: emptyCandidateId, reason: "unproved-zero-line-promotion" }, { id: unknownCandidateId, reason: "zero-line-promotion-paths-unavailable" },
     ].sort(byId),
     acceptedObjectReads: [`/repos/${repository}/git/commits/${earlySquash}`, `/repos/${repository}/git/commits/${world.shas.heldSquash}`].sort(),
     supplementedMerge: earlySquash,
