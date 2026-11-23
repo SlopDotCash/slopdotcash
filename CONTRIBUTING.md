@@ -290,14 +290,18 @@ device, inode, size and modification and change times stay the same, so an
 unchanged toolchain is not read again, nor Z3 asked its version. A check
 reads those times of Dafny's installation once, and reads them again after each
 run of Dafny, so a result is not remembered when the verifier was installed
+again during the run.
+
 The tooling package sets `--skip-gen-on-pack` in its prepare script. A
 `pnpm pack` still builds the CLI and Studio. It skips the application's
 generated models, which the tools' tarball does not contain.
-again during the run. On GitHub Actions, the install step uses the same
-strict generation task as verification, so a successful install warms the
-task cache. Local-only verification jobs save the successful generation
-archive before the long suite starts. Studio's shared Slop UI can trigger that
-generation during the workspace build. Generated stories,
+
+On GitHub Actions, the nightly check builds the tools
+during install and generates the application in its nightly task graph. Other
+jobs use the same strict generation task as verification, so a successful
+install warms the task cache. Local-only verification jobs save the successful
+generation archive before the long suite starts. Studio's shared Slop UI can
+trigger that generation during the workspace build. Generated stories,
 browser build artifacts, compiler declarations and successful test receipts
 are restored with their owning task. `check` is never skipped whole: its
 `driver:` programs run the real application in `traces` every time. Standalone examples install and check
@@ -435,8 +439,9 @@ Workspace verification installs Dafny from its pinned release, checked against i
 and restores pnpm's store, Quint's evaluator, and what the job adds to: a `selftest-*` job the selftest's shared
 tool runs, any other the spec cache of the root, each workspace package and each example. The key is of the job, the
 lockfile and the commit. A job tries both key layouts for its own name and current lockfile, then tries the current
-layout for another lockfile. Each entry is named by the tools and inputs that produced it, so a job reads only the
-entries that still apply.
+layout for another lockfile. Selftest jobs on pull requests first try an archive for that pull request and lockfile.
+A successful replay of the entire fixture task can reuse that archive when setup leaves the cached evaluator intact.
+Each entry is named by the tools and inputs that produced it, so a job reads only the entries that still apply.
 Nightly jobs restore the pinned Quint evaluator and run with fresh verification
 results.
 The default branch's `verify` job publishes the pnpm store after the frozen
@@ -446,6 +451,9 @@ requests can read it.
 Turborepo shares task results through the private Cloudflare/R2 cache.
 The task entry point disables Turbo telemetry. Each `selftest:tools` task waits for the root and
 Studio test tasks so those integration journeys do not compete with it.
+Verification installs the headless shell for Playwright and full Chromium for
+Bombadil. A hosted isolated shard A can defer full Chromium until its Bombadil
+journey runs; the nightly check installs it during setup.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
 policy. A pull request keeps its own Turborepo results in the GitHub cache
