@@ -578,7 +578,8 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
-    localInstallHelpers: "literal-shell-exec-wrapper-closure-v2",
+    localInstallHelpers:
+      "literal-shell-exec-wrapper-closure-substitution-branch-v3",
     sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
     imageFormats: "png-jpeg-gif-webp-sfnt-woff-woff2-whole-structure-v2",
     templateReview: "queued-canonical-template-deterministic-only-v1",
@@ -2029,7 +2030,10 @@ export function inspectRepository(input: {
         (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
           /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
       )
-        commands.push(text);
+        return [
+          ...commands.map((text) => ({ path: file.path, text, directory })),
+          { path: file.path, text, directory, file: true },
+        ];
       return commands.map((text) => ({ path: file.path, text, directory }));
     }),
   );

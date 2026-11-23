@@ -101,11 +101,17 @@ file invocations. Referenced files become install content, so their literal
 download URLs remain unretrieved artifacts. Shell helpers and named package
 scripts are followed with
 their invoking working directory; repeated references and cycles are
-deduplicated. Straight-line literal `cd` changes resolve locally. Missing,
-escaping or dynamic paths, substitutions, grouped commands, conditional
-directory changes, unsupported control flow, `eval` and unresolved dispatcher
-options keep install coverage
-partial. Sourced helpers are read, but their effect on the invoking directory
+deduplicated. Straight-line literal `cd` changes resolve locally, and
+`cd "$(dirname "$0")"` in a script file resolves to that file's directory.
+Ordinary shell syntax does not hide a helper (operator decision, 23 November
+2026): the commands inside `$(...)`, backticks, `( ... )`, `if`, `while`,
+`until`, `for` and `{ }` bodies are read as if they run, so a helper they
+launch is followed; `command -v` only prints. A `cd` that may not run (after
+`&&` or `||`, in a pipeline, inside a subshell or a conditional, loop or brace
+body) leaves the directory unknown, so a later local launch is a gap. Missing,
+escaping or dynamic paths, an unclosed substitution, arithmetic holding a
+command, `case` and `select`, `eval` and unresolved dispatcher options keep
+install coverage partial. Sourced helpers are read, but their effect on the invoking directory
 is left unresolved. Quoted here-document bodies are data, not commands. This
 is literal shell-command coverage,
 not a complete language call graph: no target code, substitution or variable
