@@ -1596,6 +1596,11 @@ export function disclosePrivateTrace(trace) {
       `${[
         "Session pre-upload disclosure (authorization has not started):",
         `This session will be uploaded under ${TRACE_TERMS_V3}: ${SESSION_PRIVACY_CONTRACT}`,
+        ...(trace.alreadyUploaded === true
+          ? [
+              "This file was already uploaded for this run; this rerun sends no new bytes and only records the pull request and finalizes.",
+            ]
+          : []),
         `Inspect exact final bytes: ${trace.absolutePath}`,
         `Size: ${trace.sizeBytes} bytes`,
         `Content-Type: ${trace.contentType}`,
@@ -1712,16 +1717,31 @@ export async function uploadPrivateTrace(
     disclosure = disclosePrivateTrace,
     termsVersion = TRACE_TERMS_V1,
     beforeFinalize,
+    afterIntent,
+    attached,
+    confirmAttached = false,
   } = {},
 ) {
   declaredIdentifier(clientVersion, "--client-version", 128);
   if (!TRACE_TERMS_VERSIONS.has(termsVersion))
     fail("private trace terms version is invalid");
-  if (beforeFinalize !== undefined && typeof beforeFinalize !== "function")
-    fail("private trace finalization hook is invalid");
+  for (const hook of [beforeFinalize, afterIntent])
+    if (hook !== undefined && typeof hook !== "function")
+      fail("private trace upload hook is invalid");
   if (typeof fetchImpl !== "function")
     fail("private trace transport is unavailable");
-  const trace = privateTraceFile(trajectoryPath);
+  // attached describes an object an earlier attempt already sent whose local
+  // file is gone: it can be confirmed and finalized, never uploaded.
+  const trace =
+    trajectoryPath === null && attached !== undefined
+      ? {
+          absolutePath: attached.absolutePath,
+          sha256: attached.sha256,
+          sizeBytes: attached.sizeBytes,
+          contentType: attached.contentType,
+          contents: null,
+        }
+      : privateTraceFile(trajectoryPath);
   if (typeof disclosure !== "function")
     fail("private trace disclosure is unavailable");
   disclosure({
@@ -1750,14 +1770,10 @@ export async function uploadPrivateTrace(
       assertionProvider,
     });
   const serverPath = encodeURIComponent(created.serverRunId);
-  if (created.state === "awaiting_trace") {
-    const intentBody = {
-      sha256: trace.sha256,
-      sizeBytes: trace.sizeBytes,
-      contentType: trace.contentType,
-      termsVersion,
-    };
-    const intent = await jsonRequest(
+  // The same intent, under the same key, also asks the server to confirm it
+  // holds this digest: it refuses a run whose object differs.
+  const postIntent = () =>
+    jsonRequest(
       fetchImpl,
       `${TRACE_AUTHORITY}/api/v1/runs/${serverPath}/trace-intents`,
       {
@@ -1768,7 +1784,12 @@ export async function uploadPrivateTrace(
             `intent:${created.serverRunId}:${trace.sha256}`,
           ),
         },
-        body: JSON.stringify(intentBody),
+        body: JSON.stringify({
+          sha256: trace.sha256,
+          sizeBytes: trace.sizeBytes,
+          contentType: trace.contentType,
+          termsVersion,
+        }),
       },
       [
         "contentType",
@@ -1780,6 +1801,7 @@ export async function uploadPrivateTrace(
       ],
       "trace upload intent",
     );
+  const checkIntent = (intent) => {
     let uploadUrl;
     try {
       uploadUrl = new URL(intent.uploadUrl);
@@ -1798,6 +1820,15 @@ export async function uploadPrivateTrace(
     ) {
       fail("trace upload intent returned mismatched fields");
     }
+    return uploadUrl;
+  };
+  if (created.state === "awaiting_trace") {
+    if (trace.contents === null)
+      fail(
+        "the session file this run showed is missing and Slop does not hold it; nothing was finalized",
+      );
+    const uploadUrl = checkIntent(await postIntent());
+    if (afterIntent !== undefined) afterIntent(trace);
     const uploaded = await jsonRequest(
       fetchImpl,
       uploadUrl.href,
@@ -1831,6 +1862,8 @@ export async function uploadPrivateTrace(
       fail("trace upload returned mismatched evidence");
     }
   }
+  if (created.state === "trace_uploaded" && confirmAttached)
+    checkIntent(await postIntent());
   // Events are refused once a run is finalized, so anything recorded on this
   // run happens here, after the object is attached.
   if (beforeFinalize !== undefined && created.state !== "finalized")
@@ -3141,16 +3174,52 @@ function writeSessionSettings(change) {
       fail("refusing a non-regular or symlinked session setting");
   }
   const next = { ...readSessionSettings(), ...change };
-  const temporary = join(
-    root,
-    `${SESSION_SETTINGS_FILE}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
-  );
-  writeFileSync(
-    temporary,
-    `${JSON.stringify({ upload: next.upload, licensingLinkShown: next.licensingLinkShown }, null, 2)}\n`,
-    { flag: "wx", mode: 0o600 },
-  );
+  writePrivateJson(path, {
+    upload: next.upload,
+    licensingLinkShown: next.licensingLinkShown,
+  });
+}
+
+function writePrivateJson(path, value) {
+  const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
   renameSync(temporary, path);
+}
+
+// The object an earlier session attempt attached to this run, recorded when
+// its intent was accepted. A rerun shows and finalizes exactly this object.
+function readAttachedRecord(path, runId) {
+  if (!existsSync(path)) return null;
+  const stats = lstatSync(path);
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024)
+    fail("the local record of this run's uploaded session is unreadable");
+  let value;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    // error-policy:J3 a damaged record stops before any finalize.
+    fail("the local record of this run's uploaded session is unreadable");
+  }
+  if (
+    !value ||
+    typeof value !== "object" ||
+    value.schemaVersion !== "1" ||
+    value.runId !== runId ||
+    !SHA_PATTERN.test(value.sha256 ?? "") ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 1 ||
+    value.sizeBytes > MAX_TRAJECTORY_BYTES ||
+    value.contentType !== "application/x-ndjson" ||
+    typeof value.path !== "string" ||
+    typeof value.cleaner !== "string" ||
+    !value.counts ||
+    typeof value.counts !== "object"
+  )
+    fail("the local record of this run's uploaded session is unreadable");
+  return value;
 }
 
 function headCommit(repositoryRoot) {
@@ -3193,58 +3262,122 @@ async function sessionRun(options, deps = {}) {
     }
     const sessions = join(configurationRoot(), "sessions");
     ensureDirectory(sessions);
-    const exportOptions = {
-      outPath: join(sessions, `${state.runId}.ndjson`),
-      marker: runMarker(state.runId),
-      homeDir: deps.homeDir ?? homedir(),
-      env: deps.env ?? process.env,
-      repo: PROJECT.repositoryId,
-      repoRoot: repositoryRoot,
-      fetchImpl,
-      client: state.client,
-      clientVersion: options.clientVersion,
-      provider: state.provider,
-      model: state.model,
-      startCommit: null,
-      endCommit: headCommit(repositoryRoot),
-    };
+    const recordPath = join(sessions, `${state.runId}.attached.json`);
+    const recorded = readAttachedRecord(recordPath, state.runId);
     const { CLEANER_VERSION, exportAgentLog, exportSession } = await import(
       "./session-export.mjs"
     );
-    let exported = await exportSession(exportOptions);
-    if (exported.source !== "client-file" && options.log !== null)
-      exported = await exportAgentLog({
-        ...exportOptions,
-        logPath: options.log,
-      });
-    if (!["client-file", "agent-written"].includes(exported.source)) {
-      renderResult(
-        {
-          status: "none",
-          message: "No session record; the pull request stands.",
-        },
-        options.json,
+    let shown;
+    if (recorded !== null) {
+      // A rerun never exports again: the server may already hold the bytes
+      // shown last time, and only those may be finalized.
+      let present = false;
+      try {
+        present = privateTraceFile(recorded.path).sha256 === recorded.sha256;
+      } catch {
+        // error-policy:J3 a missing file is confirmed against the server.
+      }
+      if (!present)
+        process.stderr.write(
+          `The session file uploaded for this run is missing on this machine or no longer matches: ${recorded.path}. Slop finalizes it only if it already holds digest ${recorded.sha256}.\n`,
+        );
+      shown = {
+        path: recorded.path,
+        present,
+        counts: recorded.counts,
+        cleaner: recorded.cleaner,
+        source: "recorded",
+        alreadyUploaded: true,
+      };
+    } else {
+      const exportOptions = {
+        outPath: join(sessions, `${state.runId}.partial.ndjson`),
+        marker: runMarker(state.runId),
+        homeDir: deps.homeDir ?? homedir(),
+        env: deps.env ?? process.env,
+        repo: PROJECT.repositoryId,
+        repoRoot: repositoryRoot,
+        fetchImpl,
+        client: state.client,
+        clientVersion: options.clientVersion,
+        provider: state.provider,
+        model: state.model,
+        startCommit: null,
+        endCommit: headCommit(repositoryRoot),
+      };
+      let exported = await exportSession(exportOptions);
+      if (exported.source !== "client-file" && options.log !== null)
+        exported = await exportAgentLog({
+          ...exportOptions,
+          logPath: options.log,
+        });
+      if (!["client-file", "agent-written"].includes(exported.source)) {
+        renderResult(
+          {
+            status: "none",
+            message: "No session record; the pull request stands.",
+          },
+          options.json,
+        );
+        return;
+      }
+      // Each export keeps its own digest-named file, so a later export can
+      // never overwrite bytes that were shown or uploaded.
+      const digest = privateTraceFile(exported.path).sha256;
+      const path = join(
+        sessions,
+        `${state.runId}-${digest.slice(0, 16)}.ndjson`,
       );
-      return;
+      renameSync(exported.path, path);
+      shown = {
+        path,
+        present: true,
+        counts: exported.counts,
+        cleaner: CLEANER_VERSION,
+        source: exported.source,
+        alreadyUploaded: false,
+      };
     }
     const disclose = deps.disclosure ?? disclosePrivateTrace;
-    let recorded = null;
+    let event = null;
     const evidence = await uploadPrivateTrace(
       state,
-      exported.path,
+      shown.present ? shown.path : null,
       options.clientVersion,
       {
         fetchImpl,
         assertionProvider: deps.assertionProvider ?? slopIdentityAssertion,
         termsVersion: TRACE_TERMS_V3,
+        attached:
+          recorded === null
+            ? undefined
+            : {
+                absolutePath: recorded.path,
+                sha256: recorded.sha256,
+                sizeBytes: recorded.sizeBytes,
+                contentType: recorded.contentType,
+              },
+        confirmAttached: true,
         disclosure: (trace) =>
           disclose({
             ...trace,
-            cleaner: CLEANER_VERSION,
-            counts: exported.counts,
+            cleaner: shown.cleaner,
+            counts: shown.counts,
+            alreadyUploaded: shown.alreadyUploaded,
+          }),
+        afterIntent: (trace) =>
+          writePrivateJson(recordPath, {
+            schemaVersion: "1",
+            runId: state.runId,
+            sha256: trace.sha256,
+            sizeBytes: trace.sizeBytes,
+            contentType: trace.contentType,
+            path: trace.absolutePath,
+            cleaner: shown.cleaner,
+            counts: shown.counts,
           }),
         beforeFinalize: async (serverRunId, token) => {
-          recorded = await appendPullRequestOpened(
+          event = await appendPullRequestOpened(
             serverRunId,
             token,
             { pullRequest, pullRequestNodeId },
@@ -3255,10 +3388,10 @@ async function sessionRun(options, deps = {}) {
     );
     const lines = [
       `Session uploaded under ${TRACE_TERMS_V3} and finalized.`,
-      recorded === null
+      event === null
         ? "This Slop run was already finalized; record the pull request with opened."
-        : `Recorded pull_request_opened for ${recorded.pullRequest} in Slop run ${recorded.serverRunId}.`,
-      `--trajectory ${exported.path}`,
+        : `Recorded pull_request_opened for ${event.pullRequest} in Slop run ${event.serverRunId}.`,
+      `--trajectory ${shown.path}`,
       `--trace-server-run ${evidence.serverRunId}`,
       `--trace-object-id ${evidence.objectId}`,
     ];
@@ -3268,10 +3401,10 @@ async function sessionRun(options, deps = {}) {
       {
         status: "uploaded",
         termsVersion: TRACE_TERMS_V3,
-        source: exported.source,
-        trajectory: exported.path,
+        source: shown.source,
+        trajectory: shown.path,
         ...evidence,
-        pullRequestEvent: recorded,
+        pullRequestEvent: event,
         ...(showLicensing ? { licensing: LICENSING_LINE } : {}),
         message: lines.join("\n"),
       },
