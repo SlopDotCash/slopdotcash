@@ -32,6 +32,7 @@ import {
   historicalClosedContextBindings,
   historicalEmptyLegacyClosureBindings,
 } from "./historical-assessment-reconciliation";
+import { HistoricalClosedOutcomeError } from "./historical-merged-replay";
 import {
   type HistoricalReplayReceipt,
   verifyHistoricalReplayQualification,
@@ -1496,6 +1497,9 @@ type PublicationPhase =
   | "complete assessment catalog read"
   | "assessment source reconciliation"
   | "historical assessment replay"
+  | "historical closed review verification"
+  | "historical value projection"
+  | "historical replay qualification"
   | "assessment qualification recheck"
   | "private replay review staging"
   | "assessment receipt"
@@ -1699,12 +1703,14 @@ async function auditHistoricalAssessments(
       baselineDigest: expectedPointsDigest,
       baselineRevisionCount: baseline.revisions.length,
     };
+    setPhase("historical closed review verification");
     const closedReviews = await verifyHistoricalClosedReviews(
       snapshot,
       receipt,
       catalog,
       github,
     );
+    setPhase("historical value projection");
     const allocation = projectHistoricalValueChanges(
       binding,
       baseline,
@@ -1713,6 +1719,7 @@ async function auditHistoricalAssessments(
     );
     valueSnapshot = snapshot;
     valueKeys = allocation.rows.map((row) => row.award.key);
+    setPhase("historical replay qualification");
     const qualificationSha256 = verifyHistoricalValueReplay(
       { ...binding, valueSnapshot, valueKeys },
       baseline,
@@ -1730,6 +1737,7 @@ async function auditHistoricalAssessments(
       qualificationSha256,
     };
   } else if (replay) {
+    setPhase("historical replay qualification");
     replayResult = {
       snapshotSha256: null,
       valueCoverageCount: 0,
@@ -2126,7 +2134,14 @@ if (import.meta.main) {
   let phase: PublicationPhase = "trusted invocation";
   await main((next) => {
     phase = next;
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    if (error instanceof HistoricalClosedOutcomeError)
+      console.error(
+        JSON.stringify({
+          historicalClosedOutcome: error.reason,
+          check: error.check,
+        }),
+      );
     // Error messages can contain command arguments or private responses.
     console.error(
       `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner`,

@@ -16,6 +16,7 @@
  */
 
 import { githubUserIdFromNodeIdSql } from "../github-node-sql";
+import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 
 type Preparer<S> = {
   prepare(query: string): { bind(...values: unknown[]): S };
@@ -813,4 +814,52 @@ export function notifySlopbotScamReview<S>(
       path,
       input.at,
     );
+}
+
+export const TRACE_LICENSING_EVENT_KEY = "trace-licensing:available-2026-11";
+export const TRACE_LICENSING_NOTICE =
+  "You can now choose to license your Slop traces for pay. You get 50% of each sale. Nothing is licensed unless you turn it on.";
+
+/** The participation-ban check for the uploader of `run`, not a bound id. */
+export const TRACE_LICENSING_BAN_QUERY = PARTICIPATION_BAN_QUERY.replace(
+  "b.github_id = ?",
+  "b.github_id = run.github_user_id",
+);
+
+// Uploaders through the CLI skill may have no points_members row; the Inbox
+// shows the notice to whoever later signs in with that GitHub id.
+const TRACE_LICENSING_AUDIENCE = `SELECT DISTINCT run.github_user_id AS recipient
+      FROM trace_runs run
+     WHERE run.state = 'finalized'
+       AND ${GITHUB_ID("run.github_user_id")}
+       AND NOT EXISTS (SELECT 1 FROM points_members closed
+                        WHERE closed.github_id = run.github_user_id
+                          AND closed.closed_at IS NOT NULL)
+       AND NOT EXISTS (${TRACE_LICENSING_BAN_QUERY})`;
+
+/**
+ * The one-time notice that licensing traces is available: every account with
+ * at least one finalized trace that is not participation-banned and not
+ * closed. Binds only the notice time (?1) so the same text can be run by hand.
+ */
+export const TRACE_LICENSING_AVAILABLE_SQL = `${INSERT}
+    SELECT '${TRACE_LICENSING_EVENT_KEY}', audience.recipient,
+           'trace_licensing_available', 'trace-licensing',
+           '${TRACE_LICENSING_NOTICE}', '/account#trace-licensing', ?1, ?1
+      FROM (${TRACE_LICENSING_AUDIENCE}) audience
+     WHERE true
+    ${ONCE}`;
+
+/** Counts the accounts the notice would reach that have not got it yet. */
+export const TRACE_LICENSING_RECIPIENTS_SQL = `SELECT COUNT(*) AS recipients
+      FROM (${TRACE_LICENSING_AUDIENCE}) audience
+     WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                        WHERE n.event_key = '${TRACE_LICENSING_EVENT_KEY}'
+                          AND n.recipient_github_id = audience.recipient)`;
+
+export function notifyTraceLicensingAvailable<S>(
+  db: Preparer<S>,
+  at: string,
+): S {
+  return db.prepare(TRACE_LICENSING_AVAILABLE_SQL).bind(at);
 }

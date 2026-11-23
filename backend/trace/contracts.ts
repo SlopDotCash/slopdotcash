@@ -1,3 +1,4 @@
+import type { TraceTermsVersion } from "../../src/lib/trace-licensing";
 import type { WalletChain } from "../../src/lib/wallets";
 export const TRACE_CONTENT_TYPES = [
   "text/plain",
@@ -180,6 +181,20 @@ export interface TracePersistence {
     input: Pick<AttachTraceInput, "runId" | "githubId" | "object">,
   ): Promise<boolean>;
   attachTrace(input: AttachTraceInput): Promise<PersistenceResult<TraceRun>>;
+  /**
+   * Sets the run's terms version if it has none. "same" when the run already
+   * has this version, "conflict" when it has another or cannot be stamped.
+   */
+  stampTermsVersion(
+    runId: string,
+    githubId: string,
+    version: TraceTermsVersion,
+  ): Promise<"set" | "same" | "conflict">;
+  /**
+   * Finalizes the run; a run with no version becomes v1. In the same
+   * transaction, a v2 run whose owner has licensing on gets an 'upload'
+   * licence and its granted event.
+   */
   finalizeRun(
     runId: string,
     githubId: string,
