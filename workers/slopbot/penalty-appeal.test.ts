@@ -121,6 +121,7 @@ type Run = {
   revokeOnConfirmation: () => void;
   repositoryConfig: (value: string | null, truncated?: boolean) => void;
   guidance: (value: string | null) => void;
+  targetGuidance: (sha: string, guide: string | null) => void;
   submissionBody: (value: string) => void;
   evidenceClosureEnabled: (value: boolean) => void;
   policyResponse: (status: number, body?: unknown) => void;
@@ -345,6 +346,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let hasValue = false;
   let config: string | null = null;
   let guidance: string | null = null;
+  let targetGuidance: { sha: string; guide: string | null } | null = null;
   let submissionBody = BODY;
   let configTruncated = false;
   let policyResponse: { status: number; body?: unknown } | null = null;
@@ -476,6 +478,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           owner: { login: owner, id: 77, type: "Organization" },
         });
       if (path.endsWith("/contents/.github/slopbot.json")) {
+        if (url.searchParams.get("ref") !== comparisonBase)
+          return new Response(null, { status: 404 });
         if (policyResponse !== null) {
           const { status, body } = policyResponse;
           return body === undefined || typeof body === "string"
@@ -492,13 +496,22 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           encoding: "base64",
         });
       }
-      if (path.endsWith("/contents/CONTRIBUTING.md") && guidance !== null)
+      if (path.endsWith("/contents/CONTRIBUTING.md")) {
+        const ref = url.searchParams.get("ref");
+        const guide =
+          ref === targetGuidance?.sha
+            ? targetGuidance.guide
+            : ref === comparisonBase
+              ? guidance
+              : null;
+        if (guide === null) return new Response(null, { status: 404 });
         return Response.json({
           type: "file",
-          size: Buffer.byteLength(guidance),
-          content: Buffer.from(guidance).toString("base64"),
+          size: Buffer.byteLength(guide),
+          content: Buffer.from(guide).toString("base64"),
           encoding: "base64",
         });
+      }
       if (hasValue && path.endsWith("/contents/README.md")) {
         const text =
           "Credit a reproduced bug fix as small; preserve existing awards.";
@@ -639,7 +652,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           },
           base: {
             sha: comparisonBase,
-            ref: "main",
+            ref: targetGuidance === null ? "main" : "release",
             repo: { id: repositoryId },
           },
           additions: 1,
@@ -649,13 +662,15 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: comparisonBase } });
+      if (path.endsWith("/branches/release") && targetGuidance !== null)
+        return Response.json({ commit: { sha: targetGuidance.sha } });
       if (path.includes("/compare/")) {
         const comparedHead = path.split("...").at(-1) ?? "";
         const comparedCommits =
           retainedCommitRanges.get(comparedHead) ?? commitRows();
         return Response.json({
-          base_commit: { sha: comparisonBase },
-          merge_base_commit: { sha: comparisonBase },
+          base_commit: { sha: targetGuidance?.sha ?? comparisonBase },
+          merge_base_commit: { sha: targetGuidance?.sha ?? comparisonBase },
           total_commits: comparedCommitCount ?? commitCount,
           commits: comparedCommits.slice(
             (Number(url.searchParams.get("page") ?? 1) - 1) * 100,
@@ -1326,6 +1341,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       guidance: (value) => {
         guidance = value;
       },
+      targetGuidance: (sha, guide) => {
+        targetGuidance = { sha, guide };
+      },
       submissionBody: (value) => {
         submissionBody = value;
       },
@@ -1982,6 +2000,58 @@ const screenshotsPolicy = evidencePolicy.replace(
   "UI video:",
   "- `UI screenshots:` Show the same screen and state before and after.\nUI video:",
 );
+
+test("Slop evidence closure and appeal follow the PR target guide", async () => {
+  await closedItem(async (run) => {
+    run.guidance(evidencePolicy);
+    run.targetGuidance("d".repeat(40), screenshotsPolicy);
+    run.closureEnabled(false);
+    run.evidenceClosureEnabled(true);
+    run.model("none", 0.98);
+    run.submissionBody(evidencedSubmission);
+
+    expect(await run.review()).toBe("closed (missing_evidence)");
+    expect(run.comments.join("\n")).toContain("results: UI screenshots.");
+    expect(run.sql(PENALTY)).toEqual([
+      {
+        category: "missing_evidence",
+        debit_thirds: 1,
+        moderator_review: 0,
+        reversal: null,
+      },
+    ]);
+    expect(await run.deliver(run.job("appeal", { senderId: AUTHOR }))).toBe(
+      "appeal drafted (deny)",
+    );
+  });
+});
+
+for (const scenario of [
+  "absent target guide",
+  "advanced target tip",
+] as const) {
+  test(`Slop evidence does not close with an ${scenario}`, async () => {
+    await closedItem(async (run) => {
+      run.guidance(screenshotsPolicy);
+      run.targetGuidance(
+        "d".repeat(40),
+        scenario === "absent target guide" ? null : screenshotsPolicy,
+      );
+      run.closureEnabled(false);
+      run.evidenceClosureEnabled(true);
+      run.model("none", 0.98);
+      run.submissionBody(evidencedSubmission);
+      if (scenario === "advanced target tip")
+        run.onReviewComment(() =>
+          run.targetGuidance("e".repeat(40), evidencePolicy),
+        );
+
+      expect(await run.review()).not.toStartWith("closed");
+      expect(run.currentState()).toBe("open");
+      expect(run.sql(PENALTY)).toEqual([]);
+    });
+  });
+}
 
 for (const { name, guidance, body, missing } of [
   {
