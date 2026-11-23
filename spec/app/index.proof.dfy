@@ -54,6 +54,9 @@ lemma KnownKindsHoldEveryKind(kind: RouteKind)
     case ManageProject => assert knownKinds[15] == kind;
     case SecurityProgram => assert knownKinds[16] == kind;
     case Profile => assert knownKinds[17] == kind;
+    case Fee => assert knownKinds[18] == kind;
+    case FeeReport => assert knownKinds[19] == kind;
+    case Requested => assert knownKinds[20] == kind;
     case Unknown =>
   }
 }

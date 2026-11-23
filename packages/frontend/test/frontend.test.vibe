@@ -8,8 +8,9 @@ import { api as operationsApi } from "@repo/operations/client"
 import { noticePorts, operations } from "@repo/operations/live"
 import type { ExecutionContext } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
+import { base64Encode } from "@repo/platform/chain/solana"
 import { deploymentOrigins, DeploymentTier } from "@repo/platform/config"
-import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
 import { D1, d1, sql, type Statement } from "@repo/platform/d1"
 import { github } from "@repo/platform/github"
 import { outbound } from "@repo/platform/http"
@@ -715,6 +716,218 @@ module lateReadsWorld {
 }
 import { type World as LateReadsWorld, site as lateReadsSite, startWorld as lateReadsStartWorld } from lateReadsWorld
 
+module composedWorld {
+  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import type { SqlValue } from "@repo/platform/bindings"
+  import { type Handler, type StartedWorker, bundle, migrate, startWorker } from "@repo/platform/testing"
+  import type { Answer, Ask, Session } from "@repo/platform/testing/area"
+  import { githubFake } from "@repo/platform/testing/github"
+  import { internet } from "@repo/platform/testing/internet"
+  import { type CapturedMail, mailCapture } from "@repo/platform/testing/mail"
+  import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+
+  const origin = "http://localhost:8788"
+  export const stewardId = 41
+  export const primaryId = 9001
+  export const recipientNode = "MDQ6VXNlcjQy"
+  export const stewardMail = "member-41@slop.test"
+  export const protectionToken = "composed-site-protection-token-".padEnd(48, "p")
+  const identityOrigin = "http://localhost:8790"
+  const rpcUrl = "https://rpc.base.test"
+  const inboxUrl = "https://slop.test/inbox"
+  const verifiedAt = "2026-11-01T00:00:00.000Z"
+  const roles = { ADMIN_GITHUB_IDS: "18633264,202660855", PROJECT_MODERATOR_GITHUB_IDS: "18633264,202660855" }
+  const appRoot = `${repoRoot}/apps/app`
+  const backendRoot = `${repoRoot}/apps/backend`
+
+  const securityPilot = JSON.stringify({
+    inboxUrl,
+    recipients: {
+      [String(stewardId)]: { email: stewardMail, verifiedAt, evidenceReference: "operator check 41", backupGithubId: "43" },
+      "43": { email: "bystander@slop.test", verifiedAt, evidenceReference: "operator check 43", backupGithubId: String(stewardId) },
+    },
+  })
+
+  const activityPilot = JSON.stringify({ inboxUrl, recipients: { [String(stewardId)]: { email: stewardMail, verifiedAt, evidenceReference: "operator check 41" } } })
+
+  export interface World {
+    readonly outboundErrors: ReadonlyArray<string>
+    /** @throws {never} */
+    request(path: string, ask?: Ask): Promise<Answer>
+    /** @throws {never} */
+    sql(text: string, ...params: ReadonlyArray<SqlValue>): Promise<ReadonlyArray<Readonly<Record<string, unknown>>>>
+    /** @throws {never} */
+    signIn(githubId: string, login: string): Promise<Session>
+    /** @throws {never} */
+    tick(): Promise<string>
+    /** @throws {never} */
+    mails(): ReadonlyArray<CapturedMail>
+    /** @throws {never} */
+    commitOf(name: string): string
+    /** @throws {never} */
+    unexpected(): ReadonlyArray<string>
+    /** @throws {never} */
+    dispose(): Promise<void>
+  }
+
+  interface Fetching {
+    fetch(url: string, init?: { readonly method?: string; readonly headers?: Readonly<Record<string, string>>; readonly body?: string; readonly redirect?: "manual" }): Promise<WebResponse>
+  }
+
+  interface Ticking {
+    scheduled(options: { readonly cron: string }): Promise<{ readonly outcome: string }>
+  }
+
+  function json(status: number, body: unknown) {
+    return new WebResponse(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  }
+
+  function repositoryAccess(): Handler {
+    return (request: WebRequest) => {
+      const url = new URL(request.url)
+      if (request.method === "POST") return json(200, { accepted: true })
+      const id = Number(url.searchParams.get("repositoryId"))
+      const permission = url.searchParams.get("login") === `member-${stewardId}` ? "admin" : "read"
+      const owner = { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+      return json(200, { installation: "installed", installationId: 77, permission, roleName: null, repository: { id, node_id: `R_${id}`, full_name: url.searchParams.get("repository") ?? "", private: false, owner } })
+    }
+  }
+
+  async function rpcAnswer(request: WebRequest) {
+    const body = await request.json() as { readonly id: number; readonly method: string; readonly params: ReadonlyArray<{ readonly data?: string }> }
+    const data = body.params[0]?.data
+    const result = body.method === "eth_chainId" ? "0x2105" : body.method === "eth_getCode" ? "0x6080" : data === "0x313ce567" ? `0x${"12".padStart(64, "0")}` : `0x${"20".padStart(64, "0")}${"4".padStart(64, "0")}${"534c4f50".padEnd(64, "0")}`
+    return json(200, { jsonrpc: "2.0", id: body.id, result })
+  }
+
+  async function expectStatus(step: string, response: WebResponse, status: number): Promise<WebResponse> {
+    if (response.status === status) return response
+    throw new Error(`signIn: ${step} answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
+  }
+
+  function cookieOf(step: string, response: WebResponse, name: string): string {
+    const value = new RegExp(`${name}=([^;,\\s]+)`, "u").exec(response.headers.get("set-cookie") ?? "")?.[1]
+    if (value === undefined) throw new Error(`signIn: ${step} set no ${name} cookie`)
+    return value
+  }
+
+  const bindingCookie = /__Host-slop_oauth_bind_[^=;,\s]+=[^;,\s]+/u
+
+  async function answerOf(response: WebResponse): Promise<Answer> {
+    const type = response.headers.get("content-type") ?? ""
+    const text = await response.text()
+    return { status: response.status, headers: Object.fromEntries(response.headers), body: type.includes("json") && text !== "" ? JSON.parse(text) : text }
+  }
+
+  /** @throws {never} */
+  export async function startWorld(): Promise<World> {
+    const github = githubFake()
+    github.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    github.world.addUser({ id: 42, login: "recipient", nodeId: recipientNode })
+    github.world.addUser({ id: 43, login: "bystander", nodeId: "MDQ6VXNlcjQz" })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
+    github.world.addRepo({ id: primaryId, nodeId: `R_${primaryId}`, owner: `member-${stewardId}`, name: "tool", defaultBranch: "main", license: { spdx: "MIT" } })
+    const net = internet({ github: github.handler, rpc: { [rpcUrl]: rpcAnswer } })
+    const capture = mailCapture()
+    const access = repositoryAccess()
+    const mf: StartedWorker = startWorker({
+      script: await bundle(appRoot, { entry: "_worker" }),
+      d1: { SLOP_DB: "slop-private" },
+      r2: ["PRIVATE_TRACES", "VETTING_EVIDENCE"],
+      vars: {
+        ...roles,
+        SLOP_ENVIRONMENT: "local",
+        PAYMENTS_ALLOWED_ORIGIN: origin,
+        PUBLIC_SITE_URL: "https://slop.cash",
+        PAYMENT_NETWORKS: "[]",
+        SLOP_GITHUB_READ_TOKEN: github.tokens.user("slop-reader"),
+        REWARD_RPC_BASE: rpcUrl,
+        TRACE_AUTH_SECRET: "trace-auth-secret-for-the-composed-site-journey",
+        POINTS_PROTECTION_TOKEN: protectionToken,
+      },
+      services: { ASSETS: () => new WebResponse("Not found", { status: 404 }), SLOPBOT: access },
+      outbound: net.handler,
+      workers: {
+        SLOP_IDENTITY: {
+          name: "identity",
+          script: await bundle(backendRoot, { entry: "identity" }),
+          d1: { IDENTITY_DB: "slop-private" },
+          ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+          vars: {
+            SLOP_ENVIRONMENT: "local",
+            IDENTITY_ALLOW_LOOPBACK: "1",
+            IDENTITY_PUBLIC_ORIGIN: identityOrigin,
+            GITHUB_APP_CLIENT_ID: github.app.clientId,
+            GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+            IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+            IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+          },
+        },
+        SLOP_NOTIFY: {
+          name: "notify",
+          script: await bundle(appRoot, { entry: "notify" }),
+          d1: { SLOP_DB: "slop-private" },
+          vars: { ...roles, NOTIFY_FROM_ADDRESS: "notifications@slop.cash", NOTIFY_INBOX_URL: inboxUrl, SECURITY_MAIL_PILOT: securityPilot, ACTIVITY_MAIL_PILOT: activityPilot },
+          services: { SLOPBOT: access },
+          email: { ADMIN_EMAIL: capture.binding },
+        },
+      },
+    })
+    const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
+    if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
+
+    const send = async (path: string, ask: Ask = {}) => {
+      const method = ask.method ?? (ask.json === undefined && ask.body === undefined ? "GET" : "POST")
+      const sentOrigin = ask.origin === undefined ? (method === "GET" || method === "HEAD" ? null : origin) : ask.origin
+      const headers: Record<string, string> = {
+        ...sentOrigin === null ? {} : { origin: sentOrigin },
+        ...ask.json === undefined ? {} : { "content-type": "application/json" },
+        ...ask.as === undefined ? {} : { cookie: ask.as.cookie, "x-slop-expected-github-id": ask.as.githubId },
+        ...ask.headers,
+      }
+      const body = ask.json === undefined ? ask.body : JSON.stringify(ask.json)
+      return mf.dispatchFetch(`${origin}${path}`, { method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+    }
+
+    const rows = async (text: string, params: ReadonlyArray<SqlValue>) => {
+      const db = await mf.getD1Database("SLOP_DB")
+      return (await db.prepare(text).bind(...params).all()).results as ReadonlyArray<Readonly<Record<string, unknown>>>
+    }
+
+    const signIn = async (githubId: string, login: string): Promise<Session> => {
+      const worker = (await mf.getWorker("identity")) as unknown as Fetching
+      const post = (body: unknown, cookie?: string) => ({ method: "POST", headers: { "content-type": "application/json", origin: identityOrigin, ...cookie === undefined ? {} : { cookie } }, body: JSON.stringify(body) })
+      const start = await expectStatus("start", await worker.fetch(`${identityOrigin}/v1/oauth/start`, post({ audience: "slop-points-web" })), 201)
+      const binding = bindingCookie.exec(start.headers.get("set-cookie") ?? "")?.[0]
+      if (binding === undefined) throw new Error("signIn: start set no browser binding cookie")
+      const started = await start.json() as { readonly flowId: string; readonly pollCapability: string; readonly authorizationUrl: string }
+      const authorized = await expectStatus("authorize", await worker.fetch(started.authorizationUrl, { headers: { cookie: binding }, redirect: "manual" }), 302)
+      const state = cookieOf("authorize", authorized, "__Host-slop_oauth_state")
+      const consent = new URL(authorized.headers.get("location") ?? "")
+      consent.searchParams.set("login", login)
+      const consented = await expectStatus("GitHub authorize", await net.handler(new WebRequest(consent.toString(), { redirect: "manual" })), 302)
+      await expectStatus("callback", await worker.fetch(consented.headers.get("location") ?? "", { headers: { cookie: `__Host-slop_oauth_state=${state}; ${binding}` }, redirect: "manual" }), 200)
+      const polled = await (await expectStatus("poll", await worker.fetch(`${identityOrigin}/v1/oauth/poll`, post({ flowId: started.flowId, pollCapability: started.pollCapability, audience: "slop-points-web" }, binding)), 200)).json() as { readonly assertion: string }
+      const joined = await expectStatus("join", await send("/api/v1/points/join", { json: { assertion: polled.assertion, public: true } }), 200)
+      const { actor } = await joined.json() as { readonly actor: { readonly id: string } }
+      return { cookie: `__Host-slop_points=${cookieOf("join", joined, "__Host-slop_points")}`, actorId: actor.id, githubId, login }
+    }
+
+    return {
+      outboundErrors: mf.outboundErrors,
+      request: async (path, ask) => answerOf(await send(path, ask)),
+      sql: (text, ...params) => rows(text, params),
+      signIn,
+      tick: async () => (await ((await mf.getWorker("notify")) as unknown as Ticking).scheduled({ cron: "*/5 * * * *" })).outcome,
+      mails: () => capture.messages(),
+      commitOf: (name) => github.world.repo(`member-${stewardId}/${name}`).branches.get("main") ?? "",
+      unexpected: () => net.unexpected.map((seen) => `${seen.method} ${seen.url}`),
+      dispose: () => mf.dispose(),
+    }
+  }
+}
+import { type World as ComposedWorld, primaryId as composedPrimaryId, protectionToken as composedProtectionToken, recipientNode as composedRecipientNode, startWorld as composedStartWorld, stewardId as composedStewardId, stewardMail as composedStewardMail } from composedWorld
+
 const pageSite = "https://slop.test"
 
 schema HistoryRow { readonly id: string }
@@ -725,6 +938,7 @@ service AccountBrowser { readonly world: AccountWorld }
 service ProjectsBrowser { readonly world: ProjectsWorld }
 service SecurityBrowser { readonly world: SecurityWorld }
 service LateReadsBrowser { readonly world: LateReadsWorld }
+service ComposedBrowser { readonly world: ComposedWorld }
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -995,6 +1209,200 @@ function routedTo(world: { readonly fetch: typeof globalThis.fetch }) {
       try same(String(home.body).includes(`"send":{"to":"/cdn-cgi/rum"}`), true)
       const sponsors = try area.get("/sponsors")
       try same(head(sponsors), { ...sponsorHead, beacon: true })
+    })
+  })
+
+  const Composed = Layer.effect(ComposedBrowser, effect {
+    const started = try acquireRelease(promise(() => composedStartWorld()), (opened) => promise(() => opened.dispose()))
+    return { world: started }
+  })
+
+  const payoutWallet = {
+    jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+    address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+  }
+
+  const contribution = {
+    approvedScope: "Bug fixes and documented features in the toolkit.",
+    contributionGuide: "Branch from main and keep one change per pull request.",
+    supportedTasks: "Reproduced bugs with a failing test.",
+    requiredTests: "Run the test suite and attach the output.",
+    reviewExpectations: "The failing test fails on the base and passes on the head.",
+    securityContact: "security@example.org",
+    closurePolicy: "Maintainers close duplicates.",
+    maintainerNotes: "",
+  }
+
+  const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: "2026-11-01T00:00:00.000Z" }
+
+  effect function composedManifest(world: ComposedWorld, id: string) {
+    const steward = `member-${composedStewardId}`
+    const repository = `${steward}/tool`
+    const commitSha = world.commitOf("tool")
+    const fileSha256 = try sha256Hex("MIT license\n")
+    return {
+      schemaVersion: "1",
+      id,
+      slug: id,
+      name: `Project ${id}`,
+      eyebrow: "Open-source project",
+      headline: "Reproducible research tooling for everyone.",
+      description: "Build and maintain reproducible research tooling.",
+      listingTier: "community",
+      status: "paused",
+      steward: { displayName: steward, kind: "individual", github: { actorId: String(composedStewardId), nodeId: `U_${composedStewardId}`, login: steward, type: "User", profileUrl: `https://github.com/${steward}` }, website: null },
+      authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(composedPrimaryId), repositoryNodeId: `R_${composedPrimaryId}`, proof: null },
+      terms: {
+        revision: "draft-1",
+        effectiveAt: "2026-11-01T00:00:00.000Z",
+        paymentTransfersIp: false,
+        retroactive: false,
+        receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+        copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+        repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${commitSha}/LICENSE`, commitSha, fileSha256 },
+        inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+        assignment: null,
+        externalPrize: null,
+      },
+      repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+      skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+      reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+      rewardAsset: usdc,
+      contribution,
+      reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+      funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+      modelPolicy: { mode: "open-declared", disclosureRequired: true },
+      links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+    }
+  }
+
+  effect function composedAnswer(path: string, ask: Ask = {}) {
+    const { world } = try ComposedBrowser
+    return try promise(() => world.request(path, ask))
+  }
+
+  effect function composedRows(text: string, ...params: ReadonlyArray<string | number | null>) {
+    const { world } = try ComposedBrowser
+    return try promise(() => world.sql(text, ...params))
+  }
+
+  effect function walletNotices() {
+    return try composedRows("SELECT state, attempts FROM activity_notification_outbox WHERE event_key LIKE 'wallet-claim:%' AND recipient_github_id = ? ORDER BY id", String(composedStewardId))
+  }
+
+  effect function retainedAward() {
+    const recordedAt = "2026-10-30T14:00:00.000Z"
+    const body = {
+      previous: null,
+      recordedAt,
+      sourceDigest: "a".repeat(64),
+      sourceRule: "slop-score-v2",
+      award: { key: "1".repeat(64), actor: { id: composedRecipientNode, login: "recipient" }, projectId: "alpha", category: "evaluated-contribution", amount: 90, occurredAt: recordedAt, sourceId: "manual-award-1", sourceUrl: "https://example.com/accepted-work", workUnitId: "manual-award-1", provisional: false },
+    } satisfies RevisionBody
+    const id = try pointRevisionId(body)
+    try composedRows("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, ?, ?, ?)", id, body.award.key, null, recordedAt, JSON.stringify({ id, ...body }))
+    return id
+  }
+
+  function refusal(answer: Answer) {
+    return [answer.status, field(answer.body, "error")]
+  }
+
+  layer(Layer.merge(Composed, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+    it.effect(`A contributor signs in through the composed site, lists a project, names a referral link and registers a payout wallet, the notify Worker mails the wallet notice once on its tick, and the account closes (spec/backend/accounts.md, "Story: Sign in with GitHub and keep one immutable account"; spec/backend/projects.md, "Story: Create or publish a project without routine approval"; spec/backend/referralCodes.md, "Story: Choose a name for a member's referral link"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/backend/accounts.md, "Story: Close and reopen an account without losing history")`, () => effect {
+      const { world } = try ComposedBrowser
+      const steward = try promise(() => world.signIn(String(composedStewardId), `member-${composedStewardId}`))
+      const session = try composedAnswer("/api/v1/project-session", { as: steward })
+      const created = try composedAnswer("/api/v1/projects", { json: { manifest: try composedManifest(world, "composed-tool") }, as: steward })
+      const project = try composedRows("SELECT revision FROM projects WHERE id = ?", "composed-tool")
+      const chosen = try composedAnswer("/api/v1/referrals/code", { json: { code: "composed-name" }, as: steward })
+      const registered = try composedAnswer("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+      const claimId = String(field(registered.body, "claimId") ?? "")
+      const challenged = try composedAnswer("/api/v1/payments/wallets/challenge", { json: { claimId }, as: steward })
+      const signature = base64Encode(try ed25519Sign(Redacted.make(payoutWallet.jwk), utf8(String(field(challenged.body, "message") ?? ""))))
+      const authorized = try composedAnswer("/api/v1/payments/wallets/authorize", { json: { claimId, challengeId: field(challenged.body, "challengeId"), signature }, as: steward })
+      const queued = try walletNotices()
+      const firstTick = try promise(() => world.tick())
+      const sent = try walletNotices()
+      const secondTick = try promise(() => world.tick())
+      const mailed = world.mails().map((mail) => [mail.to, mail.headers.subject])
+      const closed = try composedAnswer("/api/v1/points/account/close", { json: { login: `member-${composedStewardId}` }, as: steward })
+      const closedMe = try composedAnswer("/api/v1/points/me", { as: steward })
+      const afterClose = try composedAnswer("/api/v1/payments/wallets/register", { json: { chain: "solana", address: payoutWallet.address }, as: steward })
+      try same({
+        session: [session.status, field(field(session.body, "session"), "githubId")],
+        created: created.status,
+        project,
+        chosen: [chosen.status, field(chosen.body, "code")],
+        wallet: [registered.status, challenged.status, authorized.status, field(authorized.body, "authorized")],
+        effective: try composedRows("SELECT id FROM effective_payment_wallet_claims WHERE github_user_id = ?", String(composedStewardId)),
+        notice: { queued, ticks: [firstTick, secondTick], sent, mailed },
+        closed: [closed.status, field(closed.body, "closed")],
+        closedMe: [closedMe.status, closedMe.body],
+        afterClose: afterClose.status,
+        unexpected: world.unexpected(),
+        outboundErrors: world.outboundErrors,
+      }, {
+        session: [200, String(composedStewardId)],
+        created: 201,
+        project: [{ revision: 1 }],
+        chosen: [200, "composed-name"],
+        wallet: [200, 200, 200, true],
+        effective: [{ id: claimId }],
+        notice: { queued: [{ state: "queued", attempts: 0 }], ticks: ["ok", "ok"], sent: [{ state: "provider-accepted", attempts: 1 }], mailed: [[composedStewardMail, "Slop inbox notice"]] },
+        closed: [200, true],
+        closedMe: [200, null],
+        afterClose: 401,
+        unexpected: [],
+        outboundErrors: [],
+      })
+    })
+
+    it.effect(`A recipient disputes their own Points record through the composed site, which answers the journal and opens the protected months only to the operator secret (spec/points/disputes.md, "Story: A recipient disputes their own current Points record privately"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/protectedMonths.md, "The protected-months route answers only the configured operator secret and names months and projects only"; spec/frontend/requests.md, "Story: Read current data without losing the last good result")`, () => effect {
+      const { world } = try ComposedBrowser
+      const recipient = try promise(() => world.signIn("42", "recipient"))
+      const bystander = try promise(() => world.signIn("43", "bystander"))
+      const current = try retainedAward()
+      const protectedPath = "/api/v1/operator/protected-point-months"
+      const journal = try composedAnswer("/api/v1/points/journal")
+      const hidden = try composedAnswer(protectedPath)
+      const wrongSecret = try composedAnswer(protectedPath, { headers: { authorization: `Bearer ${"x".repeat(48)}` } })
+      const listing = try composedAnswer(protectedPath, { headers: { authorization: `Bearer ${composedProtectionToken}` } })
+      const listed = try composedAnswer("/api/v1/points/disputes", { as: recipient })
+      const reason = "The month of this award is wrong."
+      const foreign = try composedAnswer("/api/v1/points/disputes", { json: { revisionId: current, reason }, as: bystander })
+      const opened = try composedAnswer("/api/v1/points/disputes", { json: { revisionId: current, reason }, as: recipient })
+      const key = String(field(opened.body, "id") ?? "")
+      const repeated = try composedAnswer("/api/v1/points/disputes", { json: { revisionId: current, reason }, as: recipient })
+      const disputePath = `/api/v1/points/disputes/${encodeURIComponent(key)}`
+      const read = try composedAnswer(disputePath, { as: recipient })
+      const selfDecides = try composedAnswer(disputePath, { json: { action: "uphold", reason: "My own review." }, as: recipient })
+      const awards = field(listed.body, "awards")
+      try same({
+        journal: [isJson(journal), journal.status !== 500],
+        hidden: refusal(hidden),
+        wrongSecret: refusal(wrongSecret),
+        listing: [listing.status, field(listing.body, "schema")],
+        listed: Array.isArray(awards) ? awards.map((entry: unknown) => [field(entry, "revisionId") === current, field(entry, "disputeId")]) : awards,
+        foreign: refusal(foreign),
+        opened: [opened.status, field(opened.body, "state"), key.startsWith("points-dispute:")],
+        repeated: [repeated.status, field(repeated.body, "id") === key],
+        read: [field(read.body, "state"), field(read.body, "reason"), field(read.body, "mayDecide")],
+        selfDecides: refusal(selfDecides),
+        outboundErrors: world.outboundErrors,
+      }, {
+        journal: [true, true],
+        hidden: [404, "not_found"],
+        wrongSecret: [404, "not_found"],
+        listing: [200, "slop-protected-point-months-v1"],
+        listed: [[true, null]],
+        foreign: [403, "not_authorized"],
+        opened: [201, "triage", true],
+        repeated: [201, true],
+        read: ["triage", reason, false],
+        selfDecides: [403, "not_authorized"],
+        outboundErrors: [],
+      })
     })
   })
 }

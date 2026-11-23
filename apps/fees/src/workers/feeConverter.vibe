@@ -163,7 +163,7 @@ effect function creditKept(flow: Machine.Shape, keptFee: KeptFee) {
   return credited !== undefined
 }
 
-effect function creditedKept(network: Network, names: Names, usdc: string, wallet: string, fees: ReadonlyArray<KeptSubmissionFee>) {
+effect function creditedKept(network: Network, names: Names, wallet: string, fees: ReadonlyArray<KeptSubmissionFee>, usdc?: string) {
   const start: FeeFlow = { ...flowStart, fee: { ...flowStart.fee, network }, buyback: { ...flowStart.buyback, source: network } }
   const held = try Ref.make(start)
   const flow = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
@@ -172,7 +172,7 @@ effect function creditedKept(network: Network, names: Names, usdc: string, walle
   if (canAdvanceBuybackClock(try flow.get(), now, "Worker")) try flow.send({ type: "advanceBuybackClock", now }, "Worker")
   const credited: Array<KeptSubmissionFee> = []
   for (const fee of fees) {
-    if (fee.token.toLowerCase() !== usdc.toLowerCase() || fee.keptTo.toLowerCase() !== wallet.toLowerCase()) continue
+    if ((usdc !== undefined && fee.token.toLowerCase() !== usdc.toLowerCase()) || fee.keptTo.toLowerCase() !== wallet.toLowerCase()) continue
     const amount = exactNumber(fee.amount)
     const keptFee: KeptFee = { deposit: names.number("receipt", `KeptSubmissionFee:${fee.deposit}`), token: 1, amount: amount ?? 0, toFeeWallet: true, accepted: true, finalized: true, resolved: true, chainTime: fee.chainTime }
     if (amount === undefined || !(try creditKept(flow, keptFee))) {
@@ -185,7 +185,7 @@ effect function creditedKept(network: Network, names: Names, usdc: string, walle
 }
 
 effect function sourceLeg(run: Run, network: EnabledNetwork, usdc: string, names: Names, journaled: Instance | undefined) {
-  const kept = try creditedKept(network.network, names, usdc, network.feeWallet, try keptOf(network.definition.escrowNetworks))
+  const kept = try creditedKept(network.network, names, network.feeWallet, try keptOf(network.definition.escrowNetworks), usdc)
   const evidence = try incomeEvidence({ network: network.network, wallet: network.feeWallet, usdc, scope: "", offset: 0 }, [], kept)
   const leg: Leg = { network: network.network, scope: "", offset: 0, held: run.derived.held, names, evidence, income: evidence, cancelling: [], reported: [] }
   return journaled === undefined ? leg : { ...leg, journal: journaled } satisfies Leg
@@ -223,7 +223,7 @@ effect function pooled(run: Run, network: EnabledNetwork, facts: ReviewedFacts, 
     journal: instance,
     assets: facts.tokens.map((token) => ({ token: token.address, booked: [] })),
     bookedSlop: [],
-    kept: try keptOf(network.definition.escrowNetworks),
+    kept: try creditedKept(network.network, names, network.feeWallet, try keptOf(network.definition.escrowNetworks)),
   })
   const result = try robinhoodPool(pool, { runId, wallet: network.feeWallet, limits, native: network.nativeLimits ?? noBudget, kyber: run.kyber })
   try Effect.logInfo("fee_buyback_pool", { network: network.definition.name, records: result.records })

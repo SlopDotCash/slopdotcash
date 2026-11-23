@@ -9,8 +9,13 @@ programs run from the manual fee Worker inspection workflow and only read:
 they never change a Worker version, setting, schedule, binding or secret,
 never write a fee journal record, and never sign or submit anything. Their
 only output is the run's report in the runner's temporary directory, which
-keeps allowlisted event names, error categories, fixed method names and
-aggregate amounts; raw tail messages and RPC URLs are discarded in memory. A
+keeps allowlisted event names, error categories, fixed method names,
+aggregate amounts and, for a claim error, a conversion error or a Solana
+buyback bridge-leg error, the provider failure the Worker logged: its
+provider (EVM RPC, Solana RPC, Jupiter or KyberSwap), its stage (deployment
+check, RPC response or response JSON), an allowlisted method of that
+provider when it names one and an HTTP status from 100 to 599 when it has
+one, and nothing else; raw tail messages and RPC URLs are discarded in memory. A
 diagnostic never stands for a completed deployment, payment or scan.
 
 Versions, deployments and sources are opaque integers here. One instance

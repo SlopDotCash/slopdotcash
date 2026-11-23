@@ -598,17 +598,17 @@ not validate, so it never writes a sitemap from a malformed index.
 
 ### The sitemap lists every fixed indexed page, each listed project and each published cycle, and no private route
 
-The sitemap lists, in this order, the six fixed indexed pages `/`,
-`/how-it-works`, `/sponsors`, `/cycles`, `/points` and `/projects/new`
-(development's `STATIC_PAGE_TITLES` order); then `/projects/<slug>` for each
+The sitemap lists, in this order, the seven fixed indexed pages `/`,
+`/how-it-works`, `/sponsors`, `/cycles`, `/points`, `/projects/new` and
+`/requested` (development's `STATIC_PAGE_TITLES` order); then `/projects/<slug>` for each
 listed registry project (registered, neither retired nor legacy), in registry
 order, paused or flagged ones included; then `/cycles/<projectId>/<cycleId>`
 for each entry of the published cycle index, in the index's order. Each entry
 is the [app shell](../app/index.md)'s route, and its path is
 [routes](../frontend/routes.md) `canonicalPath` of its kind with `:project`
-and `:cycle` filled in: the six fixed pages are exactly the route kinds with a
-static title, and their paths equal `canonicalPath` of `Home`, `HowItWorks`,
-`Sponsors`, `CycleArchive`, `Points` and `NewProject`. The rule lives here,
+and `:cycle` filled in: the seven fixed pages are exactly the route kinds with
+a static title, and their paths equal `canonicalPath` of `Home`, `HowItWorks`,
+`Sponsors`, `CycleArchive`, `Points`, `NewProject` and `Requested`. The rule lives here,
 in the contributor spec that builds the site files, because `@repo/frontend`
 depends on `@repo/contributor`, so the contributor site program reads these
 routes from its own generated copy. A retired or legacy project is never
@@ -622,8 +622,8 @@ import app as A from "../app"
 import routes as RT from "../frontend/routes"
 type SitemapProject = { slug: str, view: F::ProjectView }
 type PublishedCycle = { projectId: str, cycleId: str }
-pure val sitemapFixedKinds = List(A::Home, A::HowItWorks, A::Sponsors, A::CycleArchive, A::Points, A::NewProject)
-pure val sitemapFixedPaths = List("/", "/how-it-works", "/sponsors", "/cycles", "/points", "/projects/new")
+pure val sitemapFixedKinds = List(A::Home, A::HowItWorks, A::Sponsors, A::CycleArchive, A::Points, A::NewProject, A::Requested)
+pure val sitemapFixedPaths = List("/", "/how-it-works", "/sponsors", "/cycles", "/points", "/projects/new", "/requested")
 pure def sitemapRoutes(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): List[A::Route] =
   sitemapFixedKinds.listMap(k => A::page(k))
     .concat(sitemapProjects.select(x => F::listed(x.view)).listMap(x => { ...A::page(A::Project), projectId: x.slug }))
@@ -635,7 +635,7 @@ pure def lawSitemapFixedPagesAreTheStaticPages(routeKind: A::RouteKind): bool =
   ((RT::staticTitle(routeKind) != "") iff sitemapFixedKinds.includes(routeKind))
   and sitemapFixedKinds.listMap(k => RT::canonicalPath(k)) == sitemapFixedPaths
 pure def lawSitemapStartsWithTheFixedPages(sitemapProjects: List[SitemapProject], publishedCycles: List[PublishedCycle]): bool =
-  List(0, 1, 2, 3, 4, 5).every(i => sitemapRoutes(sitemapProjects, publishedCycles).nthOr(i, A::page(A::Unknown))
+  List(0, 1, 2, 3, 4, 5, 6).every(i => sitemapRoutes(sitemapProjects, publishedCycles).nthOr(i, A::page(A::Unknown))
     == A::page(sitemapFixedKinds.nthOr(i, A::Unknown)))
 pure def lawSitemapListsListedProjectsAndPublishedCycles(sitemapProjects: List[SitemapProject],
   publishedCycles: List[PublishedCycle]): bool =

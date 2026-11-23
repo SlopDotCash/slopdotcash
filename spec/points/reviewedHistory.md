@@ -235,6 +235,39 @@ first-parent chain without the retiring merge and pinned until the import:
 one commit is its head with one parent). The ancestry check does not apply
 to an identical accepted change.
 
+Instead of claim coverage or an identical accepted change, a retirement may
+rest on a net outcome (`netOutcome`, main): the retired source's whole
+accepted first-parent diff is an ordered composition of earlier rewarded
+path changes. It is exclusive of every other proof: no earlier source,
+coverage, identical accepted change, earlier acceptance proof, unchanged
+promotion, accepted squash or accepted promotion. The protected runner
+reads in one GraphQL read before verification, and finds unchanged again
+after it and just before import, the retired pull request and every named
+earlier pull request in the same public repository (merged, same number, URL, merge time and merge commit,
+the retired one with its audited head and commit count); acquires the
+retired merge's objects in pinned Git; requires the merge's parents to be
+exactly the reviewed first parent and the source head; requires the
+source's complete submitted range (head back to the first parent) to be
+exactly the reviewed commits with their ordered parents; requires each
+earlier source's accepted merge to lie in that submitted range; and derives
+every first-parent raw path transition (no renames; modes 000000, 100644,
+100755, 120000, 160000) of the retired merge and of each earlier merge. The
+proof must name every path of the retired merge's diff exactly once and
+bind the raw diff bytes by SHA-256; for each path the named earlier sources,
+in strictly increasing acceptance time, must carry the path from the
+retired merge's preimage through each intermediate mode and object identity
+to its postimage, and every named earlier source is used by some path. Each
+earlier source is accepted strictly before the retired one, named once,
+with a distinct merge, and is not itself retiring; its ordinary award
+revision (category merged-pull-request, keyed by its project, actor,
+category and source, with the pull URL and merge time of the earlier source
+and a positive amount, recorded no later than the review) is the same
+revision at the baseline and in the reviewed result. The retired pool is
+the single-source pull-request candidate keyed by the source's own record,
+has a positive row, and every row is the baseline's latest revision. The
+dossier binds the proof's digest (`netOutcomeSha256`). The ancestry check
+does not apply to a net outcome either.
+
 ```quint
 type AcceptedPromotion = { headTree: int, mergeTree: int, mergeParents: List[int], sourceHead: int }
 pure def promotionKeepsContent(a: AcceptedPromotion): bool =
@@ -296,10 +329,18 @@ pure def identicalChangeApplies(i: IdenticalChange, retiredAt: int): bool =
    else if (i.kind == EmptySquash) i.singleOwnCommit and i.ownerPositiveAtBaseline
    else if (i.kind == SurvivingCarrier) i.singleOwnCommit and i.originalAuthorPair and i.carrierTipPinned
    else i.singleOwnCommit)
+type NetOutcome = { present: bool, sources: int, earlierBefore: bool, inSubmittedRange: bool, completeRange: bool,
+  allPaths: bool, composes: bool, trustedVerification: bool, earlierAwardsRetained: bool, ownRecordPool: bool }
+pure def netOutcomeApplies(n: NetOutcome): bool =
+  n.present and n.sources > 0 and n.earlierBefore and n.inSubmittedRange and n.completeRange and n.allPaths and n.composes and
+  n.trustedVerification and n.earlierAwardsRetained and n.ownRecordPool
+pure val noNetOutcome: NetOutcome = { present: false, sources: 0, earlierBefore: false, inSubmittedRange: false,
+  completeRange: false, allPaths: false, composes: false, trustedVerification: false, earlierAwardsRetained: false,
+  ownRecordPool: false }
 type Retirement = { source: int, occurredAt: int, sourceComplete: bool, poolUnchanged: bool, octoberPool: bool,
   dossierBound: bool, claimedPaths: int, promotion: AcceptedPromotion, unchanged: List[UnchangedPromotion],
   squashes: List[AcceptedSquash], covers: List[NativeCover], earlier: List[EarlierBasis], claims: List[ClaimCover],
-  mergeEdges: List[CarriedMergeEdge], order: List[AcceptanceOrder], identical: IdenticalChange }
+  mergeEdges: List[CarriedMergeEdge], order: List[AcceptanceOrder], identical: IdenticalChange, net: NetOutcome }
 pure def coveringSource(retirement: Retirement, owner: int): bool =
   owner != retirement.source and (retirement.earlier.some(e => e.source == owner) or retirement.squashes.some(s => s.source == owner))
 pure def claimCoverageApplies(retirement: Retirement): bool =
@@ -319,10 +360,31 @@ pure def identicalRetirementApplies(retirement: Retirement): bool =
   identicalChangeApplies(retirement.identical, retirement.occurredAt) and retirement.earlier.length() == 1 and
   retirement.unchanged.length() == 0 and retirement.squashes.length() == 0 and retirement.covers.length() == 0 and
   retirement.mergeEdges.length() == 0 and retirement.claims.length() == 0 and retirement.claimedPaths == 0
+pure def netRetirementApplies(retirement: Retirement): bool =
+  netOutcomeApplies(retirement.net) and retirement.identical.kind == NoIdenticalChange and retirement.earlier.length() == 0 and
+  retirement.unchanged.length() == 0 and retirement.squashes.length() == 0 and retirement.covers.length() == 0 and
+  retirement.mergeEdges.length() == 0 and retirement.claims.length() == 0 and retirement.claimedPaths == 0 and
+  retirement.order.length() == 0
 pure def retirementApplies(retirement: Retirement): bool =
   retirement.source > 0 and retirement.sourceComplete and retirement.poolUnchanged and retirement.octoberPool and retirement.dossierBound and
   retirement.earlier.every(e => earlierAccepted(e, retirement.source, retirement.occurredAt)) and
-  (if (retirement.identical.kind == NoIdenticalChange) claimCoverageApplies(retirement) else identicalRetirementApplies(retirement))
+  (if (retirement.net.present) netRetirementApplies(retirement)
+   else if (retirement.identical.kind == NoIdenticalChange) claimCoverageApplies(retirement)
+   else identicalRetirementApplies(retirement))
+pure def lawNetOutcomeIsExclusive(retirement: Retirement): bool =
+  (retirement.net.present and (retirement.identical.kind != NoIdenticalChange or retirement.earlier.length() > 0 or
+    retirement.claims.length() > 0 or retirement.squashes.length() > 0)) implies not(retirementApplies(retirement))
+pure def lawNetOutcomeNeedsEveryPath(retirement: Retirement): bool =
+  (retirement.net.present and not(retirement.net.allPaths and retirement.net.composes)) implies not(retirementApplies(retirement))
+pure def lawNetOutcomeNeedsTheSubmittedRange(retirement: Retirement): bool =
+  (retirement.net.present and not(retirement.net.inSubmittedRange and retirement.net.completeRange)) implies
+    not(retirementApplies(retirement))
+pure def lawNetOutcomeNeedsRetainedEarlierAwards(retirement: Retirement): bool =
+  (retirement.net.present and not(retirement.net.earlierAwardsRetained)) implies not(retirementApplies(retirement))
+pure def lawNetOutcomeNeedsTrustedVerification(retirement: Retirement): bool =
+  (retirement.net.present and not(retirement.net.trustedVerification)) implies not(retirementApplies(retirement))
+pure def lawNetOutcomeNeedsEarlierAcceptance(retirement: Retirement): bool =
+  (retirement.net.present and not(retirement.net.earlierBefore)) implies not(retirementApplies(retirement))
 pure def lawPromotionMustKeepContent(a: AcceptedPromotion): bool = a.headTree != a.mergeTree implies not(promotionKeepsContent(a))
 pure def lawChangedPromotionIsNotUnchanged(u: UnchangedPromotion): bool =
   (u.changedLines > 0 or u.headTree != u.baseTree) implies not(unchangedPromotion(u))
@@ -369,11 +431,15 @@ pure val distinctOrder: AcceptanceOrder = { sameMerge: false, ancestryKnown: tru
 pure val readyRetirement: Retirement = { source: 1, occurredAt: 2432120, sourceComplete: true, poolUnchanged: true,
   octoberPool: true, dossierBound: true, claimedPaths: 1, promotion: promotion, unchanged: List(), squashes: List(squash),
   covers: List(), earlier: List({ ...earlier, rewarded: true }), claims: List(claimCover), mergeEdges: List(),
-  order: List(distinctOrder, distinctOrder), identical: noIdentical }
+  order: List(distinctOrder, distinctOrder), identical: noIdentical, net: noNetOutcome }
 pure val sharedChange: IdenticalChange = { ...noIdentical, kind: SharedMerge, earlierSources: 1, ownerAt: 2432110,
   diffVerified: true, ownRecordPool: true, ownerPositive: true, ownerPositiveAtBaseline: true, sameHead: true }
 pure val identicalRetirement: Retirement = { ...readyRetirement, claimedPaths: 0, squashes: List(), claims: List(), order: List(),
   identical: sharedChange }
+pure val netChange: NetOutcome = { present: true, sources: 2, earlierBefore: true, inSubmittedRange: true, completeRange: true,
+  allPaths: true, composes: true, trustedVerification: true, earlierAwardsRetained: true, ownRecordPool: true }
+pure val netRetirement: Retirement = { ...readyRetirement, claimedPaths: 0, squashes: List(), claims: List(), order: List(),
+  earlier: List(), net: netChange }
 pure val carriedEdge: CarriedMergeEdge = { origin: 2, originAt: 2432110, originRetiring: false, namedAcceptedMerge: true,
   twoParents: true, originHeadSecond: true, memberIsMerge: true, rangeFromFirstParent: true, ordinaryRewarded: true, repeated: false }
 pure def lawEarlierCarrierOfTheMergeRefused(retirement: Retirement): bool =
@@ -412,7 +478,13 @@ pure val retirementValues = Set(readyRetirement, { ...readyRetirement, claimedPa
   { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, ancestryKnown: false }) },
   { ...readyRetirement, order: List(distinctOrder, { ...distinctOrder, sameMerge: true, ancestryKnown: false }) },
   identicalRetirement, { ...identicalRetirement, identical: { ...sharedChange, sameHead: false } },
-  { ...identicalRetirement, squashes: List(squash) })
+  { ...identicalRetirement, squashes: List(squash) },
+  netRetirement, { ...netRetirement, net: { ...netChange, allPaths: false } },
+  { ...netRetirement, net: { ...netChange, inSubmittedRange: false } },
+  { ...netRetirement, net: { ...netChange, earlierAwardsRetained: false } },
+  { ...netRetirement, net: { ...netChange, trustedVerification: false } },
+  { ...netRetirement, net: { ...netChange, earlierBefore: false } },
+  { ...netRetirement, identical: sharedChange }, { ...netRetirement, earlier: List({ ...earlier, rewarded: true }) })
 ```
 
 ### A historical replay scores only the pinned project's one repository

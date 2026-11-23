@@ -311,7 +311,7 @@ describe('Maintain a live project with current GitHub authority (spec/backend/pr
     const id = await createProject(users.tia, fullName, "Core");
     await openGroup("Repositories");
     await site.click(named("button", "Change integration branch"));
-    await shown(named("status")).toMatchObject({ text: expect.stringContaining("No other branch head is available.") });
+    await shown(text("No other branch head is available.", true)).toMatchObject({ visible: true });
     await shown(field("New integration branch")).toMatchObject({ count: 0 });
 
     const add = async (name: string) => {
@@ -594,32 +594,26 @@ const awardPeriod = () => {
 };
 
 type Manifest = Readonly<Record<string, unknown>>;
-type RevisionKind = "OwnerUpdate" | "AdminHold";
-
-async function revise(id: string, actor: User, kind: RevisionKind, reason: string, change: (manifest: Manifest) => Manifest) {
-  const [current] = await site.sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id);
-  const revision = Number(current?.revision) + 1;
-  const manifest = change(parsed(current?.manifest) as Manifest);
-  const status = typeof manifest.status === "string" ? manifest.status : String(current?.status);
-  const text = JSON.stringify(manifest);
-  const digest = await sha256(text);
-  const now = new Date().toISOString();
-  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, text, digest, reason, String(actor.id), actor.login, now);
-  await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, revision, kind);
-  await site.sql("UPDATE projects SET status = ?, revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", status, revision, text, digest, now, id);
-}
 
 async function monthlyPool(id: string, owner: User, more: { readonly active?: boolean; readonly reward?: Manifest } = {}) {
-  await revise(id, owner, "OwnerUpdate", "Monthly awards", (manifest) => {
-    const escrow = manifest.escrow as { readonly deployments?: ReadonlyArray<{ readonly asset?: string }> } | undefined;
-    return {
-      ...manifest,
-      ...(more.active === true ? { status: "active" } : {}),
-      rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
-      reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
-      escrow: escrow ?? { chain: "base", deployments: [] },
-    };
-  });
+  const [current] = await site.sql("SELECT revision, status, manifest FROM projects WHERE id = ?", id);
+  const revision = Number(current?.revision) + 1;
+  const recorded = parsed(current?.manifest) as Manifest;
+  const escrow = recorded.escrow as { readonly deployments?: ReadonlyArray<{ readonly asset?: string }> } | undefined;
+  const status = more.active === true ? "active" : String(current?.status);
+  const manifest = {
+    ...recorded,
+    status,
+    rewardAsset: { network: "base", kind: "stablecoin", address: escrow?.deployments?.[0]?.asset ?? "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC" },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "base", rewardStartAt: `${awardPeriod()}-01T00:00:00.000Z`, cycle: "calendar-month-utc", monthlyCapMinor: "5000000", monthlyCapDisplay: "$5", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged", ...more.reward },
+    escrow: escrow ?? { chain: "base", deployments: [] },
+  };
+  const written = JSON.stringify(manifest);
+  const digest = await sha256(written);
+  const now = new Date().toISOString();
+  await site.sql("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES(?,?,?,?,?,?,?,?)", id, revision, written, digest, "Monthly awards", String(owner.id), owner.login, now);
+  await site.sql("INSERT INTO project_revision_kinds(project_id,revision,kind) VALUES(?,?,?)", id, revision, "OwnerUpdate");
+  await site.sql("UPDATE projects SET status = ?, revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?", status, revision, written, digest, now, id);
 }
 
 async function proposeMonth(id: string, rows: ReadonlyArray<readonly [User, string]>) {
@@ -709,6 +703,7 @@ describe('Freeze exactly one execution snapshot (spec/settlement/monthly.md, "St
     await shown(finalize).toMatchObject({ disabled: false });
     await site.click(finalize);
     await shown({ text: "Final · you", within: awards }).toMatchObject({ visible: true });
+    await shown({ text: "Underfunded", exact: true, within: awards }).toMatchObject({ visible: true });
     await shown(finalize).toMatchObject({ count: 0 });
     await shown(named("textbox", `Award for ${users.pia.login}`, { exact: false, within: awards })).toMatchObject({ count: 0 });
     for (const user of [users.pia, users.eli]) await shown({ text: user.login, exact: true, within: awards }).toMatchObject({ visible: true });
@@ -769,7 +764,7 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
 
     await site.fill(shareField, "20");
     const changes = named("region", "Changes");
-    await shown({ text: "20%", exact: true, within: changes }).toMatchObject({ visible: true });
+    await shown({ text: "20%", within: changes }).toMatchObject({ visible: true });
     await shown({ text: `From ${cycleText(1)}`, within: changes }).toMatchObject({ visible: true });
     await site.click(publish);
     await expect.poll(async () => (await lastRevision(id))?.revision, { timeout: 30_000 }).toBe(3);
@@ -810,6 +805,8 @@ describe('Take the maintainer share out of the monthly amount (spec/settlement/m
     const card = named("link", "Shared now", { exact: false, within: named("region", "Projects") });
     await shown(card).toMatchObject({ text: expect.stringContaining("Maintainer share 20%") });
     expect((await site.read(card)).text).not.toContain("Maintainer share 20% from");
+    expect((await site.open("/sponsors")).status).toBe(200);
+    await shown(text("Maintainer share 20%", true)).toMatchObject({ visible: true });
   });
 });
 

@@ -260,7 +260,12 @@ attempt finalized. The checks run in the pinned order: no route; remaining
 network value cap (the run cap and the rolling 24-hour cap shared by every
 token of the network); quote above the remaining cap; unsafe integer value;
 below 5 USDC or ten times the gas cost (dust, which waits in the wallet);
-unknown or high price impact; minimum output outside 1% slippage. A dry run
+unknown or high price impact; minimum output outside 1% slippage. A
+KyberSwap route refusal with HTTP 4xx while quoting is no route, except an
+authentication refusal (HTTP 401 or 403), which is a provider fault: the
+evaluation records no row and the run logs the failure. A Jupiter quote
+refusal with any HTTP 4xx, 403 included, is no route. A refusal of the
+route read again at signing is never no route. A dry run
 records the quote, counts it against the run cap and never signs. A
 repeated waiting outcome with the same amount, reason and mode adds no row.
 A run handles one token's live quote at a time.
@@ -770,7 +775,10 @@ A claim runs only in a recovery scan of a live network. It names a
 registered reviewed vault and its deployment, pays the token that vault
 accrues to this network's fee wallet, and needs a value of at least 5 USDC
 and ten times its gas cost, and its final priced native fee times ten must
-not exceed that value. It claims at most the accrued amount observed
+not exceed that value. A claim whose value exceeds safe integer accounting
+or is below 5 USDC is skipped before its network fee is priced, so no fee
+estimate is read for it; a fee that cannot be priced skips only a claim at
+or above that floor. It claims at most the accrued amount observed
 from that vault, and only while the fee wallet holds and is proposed for
 none of the vault's roles at the pinned block (`verifiedVault`, which throws
 "The fee wallet holds or is proposed for a vault role").
