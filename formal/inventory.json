@@ -9781,7 +9781,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "24deaa5b5d0edacbf54667dfa54de7f10b68d6c5b1b68565b3a149c70ebc9e40",
+      "sha256": "4a66027226ef27e143f6ab550e844b8128d9e1e362b74d572d9367d334517bf4",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9797,13 +9797,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 170, 285, 300, 309, 319, 322, 521, 675, 854, 883, 893, 1028, 1033,
-        1038, 1040, 1043, 1045, 1046, 1057, 1060, 1062, 1119, 1120, 1122, 1123,
-        1139, 1145, 1196, 1224, 1225, 1233, 1238, 1339, 1341, 1361, 1380, 1463,
-        1468, 1626, 1748, 1761, 1762, 1799, 1816, 1819, 1820, 1983, 1988, 2050,
-        2063, 2068, 2075, 2076, 2080, 2081, 2089, 2105, 2162, 2315, 2375, 2381,
-        2392, 2418, 2448, 2473, 2481, 2504, 2509, 2585, 2586, 2636, 2671, 2722,
-        2867, 3138, 3213, 3400, 3411, 3419, 3517, 3518, 3558, 3608, 3622, 3638
+        3, 171, 287, 302, 311, 321, 324, 523, 677, 856, 885, 895, 1030, 1035,
+        1040, 1042, 1045, 1047, 1048, 1059, 1062, 1064, 1121, 1122, 1124, 1125,
+        1141, 1147, 1198, 1226, 1227, 1235, 1240, 1341, 1343, 1363, 1382, 1465,
+        1470, 1628, 1750, 1763, 1764, 1801, 1818, 1821, 1822, 1985, 1990, 2052,
+        2065, 2070, 2077, 2078, 2082, 2083, 2091, 2107, 2164, 2318, 2379, 2385,
+        2396, 2422, 2452, 2477, 2485, 2508, 2513, 2594, 2595, 2646, 2681, 2732,
+        2877, 3148, 3223, 3410, 3421, 3429, 3527, 3528, 3568, 3618, 3632, 3648
       ],
       "review": "mapped-abstraction"
     },
@@ -17823,7 +17823,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_penalty_once.qnt",
-      "sha256": "d2097502c9f42900ec68b0d335dcc1fe954c1c88c60df23736dbb3498e50fcc8",
+      "sha256": "f1498f80fbf1679b6504509b43621525af29900a907d973ff02f8a6f8e34a016",
       "sources": [
         "migrations/0064_slopbot_penalties_appeals.sql",
         "workers/slopbot/penalties.ts",
@@ -17831,7 +17831,10 @@
       ],
       "scenarios": [
         "appealUpholdReversesCoveredDebitTest",
+        "delayedReopenKeepsLaterHeadDebitTest",
         "lateReopenReversesOwnRevisionDebitTest",
+        "mergeBeforeNonMaintainerDeliveryCannotReverseTest",
+        "mergeBeforeReopenDeliveryReversesDebitOnceTest",
         "newerHeadDebitSurvivesOlderAppealTest",
         "olderCloseJobKeepsLaterHeadDebitTest",
         "reopenBeforeRecordWritesNoDebitTest",
