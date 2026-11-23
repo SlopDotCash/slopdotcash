@@ -7,6 +7,7 @@ import {
 } from "../../src/lib/deployment";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import type { GithubActor } from "../../src/lib/project-contracts";
+import { isTraceTermsVersion } from "../../src/lib/trace-licensing";
 import {
   assertWalletPossessionChallenge,
   isSignableSolanaAddress,
@@ -914,6 +915,31 @@ async function createTraceIntent(
     contentType = normalizedContentType(body.contentType);
   } catch {
     fail(415, "unsupported_media_type", "Trace must be UTF-8 text or NDJSON");
+  }
+  // Absent means the client predates version 2 and uploads under version 1.
+  const termsVersion = body.termsVersion ?? "private-trace-v1";
+  if (body.termsVersion === null || !isTraceTermsVersion(termsVersion)) {
+    fail(
+      400,
+      "invalid_request",
+      "termsVersion must be private-trace-v1 or private-trace-v2",
+    );
+  }
+  const stamp = await deps.persistence.stampTermsVersion(
+    runId,
+    actor.githubId,
+    termsVersion,
+  );
+  if (stamp === "conflict") {
+    await assertParticipationAllowed(actor, deps);
+    const current = await ensureOwner(deps.persistence, actor, runId);
+    if (current.state === "finalized")
+      fail(409, "run_finalized", "A finalized run cannot be changed");
+    fail(
+      409,
+      "trace_terms_conflict",
+      "The run already has a different terms version",
+    );
   }
   const capability = await deriveUploadCapability(
     deps.authSecret,

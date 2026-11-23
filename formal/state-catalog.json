@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "481ad2c05b3f0f47122bbb3dce40fe43200dfc20386a1f11125372ccb5b646a7",
+  "inventorySha256": "c5c8bd3e38b3a73c4ead7279a07002619443b6584cd887b4cbddeb77a6bf78e1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 715,
+      "line": 716,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -731,7 +731,7 @@
     },
     {
       "path": "backend/trace/contracts.ts",
-      "line": 26,
+      "line": 27,
       "name": "RunState",
       "kind": "string-union",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
@@ -2326,6 +2326,31 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0148_trace_licensing.sql",
+      "line": 31,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["licensed", "withdrawn"],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
+      "lexicallyUnmentionedValues": ["licensed", "withdrawn"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0148_trace_licensing.sql",
+      "line": 42,
+      "name": "reason",
+      "kind": "sql-check",
+      "values": ["account_closed", "opt_in", "setting_off", "upload"],
+      "models": ["formal/models/api/api_trace_licensing.qnt"],
+      "lexicallyUnmentionedValues": [
+        "account_closed",
+        "opt_in",
+        "setting_off",
+        "upload"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -3072,7 +3097,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 254,
+      "line": 255,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -3091,7 +3116,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 573,
+      "line": 574,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -3110,7 +3135,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1444,
+      "line": 1455,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],

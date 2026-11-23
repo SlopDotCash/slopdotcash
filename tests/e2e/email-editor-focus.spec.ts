@@ -8,7 +8,13 @@ import {
   emptyPointsJournal,
   type PointsIndex,
 } from "../../src/lib/points";
-import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
+import {
+  EMPTY_TRACE_LISTING,
+  escapeRegExp,
+  expect,
+  expectAccessible,
+  test,
+} from "./fixtures";
 import {
   holdProjectSessionUntilUnmount,
   leaveEditorWithHeldSession,
@@ -230,6 +236,8 @@ async function serveAccount(
       return route.fulfill({ json: { appeals: [] } });
     if (path === "/api/v1/referrals/me")
       return route.fulfill({ json: { enabled: false } });
+    if (path === "/api/v1/traces/me")
+      return route.fulfill({ json: EMPTY_TRACE_LISTING });
     throw new Error(
       `Unexpected account API in fixture: ${request.method()} ${path}`,
     );
