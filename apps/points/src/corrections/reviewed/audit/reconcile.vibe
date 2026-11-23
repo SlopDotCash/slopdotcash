@@ -1,11 +1,12 @@
-// spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"
+// spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/assessmentAudit.md, "A closed review and a removed accepted merge bind only from exact public evidence"
 import { parsedJson, sha256Of } from "@repo/platform/git/bytes"
 import type { SourceAudit } from "../packet.vibe"
+import { type HistoricalEvidence, type JointCandidate, type VerifiedClosedFinding, isStandaloneHistoricalReview } from "../replay/bindings.vibe"
 import type { AssessmentCatalogRow, HistoricalAssessmentCatalog, HistoricalAssessmentHeads, Row } from "./catalog.vibe"
 
 export error InvalidAssessmentJournal { message: string }
 
-export type SourceFinding = "audited-head" | "stale-head" | "conflicting-audit-binding" | "missing-from-merged-audit" | "outside-audit"
+export type SourceFinding = VerifiedClosedFinding | "retained-removed-merge" | "audited-head" | "stale-head" | "conflicting-audit-binding" | "missing-from-merged-audit" | "outside-audit"
 
 export type Blocker = "incomplete-catalog" | "invalid-legacy-history" | "invalid-joint-history" | "conflicting-audit-binding" | "missing-from-merged-audit"
 
@@ -337,7 +338,7 @@ effect function jointHistory(catalog: HistoricalAssessmentCatalog, audit: Source
   return { sources, active: records.filter((_, at) => used[at] !== true) }
 }
 
-function scopedRecord(journal: ScopedRecord["journal"], row: AssessmentCatalogRow, sources: ReadonlyArray<Row>, audit: SourceAudit, byId: ReadonlyMap<string, Audited>, byNumber: ReadonlyMap<number, Audited>): ScopedRecord {
+function scopedRecord(journal: ScopedRecord["journal"], row: AssessmentCatalogRow, sources: ReadonlyArray<Row>, audit: SourceAudit, byId: ReadonlyMap<string, Audited>, byNumber: ReadonlyMap<number, Audited>, evidence?: HistoricalEvidence): ScopedRecord {
   return {
     journal,
     digest: row.record_digest,
@@ -348,9 +349,16 @@ function scopedRecord(journal: ScopedRecord["journal"], row: AssessmentCatalogRo
       const headSha = String(source.headSha)
       const audited = byId.get(id) ?? byNumber.get(number)
       const occurredAt = new Date(String(source.occurredAt)).toISOString()
-      const finding: SourceFinding = audited !== undefined
-        ? audited.id !== id || audited.number !== number || audited.mergedAt !== occurredAt ? "conflicting-audit-binding" : audited.headSha === headSha ? "audited-head" : "stale-head"
-        : occurredAt >= audit.from && occurredAt < audit.through ? "missing-from-merged-audit" : "outside-audit"
+      let finding: SourceFinding = "outside-audit"
+      if (audited !== undefined) {
+        finding = audited.id !== id || audited.number !== number || audited.mergedAt !== occurredAt
+          ? "conflicting-audit-binding"
+          : audited.headSha === headSha ? "audited-head" : "stale-head"
+      } else if (occurredAt >= audit.from && occurredAt < audit.through) {
+        finding = evidence?.removed.has(id) === true
+          ? "retained-removed-merge"
+          : evidence?.verifiedClosed.get(id) ?? "missing-from-merged-audit"
+      }
       return { id, number, headSha, auditedHeadSha: audited?.headSha ?? null, occurredAt, finding }
     }).sort((left, right) => left.number - right.number),
   }
@@ -360,7 +368,12 @@ function blocked(record: ScopedRecord) {
   return record.sources.some((source) => source.finding === "conflicting-audit-binding" || source.finding === "missing-from-merged-audit")
 }
 
-export effect function classifyHistoricalAssessmentScope(catalog: HistoricalAssessmentCatalog, audit: SourceAudit, projectId: string): ClassifiedScope!InvalidAssessmentJournal {
+export effect function classifyHistoricalAssessmentScope<E = never, R = never>(
+  catalog: HistoricalAssessmentCatalog,
+  audit: SourceAudit,
+  projectId: string,
+  readEvidence?: (candidates: ReadonlyArray<JointCandidate>) => HistoricalEvidence!E!R,
+): ClassifiedScope!(InvalidAssessmentJournal | E)!R {
   try ensure(matches(projectId, projectPattern) && audit.repository.length <= 201 && repositoryPathPattern.test(audit.repository) &&
     !audit.repository.split("/").some((part) => part === "." || part === "..") && matches(audit.repositoryNodeId, nodePattern) &&
     audit.from === auditFrom && audit.through === auditThrough && audit.sources.length > 0)
@@ -406,9 +419,24 @@ export effect function classifyHistoricalAssessmentScope(catalog: HistoricalAsse
     return { receipt: receipt("incomplete", [], ["invalid-joint-history"]), observations: [...observed(catalog.legacy, false, all, none), ...observed(catalog.joint, true, none, none)] }
   }
   const activeLegacy = [...legacy.entries()].filter(([key]) => !joint.sources.has(key)).map(([, value]) => value)
+  const jointSources = joint.active.map(({ row, record }) => {
+    const sources = list(record.sources) as ReadonlyArray<Row>
+    return { row, record, sources, initial: scopedRecord("joint", row, sources, audit, byId, byNumber) }
+  })
+  const candidates: JointCandidate[] = []
+  for (const { record, sources, initial } of jointSources) {
+    const standalone = initial.sources.length === 1 && initial.sources[0]?.finding === "missing-from-merged-audit" &&
+      isStandaloneHistoricalReview(record)
+    if (!standalone && !initial.sources.some(({ finding }) => finding === "audited-head" || finding === "stale-head")) continue
+    const missingIds = new Set(initial.sources.filter(({ finding }) => finding === "missing-from-merged-audit").map(({ id }) => id))
+    for (const source of sources) {
+      if (source.indirectAcceptance === undefined && missingIds.has(String(source.pullRequestNodeId))) candidates.push({ source, standalone })
+    }
+  }
+  const evidence = readEvidence === undefined || candidates.length === 0 ? undefined : try readEvidence(candidates)
   const relevant = [
     ...activeLegacy.map(({ row, record }) => scopedRecord("legacy", row, [record], audit, byId, byNumber)),
-    ...joint.active.map(({ row, record }) => scopedRecord("joint", row, list(record.sources) as ReadonlyArray<Row>, audit, byId, byNumber)),
+    ...jointSources.map(({ row, sources, initial }) => evidence === undefined ? initial : scopedRecord("joint", row, sources, audit, byId, byNumber, evidence)),
   ].filter(({ sources }) => sources.some(({ finding }) => finding !== "outside-audit"))
   const blockers: Blocker[] = []
   for (const finding of ["conflicting-audit-binding", "missing-from-merged-audit"] as const) {

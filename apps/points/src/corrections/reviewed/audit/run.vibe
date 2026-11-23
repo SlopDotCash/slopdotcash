@@ -6,6 +6,7 @@ import { batchDigest } from "../../../kernels/records/ids.vibe"
 import { publishedJournal, publishedRegistry } from "../../collect/published.vibe"
 import { type SourceAudit, digestPattern, digestText, refusal, require } from "../packet.vibe"
 import { exactMainHead } from "../transport.vibe"
+import { historicalEvidence } from "../replay/bindings.vibe"
 import { PublicRepository, historicalSourceAudit } from "../verify.vibe"
 import type { AssessmentAudit, AuditStatus } from "../../../../gen/points__assessmentAudit.ts"
 import { apply, canSeal, catalogsComplete, initial } from "../../../../gen/points__assessmentAudit.effect.vibe"
@@ -157,7 +158,8 @@ export effect function auditedScope(setPhase: (phase: AuditPhase) => void, repla
   const baseline = try publishedJournal()
   try require((try batchDigest(baseline)) === inputs.expectedPointsDigest && baseline.revisions.length === catalog.heads.d1PointsCount, "Assessment audit Points baseline differs from the public journal")
   setPhase("assessment source reconciliation")
-  const classified = try classifyHistoricalAssessmentScope(catalog, sourceAudit, inputs.projectId)
+  const classified = try classifyHistoricalAssessmentScope(catalog, sourceAudit, inputs.projectId,
+    historicalEvidence({ baseline, integrationBranch: project.integrationBranch }, inputs.projectId))
   const state = try capturedCut(classified, catalog.heads)
   const { heads } = catalog
   const report: AuditReport = {
