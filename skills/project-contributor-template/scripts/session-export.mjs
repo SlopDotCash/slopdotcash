@@ -112,7 +112,10 @@ function* strings(value) {
   if (typeof value === "string") yield value;
   else if (Array.isArray(value)) for (const v of value) yield* strings(v);
   else if (value && typeof value === "object")
-    for (const v of Object.values(value)) yield* strings(v);
+    for (const [k, v] of Object.entries(value)) {
+      yield k;
+      yield* strings(v);
+    }
 }
 
 function hasOutsidePath(value, repoRoot, homeDir) {
@@ -133,7 +136,7 @@ function mapStrings(value, fn) {
   if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn));
   if (value && typeof value === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = mapStrings(v, fn);
+    for (const [k, v] of Object.entries(value)) out[fn(k)] = mapStrings(v, fn);
     return out;
   }
   return value;
@@ -238,6 +241,7 @@ export function cleanEvents(events, ctx) {
     for (const k of ALLOWED_FIELDS)
       if (original[k] !== undefined) e[k] = original[k];
     const outside =
+      original.redactOutside === true ||
       hasOutsidePath(
         [e.text, e.args, e.path].filter((x) => x !== undefined),
         repo,
@@ -254,7 +258,10 @@ export function cleanEvents(events, ctx) {
     }
     const readPath =
       e.kind === "tool_result" && typeof e.path === "string" ? e.path : null;
-    const stripSource = readPath !== null && !keepsSource(readPath, ctx);
+    const stripSource =
+      e.kind === "tool_result" &&
+      (original.redactSource === true ||
+        (readPath !== null && !keepsSource(readPath, ctx)));
     const contentTool =
       e.kind === "tool_call" &&
       typeof e.tool === "string" &&
@@ -371,7 +378,11 @@ export function findSessionFile(marker, opts) {
   files.sort((a, b) => b.mtime - a.mtime);
   for (const f of files) {
     try {
-      if (readFileSync(f.path, "utf8").includes(marker))
+      const text = readFileSync(f.path, "utf8");
+      if (!text.includes(marker)) continue;
+      const read = f.client === "claude-code" ? readClaudeCode : readCodex;
+      const lines = text.split("\n").filter((l) => l.trim() !== "");
+      if (read(lines, marker).length > 0)
         return { path: f.path, client: f.client };
     } catch {}
   }
@@ -387,6 +398,28 @@ function parseLines(lines) {
       return null;
     }
   });
+}
+
+const ISO_TIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
+const START_COMMAND = /run-receipt\.mjs["']?\s+start\b/;
+const END_COMMAND = /run-receipt\.mjs["']?\s+(?:session|export)\b/;
+const OWN_COMMAND = /run-receipt\.mjs/;
+
+function isoTime(t) {
+  return typeof t === "string" &&
+    ISO_TIME.test(t) &&
+    !Number.isNaN(Date.parse(t))
+    ? t
+    : undefined;
+}
+
+export function commandText(args) {
+  if (!args || typeof args !== "object") return "";
+  const c = args.command ?? args.cmd;
+  if (Array.isArray(c)) return c.filter((x) => typeof x === "string").join(" ");
+  return typeof c === "string" ? c : "";
 }
 
 function resultText(content) {
@@ -405,50 +438,92 @@ function readPathOf(name, input) {
   return undefined;
 }
 
-export function readClaudeCode(lines, marker) {
-  const records = parseLines(lines);
-  const start = lines.findIndex((l) => l.includes(marker));
-  if (start < 0) return [];
+// items: {kind, t, cwd, text?, tool?, args?, callId?} in file order. The
+// session starts at the result of the start command that printed the marker
+// and ends before the first session or export command. Internal fields
+// (cwd, call) are used by exportSession and never written out.
+function windowItems(items, marker) {
   const calls = new Map();
+  let started = false;
   const events = [];
-  records.forEach((r, i) => {
-    if (!r || r.isSidechain === true) return;
-    if (r.type !== "user" && r.type !== "assistant") return;
-    const content = r.message?.content;
-    const t = typeof r.timestamp === "string" ? r.timestamp : undefined;
-    const emit = i >= start;
-    if (typeof content === "string") {
-      if (emit && r.type === "user" && r.isMeta !== true)
-        events.push({ t, kind: "user", text: content });
-      return;
+  for (const it of items) {
+    if (it.kind === "tool_call" && typeof it.callId === "string")
+      calls.set(it.callId, { name: it.tool, input: it.args });
+    if (!started) {
+      if (it.kind !== "tool_result" || !it.text?.includes(marker)) continue;
+      const call = calls.get(it.callId);
+      if (!START_COMMAND.test(commandText(call?.input))) continue;
+      started = true;
+    } else if (
+      it.kind === "tool_call" &&
+      END_COMMAND.test(commandText(it.args))
+    )
+      break;
+    const e = { kind: it.kind };
+    const t = isoTime(it.t);
+    if (t !== undefined) e.t = t;
+    if (it.text !== undefined) e.text = it.text;
+    if (it.kind === "tool_call") {
+      if (typeof it.tool !== "string" || !TOOL_NAME.test(it.tool)) continue;
+      e.tool = it.tool;
+      e.args = it.args;
+    } else if (it.kind === "tool_result") {
+      const call = calls.get(it.callId);
+      if (call && !(typeof call.name === "string" && TOOL_NAME.test(call.name)))
+        continue;
+      if (call) {
+        e.tool = call.name;
+        e.call = call;
+        const path = readPathOf(call.name, call.input);
+        if (path !== undefined) e.path = path;
+      }
     }
-    if (!Array.isArray(content)) return;
+    if (it.cwd !== undefined) e.cwd = it.cwd;
+    events.push(e);
+  }
+  return started ? events : [];
+}
+
+export function readClaudeCode(lines, marker) {
+  const items = [];
+  for (const r of parseLines(lines)) {
+    if (!r || r.isSidechain === true) continue;
+    if (r.type !== "user" && r.type !== "assistant") continue;
+    const content = r.message?.content;
+    const t = r.timestamp;
+    const cwd = typeof r.cwd === "string" ? r.cwd : undefined;
+    if (typeof content === "string") {
+      if (r.type === "user" && r.isMeta !== true)
+        items.push({ kind: "user", t, cwd, text: content });
+      continue;
+    }
+    if (!Array.isArray(content)) continue;
     for (const b of content) {
       if (!b || typeof b !== "object") continue;
       if (b.type === "text" && typeof b.text === "string") {
-        if (emit && r.isMeta !== true)
-          events.push({ t, kind: r.type, text: b.text });
+        if (r.isMeta !== true)
+          items.push({ kind: r.type, t, cwd, text: b.text });
       } else if (b.type === "tool_use" && r.type === "assistant") {
-        if (typeof b.id === "string")
-          calls.set(b.id, { name: b.name, input: b.input });
-        if (emit)
-          events.push({ t, kind: "tool_call", tool: b.name, args: b.input });
-      } else if (b.type === "tool_result" && r.type === "user") {
-        if (!emit) continue;
-        const call = calls.get(b.tool_use_id);
-        const e = {
+        items.push({
+          kind: "tool_call",
           t,
+          cwd,
+          tool: b.name,
+          args: b.input,
+          callId: b.id,
+        });
+      } else if (b.type === "tool_result" && r.type === "user") {
+        items.push({
           kind: "tool_result",
-          tool: call?.name,
+          t,
+          cwd,
           text: resultText(b.content),
-        };
-        const path = readPathOf(call?.name, call?.input);
-        if (path !== undefined) e.path = path;
-        events.push(e);
+          callId: b.tool_use_id,
+        });
       }
     }
-  });
-  return events;
+  }
+  return windowItems(items, marker);
 }
 
 const CODEX_HARNESS_TEXT =
@@ -481,37 +556,39 @@ function codexArgs(raw) {
 // Shapes follow openai/codex: codex-rs/history RolloutLine {timestamp, type,
 // payload} with ResponseItem payloads (message, function_call,
 // function_call_output, custom_tool_call, custom_tool_call_output). Reasoning,
-// session_meta, turn_context and event_msg are not read.
+// event_msg and unknown types are not read; session_meta and turn_context are
+// read only for their working directory.
 export function readCodex(lines, marker) {
-  const records = parseLines(lines);
-  const start = lines.findIndex((l) => l.includes(marker));
-  if (start < 0) return [];
-  const calls = new Map();
-  const events = [];
-  records.forEach((r, i) => {
-    if (r?.type !== "response_item") return;
+  const items = [];
+  let cwd;
+  for (const r of parseLines(lines)) {
+    if (!r) continue;
     const p = r.payload;
-    if (!p || typeof p !== "object") return;
-    const t = typeof r.timestamp === "string" ? r.timestamp : undefined;
-    const emit = i >= start;
+    if (!p || typeof p !== "object") continue;
+    if (r.type === "session_meta" || r.type === "turn_context") {
+      if (typeof p.cwd === "string") cwd = p.cwd;
+      continue;
+    }
+    if (r.type !== "response_item") continue;
+    const t = r.timestamp;
     if (p.type === "message") {
-      if (!emit || (p.role !== "user" && p.role !== "assistant")) return;
+      if (p.role !== "user" && p.role !== "assistant") continue;
       const text = codexText(p.content);
-      if (p.role === "user" && CODEX_HARNESS_TEXT.test(text)) return;
-      events.push({ t, kind: p.role, text });
+      if (p.role === "user" && CODEX_HARNESS_TEXT.test(text)) continue;
+      items.push({ kind: p.role, t, cwd, text });
     } else if (p.type === "function_call" || p.type === "custom_tool_call") {
-      const args = codexArgs(
-        p.type === "function_call" ? p.arguments : p.input,
-      );
-      if (typeof p.call_id === "string")
-        calls.set(p.call_id, { name: p.name, input: args });
-      if (emit) events.push({ t, kind: "tool_call", tool: p.name, args });
+      items.push({
+        kind: "tool_call",
+        t,
+        cwd,
+        tool: p.name,
+        args: codexArgs(p.type === "function_call" ? p.arguments : p.input),
+        callId: p.call_id,
+      });
     } else if (
       p.type === "function_call_output" ||
       p.type === "custom_tool_call_output"
     ) {
-      if (!emit) return;
-      const call = calls.get(p.call_id);
       const out = p.output;
       const text =
         typeof out === "string"
@@ -522,13 +599,10 @@ export function readCodex(lines, marker) {
                 .map((b) => b.text)
                 .join("\n")
             : "";
-      const e = { t, kind: "tool_result", tool: call?.name ?? p.name, text };
-      const path = readPathOf(e.tool, call?.input);
-      if (path !== undefined) e.path = path;
-      events.push(e);
+      items.push({ kind: "tool_result", t, cwd, text, callId: p.call_id });
     }
-  });
-  return events;
+  }
+  return windowItems(items, marker);
 }
 
 export async function repoLicence(repo, fetchImpl) {
@@ -606,6 +680,131 @@ export function makeIsRepoFile(events, repoRoot, homeDir) {
   return (abs) => (tracked.has(abs) || written.has(abs)) && !ignored.has(abs);
 }
 
+const HARMLESS_RESULT =
+  /^(?:the file .{1,150} has been (?:created|updated|written)(?: successfully)?\.?|files? (?:created|updated|written|edited)(?: successfully)?(?: at:? .{1,150})?\.?|successfully (?:wrote|created|updated|edited) .{1,150}|wrote \d+ bytes.{0,60}|\(no content\)|no (?:matches|files) found\.?)$/i;
+
+function harmless(text) {
+  const t = (text ?? "").trim();
+  return (
+    t === "" ||
+    (t.length <= 200 && !t.includes("\n") && HARMLESS_RESULT.test(t))
+  );
+}
+
+function unquote(t) {
+  return t.replace(/^["'`]+|["'`]+$/g, "");
+}
+
+// Directory changes inside a command: any target outside the repo (or not
+// knowable) means the command ran somewhere else.
+function leavesRepo(call, g) {
+  const input = call?.input;
+  const cmd = commandText(input);
+  const targets = [];
+  for (const re of [
+    /(?:^|[\s;&|(])(?:cd|pushd)\s+(\S+)/g,
+    /\bgit\s+-C\s+(\S+)/g,
+    /(?:^|\s)-C\s+(\S+)/g,
+    /--(?:cwd|directory|workdir|work-tree|prefix)(?:=|\s+)(\S+)/g,
+  ])
+    for (const m of cmd.matchAll(re)) targets.push(unquote(m[1]));
+  if (/(?:^|[;&|(]\s*)(?:cd|pushd)\s*(?:$|[;&|)])/.test(cmd)) return true;
+  if (typeof input?.workdir === "string") targets.push(input.workdir);
+  return targets.some(
+    (t) => t === "-" || /[$`]/.test(t) || isOutside(t, g.repoRoot, g.homeDir),
+  );
+}
+
+function fileStatus(abs, g) {
+  try {
+    if (!statSync(abs).isFile()) return "ok";
+  } catch {
+    return "ok";
+  }
+  if (!insideRepo(abs, g.repoRoot)) return "outside";
+  return g.isRepoFile(abs) === true ? "ok" : "source";
+}
+
+function commandTouches(cmd, g) {
+  let verdict = "ok";
+  for (const raw of cmd.split(/[\s;&|<>()"'`=,]+/).slice(0, 400)) {
+    if (!raw || raw.startsWith("-")) continue;
+    if (SAFE_ABSOLUTE.has(raw)) continue;
+    if (/^\$/.test(raw) && raw.includes("/")) return "outside";
+    const abs = normalise(raw, g.repoRoot, g.homeDir);
+    if (
+      (raw.includes("/") || raw.startsWith("~")) &&
+      !insideRepo(abs, g.repoRoot)
+    )
+      return "outside";
+    const st = fileStatus(abs, g);
+    if (st === "outside") return "outside";
+    if (st === "source") verdict = "source";
+  }
+  return verdict;
+}
+
+function outputTouches(text, g) {
+  let verdict = "ok";
+  for (const line of text.split("\n").slice(0, 2000)) {
+    const l = line.trim();
+    if (!l || l.length > 400) continue;
+    const cands = [];
+    if (!/\s/.test(l)) cands.push(l);
+    const colon = l.indexOf(":");
+    if (colon > 0) cands.push(l.slice(0, colon));
+    for (const c of cands) {
+      if (!/[./]/.test(c) || /\s/.test(c)) continue;
+      const st = fileStatus(normalise(c, g.repoRoot, g.homeDir), g);
+      if (st === "outside") return "outside";
+      if (st === "source") verdict = "source";
+    }
+  }
+  return verdict;
+}
+
+// Marks tool results the cleaner must redact whole, and drops entries made
+// outside the repo. Fails closed: with no licence only receipt-tool output and
+// known confirmations survive.
+function guardEvents(events, g) {
+  const out = [];
+  for (const e of events) {
+    if (e.cwd !== undefined && isOutside(e.cwd, g.repoRoot, g.homeDir))
+      continue;
+    if (e.kind === "tool_result") {
+      const call = e.call;
+      const cmd = commandText(call?.input);
+      if (OWN_COMMAND.test(cmd)) {
+        // the receipt tool's own output
+      } else if (!g.keepRepoFiles) {
+        if (!harmless(e.text)) e.redactSource = true;
+      } else if (leavesRepo(call, g)) e.redactOutside = true;
+      else if (e.path !== undefined) {
+        // a read of one named file: the cleaner applies the file rule
+      } else if (typeof e.tool === "string" && CONTENT_TOOL.test(e.tool)) {
+        const p = call ? readPathFor(call.input) : undefined;
+        if (p !== undefined) e.path = p;
+        else e.redactSource = true;
+      } else if (typeof e.tool === "string" && READ_TOOL.test(e.tool)) {
+        e.redactSource = true;
+      } else {
+        const a = commandTouches(cmd, g);
+        const b = a === "outside" ? a : outputTouches(e.text ?? "", g);
+        if (a === "outside" || b === "outside") e.redactOutside = true;
+        else if (a === "source" || b === "source") e.redactSource = true;
+      }
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+function readPathFor(input) {
+  if (!input || typeof input !== "object") return undefined;
+  for (const k of PATH_KEYS) if (typeof input[k] === "string") return input[k];
+  return undefined;
+}
+
 export async function exportSession(opts) {
   const fallback = {
     path: opts.outPath,
@@ -630,15 +829,23 @@ export async function exportSession(opts) {
   const keepRepoFiles = licence !== null && OSI_LICENCES.has(licence);
   const userName =
     opts.env?.USER || opts.env?.LOGNAME || basename(opts.homeDir || "");
-  const { events, counts } = cleanEvents(raw, {
+  const isRepoFile = keepRepoFiles
+    ? makeIsRepoFile(raw, opts.repoRoot, opts.homeDir)
+    : () => false;
+  const repoRoot = opts.repoRoot.replace(/\/+$/, "");
+  const guarded = guardEvents(raw, {
+    repoRoot,
+    homeDir: opts.homeDir,
+    keepRepoFiles,
+    isRepoFile,
+  });
+  const { events, counts } = cleanEvents(guarded, {
     repoRoot: opts.repoRoot,
     homeDir: opts.homeDir,
     userName,
     env: opts.env,
     keepRepoFiles,
-    isRepoFile: keepRepoFiles
-      ? makeIsRepoFile(raw, opts.repoRoot, opts.homeDir)
-      : () => false,
+    isRepoFile,
   });
   const header = {
     format: "slop-session-v1",
@@ -650,8 +857,8 @@ export async function exportSession(opts) {
     repository: opts.repo,
     startCommit: opts.startCommit,
     endCommit: opts.endCommit,
-    startedAt: events[0]?.t ?? null,
-    endedAt: events[events.length - 1]?.t ?? null,
+    startedAt: events.find((e) => e.t !== undefined)?.t ?? null,
+    endedAt: events.findLast((e) => e.t !== undefined)?.t ?? null,
     cleaner: CLEANER_VERSION,
     licence,
     repoFilesKept: keepRepoFiles,

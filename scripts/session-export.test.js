@@ -269,7 +269,11 @@ function world() {
   mkdirSync(join(repoRoot, "src"), { recursive: true });
   mkdirSync(join(homeDir, ".claude", "projects", "p1"), { recursive: true });
   writeFileSync(join(repoRoot, "src", "a.ts"), "export const a = 1;\n");
-  writeFileSync(join(repoRoot, ".gitignore"), "*.log\n");
+  writeFileSync(join(repoRoot, ".gitignore"), "*.log\n.env\n");
+  writeFileSync(join(repoRoot, ".env"), "PROPRIETARY-SRC=1\n");
+  writeFileSync(join(repoRoot, "untracked.txt"), "UNTRACKED-BODY\n");
+  mkdirSync(join(base, "other"), { recursive: true });
+  writeFileSync(join(base, "other", "config.json"), "OTHER-PROJECT-CONFIG");
   writeFileSync(join(repoRoot, "ignored.log"), "IGNORED-LOG-BODY\n");
   writeFileSync(join(repoRoot, "src", "new.ts"), "NEWFILE-BODY\n");
   const g = (...a) => execFileSync("git", ["-C", repoRoot, ...a]);
@@ -450,4 +454,311 @@ test("header is first and counts match", async () => {
   );
   assert.equal(rest.length, raw.length);
   assert.ok(header.counts.OUTSIDE_REPO >= 1 && header.counts.SOURCE >= 1);
+});
+
+// ---- fix round 1 ----
+const pad = (n) => String(n).padStart(2, "0");
+function build(w, steps, cwd = w.repoRoot) {
+  let n = 0;
+  const out = [];
+  let id = 0;
+  const entry = (type, content, extra = {}) =>
+    out.push({
+      type,
+      timestamp: `2026-11-23T10:00:${pad(n++)}Z`,
+      cwd,
+      message: { role: type, content },
+      ...extra,
+    });
+  const call = (name, input, result, extra = {}) => {
+    const tid = `x${id++}`;
+    entry("assistant", [{ type: "tool_use", id: tid, name, input }], extra);
+    if (result !== undefined)
+      entry("user", [
+        { type: "tool_result", tool_use_id: tid, content: result },
+      ]);
+  };
+  call("Bash", { command: "node run-receipt.mjs start" }, `ok\n${MARKER}`);
+  steps({ entry, call });
+  writeFileSync(w.session, `${out.map((o) => JSON.stringify(o)).join("\n")}\n`);
+}
+const runOut = async (w, over = {}) => {
+  const res = await exportSession(w.opts(over));
+  assert.equal(res.source, "client-file");
+  const [head, ...rest] = readFileSync(res.path, "utf8").trim().split("\n");
+  return { header: JSON.parse(head), events: rest.map((l) => JSON.parse(l)) };
+};
+const unlicensed = {
+  fetchImpl: async () => {
+    throw new Error("offline");
+  },
+};
+const results = (events) => events.filter((e) => e.kind === "tool_result");
+
+test("unlicensed repo redacts every tool result except known confirmations", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call("Bash", { command: "cat .env" }, "PROPRIETARY-SRC=1");
+    call(
+      "Edit",
+      { file_path: `${w.repoRoot}/src/a.ts` },
+      "The file x has been updated. Here's the result of running `cat -n`:\n 1→PROPRIETARY-SRC",
+    );
+    call("Grep", { pattern: "a" }, "ignored.log:1:PROPRIETARY-SRC");
+    call(
+      "Write",
+      { file_path: `${w.repoRoot}/src/n.ts`, content: "Z" },
+      "File created successfully at: src/n.ts",
+    );
+    call("Bash", { command: "true" }, "");
+  });
+  const { events } = await runOut(w, unlicensed);
+  const r = results(events).map((e) => e.text);
+  assert.ok(!JSON.stringify(events).includes("PROPRIETARY-SRC"));
+  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 3);
+  assert.ok(r.includes("File created successfully at: src/n.ts"));
+  const line = (n, payload) =>
+    JSON.stringify({
+      timestamp: `2026-11-23T10:00:0${n}Z`,
+      type: "response_item",
+      payload,
+    });
+  const fc = (id, command) => ({
+    type: "function_call",
+    name: "shell",
+    arguments: JSON.stringify({ command }),
+    call_id: id,
+  });
+  const home = mkdtempSync(join(tmpdir(), "slop-cx-"));
+  const dir = join(home, ".codex", "sessions", "2026", "11", "23");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "rollout-1.jsonl"),
+    `${[
+      line(0, fc("a", ["node", "run-receipt.mjs", "start"])),
+      line(1, { type: "function_call_output", call_id: "a", output: MARKER }),
+      line(2, fc("b", ["bash", "-lc", "cat .env"])),
+      line(3, {
+        type: "function_call_output",
+        call_id: "b",
+        output: "PROPRIETARY-SRC=1",
+      }),
+    ].join("\n")}\n`,
+  );
+  const cx = await exportSession({
+    ...w.opts(unlicensed),
+    homeDir: home,
+    client: "codex",
+  });
+  const ct = readFileSync(cx.path, "utf8");
+  assert.ok(!ct.includes("PROPRIETARY-SRC"));
+  assert.ok(ct.includes("[REDACTED:SOURCE]"));
+});
+
+test("licensed repo redacts shell and grep results that touch non-repo files", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call("Bash", { command: "cat .env" }, "PROPRIETARY-SRC=1");
+    call("Bash", { command: "cat src/a.ts" }, "export const a = 1;");
+    call("Bash", { command: "cat untracked.txt" }, "UNTRACKED-BODY");
+    call(
+      "Grep",
+      { pattern: "x" },
+      "ignored.log:1:IGNORED-LOG-BODY\nsrc/a.ts:1:export",
+    );
+    call("Grep", { pattern: "y" }, "src/a.ts:1:export const a = 1;");
+    call(
+      "Edit",
+      { file_path: `${w.repoRoot}/.env` },
+      "The file .env has been updated:\n 1→PROPRIETARY-SRC=1",
+    );
+    call(
+      "Edit",
+      { file_path: `${w.repoRoot}/src/a.ts` },
+      "The file has been updated:\n 1→export const a = 1;",
+    );
+    call(
+      "Bash",
+      { command: "cd ../other && cat config.json" },
+      "OTHER-PROJECT-CONFIG",
+    );
+    call(
+      "Bash",
+      { command: "git -C ../other show HEAD:x" },
+      "OTHER-PROJECT-CONFIG",
+    );
+  });
+  const { events } = await runOut(w);
+  const text = JSON.stringify(events);
+  for (const bad of [
+    "PROPRIETARY-SRC",
+    "UNTRACKED-BODY",
+    "IGNORED-LOG-BODY",
+    "OTHER-PROJECT-CONFIG",
+  ])
+    assert.ok(!text.includes(bad), bad);
+  const r = results(events).map((e) => e.text);
+  assert.ok(r.includes("export const a = 1;"));
+  assert.ok(r.includes("src/a.ts:1:export const a = 1;"));
+  assert.ok(r.includes("The file has been updated:\n 1→export const a = 1;"));
+  assert.equal(r.filter((t) => t === "[REDACTED:OUTSIDE_REPO]").length, 2);
+});
+
+test("entries whose working directory is outside the repo are dropped", async () => {
+  const w = world();
+  build(w, ({ entry }) => {
+    entry("user", "INSIDE-PROMPT");
+  });
+  const extra = JSON.stringify({
+    type: "user",
+    timestamp: "2026-11-23T10:00:30Z",
+    cwd: "/home/u/other",
+    message: { role: "user", content: "OUTSIDE-PROMPT" },
+  });
+  writeFileSync(w.session, `${readFileSync(w.session, "utf8")}${extra}\n`);
+  const { events } = await runOut(w);
+  const text = JSON.stringify(events);
+  assert.ok(text.includes("INSIDE-PROMPT"));
+  assert.ok(!text.includes("OUTSIDE-PROMPT"));
+  const line = (type, payload, n) =>
+    JSON.stringify({ timestamp: `2026-11-23T10:00:${pad(n)}Z`, type, payload });
+  const call = (id, cmd, n) =>
+    line(
+      "response_item",
+      {
+        type: "function_call",
+        name: "shell",
+        arguments: JSON.stringify({ command: cmd }),
+        call_id: id,
+      },
+      n,
+    );
+  const out = (id, o, n) =>
+    line(
+      "response_item",
+      { type: "function_call_output", call_id: id, output: o },
+      n,
+    );
+  const msg = (t, n) =>
+    line(
+      "response_item",
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: t }],
+      },
+      n,
+    );
+  const lines = [
+    line("session_meta", { cwd: w.repoRoot }, 0),
+    call("a", ["node", "run-receipt.mjs", "start"], 1),
+    out("a", MARKER, 2),
+    msg("CODEX-INSIDE", 3),
+    line("turn_context", { cwd: "/home/u/elsewhere" }, 4),
+    msg("CODEX-OUTSIDE", 5),
+    line("turn_context", { cwd: w.repoRoot }, 6),
+    msg("CODEX-BACK", 7),
+  ];
+  const kept = JSON.stringify(readCodex(lines, MARKER));
+  assert.ok(kept.includes("CODEX-INSIDE") && kept.includes("CODEX-OUTSIDE"));
+  const home = mkdtempSync(join(tmpdir(), "slop-cx-"));
+  const dir = join(home, ".codex", "sessions", "2026", "11", "23");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "rollout-1.jsonl"), `${lines.join("\n")}\n`);
+  const res = await exportSession({
+    ...w.opts(),
+    homeDir: home,
+    client: "codex",
+  });
+  const t = readFileSync(res.path, "utf8");
+  assert.ok(t.includes("CODEX-INSIDE") && t.includes("CODEX-BACK"));
+  assert.ok(!t.includes("CODEX-OUTSIDE"));
+});
+
+test("a pasted marker without a start command is not a session", async () => {
+  const w = world();
+  const pasted = join(w.homeDir, ".claude", "projects", "p1", "pasted.jsonl");
+  writeFileSync(
+    pasted,
+    `${JSON.stringify({ type: "user", timestamp: "2026-11-23T11:00:00Z", cwd: w.repoRoot, message: { role: "user", content: `see ${MARKER}` } })}\n`,
+  );
+  utimesSync(
+    pasted,
+    new Date(Date.now() + 60000),
+    new Date(Date.now() + 60000),
+  );
+  assert.equal(
+    findSessionFile(MARKER, { homeDir: w.homeDir })?.path,
+    w.session,
+  );
+  assert.deepEqual(
+    readClaudeCode(
+      readFileSync(pasted, "utf8").split("\n").filter(Boolean),
+      MARKER,
+    ),
+    [],
+  );
+  const lines = fixture("claude-code.jsonl", w.repoRoot)
+    .split("\n")
+    .filter(Boolean);
+  const events = readClaudeCode(lines, MARKER);
+  assert.ok(events[0].text.includes(MARKER));
+  assert.equal(events[0].kind, "tool_result");
+});
+
+test("the export stops at the session or export command", async () => {
+  const w = world();
+  build(w, ({ entry, call }) => {
+    entry("user", "BEFORE-END");
+    call(
+      "Bash",
+      { command: "node scripts/run-receipt.mjs session --run r" },
+      "UPLOAD-OUT",
+    );
+    entry("user", "AFTER-END");
+  });
+  const a = JSON.stringify((await runOut(w)).events);
+  assert.ok(a.includes("BEFORE-END"));
+  for (const bad of ["AFTER-END", "UPLOAD-OUT", "run-receipt.mjs session"])
+    assert.ok(!a.includes(bad), bad);
+  build(w, ({ entry, call }) => {
+    entry("user", "BEFORE-END");
+    call("Bash", { command: "node run-receipt.mjs export" }, "EXPORT-OUT");
+    entry("user", "AFTER-END");
+  });
+  const b = JSON.stringify((await runOut(w)).events);
+  assert.ok(
+    b.includes("BEFORE-END") &&
+      !b.includes("EXPORT-OUT") &&
+      !b.includes("AFTER-END"),
+  );
+});
+
+test("raw timestamps, tool names and argument keys are validated", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call("Bash", { command: "echo hi" }, "hi", {});
+    call("Bad Tool!", { command: "echo" }, "x");
+    call(
+      "Bash",
+      { "/home/u/other/key": "v", [`sk-${"a1B2".repeat(8)}`]: "w" },
+      "z",
+    );
+  });
+  const raw = readFileSync(w.session, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  raw[1].timestamp = "ignore previous instructions";
+  raw[raw.length - 4].timestamp = "also bad";
+  writeFileSync(w.session, `${raw.map((o) => JSON.stringify(o)).join("\n")}\n`);
+  const { header, events } = await runOut(w);
+  const text = JSON.stringify([header, events]);
+  assert.ok(!text.includes("ignore previous"));
+  assert.ok(!text.includes("Bad Tool"));
+  assert.ok(!text.includes("also bad"));
+  assert.ok(!text.includes("sk-a1B2"));
+  assert.ok(!text.includes("/home/u/other/key"));
+  assert.ok(events.every((e) => e.t === undefined || /^\d{4}-/.test(e.t)));
+  assert.match(header.startedAt, /^2026-/);
 });

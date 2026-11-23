@@ -5829,9 +5829,9 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/session-export.mjs",
-      "sha256": "16bb079b82023de3ace0490a6947e6b756bf04bfb19e1f048e71dd1ce7a46dc1",
+      "sha256": "a782ddfbb2cd54662098009609f08e1174a0997fd434a45bc30b47d38d245f13",
       "models": ["formal/models/contributor/contributor_session_cleaner.qnt"],
-      "candidateLines": [556, 582, 602],
+      "candidateLines": [630, 656, 676],
       "review": "mapped-abstraction"
     },
     {
