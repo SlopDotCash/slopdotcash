@@ -188,9 +188,9 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "48fbd7948eac50446fb35f1391b33a24a63dab5a244f2cbb307ae4db2996f87b",
+      "sha256": "f23a3e2a61929b034c34c3fc97e90a19f347a43fa75486b41efa69eb5881fb4e",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 138],
+      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 164, 165, 168, 173],
       "review": "mapped-abstraction"
     },
     {
@@ -10684,12 +10684,15 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "5041091e4cf95ba2f996844d430862856b6f74fefe9336405ae4eb5c295bfd92",
+      "sha256": "1c00c804166f679cf9db77aaf6ee7b0756fd75382e8eda2bd642ead0c8d2f4c3",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "candidateLines": [2, 106, 180, 223, 240, 242, 249, 370, 386, 405, 417],
+      "candidateLines": [
+        2, 73, 85, 94, 106, 147, 199, 273, 317, 339, 341, 348, 475, 491, 510,
+        522
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -10718,16 +10721,16 @@
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "f517275eb9be4075947bee5b80268cfe3dff81cd139bf0e86d5abdd8ac7b624c",
+      "sha256": "c7bc4d9d48d0daaf08c8ca4391b3b67dbadfd68144de91e3011935fa2d5b8535",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 139, 152, 153, 173, 198, 202, 209, 215, 224, 275, 482, 511,
-        519, 536, 542, 557, 581, 583, 609, 610, 661, 663, 667, 747, 751, 755,
-        759, 764, 827
+        4, 11, 13, 140, 153, 154, 174, 199, 200, 205, 212, 218, 227, 278, 485,
+        514, 522, 539, 545, 560, 584, 586, 612, 613, 664, 666, 670, 750, 754,
+        758, 762, 767, 830
       ],
       "review": "mapped-abstraction"
     },

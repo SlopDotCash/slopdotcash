@@ -135,9 +135,44 @@ jobs:
         with:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile --ignore-scripts
+      # The scanner reads each project repository's public GitHub record. The
+      # shared GITHUB_TOKEN quota is often spent by other workflows, so the
+      # scan dispatch App's own token is used when it can read a public
+      # repository outside this one; otherwise GITHUB_TOKEN is used as before.
+      - name: Mint scanner read token
+        id: scan-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-metadata: read
+      - name: Choose scanner read token
+        id: read-token
+        env:
+          APP_TOKEN: ${{ steps.scan-token.outputs.token }}
+          SHARED_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Only counts are printed, never a token.
+          shared="$(curl -fsS -H "Authorization: Bearer $SHARED_TOKEN" https://api.github.com/rate_limit | jq -r '.resources.core | "\(.remaining) of \(.limit)"' || echo unknown)"
+          echo "Shared GITHUB_TOKEN core requests left: $shared"
+          source=shared
+          if [ -n "$APP_TOKEN" ]; then
+            status="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $APP_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/repos/octocat/Hello-World || echo 000)"
+            if [ "$status" = 200 ]; then
+              source=app
+            else
+              echo "::warning title=Scanner read token::The scan App token read a public repository with HTTP $status; using GITHUB_TOKEN."
+            fi
+          fi
+          echo "Scanner GitHub reads use the $source token."
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Run bounded scanner and retain publication state
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ steps.read-token.outputs.source == 'app' && steps.scan-token.outputs.token || github.token }}
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
           SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
           VETTING_RATE_CARDS: ${{ vars.VETTING_RATE_CARDS }}
