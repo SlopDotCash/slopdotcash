@@ -10613,7 +10613,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "8a3995b57b7c5abed07ff179e20c466be08639ba2997a865ee77f90c4180f057",
+      "sha256": "ad47d8dfa2d44fa568a7438950bcd160bb38868085fc5ee6da3a3be6fcad1d04",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -10622,8 +10622,8 @@
         "formal/models/vetting/vetting_scan_clearance_rule.qnt"
       ],
       "candidateLines": [
-        256, 264, 265, 2102, 2103, 2139, 2140, 2325, 2388, 2394, 2397, 2417,
-        2484, 2500, 2559
+        256, 264, 265, 2105, 2106, 2142, 2143, 2328, 2391, 2397, 2400, 2420,
+        2487, 2503, 2562
       ],
       "review": "mapped-abstraction"
     },
@@ -10657,9 +10657,9 @@
     },
     {
       "path": "workers/vetting/local-install-helpers.ts",
-      "sha256": "7f19afa97bbf102f2522fc89f1b3637e14323c2796ed90ef9516b3847507922c",
+      "sha256": "d6dd7da1bec65200dea69d5fcfb1962ae4fbe89f82fa8dacbae850ccd4d586a6",
       "models": ["formal/models/vetting/vetting_local_helpers.qnt"],
-      "candidateLines": [194],
+      "candidateLines": [327],
       "review": "mapped-abstraction"
     },
     {
