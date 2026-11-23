@@ -269,7 +269,11 @@ function world() {
   mkdirSync(join(repoRoot, "src"), { recursive: true });
   mkdirSync(join(homeDir, ".claude", "projects", "p1"), { recursive: true });
   writeFileSync(join(repoRoot, "src", "a.ts"), "export const a = 1;\n");
-  writeFileSync(join(repoRoot, ".gitignore"), "*.log\n.env\n");
+  writeFileSync(join(repoRoot, ".gitignore"), "*.log\n.env\n*.pem\nsecrets/\n");
+  mkdirSync(join(repoRoot, "secrets"));
+  writeFileSync(join(repoRoot, "secrets", "key"), "SECRET-BODY\n");
+  writeFileSync(join(repoRoot, "k.pem"), "SECRET-BODY\n");
+  writeFileSync(join(repoRoot, "list.txt"), ".env\n");
   writeFileSync(join(repoRoot, ".env"), "PROPRIETARY-SRC=1\n");
   writeFileSync(join(repoRoot, "untracked.txt"), "UNTRACKED-BODY\n");
   mkdirSync(join(base, "other"), { recursive: true });
@@ -508,7 +512,7 @@ test("unlicensed repo redacts every tool result except known confirmations", asy
     call(
       "Write",
       { file_path: `${w.repoRoot}/src/n.ts`, content: "Z" },
-      "File created successfully at: src/n.ts",
+      `File created successfully at: ${w.repoRoot}/src/n.ts`,
     );
     call("Bash", { command: "true" }, "");
   });
@@ -761,4 +765,150 @@ test("raw timestamps, tool names and argument keys are validated", async () => {
   assert.ok(!text.includes("/home/u/other/key"));
   assert.ok(events.every((e) => e.t === undefined || /^\d{4}-/.test(e.t)));
   assert.match(header.startedAt, /^2026-/);
+});
+
+// ---- fix round 2 ----
+test("licensed shell results are kept only when the command is fully resolvable", async () => {
+  const w = world();
+  const cmds = [
+    "cat .env*",
+    "cat *.pem",
+    "cat $(git ls-files -o --ignored --exclude-standard)",
+    "xargs cat < list.txt",
+    "find . -name '*.env' -exec cat {} ;",
+    "git show HEAD:.env",
+    "cat {.env,x}",
+    "cat .[e]nv",
+    "cat .e''nv",
+    "cat .e\\nv",
+    "cat `echo .env`",
+    "cat $HOME/../x",
+    "eval 'cat .env'",
+    "bash -c 'cat .env'",
+    "cd secrets && cat key",
+    "popd; cat key",
+  ];
+  build(w, ({ call }) => {
+    for (const command of cmds) call("Bash", { command }, "SECRET-BODY");
+    call(
+      "Grep",
+      { pattern: "KEY", path: ".env", output_mode: "content" },
+      "SECRET-BODY",
+    );
+    call("Glob", { pattern: "x", path: "k.pem" }, "SECRET-BODY");
+    call("Bash", { command: "cat src/a.ts" }, "export const a = 1;");
+  });
+  const { events } = await runOut(w);
+  assert.ok(!JSON.stringify(events).includes("SECRET-BODY"));
+  assert.ok(results(events).some((e) => e.text === "export const a = 1;"));
+  const home = mkdtempSync(join(tmpdir(), "slop-cx-"));
+  const dir = join(home, ".codex", "sessions", "2026", "11", "23");
+  mkdirSync(dir, { recursive: true });
+  const line = (n, type, payload) =>
+    JSON.stringify({ timestamp: `2026-11-23T10:00:0${n}Z`, type, payload });
+  const fc = (id, args) => ({
+    type: "function_call",
+    name: "shell",
+    arguments: JSON.stringify(args),
+    call_id: id,
+  });
+  writeFileSync(
+    join(dir, "rollout-2.jsonl"),
+    `${[
+      line(0, "session_meta", { cwd: w.repoRoot }),
+      line(
+        1,
+        "response_item",
+        fc("a", { command: ["node", "run-receipt.mjs", "start"] }),
+      ),
+      line(2, "response_item", {
+        type: "function_call_output",
+        call_id: "a",
+        output: MARKER,
+      }),
+      line(
+        3,
+        "response_item",
+        fc("b", { command: "cat key", workdir: join(w.repoRoot, "secrets") }),
+      ),
+      line(4, "response_item", {
+        type: "function_call_output",
+        call_id: "b",
+        output: "SECRET-BODY",
+      }),
+      line(
+        5,
+        "response_item",
+        fc("c", { command: ["bash", "-lc", "cat .env"] }),
+      ),
+      line(6, "response_item", {
+        type: "function_call_output",
+        call_id: "c",
+        output: "SECRET-BODY",
+      }),
+    ].join("\n")}\n`,
+  );
+  const cx = await exportSession({
+    ...w.opts(),
+    homeDir: home,
+    client: "codex",
+  });
+  assert.ok(!readFileSync(cx.path, "utf8").includes("SECRET-BODY"));
+});
+
+test("only a single receipt invocation counts as the receipt tool's own output", async () => {
+  const w = world();
+  const bad = [
+    "cat .env && node run-receipt.mjs status",
+    "cd ../other && cat s.txt; node run-receipt.mjs x",
+    "git diff; node run-receipt.mjs authorize",
+    "cat src/a.ts; node run-receipt.mjs status",
+    "node run-receipt.mjs status | cat",
+    "node run-receipt.mjs status > out.txt",
+  ];
+  const go = async (over, list) => {
+    build(w, ({ call }) => {
+      for (const command of list) call("Bash", { command }, "LEAKWORD-XYZ");
+      call(
+        "Bash",
+        { command: "node scripts/run-receipt.mjs status --run r1" },
+        "RECEIPT-OUT",
+      );
+    });
+    const { events } = await runOut(w, over);
+    const text = JSON.stringify(events);
+    assert.ok(!text.includes("LEAKWORD-XYZ"));
+    assert.ok(text.includes("RECEIPT-OUT"));
+  };
+  await go({}, bad.slice(0, 2));
+  await go(unlicensed, bad);
+});
+
+test("unlicensed allowlist accepts only exact confirmations from write tools", async () => {
+  const w = world();
+  const file = `${w.repoRoot}/src/n.ts`;
+  build(w, ({ call }) => {
+    call("Bash", { command: "echo x" }, "wrote 3 bytes LEAKWORD-XYZ");
+    call("Bash", { command: "echo x" }, "Successfully created LEAKWORD-XYZ");
+    call(
+      "Edit",
+      { file_path: file },
+      "The file LEAKWORD-XYZ has been updated successfully.",
+    );
+    call(
+      "Write",
+      { file_path: file, content: "Z" },
+      `File created successfully at: ${file}`,
+    );
+    call(
+      "Edit",
+      { file_path: file },
+      `The file ${file} has been updated successfully.`,
+    );
+  });
+  const { events } = await runOut(w, unlicensed);
+  const r = results(events).map((e) => e.text);
+  assert.ok(!JSON.stringify(events).includes("LEAKWORD-XYZ"));
+  assert.equal(r.filter((t) => t === "[REDACTED:SOURCE]").length, 3);
+  assert.ok(r.includes("File created successfully at: src/n.ts"));
 });
