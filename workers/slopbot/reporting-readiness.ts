@@ -1,4 +1,5 @@
 import type { D1Database, D1QueryStatement } from "../../backend/d1";
+import { sendBacklogNotices } from "../../backend/projects/backlog-notices";
 import { refreshMergeActivity } from "../../backend/projects/merge-activity";
 import {
   githubAppReportingReader,
@@ -107,7 +108,8 @@ export async function ensureWantedLabel(
  * Daily merge activity of active projects' repositories (#1993). Reads a few
  * due repositories per hourly run; a GitHub failure is recorded on that
  * repository and never fails the schedule. The same read lists wanted issues
- * and creates a missing wanted label (PRD section 5).
+ * and creates a missing wanted label (PRD section 5), and the backlog rule's
+ * owner notices follow it.
  */
 export async function refreshRegisteredMergeActivity(
   env: ReportingRefreshEnv,
@@ -127,7 +129,7 @@ export async function refreshRegisteredMergeActivity(
     now: () => new Date(),
   };
   const labelToken = githubAppRepositoryToken(credentials, { issues: "write" });
-  return refreshMergeActivity(
+  const result = await refreshMergeActivity(
     env.SLOPBOT_DB,
     projects,
     githubAppRepositoryToken(credentials, {
@@ -148,4 +150,8 @@ export async function refreshRegisteredMergeActivity(
           );
     },
   );
+  // The backlog rule's owner notices read the rows just stored. A failure
+  // never fails the merge activity read (PRD section 5).
+  await sendBacklogNotices(env.SLOPBOT_DB, projects, now);
+  return result;
 }
