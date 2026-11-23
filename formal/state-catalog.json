@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "52192cf6020690d1e04b585b04beece890d44a6da4ac7b05af332d7899aab8f1",
+  "inventorySha256": "ba24a3817ee6e0eacafa2d5c3690912cc05800b2b452bf8cf540f30404904726",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2456,7 +2456,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 282,
+      "line": 283,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2478,7 +2478,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 532,
+      "line": 533,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2516,7 +2516,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4068,
+      "line": 4069,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2538,7 +2538,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4672,
+      "line": 4673,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2560,7 +2560,7 @@
     },
     {
       "path": "scripts/historical-assessment-reconciliation.ts",
-      "line": 75,
+      "line": 79,
       "name": "Status",
       "kind": "string-union",
       "values": [
@@ -2574,7 +2574,7 @@
     },
     {
       "path": "scripts/historical-merged-replay.ts",
-      "line": 26,
+      "line": 31,
       "name": "reason",
       "kind": "string-union",
       "values": ["assessment", "lifecycle", "projection", "scored-work"],
@@ -2793,7 +2793,7 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "line": 1481,
+      "line": 1482,
       "name": "PublicationPhase",
       "kind": "string-union",
       "values": [

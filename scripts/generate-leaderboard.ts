@@ -109,6 +109,7 @@ import { createHistoricalAssessmentTransport } from "./historical-assessment-tra
 import {
   createMergedHistoricalReplaySnapshot,
   type HistoricalClosedContextBindings,
+  type HistoricalEmptyLegacyClosureBindings,
 } from "./historical-merged-replay";
 import {
   type LocalGitObjects,
@@ -5218,6 +5219,7 @@ interface HistoricalLeaderboardCollection {
   baseline: PointsJournal;
   history: typeof fetch;
   closedContexts?: HistoricalClosedContextBindings;
+  emptyLegacyClosures?: HistoricalEmptyLegacyClosureBindings;
 }
 
 /** Replay the canonical collector against the verified census and frozen histories. */
@@ -5229,6 +5231,7 @@ export async function generateHistoricalLeaderboardFromGitHub(
     catalog: HistoricalAssessmentCatalog;
     baseline: PointsJournal;
     closedContexts?: HistoricalClosedContextBindings;
+    emptyLegacyClosures?: HistoricalEmptyLegacyClosureBindings;
   },
   options: GenerateOptions = {},
 ): Promise<LeaderboardSnapshot> {
@@ -5268,6 +5271,7 @@ export async function generateHistoricalLeaderboardFromGitHub(
       baseline,
       history,
       closedContexts: approved.closedContexts,
+      emptyLegacyClosures: approved.emptyLegacyClosures,
     },
   );
 }
@@ -6160,6 +6164,7 @@ async function collectLeaderboardFromGitHub(
         historical.scope,
         historical.baseline,
         historical.closedContexts,
+        historical.emptyLegacyClosures,
       )
     : createLeaderboardSnapshot(input);
 }

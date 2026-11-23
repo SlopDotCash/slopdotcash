@@ -24,6 +24,7 @@ import {
   classifyHistoricalAssessmentScope,
   type HistoricalContextGitHub,
   historicalClosedContextBindings,
+  historicalEmptyLegacyClosureBindings,
 } from "./historical-assessment-reconciliation";
 import { rebindHistoricalStandaloneReview } from "./historical-closed-review-source";
 import type { HistoricalPointsPacket } from "./reviewed-historical-points";
@@ -375,6 +376,165 @@ test("closed joint context requires an audited merge anchor and matching GitHub 
     status: "incomplete",
     blockers: ["missing-from-merged-audit"],
   });
+});
+
+test("empty legacy closures require exact GitHub nonacceptance and stay out of economic replay", async () => {
+  const source = {
+    ...member,
+    pullRequestNodeId: "PR_legacy_closed",
+    pullRequestNumber: 10,
+  };
+  const root = legacy(1, source);
+  const baseline = emptyPointsJournal(recordedAt);
+  const graph = {
+    __typename: "PullRequest",
+    id: source.pullRequestNodeId,
+    number: 10,
+    state: "CLOSED",
+    closed: true,
+    merged: false,
+    mergedAt: null,
+    mergeCommit: null,
+    closedAt: source.occurredAt,
+    headRefOid: source.headSha,
+    reviews: { totalCount: 0 },
+    repository: {
+      id: source.repositoryNodeId,
+      databaseId: source.repositoryDatabaseId,
+      isPrivate: false,
+      nameWithOwner: source.repository,
+    },
+  };
+  const rest = {
+    number: 10,
+    node_id: source.pullRequestNodeId,
+    state: "closed",
+    merged: false,
+    merged_at: null,
+    merge_commit_sha: source.mergeSha,
+    closed_at: source.occurredAt,
+    head: { sha: source.headSha },
+    base: {
+      sha: source.policySha,
+      repo: {
+        node_id: source.repositoryNodeId,
+        id: source.repositoryDatabaseId,
+        private: false,
+      },
+    },
+  };
+  function readGithub(
+    observed = graph,
+    accessed: { [key: string]: unknown } = rest,
+  ): HistoricalContextGitHub {
+    return {
+      async graphql<T>() {
+        return { nodes: [observed] } as T;
+      },
+      async get<T>(path: string) {
+        expect(path).toBe(`/repos/${source.repository}/pulls/10`);
+        return accessed as T;
+      },
+    };
+  }
+  async function classify(
+    patch: Record<string, unknown>,
+    github: HistoricalContextGitHub,
+    points = baseline,
+    marker: string | null = source.mergeSha,
+  ) {
+    const record = JSON.parse(root.record_json);
+    const record_json = JSON.stringify({
+      ...record,
+      mergeSha: marker,
+      assessment: { ...record.assessment, tier: null, ...patch },
+    });
+    const assessed = catalog([
+      { ...root, record_json, record_digest: sha256Hex(record_json) },
+    ]);
+    assessed.heads.d1PointsCount = points.revisions.length;
+    assessed.heads.d1PointsDigest = sha256Hex(JSON.stringify(points));
+    return classifyHistoricalAssessmentScope(
+      assessed,
+      audit,
+      projectId,
+      github,
+      { baseline: points, integrationBranch: "develop" },
+    );
+  }
+  for (const [status, marker] of [
+    ["assessed", null],
+    ["unresolved", source.mergeSha],
+  ] as const) {
+    const verified = await classify(
+      { status },
+      readGithub(graph, { ...rest, merge_commit_sha: marker }),
+      baseline,
+      marker,
+    );
+    expect(verified.status).toBe("no-scoped-active-assessments");
+    expect(verified.records).toEqual([]);
+    expect(verified.counts).toMatchObject({
+      activeLegacyRecords: 1,
+      relevantRecords: 0,
+    });
+    expect(historicalClosedContextBindings(verified).size).toBe(0);
+    expect(
+      historicalEmptyLegacyClosureBindings(verified).get(
+        source.pullRequestNodeId,
+      ),
+    ).toMatchObject({
+      number: 10,
+      headSha: source.headSha,
+      occurredAt: source.occurredAt,
+    });
+    expect(JSON.stringify(verified)).not.toContain("PRIVATE RAW EXPLANATION");
+  }
+  const existingReview = appendPointAwards(
+    baseline,
+    [
+      {
+        key: pointKey(
+          projectId,
+          "U_reviewer",
+          "substantive-review",
+          "PRR_existing",
+        ),
+        actor: { id: "U_reviewer", login: "reviewer" },
+        projectId,
+        category: "substantive-review",
+        occurredAt: source.occurredAt,
+        sourceId: "PRR_existing",
+        sourceUrl:
+          "https://github.com/elizaOS/eliza/pull/10#pullrequestreview-123",
+        workUnitId: "wu_legacy_review",
+        amount: 10,
+        provisional: true,
+      },
+    ],
+    "1".repeat(64),
+    "slop-score-v2",
+    recordedAt,
+  );
+  for (const guarded of [
+    await classify({}, readGithub({ ...graph, reviews: { totalCount: 1 } })),
+    await classify({}, readGithub({ ...graph, merged: true })),
+    await classify({}, readGithub(graph, { ...rest, merge_commit_sha: null })),
+    await classify(
+      {},
+      readGithub(graph, {
+        ...rest,
+        base: { ...rest.base, sha: source.headSha },
+      }),
+    ),
+    await classify({ tier: "micro" }, readGithub()),
+    await classify({ reviews: [{ sourceId: "PRR_recorded" }] }, readGithub()),
+    await classify({}, readGithub(), existingReview),
+  ]) {
+    expect(guarded.status).toBe("incomplete");
+    expect(guarded.blockers).toEqual(["missing-from-merged-audit"]);
+    expect(historicalEmptyLegacyClosureBindings(guarded).size).toBe(0);
+  }
 });
 
 test("a removed assessed merge keeps its archived award only with current Git ancestry", async () => {

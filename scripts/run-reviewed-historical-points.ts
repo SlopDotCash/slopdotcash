@@ -30,6 +30,7 @@ import {
   classifyHistoricalAssessmentScope,
   type HistoricalAssessmentReceipt,
   historicalClosedContextBindings,
+  historicalEmptyLegacyClosureBindings,
 } from "./historical-assessment-reconciliation";
 import { verifyHistoricalNetOutcomes } from "./historical-net-outcome";
 import {
@@ -1658,7 +1659,7 @@ async function auditHistoricalAssessments(
     receiptDigest: receipt.receiptSha256,
   };
   if (receipt.status === "incomplete") {
-    console.log(JSON.stringify(report));
+    console.log(JSON.stringify({ ...report, blockerCodes: receipt.blockers }));
     throw Error("Assessment catalog could not be reconciled");
   }
   let replayResult: HistoricalReplayReceipt["replay"] | undefined;
@@ -1677,6 +1678,7 @@ async function auditHistoricalAssessments(
         catalog,
         baseline,
         closedContexts: historicalClosedContextBindings(receipt),
+        emptyLegacyClosures: historicalEmptyLegacyClosureBindings(receipt),
       },
       {
         evidenceToken: token,

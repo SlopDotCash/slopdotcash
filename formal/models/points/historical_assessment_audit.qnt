@@ -67,6 +67,10 @@ module historical_assessment_audit {
       .with("invalid", s.invalid or not(valid)).with("relevant", s.relevant or activeInScope),
   }
 
+  action observeEmptyLegacyClosure(
+    exactClosure: bool, emptyAssessment: bool, noFormalReviews: bool, noPriorAward: bool,
+  ): bool = observe(false, exactClosure and emptyAssessment and noFormalReviews and noPriorAward, false)
+
   val complete = not(s.invalid) and s.jointRead == s.jointExpected and s.legacyRead == s.legacyExpected
   action changeCheckpoint(affectsScope: bool): bool = all {
     s.phase == "reading" or s.phase == "staged",
@@ -182,6 +186,15 @@ module historical_assessment_audit {
   run changedScopeCannotEnterAuditTest = init.then(capture(true, false, false, 1, 1).fail())
   run changedCheckpointRefusesReceiptTest = init
     .then(capture(true, true, false, 0, 0)).then(changeCheckpoint(true)).then(seal.fail())
+  run exactEmptyLegacyClosureDoesNotRequireValueReplayTest = init
+    .then(capture(true, true, false, 0, 1)).then(observeEmptyLegacyClosure(true, true, true, true))
+    .then(seal).expect(s.status == "no-scoped-active-assessments" and invariant)
+  run emptyLegacyClosureWithFormalReviewRefusesReceiptTest = init
+    .then(capture(true, true, false, 0, 1)).then(observeEmptyLegacyClosure(true, true, false, true))
+    .then(seal).expect(s.status == "incomplete" and invariant)
+  run emptyLegacyClosureWithPriorAwardRefusesReceiptTest = init
+    .then(capture(true, true, false, 0, 1)).then(observeEmptyLegacyClosure(true, true, true, false))
+    .then(seal).expect(s.status == "incomplete" and invariant)
   run unrelatedAppendAllowsReceiptTest = init
     .then(capture(true, true, false, 0, 0)).then(changeCheckpoint(false))
     .then(seal).expect(s.status == "no-scoped-active-assessments" and invariant)
