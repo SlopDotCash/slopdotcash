@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 
-const NEW = "0147_trace_licensing.sql";
+const NEW = "0148_trace_licensing.sql";
 
 describe("trace licensing migration", () => {
   test("migration backfills v1 on uploaded runs and guards history", () => {

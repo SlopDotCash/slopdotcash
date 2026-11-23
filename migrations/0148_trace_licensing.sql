@@ -55,11 +55,11 @@ CREATE TRIGGER trace_licence_events_no_delete BEFORE DELETE ON trace_licence_eve
 BEGIN SELECT RAISE(ABORT, 'trace licence history is append-only'); END;
 
 -- Notifications: add trace_licensing_available (rebuild as in 0079).
-CREATE TABLE notifications_0147_copy (
+CREATE TABLE notifications_0148_copy (
   event_key TEXT, recipient_github_id TEXT, kind TEXT, subject TEXT,
   detail TEXT, action_path TEXT, source_at TEXT, created_at TEXT, read_at TEXT
 ) STRICT;
-INSERT INTO notifications_0147_copy (
+INSERT INTO notifications_0148_copy (
   event_key, recipient_github_id, kind, subject, detail, action_path,
   source_at, created_at, read_at
 )
@@ -109,8 +109,8 @@ INSERT INTO notifications (
 SELECT
   event_key, recipient_github_id, kind, subject, detail, action_path,
   source_at, created_at, read_at
-FROM notifications_0147_copy;
-DROP TABLE notifications_0147_copy;
+FROM notifications_0148_copy;
+DROP TABLE notifications_0148_copy;
 
 CREATE INDEX notifications_recipient
   ON notifications(recipient_github_id, source_at DESC);
