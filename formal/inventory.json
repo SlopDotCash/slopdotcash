@@ -5477,14 +5477,14 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "ca6042c20b1242864719c80f9b064501079114a4edb3a91509e4478bae1aa45d",
+      "sha256": "6b6a04da68e73c27d21144ee5f131addd074f106b6ff81412b5031020854cc19",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 248, 249, 250, 251, 253, 258, 301, 316, 317, 323, 324, 459, 1183,
-        1412, 1432, 1646, 1664, 1671, 1803, 1898, 2060
+        3, 249, 250, 251, 252, 254, 259, 302, 317, 318, 324, 325, 460, 1169,
+        1398, 1418, 1632, 1650, 1657, 1789, 1884, 2046
       ],
       "review": "mapped-abstraction"
     },
@@ -5673,9 +5673,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
+      "sha256": "f38f2ba7eafb17a79f3577891aa1b31a7c0d83dfb66f256a5b280ee3a97647a7",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [289, 290],
+      "candidateLines": [315, 316],
       "review": "mapped-abstraction"
     },
     {

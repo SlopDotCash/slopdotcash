@@ -70,6 +70,7 @@ import { loadParticipationBans } from "./value-ingestion";
 import {
   type PublicMergeRepository,
   publicGitProcess,
+  runPublicGit,
   withPublicGitObjects,
 } from "./value-merge-ingestion";
 
@@ -554,11 +555,8 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
         if (survivingCarrier) await verifyOriginalAuthor();
       },
       async verifyNative(directory) {
-        const nativeGit = async (...args: string[]) => {
-          const command = publicGitProcess(directory, args);
-          return (await execute(command.file, command.args, command.options))
-            .stdout;
-        };
+        const nativeGit = async (...args: string[]) =>
+          (await runPublicGit(directory, args)).stdout;
         if (branchTip) {
           const base = checked[0].pull.base.sha;
           const [submitted, integrated, trees] = await Promise.all([
@@ -909,7 +907,7 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
             timeout: 1_800_000,
           });
         }
-        const command = publicGitProcess(directory, [
+        const { stdout } = await runPublicGit(directory, [
           "rev-list",
           "--parents",
           "--first-parent",
@@ -917,11 +915,6 @@ export async function verifyHistoricalIdenticalAcceptedChanges(
           current,
           `^${tip}`,
         ]);
-        const { stdout } = await execute(
-          command.file,
-          command.args,
-          command.options,
-        );
         const added = stdout
           .trim()
           .split("\n")
@@ -1155,15 +1148,8 @@ export async function verifyHistoricalAcceptedSquashes(
         1024 * 1024,
       );
       await withObjects(repository, [mergeSha], async (directory) => {
-        const git = async (...args: string[]) => {
-          const command = publicGitProcess(directory, args);
-          return (
-            await execute(command.file, command.args, {
-              ...command.options,
-              maxBuffer,
-            })
-          ).stdout.trim();
-        };
+        const git = async (...args: string[]) =>
+          (await runPublicGit(directory, args, maxBuffer)).stdout.trim();
         const [parentLine, acceptedTree] = await Promise.all([
           git("show", "--no-patch", "--format=%P", mergeSha),
           git("rev-parse", `${mergeSha}^{tree}`),
