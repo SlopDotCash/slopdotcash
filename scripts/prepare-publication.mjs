@@ -24,8 +24,23 @@ const stages = [
       ...(currentProfiles ? ["--current"] : []),
     ],
   ],
+  // The public record (/record, /receipts) reads the plain leaderboard on disk,
+  // so it runs before the transport stage splits it. It never fails a build.
+  [process.execPath, ["scripts/record/build-record.mjs"], { soft: true }],
   [process.execPath, ["scripts/prepare-leaderboard-transport.mjs"]],
 ];
-for (const [command, args] of stages) {
+for (const [command, args, options] of stages) {
+  if (options?.soft) {
+    try {
+      execFileSync(command, args, {
+        cwd: root,
+        stdio: "inherit",
+        timeout: 10 * 60_000,
+      });
+    } catch (error) {
+      console.log(`record: stage did not finish (${error.message})`);
+    }
+    continue;
+  }
   execFileSync(command, args, { cwd: root, stdio: "inherit" });
 }
