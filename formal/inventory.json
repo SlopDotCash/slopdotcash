@@ -336,7 +336,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "912bb8b6c15c8c411ebebd226eb319eb998317db89dfc64c53ff9917dfa4d064",
+      "sha256": "c1c772c3877db148f2364ea34dc23a29e0c7eccd8e0ec466591f5170be1a942c",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -349,7 +349,7 @@
       "candidateLines": [
         15, 30, 131, 139, 140, 166, 169, 178, 184, 197, 252, 281, 289, 298, 307,
         314, 328, 334, 348, 370, 377, 398, 430, 446, 454, 488, 513, 571, 587,
-        602, 634, 660, 689, 753, 770, 796, 808, 811
+        602, 634, 660, 689, 753, 770, 802, 811, 814
       ],
       "review": "mapped-abstraction"
     },
@@ -1354,11 +1354,11 @@
     },
     {
       "path": "backend/trace-licensing/handler.ts",
-      "sha256": "5969fa9a2335a9157f95250743867bd0e1c1497b21067d7a4b79147423142ecf",
+      "sha256": "24ea48dad75f54c9d0024a74da2fd5379e47acd02df1e5ead3c1b737d4a7c68c",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
-        3, 8, 9, 10, 61, 66, 68, 165, 172, 195, 196, 249, 266, 272, 274, 284,
-        286, 292, 295, 300, 301, 306, 385, 391, 414, 420, 431, 440, 442
+        3, 8, 9, 10, 61, 66, 68, 165, 172, 195, 196, 249, 268, 274, 276, 286,
+        288, 294, 297, 302, 303, 308, 390, 396, 419, 425, 436, 445, 447
       ],
       "review": "mapped-abstraction"
     },
@@ -1376,7 +1376,7 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "c1eac7869e29dc310ce88958b8aa215bcefa7187c3b716ac93741a635f48b0b9",
+      "sha256": "e6c34f376b84114fc40289ca62eb25af576b8647e5f73033a24203f3d7e72bad",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
@@ -1395,10 +1395,10 @@
       "candidateLines": [
         66, 161, 284, 285, 288, 306, 317, 322, 345, 383, 396, 399, 421, 422,
         427, 430, 460, 461, 464, 465, 481, 484, 506, 533, 540, 543, 547, 566,
-        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 741, 744, 746, 757,
-        765, 775, 783, 797, 798, 803, 808, 828, 832, 834, 873, 878, 894, 902,
-        903, 909, 910, 916, 941, 947, 949, 1043, 1071, 1099, 1114, 1115, 1117,
-        1135, 1149, 1154, 1157, 1218, 1219, 1226, 1229, 1231
+        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 722, 742, 745, 747,
+        758, 766, 776, 784, 798, 799, 804, 809, 829, 833, 835, 874, 879, 895,
+        903, 904, 910, 911, 917, 942, 948, 950, 1044, 1072, 1100, 1115, 1116,
+        1118, 1136, 1150, 1155, 1158, 1219, 1220, 1227, 1230, 1232
       ],
       "review": "mapped-abstraction"
     },
@@ -3913,9 +3913,9 @@
     },
     {
       "path": "scripts/announce-trace-licensing.ts",
-      "sha256": "979433fd29a78efe3871b6e76d97c656218d711ff1a9e48149df6edd113b6835",
+      "sha256": "04440f55d8f442c89869f1d0c621b5cfb2bedeb6c844f91c5eb6ff8269364a60",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
-      "candidateLines": [5, 43, 44],
+      "candidateLines": [5, 43, 57, 60],
       "review": "mapped-abstraction"
     },
     {
@@ -6722,11 +6722,11 @@
     },
     {
       "path": "src/TraceLicensing.tsx",
-      "sha256": "1b80120a9d9d2ea19e5eaf4cf29bb4281be6aa1bdc5778853d97b4b75708bfde",
+      "sha256": "d68569efb3b95507f9fca89d3af7a979fa6995c815df65814dc0dd62d5a51231",
       "models": ["formal/models/api/api_trace_licensing.qnt"],
       "candidateLines": [
-        5, 8, 38, 39, 40, 160, 162, 181, 182, 183, 194, 198, 206, 233, 240, 312,
-        365
+        5, 8, 38, 39, 40, 160, 162, 181, 182, 183, 185, 192, 208, 212, 242, 244,
+        253, 255, 260, 267, 430
       ],
       "review": "mapped-abstraction"
     },
@@ -11937,7 +11937,7 @@
     },
     {
       "path": "formal/models/api/api_trace_licensing.qnt",
-      "sha256": "46e036575ebb8a8e5cd1d9fa9dd9fa9966528c5106d3bce0e8fb737c7f304b2c",
+      "sha256": "fd12e10c81d6251aaac7133a6ddc33d4ef1a6205d76023aa2467c3de5d999b8e",
       "sources": [
         "backend/points/handler.ts",
         "backend/trace-licensing/handler.ts",
@@ -11954,6 +11954,7 @@
         "closeWithLicenceWritesTest",
         "closeWithdrawsTest",
         "noopWritesNothingTest",
+        "optInWritesTest",
         "staleCountRefusedTest",
         "turnOffWithdrawsTest",
         "uploadWhileOnTest"

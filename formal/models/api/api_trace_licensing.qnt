@@ -92,9 +92,12 @@ module api_trace_licensing {
     traces.get(i).final, traces.get(i).lic != 1,
     traces' = traces.set(i, traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2)),
     on' = on, closed' = closed, banned' = banned,
-    wrote' = false,
+    // The opt-in writes an opted_in account event with the grant.
+    wrote' = true,
   }
 
+  // An expected count of 0 is modelled as a refusal (optInRefused): the code
+  // answers licensed: 0 and writes nothing, the same state change.
   action optInAll(expected: int): bool = all {
     on, not(closed), not(banned),
     expected == eligibleCount(traces),
@@ -172,4 +175,6 @@ module api_trace_licensing {
   run noopWritesNothingTest = init.then(enable).then(noopToggle).expect(not(wrote) and on)
   run closeNothingToWithdrawTest = init.then(close).expect(not(wrote) and closed)
   run closeWithLicenceWritesTest = init.then(enable).then(close).expect(wrote and not(on))
+  run optInWritesTest = init.then(enable).then(finalize(1, 1)).then(optIn(1))
+    .expect(wrote and traces.get(1).lic == 1 and traces.get(1).basis == 2)
 }

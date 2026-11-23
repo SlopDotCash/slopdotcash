@@ -2,7 +2,12 @@
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { type Diagnostics, expect, test } from "./fixtures";
+import {
+  type Diagnostics,
+  expect,
+  expectAccessibleReflow,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -161,11 +166,18 @@ async function openSettings(
       githubId: await request.headerValue("x-slop-expected-github-id"),
     });
     if (routes.setting) return route.fulfill(routes.setting(body));
+    const wasEnabled = server.enabled;
     server.enabled = body.enabled === true;
-    if (!server.enabled)
+    let withdrawn = 0;
+    if (wasEnabled && !server.enabled)
       for (const t of server.traces)
-        if (t.licence === "licensed") t.licence = "withdrawn";
-    return route.fulfill({ json: { setting: listing(server, null).setting } });
+        if (t.licence === "licensed") {
+          t.licence = "withdrawn";
+          withdrawn += 1;
+        }
+    return route.fulfill({
+      json: { setting: listing(server, null).setting, withdrawn },
+    });
   });
   await page.route(`${site}/api/v1/traces/licences`, async (route) => {
     const request = route.request();
@@ -316,13 +328,22 @@ test("bulk confirm shows the count and posts expectedCount", async ({
   ]);
 });
 
-test("row License posts one runId", async ({ page, diagnostics }) => {
+test("row License posts one runId and updates that row where it is", async ({
+  page,
+  diagnostics,
+}) => {
   const server: Server = {
     enabled: true,
     traces: [run(0, "licensed"), run(1), run(2)],
     pageSize: 2,
   };
-  const { section, licences } = await openSettings(page, diagnostics, server);
+  let reads = 0;
+  const { section, licences } = await openSettings(page, diagnostics, server, {
+    me: () => {
+      reads += 1;
+      return null;
+    },
+  });
   const rows = section.getByRole("listitem");
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toHaveText(
@@ -331,6 +352,10 @@ test("row License posts one runId", async ({ page, diagnostics }) => {
   await expect(rows.nth(0).getByRole("button")).toHaveCount(0);
   await expect(rows.nth(1)).toHaveText(
     "Nov 19, 2026 · asi · anthropic/claude-opus-5-5 · v1 · not licensed License",
+  );
+  // Each row's button names its trace for a screen reader.
+  await expect(rows.nth(1).getByRole("button")).toHaveAccessibleName(
+    "License trace of Nov 19, 2026, asi",
   );
 
   // "More" reads the next page and keeps the first.
@@ -341,15 +366,23 @@ test("row License posts one runId", async ({ page, diagnostics }) => {
     section.getByRole("button", { name: "More", exact: true }),
   ).toHaveCount(0);
 
+  const readsBefore = reads;
   await rows
-    .nth(1)
-    .getByRole("button", { name: "License", exact: true })
+    .nth(2)
+    .getByRole("button", { name: "License trace of Nov 18, 2026, eliza" })
     .click();
   await expect(
     section.getByText("Your traces (3) · licensed 2", { exact: true }),
   ).toBeVisible();
+  // The row read on the second page is updated in place; nothing reloads.
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(2)).toHaveText(
+    "Nov 18, 2026 · eliza · anthropic/claude-opus-5-5 · v1 · licensed",
+  );
+  await expect(rows.nth(1).getByRole("button")).toHaveCount(1);
+  expect(reads).toBe(readsBefore);
   expect(licences).toEqual([
-    { body: { runIds: ["run_1"] }, githubId: GITHUB_ID },
+    { body: { runIds: ["run_2"] }, githubId: GITHUB_ID },
   ]);
 });
 
@@ -393,7 +426,102 @@ test("error shows the server message", async ({ page, diagnostics }) => {
   await expect(section.getByRole("alert")).toHaveText(
     "This account is closed.",
   );
-  await expect(section.getByRole("button")).toHaveCount(0);
+  await expect(section.getByRole("button")).toHaveCount(1);
   await expect(section.getByRole("checkbox")).toHaveCount(0);
   await expect(section.getByText(/Your traces/u)).toHaveCount(0);
+});
+
+test("the error state retries the read", async ({ page, diagnostics }) => {
+  const server: Server = { enabled: false, traces: [run(1)], pageSize: 100 };
+  let failing = true;
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 \(.+\) at .+\/api\/v1\/traces\/me$/u,
+  );
+  const { section } = await openSettings(page, diagnostics, server, {
+    me: () =>
+      failing ? { status: 503, json: { error: "unavailable" } } : null,
+  });
+  await expect(section.getByRole("alert")).toHaveText(
+    "Trace licensing is unavailable. Retry later.",
+  );
+  failing = false;
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    section.getByText("Your traces (1) · licensed 0", { exact: true }),
+  ).toBeVisible();
+  await expect(section.getByRole("alert")).toHaveCount(0);
+  await expect(
+    section.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("turn off shows the server's withdrawn count, and a failed reload keeps the list and the notice", async ({
+  page,
+  diagnostics,
+}) => {
+  const server: Server = {
+    enabled: true,
+    traces: [run(0, "licensed"), run(1, "licensed"), run(2)],
+    pageSize: 100,
+  };
+  let failing = false;
+  diagnostics.allow(
+    /^console Failed to load resource: the server responded with a status of 503 \(.+\) at .+\/api\/v1\/traces\/me$/u,
+  );
+  const { section } = await openSettings(page, diagnostics, server, {
+    me: () =>
+      failing ? { status: 503, json: { error: "unavailable" } } : null,
+    setting: () => {
+      // A trace licensed after the page loaded is withdrawn too.
+      server.enabled = false;
+      for (const t of server.traces) t.licence = "withdrawn";
+      failing = true;
+      return {
+        status: 200,
+        json: { setting: listing(server, null).setting, withdrawn: 3 },
+      };
+    },
+  });
+  await expect(
+    section.getByText("Your traces (3) · licensed 2", { exact: true }),
+  ).toBeVisible();
+  await section.getByRole("button", { name: "Turn off", exact: true }).click();
+  await expect(section.getByRole("status")).toHaveText(
+    "Turned off. 3 traces withdrawn.",
+  );
+  await expect(section.getByRole("alert")).toHaveText(
+    "Trace licensing is unavailable. Retry later.",
+  );
+  // The last list stays, with the answer the write returned applied.
+  await expect(
+    section.getByText("Your traces (3) · licensed 0", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("button", { name: "Turn on", exact: true }),
+  ).toBeDisabled();
+  failing = false;
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(section.getByRole("alert")).toHaveCount(0);
+  await expect(section.getByRole("listitem")).toHaveCount(3);
+  await expect(section.getByRole("listitem").nth(0)).toContainText("withdrawn");
+});
+
+test.describe("at 320px", () => {
+  test.use({ viewport: { width: 320, height: 800 } });
+  test("the section reflows and passes axe, at normal and doubled text", async ({
+    page,
+    diagnostics,
+  }) => {
+    const server: Server = {
+      enabled: true,
+      traces: [run(0, "licensed"), run(1), run(2, "withdrawn")],
+      pageSize: 2,
+    };
+    const { section } = await openSettings(page, diagnostics, server);
+    await expect(
+      section.getByRole("button", { name: "License all 2 earlier traces" }),
+    ).toBeVisible();
+    await section.scrollIntoViewIfNeeded();
+    await expectAccessibleReflow(page, "trace-licensing-320");
+  });
 });

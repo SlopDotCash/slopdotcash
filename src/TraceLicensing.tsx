@@ -181,28 +181,34 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
   const [view, setView] = useState<View>({ status: "loading" });
   const [ticked, setTicked] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A reload that failed after the list was shown: the list stays.
+  const [reloadError, setReloadError] = useState<string | null>(null);
   const { busy, error, setError, run } = useAction();
   const controller = useRef<AbortController | null>(null);
   const loads = useRef(0);
+  const shown = useRef<Listing | null>(null);
+  const show = useCallback((next: Listing) => {
+    shown.current = next;
+    setView({ status: "ready", listing: next });
+  }, []);
   const load = useCallback(async () => {
     const signal = controller.current?.signal;
     if (!signal || signal.aborted) return;
     const attempt = ++loads.current;
     try {
       const loaded = listing(await request(TRACES_ME_API, githubId, signal));
-      if (!signal.aborted && attempt === loads.current)
-        setView({ status: "ready", listing: loaded });
+      if (!signal.aborted && attempt === loads.current) {
+        show(loaded);
+        setReloadError(null);
+      }
     } catch (caught) {
-      if (!signal.aborted && attempt === loads.current)
-        setView({
-          status: "error",
-          message:
-            caught instanceof Error
-              ? caught.message
-              : "Trace licensing failed.",
-        });
+      if (signal.aborted || attempt !== loads.current) return;
+      const message =
+        caught instanceof Error ? caught.message : "Trace licensing failed.";
+      if (shown.current === null) setView({ status: "error", message });
+      else setReloadError(message);
     }
-  }, [githubId]);
+  }, [githubId, show]);
   useEffect(() => {
     const current = new AbortController();
     controller.current = current;
@@ -210,7 +216,11 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
     return () => current.abort();
   }, [load]);
 
-  const act = (action: (signal: AbortSignal) => Promise<void>) => {
+  /** Runs one write; `reload` reads the list again after it succeeds. */
+  const act = (
+    action: (signal: AbortSignal) => Promise<void>,
+    reload = true,
+  ) => {
     const signal = controller.current?.signal;
     if (!signal || signal.aborted) return;
     setNotice(null);
@@ -226,9 +236,26 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
           await load();
         throw caught;
       }
-      await load();
+      if (reload) await load();
     });
   };
+  const retry = () => {
+    setReloadError(null);
+    if (shown.current === null) setView({ status: "loading" });
+    void run(load);
+  };
+  const retryButton = (
+    <div className="handoff-actions">
+      <button
+        className="button secondary-button button-small"
+        disabled={busy}
+        type="button"
+        onClick={retry}
+      >
+        Retry
+      </button>
+    </div>
+  );
 
   if (view.status === "loading") return <Spinner label="Loading your traces" />;
   const lead = (
@@ -242,12 +269,13 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
       <div className="email-enrollment">
         {lead}
         <p role="alert">{view.message}</p>
+        {retryButton}
       </div>
     );
   const { setting: current, totals, nextCursor } = view.listing;
   const turnOn = () =>
     act(async (signal) => {
-      setting(
+      const next = setting(
         record(
           await request(TRACE_LICENSING_API, githubId, signal, {
             method: "PUT",
@@ -256,23 +284,36 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
         ).setting,
       );
       setTicked(false);
+      if (shown.current) show({ ...shown.current, setting: next });
     });
-  const turnOff = () => {
-    const withdrawn = totals.licensed;
+  const turnOff = () =>
     act(async (signal) => {
-      setting(
-        record(
-          await request(TRACE_LICENSING_API, githubId, signal, {
-            method: "PUT",
-            json: { enabled: false },
-          }),
-        ).setting,
+      const answer = record(
+        await request(TRACE_LICENSING_API, githubId, signal, {
+          method: "PUT",
+          json: { enabled: false },
+        }),
       );
+      const next = setting(answer.setting);
+      const withdrawn = count(answer.withdrawn);
+      const before = shown.current;
+      if (before)
+        show({
+          ...before,
+          setting: next,
+          totals: {
+            traces: before.totals.traces,
+            licensed: 0,
+            eligible: before.totals.traces,
+          },
+          traces: before.traces.map((row) =>
+            row.licence === "licensed" ? { ...row, licence: "withdrawn" } : row,
+          ),
+        });
       setNotice(
         `Turned off. ${COUNT.format(withdrawn)} ${traces(withdrawn)} withdrawn.`,
       );
     });
-  };
   const license = (json: unknown) =>
     act(async (signal) => {
       count(
@@ -284,6 +325,33 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
         ).licensed,
       );
     });
+  /** Licenses one row and updates that row where it is, keeping the pages read. */
+  const licenseRow = (runId: string) =>
+    act(async (signal) => {
+      const licensed = count(
+        record(
+          await request(TRACE_LICENCES_API, githubId, signal, {
+            method: "POST",
+            json: { runIds: [runId] },
+          }),
+        ).licensed,
+      );
+      const before = shown.current;
+      if (!before) return;
+      // Zero means the server already held it licensed: only the row was stale.
+      const moved = Math.min(licensed, before.totals.eligible);
+      show({
+        ...before,
+        totals: {
+          traces: before.totals.traces,
+          licensed: before.totals.licensed + moved,
+          eligible: before.totals.eligible - moved,
+        },
+        traces: before.traces.map((row) =>
+          row.runId === runId ? { ...row, licence: "licensed" } : row,
+        ),
+      });
+    }, false);
   const licenseAll = () => {
     const eligible = totals.eligible;
     if (
@@ -307,13 +375,10 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
           signal,
         ),
       );
-      if (signal.aborted || attempt !== loads.current) return;
-      setView({
-        status: "ready",
-        listing: {
-          ...page,
-          traces: [...view.listing.traces, ...page.traces],
-        },
+      if (signal.aborted || attempt !== loads.current || !shown.current) return;
+      show({
+        ...page,
+        traces: [...shown.current.traces, ...page.traces],
       });
     });
   };
@@ -364,6 +429,12 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
       )}
       {notice ? <p role="status">{notice}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
+      {reloadError ? (
+        <>
+          <p role="alert">{reloadError}</p>
+          {retryButton}
+        </>
+      ) : null}
       {totals.traces === 0 ? (
         <EmptyState text="No traces yet" />
       ) : (
@@ -396,10 +467,11 @@ export function TraceLicensing({ githubId }: { githubId: string | null }) {
                   <>
                     {" "}
                     <button
+                      aria-label={`License trace of ${formatDate(row.finalizedAt)}, ${row.projectId}`}
                       className="button secondary-button button-small"
                       disabled={busy}
                       type="button"
-                      onClick={() => license({ runIds: [row.runId] })}
+                      onClick={() => licenseRow(row.runId)}
                     >
                       License
                     </button>

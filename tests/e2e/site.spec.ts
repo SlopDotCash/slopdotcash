@@ -1752,17 +1752,24 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContractV2).toContain(
     "# Private trace privacy contract v2",
   );
-  expect(privateTraceContractV2).toContain(
+  // Phrases are matched across line wraps, so a rewrap of the README holds.
+  const privateTraceContractV2Text = privateTraceContractV2.replace(
+    /\s+/gu,
+    " ",
+  );
+  expect(privateTraceContractV2Text).toContain(
     "Licensing is available from your account settings",
   );
-  expect(privateTraceContractV2).toContain("every listed trace at once");
-  expect(privateTraceContractV2).toContain(
-    "Closing the account\nwithdraws every unsold licence",
+  expect(privateTraceContractV2Text).toContain("every listed trace at once");
+  expect(privateTraceContractV2Text).toContain(
+    "Closing the account withdraws every unsold licence",
   );
-  expect(privateTraceContractV2).not.toContain("Licensing is not available");
-  expect(privateTraceContractV2).toContain("50% of what the buyer pays");
-  expect(privateTraceContractV2).toContain("while the setting is on");
-  expect(privateTraceContractV2).not.toContain("once consent records ship");
+  expect(privateTraceContractV2Text).not.toContain(
+    "Licensing is not available",
+  );
+  expect(privateTraceContractV2Text).toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2Text).toContain("while the setting is on");
+  expect(privateTraceContractV2Text).not.toContain("once consent records ship");
   expect(privateTraceContractV2).toContain("Retention is permanent");
   expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
   expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
