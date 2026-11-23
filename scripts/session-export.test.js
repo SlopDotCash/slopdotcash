@@ -1,9 +1,25 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   CLEANER_VERSION,
   cleanEvents,
+  exportSession,
+  findSessionFile,
   OSI_LICENCES,
+  readClaudeCode,
+  readCodex,
+  repoLicence,
   truncateToLimit,
 } from "../skills/project-contributor-template/scripts/session-export.mjs";
 
@@ -237,4 +253,201 @@ test("secret words in prose are left alone", () => {
   assert.equal(clean([ev("assistant", text)]).events[0].text, text);
   const flag = clean([ev("tool_result", "run --token abcdefghijklmnop1234")]);
   assert.ok(!flag.events[0].text.includes("abcdefghijklmnop1234"));
+});
+
+const MARKER = "slop-run:run-abc123";
+const fixture = (name, repo) =>
+  readFileSync(`tests/fixtures/sessions/${name}`, "utf8").replaceAll(
+    "{{REPO}}",
+    repo,
+  );
+
+function world() {
+  const base = mkdtempSync(join(tmpdir(), "slop-export-"));
+  const homeDir = join(base, "home");
+  const repoRoot = join(base, "proj");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(join(homeDir, ".claude", "projects", "p1"), { recursive: true });
+  writeFileSync(join(repoRoot, "src", "a.ts"), "export const a = 1;\n");
+  writeFileSync(join(repoRoot, ".gitignore"), "*.log\n");
+  writeFileSync(join(repoRoot, "ignored.log"), "IGNORED-LOG-BODY\n");
+  writeFileSync(join(repoRoot, "src", "new.ts"), "NEWFILE-BODY\n");
+  const g = (...a) => execFileSync("git", ["-C", repoRoot, ...a]);
+  g("init", "-q");
+  g("add", ".gitignore", "src/a.ts");
+  const session = join(homeDir, ".claude", "projects", "p1", "new.jsonl");
+  writeFileSync(session, fixture("claude-code.jsonl", repoRoot));
+  const opts = (over = {}) => ({
+    marker: MARKER,
+    repoRoot,
+    repo: "o/r",
+    homeDir,
+    env: { USER: "alice" },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ license: { spdx_id: "MIT" } }),
+    }),
+    client: "claude-code",
+    clientVersion: "1.0.0",
+    provider: "anthropic",
+    model: "m",
+    startCommit: "a".repeat(40),
+    endCommit: "b".repeat(40),
+    outPath: join(base, "out", "trace.ndjson"),
+    ...over,
+  });
+  return { base, homeDir, repoRoot, session, opts };
+}
+
+test("picks newest file and drops events before the marker", async () => {
+  const w = world();
+  const old = join(w.homeDir, ".claude", "projects", "p1", "old.jsonl");
+  writeFileSync(
+    old,
+    `${JSON.stringify({ type: "user", timestamp: "2026-11-22T00:00:00Z", message: { role: "user", content: `OLDER-FILE ${MARKER}` } })}\n`,
+  );
+  utimesSync(old, new Date(1000), new Date(1000));
+  const found = findSessionFile(MARKER, { homeDir: w.homeDir });
+  assert.equal(found?.path, w.session);
+  assert.equal(found?.client, "claude-code");
+  const res = await exportSession(w.opts());
+  assert.equal(res.source, "client-file");
+  const text = readFileSync(res.path, "utf8");
+  assert.ok(!text.includes("OLDER-FILE"));
+  assert.ok(!text.includes("EARLY-EVENT"));
+  const events = text
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((l) => JSON.parse(l));
+  assert.ok(events[0].text.includes(MARKER));
+  assert.ok(events.some((e) => e.text === "Please fix the bug"));
+});
+
+test("unknown record types and fields are dropped", async () => {
+  const w = world();
+  const text = readFileSync((await exportSession(w.opts())).path, "utf8");
+  for (const bad of [
+    "future-thing",
+    "FUTURE-BODY",
+    "LEAK-ME",
+    "LEAK-TOP",
+    "SECRET-THINKING",
+    "API-REQUEST-BODY",
+    "ATTACHMENT-BODY",
+  ])
+    assert.ok(!text.includes(bad), bad);
+  assert.ok(text.includes("Working on it"));
+});
+
+test("reads keep repo files only when tracked or written and not ignored", async () => {
+  const w = world();
+  const res = await exportSession(w.opts());
+  const events = readFileSync(res.path, "utf8")
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((l) => JSON.parse(l));
+  const results = events.filter((e) => e.kind === "tool_result");
+  const byText = (s) => results.find((e) => e.text === s);
+  assert.ok(byText("export const a = 1;"));
+  assert.ok(byText("[REDACTED:OUTSIDE_REPO]"));
+  assert.ok(byText("[REDACTED:SOURCE]"));
+  const text = JSON.stringify(events);
+  assert.ok(!text.includes("TOP-SECRET-OTHER"));
+  assert.ok(!text.includes("IGNORED-LOG-BODY"));
+  assert.equal(res.licence, "MIT");
+});
+
+test("codex reader keeps calls and outputs, drops reasoning", () => {
+  const lines = fixture("codex.jsonl", "/home/u/proj")
+    .split("\n")
+    .filter(Boolean);
+  const events = readCodex(lines, MARKER);
+  const text = JSON.stringify(events);
+  for (const bad of [
+    "SECRET-REASONING",
+    "EVENT-MSG-BODY",
+    "DEVELOPER-PROMPT",
+    "ENV-CONTEXT",
+    "TURN-CONTEXT-BODY",
+    "FUTURE-BODY",
+    "LEAK-ME",
+    "EARLY-EVENT",
+  ])
+    assert.ok(!text.includes(bad), bad);
+  assert.deepEqual(
+    events.map((e) => e.kind),
+    ["tool_result", "user", "assistant", "tool_call", "tool_result"],
+  );
+  assert.equal(events[3].tool, "shell");
+  assert.deepEqual(events[3].args.command, ["cat", "src/a.ts"]);
+  assert.equal(events[4].text, "export const a = 1;");
+  assert.equal(readCodex(lines, "slop-run:none").length, 0);
+});
+
+test("claude reader pairs read results with their file path", () => {
+  const lines = fixture("claude-code.jsonl", "/r").split("\n").filter(Boolean);
+  const events = readClaudeCode(lines, MARKER);
+  const reads = events.filter((e) => e.kind === "tool_result" && e.path);
+  assert.deepEqual(
+    reads.map((e) => e.path),
+    ["/r/src/a.ts", "/home/u/other/secret.txt", "/r/ignored.log"],
+  );
+});
+
+test("licence lookup failure counts as unlicensed", async () => {
+  const w = world();
+  const res = await exportSession(
+    w.opts({
+      fetchImpl: async () => {
+        throw new Error("offline");
+      },
+    }),
+  );
+  const [head, ...rest] = readFileSync(res.path, "utf8").trim().split("\n");
+  const header = JSON.parse(head);
+  assert.equal(header.licence, null);
+  assert.equal(header.repoFilesKept, false);
+  const body = rest.join("\n");
+  assert.ok(!body.includes("export const a = 1;"));
+  assert.ok(body.includes("[REDACTED:SOURCE]"));
+  assert.equal(await repoLicence("o/r", async () => ({ ok: false })), null);
+  assert.equal(
+    await repoLicence("o/r", async () => ({
+      ok: true,
+      json: async () => ({ license: { spdx_id: "NOASSERTION" } }),
+    })),
+    "NOASSERTION",
+  );
+});
+
+test("marker not found asks for fallback", async () => {
+  const w = world();
+  const res = await exportSession(w.opts({ marker: "slop-run:missing" }));
+  assert.equal(res.source, "fallback-needed");
+  assert.ok(!existsSync(w.opts().outPath));
+});
+
+test("header is first and counts match", async () => {
+  const w = world();
+  const res = await exportSession(w.opts());
+  const [head, ...rest] = readFileSync(res.path, "utf8").trim().split("\n");
+  const header = JSON.parse(head);
+  assert.equal(header.format, "slop-session-v1");
+  assert.equal(header.source, "client-file");
+  assert.equal(header.cleaner, CLEANER_VERSION);
+  assert.equal(header.repository, "o/r");
+  assert.equal(header.licence, "MIT");
+  assert.equal(header.repoFilesKept, true);
+  assert.equal(header.rules, "https://slop.cash/protocol/private-trace-v3.md");
+  assert.equal(header.startedAt, "2026-11-23T10:00:03Z");
+  assert.equal(header.endedAt, "2026-11-23T10:00:14Z");
+  assert.deepEqual(header.counts, res.counts);
+  const raw = readClaudeCode(
+    fixture("claude-code.jsonl", w.repoRoot).split("\n").filter(Boolean),
+    MARKER,
+  );
+  assert.equal(rest.length, raw.length);
+  assert.ok(header.counts.OUTSIDE_REPO >= 1 && header.counts.SOURCE >= 1);
 });
