@@ -12,6 +12,7 @@
   "include": [
     "src/lib/verified-*.ts",
     "src/lib/weighted-allocation.ts",
+    "src/lib/sponsored-pools-notice.ts",
     "tests/*.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
