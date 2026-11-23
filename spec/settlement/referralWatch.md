@@ -82,9 +82,9 @@ pure def withKeyed(entries: List[Keyed], key: int, amount: M::Amount): List[Keye
   else entries.append({ key: key, amount: amount })
 pure def capLeft(cap: M::Amount, used: M::Amount): M::Amount =
   if (M::compareAmounts(cap, used) > 0) M::subtractAmounts(cap, used) else M::zero
-pure def least(left: M::Amount, right: M::Amount): M::Amount = if (M::compareAmounts(left, right) <= 0) left else right
+pure def smallerAmount(left: M::Amount, right: M::Amount): M::Amount = if (M::compareAmounts(left, right) <= 0) left else right
 pure def replayAccrual(file: WatchedFile, r: Replay, x: WatchedAccrual): Replay =
-  val expected = least(x.computed, least(capLeft(file.projectCap, keyedAmount(r.projects, x.project)), capLeft(file.poolCap, r.pool)))
+  val expected = smallerAmount(x.computed, smallerAmount(capLeft(file.projectCap, keyedAmount(r.projects, x.project)), capLeft(file.poolCap, r.pool)))
   if (r.failure != NoFailure) r
   else if (x.obligation == "" or r.obligations.includes(x.obligation)) { ...r, failure: ObligationRepeated }
   else if (not(x.counted)) (if (M::equalAmounts(x.computed, M::zero) and M::equalAmounts(x.accrued, M::zero))
