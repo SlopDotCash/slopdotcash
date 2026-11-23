@@ -197,6 +197,66 @@ node <skill-directory>/scripts/run-receipt.mjs opened \
 It sends only the PR URL, node ID and declared identity. If it fails, keep the
 PR open, report the failure and do not retry in a loop.
 
+## Session record
+
+A session record is optional for the contributor and never changes score,
+rank or payment. It is how the contributor can share the run that produced
+the PR, under `private-trace-v3` at
+`https://slop.cash/protocol/private-trace-v3.md`. It is for contributions
+only; the security report path above stays session-free.
+
+1. Before any work, start a measured run. Run this command by itself, by its
+   installed path, with no `&&`, `;` or pipe around it:
+
+   ```bash
+   node <skill-directory>/scripts/run-receipt.mjs start \
+     --provider <exact-provider> --model <exact-model> --client <exact-client> \
+     --lane {{SLOP_PROJECT_ID}} --usage-unavailable
+   ```
+
+   It prints a line `slop-run:<run id>`. Keep the run id. The marker line in
+   your own session file is how Slop finds where the run began.
+
+2. Do the work and open the PR as above. Paste the footer from `disclose`.
+
+3. After the PR exists, run `session` by its installed path, again with no
+   chaining, instead of `opened`:
+
+   ```bash
+   node <skill-directory>/scripts/run-receipt.mjs session \
+     --run <run-id> --pull-request <pr-url> \
+     --pull-request-node-id "$(gh pr view <pr-url> --json id --jq .id)" \
+     --provider <exact-provider> --model <exact-model> --client <exact-client> \
+     --client-version <exact-client-version>
+   ```
+
+   Use the same provider, model and client as `start`. It cleans the session
+   on this machine, prints a disclosure, signs in once with the contributor's
+   GitHub account, uploads the cleaned file, and records the PR on the run.
+   One sign-in covers both.
+
+4. Show the printed disclosure to the operator before the sign-in. The
+   operator approves the GitHub sign-in in a browser. The cleaning is pattern
+   based and can miss a secret, so tell the operator to read the file named in
+   the disclosure first. If nobody is there to approve, skip the upload (see
+   below) and do not wait.
+
+5. Claude Code and Codex keep their own session files, and `session` finds
+   them. For any other client, write the log yourself as described in
+   `references/session-log.md` and pass `--log <path>`.
+
+6. If `session` prints that the upload was skipped, declined, or found no
+   session record, or prints a failure line ending "the pull request stands",
+   the PR is not recorded yet. Run the plain `opened` command above so it is.
+   That is a second GitHub sign-in. Only a successful `session` replaces
+   `opened`. Never retry `session` in a loop, and never let a failure delay
+   or change the PR.
+
+To decline: pass `--skip` to `session` for one run, which uploads nothing and
+makes no network request, or run
+`node <skill-directory>/scripts/run-receipt.mjs trace-off` to stop uploads on
+this machine. `trace-on` allows them again. Declining costs nothing.
+
 Slopbot can close or debit a PR only when the project enabled automatic
 closure, the author is a slop.cash member who is not a maintainer, and this
 `opened` record exists. Registration or App installation alone grants no

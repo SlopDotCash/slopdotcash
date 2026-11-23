@@ -2268,7 +2268,16 @@ describe("generated project skill installation", () => {
       },
     );
     expect(start.status, start.stderr).toBe(0);
-    expect(JSON.parse(start.stdout).runId).toBeTruthy();
+    const started = JSON.parse(start.stdout);
+    expect(started.runId).toBeTruthy();
+    expect(started.message).toContain(`slop-run:${started.runId}`);
+    for (const file of [
+      "scripts/session-export.mjs",
+      "references/session-log.md",
+    ])
+      expect(readFileSync(join(installedSkill, file)).length).toBeGreaterThan(
+        0,
+      );
     generatedAuthority(root);
 
     // Template selection is unrestricted; approved D1 policy still advances.
