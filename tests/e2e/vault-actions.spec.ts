@@ -2126,7 +2126,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("region", { name: "Setup status: Ready" }),
+      page.getByRole("region", { name: "Setup Ready", exact: true }),
     ).toBeVisible();
     await expect(
       page
