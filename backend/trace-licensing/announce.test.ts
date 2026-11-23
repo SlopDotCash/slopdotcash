@@ -121,3 +121,14 @@ test("the script's literal statement works without bindings and is idempotent", 
   h.sqlite.exec(sql);
   expect(h.notices().map((n) => n.id)).toEqual(["111"]);
 });
+
+test("an uploader with no points_members row is notified once", async () => {
+  const h = harness();
+  h.run("121");
+  h.run("121");
+  expect(h.count()).toBe(1);
+  await h.send();
+  await h.send();
+  expect(h.notices().map((n) => n.id)).toEqual(["121"]);
+  expect(h.count()).toBe(0);
+});

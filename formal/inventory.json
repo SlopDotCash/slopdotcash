@@ -336,7 +336,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "3c887ba58990b4ecae949c3ac708260f927338704c738b297a8aae85e496ef0d",
+      "sha256": "912bb8b6c15c8c411ebebd226eb319eb998317db89dfc64c53ff9917dfa4d064",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -349,7 +349,7 @@
       "candidateLines": [
         15, 30, 131, 139, 140, 166, 169, 178, 184, 197, 252, 281, 289, 298, 307,
         314, 328, 334, 348, 370, 377, 398, 430, 446, 454, 488, 513, 571, 587,
-        602, 634, 660, 689, 753, 770, 802, 805, 814, 825
+        602, 634, 660, 689, 753, 770, 796, 808, 811
       ],
       "review": "mapped-abstraction"
     },
