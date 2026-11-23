@@ -2224,6 +2224,68 @@ describe("durable private report controls", () => {
     expect(revoked.body.report).toBeUndefined();
   });
 
+  test("case and report lists check every registered project's GitHub authority at once", async () => {
+    const t = fixture();
+    required((await t.create("own-report", REPORTER)).body.submission);
+    // Projects without bounty terms whose cases put them in the list. Each
+    // one needs a live Slopbot read of the viewer's repository permission.
+    const extra = [
+      "registered-a",
+      "registered-b",
+      "registered-c",
+      "registered-d",
+    ];
+    for (const id of extra) {
+      const text = JSON.stringify(
+        applicationManifest(id, `example/${id}`, { status: "active" }),
+      );
+      const digest = createHash("sha256").update(text).digest("hex");
+      t.sqlite
+        .query(
+          "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Fixture',?)",
+        )
+        .run(id, text, digest, START);
+      t.sqlite
+        .query(
+          "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)",
+        )
+        .run(id, text, digest, START, START);
+      t.sqlite.exec("DROP TABLE IF EXISTS temp.copied_case");
+      t.sqlite.exec(
+        "CREATE TEMP TABLE copied_case AS SELECT * FROM security_cases LIMIT 1",
+      );
+      t.sqlite
+        .query("UPDATE temp.copied_case SET id = ?, project_id = ?")
+        .run(`sc_${id.replace("-", "_")}_fixture0001`, id);
+      t.sqlite.exec(
+        "INSERT INTO security_cases SELECT * FROM temp.copied_case",
+      );
+    }
+    let inFlight = 0;
+    let peak = 0;
+    let calls = 0;
+    t.deps.repositoryAccess = async () => {
+      calls += 1;
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      inFlight -= 1;
+      return { installation: "missing" as const };
+    };
+    const cases = await t.call(REPORTER, "GET", "security-cases");
+    expect(cases.status).toBe(200);
+    // One read per registered project, all in flight together: a slow
+    // GitHub answer costs one wait, not one wait per project.
+    expect(peak).toBe(extra.length);
+    expect(calls).toBe(extra.length);
+    peak = 0;
+    calls = 0;
+    const submissions = await t.call(REPORTER, "GET", "security-submissions");
+    expect(submissions.status).toBe(200);
+    expect(peak).toBe(extra.length);
+    expect(calls).toBe(extra.length);
+  });
+
   test("an authority outage preserves owned receipts and refuses inaccessible reports", async () => {
     const t = fixture();
     const own = required(
