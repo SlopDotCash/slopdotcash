@@ -649,6 +649,7 @@ const types: Record<string, ObjectType> = {
       pushedDate: scalar("DateTime", () => null),
       url: scalar("URI", ({ commit, repo }) => `${github}/${fullName(repo)}/commit/${commit.sha}`),
       commitUrl: scalar("URI", ({ commit, repo }) => `${github}/${fullName(repo)}/commit/${commit.sha}`),
+      repository: { type: "Repository", resolve: ({ repo }) => new Obj("Repository", repo) },
       additions: scalar("Int", ({ commit, repo }) => counts(repo, commit).additions),
       deletions: scalar("Int", ({ commit, repo }) => counts(repo, commit).deletions),
       changedFiles: scalar("Int", ({ commit, repo }) => counts(repo, commit).changed),
