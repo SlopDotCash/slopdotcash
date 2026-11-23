@@ -5,9 +5,9 @@ import {
 } from "../../src/lib/leaderboard-transport.mjs";
 import { expect, test } from "./fixtures";
 
-// Scale only the published-data deadline so the test uses native cancellation.
-const SCALED_DEADLINE_MS = 3_000;
-const SLOW_PART_RESPONSE_MS = 800;
+const STALLED_REQUEST_DEADLINE_MS = 3_000;
+const SLOW_REQUEST_DEADLINE_MS = 6_000;
+const SLOW_PART_DELAY_MS = 2_000;
 
 for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
   const broken = mode === "corrupted";
@@ -27,44 +27,48 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       diagnostics.allow(
         /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/cycles\/index\.json\?[^ ]*$/u,
       );
-    if (stalled) {
+    if (stalled || mode === "slow")
       await page.addInitScript(
         ([deadline, scaled]) => {
-          const fetch = window.fetch.bind(window);
           const timeout = AbortSignal.timeout.bind(AbortSignal);
           const any = AbortSignal.any.bind(AbortSignal);
-          const scaledSignals = new WeakMap<AbortSignal, AbortSignal>();
+          const browser: Window = window;
+          const fetchRequest = browser.fetch.bind(browser);
+          const publishedDeadlines = new WeakSet<AbortSignal>();
+
+          // Keep the native timeout and caller cancellation. Only shorten an
+          // existing published-data deadline for the snapshot transport.
           AbortSignal.timeout = (ms) => {
             const signal = timeout(ms);
-            if (ms === deadline) scaledSignals.set(signal, timeout(scaled));
+            if (ms === deadline) publishedDeadlines.add(signal);
             return signal;
           };
           AbortSignal.any = (signals) => {
-            const signal = any(signals);
-            const replacements = signals.map(
-              (item) => scaledSignals.get(item) ?? item,
-            );
-            if (replacements.some((item, index) => item !== signals[index]))
-              scaledSignals.set(signal, any(replacements));
-            return signal;
+            const combined = any(signals);
+            if (signals.some((signal) => publishedDeadlines.has(signal)))
+              publishedDeadlines.add(combined);
+            return combined;
           };
-          // Only test parts use the shortened version of their real signal.
-          // A shared deadline stays shared, and unrelated requests keep theirs.
-          window.fetch = (input, init) => {
-            const signal = init?.signal && scaledSignals.get(init.signal);
+          browser.fetch = (input, init) => {
+            const signal = init?.signal;
             if (
-              signal &&
               typeof input === "string" &&
-              input.startsWith("/data/leaderboard/") &&
-              input.endsWith(".part")
+              /^\/data\/leaderboard(?:\.json\?|\/[^/]+\.part$)/u.test(input) &&
+              signal &&
+              publishedDeadlines.has(signal)
             )
-              return fetch(input, { ...init, signal });
-            return fetch(input, init);
+              return fetchRequest(input, {
+                ...init,
+                signal: any([signal, timeout(scaled)]),
+              });
+            return fetchRequest(input, init);
           };
         },
-        [PUBLISHED_DATA_DEADLINE_MS, SCALED_DEADLINE_MS] as const,
+        [
+          PUBLISHED_DATA_DEADLINE_MS,
+          stalled ? STALLED_REQUEST_DEADLINE_MS : SLOW_REQUEST_DEADLINE_MS,
+        ] as const,
       );
-    }
     await page.route("https://avatars.githubusercontent.com/**", (route) =>
       route.fulfill({
         contentType: "image/svg+xml",
@@ -84,12 +88,10 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
       if (stalled) return;
       const bytes = chunks.get(new URL(route.request().url()).pathname);
       if (!bytes) throw new Error("Unexpected snapshot part");
-      // Keep the existing successful slow-part timing outside the stalled
-      // fixture's shortened deadline.
+      // Each response meets the scaled per-request deadline. The four
+      // sequential responses take longer than that deadline in total.
       if (mode === "slow")
-        await new Promise((resolve) =>
-          setTimeout(resolve, SLOW_PART_RESPONSE_MS),
-        );
+        await new Promise((resolve) => setTimeout(resolve, SLOW_PART_DELAY_MS));
       await route.fulfill({
         body: broken ? Buffer.from("changed") : Buffer.from(bytes),
         contentType: "text/plain; charset=utf-8",
@@ -137,7 +139,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         .poll(() => partReads, { timeout: 15_000 })
         .toBeGreaterThan(1);
       await expect(page.locator("main.profile-page")).toBeVisible({
-        timeout: 10_000,
+        timeout: mode === "slow" ? 20_000 : 10_000,
       });
       if (mode === "slow") {
         expect(rootReads).toBe(1);
