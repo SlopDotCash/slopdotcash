@@ -149,11 +149,12 @@ uploading client showed.
 
 ### Status
 
-Licensing is not available yet. No account can turn it on, and no trace is
-licensed, exported or sold. The skills still offer upload under version 1.
-This section takes effect for a trace only when a client shows it before
-upload, and licensing takes effect only when the account setting described
-below exists and the contributor turns it on.
+Licensing is available from your account settings (`/account#trace-licensing`).
+It is off until you turn it on. No trace has been sold or exported. Sales
+start only when Slop has a buyer and the credential scan exists. The skills
+still offer upload under version 1. This section takes effect for a trace only
+when a client shows it before upload, and licensing takes effect only for a
+contributor who has turned the account setting on.
 
 ### Consent and default upload
 
@@ -171,11 +172,22 @@ does not upload an agent trace.
 ### Licensing for pay
 
 Licensing is a separate yes. A contributor turns it on in their Slop account
-setting and can turn it off at any time. It covers each trace the contributor
-uploads under this version while the setting is on. A trace uploaded under version 1
-is licensed only when the contributor opts that trace in explicitly, one by
-one. Turning the setting off stops every future sale of that contributor's
-traces; copies already sold stay sold.
+setting, after ticking one confirmation that the terms of the model provider
+used in each run allow them to license that run's output, and can turn it off
+at any time. Slop records when the setting was turned on or off, which terms
+were shown and that the confirmation was ticked. The setting is off by
+default. It covers each trace the contributor uploads under this version while
+the setting is on. Any of the contributor's traces not already licensed,
+including version 1 traces and traces uploaded while the setting was off, is
+licensed only when the contributor opts it in explicitly, trace by trace or
+every listed trace at once after seeing the list and its count; if the count
+changed in the meantime, nothing is licensed and the list is shown again.
+Opting in is possible only while the setting is on. Turning the setting off
+withdraws every unsold licence and stops every future sale of that
+contributor's traces; copies already sold stay sold. Closing the account
+withdraws every unsold licence and turns the setting off; reopening the
+account restores neither. An account under a participation ban cannot turn
+licensing on or opt a trace in, and the licences it already holds stay.
 
 Only a trace joined to a merged or closed pull request whose outcome Slop has
 recorded may be offered. Slop licenses traces to AI model developers and to
@@ -242,9 +254,9 @@ not claim that pattern matching removes every secret.
 ### Storage, access, and retention
 
 The trace body is stored as one immutable, content-addressed object in a
-private R2 bucket. D1 stores its digest, size, media type, actor and run
-joins, upload progress, and access-audit metadata, but not the body. It will
-also store the terms version once consent records ship.
+private R2 bucket. D1 stores its digest, size, media type, terms version, actor and run
+joins, upload progress, licensing state and history, and access-audit
+metadata, but not the body.
 Public GitHub and Slop artifacts contain only safe run metadata, the digest,
 and immutable upload identity.
 

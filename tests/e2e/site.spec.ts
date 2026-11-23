@@ -1752,12 +1752,17 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContractV2).toContain(
     "# Private trace privacy contract v2",
   );
-  expect(privateTraceContractV2).toContain("Licensing is not available yet");
+  expect(privateTraceContractV2).toContain(
+    "Licensing is available from your account settings",
+  );
+  expect(privateTraceContractV2).toContain("every listed trace at once");
+  expect(privateTraceContractV2).toContain(
+    "Closing the account\nwithdraws every unsold licence",
+  );
+  expect(privateTraceContractV2).not.toContain("Licensing is not available");
   expect(privateTraceContractV2).toContain("50% of what the buyer pays");
   expect(privateTraceContractV2).toContain("while the setting is on");
-  expect(privateTraceContractV2).toContain(
-    "also store the terms version once consent records ship",
-  );
+  expect(privateTraceContractV2).not.toContain("once consent records ship");
   expect(privateTraceContractV2).toContain("Retention is permanent");
   expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
   expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
