@@ -959,6 +959,22 @@ async function listCases(
   const all = await programs(deps);
   const currentRoles = new Map<string, Set<Role>>();
   let authorityUnavailable = false;
+  // Every project without bounty terms needs a live GitHub permission read.
+  // Start them together: one after another, they cost a GitHub round trip
+  // per project for every viewer, and the browser abandons the list after
+  // 15 seconds. The case loop below reuses each result.
+  const authorities = new Map<string, Promise<boolean>>();
+  for (const [id, manifest] of all)
+    if (!manifest.securityBounty) {
+      const read = repositoryReportingAuthority(
+        deps.repositoryAccess,
+        manifest,
+        actor,
+      );
+      // Awaited below; this only keeps a failure from going unhandled first.
+      read.catch(() => undefined);
+      authorities.set(id, read);
+    }
   for (const [id, manifest] of all) {
     const roles = programRoles(
       manifest.securityBounty,
@@ -967,16 +983,10 @@ async function listCases(
     );
     // A moderator's role belongs to an escalated case, not its whole project.
     roles.delete("dispute");
-    if (!manifest.securityBounty) {
+    const read = authorities.get(id);
+    if (read) {
       try {
-        if (
-          await repositoryReportingAuthority(
-            deps.repositoryAccess,
-            manifest,
-            actor,
-          )
-        )
-          roles.add("security-maintainer");
+        if (await read) roles.add("security-maintainer");
       } catch (error) {
         if (!reportingAuthorityUnavailable(error)) throw error;
         authorityUnavailable = true;
@@ -1006,8 +1016,13 @@ async function listCases(
   // Every per-case read of the list, in a fixed number of statements: one list
   // request used to cost six D1 round trips per visible case.
   const projects = new Map<string, CaseContext["project"]>();
-  for (const projectId of new Set(rows.map((row) => row.project_id)))
-    projects.set(projectId, await currentReportingProject(deps, projectId));
+  const rowProjectIds = [...new Set(rows.map((row) => row.project_id))];
+  const reportingProjects = await Promise.all(
+    rowProjectIds.map((projectId) => currentReportingProject(deps, projectId)),
+  );
+  rowProjectIds.forEach((projectId, index) =>
+    projects.set(projectId, reportingProjects[index]),
+  );
   const triagerIds = new Set<string>();
   for (const part of chunked(rows.map((row) => row.id))) {
     const found = await deps.db
@@ -1021,7 +1036,6 @@ async function listCases(
     for (const row of found.results ?? []) triagerIds.add(row.case_id);
   }
   // One remote authority read per project, not per case.
-  const authorities = new Map<string, Promise<boolean>>();
   const authority = (projectId: string) => () => {
     let read = authorities.get(projectId);
     if (!read) {

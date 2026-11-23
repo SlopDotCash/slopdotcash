@@ -1084,6 +1084,12 @@ export async function listStoredSubmissions(
     }
     return result;
   };
+  // Start every live GitHub permission read together; the loop below awaits
+  // each memoized result in order. One after another, they cost a GitHub
+  // round trip per project before the list can answer.
+  for (const { id, manifest } of manifests)
+    if (!(JSON.parse(manifest) as ProjectDefinition).securityBounty)
+      authorityFor(id).catch(() => undefined);
   const projects: string[] = [];
   let authorityUnavailable = false;
   for (const { id } of manifests) {
