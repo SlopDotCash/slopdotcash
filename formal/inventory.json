@@ -9683,7 +9683,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "b7e9765eacce480d4bfb9c0b17b77ad2c5c79e66edaa4579bf80ac06673a22f2",
+      "sha256": "24deaa5b5d0edacbf54667dfa54de7f10b68d6c5b1b68565b3a149c70ebc9e40",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
@@ -9699,13 +9699,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 170, 285, 300, 309, 319, 322, 514, 668, 847, 876, 886, 1021, 1026,
-        1031, 1033, 1036, 1038, 1039, 1050, 1053, 1055, 1112, 1113, 1115, 1116,
-        1132, 1138, 1189, 1217, 1218, 1226, 1231, 1332, 1334, 1354, 1373, 1456,
-        1461, 1619, 1741, 1754, 1755, 1792, 1809, 1812, 1813, 1976, 1981, 2043,
-        2056, 2061, 2068, 2069, 2073, 2074, 2082, 2098, 2155, 2308, 2368, 2374,
-        2385, 2411, 2441, 2466, 2474, 2497, 2502, 2578, 2579, 2629, 2664, 2715,
-        2860, 3131, 3206, 3393, 3404, 3412, 3510, 3511, 3551, 3601, 3615, 3631
+        3, 170, 285, 300, 309, 319, 322, 521, 675, 854, 883, 893, 1028, 1033,
+        1038, 1040, 1043, 1045, 1046, 1057, 1060, 1062, 1119, 1120, 1122, 1123,
+        1139, 1145, 1196, 1224, 1225, 1233, 1238, 1339, 1341, 1361, 1380, 1463,
+        1468, 1626, 1748, 1761, 1762, 1799, 1816, 1819, 1820, 1983, 1988, 2050,
+        2063, 2068, 2075, 2076, 2080, 2081, 2089, 2105, 2162, 2315, 2375, 2381,
+        2392, 2418, 2448, 2473, 2481, 2504, 2509, 2585, 2586, 2636, 2671, 2722,
+        2867, 3138, 3213, 3400, 3411, 3419, 3517, 3518, 3558, 3608, 3622, 3638
       ],
       "review": "mapped-abstraction"
     },
@@ -17865,7 +17865,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_submission_evidence.qnt",
-      "sha256": "8641b17053a6577d07b3bc955cc32d6b93ddfe1ac3b0e819425479a23be4f0f9",
+      "sha256": "7a52a9b48180a7b9038506c9bef018e0142c17e98a63288fffe55cb8b67dea3b",
       "sources": [
         "workers/slopbot/contracts.ts",
         "workers/slopbot/penalties.ts",
@@ -17879,6 +17879,8 @@
         "nonUiScreenshotsCannotCloseTest",
         "optOutCannotCloseTest",
         "screenshotsAddedBeforeCloseTest",
+        "targetGuideUnavailableCannotCloseTest",
+        "targetTipMovedBeforeCloseTest",
         "unrequestedScreenshotsCannotCloseTest",
         "unsignedCannotCloseTest"
       ]
