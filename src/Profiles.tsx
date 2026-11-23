@@ -2,7 +2,11 @@ import { ExternalLink, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useState } from "react";
 import { ChainIcon } from "./ChainIcon";
 import { Link } from "./Link";
-import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
+import {
+  fetchWithDeadline,
+  PUBLISHED_DATA_DEADLINE_MS,
+  readBoundedJson,
+} from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -40,10 +44,11 @@ import {
 
 async function loadProfiles(signal: AbortSignal) {
   // Reuse stored bytes only after the server revalidates the identity directory.
-  const response = await fetchWithDeadline("/data/profiles.json", {
-    signal,
-    cache: "no-cache",
-  });
+  const response = await fetchWithDeadline(
+    "/data/profiles.json",
+    { signal, cache: "no-cache" },
+    PUBLISHED_DATA_DEADLINE_MS,
+  );
   if (!response.ok) throw Error("Profiles unavailable");
   const index = await readBoundedJson(response, 8 * 1024 * 1024, "profiles");
   assertProfiles(index);

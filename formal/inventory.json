@@ -194,9 +194,12 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "f23a3e2a61929b034c34c3fc97e90a19f347a43fa75486b41efa69eb5881fb4e",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 164, 165, 168, 173],
+      "sha256": "27fa0462af4d9e883b09b6e46fd6583c123c2993d13098714d23302a582fa5f3",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [53, 58, 62, 63, 72, 74, 101, 107, 159, 160, 163, 168],
       "review": "mapped-abstraction"
     },
     {
@@ -5008,13 +5011,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "41f7e0e8479cfc5bdc9409ab5111b9aaf3eb7d0dfc3a3693d715d30b1a1b5753",
+      "sha256": "c77f3f3f3bdbb9f60e14f41b833036466790381accc08009f1c3fce9b43b2133",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/release/release_publication.qnt",
         "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [226, 271, 337],
+      "candidateLines": [227, 272, 338],
       "review": "mapped-abstraction"
     },
     {
@@ -5504,9 +5507,12 @@
     },
     {
       "path": "scripts/run-vetting-controller.ts",
-      "sha256": "accc465ec0ead5270ff90d1f4a45c5cdc058c706189063bd02838be027450dba",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [3, 53, 134, 135],
+      "sha256": "1c343ba37f10ceece683a54054c795f0c4d0e9cf5ef1dbeebefef7c2b6996345",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_runner_equivalence.qnt"
+      ],
+      "candidateLines": [3, 58, 127, 148, 151, 153, 186, 187],
       "review": "mapped-abstraction"
     },
     {
@@ -5734,6 +5740,13 @@
       "sha256": "2dfb4d302bc438d7a4e059c5c31416045c31499ff7bedf132253e1cd74adc4d4",
       "models": ["formal/models/release/deployment_probe.qnt"],
       "candidateLines": [4, 6, 29, 42, 44, 47, 51],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/vetting-runner-equivalence.ts",
+      "sha256": "cdb7d43e053b373a898567c5c2b6d44d538da6b23bd9b17ba4002ae77b646cc3",
+      "models": ["formal/models/vetting/vetting_runner_equivalence.qnt"],
+      "candidateLines": [141, 152, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -6274,7 +6287,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "c889ed5c27e823d92cd9ee867e475c6cfc48a3439df23eee4d8b422e9e93b052",
+      "sha256": "b7ab3f6ac388b75be351d1203bd6a2dc8383d6e6987acbe49c888b80f4cb0df8",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -6286,19 +6299,20 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        20, 25, 96, 113, 114, 115, 117, 123, 133, 142, 145, 153, 156, 158, 160,
-        161, 177, 179, 229, 230, 231, 234, 235, 236, 237, 254, 260, 267, 275,
-        285, 292, 299, 313, 333, 350, 369, 370, 375, 399, 402, 403, 404, 405,
-        406, 408, 409, 426, 508, 509, 510, 512, 514, 515, 522, 523, 537, 539,
-        541, 543, 545, 548, 549, 553, 555, 557, 567, 568, 573, 575, 587, 588,
-        615, 619, 620, 630, 631, 642, 644, 651, 652, 671, 677, 703, 704, 705,
-        706, 709, 719, 744, 793, 806, 811, 820, 886, 906, 912, 921, 927, 932,
-        934, 937, 943, 944, 955, 964, 972, 974, 983, 986, 987, 988, 989, 991,
-        992, 995, 996, 1007, 1040, 1044, 1101, 1102, 1172, 1182, 1187, 1205,
-        1207, 1209, 1212, 1213, 1214, 1216, 1284, 1288, 1390, 1391, 1392, 1422,
-        1423, 1464, 1465, 1466, 1468, 1475, 1477, 1481, 1483, 1485, 1494, 1495,
-        1501, 1507, 1512, 1521, 1522, 1523, 1524, 1527, 1528, 1530, 1535, 1536,
-        1539, 1540, 1542, 1548, 1554, 1555, 1556, 1557, 1560, 1561, 1569, 1581
+        20, 25, 97, 126, 127, 128, 130, 136, 146, 155, 158, 166, 169, 171, 173,
+        174, 195, 197, 253, 254, 255, 258, 259, 260, 261, 278, 284, 291, 299,
+        309, 316, 323, 337, 357, 374, 393, 394, 399, 423, 426, 427, 428, 429,
+        430, 432, 433, 450, 541, 542, 543, 545, 547, 548, 555, 556, 570, 572,
+        574, 576, 578, 581, 582, 586, 588, 590, 600, 601, 606, 608, 620, 621,
+        648, 652, 653, 663, 664, 675, 677, 684, 685, 704, 710, 736, 737, 738,
+        739, 742, 752, 777, 826, 839, 844, 853, 919, 939, 945, 954, 960, 965,
+        967, 970, 976, 977, 988, 997, 1005, 1007, 1016, 1019, 1020, 1021, 1022,
+        1024, 1025, 1028, 1029, 1040, 1073, 1077, 1134, 1135, 1205, 1215, 1220,
+        1238, 1240, 1242, 1245, 1246, 1247, 1249, 1317, 1321, 1423, 1424, 1425,
+        1455, 1456, 1497, 1498, 1499, 1501, 1508, 1510, 1514, 1516, 1518, 1527,
+        1528, 1534, 1540, 1545, 1554, 1555, 1556, 1557, 1560, 1561, 1563, 1568,
+        1569, 1572, 1573, 1575, 1581, 1587, 1588, 1589, 1590, 1593, 1594, 1602,
+        1614
       ],
       "review": "mapped-abstraction"
     },
@@ -6379,16 +6393,16 @@
     },
     {
       "path": "src/Profiles.tsx",
-      "sha256": "74f4acd60f1b7370154057054f521255f18b9faa12db0e6c65d4ef409b119926",
+      "sha256": "2b2b9dfef893ca469acc548d426300b34b6fe262ba99ca37d332962be9f28194",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        2, 62, 63, 70, 76, 77, 79, 84, 107, 109, 110, 120, 138, 139, 144, 145,
-        146, 152, 153, 158, 159, 160, 165, 234, 246, 248, 251, 267, 271, 310,
-        317, 371, 384, 409, 414, 415, 417, 418, 424, 425, 435
+        2, 67, 68, 75, 81, 82, 84, 89, 112, 114, 115, 125, 143, 144, 149, 150,
+        151, 157, 158, 163, 164, 165, 170, 239, 251, 253, 256, 272, 276, 315,
+        322, 376, 389, 414, 419, 420, 422, 423, 429, 430, 440
       ],
       "review": "mapped-abstraction"
     },
@@ -6856,13 +6870,13 @@
     },
     {
       "path": "src/lib/browser-json.ts",
-      "sha256": "90a4b15cb147de6233eea8f7675dcab703d066032cbc997cf105e7a940d1527e",
+      "sha256": "d44178ff3b6bf5e9ca8bf443ab1a8ba52d7662924fdce7e4079b701883612619",
       "models": [
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_transport.qnt",
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
-      "candidateLines": [1, 99],
+      "candidateLines": [8, 110],
       "review": "mapped-abstraction"
     },
     {
@@ -6938,13 +6952,13 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "sha256": "240b4a48f1e79642b28d1b395b2c1ba8e28bfbcd5580cd6230bf8c07463884d1",
+      "sha256": "453070c70b55eadb742b1dbd75932b698858913e7e24e1439aa4c1e22a38b5a7",
       "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "candidateLines": [
-        64, 98, 392, 423, 424, 574, 603, 604, 606, 607, 616, 617, 619, 670, 746,
-        752, 759, 761, 762, 767, 769, 771, 777, 827, 828, 840, 850, 851, 852,
-        853, 856, 858, 861, 866, 872, 878, 882, 885, 889, 891, 893, 900, 909,
-        915, 918, 921, 923, 934, 940, 952, 998
+        68, 102, 396, 427, 428, 578, 607, 608, 610, 611, 620, 621, 623, 674,
+        750, 756, 763, 765, 766, 771, 773, 775, 781, 831, 832, 844, 854, 855,
+        856, 857, 860, 862, 865, 870, 876, 882, 886, 889, 893, 895, 897, 904,
+        913, 919, 922, 925, 927, 938, 944, 956, 1002
       ],
       "review": "mapped-abstraction"
     },
@@ -8160,15 +8174,15 @@
     },
     {
       "path": "src/lib/use-snapshot.ts",
-      "sha256": "a6432218cb3714481c11e53622197d11ea46392131782b7faa412f4c9a629b25",
+      "sha256": "c87adb83b33efae45f05602603d41c5c6ebcb36d415dfa04f5bc0b3891907d99",
       "models": [
         "formal/models/ui/ui_resources.qnt",
         "formal/models/ui/ui_snapshot_cache.qnt",
         "formal/models/ui/ui_time_boundary.qnt"
       ],
       "candidateLines": [
-        1, 27, 28, 30, 41, 57, 70, 75, 88, 97, 123, 125, 129, 137, 147, 152,
-        165, 182, 190, 192, 193, 196, 203, 216, 218, 229, 230, 234
+        1, 31, 32, 34, 45, 61, 74, 79, 93, 103, 129, 131, 135, 143, 153, 158,
+        171, 188, 196, 198, 199, 202, 209, 222, 224, 235, 236, 240
       ],
       "review": "mapped-abstraction"
     },
@@ -22619,6 +22633,22 @@
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",
         "unknownRetryStaysUnknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_runner_equivalence.qnt",
+      "sha256": "f9240ca4367837865433402503ee4c3b3d9cb5a6c0ecd2b2f3080eed57596112",
+      "sources": [
+        ".github/workflows/vetting-controller.yml",
+        "scripts/run-vetting-controller.ts",
+        "scripts/vetting-runner-equivalence.ts"
+      ],
+      "scenarios": [
+        "laterUnrelatedMergeRunsTest",
+        "sameCommitRunsTest",
+        "scannerChangeWaitsForReleaseTest",
+        "unreadableCompareRefusesTest",
+        "unrelatedMergeAfterScannerReleaseRunsTest"
       ]
     },
     {
