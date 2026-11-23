@@ -4,20 +4,18 @@ import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { shareImplementationPoints } from "../src/lib/implementation-allocation";
-import {
-  assertLeaderboardSnapshot,
-  type LeaderboardSnapshot,
-} from "../src/lib/leaderboard";
+import type { LeaderboardSnapshot } from "../src/lib/leaderboard";
 import {
   appendPointAwards,
-  applyPointsSnapshot,
   assertPointsJournal,
   assertPointsJournalExtension,
   latestPoints,
   OCTOBER_DUPLICATE_RETIREMENT_DECISION,
   OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+  type PointRevision,
   type PointsJournal,
   pointKey,
+  VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION,
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
@@ -29,6 +27,14 @@ import { sha256Hex } from "../src/lib/sha256";
 import { VALUE_TIERS } from "../src/lib/value-assessment";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
+import {
+  assertHistoricalNetOutcome,
+  type HistoricalNetOutcome,
+} from "./historical-net-outcome";
+import {
+  projectHistoricalValueChanges,
+  type VerifiedClosedReviews,
+} from "./historical-value-replay";
 import { pointProtectionQuery } from "./points-protection-sql";
 
 /** An earlier PR's accepted squash is kept separately from its submitted history. */
@@ -71,6 +77,18 @@ function retainedCommit(raw: string, sha: string) {
   return { tree, parents };
 }
 
+export const HISTORICAL_POINTS_AUDIT_WINDOW = {
+  from: "2026-09-27T00:00:00.000Z",
+  through: "2026-11-01T00:00:00.000Z",
+} as const;
+
+export interface HistoricalReplayReference {
+  runId: number;
+  attempt: number;
+  artifactId: number;
+  qualificationSha256: string;
+}
+
 export interface HistoricalPointsPacket {
   schemaVersion: "1";
   projectId: string;
@@ -96,6 +114,7 @@ export interface HistoricalPointsPacket {
   };
   valueSnapshot: LeaderboardSnapshot | null;
   valueKeys: string[];
+  replayQualification?: HistoricalReplayReference;
   corrections: PointsImplementationCorrectionManifest;
   recipientCorrections: {
     sourceId: string;
@@ -137,9 +156,26 @@ export interface HistoricalPointsPacket {
       }[];
     };
     earlierSources: CorrectionSource[];
+    /** Complete native first-parent output composed solely of retained earlier awards. */
+    netOutcome?: HistoricalNetOutcome;
+    /** The later PR repeats the complete earlier accepted first-parent diff. */
+    identicalAcceptedChange?: {
+      earlierSourceId: string;
+      earlierMergeSha: string;
+      mergeSha: string;
+      diffSha256: string;
+      /** The later head is the exact earlier accepted merge and adds no members. */
+      carriedAcceptance?: true;
+      /** The later squash is empty and its parent already contains the change. */
+      emptySquash?: true;
+      /** The recorded branch kept the carrier's identical native merge edge. */
+      survivingCarrier?: true;
+    };
     /** Complete native commit membership already accepted before this promotion. */
     earlierAcceptanceProof?: {
       commits: { sha: string; sourceId: string }[];
+      /** Earlier GitHub acceptance objects carried as submitted merges. */
+      acceptedMergeEdges?: { sha: string; earlierSourceId: string }[];
       sourceBaseSha: string;
       objects: { sha: string; raw: string }[];
       contextSources: {
@@ -183,6 +219,26 @@ export interface HistoricalPointsPacket {
   }[];
 }
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
+export function matchesCarriedAcceptance(
+  source: CorrectionSource,
+  earlier: CorrectionSource,
+  mergeSha: string,
+): boolean {
+  const members = new Set(source.commits.map(({ sha }) => sha));
+  return (
+    source.headSha === mergeSha &&
+    source.commits.length === earlier.commits.length + 1 &&
+    members.size === source.commits.length &&
+    !earlier.commits.some(({ sha }) => sha === mergeSha) &&
+    earlier.commits.every(({ sha }) => members.has(sha)) &&
+    source.commits.some(
+      ({ sha, parentCount, parentShas }) =>
+        sha === mergeSha &&
+        parentCount === 2 &&
+        parentShas?.[1] === earlier.headSha,
+    )
+  );
+}
 function check(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
 }
@@ -209,7 +265,10 @@ export function decodeHistoricalPacketBytes(
   ) as HistoricalPointsPacket;
   check(
     Object.keys(packet)
-      .filter((key) => key !== "duplicateRetirements")
+      .filter(
+        (key) =>
+          key !== "duplicateRetirements" && key !== "replayQualification",
+      )
       .sort()
       .join(",") ===
       "baselineDigest,baselineRevisionCount,candidateDigest,corrections,manifestSha256,producerGithubId,projectId,recipientCorrections,reviewedAt,reviewerGithubId,revision,schemaVersion,sourceAudit,valueKeys,valueSnapshot",
@@ -250,6 +309,21 @@ export function decodeHistoricalPacketBytes(
       packet.baselineRevisionCount >= 0,
     "Invalid baseline count",
   );
+  if (packet.replayQualification !== undefined) {
+    const replay = packet.replayQualification;
+    check(
+      replay &&
+        typeof replay === "object" &&
+        Object.keys(replay).sort().join(",") ===
+          "artifactId,attempt,qualificationSha256,runId" &&
+        [replay.runId, replay.attempt, replay.artifactId].every(
+          (value) => Number.isSafeInteger(value) && value > 0,
+        ) &&
+        typeof replay.qualificationSha256 === "string" &&
+        /^[a-f0-9]{64}$/u.test(replay.qualificationSha256),
+      "Invalid reviewed replay qualification",
+    );
+  }
   const audit = packet.sourceAudit;
   check(
     typeof audit?.repository === "string" &&
@@ -259,8 +333,8 @@ export function decodeHistoricalPacketBytes(
     "Invalid audit repository",
   );
   check(
-    audit.from === "2026-09-27T00:00:00.000Z" &&
-      audit.through === "2026-11-01T00:00:00.000Z",
+    audit.from === HISTORICAL_POINTS_AUDIT_WINDOW.from &&
+      audit.through === HISTORICAL_POINTS_AUDIT_WINDOW.through,
     "Incomplete historical window",
   );
   check(
@@ -303,6 +377,8 @@ export function reconstructHistoricalPoints(
   baseline: PointsJournal,
   now: string,
   bans: ReadonlyMap<string, string>,
+  verifiedDuplicateChanges: ReadonlySet<string> = new Set(),
+  closedReviews?: VerifiedClosedReviews,
 ): PointsJournal {
   assertPointsJournal(baseline);
   check(
@@ -316,64 +392,24 @@ export function reconstructHistoricalPoints(
   );
   let valued = baseline;
   if (packet.valueSnapshot) {
-    assertLeaderboardSnapshot(packet.valueSnapshot);
-    check(
-      packet.valueSnapshot.valuePolicyEffectiveAt ===
-        "2026-09-01T00:00:00.000Z" &&
-        packet.valueSnapshot.window.from === packet.sourceAudit.from &&
-        packet.valueSnapshot.window.to === packet.sourceAudit.through,
-      "Historical value snapshot has another window",
-    );
-    const coverage = packet.valueSnapshot.valueAssessmentCoverage ?? [];
-    check(
-      coverage.length === packet.sourceAudit.sources.length &&
-        coverage.every(
-          (row) =>
-            packet.sourceAudit.sources.some(
-              (source) =>
-                source.id === row.pullRequestId &&
-                source.number === row.pullRequestNumber,
-            ) &&
-            row.repository.toLowerCase() ===
-              packet.sourceAudit.repository.toLowerCase(),
-        ),
-      "Snapshot omits audited sources",
-    );
-    const all = applyPointsSnapshot(
+    const { rows, snapshotDigest } = projectHistoricalValueChanges(
+      packet,
       baseline,
       packet.valueSnapshot,
-      hash(packet.valueSnapshot),
-      packet.valueSnapshot.generatedAt,
+      closedReviews,
     );
-    const latest = latestPoints(all);
-    const prior = latestPoints(baseline);
-    const eligibleKeys = [...latest.values()]
-      .filter(
-        (row) =>
-          row.id !== prior.get(row.award.key)?.id &&
-          row.award.projectId === packet.projectId &&
-          row.award.occurredAt >= packet.sourceAudit.from &&
-          row.award.occurredAt < packet.sourceAudit.through &&
-          row.decision?.sourceId.startsWith("value:"),
-      )
-      .map((row) => row.award.key);
+    const byKey = new Map(rows.map((row) => [row.award.key, row]));
     check(
-      eligibleKeys.length === packet.valueKeys.length &&
-        eligibleKeys.every((key) => packet.valueKeys.includes(key)),
+      byKey.size === packet.valueKeys.length &&
+        new Set(packet.valueKeys).size === byKey.size &&
+        packet.valueKeys.every((key) => byKey.has(key)),
       "Reviewed values omit or add an assessed change",
     );
     const selected = packet.valueKeys.map((key) => {
-      const row = latest.get(key);
+      const row = byKey.get(key);
       check(row !== undefined, "Missing reviewed value award");
       check(
-        row.decision?.sourceId.startsWith("value:"),
-        "Missing reviewed value decision",
-      );
-      check(
-        row.award.projectId === packet.projectId &&
-          row.award.occurredAt >= packet.sourceAudit.from &&
-          row.award.occurredAt < packet.sourceAudit.through &&
-          row.award.category !== "payout-received",
+        row.award.category !== "payout-received",
         "Value award exceeds reviewed scope",
       );
       return row;
@@ -381,7 +417,7 @@ export function reconstructHistoricalPoints(
     valued = appendPointAwards(
       baseline,
       selected.map((r) => r.award),
-      hash(packet.valueSnapshot),
+      snapshotDigest,
       packet.valueSnapshot.ruleVersion,
       packet.valueSnapshot.generatedAt,
       new Map(
@@ -608,9 +644,8 @@ export function reconstructHistoricalPoints(
     (packet.duplicateRetirements ?? []).map((item) => item.sourceId),
   );
   const latestBaseline = latestPoints(baseline);
-  const rewardedAwards = [...latestPoints(result).values()].map(
-    (row) => row.award,
-  );
+  const rewarded = [...latestPoints(result).values()];
+  const rewardedAwards = rewarded.map((row) => row.award);
   const validatedRetirements = new Map<string, string>();
   for (const retirement of packet.duplicateRetirements ?? []) {
     const unitKey = JSON.stringify([
@@ -661,6 +696,138 @@ export function reconstructHistoricalPoints(
             item.occurredAt <= source.occurredAt,
           "Duplicate coverage is not an earlier accepted source",
         );
+    }
+    const netOutcome = retirement.netOutcome;
+    if (netOutcome !== undefined) {
+      assertHistoricalNetOutcome(netOutcome, source);
+      check(
+        retirement.earlierSources.length === 0 &&
+          retirement.coverage.length === 0 &&
+          retirement.identicalAcceptedChange === undefined &&
+          retirement.earlierAcceptanceProof === undefined &&
+          retirement.unchangedPromotion === undefined &&
+          retirement.acceptedSquashes === undefined &&
+          retirement.acceptedPromotion === undefined &&
+          verifiedDuplicateChanges.has(hash(retirement)),
+        "Net outcome must be the exclusive trusted native duplicate proof",
+      );
+      const current = latestPoints(result);
+      for (const earlier of netOutcome.sources) {
+        const retained = latestBaseline.get(earlier.awardKey);
+        const award = retained?.award;
+        check(
+          retained?.id === earlier.awardRevisionId &&
+            current.get(earlier.awardKey)?.id === retained.id &&
+            retained.recordedAt <= packet.reviewedAt &&
+            award &&
+            award.projectId === packet.projectId &&
+            award.category === "merged-pull-request" &&
+            award.sourceId === earlier.id &&
+            award.sourceUrl ===
+              `https://github.com/${packet.sourceAudit.repository}/pull/${earlier.number}` &&
+            award.occurredAt === earlier.mergedAt &&
+            award.amount > 0 &&
+            !retiringSources.has(earlier.id) &&
+            award.key ===
+              pointKey(
+                packet.projectId,
+                award.actor.id,
+                award.category,
+                earlier.id,
+              ),
+          "Net outcome earlier ordinary award is not retained",
+        );
+      }
+    }
+    const identical = retirement.identicalAcceptedChange;
+    if (identical) {
+      const owner = earlier.get(identical.earlierSourceId);
+      const sharedMerge = identical.earlierMergeSha === identical.mergeSha;
+      const carried = identical.carriedAcceptance === true;
+      check(
+        Object.keys(identical).sort().join() ===
+          (carried
+            ? "carriedAcceptance,diffSha256,earlierMergeSha,earlierSourceId,mergeSha"
+            : identical.emptySquash === true
+              ? "diffSha256,earlierMergeSha,earlierSourceId,emptySquash,mergeSha"
+              : identical.survivingCarrier === true
+                ? "diffSha256,earlierMergeSha,earlierSourceId,mergeSha,survivingCarrier"
+                : "diffSha256,earlierMergeSha,earlierSourceId,mergeSha") &&
+          /^[a-f0-9]{64}$/u.test(identical.diffSha256) &&
+          /^[a-f0-9]{40}$/u.test(identical.earlierMergeSha) &&
+          /^[a-f0-9]{40}$/u.test(identical.mergeSha) &&
+          earlier.size === 1 &&
+          owner &&
+          (identical.survivingCarrier !== true || !sharedMerge) &&
+          (carried
+            ? !sharedMerge &&
+              matchesCarriedAcceptance(source, owner, identical.earlierMergeSha)
+            : sharedMerge
+              ? identical.emptySquash !== true &&
+                owner.headSha === source.headSha
+              : source.commits.length === 1 &&
+                source.commits[0].sha === source.headSha &&
+                source.commits[0].parentCount === 1) &&
+          owner.occurredAt !== null &&
+          source.occurredAt !== null &&
+          owner.occurredAt < source.occurredAt &&
+          !retiringSources.has(owner.sourceId) &&
+          !retirement.unchangedPromotion &&
+          !retirement.earlierAcceptanceProof &&
+          !retirement.acceptedPromotion &&
+          !retirement.acceptedSquashes &&
+          retirement.coverage.length === 0 &&
+          verifiedDuplicateChanges.has(hash(retirement)) &&
+          rewardedAwards.some(
+            (award) =>
+              award.projectId === packet.projectId &&
+              award.sourceId === owner.sourceId &&
+              award.sourceUrl === owner.sourceUrl &&
+              award.occurredAt === owner.occurredAt &&
+              award.category === "merged-pull-request" &&
+              award.amount > 0 &&
+              ((!sharedMerge && !carried && identical.emptySquash !== true) ||
+                (latestBaseline.get(award.key)?.award.amount ?? 0) > 0) &&
+              award.key ===
+                pointKey(
+                  award.projectId,
+                  award.actor.id,
+                  award.category,
+                  award.sourceId,
+                ),
+          ),
+        "Identical accepted change lacks a verified earlier ordinary pool",
+      );
+      if (carried) {
+        const ordinaryForOwner = ({ award }: PointRevision) =>
+          award.projectId === packet.projectId &&
+          award.sourceId === owner.sourceId &&
+          award.category === "merged-pull-request" &&
+          award.key ===
+            pointKey(
+              award.projectId,
+              award.actor.id,
+              award.category,
+              owner.sourceId,
+            );
+        const before = [...latestBaseline.values()].filter(ordinaryForOwner);
+        const after = rewarded.filter(ordinaryForOwner);
+        check(
+          before.length === after.length &&
+            after.every((row) => {
+              const prior = latestBaseline.get(row.award.key);
+              return (
+                prior &&
+                (prior.id === row.id ||
+                  (row.previous === prior.id &&
+                    row.decision?.reason ===
+                      VERIFIED_HISTORICAL_IMPLEMENTATION_ALLOCATION_DECISION &&
+                    hash(row.award) === hash(prior.award)))
+              );
+            }),
+          "Carried merge changes the retained earlier ordinary pool",
+        );
+      }
     }
     const unchanged = retirement.unchangedPromotion;
     const treeCommits = new Map(
@@ -856,6 +1023,7 @@ export function reconstructHistoricalPoints(
     const acceptedCommits = new Map(
       acceptedProof?.commits.map((item) => [item.sha, item.sourceId]),
     );
+    const acceptedMergeEdges = new Set<string>();
     if (acceptedProof) {
       check(
         acceptedCommits.size === acceptedProof.commits.length &&
@@ -1073,10 +1241,60 @@ export function reconstructHistoricalPoints(
           "Earlier acceptance does not cover the exact native commit",
         );
       }
+      for (const { sha, earlierSourceId } of acceptedProof.acceptedMergeEdges ??
+        []) {
+        const origin = earlier.get(earlierSourceId);
+        const context = acceptedProof.contextSources.find(
+          (item) => item.id === earlierSourceId,
+        );
+        const merge = objects.get(sha);
+        const member = source.commits.find((item) => item.sha === sha);
+        const ordinary = packet.corrections.candidates.find(
+          (item) =>
+            item.kind === "pull-request" &&
+            item.projectId === packet.projectId &&
+            item.sourceId === earlierSourceId &&
+            item.sourceIds.length === 1 &&
+            item.sourceIds[0] === earlierSourceId &&
+            item.occurredAt === origin?.occurredAt,
+        );
+        check(
+          !acceptedMergeEdges.has(sha) &&
+            !acceptedCommits.has(sha) &&
+            origin?.occurredAt &&
+            source.occurredAt &&
+            origin.occurredAt < source.occurredAt &&
+            !retiringSources.has(earlierSourceId) &&
+            context?.mergeSha === sha &&
+            merge?.parents.length === 2 &&
+            merge.parents[1] === origin.headSha &&
+            member?.parentCount === 2 &&
+            ordinary &&
+            rewardedAwards.some(
+              (award) =>
+                award.projectId === packet.projectId &&
+                award.category === "merged-pull-request" &&
+                award.sourceId === earlierSourceId &&
+                award.sourceUrl === origin.sourceUrl &&
+                award.occurredAt === origin.occurredAt &&
+                award.workUnitId === ordinary.workUnitId &&
+                award.key ===
+                  pointKey(
+                    award.projectId,
+                    award.actor.id,
+                    "merged-pull-request",
+                    earlierSourceId,
+                  ) &&
+                award.amount > 0,
+            ),
+          "Earlier accepted merge edge is not bound to a retained ordinary award",
+        );
+        acceptedMergeEdges.add(sha);
+      }
     }
     const usedSquashes = new Set<string>();
     const expected: string[] = [];
-    for (const commit of source.commits) {
+    for (const commit of identical || netOutcome ? [] : source.commits) {
       check(
         /^[a-f0-9]{40}$/u.test(commit.sha) &&
           Number.isSafeInteger(commit.parentCount) &&
@@ -1085,7 +1303,8 @@ export function reconstructHistoricalPoints(
           commit.parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)),
         "Duplicate commit identity is incomplete",
       );
-      if (acceptedCommits.has(commit.sha)) continue;
+      if (acceptedCommits.has(commit.sha) || acceptedMergeEdges.has(commit.sha))
+        continue;
       if (commit.parentCount > 1) {
         const resolutionFiles =
           commit.mergeResolution &&
@@ -1273,7 +1492,10 @@ export function reconstructHistoricalPoints(
       }
     }
     check(
-      (expected.length > 0 || acceptedCommits.size > 0) &&
+      (identical ||
+        netOutcome ||
+        expected.length > 0 ||
+        acceptedCommits.size > 0) &&
         usedSquashes.size === squashes.size &&
         retirement.coverage.length === expected.length &&
         retirement.coverage.every((row) =>
@@ -1289,6 +1511,10 @@ export function reconstructHistoricalPoints(
         evidence.sourceSha256 === hash(source) &&
         evidence.coverageSha256 === hash(retirement.coverage) &&
         evidence.earlierSourcesSha256 === hash(retirement.earlierSources) &&
+        (identical === undefined ||
+          evidence.identicalAcceptedChangeSha256 === hash(identical)) &&
+        (netOutcome === undefined ||
+          evidence.netOutcomeSha256 === hash(netOutcome)) &&
         (acceptedProof === undefined ||
           (evidence.earlierAcceptanceProofSha256 === hash(acceptedProof) &&
             (!acceptedProof.contextSources.some(
@@ -1326,6 +1552,25 @@ export function reconstructHistoricalPoints(
             award.occurredAt.startsWith("2026-10-") &&
             award.sourceUrl === source.sourceUrl,
         ) &&
+        (!netOutcome ||
+          (candidate.kind === "pull-request" &&
+            candidate.sourceIds.length === 1 &&
+            candidate.sourceIds[0] === source.sourceId &&
+            rows.every(
+              (row) => latestBaseline.get(row.award.key)?.id === row.id,
+            ))) &&
+        (!(identical || netOutcome) ||
+          (rows.some(({ award }) => award.amount > 0) &&
+            rows.every(
+              ({ award }) =>
+                award.key ===
+                pointKey(
+                  award.projectId,
+                  award.actor.id,
+                  award.category,
+                  award.sourceId,
+                ),
+            ))) &&
         rows.length === retirement.expectedPredecessors.length &&
         new Set(retirement.expectedPredecessors.map((row) => row.key)).size ===
           rows.length &&
@@ -1337,6 +1582,51 @@ export function reconstructHistoricalPoints(
         ),
       "Duplicate pool changed after owner review",
     );
+    if (identical?.survivingCarrier === true) {
+      const carrier = earlier.get(identical.earlierSourceId);
+      const original = source.author;
+      const inPair = ({ award }: (typeof rows)[number]) =>
+        award.projectId === packet.projectId &&
+        award.category === "merged-pull-request" &&
+        (award.sourceId === source.sourceId ||
+          award.sourceId === carrier?.sourceId);
+      const currentPair = [...latestPoints(result).values()].filter(inPair);
+      const baselinePair = [...latestBaseline.values()].filter(inPair);
+      const positive = currentPair.filter(({ award }) => award.amount > 0);
+      const retiring = positive.filter(
+        ({ award }) => award.sourceId === source.sourceId,
+      );
+      const retained = positive.filter(
+        ({ award }) => award.sourceId === carrier?.sourceId,
+      );
+      check(
+        carrier &&
+          original?.kind === "User" &&
+          source.commits[0]?.author?.id === original.id &&
+          source.commits[0]?.author?.kind === "User" &&
+          retiring.length === 1 &&
+          retained.length === 1 &&
+          rows.some((row) => row.id === retiring[0].id) &&
+          retiring[0].award.actor.id === original.id &&
+          retained[0].award.actor.id === original.id &&
+          retained[0].award.amount === retiring[0].award.amount &&
+          retained[0].award.sourceUrl === carrier.sourceUrl &&
+          retained[0].award.occurredAt === carrier.occurredAt &&
+          retained[0].award.occurredAt.startsWith("2026-10-") &&
+          retained[0].award.key ===
+            pointKey(
+              packet.projectId,
+              original.id,
+              "merged-pull-request",
+              carrier.sourceId,
+            ) &&
+          currentPair.length === baselinePair.length &&
+          currentPair.every(
+            (row) => latestBaseline.get(row.award.key)?.id === row.id,
+          ),
+        "Surviving carrier must preserve the equal original-author award",
+      );
+    }
     validatedRetirements.set(source.sourceId, hash(source));
     result = appendPointAwards(
       result,

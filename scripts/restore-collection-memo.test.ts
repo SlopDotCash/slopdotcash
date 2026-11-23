@@ -42,6 +42,20 @@ class Select(unittest.TestCase):
         )
         self.assertEqual(chosen["id"], 6)
 
+    def test_implementation_sidecar_must_match_the_selected_memo_attempt(self):
+        sidecars = [
+            artifact("accepted-implementation-memo-1", id=4),
+            artifact("accepted-implementation-memo-2", id=5),
+            artifact("accepted-implementation-memo-3", id=6),
+        ]
+        self.assertEqual(restore.select_memo(
+            sidecars, RUN, NOW, restore.IMPLEMENTATION_MEMO_ARTIFACT, 2
+        )["id"], 5)
+        self.assertIsNone(restore.select_memo(
+            sidecars[:1], RUN, NOW, restore.IMPLEMENTATION_MEMO_ARTIFACT, 2
+        ))
+        self.assertIsNone(restore.select_memo(sidecars, RUN, NOW))
+
     def test_ignores_old_expired_foreign_and_other_artifacts(self):
         for candidate in [
             artifact("collection-memo-1", age=timedelta(days=8)),
@@ -88,6 +102,18 @@ class Extract(unittest.TestCase):
             out = Path(tmp) / "out" / "collection-memo.json"
             restore.extract_memo(archive, out)
             self.assertEqual(out.read_text(), "{}")
+
+    def test_extracts_sidecar_in_independent_exact_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "i.zip"
+            member = restore.IMPLEMENTATION_MEMO_NAME
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr(member, '{"evidence":true}')
+            out = Path(tmp) / "out" / member
+            with self.assertRaises(ValueError):
+                restore.extract_memo(archive, out)
+            restore.extract_memo(archive, out, member)
+            self.assertEqual(out.read_text(), '{"evidence":true}')
 
     def test_refuses_anything_else(self):
         with tempfile.TemporaryDirectory() as tmp:
