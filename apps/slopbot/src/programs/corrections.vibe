@@ -115,12 +115,15 @@ export function retainedBinder(repositories: ReadonlyArray<RegisteredRepository>
   }
 }
 
+type Binder = ReturnType<typeof retainedBinder>
+type BinderEffect = ReturnType<Binder["ordinary"] | Binder["grouped"] | Binder["october"][keyof Binder["october"]]>
+
 effect function proveWithBinder(evidence: CollectedEvidence) {
   const repositories = try collectedTargets(try fetchRegistry())
   const feedConcurrency = try valueFeedConcurrency()
   const inputs = Layer.provide(collectValueInputs({ repositories, feedConcurrency }), acceptanceWith(collectRetainedMergeReferences))
   provide inputs {
-    return try proveRetained(evidence, retainedBinder(repositories))
+    return try proveRetained<Effect.Error<BinderEffect>, Effect.Services<BinderEffect>>(evidence, retainedBinder(repositories))
   }
 }
 
