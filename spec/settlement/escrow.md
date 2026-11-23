@@ -662,7 +662,8 @@ Each award has a unique source, a positive gross, the fee its vault purpose
 requires, and a paid record only with a destination, positive binding
 version and transaction. Each withdrawal fee is `ceil(gross / 50)`. Each
 admitted month is unique by period, never holds more remainder than it
-admitted, and a monthly leaf belongs to an admitted month. The pledged total
+admitted, and a monthly leaf belongs to an admitted month, as does each
+released Solana leaf, so a month admitted later starts untouched. The pledged total
 is the sum of the open pledges and the free balance always covers it; each
 period holds one positive pledge, a bounty vault and a vault not yet created
 hold none, and on EVM an open pledge's period has no admitted root.
@@ -681,6 +682,7 @@ pure def alwaysWithdrawalFees(e: Escrow): bool = e.withdrawals.every(w => M::val
 pure def alwaysMonths(e: Escrow): bool = e.months.every(m => validPeriod(m.period) and m.root != "" and m.allocationDigest != ""
   and M::validAmount(m.remaining) and M::validAmount(m.released) and M::validAmount(m.admittedGross)
   and M::compareAmounts(m.remaining, m.admittedGross) <= 0 and e.months.select(other => other.period == m.period).length() == 1)
+pure def alwaysReleasedLeavesAdmitted(e: Escrow): bool = e.releasedLeaves.every(l => hasMonth(e, l.period))
 pure def alwaysBountyVaultHasNoMonths(e: Escrow): bool = e.purpose == BountyPurpose implies e.months.length() == 0 and not(e.monthlyEnabled)
 pure def alwaysPledgesCovered(e: Escrow): bool =
   M::equalAmounts(e.pledged, openPledged(e.pledges)) and M::validAmount(e.pledged) and M::compareAmounts(e.free, e.pledged) >= 0
