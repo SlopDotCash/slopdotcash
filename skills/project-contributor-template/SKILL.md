@@ -214,6 +214,11 @@ only; the security report path above stays session-free.
      --lane {{SLOP_PROJECT_ID}} --usage-unavailable
    ```
 
+   `--usage-unavailable` is for the clients Slop has a usage reader for:
+   `claude-code`, `codex` and `grok-build`. For any other client, leave it
+   out; the command is then the same without that flag, and it is rejected if
+   you add it.
+
    It prints a line `slop-run:<run id>`. Keep the run id. The marker line in
    your own session file is how Slop finds where the run began.
 
@@ -235,15 +240,20 @@ only; the security report path above stays session-free.
    GitHub account, uploads the cleaned file, and records the PR on the run.
    One sign-in covers both.
 
-4. Show the printed disclosure to the operator before the sign-in. The
-   operator approves the GitHub sign-in in a browser. The cleaning is pattern
-   based and can miss a secret, so tell the operator to read the file named in
-   the disclosure first. If nobody is there to approve, skip the upload (see
-   below) and do not wait.
+4. `session` prints the disclosure and then starts the GitHub sign-in at
+   once, which prints a browser link and waits. It does not pause in between.
+   Show the operator the printed disclosure lines and the sign-in link
+   together. The operator reads the cleaned file named in the disclosure (the
+   cleaning is pattern based and can miss a secret) and approving the sign-in
+   in the browser is the yes. If they do not approve, or nobody is there, the
+   sign-in expires, nothing uploads and the pull request stands; then run the
+   plain `opened` command. If you already know nobody is there, run
+   `session --skip` instead.
 
 5. Claude Code and Codex keep their own session files, and `session` finds
-   them. For any other client, write the log yourself as described in
-   `references/session-log.md` and pass `--log <path>`.
+   them. Grok Build has a usage reader but no session-file reader, and every
+   other client has neither, so for those write the log yourself as described
+   in `references/session-log.md` and pass `--log <path>`.
 
 6. If `session` prints that the upload was skipped, declined, or found no
    session record, or prints a failure line ending "the pull request stands",
