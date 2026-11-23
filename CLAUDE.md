@@ -512,8 +512,13 @@ Operator decision, 22 November 2026: contract version 2
 upload by default after showing the file and a one-line decline, and adds paid
 licensing as a separate account opt-in: 50% of each sale to contributors,
 merged or closed pull requests only, never re-identification or resale.
-Version 1 keeps governing traces uploaded under it. Licensing is not available
-until the account setting exists.
+Version 1 keeps governing traces uploaded under it. Operator decision,
+23 November 2026: licensing is available from the account settings
+(`/account#trace-licensing`), off by default, and turning it on needs the
+provider-terms confirmation. A contributor's earlier or unlicensed traces are
+licensed only by an explicit opt-in, one by one or all listed at once; turning
+the setting off or closing the account withdraws every unsold licence. No trace
+has been sold or exported.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
 digests. No website or API route returns a trace body, including to
