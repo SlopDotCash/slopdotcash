@@ -312,6 +312,7 @@ export function duplicateOrderFixture(mode: "behind" | "reverse" | "missing") {
         if (url.pathname === `${root}/pulls/${source.number}`) return Response.json({
           number: source.number, node_id: source.id, html_url: `https://github.com/${audit.repository}/pull/${source.number}`,
           head: { sha: source.headSha }, state: "closed", merged_at: source.mergedAt,
+          base: { sha: source.headSha }, user: null, commits: 1,
           merge_commit_sha: source.id === f.retirement.sourceId ? retired : earlier,
         })
       }

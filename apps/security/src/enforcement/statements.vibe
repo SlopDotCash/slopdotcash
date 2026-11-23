@@ -137,9 +137,12 @@ export interface Writer {
 
 effect function journalWrites(change: EnforcementChange, before: Enforcement, after: Enforcement, details: RecordDetails | undefined, writer: Writer) {
   const writes: Statement[] = []
+  let named = change.recordId
   for (const entry of after.journal.slice(before.journal.length)) {
     const authored = try authoredBy(entry, details, change.projectId)
-    const id = entry.issuer === "ByContributorFlags" ? `enf_flags_${try writer.recordId()}` : `enf_${try writer.recordId()}`
+    const flagged = entry.issuer === "ByContributorFlags"
+    const id = flagged ? `enf_flags_${try writer.recordId()}` : named === undefined ? `enf_${try writer.recordId()}` : named
+    if (!flagged) named = undefined
     const journaled = { id, entry }
     writes.push(recordStatement(change, after, journaled, authored))
     if (entry.kind === "RecordReinstate" && entry.issuer === "ByModerator") writes.push(try reviewStatement(id, before, after))

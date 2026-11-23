@@ -15,10 +15,8 @@ export type PublicVaultFundingProps = {
   deployment: FundingDeployment;
   /** The UTC month, `YYYY-MM`, whose saved requests belong to this page. */
   period: string;
-  /** The signed-in account's GitHub id as a number, or 0 when signed out. */
+  /** The signed-in account's GitHub id as a number, or 0 when signed out: any connected wallet deposits either way. */
   account: number;
-  /** Where "Sign in with GitHub" goes, returning to this page. */
-  loginHref: string;
   /** Names the vault's network, for a project with more than one fundable vault. */
   showNetwork: boolean;
   /** Called once a deposit is verified on the finalized chain. */
@@ -26,14 +24,14 @@ export type PublicVaultFundingProps = {
 };
 
 /** The public project page's deposit control: the no-refund disclosure first, and the wallet form only once someone asks to fund or this tab holds a saved request. */
-export function PublicVaultFunding({ project, deployment, period, account, loginHref, showNetwork, onFinalized }: PublicVaultFundingProps) {
+export function PublicVaultFunding({ project, deployment, period, account, showNetwork, onFinalized }: PublicVaultFundingProps) {
   const [open, setOpen] = useState(() => savedRequestHeld(project, deployment, period));
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-foreground">{noRefundDisclosure}</p>
       {open ? (
         <Suspense fallback={<Spinner size="sm" label="Loading the funding form" />}>
-          <VaultActions depositOnly project={project} deployment={deployment} period={period} account={account} loginHref={loginHref} onFinalized={onFinalized} />
+          <VaultActions depositOnly project={project} deployment={deployment} period={period} account={account} onFinalized={onFinalized} />
         </Suspense>
       ) : (
         <Button variant="secondary" className="self-start" onClick={() => setOpen(true)}>

@@ -78,7 +78,7 @@ layer(Layer.mergeAll(NodeServices.layer, systemGit, webCrypto), { excludeTestSer
         journal: world.journal.get(assessmentId),
         keyOnlyToSurplus: world.provider.calls.every((call) => call.key === "surplus-test-key"),
       },
-      { refreshed: true, state: "published", disposition: "clean", specialist: true, anthropic: everyItemOnce, openai: everyItemOnce, unsigned: 0, results: 1, journal: ["reserve", "complete"], keyOnlyToSurplus: true },
+      { refreshed: true, state: "published", disposition: "incomplete", specialist: true, anthropic: everyItemOnce, openai: everyItemOnce, unsigned: 0, results: 1, journal: ["reserve", "complete"], keyOnlyToSurplus: true },
     )
   }))
 

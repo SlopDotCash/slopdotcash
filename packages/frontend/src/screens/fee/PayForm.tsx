@@ -1,6 +1,6 @@
 // spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item"; spec/frontend/feePages.md, "A deposit is received at canonical inclusion and finished only at finality, and a deposit from the tab blocks another for an hour"; spec/frontend/feePages.md, "Nothing is offered while the deposit is switched off, and a recorded deposit is still shown"
 import { Address, Alert, Button, ExternalLink, RadioGroup, Spinner, WalletChooser } from "@repo/ui";
-import { depositedWithinHour, type PayFlow } from "../../../gen/frontend__feePages.ts";
+import { canConfirmUnsent, canDisconnectWallet, depositedWithinHour, payer, type PayFlow } from "../../../gen/frontend__feePages.ts";
 import { networkLabel } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
 import { amountText, keptToText, wayKey } from "../../wallets/fee/feeCalls.ts";
@@ -127,6 +127,7 @@ export function PayForm({ runtime, pay, state, shown, noun }: { runtime: FeeRunt
           busy={busy}
           onCheck={() => void act(pay.check(""))}
           onEnterHash={state.phase === "Unclear" ? (candidate) => void act(pay.check(candidate)) : undefined}
+          onConfirmUnsent={canConfirmUnsent(state, payer) ? () => void act(pay.clearUnsent()) : undefined}
         />
       ) : awaiting && shown.deposited ? (
         <p className="text-muted-foreground">
@@ -172,6 +173,11 @@ export function PayForm({ runtime, pay, state, shown, noun }: { runtime: FeeRunt
                 </Button>
               </div>
             </section>
+          ) : null}
+          {canDisconnectWallet(state, payer) ? (
+            <Button variant="ghost" className="self-start" disabled={busy} onClick={() => void act(pay.disconnect())}>
+              Choose another wallet
+            </Button>
           ) : null}
         </div>
       ) : null}

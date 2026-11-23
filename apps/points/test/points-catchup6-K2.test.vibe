@@ -1,0 +1,215 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type SourceDecision, type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { type HistoricalPin, validateHistoricalSnapshot, validatePublishable, validateSnapshot } from "../src/client/snapshot/validate.vibe"
+import type { LeaderboardSnapshot } from "../src/client/snapshot/schema.vibe"
+import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { assembleSnapshot, createHistoricalSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
+import { type Seeded, repository, seeded, start } from "./support/u5/github.ts"
+import { acceptedReviewHistoryJson, registryAnswer, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
+
+function layers(world: Seeded, collections: Array<Collection>) {
+  const outbound = outboundVia(served(world).fetcher)
+  const values = Layer.succeed(ValueInputs, {
+    load: (census: ValueCensus) => effect {
+      return {
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: [],
+      }
+    },
+  })
+  const recorded = Layer.effect(SnapshotAssembly, effect {
+    const real = try SnapshotAssembly
+    return { assemble: (collection: Collection) => effect {
+      collections.push(collection)
+      return try real.assemble(collection)
+    } }
+  })
+  return Layer.mergeAll(
+    outbound,
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
+    Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
+    values,
+    Layer.provide(recorded, snapshotAssembly),
+  )
+}
+
+function message(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" ? error.message : error._tag
+}
+
+effect function collected(world: Seeded) {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped()
+  try fs.makeDirectory(`${directory}/data`, { recursive: true })
+  try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
+  try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
+  const collections: Array<Collection> = []
+  const output = `${directory}/leaderboard.json`
+  const snapshot = try Effect.provide(collectSnapshot({ registryPath: `${directory}/registry.json`, cutoffMs: start, dataRoot: directory, output }), layers(world, collections))
+  const collection = collections.at(-1)
+  if (collection === undefined) throw new Error("the assembly was never asked")
+  return { snapshot, collection, written: JSON.parse(try fs.readFileString(output)) as LeaderboardSnapshot }
+}
+
+effect function workUnit(claimIds: ReadonlyArray<string>, assessment: unknown) {
+  const unit = { claimIds: [...claimIds].sort(), assessment }
+  return { ...unit, workUnitId: `wu_${try sha256Hex(JSON.stringify(unit))}` }
+}
+
+effect function staleHistory(world: Seeded, collection: Collection) {
+  const outcomes = collection.work.outcomes
+  const sources = outcomes.map((pull) => ({ repository, repositoryNodeId: world.repositoryNodeId, repositoryDatabaseId: 42, pullRequestNodeId: pull.id, pullRequestNumber: pull.number, headSha: pull.headRefOid, mergeSha: pull.headRefOid, occurredAt: pull.mergedAt }))
+  const claims: Array<{ id: string; repositoryNodeId: string; commitSha: string; path: string; carrierPullRequestIds: ReadonlyArray<string>; creditPullRequestId: string }> = []
+  for (const source of sources) claims.push({ id: try sha256Hex(source.pullRequestNodeId), repositoryNodeId: source.repositoryNodeId, commitSha: source.headSha, path: "src/fix.ts", carrierPullRequestIds: [source.pullRequestNodeId], creditPullRequestId: source.pullRequestNodeId })
+  const assessment = { status: "assessed", tier: "micro", rationale: "Complete fixture claim scope.", reviews: [] }
+  const claimOf = (id: string) => claims.find((claim) => claim.creditPullRequestId === id)?.id ?? ""
+  const shared = try workUnit([claimOf(world.ids.paired), claimOf(world.ids.stacked)], assessment)
+  const independent = try workUnit([claimOf(world.ids.bulk)], assessment)
+  const record = { schemaVersion: "slop-work-unit-record:v1", projectId: "widgets", sources, claims, units: [shared, independent], supersedes: [] }
+  const recordJson = JSON.stringify(record)
+  const recordDigest = try sha256Hex(recordJson)
+  const added = { ...claims[0], id: try sha256Hex("additional-implementation-claim"), path: "src/second-fix.ts", creditPullRequestId: world.ids.paired, carrierPullRequestIds: [world.ids.paired] }
+  const successor = try workUnit([...shared.claimIds, added.id], assessment)
+  const successorJson = JSON.stringify({ ...record, claims: [...claims, added], units: [successor, independent], supersedes: [recordDigest] })
+  const successorDigest = try sha256Hex(successorJson)
+  const row = { sequence: 1, record_digest: recordDigest, record_json: recordJson, recorded_at: collection.generatedAt }
+  const decision = { status: "stale", history: [row, { ...row, sequence: 2, record_digest: successorDigest, record_json: successorJson }], latestDigest: successorDigest }
+  const rows: ReadonlyArray<SourceDecision> = sources.map((source) => ({ sourceId: source.pullRequestNodeId, decision }))
+  return { rows, recordDigest, successorDigest, shared, successor, independent, row, decision }
+}
+
+function withJoint(collection: Collection, rows: ReadonlyArray<SourceDecision>): Collection {
+  return { ...collection, value: { ...collection.value, jointValueDecisions: rows } }
+}
+
+it.live('Publish a collected window through the real snapshot assembly (spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  try scoped(effect {
+    const { snapshot, collection, written } = try collected(world)
+    const registry = repositoryRegistry(world)
+    try same({
+      written: written.generatedAt === snapshot.generatedAt,
+      coverage: (snapshot.valueAssessmentCoverage ?? []).map((row) => row.pullRequestId).sort(),
+      statuses: [...new Set((snapshot.valueAssessmentCoverage ?? []).map((row) => row.status))].every((status) => ["missing", "incomplete"].includes(status)),
+      counts: { merged: snapshot.source.counts.mergedPullRequests, closed: snapshot.source.counts.closedUnmergedPullRequests },
+      queue: { issues: snapshot.workQueue.issues.length, pullRequests: snapshot.workQueue.pullRequests.length },
+      repositories: snapshot.repositories.map(({ id, role }) => ({ id, role })),
+      membership: snapshot.reviewedImplementationUnits,
+      reassembled: JSON.stringify(try assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection) })) === JSON.stringify(written),
+    }, {
+      written: true,
+      coverage: [world.ids.paired, world.ids.stacked, world.ids.bulk, world.ids.closed].sort(),
+      statuses: true,
+      counts: { merged: 3, closed: 1 },
+      queue: { issues: collection.openIssues.length, pullRequests: collection.openPullRequests.length },
+      repositories: [{ id: repository, role: "primary" }],
+      membership: undefined,
+      reassembled: true,
+    })
+    const merge = written.ledger.find((event) => event.category === "merged-pull-request")
+    if (merge === undefined) throw new Error("the window credited no accepted merge")
+    const unbound = { ...written, ledger: written.ledger.map((event) => event.id === merge.id ? { ...event, scoreDecisionAt: event.occurredAt, scoreDecisionSourceId: "value:undefined" } : event) }
+    const refused = validateSnapshot(unbound, registry) catch (error) => message(error)
+    try same(refused, "Value score event is not bound to its assessment coverage")
+  })
+  }
+})
+
+it.live('The snapshot publishes exact unit memberships from hash-pinned stale history (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  try scoped(effect {
+    const { collection } = try collected(world)
+    const history = try staleHistory(world, collection)
+    const scope = { mode: "rolling" as const, repositories: rollingRepositories(collection) }
+    const snapshot = try assembleSnapshot(withJoint(collection, history.rows), scope)
+    const registry = repositoryRegistry(world)
+    try validateSnapshot(snapshot, registry)
+    const memberships = new Map((snapshot.reviewedImplementationUnits ?? []).map(({ pullRequestId, units }) => [pullRequestId, units] as const))
+    const coverage = new Map((snapshot.valueAssessmentCoverage ?? []).map((row) => [row.pullRequestId, row] as const))
+    const shared = memberships.get(world.ids.paired) ?? []
+    const independent = memberships.get(world.ids.bulk) ?? []
+    const previous = shared.find((member) => member.recordDigest === history.recordDigest)
+    const next = shared.find((member) => member.recordDigest === history.successorDigest)
+    try same({
+      coverage: [world.ids.paired, world.ids.stacked].map((id) => ({ status: coverage.get(id)?.status, recordDigest: coverage.get(id)?.recordDigest })),
+      sameMembers: JSON.stringify(shared) === JSON.stringify(memberships.get(world.ids.stacked)),
+      previous: previous?.workUnitId,
+      next: next?.workUnitId,
+      sameGroup: previous !== undefined && previous.groupId === next?.groupId,
+      independent: independent.map((member) => member.workUnitId),
+      independentGroup: independent[0]?.groupId === independent[1]?.groupId && independent[0]?.groupId !== shared[0]?.groupId,
+    }, {
+      coverage: [{ status: "stale", recordDigest: history.successorDigest }, { status: "stale", recordDigest: history.successorDigest }],
+      sameMembers: true,
+      previous: history.shared.workUnitId,
+      next: history.successor.workUnitId,
+      sameGroup: true,
+      independent: [history.independent.workUnitId, history.independent.workUnitId],
+      independentGroup: true,
+    })
+    const repeated = { ...snapshot, reviewedImplementationUnits: (snapshot.reviewedImplementationUnits ?? []).map((source) => source.pullRequestId === world.ids.paired ? { ...source, units: [...source.units, source.units[0]] } : source) }
+    const inconsistent = validateSnapshot(repeated, registry) catch (error) => message(error)
+    const forged = { ...history.decision, history: [{ ...history.row, record_json: JSON.stringify({ ...JSON.parse(history.row.record_json), projectId: "other" }) }, ...history.decision.history.slice(1)] }
+    const mismatched = assembleSnapshot(withJoint(collection, history.rows.map((row) => ({ ...row, decision: forged }))), scope) catch (error) => message(error)
+    try same({ inconsistent, mismatched }, { inconsistent: "Reviewed implementation units must be unique and consistent", mismatched: "Reviewed implementation record digest does not match" })
+  })
+  }
+})
+
+it.live('A pinned repository uses the real historical scoring and snapshot validator (spec/points/reviewedHistory.md, "A historical replay scores only the pinned project\'s one repository"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review")', () => effect {
+  const world = try Effect.try(() => seeded())
+  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  try scoped(effect {
+    const { collection } = try collected(world)
+    const project = registryAnswer(world).projects[0]
+    const pin: HistoricalPin = { projectId: "widgets", repository, repositoryNodeId: world.repositoryNodeId, manifestSha256: try sha256Hex(JSON.stringify(project)) }
+    const registry = repositoryRegistry(world)
+    const historical = try createHistoricalSnapshot(collection, pin, project)
+    const other = { ...registry.registered[0], id: "ada/gadgets", name: "gadgets", githubUrl: "https://github.com/ada/gadgets", nodeId: "R_gadgets" }
+    const wider = { ...registry, registered: [...registry.registered, other], targets: [...registry.targets, other] }
+    const ordinary = validatePublishable(historical, wider, start) catch (error) => message(error)
+    const censusless = { ...collection, work: { ...collection.work, outcomes: collection.work.outcomes.map((outcome) => ({ ...outcome, commits: [] })), collections: collection.work.collections.map((entry) => ({ ...entry, outcomes: entry.outcomes.map((outcome) => ({ ...outcome, commits: [] })) })) } }
+    const replay = try createHistoricalSnapshot(censusless, pin, project)
+    const owners = new Map(collection.work.outcomes.flatMap((outcome) => (outcome.commits ?? []).map((commit) => [`${repository.toLowerCase()}\u0000${commit.oid}`, "PR_earlier_accepted"] as const)))
+    const owned = try createHistoricalSnapshot(collection, pin, project, { previousAcceptedOrdinaryOwners: owners })
+    const manifest = createHistoricalSnapshot(collection, { ...pin, manifestSha256: "a".repeat(64) }, project) catch (error) => message(error)
+    const moved = { ...historical, source: { ...historical.source, repositoryId: "R_wrong", repositories: historical.source.repositories.map((row) => ({ ...row, repositoryId: "R_wrong" })) } }
+    const wrongNode = validateHistoricalSnapshot(moved, registry, pin, project, start) catch (error) => message(error)
+    const foreign = createHistoricalSnapshot({ ...collection, source: { ...collection.source, repositories: [...collection.source.repositories, { id: "ada/gadgets", repositoryId: "R_gadgets" }] } }, pin, project) catch (error) => message(error)
+    try same({
+      repositories: historical.repositories.map(({ id, role }) => ({ id, role })),
+      ordinary,
+      censusPreserved: JSON.stringify(replay) === JSON.stringify(historical),
+      ownersIgnored: JSON.stringify(owned) === JSON.stringify(historical),
+      manifest,
+      wrongNode,
+      foreign,
+    }, {
+      repositories: [{ id: repository, role: "primary" }],
+      ordinary: "snapshot.repositories must list the complete target repository registry for publication",
+      censusPreserved: true,
+      ownersIgnored: true,
+      manifest: "Historical leaderboard requires the pinned active project and repository",
+      wrongNode: "Historical leaderboard source differs from the pinned repository",
+      foreign: "Historical leaderboard input is outside the pinned repository",
+    })
+  })
+  }
+})

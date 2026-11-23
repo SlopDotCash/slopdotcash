@@ -1,0 +1,223 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { Git, gitBytes, systemGit } from "@repo/platform/git"
+import { gitObjectId, lossyText, textBytes } from "@repo/platform/git/bytes"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type ValueCensus, ValueInputs } from "@repo/ports/points"
+import { type JournalReader } from "../src/collect/implementation/facts.vibe"
+import { type ImplementationMemo, emptyImplementationMemo, implementationMemoFile, openImplementationMemo, parseImplementationMemo, writeImplementationMemo } from "../src/collect/implementation/memo.vibe"
+import { type ProofReader, readAcceptedImplementationProofs } from "../src/collect/implementation/native.vibe"
+import { type Collection, SnapshotAssembly, collectSnapshot } from "../src/collect/run/pipeline.vibe"
+import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { assembleSnapshot, rollingRepositories, snapshotAssembly } from "../src/score/assemble/assemble.vibe"
+import { acceptedReviewHistoryJson, repositoryRegistry, served } from "./support/catchup3-e1/world.ts"
+import { type Seeded, day, repository, seeded, start } from "./support/u5/github.ts"
+
+const codeDigest = "a".repeat(64)
+const missing = { status: "missing", history: [], latestDigest: null, implementationActorNodeIds: [] }
+const noJournal: JournalReader = () => effect {
+  return null
+}
+
+interface Squashes {
+  readonly first: string
+  readonly second: string
+  readonly firstMerge: string
+  readonly secondMerge: string
+  readonly secondHead: string
+  readonly commits: ReadonlyArray<string>
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function squashed(world: Seeded): Squashes {
+  const fake = world.fake.world
+  const main = fake.repo(repository).defaultBranch
+  const base = fake.repo(repository).branches.get(main) ?? ""
+  const change = { "src/same.ts": "same\n" }
+  const files = [{ path: "src/same.ts", additions: 1, deletions: 0, status: "added" as const }]
+  const iso = (millis: number) => new Date(millis).toISOString()
+  const other = fake.addCommit(repository, { branch: main, parents: [base], author: "ada", files: { "docs/other.md": "other\n" } })
+  const firstHead = fake.addCommit(repository, { branch: "first", parents: [base], author: "grace", files: change })
+  const firstMerge = fake.addCommit(repository, { branch: main, parents: [other], author: "grace", files: change })
+  const reverted = fake.addCommit(repository, { branch: main, parents: [firstMerge], author: "ada", files: { "src/same.ts": null } })
+  const secondHead = fake.addCommit(repository, { branch: "second", parents: [reverted], author: "linus", files: change })
+  const secondMerge = fake.addCommit(repository, { branch: main, parents: [reverted], author: "linus", files: change })
+  const first = fake.addPull({ repo: repository, author: "grace", title: "Add the shared file", mergedAt: iso(start - 5 * day), commits: [firstHead], headSha: firstHead, headRef: "first", mergeCommit: firstMerge, files })
+  const second = fake.addPull({ repo: repository, author: "linus", title: "Add the shared file again", mergedAt: iso(start - 4 * day), commits: [secondHead], headSha: secondHead, headRef: "second", mergeCommit: secondMerge, files })
+  return {
+    first: fake.pull(repository, first).nodeId,
+    second: fake.pull(repository, second).nodeId,
+    firstMerge,
+    secondMerge,
+    secondHead,
+    commits: [base, other, firstHead, firstMerge, reverted, secondHead, secondMerge],
+  }
+}
+
+effect function stored(directory: string, args: ReadonlyArray<string>, input: string) {
+  return lossyText(try gitBytes({ args: ["-C", directory, ...args], input: textBytes(input), limit: 1024 * 1024, seconds: 60 }, "fixture object")).trim()
+}
+
+effect function bareRepository(world: Seeded, commits: ReadonlyArray<string>) {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-k3-native-" })
+  try gitBytes({ args: ["-C", directory, "init", "--bare", "--quiet"], limit: 1024 * 1024, seconds: 60 }, "fixture repository")
+  for (const sha of commits) {
+    const commit = world.fake.world.repo(repository).commits.get(sha)
+    if (commit === undefined) throw new Error(`no fixture commit ${sha}`)
+    const directories = new Set<string>([""])
+    for (const path of commit.files.keys()) {
+      const parts = path.split("/")
+      for (let index = 1; index < parts.length; index += 1) directories.add(`${parts.slice(0, index).join("/")}/`)
+    }
+    const trees = new Map<string, string>()
+    for (const prefix of [...directories].sort((left, right) => right.split("/").length - left.split("/").length)) {
+      const lines: string[] = []
+      for (const [path, bytes] of commit.files) if (path.startsWith(prefix) && !path.slice(prefix.length).includes("/")) lines.push(`100644 blob ${gitObjectId("blob", bytes)}\t${path.slice(prefix.length)}`)
+      for (const child of directories) if (child !== prefix && child.startsWith(prefix) && !child.slice(prefix.length, -1).includes("/")) lines.push(`040000 tree ${trees.get(child) ?? ""}\t${child.slice(prefix.length, -1)}`)
+      trees.set(prefix, try stored(directory, ["mktree", "--missing"], `${lines.join("\n")}\n`))
+    }
+    const stamp = `${commit.authorName} <${commit.authorEmail}> ${Math.floor(Date.parse(commit.date) / 1000)} +0000`
+    const text = [`tree ${trees.get("") ?? ""}`, ...commit.parents.map((parent) => `parent ${parent}`), `author ${stamp}`, `committer ${stamp}`, "", commit.message].join("\n")
+    const written = try stored(directory, ["hash-object", "-w", "-t", "commit", "--literally", "--stdin"], text)
+    if (written !== sha) throw new Error(`fixture commit ${sha} was written as ${written}`)
+  }
+  return directory
+}
+
+effect function localProofs(directory: string, calls: { count: number }) {
+  const services = try Effect.context<Git | Experimental.Crypto.Crypto>()
+  const reader: ProofReader = (_repository, sources) => effect {
+    calls.count += 1
+    provide services {
+      return try readAcceptedImplementationProofs(directory, sources)
+    }
+  }
+  return reader
+}
+
+function layers(world: Seeded, collections: Array<Collection>) {
+  const outbound = outboundVia(served(world).fetcher)
+  const values = Layer.succeed(ValueInputs, {
+    load: (census: ValueCensus) => effect {
+      return {
+        valueDecisions: census.value.map((outcome) => ({ sourceId: outcome.id, decision: missing })),
+        jointValueDecisions: [],
+        valueActors: [],
+        retainedCommitCredits: [],
+        attributionHolds: [],
+        heldWorkUnits: [],
+      }
+    },
+  })
+  const recorded = Layer.effect(SnapshotAssembly, effect {
+    const real = try SnapshotAssembly
+    return { assemble: (collection: Collection) => effect {
+      collections.push(collection)
+      return try real.assemble(collection)
+    } }
+  })
+  return Layer.mergeAll(
+    outbound,
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outbound),
+    Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outbound),
+    values,
+    Layer.provide(recorded, snapshotAssembly),
+  )
+}
+
+effect function collected(world: Seeded, proofs: ProofReader, memo: ImplementationMemo | undefined) {
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped()
+  try fs.makeDirectory(`${directory}/data`, { recursive: true })
+  try fs.writeFileString(`${directory}/data/accepted-review-history.json`, acceptedReviewHistoryJson)
+  try fs.writeFileString(`${directory}/registry.json`, JSON.stringify(repositoryRegistry(world)))
+  const collections: Array<Collection> = []
+  try Effect.provide(collectSnapshot({ registryPath: `${directory}/registry.json`, cutoffMs: start, dataRoot: directory, output: `${directory}/leaderboard.json`, implementation: { proofs, journal: noJournal, memo } }), layers(world, collections))
+  const collection = collections.at(-1)
+  if (collection === undefined || collection.implementation === undefined) throw new Error("the assembly never received the implementation facts")
+  return { collection, implementation: collection.implementation }
+}
+
+it.live('An identical earlier single-commit acceptance holds the later one, and a missing native object leaves it unresolved (spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"; spec/points/authorship.md, "Only accepted unique commits contribute line weight, a merge only through its one merge resolution")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const squashes = try Effect.try(() => squashed(world))
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  try scoped(effect {
+    const complete = try bareRepository(world, squashes.commits)
+    const { collection, implementation } = try collected(world, try localProofs(complete, { count: 0 }), undefined)
+    const digests = implementation.history.acceptedImplementationDigests
+    const scored = try assembleSnapshot(collection, { mode: "rolling", repositories: rollingRepositories(collection), history: implementation.history })
+    const statusOf = (id: string) => (scored.valueAssessmentCoverage ?? []).find((row) => row.pullRequestId === id)?.status
+    try same({
+      equal: digests.get(squashes.first) !== undefined && digests.get(squashes.first) === digests.get(squashes.second),
+      unresolved: [...implementation.history.unresolvedImplementationSources],
+      markers: [implementation.markers.get(squashes.first), implementation.markers.get(squashes.second)],
+      later: statusOf(squashes.second),
+    }, {
+      equal: true,
+      unresolved: [],
+      markers: [{ acceptedOrdinaryCommitOid: squashes.firstMerge }, { acceptedOrdinaryCommitOid: squashes.secondMerge }],
+      later: "incomplete",
+    })
+
+    const partial = try bareRepository(world, squashes.commits.filter((sha) => sha !== squashes.secondHead))
+    const held = (try collected(world, try localProofs(partial, { count: 0 }), undefined)).implementation.history
+    try same({
+      proved: [...held.acceptedImplementationDigests.keys()],
+      unresolved: [...held.unresolvedImplementationSources],
+    }, {
+      proved: [squashes.first],
+      unresolved: [squashes.second],
+    })
+  })
+  }
+})
+
+it.live('A written implementation memo is reused on the next pass, and a stale or tampered one is refused and read live (spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const squashes = try Effect.try(() => squashed(world))
+  provide Layer.mergeAll(NodeServices.layer, webCrypto, systemGit) {
+  try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const repositoryDirectory = try bareRepository(world, squashes.commits)
+    const memoDirectory = try fs.makeTempDirectoryScoped({ prefix: "slop-k3-memo-" })
+    const collectionMemo = `${memoDirectory}/collection-memo.json`
+    const sidecar = `${memoDirectory}/${implementationMemoFile}`
+    const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({ SLOP_COLLECTION_MEMO: collectionMemo }))
+
+    const memo = emptyImplementationMemo()
+    const live = { count: 0 }
+    const first = (try collected(world, try localProofs(repositoryDirectory, live), memo)).implementation.history.acceptedImplementationDigests
+    try writeImplementationMemo(memo, codeDigest, collectionMemo)
+
+    const reused = { count: 0 }
+    const reopened = try Effect.provide(openImplementationMemo(codeDigest), environment)
+    const again = (try collected(world, try localProofs(repositoryDirectory, reused), reopened)).implementation.history.acceptedImplementationDigests
+
+    const contents = try fs.readFileString(sidecar)
+    const stale = parseImplementationMemo(contents, codeDigest, (try Clock.currentTimeMillis) + 8 * day) catch (error) => error._tag
+    try fs.writeFileString(sidecar, contents.replace(codeDigest, "b".repeat(64)))
+    const refused = { count: 0 }
+    const tampered = try Effect.provide(openImplementationMemo(codeDigest), environment)
+    const relive = (try collected(world, try localProofs(repositoryDirectory, refused), tampered)).implementation.history.acceptedImplementationDigests
+
+    try same({
+      calls: [live.count, reused.count, refused.count],
+      reusedDigests: [...again].sort(),
+      reliveDigests: [...relive].sort(),
+      stale: typeof stale === "string" ? stale : "accepted",
+    }, {
+      calls: [1, 0, 1],
+      reusedDigests: [...first].sort(),
+      reliveDigests: [...first].sort(),
+      stale: "ImplementationMemoInvalid",
+    })
+  })
+  }
+})

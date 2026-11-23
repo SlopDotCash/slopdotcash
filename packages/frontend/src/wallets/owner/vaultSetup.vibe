@@ -1,4 +1,4 @@
-// spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+// spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
 import { SYSTEM_PROGRAM, address } from "@repo/platform/chain/solana"
 import { creationOf } from "@repo/settlement/chain/evm/creation"
 import { createVaultCalldata } from "@repo/settlement/chain/evm/factories"
@@ -7,7 +7,7 @@ import { type SolanaCreation, initializeVault } from "@repo/settlement/chain/sol
 import { isTokenProgram } from "@repo/settlement/chain/solana/pda"
 import type { Route } from "@repo/platform/route"
 import { type AccountWallet, paymentsMe, projectVaultRead, projectVaultSetup } from "@repo/settlement/client"
-import { NETWORKS, chainFamily, defaultAsset, isNetworkKey } from "@repo/settlement/kernels/networks"
+import { EVM_NATIVE_ASSET, NETWORKS, chainFamily, defaultAsset, isNetworkKey } from "@repo/settlement/kernels/networks"
 import { registryProjectDigest } from "@repo/settlement/owner/ownerInstructions"
 import type { ProgramFundsView } from "@repo/ports/security"
 import { type Answer, Machine as VaultMachine } from "../../../gen/frontend__ownerVault.effect.vibe"
@@ -23,17 +23,20 @@ import { type EvmConnection, connectEvm, evmRequest, sendTransaction } from "../
 import { type SolanaConnection, connectSolana } from "../core/solana.vibe"
 import { sessionSlots } from "../core/slots.ts"
 import { evmChainIdOf } from "./commitmentCalls.ts"
+import { evmVaultOf } from "./commitments.vibe"
+import { type EvmVault, type TransferReview, reviewTransfer } from "./evmVault.vibe"
 import { ownerMonthlyPage } from "./ownerMonthly.vibe"
 import type { VaultCreationPlan } from "./ownerPlans.schema.ts"
 import { readText, slotOfText } from "./flowSlots.ts"
 import { type Saved, autoSpacingMs, ownerVaultPage } from "./ownerVault.vibe"
+import { type Setup, type VaultKind, provisionalMessages, provisionalVault } from "./provisionalVault.vibe"
 import { type ReviewedWire, wireMatches } from "./solanaPlans.ts"
 import { signAndVerify } from "./solanaVault.vibe"
 
 export type SetupPurpose = "ordinary" | "security-bounty"
 type SetupAnswer = typeof projectVaultSetup extends Route<infer _Body, infer A, infer _Access> ? A : never
 export type CreationReview = Extract<SetupAnswer, { readonly review: unknown }>["review"]
-export type { AccountWallet, ProgramFundsView, VaultCreationPlan, WalletOffer }
+export type { AccountWallet, EvmConnection, ProgramFundsView, Setup, TransferReview, VaultCreationPlan, WalletOffer }
 
 export interface SetupTerms {
   readonly projectId: string
@@ -78,6 +81,24 @@ export interface Checked {
   readonly registration: Registration | undefined
 }
 
+export interface SentCreation {
+  readonly hash: string
+  readonly kept: "saved" | "storage" | "changed"
+}
+
+export interface ProvisionalDeployment {
+  readonly network: string
+  readonly vault: string
+  readonly owner: string
+  readonly asset: string
+  readonly deploymentTransaction: string
+}
+
+export interface ProvisionalChecked {
+  readonly state: Setup
+  readonly hash: string
+}
+
 export error SetupStopped { message: string; code: string }
 
 export const setupMessages = {
@@ -107,23 +128,37 @@ export function reviewedWalletMessage(network: string): string {
   return `Connect the reviewed wallet on ${network}.`
 }
 
+export function creationNotKept(sent: SentCreation): string {
+  return sent.kept === "storage" ? `Creation sent: ${sent.hash}. Keep this hash; browser storage could not save it.` : `Creation sent: ${sent.hash}. The saved request changed. Keep this hash with your wallet activity.`
+}
+
 export function includedMessage(chain: string): string {
   return `The vault is on ${chain} but its creation is not finalized yet. You can fund it below now. A deposit counts once ${chain} finalizes it.`
 }
 
 const readLimitBytes = 1_048_576
+const provisionalFastAttempts = 20
+const provisionalAttempts = 240
 const setupDeadlineMs = 45_000
 const creationFailures: ReadonlySet<string> = new Set(["vault_creation_failed"])
 const creationRefusals: ReadonlySet<string> = new Set(["vault_creation_failed", "vault_creation_invalid"])
 
 type VaultPage = Effect.Success<ReturnType<typeof ownerVaultPage>>
 type MonthlyPage = Effect.Success<ReturnType<typeof ownerMonthlyPage>>
+type ProvisionalPage = Effect.Success<ReturnType<typeof provisionalVault>>
+
+interface ProvisionalHeld {
+  readonly deployment: ProvisionalDeployment
+  readonly vault: EvmVault
+  readonly page: ProvisionalPage
+}
 
 export service SetupDesk {
   readonly terms: SetupTerms
   readonly page: VaultPage
   readonly key: string
   readonly actor: Ref.Ref<string>
+  readonly provisional: Ref.Ref<ProvisionalHeld | undefined>
 }
 
 const shared = Layer.provideMerge(walletChoiceServices, browserServices)
@@ -138,7 +173,8 @@ export function setupServices(terms: SetupTerms) {
     const key = setupKey(terms.projectId, terms.purpose)
     const page = try ownerVaultPage(sessionSlots(), { creation: key, transfer: `${key}:transfer` }, false)
     const actor = try Ref.make("")
-    return { terms, page, key, actor }
+    const provisional = try Ref.make<ProvisionalHeld | undefined>(undefined)
+    return { terms, page, key, actor, provisional }
   })
   const machine = Layer.effect(VaultMachine, effect { return (try SetupDesk).page.machine })
   return Layer.provideMerge(machine, Layer.provideMerge(desk, shared))
@@ -355,7 +391,11 @@ export effect function createVault(connection: SetupConnection, shown: ReviewedC
     throw stopped(setupMessages.recover)
   })
   if (!creationIdValid(shown.input.network, hash)) throw stopped(setupMessages.noHash)
-  return hash
+  const saved = try page.saved("Creation")
+  if (saved.attempt.hash === hash) return { hash, kept: "saved" } satisfies SentCreation
+  const stored = slotOfText(readText(sessionSlots(), (try SetupDesk).key))
+  const unsaved = stored.kind === "owned" && stored.slot.attempt.identity === saved.attempt.identity && stored.slot.attempt.hash === ""
+  return { hash, kept: unsaved ? "storage" : "changed" } satisfies SentCreation
 }
 
 function inputOf(plan: VaultCreationPlan): SetupInput {
@@ -407,6 +447,21 @@ export effect function watchRegistration(soon: boolean, report: (registration: R
   return { state, registration: try Ref.get(seen) }
 }
 
+export effect function askRegistrationSoon() {
+  const { page } = try SetupDesk
+  const seen = try Ref.make<Registration | undefined>(undefined)
+  const state = try page.ask("Creation", "AutoCheck", (saved) => checkedOrFailed(saved, seen))
+  return { state, registration: try Ref.get(seen) }
+}
+
+export effect function setupTabHidden(hidden: boolean) {
+  return try (try SetupDesk).page.tabHidden(hidden)
+}
+
+export effect function setupEditing(editing: boolean) {
+  return try (try SetupDesk).page.edit(editing)
+}
+
 export effect function enterCreationHash(candidate: string) {
   const { page } = try SetupDesk
   const saved = try savedCreation()
@@ -434,6 +489,106 @@ export effect function unreadableCreation() {
 
 export effect function clearUnreadableCreation() {
   return try (try SetupDesk).page.clearUnreadable("Creation")
+}
+
+export function provisionalDeploymentOf(value: Readonly<Record<string, unknown>> | undefined, plan: VaultCreationPlan | undefined, hash: string): ProvisionalDeployment | undefined {
+  if (value === undefined || plan === undefined || familyOfNetwork(plan.network) !== "evm") return undefined
+  const { network, vault, owner, asset, deploymentTransaction } = value
+  if (network !== plan.network || typeof vault !== "string" || !/^0x[0-9a-fA-F]{40}$/u.test(vault) || typeof owner !== "string" || owner.toLowerCase() !== plan.owner.toLowerCase()
+    || typeof asset !== "string" || asset.toLowerCase() !== plan.asset.toLowerCase() || typeof deploymentTransaction !== "string" || hash === "" || deploymentTransaction.toLowerCase() !== hash.toLowerCase()) return undefined
+  return { network: plan.network, vault: vault.toLowerCase(), owner: owner.toLowerCase(), asset: asset.toLowerCase(), deploymentTransaction: deploymentTransaction.toLowerCase() }
+}
+
+function provisionalKey(shown: ProvisionalDeployment): string {
+  return `${storageKeys.vaultAction.key}${shown.network}:provisional:${shown.vault}`
+}
+
+function vaultKindOf(terms: SetupTerms, vault: EvmVault): VaultKind {
+  if (terms.purpose === "security-bounty") return "BountyEvm"
+  return vault.asset.toLowerCase() === EVM_NATIVE_ASSET ? "EvmNative" : "OrdinaryEvmToken"
+}
+
+export effect function openProvisional(shown: ProvisionalDeployment) {
+  const { terms, provisional } = try SetupDesk
+  const known = try Ref.get(provisional)
+  if (known !== undefined && known.deployment.vault === shown.vault && known.deployment.deploymentTransaction === shown.deploymentTransaction) return try known.page.machine.get()
+  const vault = evmVaultOf(shown, terms.purpose === "security-bounty" ? "BountyPurpose" : "OrdinaryPurpose")
+  if (vault === undefined) throw stopped(setupMessages.unavailable)
+  const page = try provisionalVault(sessionSlots(), provisionalKey(shown), vault, shown.owner)
+  try page.reviewCreation(vaultKindOf(terms, vault), true)
+  try Ref.set(provisional, { deployment: shown, vault, page })
+  return try page.machine.get()
+}
+
+effect function heldProvisional() {
+  const known = try Ref.get((try SetupDesk).provisional)
+  if (known === undefined) throw stopped(provisionalMessages.closed)
+  return known
+}
+
+effect function followedCreation(held: ProvisionalHeld, connection: EvmConnection) {
+  return try held.page.followCreation(connection, held.deployment.deploymentTransaction)
+}
+
+export effect function savedProvisional() {
+  const known = try Ref.get((try SetupDesk).provisional)
+  if (known === undefined) return undefined
+  return try known.page.saved()
+}
+
+export effect function connectProvisionalOwner(id: number) {
+  const held = try heldProvisional()
+  const connection = try connectEvm(id, false)
+  if (connection.address.toLowerCase() !== held.deployment.owner) throw stopped(provisionalMessages.ownerOnly)
+  return connection
+}
+
+export effect function reviewProvisionalDeposit(connection: EvmConnection, amount: string) {
+  const held = try heldProvisional()
+  const state = try followedCreation(held, connection)
+  if (state.form !== "Provisional") throw stopped(provisionalMessages.closed)
+  return try reviewTransfer(connection, held.vault, "deposit", amount, "latest")
+}
+
+export effect function depositProvisional(connection: EvmConnection, amount: string) {
+  const { provisional } = try SetupDesk
+  const held = try heldProvisional()
+  try followedCreation(held, connection)
+  const sent = held.page.deposit(connection, amount) catch effect (error) => {
+    if (error._tag === "DepositStopped" && error.message === provisionalMessages.unclear) {
+      try Ref.set(provisional, undefined)
+      try openProvisional(held.deployment)
+    }
+    throw error
+  }
+  return sent
+}
+
+export effect function checkProvisional(connection: EvmConnection) {
+  const held = try heldProvisional()
+  try followedCreation(held, connection)
+  const checked: ProvisionalChecked = try held.page.followSaved(connection)
+  return checked
+}
+
+export effect function recoverProvisionalHash(connection: EvmConnection, transaction: string) {
+  const held = try heldProvisional()
+  try held.page.recoverHash(transaction)
+  return try checkProvisional(connection)
+}
+
+export effect function watchProvisional(connection: EvmConnection, hidden: () => boolean, report: (checked: ProvisionalChecked) => void!!) {
+  let attempts = 0
+  while (attempts < provisionalAttempts) {
+    try Effect.sleep(attempts < provisionalFastAttempts ? 3_000 : 15_000)
+    if (hidden()) continue
+    attempts += 1
+    const checked = checkProvisional(connection) catch () => undefined
+    if (checked === undefined) continue
+    try report(checked)
+    if (checked.state.phase === "NoDeposit" || checked.state.phase === "Verified") return checked
+  }
+  return undefined
 }
 
 export effect function watchSetupOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {

@@ -1,9 +1,10 @@
 import { webCrypto, sha256Hex } from "@repo/platform/crypto";
 import { pointRevisionId } from "@repo/points/client";
-import { REPORT_DEPOSIT_SWITCHED_ON, SECURITY_DEFAULT_EXCLUSIONS, SECURITY_ROUTINE_DECISION_NOTICE, reportDepositOn } from "@repo/security/client";
+import { REPORT_DEPOSIT_SWITCHED_ON, SECURITY_DEFAULT_EXCLUSIONS, SECURITY_ROUTINE_DECISION_NOTICE, reportDepositItem, reportDepositOn } from "@repo/security/client";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { REPORT_DEPOSIT_NOTICE } from "../src/projections/reportDeposit.ts";
+import { loginPath } from "../src/platform/environment.ts";
+import { REPORT_DEPOSIT_NOTICE, REPORT_DEPOSIT_SPAM_INFO } from "../src/projections/reportDeposit.ts";
 import { at, named, shown, signIn, signOut, site } from "./support/ui/browser.ts";
 import type { Target } from "./support/ui/protocol.ts";
 
@@ -232,14 +233,16 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
   const patch = "--- a/test/Vault.t.sol\n+++ b/test/Vault.t.sol\n@@ -1 +1,3 @@\n+function testWithdrawRounding() public {\n+  vault.withdraw(1);\n+}\n";
   const textFile = (name: string, text: string, mimeType = "text/plain") => ({ name, mimeType, bytes: [...new TextEncoder().encode(text)] });
 
-  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, and sends the proof with the report (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project")', async () => {
+  it('the form states the refundable deposit before filing, loads the description from a file, refuses a binary or wrong-ending proof while keeping the chosen one, sends the proof with the report, and the Inbox follows the deposit from needed, through its pay page where a connected wallet can be put back, to recorded (spec/security/reportDeposit.md, "A deposit is asked only with a new case, at a rate in force, from a reporter who is not exempt"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/frontend/drafts.md, "A draft belongs to one account and project"; spec/security/reportDeposit.md, "A report that waits for its deposit belongs to its reporter alone"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days"; spec/frontend/feePages.md, "The wallet is asked only after a fresh read shows the same amount due, from one saved attempt per item")', async () => {
+    const summary = "Withdrawal rounds shares in the wrong direction";
     const description = "At commit abc, withdraw() rounds shares down. The attached test repeats a synthetic withdrawal.";
+    await site.wallets({ evm: { name: "Anvil Wallet" } });
     await signIn(users.rae.login, programPath(vaultKit));
     await shown(summaryField).toMatchObject({ visible: true, disabled: false });
     const asked = REPORT_DEPOSIT_SWITCHED_ON && reportDepositOn(manifestOf(vaultKit, bountyTerms(vaultKit, [users.max], ownerLines)));
     await shown({ text: REPORT_DEPOSIT_NOTICE, exact: true }).toMatchObject({ count: asked ? 1 : 0 });
 
-    await site.fill(summaryField, "Withdrawal rounds shares in the wrong direction");
+    await site.fill(summaryField, summary);
     await site.upload({ label: "Load report from file" }, textFile("report.md", `\n${description}\n`, "text/markdown"));
     await shown(descriptionField).toMatchObject({ value: description });
 
@@ -260,6 +263,49 @@ describe('Submit and recover one private report (spec/security/intake.md, "Story
     await shown(named("heading", "Report received")).toMatchObject({ visible: true });
     await expect.poll(() => submissionsOf(users.rae), { timeout: journeyMs }).toEqual([expect.objectContaining({ project_id: vaultKit })]);
     expect(await sentCount("POST", "/api/v1/security-submissions")).toBe(1);
+
+    await expect.poll(() => casesOf(vaultKit), { timeout: journeyMs }).toHaveLength(1);
+    const [filed] = await casesOf(vaultKit);
+    const caseId = String(filed?.id);
+    const payPath = `/fee/report/${caseId}`;
+    const needed = named("link", "Deposit needed: 395 SLOP");
+    await site.open("/inbox");
+    await shown({ text: summary, exact: true }).toMatchObject({ visible: true });
+    await shown(named("link", "Deposit needed", { exact: false })).toMatchObject({ count: 0 });
+
+    await site.sql(
+      "INSERT INTO security_report_deposits(case_id,project_id,item,mode,slop_amount,slop_per_usd,asked_at) VALUES(?,?,?,'asked','395000000000000000000','79',?)",
+      caseId,
+      vaultKit,
+      reportDepositItem(caseId) ?? null,
+      new Date().toISOString(),
+    );
+    await site.open("/inbox");
+    await shown(needed).toMatchObject({ visible: true, href: payPath });
+    await site.click(needed);
+    await at(payPath);
+    const payForm = named("region", "Pay the deposit");
+    const connected = named("group", "Connected wallet", { within: payForm });
+    await shown(named("button", "Pay from a wallet")).toMatchObject({ visible: true, disabled: false });
+    await shown(named("button", "Connect Anvil Wallet")).toMatchObject({ count: 0 });
+    await site.click(named("button", "Pay from a wallet"));
+    await site.click(named("button", "Connect Anvil Wallet", { within: payForm }));
+    await shown(connected).toMatchObject({ visible: true });
+    await shown(named("button", "Review deposit", { within: payForm })).toMatchObject({ visible: true });
+    await site.click(named("button", "Choose another wallet", { within: payForm }));
+    await shown(connected).toMatchObject({ count: 0 });
+    await shown(named("button", "Review deposit", { within: payForm })).toMatchObject({ count: 0 });
+    await shown(named("button", "Choose another wallet", { within: payForm })).toMatchObject({ count: 0 });
+    await shown(named("button", "Connect Anvil Wallet", { within: payForm })).toMatchObject({ visible: true, disabled: false });
+    expect((await site.walletAsked()).filter((request) => request.method === "eth_sendTransaction")).toEqual([]);
+
+    await site.sql("UPDATE security_report_deposits SET paid_at = ? WHERE case_id = ?", new Date().toISOString(), caseId);
+    await site.open("/inbox");
+    await shown({ text: "Deposit recorded", exact: true }).toMatchObject({ visible: true });
+    await shown(needed).toMatchObject({ count: 0 });
+    await site.sql("UPDATE security_report_deposits SET outcome = 'refund_due', outcome_reason = 'responded', outcome_at = ? WHERE case_id = ?", new Date().toISOString(), caseId);
+    await site.open("/inbox");
+    await shown({ text: "Deposit recorded, to be sent back", exact: true }).toMatchObject({ visible: true });
   });
 
   it('three tab returns keep the reporter\'s reports on the Inbox and re-read only the session (spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/requests.md, "Only the current request may publish its validated result")', async () => {
@@ -310,7 +356,7 @@ describe('Change accounts without disclosing the prior account\'s draft (spec/fr
 });
 
 describe('Carry one report from durable receipt to a decision and optional forwarding (spec/security/journey.md, "Story: Carry one report from durable receipt to a decision and optional forwarding"; spec/security/cases.md, "Story: Obtain a human decision on every report the routine pass leaves open")', () => {
-  it('the reporter and the current maintainer each see the case, an outsider sees none, and a maintainer whose role is revoked loses it (spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', async () => {
+  it('the reporter and the current maintainer each see the case, an outsider sees none, the maintainer may mark a rejection as spam and the mark is sent with the decision, and a maintainer whose role is revoked loses the case (spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/reportDeposit.md, "A paid deposit is sent back on a first response and kept only after a keeping close stood seven days")', async () => {
     await site.allow(...expectedFailures);
     await signIn(users.rae.login, programPath(vaultKit));
     await writeReport("Share rounding lets a deposit mint for free", "Depositing one wei rounds the share price down to zero at the attached commit.");
@@ -341,11 +387,76 @@ describe('Carry one report from durable receipt to a decision and optional forwa
     await shown(named("region", "Case actions")).toMatchObject({ visible: true });
     await shown(caseButton(caseId)).toMatchObject({ visible: true });
 
+    const decision = named("form", "Decide");
+    const outcome: Target = { label: "Outcome", within: decision };
+    const spam = named("checkbox", `Spam · ${REPORT_DEPOSIT_SPAM_INFO}`, { within: decision });
+    await site.click(named("button", "Decide", { within: named("region", "Case actions") }));
+    await shown(outcome).toMatchObject({ visible: true });
+    await shown(spam).toMatchObject({ count: 0 });
+    await site.select(outcome, "Duplicate");
+    await shown(spam).toMatchObject({ count: 0 });
+    await site.select(outcome, "Rejected");
+    await shown(spam).toMatchObject({ visible: true, checked: false });
+    await site.click(spam);
+    await shown(spam).toMatchObject({ checked: true });
+    await site.select({ label: "Severity", within: decision }, "Informational");
+    await site.fill(named("textbox", "Reason", { exact: false, within: decision }), "Generated text with no finding in it.");
+    await site.click(named("button", "Record decision", { within: decision }));
+    await expect
+      .poll(() => site.sql("SELECT json_extract(detail, '$.outcome') AS outcome, json_extract(detail, '$.spam') AS spam FROM security_case_events WHERE case_id = ? AND kind = 'decide'", caseId), { timeout: journeyMs })
+      .toEqual([{ outcome: "rejected", spam: 1 }]);
+
     await publishRevision(vaultKit, 2, bountyTerms(vaultKit, [users.fin], ownerLines));
     await site.open("/security");
     await shown(named("heading", "Security cases", { level: 1 })).toMatchObject({ visible: true });
     await expect.poll(() => site.read(caseButton(caseId)), { timeout: journeyMs }).toMatchObject({ count: 0 });
     await shown(named("region", "Case actions")).toMatchObject({ count: 0 });
+  });
+});
+
+describe('Close and reopen an account without losing history (spec/backend/accounts.md, "Story: Close and reopen an account without losing history")', () => {
+  it('closing a reporter who holds an unpaid award and a private case keeps both, reads neither while closed, and only an explicit reopen shows the case again (spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/settlement/payment.md, "An approved obligation retains its immutable amount and purpose")', async () => {
+    await site.allow("^console Failed to load resource: the server responded with a status of 40[139]", "^40[13] (GET|POST) /api/v1/", "^409 POST /api/v1/points/join$");
+    await signIn(users.rae.login, programPath(vaultKit));
+    await writeReport("Withdraw queue skips a paused vault", "Withdrawals queued while the vault is paused bypass the share check at the attached commit.");
+    await site.click(named("button", "Review report"));
+    await site.click(named("button", "Submit private report"));
+    await shown(named("heading", "Report received")).toMatchObject({ visible: true });
+    await expect.poll(() => casesOf(vaultKit), { timeout: journeyMs }).toHaveLength(1);
+    const [received] = await casesOf(vaultKit);
+    const caseId = String(received?.id);
+    const reporter = String(users.rae.id);
+    await site.sql(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES('obligation-closing',?,?,'base-mainnet','base',?,'0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',6,'100000000','2000000',?,'reserved',?)",
+      vaultKit,
+      reporter,
+      `0x${"2".repeat(40)}`,
+      "9".repeat(64),
+      new Date().toISOString(),
+    );
+    const retained = async () => ({
+      obligations: await site.sql("SELECT id, state, gross_base, fee_base FROM payment_obligations WHERE github_user_id = ?", reporter),
+      cases: await site.sql("SELECT id, receipt_state, revision FROM security_cases WHERE reporter_github_id = ?", reporter),
+      submissions: await submissionsOf(users.rae),
+    });
+    const before = await retained();
+    expect({ obligations: before.obligations.length, cases: before.cases.length, submissions: before.submissions.length }).toEqual({ obligations: 1, cases: 1, submissions: 1 });
+
+    expect(await site.fetch("POST", "/api/v1/points/account/close", { login: users.rae.login })).toMatchObject({ status: 200, body: { closed: true } });
+    expect(await site.fetch("GET", "/api/v1/security-cases")).toMatchObject({ status: 401 });
+    expect(await site.fetch("GET", "/api/v1/payments/me")).toMatchObject({ status: 401 });
+    expect(await retained()).toEqual(before);
+
+    await site.github(users.rae.login);
+    await site.open(loginPath("/security"));
+    await site.click(named("button", "Continue with GitHub"));
+    await shown(named("button", "Reopen account")).toMatchObject({ visible: true, disabled: false });
+    await shown(named("button", "Continue with GitHub")).toMatchObject({ count: 0 });
+    expect(await retained()).toEqual(before);
+    await site.click(named("button", "Reopen account"));
+    await at("/security");
+    await shown(caseButton(caseId)).toMatchObject({ visible: true });
+    expect(await retained()).toEqual(before);
   });
 });
 

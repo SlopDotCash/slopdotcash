@@ -13,6 +13,7 @@ import { digest } from "../chain/solana/bytes.ts"
 import { awardId as solanaAwardId } from "../chain/solana/pda.ts"
 import { bountyFeeBase } from "../kernels/fees.ts"
 import { NETWORKS, type NetworkKey, chainFamily, isChain } from "../kernels/networks.ts"
+import type { Alongside } from "../direct/journal.vibe"
 import { type ReviewedDeployment, reviewedPolicy } from "../vault/policy.vibe"
 import { awardAsset, sameAssetAddress, snapshotMaxAgeMillis } from "./programFunds.vibe"
 
@@ -172,15 +173,16 @@ effect function written(caseId: string, statements: ReadonlyArray<Statement>) {
   }
 }
 
-export effect function consentEscrow(context: CaseContext, deployment: EscrowDeployment, alongside: ReadonlyArray<Statement>) {
+export effect function consentEscrow(context: CaseContext, deployment: EscrowDeployment, alongside: Alongside) {
   if (context.actorGithubId !== context.reporterGithubId) return try refuse("forbiddenOnlyTheReporterMay")
   const revision = context.revision + 1
   const at = try isoNow()
+  const detail = { network: deployment.reviewed.network, publicChainVisibilityAccepted: true } as const
   try written(context.caseId, [
-    ...alongside,
+    ...(try alongside(detail)),
     sql`INSERT INTO security_payment_consents (case_id, deployment, reporter_github_id, accepted_at, case_revision) SELECT ${context.caseId}, ${JSON.stringify(deployment.record)}, ${context.actorGithubId}, ${at}, ${revision} WHERE EXISTS (SELECT 1 FROM security_case_events WHERE case_id = ${context.caseId} AND case_revision = ${revision} AND kind = 'consent-payment')`,
   ])
-  return { network: deployment.reviewed.network, publicChainVisibilityAccepted: true } as const
+  return detail
 }
 
 effect function obligationOf(deployment: ReviewedDeployment, source: string) {
@@ -195,7 +197,7 @@ effect function obligationOf(deployment: ReviewedDeployment, source: string) {
   return try orDie(Effect.try(() => evmAwardId(deployment.chainId, vault, sourceDigest)))
 }
 
-export effect function prepareEscrow(context: CaseContext, network: string, award: ApprovedAward | undefined, program: EscrowProgram | undefined, alongside: ReadonlyArray<Statement>) {
+export effect function prepareEscrow(context: CaseContext, network: string, award: ApprovedAward | undefined, program: EscrowProgram | undefined, alongside: Alongside) {
   if (award?.split === "FullAward") return try refuse("railUnavailableTheBountyVaultPays")
   const deployment = program?.deployments.find((entry) => entry.reviewed.network === network)
   const terms = program?.terms
@@ -219,13 +221,14 @@ export effect function prepareEscrow(context: CaseContext, network: string, awar
   const source = try randomToken(32)
   const obligationId = try obligationOf(reviewed, source)
   const revision = context.revision + 1
+  const detail = { network: reviewed.network, publicChainVisibilityAccepted: true } as const
   try written(context.caseId, [
-    ...alongside,
+    ...(try alongside(detail)),
     sql`INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment)
       SELECT ${context.caseId}, ${obligationId}, ${source}, ${reviewed.network}, ${reviewed.vault}, ${reviewed.asset}, ${terms.decimals}, ${reserved.toString()}, ${bountyFeeBase(reserved).toString()}, ${context.reporterGithubId}, ${context.actorGithubId}, ${at}, ${revision}, ${recordText}
       WHERE EXISTS (SELECT 1 FROM security_cases c JOIN security_case_events e ON e.case_id = c.id AND e.case_revision = c.revision WHERE c.id = ${context.caseId} AND c.revision = ${revision} AND c.award_state = 'approved' AND e.kind = 'prepare-payment')`,
   ])
-  return { network: reviewed.network, publicChainVisibilityAccepted: true } as const
+  return detail
 }
 
 function stateOf(row: SettlementRow): VaultSettlementState {

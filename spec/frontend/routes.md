@@ -74,8 +74,9 @@ and maintain open source" (development `src/lib/site-routes.ts` at
 Private routes have fixed titles and canonical paths: Account (`/account`),
 Log in (`/login`), Your payouts (`/earnings`), Inbox, Admin, Private vetting
 evidence and Security cases (`/security`). Fixed public pages are How it works,
-Fund a project (`/sponsors`), Cycle archive (`/cycles`), Contributors (`/points`) and Add a project
-(`/projects/new`) (development `src/lib/site-routes.ts` at `8660a6121`). The
+Fund a project (`/sponsors`), Cycle archive (`/cycles`), Contributors (`/points`), Add a project
+(`/projects/new`) and Requested repos (`/requested`) (development
+`src/lib/site-routes.ts` at `f3f2725e0`). The
 two pay pages are titled "Submission fee" (`/fee/<owner>/<repo>/<number>`)
 and "Report deposit" (`/fee/report/<case>`), one page per pull request or
 report, and are never indexed and have no canonical (development
@@ -107,6 +108,7 @@ pure def pageOf(kind: A::RouteKind): N::Page =
   else if (kind == A::Project) N::Project else if (kind == A::ManageProject) N::ManageProject
   else if (kind == A::SecurityProgram) N::SecurityProgram else if (kind == A::Profile) N::Profile
   else if (kind == A::Fee) N::SubmissionFee else if (kind == A::FeeReport) N::ReportDeposit
+  else if (kind == A::Requested) N::RequestedRepos
   else N::Gone
 pure def privateTitle(kind: A::RouteKind): str =
   if (kind == A::Account) "Account" else if (kind == A::Login) "Log in" else if (kind == A::Earnings) "Your payouts"
@@ -117,6 +119,7 @@ pure def staticTitle(kind: A::RouteKind): str =
   if (kind == A::Home) "Slop: ship and maintain open source" else if (kind == A::HowItWorks) "How it works"
   else if (kind == A::Sponsors) "Fund a project" else if (kind == A::CycleArchive) "Cycle archive"
   else if (kind == A::Points) "Contributors" else if (kind == A::NewProject) "Add a project"
+  else if (kind == A::Requested) "Requested repos"
   else ""
 pure def payTitle(kind: A::RouteKind): str =
   if (kind == A::Fee) "Submission fee" else if (kind == A::FeeReport) "Report deposit" else ""
@@ -129,6 +132,7 @@ pure def canonicalPath(kind: A::RouteKind): str =
   else if (kind == A::Project) "/projects/:project" else if (kind == A::ManageProject) "/projects/:project/manage"
   else if (kind == A::SecurityProgram) "/projects/:project/security" else if (kind == A::Cycle) "/cycles/:project/:cycle"
   else if (kind == A::Profile) "/contributors/:login"
+  else if (kind == A::Requested) "/requested"
   else ""
 pure def recordKind(kind: A::RouteKind): bool =
   kind == A::Project or kind == A::ManageProject or kind == A::SecurityProgram or kind == A::Cycle or kind == A::Profile
@@ -150,7 +154,7 @@ pure def lawIndexedHeadHasCanonical(route: A::Route, recordFound: bool, recordNa
 pure def lawPayPagesAreNeverIndexed(route: A::Route, recordFound: bool, recordName: str): bool =
   (route.kind == A::Fee or route.kind == A::FeeReport) implies
     (not(routeHead(route, recordFound, recordName).indexed) and routeHead(route, recordFound, recordName).titleName == payTitle(route.kind))
-pure val routeValues = Set(A::page(A::Account), A::page(A::Home), A::page(A::Unknown), { ...A::page(A::Project), projectId: "eliza" },
+pure val routeValues = Set(A::page(A::Account), A::page(A::Home), A::page(A::Unknown), A::page(A::Requested), { ...A::page(A::Project), projectId: "eliza" },
   { ...A::page(A::Profile), login: "alice" }, { ...A::page(A::Cycle), projectId: "eliza", cycleId: "2026-11" },
   { ...A::page(A::Fee), owner: "octocat", repo: "slop", number: "7" }, { ...A::page(A::FeeReport), caseId: "sc_abcdefgh" })
 pure val recordNameValues = Set("", "eliza", "alice")

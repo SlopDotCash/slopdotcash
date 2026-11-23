@@ -7,6 +7,7 @@ import type { Effect } from "effect";
 import { useMemo, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { formatDateTime } from "../../app/format.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { PageProps } from "../../app/pages.ts";
 import { type ProfileActor, resolveProfileActor } from "../../projections/profile.ts";
 import { findHistoricalProject, findProjectByRepositoryId, type RegistryBoot } from "../../reads/registry.vibe";
@@ -54,6 +55,7 @@ function Unverified({ login, status, onRetry }: { login: string; status: ReadSta
 function UnknownContributor({ login }: { login: string }) {
   return (
     <NotFound title={`@${login} not found`}>
+      <NotFoundHead />
       <p>
         <a href="/points" className={linkClass}>
           Find a contributor

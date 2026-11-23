@@ -1,13 +1,8 @@
-// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"
+// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/reviewedHistory.md, "A duplicate retirement zeroes only an October pool whose every claim an earlier accepted source already covers"; spec/points/assessmentAudit.md, "A read-only assessment audit reports a conclusion only at a complete, current journal cut"; spec/points/reviewedHistory.md, "A reviewed packet applies only to the baseline it was reviewed on and only as reviewed"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
 import { isoNow } from "@repo/platform/clock"
-import { d1Http } from "@repo/platform/d1Http"
-import { github } from "@repo/platform/github"
-import { githubApp } from "@repo/platform/github/app"
 import { type Journal } from "../kernels/records/canonical.ts"
 import { batchDigest } from "../kernels/records/ids.vibe"
 import { participationBans } from "../collect/feeds/bans.vibe"
-import { databases } from "../evaluations/check.vibe"
-import { actionsToken } from "../ingestion/token.vibe"
 import { repositoriesOf } from "../journal/build.vibe"
 import { readRegistry } from "../snapshot/adaptPr.vibe"
 import { batchRecorded } from "../corrections/apply/apply.vibe"
@@ -15,10 +10,19 @@ import { projectOfRegistry } from "../corrections/apply/derive.vibe"
 import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
 import { type HistoricalPacket, decodeEncodedPacket, decodePacketBytes, digestPattern, digestText, require } from "../corrections/reviewed/packet.vibe"
 import { reconstructHistoricalPoints } from "../corrections/reviewed/reconstruct.vibe"
-import { type ReviewedStorageError, type ReviewedStorageServices, exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
-import { readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
+import { exactMainHead, readPacket, reviewedStorage, trustedMain } from "../corrections/reviewed/transport.vibe"
+import { type HistoricalAssessmentJournalHeads, readHistoricalAssessmentJournalHeads } from "../corrections/reviewed/audit/catalog.vibe"
 import { auditAssessments } from "../corrections/reviewed/audit/run.vibe"
-import { enforcementGeneration, historicalStatements, recordHistorical, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalDuplicateOrder, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
+import type { HistoricalAssessmentReceipt } from "../corrections/reviewed/audit/reconcile.vibe"
+import type { HistoricalProject } from "../client/snapshot/validate.vibe"
+import { latestOf } from "../corrections/reviewed/replay/latest.vibe"
+import { verifyHistoricalReplayQualification } from "../corrections/reviewed/replay/qualification.vibe"
+import { readTrustedHistoricalReplay } from "../corrections/reviewed/replay/receipt.vibe"
+import { replayReview } from "../corrections/reviewed/replay/review.vibe"
+import { replayUsage } from "../corrections/reviewed/replay/run.vibe"
+import { phased, reviewedServices } from "../corrections/reviewed/replay/services.vibe"
+import { type VerifiedClosedReviews, assertRemovedMergeGroupsPreserved } from "../corrections/reviewed/replay/value.vibe"
+import { enforcementGeneration, historicalStatements, recordHistorical, verifyCarrierTips, verifyHistoricalAcceptedSquashes, verifyHistoricalCensus, verifyHistoricalDuplicateAcceptanceOrder, verifyHistoricalIdenticalAcceptedChanges, verifyHistoricalProtection, verifyHistoricalValueRecords, verifyOwnerAuthority, verifyRecipientAccounts } from "../corrections/reviewed/verify.vibe"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -26,8 +30,6 @@ module verified {
   export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
 }
 import { githubUserIdFromNodeId } from verified
-
-export error ReviewedPublicationRefused { message: string }
 
 export type PublicationPhase =
   | "trusted invocation"
@@ -66,7 +68,7 @@ interface Invocation {
 }
 
 schema RegistryRevision { readonly projectId: string; readonly revision: number; readonly manifestSha256: string; readonly manifest: Schema.Unknown }
-schema ListedRepository { readonly id: string; readonly nodeId?: string; readonly countsFrom?: string }
+schema ListedRepository { readonly id: string; readonly nodeId?: string; readonly countsFrom?: string; readonly integrationBranch?: string }
 schema ProjectAuthority { readonly repositoryNodeId?: string }
 schema ListedProject { readonly id: string; readonly repositories: ReadonlyArray<ListedRepository>; readonly authority?: ProjectAuthority }
 
@@ -93,7 +95,7 @@ effect function privatePacket() {
     return { encoded: parts.join(""), bytes: null as Uint8Array | null }
   }
   const storage = try reviewedStorage(try environment("CLOUDFLARE_ACCOUNT_ID"), try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make("")))
-  const bytes: Uint8Array | null = try readPacket<ReviewedStorageError, ReviewedStorageServices>(storage, manifest)
+  const bytes: Uint8Array | null = try readPacket(storage, manifest)
   return { encoded: "", bytes }
 }
 
@@ -115,7 +117,7 @@ effect function verifiedProject(packet: HistoricalPacket) {
   for (const entry of listedProjects(registry.projects)) {
     for (const repository of entry.repositories) if (repository.countsFrom !== undefined) countsFrom[repository.id] = repository.countsFrom
   }
-  return { registry, countsFrom, manifest: project as unknown }
+  return { registry, countsFrom, manifest: project as unknown, repository: listed.repositories[index]?.id ?? "", integrationBranch: listed.repositories[index]?.integrationBranch }
 }
 
 function githubIdOf(actor: string) {
@@ -155,9 +157,10 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   setPhase("historical census verification")
   try verifyHistoricalCensus(packet)
   setPhase("duplicate acceptance order verification")
-  const retirementOrder = try verifyHistoricalDuplicateOrder(packet)
+  const order = try verifyHistoricalDuplicateAcceptanceOrder(packet)
   setPhase("accepted squash verification")
   try verifyHistoricalAcceptedSquashes(packet)
+  const identical = try verifyHistoricalIdenticalAcceptedChanges(packet, project.integrationBranch ?? "")
   setPhase("financial protection verification")
   const protection = try verifyHistoricalProtection(packet)
   setPhase("public Points read")
@@ -172,11 +175,29 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     try Console.log(JSON.stringify({ projectId: packet.projectId, enforcementGeneration: generation, mode: "already-published", candidateDigest: packet.candidateDigest }))
     return
   }
-  setPhase("assessment journal checkpoint read")
-  try require(!invocation.apply, "Applying historical Points requires a reviewed replay qualification")
-  const assessmentHeads = try readHistoricalAssessmentJournalHeads()
+  const repositories = repositoriesOf(registry, project.countsFrom)
+  let assessmentHeads: HistoricalAssessmentJournalHeads
+  let closedReviews: VerifiedClosedReviews = new Map()
+  let assessmentReceipt: HistoricalAssessmentReceipt | undefined
+  const qualification = packet.replayQualification
+  if (qualification !== undefined) {
+    setPhase("trusted replay receipt read")
+    const sourceCommit = try environment("GITHUB_SHA")
+    const donor = try readTrustedHistoricalReplay(qualification, sourceCommit)
+    setPhase("assessment qualification match")
+    const pin = { projectId: packet.projectId, repository: project.repository, repositoryNodeId: packet.sourceAudit.repositoryNodeId, manifestSha256: packet.manifestSha256 }
+    const context = { registry, repositories, protection: [], pin, project: project.manifest as HistoricalProject, now: try Clock.currentTimeMillis }
+    const qualified = try verifyHistoricalReplayQualification(packet, baseline, donor, sourceCommit, generation, context, project.integrationBranch)
+    assessmentHeads = qualified.heads
+    closedReviews = qualified.closedReviews
+    assessmentReceipt = qualified.receipt
+  } else {
+    setPhase("assessment journal checkpoint read")
+    try require(!invocation.apply, "Applying historical Points requires a reviewed replay qualification")
+    assessmentHeads = try readHistoricalAssessmentJournalHeads()
+  }
   setPhase("value record verification")
-  try verifyHistoricalValueRecords(packet)
+  try verifyHistoricalValueRecords(packet, { qualifiedReplay: qualification !== undefined })
   setPhase("historical Points reconstruction")
   const candidate = try reconstructHistoricalPoints({
     packet,
@@ -185,10 +206,13 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
     bans,
     protection,
     registry,
-    repositories: repositoriesOf(registry, project.countsFrom),
+    repositories,
     projectOf: projectOfRegistry(project.registry.projects),
-    retirementOrder,
+    qualified: qualification !== undefined,
+    closedReviews,
+    verifiedRetirements: { identical: identical.identical, order },
   })
+  if (assessmentReceipt !== undefined) try assertRemovedMergeGroupsPreserved(candidate.revisions.slice(baseline.revisions.length), assessmentReceipt, latestOf(baseline.revisions))
   setPhase("import preparation")
   const prepared = try historicalStatements(packet, candidate, generation, githubIdOf, assessmentHeads)
   const candidateDigest = prepared.digest
@@ -200,6 +224,7 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
         try exactMainHead("Historical publication source changed")
         try verifyOwnerAuthority(packet, project.manifest)
         try verifyHistoricalProtection(packet)
+        try verifyCarrierTips(packet, identical)
         setPhase("protected import and readback")
       },
       loadPublic: publishedJournal,
@@ -216,32 +241,14 @@ effect function published(setPhase: (phase: PublicationPhase) => void, invocatio
   }))
 }
 
-effect function services<A, E, R>(run: A!E!R) {
-  const accountId = try environment("CLOUDFLARE_ACCOUNT_ID")
-  const apiToken = try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make(""))
-  const token = try actionsToken()
-  const appId = try environment("SLOPBOT_APP_ID")
-  const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
-  provide Layer.mergeAll(
-    d1Http({ accountId, databaseId: databases.production, token: apiToken }),
-    github({ token, userAgent: "slopbot" }),
-    githubApp({ appId, privateKey, userAgent: "slop-october-owner-check" }),
-  ) {
-    return try run
-  }
-}
-
 export effect function reviewed(args: ReadonlyArray<string>) {
-  let phase: PublicationPhase = "trusted invocation"
-  const setPhase = (next: PublicationPhase) => {
-    phase = next
-  }
-  const run = effect {
+  const [operation, ...rest] = args
+  if (operation === "replay-review") return try replayReview(rest)
+  try require(operation !== "--replay-assessments", replayUsage)
+  try phased("trusted invocation" as PublicationPhase, (setPhase) => effect {
     try trustedMain("Reviewed historical publication requires manual main workflow")
-    if (args.length === 1 && args[0] === "--audit-assessments") return try services(auditAssessments(setPhase))
+    if (args.length === 1 && operation === "--audit-assessments") return try reviewedServices(auditAssessments(setPhase))
     const invocation = try invocationOf(args)
-    try services(published(setPhase, invocation))
-  }
-  const refused = () => Effect.fail(new ReviewedPublicationRefused({ message: `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner` }))
-  try Effect.catchDefect(Effect.catch(run, refused), refused)
+    try reviewedServices(published(setPhase, invocation))
+  })
 }

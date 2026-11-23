@@ -1,18 +1,24 @@
-// spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+// spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"; spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { Alert, Button, Metric, MetricGrid, Spinner, Status } from "@repo/ui";
 import { RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { lazy, type ReactNode, Suspense, useState } from "react";
 import { formatDateTime } from "../../../app/format.ts";
 import { assetSymbol } from "../../../kernels/assetText.ts";
 import { type BountyFunds as Funds, bountyFundsRuntime, readBountyFunds, setupMessages } from "../../../wallets/owner/vaultSetup.vibe";
 import { useSettled } from "../vault/hooks.ts";
+import { periodOf } from "../vault/savedPlans.ts";
+import { type BountyProject, bountyFundingOf } from "./bounty.schema.ts";
+
+const VaultActions = lazy(() => import("../vault/VaultActions.tsx").then((module) => ({ default: module.VaultActions })));
 
 export type BountyFundsViewProps = {
   /** The private read: loading, failed with its message, or the funds the current owner may see. */
   read: { readonly status: "running" } | { readonly status: "failed"; readonly message: string } | { readonly status: "done"; readonly value: Funds };
   /** The last funds shown, kept in view while a refresh fails. */
   last?: Funds;
+  /** The deposit and withdrawal forms of each bounty vault, shown with the funds. */
+  vaults?: ReactNode;
   onRefresh: () => void;
 };
 
@@ -27,7 +33,7 @@ function available(funds: NonNullable<Funds["funds"]>): string {
 }
 
 /** The private bounty vault's balance from its last finalized snapshot, for the project's current owner only. */
-export function BountyFundsView({ read, last, onRefresh }: BountyFundsViewProps) {
+export function BountyFundsView({ read, last, vaults, onRefresh }: BountyFundsViewProps) {
   const shown = read.status === "done" ? read.value : last;
   const stale = read.status === "failed" && last !== undefined;
   return (
@@ -53,6 +59,7 @@ export function BountyFundsView({ read, last, onRefresh }: BountyFundsViewProps)
           ) : (
             <p className="text-sm text-muted-foreground">No balance yet</p>
           )}
+          {vaults}
         </>
       )}
       <Button variant="secondary" size="icon" className="self-start" aria-label="Refresh bounty funds" title="Refresh bounty funds" disabled={read.status === "running"} onClick={onRefresh}>
@@ -63,22 +70,33 @@ export function BountyFundsView({ read, last, onRefresh }: BountyFundsViewProps)
 }
 
 export type BountyFundsProps = {
-  /** The project whose bounty vault this is. */
-  projectId: string;
+  /** The project whose bounty vaults these are. */
+  project: BountyProject;
   /** The signed-in account's GitHub id as a number. */
   account: number;
   /** The signed-in account's GitHub id. */
   githubId: string;
 };
 
-/** Reads the private bounty funds under the viewer's current authority and keeps the last ones while a refresh fails. */
-export function BountyFunds({ projectId, account, githubId }: BountyFundsProps) {
-  const runtime = bountyFundsRuntime(projectId);
+/** Reads the private bounty funds under the viewer's current authority, keeps the last ones while a refresh fails, and offers each bounty vault's deposit while the read allows setup. */
+export function BountyFunds({ project, account, githubId }: BountyFundsProps) {
+  const runtime = bountyFundsRuntime(project.id);
   const [reload, setReload] = useState(0);
   const [last, setLast] = useState<{ readonly account: number; readonly funds: Funds }>();
   const settled = useSettled(runtime, `bounty-funds:${account}:${reload}`, () => readBountyFunds(account, githubId));
   const read: BountyFundsViewProps["read"] =
     settled.status === "running" ? settled : settled.status === "failed" ? settled : settled.value === undefined ? { status: "failed", message: setupMessages.bountyFunds } : { status: "done", value: settled.value };
   if (read.status === "done" && (last?.account !== account || read.value !== last.funds)) setLast({ account, funds: read.value });
-  return <BountyFundsView read={read} last={last?.account === account ? last.funds : undefined} onRefresh={() => setReload((count) => count + 1)} />;
+  const kept = last?.account === account ? last.funds : undefined;
+  const shown = read.status === "done" ? read.value : kept;
+  const canDeposit = read.status !== "failed" && shown?.canSetup === true;
+  const refresh = () => setReload((count) => count + 1);
+  const funding = bountyFundingOf(project);
+  const period = periodOf(Date.now());
+  const vaults = (project.securityBounty.settlement?.deployments ?? []).map((deployment) => (
+    <Suspense key={`${deployment.network}:${deployment.vault}`} fallback={<Spinner size="sm" label="Loading the funding form" />}>
+      <VaultActions project={funding} deployment={deployment} period={period} account={account} payoutPolicy="security-bounty" canDeposit={canDeposit} onFinalized={refresh} />
+    </Suspense>
+  ));
+  return <BountyFundsView read={read} last={kept} vaults={vaults} onRefresh={refresh} />;
 }

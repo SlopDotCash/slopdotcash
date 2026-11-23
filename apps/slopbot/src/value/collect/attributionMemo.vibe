@@ -76,7 +76,6 @@ export function attributionRecorder(spellings: ReadonlyArray<string>, repository
   const references = new Map<string, AttributionReferenceDependency>()
   const reasons: string[] = []
   let incoming: string[] | undefined = undefined
-  let incomingFromDiscussion = false
 
   function named(value: string) {
     return names.has(value.toLowerCase())
@@ -105,13 +104,12 @@ export function attributionRecorder(spellings: ReadonlyArray<string>, repository
     pullNumbers.add(number)
   }
 
-  function observeIncoming(nodes: ReadonlyArray<unknown>, fromDiscussion: boolean) {
-    if (incoming !== undefined && !incomingFromDiscussion) {
+  function observeIncoming(nodes: ReadonlyArray<unknown>) {
+    if (incoming !== undefined) {
       refuse("incoming references read twice")
       return
     }
     incoming = nodes.map(normalizeIncoming).sort()
-    incomingFromDiscussion = fromDiscussion
   }
 
   function restOf(path: string) {
@@ -167,14 +165,14 @@ export function attributionRecorder(spellings: ReadonlyArray<string>, repository
           refuse("incoming references span several pages")
           return
         }
-        observeIncoming(nodes, false)
+        observeIncoming(nodes)
         return
       }
       refuse("unfenced GraphQL read")
     },
     observeDiscussion(answer: unknown) {
       const nodes = timelineNodes(answer)
-      if (nodes !== undefined) observeIncoming(nodes, true)
+      if (nodes !== undefined) observeIncoming(nodes)
     },
     observeError() {
       refuse("a read failed")

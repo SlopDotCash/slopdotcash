@@ -12,6 +12,9 @@ import { EvidenceBackups, EvidenceSource, completeKey, copyKey, failed, headOf, 
 import { qualifyRetention } from "./retention.vibe"
 import { SnapshotRows, restoreRows, snapshotRows } from "./snapshot.vibe"
 
+export { backupQueue, backupSettings, evidenceBuckets } from "../../backup/store.vibe"
+export type { Env as BackupEnv } from "../../workers/backup.vibe"
+
 export service RecoveryFixture {
   readonly run: string
   readonly restored: RetentionR2Bucket
@@ -20,9 +23,16 @@ export service RecoveryFixture {
 
 export error FixtureRefused { issue: string }
 
+export type AccessQualification = { readonly objects: number; readonly bytes: number } & Readonly<Record<string, unknown>>
+
+export service RecoveryAccess {
+  qualify(): AccessQualification!FixtureRefused
+}
+
 schema Marked { qualification: string }
-schema Command { qualification: string; action: "seed" | "verify" | "corrupt" | "retention" | "empty"; delivery: string }
-schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number }
+schema Command { qualification: string; action: "access" | "seed" | "verify" | "corrupt" | "retention" | "empty"; delivery: string }
+schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number; accessBytes: number }
+schema AccessResult { objects: number; bytes: number }
 schema PhaseRow { result: string }
 schema CyclePhase { phase: string }
 schema ObjectRow { object_key: string; chunks: string; sha256: string; size_bytes: number }
@@ -86,8 +96,15 @@ effect function delivered(id: string, action: string) {
   try (try D1).run(sql`INSERT OR IGNORE INTO qualification_deliveries VALUES(${id}, ${action})`)
 }
 
+effect function access() {
+  if ((try phase("access")) !== undefined) return
+  try recordPhase("access", try (try RecoveryAccess).qualify())
+}
+
 effect function seed() {
   if ((try phase("seed")) !== undefined) return
+  if ((try phase("access")) === undefined) return try refuse("Access control qualification is absent")
+  const accessed = try phaseValue(AccessResult, "access")
   const source = (try EvidenceSource).binding
   for (let index = 0; index < smallCount; index++) try immutable(source, smallKey(index), smallBytes(index), octets)
   try immutable(source, outsideKey, encoder.encode("Harmless non-scanner sentinel"), octets)
@@ -119,7 +136,8 @@ effect function seed() {
     snapshotSha256: rowsSha,
     snapshotBytes: rows.length,
     objectSha256: sha,
-    objects: smallCount + stored.parts.length + 1,
+    objects: smallCount + stored.parts.length + 1 + accessed.objects,
+    accessBytes: accessed.bytes,
   } satisfies SeedResult)
 }
 
@@ -144,7 +162,7 @@ effect function verify() {
   const backups = (try EvidenceBackups).binding
   const completion = try recorded(CompleteReceipt, backups, try completeKey(seeded.day))
   if (completion === undefined) return try refuse("Completion has no digest")
-  const expectedBytes = smallTotal() + largeSize + seeded.snapshotBytes
+  const expectedBytes = smallTotal() + largeSize + seeded.snapshotBytes + seeded.accessBytes
   if (completion.value.objects !== seeded.objects || completion.value.pages !== completedPages || completion.value.bytes !== expectedBytes) return try refuse("Backup omitted fixture bytes")
   try startDaily(millisOf(`${seeded.day}T23:59:59Z`))
   if ((try recorded(CompleteReceipt, backups, try completeKey(seeded.day)))?.sha256 !== completion.sha256) return try refuse("Replay changed completion")
@@ -235,6 +253,7 @@ effect function empty() {
 }
 
 effect function performed(action: Command["action"]) {
+  if (action === "access") return try access()
   if (action === "seed") return try seed()
   if (action === "verify") return try verify()
   if (action === "corrupt") return try corrupt()

@@ -1,0 +1,8 @@
+// spec/points/assessmentAudit.md, "A replay qualifies only an exact merged scope, and its private review is staged only on request after exact readback"
+import type { Revision } from "../../../kernels/records/canonical.ts"
+
+export function latestOf(revisions: ReadonlyArray<Revision>) {
+  const latest = new Map<string, Revision>()
+  for (const revision of revisions) latest.set(revision.award.key, revision)
+  return latest
+}

@@ -39,7 +39,7 @@ pure def readPresentation(status: R::ReadStatus): Presentation =
   else if (status == R::Loading) shown(Neutral, Spinner, "Loading")
   else if (status == R::Current) shown(Neutral, Check, "Current")
   else if (status == R::Empty) shown(Neutral, Slash, "Nothing yet")
-  else if (status == R::Stale) shown(Caution, Clock, "May be outdated")
+  else if (status == R::Stale) shown(Caution, Clock, "Data last updated")
   else if (status == R::Denied) shown(Negative, Lock, "Not allowed")
   else if (status == R::Invalid) shown(Negative, Alert, "Could not be read")
   else if (status == R::Unavailable) shown(Caution, Slash, "Unavailable")

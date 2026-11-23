@@ -9,9 +9,6 @@ import { migrationsDir } from "@repo/platform/testing/paths"
 import { Miniflare, Request as WebRequest } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 
-// identity/config.vibe accepts only a tier's canonical identity origin or an enabled loopback origin; the local tier
-// has no canonical origin. The web flows run against the staging tier's own origins, and the loopback handoff
-// test below covers the local return path.
 const staging = deploymentOrigins("staging")
 const identity = staging.identity
 const internal = "https://identity.internal"
@@ -114,19 +111,30 @@ effect function sql(text: string, ...params: ReadonlyArray<string | number>) {
   return (try promise(() => db.prepare(text).bind(...params).all())).results
 }
 
+interface Begun {
+  readonly flow: { readonly flowId: string; readonly pollCapability: string; readonly authorizationUrl: string }
+  readonly binding: string
+}
+
+function cookies(...values: ReadonlyArray<string>) {
+  const sent = values.filter((value) => value !== "")
+  return sent.length === 0 ? {} : { cookie: sent.join("; ") }
+}
+
 effect function begin(path: string, json: unknown, headers: Readonly<Record<string, string>> = {}) {
   const answer = try call(`${identity}${path}`, { json, headers })
   const flow = try orDie(Schema.decodeUnknownEffect(StartedFlow)(answer.body))
-  return { answer, flow }
+  const binding = (answer.headers["set-cookie"] ?? "").split(";")[0] ?? ""
+  return { answer, flow, binding }
 }
 
-effect function poll(path: string, flow: { readonly flowId: string; readonly pollCapability: string }, audience: string, headers: Readonly<Record<string, string>> = {}) {
-  const answer = try call(`${identity}${path}`, { json: { flowId: flow.flowId, pollCapability: flow.pollCapability, audience }, headers })
+effect function poll(path: string, started: Begun, audience: string, headers: Readonly<Record<string, string>> = {}) {
+  const answer = try call(`${identity}${path}`, { json: { flowId: started.flow.flowId, pollCapability: started.flow.pollCapability, audience }, headers: { ...headers, ...cookies(started.binding) } })
   return [answer.status, answer.body]
 }
 
-effect function authorized(flow: { readonly authorizationUrl: string }, login: string) {
-  const answer = try call(flow.authorizationUrl)
+effect function authorized(started: Begun, login: string) {
+  const answer = try call(started.flow.authorizationUrl, { headers: cookies(started.binding) })
   const state = /__Host-slop_oauth_state=([^;]+)/u.exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""
   const consent = new URL(answer.headers.location ?? `${identity}/missing-location`)
   consent.searchParams.set("login", login)
@@ -135,8 +143,8 @@ effect function authorized(flow: { readonly authorizationUrl: string }, login: s
   return { answer, state, consent, callback: consented.headers.get("location") ?? "" }
 }
 
-effect function callback(url: string, state: string) {
-  return try call(url, { headers: { cookie: `__Host-slop_oauth_state=${state}` } })
+effect function callback(url: string, state: string, binding: string) {
+  return try call(url, { headers: cookies(state === "" ? "" : `__Host-slop_oauth_state=${state}`, binding) })
 }
 
 effect function consume(assertion: unknown, audience: string, origin = internal) {
@@ -162,6 +170,10 @@ function tokenAnswer(body: string) {
   return (github: GitHubFake) => github.alterNext(tokenCall, () => HttpServerResponse.toWeb(HttpServerResponse.text(body, { contentType: "application/json; charset=utf-8" })))
 }
 
+function tokenExchanges(github: GitHubFake) {
+  return github.requests.filter((request) => tokenCall.test(`${request.method} ${new URL(request.url).pathname}`)).length
+}
+
 function failing(call: RegExp, failure: ScriptedFailure) {
   return (github: GitHubFake) => github.failNext(call, failure)
 }
@@ -169,11 +181,11 @@ function failing(call: RegExp, failure: ScriptedFailure) {
 effect function failedSignIn(address: string, fault: (github: GitHubFake) => void) {
   const browser = { origin: site, "cf-connecting-ip": address }
   const started = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
-  const signIn = try authorized(started.flow, "octo")
+  const signIn = try authorized(started, "octo")
   const { github } = try Identity
   try orDie(Effect.try(() => fault(github)))
-  const answer = try callback(signIn.callback, signIn.state)
-  const polled = try poll("/v1/oauth/poll", started.flow, "slop-points-web", browser)
+  const answer = try callback(signIn.callback, signIn.state, started.binding)
+  const polled = try poll("/v1/oauth/poll", started, "slop-points-web", browser)
   return { outcome: [answer.status, answer.text.includes("GitHub identity could not be verified."), polled[0]], code: new URL(signIn.callback).searchParams.get("code") ?? "" }
 }
 
@@ -182,15 +194,16 @@ function assertionOf(answer: unknown) {
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
+  it.effect('Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "A website flow belongs to the browser that started it"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.1" }
     const web = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
-    const waiting = try poll("/v1/oauth/poll", web.flow, "slop-points-web", browser)
-    const signIn = try authorized(web.flow, "octo")
-    const completed = try callback(signIn.callback, signIn.state)
-    const replayed = try callback(signIn.callback, signIn.state)
-    const issued = try call(`${identity}/v1/oauth/poll`, { json: { flowId: web.flow.flowId, pollCapability: web.flow.pollCapability, audience: "slop-points-web" }, headers: browser })
-    const reissued = try poll("/v1/oauth/poll", web.flow, "slop-points-web", browser)
+    const waiting = try poll("/v1/oauth/poll", web, "slop-points-web", browser)
+    const foreign = try poll("/v1/oauth/poll", { ...web, binding: "" }, "slop-points-web", browser)
+    const signIn = try authorized(web, "octo")
+    const completed = try callback(signIn.callback, signIn.state, web.binding)
+    const replayed = try callback(signIn.callback, signIn.state, web.binding)
+    const issued = try call(`${identity}/v1/oauth/poll`, { json: { flowId: web.flow.flowId, pollCapability: web.flow.pollCapability, audience: "slop-points-web" }, headers: { ...browser, ...cookies(web.binding) } })
+    const reissued = try poll("/v1/oauth/poll", web, "slop-points-web", browser)
     const assertion = assertionOf(issued.body)
     const consumption = [
       try consume(assertion, "slop-points-web", identity),
@@ -200,8 +213,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     ]
 
     const cli = try begin("/v1/oauth/start", { audience: "private-trace-api" }, { "cf-connecting-ip": "198.51.100.2" })
-    const cliSignIn = try authorized(cli.flow, "octo")
-    const cliCompleted = try callback(cliSignIn.callback, cliSignIn.state)
+    const cliSignIn = try authorized(cli, "octo")
+    const cliCompleted = try callback(cliSignIn.callback, cliSignIn.state, cli.binding)
     const cliIssued = try call(`${identity}/v1/oauth/poll`, { json: { flowId: cli.flow.flowId, pollCapability: cli.flow.pollCapability, audience: "private-trace-api" } })
     const cliConsumed = try consume(assertionOf(cliIssued.body), "private-trace-api")
 
@@ -218,6 +231,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       issued: [issued.status, typeof issued.body === "object" && issued.body !== null && "assertionType" in issued.body ? issued.body.assertionType : undefined, /^slop_assert_v1_[A-Za-z0-9_-]{43}$/u.test(String(assertion))],
       reissued,
       consumption,
+      bound: [web.binding.startsWith(`__Host-slop_oauth_bind_${web.flow.flowId}=`), foreign, cli.binding, issued.headers["set-cookie"]],
       cli: [cli.answer.status, cli.answer.headers["access-control-allow-origin"], cliCompleted.status, cliIssued.status],
       cliConsumed,
       stored,
@@ -236,6 +250,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         [200, { githubActorId: "7", githubLogin: "octo", audience: "slop-points-web", githubNodeId: "U_octo" }],
         [401, { error: "unauthorized", message: "Identity assertion is invalid, used, or expired" }],
       ],
+      bound: [true, [403, { error: "browser_mismatch", message: "This sign-in belongs to another browser" }], "", `__Host-slop_oauth_bind_${web.flow.flowId}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=None`],
       cli: [201, undefined, 200, 200],
       cliConsumed: [200, { githubActorId: "7", githubLogin: "octo", audience: "private-trace-api", githubNodeId: "U_octo" }],
       stored: [{ status: "assertion_issued", encrypted_pkce_verifier: null, github_actor_id: "7", github_login: "octo", github_node_id: "U_octo" }],
@@ -247,16 +262,39 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.3" }
     const diagnosedBefore = (try diagnostics(0)).length
     const denied = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
-    const deniedSignIn = try authorized(denied.flow, "octo")
-    const deniedCallback = try callback(`${identity}/v1/oauth/callback?state=${deniedSignIn.state}&error=access_denied`, deniedSignIn.state)
-    const deniedPoll = try poll("/v1/oauth/poll", denied.flow, "slop-points-web", browser)
+    const deniedSignIn = try authorized(denied, "octo")
+    const deniedCallback = try callback(`${identity}/v1/oauth/callback?state=${deniedSignIn.state}&error=access_denied`, deniedSignIn.state, denied.binding)
+    const deniedPoll = try poll("/v1/oauth/poll", denied, "slop-points-web", browser)
+
+    const stateless = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const statelessSignIn = try authorized(stateless, "octo")
+    const statelessCallback = try callback(`${identity}/v1/oauth/callback?state=${statelessSignIn.state}&error=access_denied`, "", stateless.binding)
+    const statelessPoll = try poll("/v1/oauth/poll", stateless, "slop-points-web", browser)
 
     const broken = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
-    const brokenSignIn = try authorized(broken.flow, "octo")
-    const { github } = try Identity
+    const brokenSignIn = try authorized(broken, "octo")
+    const { github, db } = try Identity
     try orDie(Effect.try(() => github.failNext(/access_token/u, { status: 500 })))
-    const brokenCallback = try callback(brokenSignIn.callback, brokenSignIn.state)
-    const brokenPoll = try poll("/v1/oauth/poll", broken.flow, "slop-points-web", browser)
+    const brokenCallback = try callback(brokenSignIn.callback, brokenSignIn.state, broken.binding)
+    const brokenPoll = try poll("/v1/oauth/poll", broken, "slop-points-web", browser)
+
+    const sealed = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const sealedSignIn = try authorized(sealed, "octo")
+    try sql("UPDATE identity_oauth_flows SET encrypted_pkce_verifier = ? WHERE id = ?", "****", sealed.flow.flowId)
+    const exchangesBefore = tokenExchanges(github)
+    const sealedCallback = try callback(sealedSignIn.callback, sealedSignIn.state, sealed.binding)
+    const exchanged = tokenExchanges(github) !== exchangesBefore
+    const sealedPoll = try poll("/v1/oauth/poll", sealed, "slop-points-web", browser)
+
+    const lapsing = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const lapsingSignIn = try authorized(lapsing, "octo")
+    try orDie(Effect.try(() => github.alterNext(userCall, async (response) => {
+      await db.prepare("UPDATE identity_oauth_flows SET created_at = ?, expires_at = ? WHERE id = ?").bind(pastCreated, pastExpired, lapsing.flow.flowId).run()
+      return response
+    })))
+    const lapsedCallback = try callback(lapsingSignIn.callback, lapsingSignIn.state, lapsing.binding)
+    const lapsedStored = try sql("SELECT status, encrypted_pkce_verifier, github_actor_id FROM identity_oauth_flows WHERE id = ?", lapsing.flow.flowId)
+    const lapsedPoll = try poll("/v1/oauth/poll", lapsing, "slop-points-web", browser)
 
     const faults: ReadonlyArray<readonly [string, (github: GitHubFake) => void]> = [
       ["allowlisted error", tokenAnswer(JSON.stringify({ error: "bad_verification_code", error_description: oauthDescription, error_uri: oauthErrorUri }))],
@@ -271,8 +309,6 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       ["user 403", failing(userCall, { status: 403 })],
       ["user 429", failing(userCall, { status: 429 })],
       ["user 503", failing(userCall, { status: 503 })],
-      // The Workers runtime re-sends an idempotent GET once after a dropped connection (the request log shows a
-      // disconnected /user followed by a second /user), so a lasting transport failure drops both sends.
       ["user transport", (github: GitHubFake) => { github.failNext(userCall, { disconnect: true }); github.failNext(userCall, { disconnect: true }) }],
       ["user malformed", (github: GitHubFake) => github.alterNext(userCall, () => HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe({ id: "7", login: "octo", node_id: "U_octo", created_at: pastCreated })))],
     ]
@@ -290,8 +326,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
 
     const late = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
     try sql("UPDATE identity_oauth_flows SET created_at = ?, expires_at = ? WHERE id = ?", pastCreated, pastExpired, late.flow.flowId)
-    const lateAuthorize = try call(late.flow.authorizationUrl)
-    const latePoll = try poll("/v1/oauth/poll", late.flow, "slop-points-web", browser)
+    const lateAuthorize = try call(late.flow.authorizationUrl, { headers: cookies(late.binding) })
+    const latePoll = try poll("/v1/oauth/poll", late, "slop-points-web", browser)
 
     const crowd = { "cf-connecting-ip": "203.0.113.9" }
     const starts: number[] = []
@@ -299,8 +335,8 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     const limited = try call(`${identity}/v1/oauth/start`, { json: { audience: "private-trace-api" }, headers: crowd })
     const poller = { "cf-connecting-ip": "203.0.113.10" }
     const unavailablePolls: unknown[] = []
-    for (let index = 0; index < 120; index++) unavailablePolls.push((try poll("/v1/oauth/poll", late.flow, "slop-points-web", poller))[0])
-    const pollLimited = try poll("/v1/oauth/poll", late.flow, "slop-points-web", poller)
+    for (let index = 0; index < 120; index++) unavailablePolls.push((try poll("/v1/oauth/poll", late, "slop-points-web", poller))[0])
+    const pollLimited = try poll("/v1/oauth/poll", late, "slop-points-web", poller)
 
     const down = try sha256Hex(`slop-identity-rate:v1:${stateKey}:oauth-start:192.0.2.66`)
     try sql(`CREATE TRIGGER identity_journey_limiter_down BEFORE INSERT ON identity_rate_limits WHEN NEW.key_hash = '${down}' BEGIN SELECT RAISE(ABORT, 'limiter down'); END`)
@@ -318,7 +354,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
 
     try same({
       denied: [deniedCallback.status, deniedCallback.text.includes("The sign-in response was invalid or expired."), deniedPoll],
+      stateless: [statelessCallback.status, statelessPoll],
       broken: [brokenCallback.status, brokenCallback.text.includes("GitHub identity could not be verified."), brokenPoll],
+      sealed: [sealedCallback.status, sealedPoll, exchanged],
+      lapsed: [lapsedCallback.status, lapsedCallback.text.includes("Sign-in expired"), lapsedStored, lapsedPoll],
       failedSignIns,
       diagnosed,
       leaked,
@@ -332,7 +371,10 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       preflight: [preflight.status, preflight.headers["access-control-allow-origin"], preflight.headers["access-control-allow-methods"]],
     }, {
       denied: [400, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
+      stateless: [400, [202, { status: "pending", retryAfterSeconds: 2 }]],
       broken: [502, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
+      sealed: [500, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }], false],
+      lapsed: [410, true, [{ status: "callback_failed", encrypted_pkce_verifier: null, github_actor_id: null }], [410, { error: "flow_unavailable", message: "Identity flow is unavailable" }]],
       failedSignIns: faults.map(([name]) => [name, [502, true, 410]]),
       diagnosed: [
         diagnosis("token", "http-rejected", 500),
@@ -360,8 +402,6 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       unavailable: [503, { error: "service_unavailable", message: "Identity service is temporarily unavailable." }, "60"],
       refusals: [
         [400, { error: "invalid_request", message: "Invalid identity audience" }],
-        // Another tier's site and a foreign site are both refused by the per-tier CORS gate (client/identity.vibe
-        // browserOrigins) before the flow handler's own origin check.
         [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
         [400, { error: "https_required" }],
@@ -374,18 +414,17 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
   it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows, expired site sessions among them (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
     const local = try begin("/v1/local/start", { audience: "slop-points-web", returnOrigin: "http://127.0.0.1:4466" })
     const badOrigin = try call(`${identity}/v1/local/start`, { json: { audience: "slop-points-web", returnOrigin: "https://slop.cash" } })
-    const wrongRoute = try poll("/v1/oauth/poll", local.flow, "slop-points-web")
-    const signIn = try authorized(local.flow, "octo")
-    const completed = try callback(signIn.callback, signIn.state)
-    const delivered = try poll("/v1/local/poll", local.flow, "slop-points-web")
-    const again = try poll("/v1/local/poll", local.flow, "slop-points-web")
+    const wrongRoute = try poll("/v1/oauth/poll", local, "slop-points-web")
+    const signIn = try authorized(local, "octo")
+    const completed = try callback(signIn.callback, signIn.state, local.binding)
+    const delivered = try poll("/v1/local/poll", local, "slop-points-web")
+    const again = try poll("/v1/local/poll", local, "slop-points-web")
     const assertions = try sql("SELECT count(*) AS count FROM identity_assertions WHERE github_actor_id = '7' AND audience = 'slop-points-web' AND consumed_at IS NULL")
 
     const live = try begin("/v1/oauth/start", { audience: "private-trace-api" }, { "cf-connecting-ip": "198.51.100.5" })
     try sql("INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, audience, status, created_at, expires_at) VALUES (?, ?, ?, 'slop-points-web', 'callback_failed', ?, ?)", "flow_expired_journey_00000000", "a".repeat(64), "b".repeat(64), pastCreated, pastExpired)
     try sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, audience, created_at, expires_at, consumed_at, github_node_id) VALUES (?, '8', 'other', 'private-trace-api', ?, ?, NULL, NULL)", "c".repeat(64), "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:30.000Z")
     try sql("INSERT INTO identity_rate_limits (key_hash, request_count, window_started_at, expires_at) VALUES (?, 3, 1000, 1060)", "d".repeat(64))
-    // The identity Worker's hourly job also ends expired site sessions (identity/maintenance.vibe purgeExpired).
     for (const [actor, githubId, expiresAt] of [["actor-expired", "31", "2020-01-01T00:00:00.000Z"], ["actor-live", "32", "2099-01-01T00:00:00.000Z"]]) {
       try sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actor, githubId, `member-${githubId}`, "2026-01-01T00:00:00.000Z")
       try sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", actor.padEnd(64, "0"), actor, expiresAt)

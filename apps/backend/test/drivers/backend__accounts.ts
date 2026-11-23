@@ -173,7 +173,7 @@ async function signIn(event: Extract<Event, { token: number }>): Promise<"accept
 }
 
 function pollFacts(flowId: number, capability: number, audience: Audience): PollFacts {
-  return { flowId: knownFlow(flowId), capability: capabilityOf(capability), audience, localRoute: false };
+  return { flowId: knownFlow(flowId), capability: capabilityOf(capability), audience, localRoute: false, binding: true };
 }
 
 async function identityPoll(event: Extract<Event, { type: "identityPoll" }>) {
@@ -245,7 +245,7 @@ async function dispatch(event: Event, by: unknown): Promise<"accepted" | "refuse
     case "identityStart": {
       const id = world.lastIdentityFlow + 1;
       const flowId = flowIdOf(id);
-      const started = await outcome(start(principal(event.client), event.audience, "Production", { flowId, state: stateOf(id), capability: capabilityOf(id), verifier: text(`v${id}`, 86) }));
+      const started = await outcome(start(principal(event.client), { audience: event.audience, mode: "Production", origin: true, binding: event.audience === "PointsWeb" ? text(`b${id}`, 43) : undefined }, { flowId, state: stateOf(id), capability: capabilityOf(id), verifier: text(`v${id}`, 86) }));
       if (started === "accepted") {
         world.lastIdentityFlow = id;
         world.identityFlows.set(id, flowId);

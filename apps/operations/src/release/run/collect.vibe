@@ -1,4 +1,4 @@
-// spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
+// spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"
 import { ProjectList, RevisionList } from "@repo/backend/client"
 import { boundedBytes } from "@repo/platform/browser"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
@@ -9,6 +9,7 @@ import { type Collection, type CollectionKind, type EnvironmentName, releaseBoun
 export error RegistryRefused { message: string }
 
 export const registrySnapshotPath = "registry/snapshot.json"
+export const publishedRegistryPath = "site/data/project-registry.json"
 export const githubDirectory = "github"
 
 const registryBytesLimit = 4 * 1024 * 1024
@@ -184,7 +185,24 @@ export effect function snapshotRegistry(environment: EnvironmentName, bundle: st
   fs.writeFileString(target, text, { mode: 0o644 }) catch effect () => {
     throw new BundleRefused({ message: "the registry snapshot could not be written" })
   }
+  try publishRegistry(bundle, syncedAt, snapshot.projects)
   return { text, syncedAt, withheld: snapshot.withheld }
+}
+
+effect function publishRegistry(bundle: string, syncedAt: string, projects: ReadonlyArray<Manifest>) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const target = files.join(bundle, publishedRegistryPath)
+  fs.remove(target, { force: true }) catch effect () => {
+    throw new BundleRefused({ message: "the published registry could not be removed" })
+  }
+  if (projects.length === 0) return
+  fs.makeDirectory(files.dirname(target), { recursive: true }) catch effect () => {
+    throw new BundleRefused({ message: "the published registry directory could not be created" })
+  }
+  fs.writeFileString(target, `${JSON.stringify({ schemaVersion: "1", syncedAt, projects })}\n`, { mode: 0o644 }) catch effect () => {
+    throw new BundleRefused({ message: "the published registry could not be written" })
+  }
 }
 
 effect function boundRegistry(bundle: string) {

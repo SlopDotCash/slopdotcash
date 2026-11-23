@@ -65,7 +65,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
         {...props}
         {...controlState(disabled, state.status === "Copying")}
       >
-        {failed ? <StatusIcon icon="Alert" className={tone === "primary" ? undefined : "text-destructive"} /> : copied ? <StatusIcon icon="Check" /> : <Clipboard aria-hidden />}
+        {failed && tone === "quiet" ? <StatusIcon icon="Alert" className="text-destructive" /> : copied ? <StatusIcon icon="Check" /> : <Clipboard aria-hidden />}
         {labels ? <span data-copy-label>{visible(labels, state.status)}</span> : variant === "labeled" && label}
       </Button>
       <span role="status" className={failed && !labels ? "text-xs text-destructive" : "sr-only"}>

@@ -1,0 +1,144 @@
+// spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"; spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
+import { millisOf } from "@repo/platform/clock"
+import { executeNodeBatch, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
+import type { AcceptedImplementationPredecessor } from "../../score/history.vibe"
+import { MergedRecordInvalid, arrayAt, chunks, commitSha, recordAt } from "../merged/wire.vibe"
+import type { ImplementationMemo, PreviousImplementationObservation } from "./memo.vibe"
+import { type AcceptedImplementationSource, absent, acceptedOrdinaryCommitOid, implementationShape, implementationSourcesQuery, readImplementationAcceptance, safeCount } from "./sources.vibe"
+
+export type PreviousImplementationMetadata = PreviousImplementationObservation | { readonly kind: "unresolved"; readonly shape: string; readonly headSha: string }
+
+export interface SubmittedOrdinaryCandidate {
+  readonly predecessor: AcceptedImplementationPredecessor
+  readonly source: AcceptedImplementationSource
+}
+
+export interface PreviousImplementationRead {
+  readonly candidates: ReadonlyMap<string, ReadonlyArray<AcceptedImplementationSource>>
+  readonly unresolvedShapes: ReadonlySet<string>
+  readonly acceptedOrdinaryOwners: ReadonlyMap<string, string>
+  readonly submittedOrdinaryCandidates: ReadonlyArray<SubmittedOrdinaryCandidate>
+  readonly unresolvedSubmittedOrdinaryOids: Set<string>
+}
+
+export interface PreviousImplementationInput {
+  readonly repositoryNodeId: string
+  readonly shapes: ReadonlySet<string>
+  readonly sources: ReadonlyArray<AcceptedImplementationPredecessor>
+  readonly memo: ImplementationMemo | undefined
+  readonly carriedOrdinaryOids: ReadonlySet<string>
+}
+
+const sourceChanged = "Previous implementation source identity changed"
+const batchChanged = "Previous implementation source batch changed"
+
+export function earlierImplementationPredecessor(candidate: AcceptedImplementationPredecessor, current: AcceptedImplementationPredecessor | undefined) {
+  return current === undefined || candidate.mergedAt < current.mergedAt || (candidate.mergedAt === current.mergedAt && candidate.id < current.id)
+}
+
+export effect function implementationNodes(ids: ReadonlyArray<string>) {
+  const found = new Map<string, unknown>()
+  for (const batch of chunks(ids, reviewDetailBatchSize)) {
+    let remaining = batch
+    while (remaining.length > 0) {
+      const asked = remaining
+      const data = executeNodeBatch(implementationSourcesQuery, asked) catch effect (error) => {
+        if (error._tag !== "SourceNodeUnavailable") throw error
+        const missing = new Set(error.sources.map((source) => source.nodeId))
+        const rest = asked.filter((id) => !missing.has(id))
+        if (rest.length === asked.length) throw error
+        remaining = rest
+        return undefined
+      }
+      if (data === undefined) continue
+      const nodes = try arrayAt(data.nodes, "previous implementation sources")
+      if (nodes.length !== asked.length) throw new MergedRecordInvalid({ message: batchChanged })
+      for (const [index, id] of asked.entries()) found.set(id, nodes[index])
+      remaining = []
+    }
+  }
+  return found
+}
+
+export effect function observePreviousImplementation(value: unknown, candidate: AcceptedImplementationPredecessor, repositoryNodeId: string, path: string, collectOrdinaryAcceptances: boolean): (PreviousImplementationMetadata | undefined)!MergedRecordInvalid {
+  if (absent(value)) return undefined
+  const row = try recordAt(value, path)
+  if (row.id !== candidate.id) throw new MergedRecordInvalid({ message: sourceChanged })
+  if (row.__typename !== "PullRequest" || row.number !== candidate.number || row.url !== candidate.url || row.state !== "MERGED" || typeof row.mergedAt !== "string"
+    || millisOf(row.mergedAt) !== millisOf(candidate.mergedAt) || absent(row.repository) || absent(row.commits) || !safeCount(row.changedFiles) || !safeCount(row.additions) || !safeCount(row.deletions)) return undefined
+  const repository = try recordAt(row.repository, `${path}.repository`)
+  if (repository.id !== repositoryNodeId || repository.isPrivate !== false) return undefined
+  const commits = try recordAt(row.commits, `${path}.commits`)
+  const count = commits.totalCount
+  if (!safeCount(count)) return undefined
+  if (row.changedFiles === 0) return { kind: "ineligible" }
+  if (count > 1) {
+    if (!collectOrdinaryAcceptances || absent(row.mergeCommit) || typeof row.headRefOid !== "string") return undefined
+    const acceptance = try readImplementationAcceptance(candidate.id, try commitSha(row.headRefOid, `${path}.headRefOid`), row.mergeCommit, path)
+    if (acceptance === null) return undefined
+    if (acceptance !== "ineligible" && acceptedOrdinaryCommitOid(acceptance) !== undefined) return { kind: "accepted-ordinary", source: acceptance }
+    return { kind: "ineligible" }
+  }
+  if (count === 0) return absent(row.mergeCommit) ? undefined : { kind: "ineligible" }
+  if (absent(commits.pageInfo) || (try recordAt(commits.pageInfo, `${path}.commits.pageInfo`)).hasNextPage !== false || !Array.isArray(commits.nodes) || commits.nodes.length !== 1 || absent(commits.nodes[0])) return undefined
+  const commitPath = `${path}.commits.nodes[0]`
+  const edge = try recordAt(commits.nodes[0], commitPath)
+  const commit = try recordAt(edge.commit, `${commitPath}.commit`)
+  if (typeof row.headRefOid !== "string" || absent(commit.parents)) return undefined
+  const headSha = try commitSha(row.headRefOid, `${path}.headRefOid`)
+  if (commit.oid !== headSha) return undefined
+  const parentCount = (try recordAt(commit.parents, `${commitPath}.commit.parents`)).totalCount
+  if (!safeCount(parentCount)) return undefined
+  if (parentCount !== 1) return { kind: "ineligible" }
+  const shape = implementationShape(row.changedFiles, row.additions, row.deletions)
+  if (absent(row.mergeCommit)) return { kind: "unresolved", shape, headSha }
+  const proof = try readImplementationAcceptance(candidate.id, headSha, row.mergeCommit, path)
+  if (proof === null) return { kind: "unresolved", shape, headSha }
+  if (proof === "ineligible" || proof.mergeTreeSha === proof.firstParentTreeSha) return { kind: "ineligible" }
+  return { kind: "candidate", shape, source: proof }
+}
+
+export effect function readPreviousImplementationSources(input: PreviousImplementationInput) {
+  const { repositoryNodeId, shapes, memo, carriedOrdinaryOids } = input
+  const candidates = new Map<string, AcceptedImplementationSource[]>()
+  const unresolvedShapes = new Set<string>()
+  const acceptedOrdinarySources = new Map<string, AcceptedImplementationPredecessor>()
+  const submittedOrdinaryCandidates: SubmittedOrdinaryCandidate[] = []
+  const unresolvedSubmittedOrdinaryOids = new Set<string>()
+  const consider = (observation: PreviousImplementationMetadata, candidate: AcceptedImplementationPredecessor) => {
+    if (observation.kind === "accepted-ordinary" || observation.kind === "candidate") {
+      const oid = acceptedOrdinaryCommitOid(observation.source)
+      if (oid !== undefined && carriedOrdinaryOids.has(oid) && earlierImplementationPredecessor(candidate, acceptedOrdinarySources.get(oid))) acceptedOrdinarySources.set(oid, candidate)
+    }
+    if (observation.kind === "candidate" && carriedOrdinaryOids.has(observation.source.headSha)) submittedOrdinaryCandidates.push({ predecessor: candidate, source: observation.source })
+    if (observation.kind === "unresolved" && carriedOrdinaryOids.has(observation.headSha)) unresolvedSubmittedOrdinaryOids.add(observation.headSha)
+    if (observation.kind === "unresolved") {
+      if (shapes.has(observation.shape)) unresolvedShapes.add(observation.shape)
+      return
+    }
+    if (observation.kind !== "candidate" || !shapes.has(observation.shape)) return
+    const matching = candidates.get(observation.shape) ?? []
+    matching.push(observation.source)
+    candidates.set(observation.shape, matching)
+  }
+  const missing: AcceptedImplementationPredecessor[] = []
+  for (const candidate of input.sources) {
+    const reuse = memo?.previous(repositoryNodeId, candidate)
+    if (reuse !== undefined) consider(reuse, candidate)
+    else missing.push(candidate)
+  }
+  const nodes = try implementationNodes(missing.map((candidate) => candidate.id))
+  for (const [index, candidate] of missing.entries()) {
+    const observation = try observePreviousImplementation(nodes.get(candidate.id), candidate, repositoryNodeId, `previous implementation sources[${index}]`, carriedOrdinaryOids.size > 0)
+    if (observation === undefined) continue
+    if (observation.kind !== "unresolved" && memo !== undefined) try memo.rememberPrevious(repositoryNodeId, candidate, observation)
+    consider(observation, candidate)
+  }
+  return {
+    candidates,
+    unresolvedShapes,
+    acceptedOrdinaryOwners: new Map([...acceptedOrdinarySources].map(([oid, source]) => [oid, source.id] as const)),
+    submittedOrdinaryCandidates,
+    unresolvedSubmittedOrdinaryOids,
+  } satisfies PreviousImplementationRead
+}

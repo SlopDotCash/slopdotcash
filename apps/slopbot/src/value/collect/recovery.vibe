@@ -1,0 +1,70 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { type PublicMergeRepository, collectVerifiedMergeResolutions, recoverFiles, withPublicGitObjects } from "@repo/platform/git"
+import { type MergeRecipe, mergeRecipe, validMergeRecipe } from "@repo/platform/git/evidence"
+import { canonicalJson } from "@repo/points/collect"
+import { collectEvidence } from "../evidence/collect.vibe"
+import { EvidenceRefused, type RegisteredRepository } from "../evidence/types.vibe"
+import { fileRecoveryCapture, recoveredFiles } from "../proofs/recovery.vibe"
+import { mergeInputOf } from "../workUnits/merge.vibe"
+import type { WorkUnitSource } from "../workUnits/types.vibe"
+
+export const recoveryPrefixes = ["Full diff required:", "Added binary implementation identity is unavailable:", "Added binary accepted identity is unavailable:"]
+
+const recipeDiffers = "Merge reconstruction inputs differ from the journal"
+const comparedFields = ["pull", "commits", "reviews", "comments", "reviewComments"] as const
+
+function refused(reason: string) {
+  return new EvidenceRefused({ reason })
+}
+
+export function needsFileRecovery(source: WorkUnitSource) {
+  return source.evidence.limitations.some((limitation) => recoveryPrefixes.some((prefix) => limitation.startsWith(prefix)))
+}
+
+function sameRecipeInput(source: WorkUnitSource, recipe: MergeRecipe) {
+  return mergeRecipe(mergeInputOf(source.evidence)).inputSha256 === recipe.inputSha256
+}
+
+function requiredObjects(source: WorkUnitSource) {
+  const { evidence } = source
+  const input = mergeInputOf(evidence)
+  const merge = evidence.mergeCommitEvidence
+  return [
+    input.pull.head.sha,
+    evidence.pull.base.sha,
+    ...(merge === null ? [] : [merge.sha, ...merge.parents.map((parent) => parent.sha)]),
+    ...input.commits.flatMap(({ sha, parents }) => [sha, ...parents.map((parent) => parent.sha)]),
+  ]
+}
+
+export effect function recoverValueSourceFiles(source: WorkUnitSource, repository: PublicMergeRepository, directory: string, policy: RegisteredRepository | null) {
+  const { evidence } = source
+  if (repository.private !== false || repository.id !== evidence.repositoryDatabaseId || repository.node_id !== evidence.repositoryNodeId || repository.full_name?.toLowerCase() !== evidence.repository.toLowerCase())
+    throw refused("Immutable file recovery repository differs")
+  const capture = fileRecoveryCapture()
+  const listed = try Effect.provide(collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy }), capture.layer)
+  const requests = try capture.requests([listed])
+  const recovered = try recoveredFiles(requests, try recoverFiles(directory, requests))
+  const recollected = try collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy, recovered })
+  if (comparedFields.some((field) => canonicalJson(recollected[field]) !== canonicalJson(evidence[field]))) throw refused("Source changed during immutable file recovery")
+  const context = evidence.contextFiles
+  return {
+    ...source,
+    evidence: context === undefined ? recollected : { ...recollected, contextFiles: context, evidenceUrls: [...new Set([...recollected.evidenceUrls, ...context.map((file) => file.url)])] },
+  } satisfies WorkUnitSource
+}
+
+export effect function hydrateValueMergeSource(source: WorkUnitSource, recipe: MergeRecipe | undefined, repository: PublicMergeRepository, policy: RegisteredRepository | null) {
+  if (recipe !== undefined && !validMergeRecipe(recipe)) throw refused(recipeDiffers)
+  if (repository.node_id !== source.evidence.repositoryNodeId || repository.id !== source.evidence.repositoryDatabaseId) throw refused("Merge reconstruction requires the verified public repository")
+  const needsFiles = needsFileRecovery(source)
+  if (recipe === undefined && !needsFiles) return source
+  if (recipe !== undefined && !needsFiles && !sameRecipeInput(source, recipe)) throw refused(recipeDiffers)
+  return try withPublicGitObjects(repository, requiredObjects(source), (directory) => effect {
+    const complete = needsFiles ? try recoverValueSourceFiles(source, repository, directory, policy) : source
+    if (recipe === undefined) return complete
+    if (!sameRecipeInput(complete, recipe)) throw refused(recipeDiffers)
+    const mergeResolutions = try collectVerifiedMergeResolutions(mergeInputOf(complete.evidence), directory, recipe.profile)
+    return { ...complete, evidence: { ...complete.evidence, mergeResolutions }, mergeRecipe: recipe } satisfies WorkUnitSource
+  })
+}

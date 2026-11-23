@@ -1,10 +1,12 @@
 // spec/security/routineDecisions.md, "Story: Decide routine reports with an audit record and leave the rest to the owner"; spec/security/routineDecisions.md, "The pass reads only an unappealed undecided report once per case revision and mode"
 import { rows, sql } from "@repo/platform/d1"
-import { type Actor, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
+import { type Actor, handleRaw, json, jsonBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { later } from "@repo/platform/worker"
 import { exactKeys } from "../cases/actions.vibe"
+import { refused } from "../cases/store.vibe"
+import { getSecurityRoutine, postSecurityRoutine } from "../client/refusals.vibe"
 import { depositHeldOn } from "../deposit/hold.ts"
 import { type RoutineSource, adminLimits, backgroundLimits, runRoutineDecisions } from "./pass.vibe"
 import { type ActiveMode, type RoutineMode, routineMode } from "./tables.ts"
@@ -38,7 +40,7 @@ effect function routineSummary() {
 }
 
 effect function admitted(actor: Actor) {
-  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refuse(404, "not_found", "Not found")
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refused(getSecurityRoutine.notFoundRoutine)
   return (try RoutineSettings).mode
 }
 
@@ -50,9 +52,9 @@ effect function status(actor: Actor) {
 effect function ran(actor: Actor) {
   const mode = try admitted(actor)
   try exactKeys(try jsonBody(1), ["action"])
-  if (mode === "off") throw refuse(409, "routine_decisions_off", "Routine decisions are off")
+  if (mode === "off") throw refused(postSecurityRoutine.routineDecisionsOff)
   const run = try runRoutineDecisions(mode, "admin", adminLimits)
-  if (run === undefined) throw refuse(409, "routine_pass_recent", "A pass started in the last three minutes. Try again shortly.")
+  if (run === undefined) throw refused(postSecurityRoutine.routinePassRecent)
   return json({ mode: run.mode, examined: run.examined, recorded: run.recorded, ...(try routineSummary()) }, 200, privateHeaders)
 }
 

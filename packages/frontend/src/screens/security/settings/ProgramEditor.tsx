@@ -26,12 +26,12 @@ import {
   textLimits,
 } from "./editor.ts";
 
-export type Publish = (manifest: Readonly<Record<string, unknown>>) => Promise<string | null>;
+export type Publish = (manifest: Readonly<Record<string, unknown>>, bountyAmount: string | null) => Promise<string | null>;
 
 export type ProgramEditorProps = {
   project: EditorProject;
   actor: { readonly githubId: string; readonly githubLogin: string };
-  /** Publishes the manifest with the new terms at the editor's revision; answers why it was refused, or null once published. */
+  /** Publishes the manifest with the new terms at the editor's revision, with the whole-unit award while the terms name an asset; answers why it was refused, or null once published. */
   onPublish: Publish;
 };
 
@@ -142,7 +142,9 @@ export function ProgramEditor({ project, actor, onPublish }: ProgramEditorProps)
     if (!reviewing) return setReviewing(true);
     const program = proposedProgram(project, form, actor);
     setBusy(true);
-    void onPublish({ ...project.manifest, securityBounty: program }).then((refused) => {
+    const amount = program.amount;
+    const assetBacked = typeof amount === "object" && amount !== null && "asset" in amount && Boolean(amount.asset);
+    void onPublish({ ...project.manifest, securityBounty: program }, assetBacked ? form.amount.trim() : null).then((refused) => {
       setBusy(false);
       setReviewing(false);
       setError(refused);

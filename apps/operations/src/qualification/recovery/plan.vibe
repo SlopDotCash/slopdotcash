@@ -33,10 +33,16 @@ export const qualificationMigrations = [
   "0119_vetting_storage_generations.sql",
 ] as const
 
-export const qualificationSchema = `CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT, result TEXT);
+export const qualificationSchema = `CREATE TABLE vetting_assessments(id TEXT PRIMARY KEY, state TEXT, completed_at TEXT, result TEXT, result_sha256 TEXT);
 CREATE TABLE qualification_results(phase TEXT PRIMARY KEY, result TEXT NOT NULL CHECK(json_valid(result)));
 CREATE TABLE qualification_deliveries(id TEXT PRIMARY KEY, action TEXT NOT NULL);
 `
+
+export const qualificationAccounts = {
+  name: "0999_qualification_accounts.sql",
+  schema: `ALTER TABLE points_members ADD COLUMN closed_at TEXT CHECK (closed_at IS NULL OR length(closed_at) BETWEEN 20 AND 30);
+`,
+} as const
 
 const runPattern = /^slop-vet-q-[0-9]{1,20}-[0-9]{1,5}$/u
 const revision = /^[a-f0-9]{40}$/u

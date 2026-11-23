@@ -22,7 +22,7 @@ import { routineOwnerRanking } from "../routine/store.vibe"
 import type { CaseRole } from "../receipt/statements.vibe"
 import { IntakeSettings } from "./availability.vibe"
 import { parseReport } from "./report.vibe"
-import { CaseStanding, StoredIntake, SubmissionRow, caseOf, reporterView, storedIntake, submission, submissionView } from "./rows.vibe"
+import { CaseStanding, StoredIntake, SubmissionRow, caseOf, reporterView, standingColumns, storedIntake, submission, submissionView } from "./rows.vibe"
 
 interface Row {
   readonly status: number
@@ -42,7 +42,6 @@ const listLimit = 100
 const listEpoch = 1
 const submittingTimeoutMs = 60_000
 const submittedLimitMs = 24 * 60 * 60 * 1000
-const standingColumns = sql`id, revision, submission_state, receipt_state, award_state, project_id, reporter_github_id, appeal_state, related_party_review`
 const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
 const readers: ReadonlyArray<CaseRole> = ["reporter", "security-maintainer", "triager", "dispute"]
 const reviewers: ReadonlyArray<CaseRole> = ["security-maintainer", "triager", "dispute"]

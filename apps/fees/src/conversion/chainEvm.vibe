@@ -1,0 +1,441 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A token is converted from the wallet's observed balance; native fees only from finalized receipts, and gas top-ups never are"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
+import { type Address, EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import type { RpcFailure } from "@repo/platform/chain/rpc"
+import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
+import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
+import { type NetworkFeeObservation, additionalReserve, maximumSafeValue, replacementDeadlineMarginMs } from "../../gen/fees__conversion.effect.vibe"
+import { ClaimRefused, evmClaimEvidence, failedClaim, verifyEvmClaim } from "../claims/evm.vibe"
+import { type DeploymentRefused, VaultDeployments } from "../claims/deployments.vibe"
+import { type Type2, decodedApproval, parsedType2, wholeBig } from "../evm/abi.ts"
+import { ApprovalRefused, approvalSettled, isNative, spenderAddress } from "../evm/approval.vibe"
+import { ChainRefused, FeeChain, type Landed as Included, type Unlanded, allowanceOf, attemptStatus, baseFee, broadcast as sendRaw, credited, nativeBalance, nativeCost, tokenBalance } from "../evm/client.vibe"
+import { type KyberRefused, type KyberSettings, type KyberUnavailable, type RouteMismatch, quote as kyberQuote, referenceStable } from "../kyber/route.vibe"
+import { decodedSwap } from "../kyber/swap.ts"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { definitions } from "../runtime/networks.vibe"
+import { kyberswap } from "../runtime/pins.ts"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import { type EvmPrepared, type EvmSigned, FeeWallet, type Prepared, type SignRefused, type Signed as WalletSigned } from "../signer/feeWallet.vibe"
+import type { EvmNetwork, FeeIntent, FirstEvmIntent } from "../signer/intents.ts"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, type QuoteRead, type Replacement, type Reservable, type SendIntent, SendRefused, type SendStatus, type Signed, safeNumber, wideNumber } from "./chain.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { spendableNative as spendable } from "../kernels/arithmetic.ts"
+  import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function spendableNative(balance: bigint, reserve: bigint): bigint { return spendable(balance, reserve) }
+  /** @throws {never} */
+  export function megaweiCeiling(value: bigint): bigint { return units(value, false) }
+  /** @throws {never} */
+  export function weiOfMegawei(value: bigint): bigint { return wei(value, false) }
+}
+import { errorText, megaweiCeiling, spendableNative, weiOfMegawei } from verified
+
+export error WalletMismatch { network: string; wallet: string }
+error Withdrawn
+
+export interface EvmConversionOptions {
+  readonly epoch: number
+  readonly limits: NativeLimits | undefined
+  readonly maxSlippageBps: number
+  readonly kyber: KyberSettings
+  readonly vaults: ReadonlyArray<VaultFact>
+}
+
+type ChainServices = FeeChain | EvmRpc | HttpClient.HttpClient | VaultDeployments
+
+type Failure = RpcFailure | ChainRefused | ApprovalRefused | ClaimRefused | DeploymentRefused | KyberUnavailable | KyberRefused | RouteMismatch
+
+interface Pending {
+  readonly token: string
+  readonly ready: EvmPrepared
+  readonly go: Deferred.Deferred<boolean>
+  readonly fiber: Fiber.Fiber<WalletSigned, SignRefused | Withdrawn>
+}
+
+interface Adapter {
+  readonly options: EvmConversionOptions
+  readonly network: EvmNetwork
+  readonly wallet: FeeWallet.Shape
+  readonly scope: Scope.Scope
+  readonly held: Ref.Ref<Pending | undefined>
+}
+
+const txHash = /^0x[0-9a-fA-F]{64}$/u
+const signedBytes = /^0x(?:[0-9a-fA-F]{2})+$/u
+
+function failureDetail(error: Failure): string {
+  switch (error._tag) {
+    case "RpcUnavailable": return errorText(error.message)
+    case "RpcMalformed": return errorText(error.issue)
+    case "RpcRefused": return errorText(error.message)
+    case "WrongChain": return `the RPC answered chain ${error.actual}, not ${error.expected}`
+    case "ChainRefused": return error.issue
+    case "ApprovalRefused": return error.issue
+    case "ClaimRefused": return error.issue
+    case "DeploymentRefused": return error.message
+    case "KyberUnavailable": return errorText(error.detail)
+    case "KyberRefused": return errorText(error.message)
+    case "RouteMismatch": return error.issue
+  }
+}
+
+function unavailable(operation: string, error: Failure) {
+  return new ChainUnavailable({ operation, detail: failureDetail(error) })
+}
+
+function chainError(operation: string, error: Failure | SendRefused): ChainUnavailable | SendRefused {
+  switch (error._tag) {
+    case "SendRefused": return error
+    case "RpcUnavailable":
+    case "RpcMalformed":
+    case "RpcRefused":
+    case "WrongChain":
+    case "KyberUnavailable":
+      return unavailable(operation, error)
+    default: return new SendRefused({ operation, detail: failureDetail(error) })
+  }
+}
+
+function refusal(error: SignRefused | Withdrawn) {
+  return new SendRefused({ operation: "sign", detail: error._tag === "Withdrawn" ? "the reservation was withdrawn before signing" : error.issue })
+}
+
+function provided<A, E>(program: A!E!ChainServices, services: Context.Context<ChainServices>): A!E {
+  return Effect.provideContext(program, services)
+}
+
+function routeToken(network: EvmNetwork, token: string): Address {
+  const lower = token.toLowerCase()
+  return (isNativeAssetAddress(definitions[network].name, lower) ? kyberswap.native : lower) as Address
+}
+
+function usdcTarget(network: EvmNetwork): Address | undefined {
+  const target = definitions[network].target
+  return target.kind === "usdc" ? target.address as Address : undefined
+}
+
+function wait(reason: string): Replacement {
+  return { kind: "wait", reason }
+}
+
+effect function balanceOf(adapter: Adapter, token: string) {
+  const routed = routeToken(adapter.network, token)
+  if (isNative(routed)) return spendableNative(try nativeBalance("finalized"), adapter.options.limits?.perTransaction ?? 0n)
+  return try tokenBalance(routed, "latest")
+}
+
+effect function quoteOf(adapter: Adapter, token: string, amount: bigint) {
+  const target = referenceStable(adapter.network, adapter.options.kyber)
+  if (target === undefined) throw new ChainUnavailable({ operation: "quote", detail: `no verified USDC target on ${definitions[adapter.network].name}` })
+  const read = try Effect.mapError(kyberQuote(adapter.network, routeToken(adapter.network, token), amount, target, adapter.options.maxSlippageBps, adapter.options.kyber), (error) => unavailable("quote", error))
+  if (read.kind === "NoRoute") return { kind: "noRoute", detail: read.detail } satisfies QuoteRead
+  const { quote } = read
+  return {
+    kind: "found",
+    route: "kyberswap",
+    amountIn: quote.amountIn,
+    output: quote.amountOut,
+    minimumOutput: quote.minAmountOut,
+    gasValue: quote.gasCostMicro,
+    impactBps: quote.priceImpactBps < 0 ? undefined : quote.priceImpactBps,
+    summary: quote.summary,
+  } satisfies QuoteRead
+}
+
+effect function intentOf(adapter: Adapter, intent: SendIntent) {
+  if (usdcTarget(adapter.network) === undefined) throw new SendRefused({ operation: "reserve", detail: `no verified USDC target on ${definitions[adapter.network].name}` })
+  const token = routeToken(adapter.network, intent.token)
+  const { amountIn, output, minimumOutput } = intent.quote
+  const shared = { network: adapter.network, nonceFloor: wideNumber(intent.nonceFloor), valueMicro: output }
+  if (!isNative(token) && (try allowanceOf(token, spenderAddress("Router"), "finalized")) < amountIn) {
+    return { ...shared, kind: "KyberApprove", token, amount: amountIn } satisfies FeeIntent
+  }
+  return { ...shared, kind: "KyberSwap", token, amountIn, minimumOutput, slippageBps: adapter.options.maxSlippageBps } satisfies FeeIntent
+}
+
+effect function admitted(stage: Deferred.Deferred<EvmPrepared, SendRefused>, go: Deferred.Deferred<boolean>, ready: Prepared) {
+  if (ready.family !== "evm") throw new Withdrawn()
+  try Deferred.succeed(stage, ready)
+  if (!(try Deferred.await(go))) throw new Withdrawn()
+}
+
+effect function signed(adapter: Adapter, intent: FeeIntent, stage: Deferred.Deferred<EvmPrepared, SendRefused>, go: Deferred.Deferred<boolean>) {
+  const result = adapter.wallet.sign(intent, (ready) => admitted(stage, go, ready)) catch effect (error) => {
+    try Deferred.fail(stage, refusal(error))
+    throw error
+  }
+  return result
+}
+
+effect function signing(adapter: Adapter, intent: FeeIntent, stage: Deferred.Deferred<EvmPrepared, SendRefused>, go: Deferred.Deferred<boolean>) {
+  return try ensuring(signed(adapter, intent, stage, go), Deferred.fail(stage, new SendRefused({ operation: "sign", detail: "the signer stopped before preparing the send" })))
+}
+
+effect function released(adapter: Adapter) {
+  const current = try Ref.get(adapter.held)
+  if (current === undefined) return
+  try Ref.set(adapter.held, undefined)
+  try Fiber.interrupt(current.fiber)
+}
+
+effect function reserveOf(adapter: Adapter, intent: SendIntent) {
+  try released(adapter)
+  const feeIntent = try intentOf(adapter, intent)
+  const stage = try Deferred.make<EvmPrepared, SendRefused>()
+  const go = try Deferred.make<boolean>()
+  const fiber = fork.in(adapter.scope) signing(adapter, feeIntent, stage, go)
+  const ready = try Deferred.await(stage)
+  const maximum = wholeBig(ready.maximumUnits + additionalReserve(adapter.network))
+  if (maximum === undefined) {
+    try Fiber.interrupt(fiber)
+    throw new SendRefused({ operation: "reserve", detail: "the worst-case fee is outside the journal's exact range" })
+  }
+  try Ref.set(adapter.held, { token: intent.token, ready, go, fiber })
+  return { nonce: ready.nonce, maximumWei: weiOfMegawei(maximum).toString(), intentHash: ready.unsigned.intentHash } satisfies Reservable
+}
+
+function signedOf(signed: EvmSigned, epoch: number): Signed {
+  const ready = signed.prepared
+  return {
+    kind: ready.intent.kind === "KyberApprove" ? "Approval" : "Conversion",
+    txId: signed.txId,
+    rawTx: signed.rawTx,
+    gasLimit: ready.gasLimit,
+    fees: ready.feeUnits,
+    inspection: "Inspected",
+    outputToFeeWallet: true,
+    minimumOutput: ready.minimumOutput,
+    deadline: ready.expiresAt === undefined ? maximumSafeValue : ready.expiresAt * 1000 - epoch,
+    blockhashSlot: 0,
+    toPinnedRouter: ready.toPinnedRouter,
+    approvedAmount: ready.approvedAmount,
+    allowance: ready.allowance,
+    pricedFeeMicro: ready.pricedFeeMicro,
+    ...ready.expiresAt === undefined ? {} : { expiresAt: ready.expiresAt },
+  }
+}
+
+effect function signOf(adapter: Adapter, intent: SendIntent, reserved: Reservable) {
+  const current = try Ref.get(adapter.held)
+  if (current === undefined || current.token !== intent.token || current.ready.unsigned.intentHash !== reserved.intentHash || current.ready.nonce !== reserved.nonce)
+    throw new SendRefused({ operation: "sign", detail: "the reservation does not name the prepared send" })
+  try Ref.set(adapter.held, undefined)
+  try Deferred.succeed(current.go, true)
+  const signed = try Effect.mapError(Fiber.join(current.fiber), refusal)
+  if (signed.family !== "evm") throw new SendRefused({ operation: "sign", detail: "an EVM send was not signed as an EVM send" })
+  return signedOf(signed, adapter.options.epoch)
+}
+
+effect function broadcastOf(rawTx: string) {
+  if (!signedBytes.test(rawTx)) throw new SendRefused({ operation: "broadcast", detail: "the journaled bytes are not a signed EVM transaction" })
+  const outcome = try sendRaw(rawTx as Hex)
+  switch (outcome.kind) {
+    case "Accepted": return
+    case "FeeCapTooLow": throw new FeeCapTooLow({ operation: "broadcast", detail: outcome.detail })
+    case "Unknown": throw new ChainUnavailable({ operation: "broadcast", detail: outcome.detail })
+  }
+}
+
+effect function hashesOf(send: OpenSend) {
+  const hashes: Array<Hex> = []
+  for (const attempt of send.attempts) {
+    if (!txHash.test(attempt.txId)) throw new ChainRefused({ issue: "a journaled transaction id is malformed" })
+    hashes.push(attempt.txId as Hex)
+  }
+  return hashes
+}
+
+effect function approvalOf(send: OpenSend, found: Included) {
+  const approval = decodedApproval(found.transaction.input)
+  if (approval === undefined) throw new ApprovalRefused({ issue: "Approval receipt differs from its bounded intent" })
+  const evidence = try approvalSettled(found, { token: send.token.toLowerCase() as Address, spender: "Router", amount: approval.amount, nonce: wideNumber(send.nonce) })
+  return evidence.allowance
+}
+
+effect function claimOf(adapter: Adapter, found: Included) {
+  const vault = found.transaction.to?.toLowerCase()
+  const fact = adapter.options.vaults.find((entry) => entry.vault.toLowerCase() === vault)
+  if (fact === undefined) throw new ClaimRefused({ issue: "Recorded claim names no reviewed vault" })
+  return try evmClaimEvidence(fact, found.receipt, found.transaction)
+}
+
+effect function targetBalance(network: EvmNetwork, target: Address) {
+  const read = tokenBalance(target, "latest") catch effect (error) => {
+    try Effect.logWarning("fee_balance_unavailable", { network: definitions[network].name, token: target, error: failureDetail(error) })
+    return undefined
+  }
+  return read === undefined ? undefined : read.toString()
+}
+
+effect function landedOf(adapter: Adapter, send: OpenSend, found: Included) {
+  const { receipt } = found
+  const succeeded = receipt.status === "success"
+  const actualWei = (try nativeCost(receipt)).toString()
+  const claim = send.kind === "Claim" ? try claimOf(adapter, found) : failedClaim
+  const allowance = send.kind === "Approval" ? try approvalOf(send, found) : 0n
+  const target = usdcTarget(adapter.network)
+  const output = send.kind === "Claim" ? claim.feesClaimed : send.kind === "Conversion" && succeeded && target !== undefined ? try credited(receipt, target) : 0n
+  const after = target === undefined ? undefined : try targetBalance(adapter.network, target)
+  return {
+    kind: "landed",
+    txId: found.tx,
+    succeeded,
+    output,
+    actualWei,
+    blockHash: receipt.blockHash,
+    allowance,
+    feesClaimed: claim.feesClaimed,
+    vaultDebit: claim.vaultDebit,
+    walletCredit: claim.walletCredit,
+    roleFree: claim.roleFree,
+    ...after === undefined ? {} : { targetBalanceAfter: after },
+  } satisfies Landed
+}
+
+effect function expiredAt(adapter: Adapter, send: OpenSend) {
+  if (send.kind !== "Conversion") return undefined
+  const finalized = try (try EvmRpc).head("finalized")
+  const finalizedTime = finalized.timestamp * 1000 - adapter.options.epoch
+  return finalizedTime > send.deadline ? finalizedTime : undefined
+}
+
+effect function recordedClaim(adapter: Adapter, send: OpenSend) {
+  const first = send.attempts[0]?.rawTx
+  if (send.kind !== "Claim" || first === undefined) return
+  const original = parsedType2(first as Hex)
+  if (original === undefined) throw new ClaimRefused({ issue: "Recorded claim cannot be read from its signed bytes" })
+  try verifyEvmClaim(adapter.options.vaults, original.to)
+}
+
+effect function deadlinePassed(adapter: Adapter, send: OpenSend) {
+  return send.kind === "Conversion" && (try Clock.currentTimeMillis) - adapter.options.epoch > send.deadline + 60_000
+}
+
+effect function unlandedOf(adapter: Adapter, send: OpenSend, found: Unlanded) {
+  if (found.latestSeen) return { kind: "pending", mined: false } satisfies SendStatus
+  if (found.seen.length > 0) {
+    if (try deadlinePassed(adapter, send)) return { kind: "pending", mined: false } satisfies SendStatus
+    try recordedClaim(adapter, send)
+    return { kind: "unseen" } satisfies SendStatus
+  }
+  const nonce = wideNumber(send.nonce)
+  if (found.finalizedNonce > nonce || found.latestNonce > nonce) return { kind: "pending", mined: true } satisfies SendStatus
+  const expired = try expiredAt(adapter, send)
+  if (expired !== undefined) return { kind: "expired", finalizedTime: expired } satisfies SendStatus
+  if (try deadlinePassed(adapter, send)) return { kind: "pending", mined: false } satisfies SendStatus
+  try recordedClaim(adapter, send)
+  if (send.attempts[send.attempts.length - 1]?.rawTx === undefined) return { kind: "pending", mined: true } satisfies SendStatus
+  return { kind: "unseen" } satisfies SendStatus
+}
+
+effect function statusOf(adapter: Adapter, send: OpenSend) {
+  const found = try attemptStatus(try hashesOf(send))
+  switch (found.kind) {
+    case "Mined": return { kind: "pending", mined: true } satisfies SendStatus
+    case "Landed": return try landedOf(adapter, send, found)
+    case "Unlanded": return try unlandedOf(adapter, send, found)
+  }
+}
+
+function recordedOf(adapter: Adapter, send: OpenSend, original: Type2): FirstEvmIntent | undefined {
+  const shared = { network: adapter.network, nonceFloor: wideNumber(send.nonce), valueMicro: wideNumber(send.valueMicro) }
+  switch (send.kind) {
+    case "Approval": {
+      const approval = decodedApproval(original.data)
+      if (approval === undefined || original.to !== send.token.toLowerCase()) return undefined
+      return { ...shared, kind: "KyberApprove", token: original.to, amount: approval.amount }
+    }
+    case "Conversion": {
+      const swap = decodedSwap(original.data)
+      if (swap === undefined || swap.srcToken !== routeToken(adapter.network, send.token)) return undefined
+      return { ...shared, kind: "KyberSwap", token: swap.srcToken as Address, amountIn: swap.amount, minimumOutput: swap.minReturnAmount, slippageBps: adapter.options.maxSlippageBps }
+    }
+    case "Claim":
+      return { ...shared, kind: "EvmClaimFees", vault: original.to }
+    default: {
+      const _exhaustive: never = send.kind
+      return _exhaustive
+    }
+  }
+}
+
+function journaledBytes(send: OpenSend): readonly [Hex, ...Hex[]] | undefined {
+  const bytes: Array<Hex> = []
+  for (const attempt of send.attempts) {
+    if (attempt.rawTx === undefined || !signedBytes.test(attempt.rawTx)) return undefined
+    bytes.push(attempt.rawTx as Hex)
+  }
+  const [first, ...rest] = bytes
+  if (first === undefined) return undefined
+  return [first, ...rest]
+}
+
+effect function currentBaseFee() {
+  return baseFee() catch effect (error) => {
+    if (error._tag === "ChainRefused") return undefined
+    throw error
+  }
+}
+
+effect function replacementOf(adapter: Adapter, send: OpenSend, observedAt: number) {
+  const attempts = journaledBytes(send)
+  if (attempts === undefined) return wait("the journaled bytes are not a replaceable EVM send")
+  const original = parsedType2(attempts[0])
+  const previous = parsedType2(attempts[attempts.length - 1] ?? attempts[0])
+  if (original === undefined || previous === undefined || original.nonce !== send.nonce || previous.nonce !== send.nonce)
+    throw new SendRefused({ operation: "replacement", detail: "Recorded send cannot be replaced" })
+  if (send.kind === "Conversion" && observedAt + replacementDeadlineMarginMs >= send.deadline) return wait("router deadline too close; a same-nonce replacement would revert")
+  const recorded = recordedOf(adapter, send, original)
+  if (recorded === undefined) throw new SendRefused({ operation: "replacement", detail: "Recorded send differs from its intent" })
+  const current = try currentBaseFee()
+  if (current === undefined) return wait("the current network base fee is unavailable")
+  if (current <= previous.maxFeePerGas) return wait("the signed fee covers the current network fee")
+  const maxFeeNeeded = safeNumber(megaweiCeiling(current))
+  if (maxFeeNeeded === undefined) return wait("the current network fee is outside the journal's exact range")
+  const step = nextReplacement({
+    original: { maxFeePerGas: original.maxFeePerGas, maxPriorityFeePerGas: original.maxPriorityFeePerGas },
+    latest: { maxFeePerGas: previous.maxFeePerGas, maxPriorityFeePerGas: previous.maxPriorityFeePerGas },
+    ceiling: original.maxFeePerGas * 3n,
+  })
+  if (step.kind === "Keep") return wait("fee replacement cap reached")
+  if (send.valueMicro <= 0) return wait("the send has no recorded value to bound its fee")
+  const { maxFeePerGas, maxPriorityFeePerGas } = step.fees
+  if (recorded.kind === "EvmClaimFees") try verifyEvmClaim(adapter.options.vaults, recorded.vault)
+  const intent: FeeIntent = { kind: "EvmReplacement", network: adapter.network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro: wideNumber(send.valueMicro), preparation: [] }
+  const signed = try Effect.mapError(adapter.wallet.sign(intent, () => Effect.void), (error) => new SendRefused({ operation: "replacement", detail: error.issue }))
+  if (signed.family !== "evm") throw new SendRefused({ operation: "replacement", detail: "an EVM replacement was not signed as an EVM send" })
+  const networkFee = { maxFeeNeeded, observedAt, pricedFeeMicro: safeNumber(signed.prepared.pricedFeeMicro) ?? -1 } satisfies NetworkFeeObservation
+  return {
+    kind: "signed",
+    txId: signed.txId,
+    rawTx: signed.rawTx,
+    intentHash: signed.prepared.unsigned.intentHash,
+    networkFee,
+    maxFeePerGas: maxFeePerGas.toString(),
+    maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+  } satisfies Replacement
+}
+
+export function evmConversionChain(options: EvmConversionOptions) {
+  return Layer.effect(ConversionChain, effect {
+    const chain = try FeeChain
+    const wallet = try FeeWallet
+    if (wallet.network !== chain.network || wallet.address !== chain.wallet) throw new WalletMismatch({ network: wallet.network, wallet: wallet.address })
+    const services = try Effect.context<ChainServices>()
+    const adapter: Adapter = { options, network: chain.network, wallet, scope: try Effect.scope, held: try Ref.make<Pending | undefined>(undefined) }
+    const shape: ConversionChain.Shape = {
+      balance: (token) => provided(Effect.mapError(balanceOf(adapter, token), (error) => unavailable("balance", error)), services),
+      quote: (token, amount) => provided(quoteOf(adapter, token, amount), services),
+      reserve: (intent) => provided(Effect.mapError(reserveOf(adapter, intent), (error) => chainError("reserve", error)), services),
+      sign: (intent, reserved) => signOf(adapter, intent, reserved),
+      broadcast: (rawTx) => provided(broadcastOf(rawTx), services),
+      status: (send) => provided(Effect.mapError(statusOf(adapter, send), (error) => unavailable("status", error)), services),
+      replacement: (send, observedAt) => provided(Effect.mapError(replacementOf(adapter, send, observedAt), (error) => chainError("replacement", error)), services),
+    }
+    return shape
+  })
+}

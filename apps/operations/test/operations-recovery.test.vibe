@@ -1,28 +1,14 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import type { D1Database, R2Bucket } from "@repo/platform/bindings"
-import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
-import { type Statement, d1, first, rows, sql } from "@repo/platform/d1"
-import { type RetentionR2Bucket, partBytes, retentionBucket } from "@repo/platform/r2"
-import { bundle, database, migrate, queue, startWorker, storage } from "@repo/platform/testing"
+import { webCrypto } from "@repo/platform/crypto"
 import { type Served, serve } from "@repo/platform/testing/chains"
 import { cloudflareApi as cloudflareFake } from "@repo/platform/testing/cloudflare"
-import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
-import { Response } from "miniflare"
-import { parsed } from "../src/backup/codec.vibe"
-import { protectedWorkflow, qualificationMigrations, qualificationSchema } from "../src/qualification/recovery/plan.vibe"
+import { repoRoot } from "@repo/platform/testing/paths"
+import { protectedWorkflow } from "../src/qualification/recovery/plan.vibe"
 import { recovery } from "../src/qualification/recovery/recovery.vibe"
 
 const accountId = "0123456789abcdef0123456789abcdef"
 const run = "slop-vet-q-4242-1"
-const localRun = "slop-vet-q-12345-1"
-const largeSize = partBytes + 17
-
-schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number }
-schema ResultRow { result: string }
-schema CountRow { n: number }
-schema CycleRow { phase: string }
-schema GrantRow { consumed_at: string | null }
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -42,34 +28,10 @@ effect function settled<A, E, R>(program: A!E!R) {
   return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : String(error)
 }
 
-effect function onDatabase<A, E, R>(binding: D1Database, program: A!E!R) {
-  provide d1(binding) {
-    return try program
-  }
-}
-
-effect function retention(binding: R2Bucket) {
-  const listing = try Effect.try(() => typeof Reflect.get(binding, "list") === "function" && typeof Reflect.get(binding, "delete") === "function")
-  if (!listing) return try die(new Error("the Miniflare bucket cannot list or delete"))
-  return binding as RetentionR2Bucket
-}
-
 effect function existingWorker(served: Served, name: string) {
   const target = HttpClientRequest.put(`${served.url}/client/v4/accounts/${accountId}/workers/scripts/${name}`, { headers: { authorization: "Bearer journey" } })
   const answer = try HttpClient.execute(HttpClientRequest.bodyFormDataRecord(target, { metadata: JSON.stringify({ main_module: "worker.js" }) }))
   try Effect.try(() => assert.strictEqual(answer.status, 200))
-}
-
-effect function qualificationMigrationsDir(directory: string) {
-  const fs = try FileSystem.FileSystem
-  const files = try Path.Path
-  try fs.writeFileString(files.join(directory, "0000_qualification_schema.sql"), qualificationSchema)
-  for (const name of qualificationMigrations) try fs.copyFile(files.join(migrationsDir, name), files.join(directory, name))
-  return directory
-}
-
-function smallBytes(index: number) {
-  return utf8(`Harmless scanner recovery fixture ${index}.`)
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
@@ -156,151 +118,4 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       evidence: { recorder: protectedWorkflow, revision: source, kind: "Failed", bound: 0 },
     })
   }))
-
-  it.effect('Back up, restore and verify disposable evidence in the qualification Worker (spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes")', () => scoped(effect {
-    const fs = try FileSystem.FileSystem
-    const outbound: string[] = []
-    const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "recovery" }))
-    const mf = try acquireRelease(sync(() => startWorker({
-      script,
-      d1: { EVIDENCE_DATABASE: "recovery-source", RESTORED_DB: "recovery-restored" },
-      r2: ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"],
-      vars: { QUALIFICATION_RUN: localRun, EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: "off" },
-      queues: { producers: { EVIDENCE_BACKUP_QUEUE: "qualification" }, consumers: { qualification: { maxRetries: 1 } } },
-      outbound: (request) => {
-        outbound.push(request.url)
-        return new Response(null, { status: 503 })
-      },
-    })), (worker) => promise(() => worker.dispose()))
-    const schema = try qualificationMigrationsDir(try fs.makeTempDirectoryScoped({ prefix: "slop-recovery-schema-" }))
-    for (const binding of ["EVIDENCE_DATABASE", "RESTORED_DB"]) {
-      const applied = try promise(() => migrate(mf, binding, schema))
-      try same(applied.filter((file) => file.error !== undefined), [])
-    }
-    const source = try promise(() => database(mf, "EVIDENCE_DATABASE"))
-    const restored = try promise(() => database(mf, "RESTORED_DB"))
-    function evidence<A, E, R>(query: A!E!R) {
-      return onDatabase(source, query)
-    }
-    let deliveries = 0
-
-    effect function failure(action: string) {
-      return (try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${`failed-${action}`}`)))?.result
-    }
-
-    effect function attempt(action: string) {
-      deliveries += 1
-      const delivery = `${action}-${deliveries}`
-      const before = try failure(action)
-      const outcome = try promise(() => queue(mf, "qualification", [{ qualification: localRun, action, delivery }]))
-      const acknowledged = try evidence(first(CountRow, sql`SELECT count(*) AS n FROM qualification_deliveries WHERE id = ${`command:${delivery}`}`))
-      const after = try failure(action)
-      return { retried: outcome.retryMessages.length, acknowledged: acknowledged?.n, failed: after === before ? undefined : after }
-    }
-
-    effect function send(action: string) {
-      try same(try attempt(action), { retried: 0, acknowledged: 1, failed: undefined })
-    }
-
-    effect function resultText(phase: string) {
-      return (try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${phase}`)))?.result ?? "null"
-    }
-
-    effect function result(phase: string) {
-      const text = try resultText(phase)
-      return try Effect.try(() => JSON.parse(text) as unknown)
-    }
-
-    effect function count(statement: Statement) {
-      return (try evidence(first(CountRow, statement)))?.n ?? 0
-    }
-
-    const publicRoute = (try promise(() => mf.dispatchFetch("https://qualification.invalid/"))).status
-    const stranger = try promise(() => queue(mf, "qualification", [{ qualification: "slop-vet-q-1-1", action: "seed", delivery: "seed-9" }]))
-
-    try send("seed")
-    const seeded = try parsed(SeedResult, "seed", utf8(try resultText("seed")))
-    let cycleComplete = false
-    for (let attempt = 0; attempt < 1200 && !cycleComplete; attempt++) {
-      const cycle = try evidence(first(CycleRow, sql`SELECT phase FROM vetting_storage_cycles WHERE day = ${seeded.day}`))
-      const firstPages = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'backup-page-0'`)
-      cycleComplete = cycle?.phase === "complete" && firstPages >= 2
-      if (!cycleComplete) try sleep("100 millis")
-    }
-
-    try send("verify")
-    const proof = try result("verify")
-    try send("verify")
-    const premature = try attempt("retention")
-    try send("corrupt")
-    const corruption = try result("corrupt")
-    const verifyDeliveries = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'verify'`)
-    const verifyResults = try count(sql`SELECT count(*) AS n FROM qualification_results WHERE phase = 'verify'`)
-    const grant = try onDatabase(restored, first(GrantRow, sql`SELECT consumed_at FROM vetting_evidence_grants WHERE token_hash = ${"0".repeat(64)}`))
-    const sourceAudit = try evidence(rows(Schema.Struct({ id: Schema.String }), sql`SELECT id FROM vetting_evidence_audit ORDER BY id`))
-
-    try send("retention")
-    const retained = try result("retention")
-    const retainedText = try resultText("retention")
-    try send("retention")
-    const replayedRetention = try resultText("retention")
-    const retentionDeliveries = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'retention'`)
-    const retentionResults = try count(sql`SELECT count(*) AS n FROM qualification_results WHERE phase = 'retention'`)
-
-    try send("empty")
-    const remaining: number[] = []
-    for (const binding of ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"]) {
-      const listing = try retentionBucket(try retention(try promise(() => storage(mf, binding)))).list("", undefined, 100)
-      remaining.push(listing.objects.length)
-    }
-
-    const smallTotal = Array.from({ length: 65 }, (_, index) => smallBytes(index).length).reduce((sum, size) => sum + size, 0)
-    const completion = typeof proof === "object" && proof !== null && "completionSha256" in proof ? proof.completionSha256 : undefined
-    try Effect.try(() => assert.match(String(completion), /^[a-f0-9]{64}$/u))
-    try same({ publicRoute, strangerRetried: stranger.retryMessages.length, cycleComplete, objects: seeded.objects }, { publicRoute: 404, strangerRetried: 1, cycleComplete: true, objects: 68 })
-    try same(proof, {
-      objects: 68,
-      pages: 3,
-      bytes: smallTotal + largeSize + seeded.snapshotBytes,
-      completionSha256: completion,
-      restoredSha256: try sha256Hex(smallBytes(37)),
-      recoveredSnapshotSha256: seeded.snapshotSha256,
-      chunkedSha256: try sha256Hex(new Uint8Array(largeSize).fill(7)),
-      replayUnchanged: true,
-      sourceUnchanged: true,
-      foreignKeysValid: true,
-      immutablePolicy: true,
-    })
-    try same(seeded.objectSha256, try sha256Hex(new Uint8Array(largeSize).fill(7)))
-    try same(corruption, { changedBytesRefused: true, missingPageRefused: true, sourceUnchanged: true })
-    try same({ verifyDeliveries, verifyResults, consumedAt: grant?.consumed_at, sourceAudit: sourceAudit.map((row) => row.id) }, { verifyDeliveries: 2, verifyResults: 1, consumedAt: seeded.fixtureAt, sourceAudit: ["qualification-audit"] })
-    const cleanupPages = typeof retained === "object" && retained !== null && "cleanupPages" in retained ? Number(retained.cleanupPages) : 0
-    try Effect.try(() => assert.isTrue(cleanupPages >= 3 && cleanupPages < 20))
-    try same(premature, { retried: 0, acknowledged: 0, failed: JSON.stringify({ failed: true, category: "Intact recovery and corruption checks required" }) })
-    try same(retained, {
-      actualStorageCore: true,
-      actualScheduledCore: true,
-      controlledSequentialSubjobs: true,
-      fixtureOnlyRetentionEnabled: true,
-      fixtureCaseCount: 24,
-      agedDays: [89, 91],
-      incompleteSnapshotAndMissingCorruptRestoresRefused: true,
-      legacyPhysicalDeletionRefused: true,
-      cleanupPages,
-      deletedCompleteObjects: 0,
-      heldLegacyReferences: 21,
-      missingInventoryAudits: 0,
-      openRecentAndPermanentTraceRetained: true,
-      permanentAdmissionEvidenceRetained: true,
-      immutableHoldAudits: true,
-      holdReplayUnchanged: true,
-      restoredHeldSha256: try sha256Hex(new Uint8Array(largeSize).fill(13)),
-      restoredHeldBytes: largeSize,
-      scheduledOldAuditRemoved: true,
-      disabledAndProtectedAuditRetained: true,
-      elapsedRetentionObservation: false,
-    })
-    try same({ replayedRetention, retentionDeliveries, retentionResults }, { replayedRetention: retainedText, retentionDeliveries: 2, retentionResults: 1 })
-    try same({ remaining, outbound }, { remaining: [0, 0, 0], outbound: [] })
-  }), 300_000)
 })

@@ -1,0 +1,324 @@
+// spec/points/collectionMemo.md, "A collection reuses an earlier answer only while every input it was derived from is unchanged"; spec/points/collectionMemo.md, "The next memo records exactly the live version of every fenced answer and is written only after the snapshot"; spec/points/authorship.md, "Earlier accepted work owns its commits across windows, and a standalone assessment that overlaps it waits for joint review"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
+import { fullIntervalMs } from "../../../gen/points__collectionMemo.ts"
+import type { AcceptedImplementationPredecessor } from "../../score/history.vibe"
+import { emptyChangeDigest } from "./native.vibe"
+import { type AcceptedImplementationSource, acceptedOrdinaryCommitOid } from "./sources.vibe"
+
+export error ImplementationMemoInvalid { message: string }
+
+export type PreviousImplementationObservation =
+  | { readonly kind: "ineligible" }
+  | { readonly kind: "accepted-ordinary"; readonly source: AcceptedImplementationSource }
+  | { readonly kind: "candidate"; readonly shape: string; readonly source: AcceptedImplementationSource }
+
+export interface ImplementationMemo {
+  previous(repositoryNodeId: string, prior: AcceptedImplementationPredecessor): PreviousImplementationObservation | undefined
+  rememberPrevious(repositoryNodeId: string, prior: AcceptedImplementationPredecessor, observation: PreviousImplementationObservation): void!ImplementationMemoInvalid
+  digest(repositoryNodeId: string, source: AcceptedImplementationSource): string | undefined
+  rememberDigest(repositoryNodeId: string, source: AcceptedImplementationSource, digest: string): void!ImplementationMemoInvalid
+  beginPass(): void
+  serialize(codeDigest: string, producedAt: string): string!ImplementationMemoInvalid
+}
+
+interface PreviousEntry {
+  readonly repositoryNodeId: string
+  readonly prior: AcceptedImplementationPredecessor
+  readonly observation: PreviousImplementationObservation
+  observedAt: string | null
+}
+
+interface DigestEntry {
+  readonly repositoryNodeId: string
+  readonly source: AcceptedImplementationSource
+  readonly digest: string
+  observedAt: string | null
+}
+
+type Row = Readonly<Record<string, unknown>>
+
+export const implementationMemoFormat = "slop-accepted-implementation-memo-v2"
+export const implementationMemoFile = "accepted-implementation-memo.json"
+export const implementationMemoUnavailable = "[slop.cash] accepted implementation memo unavailable; reading evidence live"
+
+const maxBytes = 512 * 1024 * 1024
+const maxRows = 200_000
+const nodeId = /^[A-Za-z0-9_=+/-]{1,256}$/u
+const sha = /^[a-f0-9]{40}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const shapePattern = /^(0|[1-9][0-9]*)(\/(0|[1-9][0-9]*)){2}$/u
+const pullUrl = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/u
+
+function invalid(field: string) {
+  return new ImplementationMemoInvalid({ message: `Invalid accepted implementation memo: ${field}` })
+}
+
+effect function record(value: unknown, keys: ReadonlyArray<string>) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw invalid("expected object")
+  const row = value as Row
+  if (Object.keys(row).length !== keys.length || !keys.every((key) => Object.hasOwn(row, key))) throw invalid("unexpected fields")
+  return row
+}
+
+effect function text(value: unknown, pattern: RegExp, field: string) {
+  if (typeof value !== "string" || !pattern.test(value)) throw invalid(field)
+  return value
+}
+
+effect function instant(value: unknown) {
+  if (typeof value !== "string") throw invalid("timestamp")
+  const at = millisOf(value)
+  if (!Number.isFinite(at)) throw invalid("timestamp")
+  const exact = isoAt(at) catch effect () => {
+    throw invalid("timestamp")
+  }
+  if (exact !== value) throw invalid("timestamp")
+  return value
+}
+
+effect function parsePredecessor(value: unknown) {
+  const row = try record(value, ["id", "number", "url", "mergedAt"])
+  const url = try text(row.url, pullUrl, "pull request URL")
+  const match = pullUrl.exec(url)
+  if (match === null || [match[1], match[2]].some((part) => part === "." || part === "..") || typeof row.number !== "number" || !Number.isSafeInteger(row.number) || String(row.number) !== match[3]) throw invalid("pull request number")
+  return { id: try text(row.id, nodeId, "pull request node ID"), number: row.number, url, mergedAt: try instant(row.mergedAt) } satisfies AcceptedImplementationPredecessor
+}
+
+effect function parseSource(value: unknown) {
+  const row = try record(value, ["id", "headSha", "mergeSha", "mergeParentShas", "mergeTreeSha", "firstParentTreeSha"])
+  const parents = row.mergeParentShas
+  if (!Array.isArray(parents) || ![1, 2].includes(parents.length)) throw invalid("acceptance parents")
+  const mergeParentShas: string[] = []
+  for (const part of parents) mergeParentShas.push(try text(part, sha, "acceptance parent"))
+  const headSha = try text(row.headSha, sha, "submitted head")
+  const mergeSha = try text(row.mergeSha, sha, "accepted commit")
+  const mergeTreeSha = try text(row.mergeTreeSha, sha, "accepted tree")
+  const firstParentTreeSha = try text(row.firstParentTreeSha, sha, "first-parent tree")
+  if (mergeParentShas.includes(mergeSha) || mergeParentShas[0] === headSha || (mergeParentShas.length === 2 && mergeParentShas[1] !== headSha) || mergeTreeSha === firstParentTreeSha) throw invalid("acceptance topology")
+  return { id: try text(row.id, nodeId, "pull request node ID"), headSha, mergeSha, mergeParentShas, mergeTreeSha, firstParentTreeSha } satisfies AcceptedImplementationSource
+}
+
+effect function parseObservation(value: unknown, expectedSource: string): PreviousImplementationObservation!ImplementationMemoInvalid {
+  const kind = typeof value === "object" && value !== null ? (value as Row).kind : undefined
+  if (kind === "ineligible") {
+    try record(value, ["kind"])
+    return { kind: "ineligible" }
+  }
+  if (kind === "accepted-ordinary") {
+    const row = try record(value, ["kind", "source"])
+    const source = try parseSource(row.source)
+    if (source.id !== expectedSource || acceptedOrdinaryCommitOid(source) === undefined) throw invalid("ordinary accepted identity")
+    return { kind: "accepted-ordinary", source }
+  }
+  const row = try record(value, ["kind", "shape", "source"])
+  if (row.kind !== "candidate") throw invalid("observation kind")
+  const shape = try text(row.shape, shapePattern, "candidate shape")
+  if (shape.split("/").some((part) => !Number.isSafeInteger(Number(part)))) throw invalid("candidate shape")
+  const source = try parseSource(row.source)
+  if (source.id !== expectedSource) throw invalid("candidate pull request identity")
+  return { kind: "candidate", shape, source }
+}
+
+function previousKey(repositoryNodeId: string, prior: AcceptedImplementationPredecessor) {
+  return JSON.stringify([repositoryNodeId, prior.id, prior.number, prior.url, prior.mergedAt])
+}
+
+function digestKey(repositoryNodeId: string, source: AcceptedImplementationSource) {
+  return JSON.stringify([repositoryNodeId, source.id, source.headSha, source.mergeSha, source.mergeParentShas, source.mergeTreeSha, source.firstParentTreeSha])
+}
+
+effect function observedAt(value: unknown, producedAt: string) {
+  const observed = try instant(value)
+  if (millisOf(observed) > millisOf(producedAt)) throw invalid("observation is in the future")
+  return observed
+}
+
+function recent(observed: string, nowMs: number) {
+  const age = nowMs - millisOf(observed)
+  return age >= 0 && age <= fullIntervalMs
+}
+
+effect function rows(value: unknown) {
+  if (!Array.isArray(value) || value.length > maxRows) throw invalid("too many rows")
+  const listed: ReadonlyArray<unknown> = value
+  return listed
+}
+
+function compare(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+effect function storeRows<T extends { observedAt: string | null }>(entries: ReadonlyMap<string, T>, producedAt: string, retain: (entry: T) => boolean) {
+  const stamped: Array<readonly [string, T & { observedAt: string }]> = []
+  for (const [key, entry] of entries) {
+    if (!retain(entry)) continue
+    stamped.push([key, { ...entry, observedAt: try observedAt(entry.observedAt ?? producedAt, producedAt) }])
+  }
+  return stamped
+    .sort(([leftKey, left], [rightKey, right]) => compare(right.observedAt, left.observedAt) || compare(leftKey, rightKey))
+    .slice(0, maxRows)
+    .sort(([left], [right]) => compare(left, right))
+    .map(([, entry]) => entry)
+}
+
+effect function parseJson(source: string) {
+  const value: unknown = Effect.try(() => JSON.parse(source) as unknown) catch effect () => {
+    throw invalid("malformed JSON")
+  }
+  return value
+}
+
+function implementationMemo(previousEntries: Map<string, PreviousEntry>, digestEntries: Map<string, DigestEntry>, fixedCodeDigest: string | undefined): ImplementationMemo {
+  let codeDigest = fixedCodeDigest
+  const hasNativeProof = (repositoryNodeId: string, observation: PreviousImplementationObservation) =>
+    observation.kind === "candidate" && digestEntries.has(digestKey(repositoryNodeId, observation.source))
+  return {
+    previous(repositoryNodeId: string, prior: AcceptedImplementationPredecessor) {
+      return previousEntries.get(previousKey(repositoryNodeId, prior))?.observation
+    },
+    effect rememberPrevious(repositoryNodeId: string, prior: AcceptedImplementationPredecessor, observation: PreviousImplementationObservation) {
+      try text(repositoryNodeId, nodeId, "repository node ID")
+      const source = try parsePredecessor(prior)
+      previousEntries.set(previousKey(repositoryNodeId, source), { repositoryNodeId, prior: source, observation: try parseObservation(observation, source.id), observedAt: null })
+    },
+    digest(repositoryNodeId: string, source: AcceptedImplementationSource) {
+      return digestEntries.get(digestKey(repositoryNodeId, source))?.digest
+    },
+    effect rememberDigest(repositoryNodeId: string, source: AcceptedImplementationSource, digest: string) {
+      try text(repositoryNodeId, nodeId, "repository node ID")
+      const accepted = try parseSource(source)
+      try text(digest, digestPattern, "native digest")
+      const key = digestKey(repositoryNodeId, accepted)
+      const existing = digestEntries.get(key)
+      if (digest === emptyChangeDigest || (existing !== undefined && existing.digest !== digest)) throw invalid("empty or contradictory native digest")
+      digestEntries.set(key, { repositoryNodeId, source: accepted, digest, observedAt: null })
+    },
+    beginPass() {
+      for (const [key, entry] of previousEntries) if (entry.observedAt === null) previousEntries.delete(key)
+    },
+    effect serialize(nextCodeDigest: string, producedAt: string) {
+      try text(nextCodeDigest, digestPattern, "code digest")
+      if (codeDigest !== undefined && codeDigest !== nextCodeDigest) throw invalid("cannot change the evidence code digest")
+      codeDigest = nextCodeDigest
+      const nowMs = millisOf(try instant(producedAt))
+      for (const entry of previousEntries.values()) if (millisOf(entry.prior.mergedAt) > millisOf(entry.observedAt ?? producedAt)) throw invalid("pull request is in the future")
+      const previous = try storeRows(previousEntries, producedAt, (entry) => entry.observedAt === null || recent(entry.observedAt, nowMs) || hasNativeProof(entry.repositoryNodeId, entry.observation))
+      const digests = try storeRows(digestEntries, producedAt, () => true)
+      const contents = `${JSON.stringify({ format: implementationMemoFormat, codeDigest: nextCodeDigest, producedAt, previous, digests })}\n`
+      if (utf8(contents).length > maxBytes) throw invalid("file is too large")
+      for (const entry of previousEntries.values()) entry.observedAt ??= producedAt
+      for (const entry of digestEntries.values()) entry.observedAt ??= producedAt
+      return contents
+    },
+  }
+}
+
+export function emptyImplementationMemo() {
+  return implementationMemo(new Map(), new Map(), undefined)
+}
+
+export effect function parseImplementationMemo(contents: string, codeDigest: string, nowMs: number) {
+  if (utf8(contents).length > maxBytes) throw invalid("file is too large")
+  const value = try record(try parseJson(contents), ["format", "codeDigest", "producedAt", "previous", "digests"])
+  if (value.format !== implementationMemoFormat || (try text(value.codeDigest, digestPattern, "code digest")) !== codeDigest) throw invalid("version or code digest")
+  const producedAt = try instant(value.producedAt)
+  if (!recent(producedAt, nowMs)) throw invalid("stale or future artifact")
+  const digestEntries = new Map<string, DigestEntry>()
+  for (const entry of try rows(value.digests)) {
+    const row = try record(entry, ["repositoryNodeId", "source", "digest", "observedAt"])
+    const repositoryNodeId = try text(row.repositoryNodeId, nodeId, "repository node ID")
+    const source = try parseSource(row.source)
+    const digest = try text(row.digest, digestPattern, "native digest")
+    const key = digestKey(repositoryNodeId, source)
+    if (digest === emptyChangeDigest || digestEntries.has(key)) throw invalid("empty or repeated native digest")
+    digestEntries.set(key, { repositoryNodeId, source, digest, observedAt: try observedAt(row.observedAt, producedAt) })
+  }
+  const previousEntries = new Map<string, PreviousEntry>()
+  const seen = new Set<string>()
+  for (const entry of try rows(value.previous)) {
+    const row = try record(entry, ["repositoryNodeId", "prior", "observation", "observedAt"])
+    const repositoryNodeId = try text(row.repositoryNodeId, nodeId, "repository node ID")
+    const prior = try parsePredecessor(row.prior)
+    const observation = try parseObservation(row.observation, prior.id)
+    const observed = try observedAt(row.observedAt, producedAt)
+    if (millisOf(prior.mergedAt) > millisOf(observed)) throw invalid("pull request is in the future")
+    const key = previousKey(repositoryNodeId, prior)
+    if (seen.has(key)) throw invalid("repeated pull request observation")
+    seen.add(key)
+    const proved = observation.kind === "candidate" && digestEntries.has(digestKey(repositoryNodeId, observation.source))
+    if (recent(observed, nowMs) || proved) previousEntries.set(key, { repositoryNodeId, prior, observation, observedAt: observed })
+  }
+  return implementationMemo(previousEntries, digestEntries, codeDigest)
+}
+
+effect function setting(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function digestOfFile(path: string) {
+  const fs = try FileSystem.FileSystem
+  return try sha256Hex(try fs.readFile(path))
+}
+
+export effect function implementationCodeDigest() {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const program = decodeURIComponent(new URL(import.meta.url).pathname)
+  const directory = files.dirname(program)
+  const sources = (try fs.readDirectory(directory)).filter((name) => name.endsWith(".vibe")).sort(compare)
+  const digests: string[] = [try digestOfFile(program)]
+  for (const name of sources) digests.push(try digestOfFile(files.join(directory, name)))
+  let lock: string | null = null
+  let parent = directory
+  while (lock === null) {
+    const candidate = files.join(parent, "pnpm-lock.yaml")
+    if (try fs.exists(candidate)) lock = try digestOfFile(candidate)
+    const next = files.dirname(parent)
+    if (next === parent) break
+    parent = next
+  }
+  return try sha256Hex(JSON.stringify([implementationMemoFormat, sources, digests, lock]))
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  return "message" in error && typeof error.message === "string" && error.message !== "" ? error.message : error._tag
+}
+
+effect function readImplementationMemo(input: string, codeDigest: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.resolve(files.dirname(input), implementationMemoFile)
+  if (Number((try fs.stat(path)).size) > maxBytes) throw invalid("file is too large")
+  return try parseImplementationMemo(new TextDecoder().decode(try fs.readFile(path)), codeDigest, try Clock.currentTimeMillis)
+}
+
+export effect function openImplementationMemo(codeDigest: string) {
+  const input = try setting("SLOP_COLLECTION_MEMO")
+  const full = (try setting("SLOP_COLLECTION_FULL")) || "false"
+  if (input === "" || full === "true") return emptyImplementationMemo()
+  const memo = readImplementationMemo(input, codeDigest) catch effect () => {
+    try Console.error(implementationMemoUnavailable)
+    return emptyImplementationMemo()
+  }
+  return memo
+}
+
+export effect function writeImplementationMemo(memo: ImplementationMemo, codeDigest: string, output: string) {
+  const written = effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const destination = files.resolve(files.dirname(files.resolve(output)), implementationMemoFile)
+    const contents = try memo.serialize(codeDigest, try isoAt(try Clock.currentTimeMillis))
+    try fs.makeDirectory(files.dirname(destination), { recursive: true })
+    const temporary = `${destination}.${try randomId()}.tmp`
+    const kept = effect {
+      try fs.writeFile(temporary, utf8(contents), { flag: "wx" })
+      try fs.rename(temporary, destination)
+    }
+    try ensuring(kept, Effect.ignore(fs.remove(temporary, { force: true })))
+  }
+  written catch effect (error) => {
+    try Console.error(`[slop.cash] collection memo not written: ${messageOf(error)}`)
+  }
+}

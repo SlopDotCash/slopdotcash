@@ -3,6 +3,7 @@ import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
+import { Response } from "miniflare"
 
 const projectsPath = "/api/v1/referrals/projects"
 const sessionsPath = "/api/v1/points/sessions"
@@ -26,8 +27,9 @@ const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
   return areaLayer({
-    root: new URL("..", import.meta.url).pathname,
-    entry: "worker",
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
     origin,
     d1: { SLOP_DB: "slop-private" },
     vars: {
@@ -38,6 +40,7 @@ const Backend = Layer.provideMerge(Layer.unwrap(effect {
       SLOP_GITHUB_READ_TOKEN: reader,
       TRACE_AUTH_SECRET: "trace-auth-secret-for-the-reads-journey-00001",
     },
+    services: { ASSETS: () => new Response("Not found", { status: 404 }) },
     internet: net,
   })
 }), Built)

@@ -4,6 +4,7 @@ import type { Effect } from "effect";
 import { type ReactNode, useState } from "react";
 import { reviewBudgetShown } from "../../../gen/frontend__views.ts";
 import type { PageProps } from "../../app/pages.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import type { PageRuntime } from "../../app/runtime.vibe";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { hasBountyOverview } from "../../kernels/rewardSummary.ts";
@@ -58,15 +59,13 @@ function Loading() {
   );
 }
 
-/** "Project not found" for an address that names no listed project; search engines are asked not to index it. */
+/** "Project not found" for an address that names no listed project; the page is noindex with no canonical while it is mounted. */
 export function ProjectNotFound() {
   return (
-    <>
-      <meta name="robots" content="noindex" />
-      <NotFound title="Project not found" className={pageClass}>
-        <p>This project isn&apos;t listed.</p>
-      </NotFound>
-    </>
+    <NotFound title="Project not found" className={pageClass}>
+      <NotFoundHead />
+      <p>This project isn&apos;t listed.</p>
+    </NotFound>
   );
 }
 

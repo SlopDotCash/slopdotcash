@@ -150,7 +150,7 @@ type Origin = NoCheck | AutoCheck | PayerCheck
 type ChainResult = StillPending | ReceivedRead | FinalRead | FinalMismatch | ApprovalRead | Reverted | NotSent
 type Evidence = NoEvidence | Received | Finished
 type Notice = Quiet | StorageBlocked | DueChanged | DeclinedNotice | WrongWallet | CheckFailed | TxFailed | ApprovalConfirmed
-  | ReceivedNotice | VerifiedNotice
+  | ReceivedNotice | VerifiedNotice | LocalCleared
 type PayFlow = { opened: bool, subject: Subject, switchedOn: bool, page: PayPage, dueWays: int, phase: Phase,
   freshRead: FreshRead, slot: WA::Attempt, walletHash: bool, connected: bool, checking: Origin, autoAsks: int,
   evidence: Evidence, depositedAt: int, watching: bool, hidden: bool, now: int, notice: Notice, used: List[str] }
@@ -206,10 +206,19 @@ wallet is asked; an occupied slot or a storage failure asks nothing. A
 returned hash or batch reference is saved; a declined request clears its own
 attempt ("You declined the wallet request. Nothing was sent."); an unclear
 one keeps it until the payer enters the transaction hash from wallet
-activity. A finished deposit from this tab blocks another payment for an
-hour while the record still lists a way to pay ("A deposit from this browser
-tab is already on chain …"); after the hour the page says it did not count
-and is sent back to the wallet that paid it.
+activity, or, after checking wallet activity, says nothing was sent: an
+unclear request with no hash, batch reference or entered transaction hash is
+then cleared, exactly that attempt, and the payment must be reviewed again
+("Local request cleared. Review again before sending."); a request with a
+hash is never cleared this way. While the tab holds no saved request and no
+deposit of the tab waits for its record, the payer may choose another wallet
+("Choose another wallet"), which drops the review and asks for a wallet
+again (development `src/SubmissionFeePay.tsx` at `7f71c6ce9`, the
+`PendingWalletCheck` `unsent` recovery and the wallet chooser). A finished
+deposit from this tab blocks another payment for an hour while the record
+still lists a way to pay ("A deposit from this browser tab is already on
+chain …"); after the hour the page says it did not count and is sent back to
+the wallet that paid it.
 
 ```quint
 pure val recordWaitSeconds = 3600
@@ -246,6 +255,13 @@ pure def canEnterHash(p: PayFlow, candidate: str, by: int): bool =
   by == payer and candidate != "" and p.phase == Unclear and p.checking == NoCheck
 pure def enterHash(p: PayFlow, candidate: str, by: int): PayFlow =
   { ...p, phase: Sent, walletHash: false, slot: WA::compareAndReplace(p.slot, p.slot, { ...p.slot, candidate: candidate }) }
+pure def canConfirmUnsent(p: PayFlow, by: int): bool = by == payer and p.phase == Unclear and p.checking == NoCheck
+  and p.slot.hash == "" and p.slot.candidate == ""
+pure def confirmUnsent(p: PayFlow, by: int): PayFlow =
+  { ...p, phase: Idle, freshRead: NotConfirmed, walletHash: false, slot: WA::compareAndClear(p.slot, p.slot), notice: LocalCleared }
+pure def canDisconnectWallet(p: PayFlow, by: int): bool = by == payer and p.connected and p.page == Due and p.dueWays > 0
+  and p.slot == WA::noAttempt and not(depositedWithinHour(p))
+pure def disconnectWallet(p: PayFlow, by: int): PayFlow = { ...p, connected: false, phase: Idle, freshRead: NotConfirmed }
 pure def canObserveClock(p: PayFlow, now: int, by: int): bool = by == clock and now > p.now
 pure def observeClock(p: PayFlow, now: int, by: int): PayFlow = { ...p, now: now }
 pure def stepWalletAskedOnlyAfterSameDue(before: PayFlow, via: str, after: PayFlow): bool =
@@ -347,6 +363,9 @@ pure def sometimesBlockedWithinHour(p: PayFlow): bool = p.page == Due and p.dueW
 pure def sometimesUnclearKept(p: PayFlow): bool = p.phase == Unclear and p.slot != WA::noAttempt
 pure def sometimesWrongWalletRefused(p: PayFlow): bool = p.notice == WrongWallet and p.slot != WA::noAttempt
 pure def sometimesAutoChecked(p: PayFlow): bool = p.autoAsks > 0 and p.checking == AutoCheck
+pure def sometimesUnsentCleared(p: PayFlow): bool = p.notice == LocalCleared and p.slot == WA::noAttempt and p.phase == Idle
+pure def sometimesAnotherWalletAfterDecline(p: PayFlow): bool = p.notice == DeclinedNotice and not(p.connected)
+  and p.page == Due and p.phase == Idle
 pure val byValues = Set(payer, reader, adapter, chainReader, timer, tab, clock, bundle)
 pure val identityValues = Set("d1", "d2")
 pure val hashValues = Set("", "h1")

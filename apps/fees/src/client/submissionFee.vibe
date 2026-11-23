@@ -92,11 +92,6 @@ export const reportCasePattern = /^sc_[A-Za-z0-9_-]{8,72}$/u
 
 export const submissionFeeCache = { browserSeconds: 60 } as const
 
-export const submissionFeeRefusals = {
-  notFound: { status: 404, error: "not_found" },
-  methodNotAllowed: { status: 405, error: "method_not_allowed" },
-} as const
-
 export function submissionFeeItemPath(repositoryId: number, pullNumber: number) {
   return `${submissionFeePath}/items/${repositoryId}/${pullNumber}`
 }

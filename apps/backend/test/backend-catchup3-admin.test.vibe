@@ -3,6 +3,7 @@ import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
 import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
+import { Response } from "miniflare"
 
 const moderatorA = "18633264"
 const moderatorB = "202660855"
@@ -21,13 +22,23 @@ const Built = Layer.effect(World, effect {
   try orDie(Effect.try(() => {
     github.world.addUser({ id: 41, login: "responsible-41" })
     github.world.addUser({ id: 18633264, login: "moderator-a" })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
   }))
   return { github, net: internet({ github: github.handler }) }
 })
 
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
-  const { net } = try World
-  return areaLayer({ root: new URL("..", import.meta.url).pathname, entry: "worker", d1: { SLOP_DB: "slop-private" }, vars: roles, internet: net })
+  const { github, net } = try World
+  const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
+  return areaLayer({
+    root: new URL("../../points", import.meta.url).pathname,
+    config: "test/support/backendRoutes/vite.config.ts",
+    entry: "backendRoutes",
+    d1: { SLOP_DB: "slop-private" },
+    vars: { ...roles, SLOP_GITHUB_READ_TOKEN: reader },
+    services: { ASSETS: () => new Response("Not found", { status: 404 }) },
+    internet: net,
+  })
 }), Built)
 
 effect function same(actual: unknown, expected: unknown) {

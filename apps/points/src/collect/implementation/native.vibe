@@ -1,0 +1,205 @@
+// spec/points/authorship.md, "A fresh unassessed implementation is held when its acceptance repeats rewarded work or has no commit census"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { sha256Hex } from "@repo/platform/crypto"
+import { Git, gitBytes, publicGitArguments } from "@repo/platform/git"
+import { concatBytes, lossyText } from "@repo/platform/git/bytes"
+import type { AcceptedImplementationSource } from "./sources.vibe"
+
+export error ImplementationEvidenceUnavailable { message: string }
+
+export interface AcceptedImplementationProofs {
+  readonly digests: ReadonlyMap<string, string>
+  readonly unavailable: ReadonlySet<string>
+}
+
+export interface ProofRepository {
+  readonly full_name: string
+  readonly node_id: string
+  readonly private: boolean
+}
+
+export type ProofReader = (repository: ProofRepository, sources: ReadonlyArray<AcceptedImplementationSource>) => AcceptedImplementationProofs!ImplementationEvidenceUnavailable
+
+interface CommitHeader {
+  readonly tree: string
+  readonly parents: ReadonlyArray<string>
+}
+
+export const emptyChangeDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+export const publicRepositoryRequired = "Accepted implementation proof requires a public repository"
+
+const oid = /^[a-f0-9]{40}$/u
+const repositoryPath = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const fetchBatchSize = 32
+const headerLimit = 1024 * 1024
+const diffLimit = 256 * 1024 * 1024
+const diagnosticLimit = 64 * 1024
+const gitSeconds = 120
+const nativeUnavailable = "Native commit identity is unavailable"
+const rejectedObject = /not our ref|unadvertised object/u
+
+function publicEnvironment(directory: string) {
+  return { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }
+}
+
+effect function nativeGit(directory: string, args: ReadonlyArray<string>, limit: number, input?: Uint8Array) {
+  const call = { args: publicGitArguments(directory, args), env: publicEnvironment(directory), limit, seconds: gitSeconds }
+  return try gitBytes(input === undefined ? call : { ...call, input }, nativeUnavailable)
+}
+
+export function eligibleSources(sources: ReadonlyArray<AcceptedImplementationSource>) {
+  const ids = new Map<string, number>()
+  for (const { id } of sources) ids.set(id, (ids.get(id) ?? 0) + 1)
+  return sources.filter((source) => {
+    const [first, second] = source.mergeParentShas
+    return source.id.length > 0
+      && ids.get(source.id) === 1
+      && (source.mergeParentShas.length === 1 || (source.mergeParentShas.length === 2 && second === source.headSha))
+      && first !== source.headSha
+      && first !== source.mergeSha
+      && [source.headSha, source.mergeSha, source.mergeTreeSha, source.firstParentTreeSha, ...source.mergeParentShas].every((value) => oid.test(value))
+  })
+}
+
+effect function readCommit(directory: string, commit: string) {
+  const body = try nativeGit(directory, ["cat-file", "commit", commit], headerLimit)
+  const actual = lossyText(try nativeGit(directory, ["hash-object", "-t", "commit", "--literally", "--stdin"], 1024, body)).trim()
+  const text = lossyText(body)
+  const boundary = text.indexOf("\n\n")
+  if (actual !== commit || boundary < 0) throw new ImplementationEvidenceUnavailable({ message: nativeUnavailable })
+  const [treeLine = "", ...rest] = text.slice(0, boundary).split("\n")
+  const tree = treeLine.startsWith("tree ") ? treeLine.slice(5) : ""
+  const parents = rest.filter((line) => line.startsWith("parent ")).map((line) => line.slice(7))
+  if (!oid.test(tree) || parents.some((parent) => !oid.test(parent))) throw new ImplementationEvidenceUnavailable({ message: "Native commit header is invalid" })
+  return { tree, parents } satisfies CommitHeader
+}
+
+export effect function changeDigest(directory: string, base: string, head: string) {
+  const raw = try nativeGit(directory, ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--"], diffLimit)
+  return try sha256Hex(raw)
+}
+
+export effect function readAcceptedImplementationProofs(directory: string, sources: ReadonlyArray<AcceptedImplementationSource>) {
+  const digests = new Map<string, string>()
+  const unavailable = new Set(sources.map((source) => source.id))
+  const headers = new Map<string, CommitHeader>()
+  effect function header(commit: string) {
+    const known = headers.get(commit)
+    if (known !== undefined) return known
+    const read = try readCommit(directory, commit)
+    headers.set(commit, read)
+    return read
+  }
+  effect function proof(source: AcceptedImplementationSource) {
+    const accepted = try header(source.mergeSha)
+    if (accepted.tree !== source.mergeTreeSha || accepted.parents.length !== source.mergeParentShas.length || !accepted.parents.every((parent, index) => parent === source.mergeParentShas[index])) return undefined
+    const submitted = try header(source.headSha)
+    const [submittedParentOid] = submitted.parents
+    const [firstOid] = accepted.parents
+    if (submittedParentOid === undefined || submitted.parents.length !== 1 || firstOid === undefined || (source.mergeSha === source.headSha && firstOid !== submittedParentOid)) return undefined
+    const first = try header(firstOid)
+    if (first.tree !== source.firstParentTreeSha) return undefined
+    const submittedParent = try header(submittedParentOid)
+    const digest = try changeDigest(directory, first.tree, accepted.tree)
+    if (first.tree === submittedParent.tree && accepted.tree === submitted.tree) return { digest, same: true }
+    return { digest, same: digest === (try changeDigest(directory, submittedParent.tree, submitted.tree)) }
+  }
+  for (const source of eligibleSources(sources)) {
+    const proved = proof(source) catch effect () => {
+      return undefined
+    }
+    if (proved === undefined) continue
+    unavailable.delete(source.id)
+    if (proved.same && proved.digest !== emptyChangeDigest) digests.set(source.id, proved.digest)
+  }
+  return { digests, unavailable } satisfies AcceptedImplementationProofs
+}
+
+effect function drained<E>(stream: Stream.Stream<Uint8Array, E>) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of stream) {
+    if (size < diagnosticLimit) chunks.push(chunk)
+    size += chunk.length
+  }
+  return concatBytes(chunks)
+}
+
+effect function fetchTips(directory: string, url: string, tips: ReadonlyArray<string>) {
+  const git = try Git
+  const args = publicGitArguments(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--depth=2", "--filter=blob:none", url, ...tips])
+  const env = {
+    PATH: git.searchPath,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+    LC_ALL: "C",
+    ...publicEnvironment(directory),
+  }
+  const ran = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make(git.binary, args, { env, extendEnv: false, stdin: "ignore", stdout: "ignore" }))
+    const [diagnostics, code] = try.all [drained(handle.stderr), handle.exitCode]
+    return Number(code) === 0 ? undefined : lossyText(diagnostics)
+  })
+  const failure = timeout(ran, Duration.seconds(gitSeconds)) catch effect () => {
+    return ""
+  }
+  return failure
+}
+
+effect function fetchSources(directory: string, url: string, sources: ReadonlyArray<AcceptedImplementationSource>) {
+  const pending: Array<ReadonlyArray<AcceptedImplementationSource>> = []
+  for (let start = 0; start < sources.length; start += fetchBatchSize) pending.push(sources.slice(start, start + fetchBatchSize))
+  while (pending.length > 0) {
+    const batch = pending.shift() ?? []
+    const tips = [...new Set(batch.flatMap((source) => [source.headSha, source.mergeSha]))]
+    const failure = try fetchTips(directory, url, tips)
+    if (failure === undefined || batch.length < 2 || !rejectedObject.test(failure)) continue
+    const middle = Math.floor(batch.length / 2)
+    pending.unshift(batch.slice(0, middle), batch.slice(middle))
+  }
+}
+
+function publicName(repository: ProofRepository) {
+  const name = repository.full_name
+  return repository.private === false && repository.node_id !== "" && name.length <= 201 && repositoryPath.test(name) && !name.split("/").some((part) => part === "." || part === "..")
+}
+
+export effect function loadAcceptedImplementationProofs(repository: ProofRepository, sources: ReadonlyArray<AcceptedImplementationSource>) {
+  if (!publicName(repository)) throw new ImplementationEvidenceUnavailable({ message: publicRepositoryRequired })
+  const eligible = eligibleSources(sources)
+  if (eligible.length === 0) return { digests: new Map<string, string>(), unavailable: new Set(sources.map((source) => source.id)) } satisfies AcceptedImplementationProofs
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-accepted-digests-" })
+    try nativeGit(directory, ["init", "--bare", "--template=", "--quiet"], headerLimit)
+    try fetchSources(directory, `https://github.com/${repository.full_name}.git`, eligible)
+    return try readAcceptedImplementationProofs(directory, sources)
+  })
+}
+
+function messageOf(error: { readonly _tag: string }) {
+  const fields: Readonly<Record<string, unknown>> = { ...error }
+  for (const key of ["message", "reason"]) {
+    const value = fields[key]
+    if (typeof value === "string" && value !== "") return value
+  }
+  return error._tag
+}
+
+export effect function nativeProofReader() {
+  const services = try Effect.context<Git | ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Experimental.Crypto.Crypto>()
+  const reader: ProofReader = (repository, sources) => effect {
+    provide services {
+      const proofs = loadAcceptedImplementationProofs(repository, sources) catch effect (error) => {
+        throw new ImplementationEvidenceUnavailable({ message: messageOf(error) })
+      }
+      return proofs
+    }
+  }
+  return reader
+}

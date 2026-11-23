@@ -40,8 +40,8 @@ The main action darkens or lightens to `primary-hover` under the pointer and to
 
 ```quint
 type Pair = { text: Role, surface: Role, least: int }
-pure def pair(text: Role, surface: Role, least: int): Pair = { text: text, surface: surface, least: least }
-pure def onPageAndCard(role: Role, least: int): List[Pair] = List(pair(role, Background, least), pair(role, Card, least))
+pure def pair(text: Role, surface: Role, minimum: int): Pair = { text: text, surface: surface, least: minimum }
+pure def onPageAndCard(role: Role, minimum: int): List[Pair] = List(pair(role, Background, minimum), pair(role, Card, minimum))
 pure val requiredContrast: List[Pair] =
   List(pair(Foreground, Background, 45), pair(Foreground, Muted, 45), pair(MutedForeground, Popover, 45),
     pair(CardForeground, Card, 45), pair(PopoverForeground, Popover, 45), pair(PrimaryForeground, Primary, 45),
@@ -51,7 +51,7 @@ pure val requiredContrast: List[Pair] =
     .concat(onPageAndCard(Ok, 45)).concat(onPageAndCard(Warn, 45)).concat(onPageAndCard(Info, 45))
     .concat(onPageAndCard(Input, 30)).concat(onPageAndCard(Ring, 30))
 pure def required(text: Role, surface: Role): int =
-  requiredContrast.foldl(0, (least, p) => if (p.text == text and p.surface == surface and p.least > least) p.least else least)
+  requiredContrast.foldl(0, (minimum, p) => if (p.text == text and p.surface == surface and p.least > minimum) p.least else minimum)
 pure def lawForegroundsAreReadable(role: Role): bool =
   match role {
     | CardForeground => required(CardForeground, Card) == 45

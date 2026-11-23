@@ -60,8 +60,7 @@ export effect function qualifyAccess(env: FixtureEnv) {
   effect function fixture(id: string, data: Uint8Array, closedDays?: number, permanentAdmission = false) {
     const sha = try sha256Hex(data)
     const at = try isoNow()
-    try db.run(sql`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state)
-      VALUES(${id},'qualification-only',1,${"a".repeat(64)},${"b".repeat(64)},${"c".repeat(40)},${"d".repeat(64)},${owner},'synthetic-qualification',${at},'Harmless access qualification','pending')`)
+    try db.run(sql`INSERT INTO vetting_assessments(id,state,completed_at) VALUES(${id},'incomplete',${at})`)
     const chunked = data.length > partBytes
     const chunks: Array<{ readonly index: number; readonly sha256: string; readonly sizeBytes: number; readonly offset: number }> = []
     if (chunked) for (let offset = 0; offset < data.length; offset += partBytes) {
@@ -78,12 +77,8 @@ export effect function qualifyAccess(env: FixtureEnv) {
     stored += chunked ? chunks.length : 1
     bytes += data.length
     const finished = new Date(started - (closedDays ?? 0) * day).toISOString()
-    if (permanentAdmission) {
-      try db.run(sql`UPDATE vetting_assessments SET state='clean',result=${JSON.stringify({ schemaVersion: "slop-vetting-result-v2", disposition: "clean" })},completed_at=${finished} WHERE id=${id}`)
-    } else {
-      try db.run(sql`UPDATE vetting_assessments SET state='incomplete',completed_at=${at} WHERE id=${id}`)
-      if (closedDays !== undefined) try db.run(sql`INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(${id},${finished},${owner},'Synthetic aged case')`)
-    }
+    if (permanentAdmission) try db.run(sql`UPDATE vetting_assessments SET state='clean',result=${JSON.stringify({ schemaVersion: "slop-vetting-result-v2", disposition: "clean" })},completed_at=${finished} WHERE id=${id}`)
+    else if (closedDays !== undefined) try db.run(sql`INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(${id},${finished},${owner},'Synthetic aged case')`)
     return { id, sha, data, path: `${root}/${id}/${runId}/${sha}` } satisfies Fixture
   }
 

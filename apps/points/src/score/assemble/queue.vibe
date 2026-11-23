@@ -1,4 +1,5 @@
 // spec/points/census.md, "Every retained item has a deterministic, fail-closed selection decision with all its reasons"; spec/points/census.md, "A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days"
+import { millisOf } from "@repo/platform/clock"
 import type { CensusEntry } from "../../census/collect.vibe"
 import { queueSelection } from "../../census/selection.vibe"
 import type { GitHubActor, WorkItem, WorkItemClaim } from "../../client/snapshot/schema.vibe"
@@ -100,7 +101,11 @@ export effect function workQueue(collection: Collection) {
     }
   }
   const openPulls = new Map(collection.openPullRequests.map((pull) => [pull.id, pull] as const))
-  const referenceTime = collection.bounds.toMs
+  const closing = new Map<string, PullRequestRecord[]>()
+  for (const pull of collection.openPullRequests) {
+    for (const issueId of pull.closingIssueIds) closing.set(issueId, [...(closing.get(issueId) ?? []), pull])
+  }
+  const referenceTime = millisOf(collection.generatedAt)
   const queued = (record: IssueRecord | PullRequestRecord, linked: ReadonlyArray<PullRequestRecord>) => effect {
     const found = entries.get(record.id)
     if (found === undefined) throw new AssemblyRefused({ message: `Open work item ${record.id} has no census decision` })
@@ -108,10 +113,11 @@ export effect function workQueue(collection: Collection) {
   }
   const issues: WorkItem[] = []
   for (const issue of collection.openIssues) {
-    const linked = (issue.referencedPullRequestIds ?? []).flatMap((id) => {
+    const referenced = (issue.referencedPullRequestIds ?? []).flatMap((id) => {
       const pull = openPulls.get(id)
       return pull === undefined ? [] : [pull]
     })
+    const linked = [...new Map([...(closing.get(issue.id) ?? []), ...referenced].map((pull) => [pull.id, pull] as const)).values()]
     issues.push(try queued(issue, linked))
   }
   const pullRequests: WorkItem[] = []

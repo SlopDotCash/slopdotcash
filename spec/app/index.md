@@ -23,7 +23,7 @@ that does not decode opens the unknown page.
 ```quint
 type RouteKind = Home | HowItWorks | Sponsors | CycleArchive | Cycle | Points | Account | Login | Earnings | Inbox |
   Admin | NewProject | VettingEvidence | SecurityCases | Project | ManageProject | SecurityProgram | Profile |
-  Fee | FeeReport | Unknown
+  Fee | FeeReport | Requested | Unknown
 type Route = { kind: RouteKind, projectId: str, cycleId: str, login: str, owner: str, repo: str, number: str, caseId: str }
 type Shell = { route: Route, opened: int }
 
@@ -73,12 +73,16 @@ digits, `_` and `-`) is the page's to say, as "This address does not name a
 pull request" or "This address does not name a report", not the unknown
 page.
 
+`/requested` opens the Requested repos page, whose `?flag=<owner>/<name>`
+query is the page's to read, not the shell's.
+
 ```quint
 pure def namedKind(segment: str): RouteKind =
   if (segment == "how-it-works") HowItWorks else if (segment == "sponsors") Sponsors
   else if (segment == "cycles") CycleArchive else if (segment == "account") Account else if (segment == "login") Login
   else if (segment == "earnings") Earnings else if (segment == "inbox") Inbox else if (segment == "admin") Admin
-  else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases else Unknown
+  else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases
+  else if (segment == "requested") Requested else Unknown
 pure def namedPage(segment: str, kind: RouteKind): bool = kind != Unknown and namedKind(segment) == kind
 
 pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
@@ -103,7 +107,8 @@ pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool, securit
   else n == 1 and namedPage(first, kind)
 
 pure val knownKinds = List(Home, HowItWorks, Sponsors, CycleArchive, Cycle, Points, Account, Login, Earnings, Inbox, Admin,
-  NewProject, VettingEvidence, SecurityCases, Project, ManageProject, SecurityProgram, Profile, Fee, FeeReport)
+  NewProject, VettingEvidence, SecurityCases, Project, ManageProject, SecurityProgram, Profile, Fee, FeeReport,
+  Requested)
 pure def kindMatches(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
   if (kind == Unknown) not(knownKinds.some(known => matchesKnown(known, segments, withX, securitySettings)))
   else matchesKnown(kind, segments, withX, securitySettings)
@@ -164,10 +169,12 @@ pure def sometimesUnknown(s: Shell): bool = s.route.kind == Unknown
 pure def sometimesProfile(s: Shell): bool = s.route.kind == Profile
 pure def sometimesFee(s: Shell): bool = s.route.kind == Fee
 pure def sometimesFeeReport(s: Shell): bool = s.route.kind == FeeReport
+pure def sometimesRequested(s: Shell): bool = s.route.kind == Requested
 pure val segmentsValues = Set(
   List("fee", "octocat", "slop", "7"), List("fee", "report", "sc_abcdefgh"), List("fee", "report"), List("fee", "octocat", "slop"),
   List(), List("points"), List("wallet"), List("security"), List("cycles"), List("how-it-works"), List("projects"),
   List("projects", "new"), List("projects", "slop"), List("projects", "slop", "manage"), List("projects", "slop", "security"),
   List("projects", "slop", "awards"), List("projects", "new", "funding"), List("admin", "applications", "7"),
-  List("contributors", "octocat"), List("cycles", "slop", "2026-11"), List("cycles", "slop"), List("projects", ""))
+  List("contributors", "octocat"), List("cycles", "slop", "2026-11"), List("cycles", "slop"), List("projects", ""),
+  List("requested"), List("requested", "x"))
 ```

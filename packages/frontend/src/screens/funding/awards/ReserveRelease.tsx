@@ -1,11 +1,12 @@
 // spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
 import type { MonthlyOwnerView } from "@repo/settlement/client";
-import { Alert, Button, Disclosure, Status, WalletChooser, type WalletOption } from "@repo/ui";
+import { Alert, Button, CopyButton, Disclosure, Status, WalletChooser, type WalletOption } from "@repo/ui";
 import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { useMachine as useMonthly } from "../../../../gen/frontend__ownerMonthly.react.ts";
 import { transactionUrl } from "../../../kernels/explorers.ts";
 import { deploymentOf } from "../../../wallets/owner/commitmentCalls.ts";
+import { familyOf } from "../../../wallets/owner/commitments.vibe";
 import { monthlyMessages } from "../../../wallets/owner/ownerMonthly.vibe";
 import { releaseMessages } from "../../../wallets/owner/reserveRelease.vibe";
 import { useSettled } from "../vault/hooks.ts";
@@ -28,7 +29,7 @@ import {
 import { useAwardAction, useAwardOffers } from "./hooks.ts";
 import { amountText } from "./month.ts";
 
-export type ReleaseNotice = { readonly tone: "Neutral" | "Positive" | "Negative"; readonly spinner?: boolean; readonly text: string };
+export type ReleaseNotice = { readonly tone: "Neutral" | "Positive" | "Negative"; readonly spinner?: boolean; readonly text: string; readonly kept?: string };
 
 export type ReserveReleaseProps = {
   /** The month's vault network, which names the explorer and the wallet family. */
@@ -66,8 +67,14 @@ export function ReserveRelease({ network, released, pending, unreadable = false,
     <Disclosure summary="Repair reserve" defaultOpen={defaultOpen} className="flex flex-col gap-3">
       {error ? <Alert variant="destructive">{error}</Alert> : null}
       {notice ? (
-        <p role="status">
+        <p role="status" className="flex flex-wrap items-center gap-2">
           <Status presentation={{ tone: notice.tone, icon: notice.spinner ? "Spinner" : notice.tone === "Negative" ? "Alert" : notice.tone === "Positive" ? "Check" : "Dot", label: notice.text }} />
+          {notice.kept ? (
+            <>
+              <code className="break-all font-mono text-sm text-foreground">{notice.kept}</code>
+              <CopyButton text={notice.kept} label="Copy transaction hash" />
+            </>
+          ) : null}
         </p>
       ) : null}
       {unreadable ? (
@@ -177,7 +184,13 @@ export function OwnerReserveRelease({ runtime, view, account, onReleased }: Owne
         })
       }
       onConnect={(offer) => releaseAct(connectReleaseOwner(Number(offer.id)), setWallet)}
-      onSign={() => wallet && ready && releaseAct(sendRelease(wallet, ready), () => setNotice({ tone: "Neutral", spinner: true, text: releaseMessages.submitted }))}
+      onSign={() =>
+        wallet &&
+        ready &&
+        releaseAct(sendRelease(wallet, ready), (sent) =>
+          setNotice(sent.kept ? { tone: "Neutral", spinner: true, text: releaseMessages.submitted } : { tone: "Negative", text: `Not saved. Keep this ${familyOf(deployment) === "solana" ? "signature" : "hash"}:`, kept: sent.hash }),
+        )
+      }
       onCheck={() => releaseAct(checkSavedRelease(), checked)}
       onEnterHash={(candidate) => releaseAct(enterReleaseHash(candidate), checked)}
       onConfirmUnsent={() =>

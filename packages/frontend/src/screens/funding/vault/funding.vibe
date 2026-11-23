@@ -1,4 +1,4 @@
-// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"; spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/vaultLocks.md, "A vault with month locks refuses a withdrawal into its locked funds before the wallet is asked, and Slop's own guard applies only to a vault without them"; spec/frontend/monthLock.md, "The card appears only once the finalized read shows pledge support"; spec/frontend/projections.md, "The public page offers only a deposit, after the no-refund disclosure"; spec/settlement/vaultDeposits.md, "The funders read lists the newest 50 deposits with the full count and names a depositor only by one public, open, wallet-signed registration"; spec/settlement/escrow.md, "A vault starts empty with an immutable network, asset, purpose, owner and fee recipient"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
 import { millisOf } from "@repo/platform/clock"
 import { U128_MAX, decodeUint } from "@repo/settlement/chain/evm/abi"
 import { staleAfterMs } from "@repo/settlement/client"
@@ -12,6 +12,7 @@ import { type VaultLocks, pageGuardApplies } from "../../../../gen/frontend__vau
 import { type ChainResult, Machine as MonthlyMachine } from "../../../../gen/frontend__ownerMonthly.effect.vibe"
 import { Machine as ReadMachine } from "../../../../gen/frontend__requests.effect.vibe"
 import { formatAssetAmount, formatRewardMinor, knownAssetSymbol, networkLabel } from "../../../kernels/assetText.ts"
+import type { PayoutPolicy } from "../../../kernels/payout.ts"
 import { unreadLocks } from "../../../kernels/poolFunding.ts"
 import { untilTime } from "../../../platform/clock.vibe"
 import { browserServices } from "../../../platform/layer.vibe"
@@ -90,6 +91,7 @@ export const fundingMessages = {
   reviewChanged: "The vault review changed. Review the action again before signing.",
   promiseUnread: "Withdrawals wait until this month's pool funding is read, so what contributors were shown stays in the vault. Deposits are open.",
   manageWithdrawals: "Withdrawals are made from the project's manage page.",
+  ownerWithdraws: "Connect the vault owner's wallet to withdraw free funds.",
 } as const
 
 type BatchFlow = Effect.Success<ReturnType<typeof batchFlow>>
@@ -124,7 +126,7 @@ function unreadPool(monthlyPool: boolean, period: string): PoolFacts {
   return { read: "PoolLoading", monthlyPool, period: parsePeriod(period) ?? 0, amount: zero, priorAmount: zero, priorPending: false, freeNow: zero, monthStartRead: false, freeAtStart: zero, withdrawnSince: false, pledgeSupport: false, pledged: zero }
 }
 
-function deskOf(project: FundingProject, deployment: FundingDeployment, period: string) {
+function deskOf(project: FundingProject, deployment: FundingDeployment, period: string, policy: PayoutPolicy) {
   return Layer.effect(VaultDesk, effect {
     const storage = sessionSlots()
     const keys = vaultKeys(project.id, deployment, period)
@@ -132,9 +134,11 @@ function deskOf(project: FundingProject, deployment: FundingDeployment, period: 
     const batch = try batchFlow(storage, keys.batch)
     const monthly = try ownerMonthlyPage(storage, { commitment: keys.commitment, setting: keys.setting, release: keys.release }, project.id, period)
     const terms = solanaTerms(deployment)
-    const solana: SolanaVault | undefined = terms === undefined ? undefined : { projectId: project.id, network: deployment.network, vault: deployment.vault, terms }
+    const bounty = policy === "security-bounty"
+    const solana: SolanaVault | undefined = terms === undefined ? undefined : { projectId: project.id, network: deployment.network, vault: deployment.vault, terms, ...(bounty ? { purpose: "security-bounty" as const } : {}) }
     const monthlyPool = project.reward.kind === "monthly-pool"
-    return { deployment, reward: project.reward, monthlyPool, unreadPool: unreadPool(monthlyPool, period), family: familyOf(deployment), evm: evmVaultOf(deployment), solana, page, batch, monthly, keys }
+    const evm = evmVaultOf(deployment, bounty ? "BountyPurpose" : "OrdinaryPurpose")
+    return { deployment, reward: project.reward, monthlyPool, unreadPool: unreadPool(monthlyPool, period), family: familyOf(deployment), evm, solana, page, batch, monthly, keys }
   })
 }
 
@@ -146,8 +150,8 @@ function machinesOf() {
   )
 }
 
-export function vaultServices(project: FundingProject, deployment: FundingDeployment, period: string) {
-  return Layer.provideMerge(Layer.merge(machinesOf(), lockServices(project, deployment)), Layer.provideMerge(deskOf(project, deployment, period), shared))
+export function vaultServices(project: FundingProject, deployment: FundingDeployment, period: string, policy: PayoutPolicy = "ordinary") {
+  return Layer.provideMerge(Layer.merge(machinesOf(), lockServices(project, deployment)), Layer.provideMerge(deskOf(project, deployment, period, policy), shared))
 }
 
 export type VaultServices = Layer.Success<ReturnType<typeof vaultServices>>
@@ -155,11 +159,11 @@ export type VaultRuntime = ManagedRuntime.ManagedRuntime<VaultServices, Layer.Er
 
 const vaults = new Map<string, VaultRuntime>()
 
-export function vaultRuntime(project: FundingProject, deployment: FundingDeployment, period: string): VaultRuntime {
-  const key = [project.id, deployment.network, deployment.vault, deployment.asset, period].join("\n")
+export function vaultRuntime(project: FundingProject, deployment: FundingDeployment, period: string, policy: PayoutPolicy = "ordinary"): VaultRuntime {
+  const key = [project.id, deployment.network, deployment.vault, deployment.asset, period, policy].join("\n")
   const known = vaults.get(key)
   if (known !== undefined) return known
-  const made = ManagedRuntime.make(vaultServices(project, deployment, period), { memoMap: memo })
+  const made = ManagedRuntime.make(vaultServices(project, deployment, period, policy), { memoMap: memo })
   vaults.set(key, made)
   return made
 }
@@ -277,8 +281,12 @@ export effect function followVault(account: number) {
   return try (try VaultDesk).page.follow(account)
 }
 
-export effect function connectWallet(id: number, forTransfer: boolean) {
-  const { family, page, keys } = try VaultDesk
+function ownerWallet(connection: Connection, owner: string): boolean {
+  return connection.family === "evm" ? connection.address.toLowerCase() === owner.toLowerCase() : connection.address === owner
+}
+
+export effect function connectWallet(id: number, forTransfer: boolean, withdrawOnly: boolean = false) {
+  const { deployment, family, page, keys } = try VaultDesk
   if (family === undefined) throw stopped(fundingMessages.unsupported)
   let connection: Connection
   if (family === "evm") {
@@ -292,6 +300,7 @@ export effect function connectWallet(id: number, forTransfer: boolean) {
   const saved = try page.saved("Transfer")
   const from = plannedFrom(saved.plan) ?? plannedFrom(storedPlan(sessionSlots(), keys.batch))
   if (from !== undefined && from !== connection.address.toLowerCase()) throw stopped(`${fundingMessages.reconnect}${from}`)
+  if (withdrawOnly && !ownerWallet(connection, deployment.owner)) throw stopped(fundingMessages.ownerWithdraws)
   return connection
 }
 
@@ -324,14 +333,21 @@ effect function guarded(operation: "deposit" | "withdraw", pool: PoolFacts | und
   if (operation === "withdraw" && monthlyPool && pool === undefined && (try orDie(Effect.try(() => pageGuardApplies(unreadPool, locks))))) throw stopped(fundingMessages.promiseUnread)
 }
 
+effect function recordReview(withdrawal: bigint, facts: PoolFacts, locks: VaultLocks, refusal: string, depositOnly: boolean) {
+  const { page } = try VaultDesk
+  if (depositOnly) return try page.reviewDeposit()
+  return try page.review("Transfer", withdrawal, facts, locks, refusal)
+}
+
 effect function publicGuard(funding: PublicFunding | undefined, operation: "deposit" | "withdraw") {
   if (funding !== undefined && !publicSendAllowed(funding, operation === "withdraw")) throw stopped(operation === "withdraw" ? fundingMessages.manageWithdrawals : fundingMessages.waiting)
 }
 
 export effect function reviewAction(connection: Connection, operation: "deposit" | "withdraw", amount: string, pool: PoolFacts | undefined, account: number, pledgeSupport: boolean, funding?: PublicFunding) {
   try publicGuard(funding, operation)
-  const { evm, solana, page, batch, unreadPool } = try VaultDesk
+  const { evm, solana, batch, unreadPool } = try VaultDesk
   const facts = pool ?? unreadPool
+  const depositOnly = funding !== undefined
   const cached: VaultLocks = { ...unreadLocks, cachedSupport: pledgeSupport }
   const refusal = try refusalOf(operation, pool)
   if (connection.family === "solana") {
@@ -340,14 +356,14 @@ export effect function reviewAction(connection: Connection, operation: "deposit"
     const funding = try reviewFunding(solana, connection.solana, operation, amount)
     const free = funding.plan.freeBalance === null ? undefined : baseUnits(funding.plan.freeBalance, false)
     const reviewed: VaultLocks = free === undefined ? cached : { ...cached, freeKnown: true, free: try amountOf(free) }
-    try page.review("Transfer", operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts, reviewed, refusal)
+    try recordReview(operation === "withdraw" ? baseUnits(funding.plan.gross, true) ?? 0n : 0n, facts, reviewed, refusal, depositOnly)
     return { kind: "solana", funding } satisfies ActionReview
   }
   if (evm === undefined) throw stopped(fundingMessages.unsupported)
   const review = try reviewTransfer(connection.evm, evm, operation, amount, "finalized")
   const locks = operation === "withdraw" ? try walletLocks(connection.evm, evm, pledgeSupport, review.freeBalance) : cached
   try guarded(operation, pool, locks)
-  try page.review("Transfer", operation === "withdraw" ? review.gross : 0n, facts, locks, refusal)
+  try recordReview(operation === "withdraw" ? review.gross : 0n, facts, locks, refusal, depositOnly)
   let offered = false
   if (review.batch) offered = (try batch.review(account, review)).phase === "Offered"
   return { kind: "evm", review, batch: offered } satisfies ActionReview

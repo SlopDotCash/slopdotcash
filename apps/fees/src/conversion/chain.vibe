@@ -89,6 +89,7 @@ export interface OpenSend {
   readonly token: string
   readonly nonce: number
   readonly deadline: number
+  readonly valueMicro: number
   readonly attempts: ReadonlyArray<SendAttempt>
 }
 

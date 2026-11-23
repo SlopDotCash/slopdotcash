@@ -27,9 +27,6 @@ const Built = Layer.effect(World, effect {
   return { github, net: internet({ github: github.handler }) }
 })
 
-// The project routes need the security area's enforcement ports, so they are served by the composed backend and
-// security Worker that the points package builds (apps/points/test/support/backendRoutes); apps/backend's own
-// Worker entry serves only the account, binding and referral-code routes.
 const Backend = Layer.provideMerge(Layer.unwrap(effect {
   const { github, net } = try World
   const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
@@ -51,7 +48,6 @@ function outcome(answer: Answer) {
 effect function member(githubId: string) {
   const area = try Area
   const token = `enforcement-session-${githubId}-`.padEnd(48, "x")
-  // Each test of this file shares one database, so a member seeded by an earlier test is kept.
   try area.sql("INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
   try area.sql("INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
   return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
@@ -87,8 +83,6 @@ effect function project(id: string, revisions: ReadonlyArray<{ readonly status: 
   return last.digest
 }
 
-// The vetting service's ban follows its confirmed-malicious assessment: enforcement replay derives the ServiceBan
-// from the completed assessment that the ban record names (security/src/enforcement/replay.vibe).
 effect function vettingBan(id: string, repositoryId: string, digest: string) {
   const area = try Area
   const assessment = `vet_${id.replaceAll("-", "")}01`
@@ -171,7 +165,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     })
   })
 
-  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal")', () => effect {
+  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "A banned account keeps its appeal and an independent moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal or the project\'s open request")', () => effect {
     const area = try Area
     const a = try member(moderatorA)
     const b = try member(moderatorB)
@@ -201,8 +195,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
       selfBan: [409, "rejected"],
       decided: [[200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
       publicBans: [200, "public, max-age=0, s-maxage=30", "*", [responsible]],
-      // A second appeal while the account's own is open is refused (409 appeal_open), and the moderator who banned
-      // the account cannot release it (403 independent_review_required) (spec/backend/access.md).
       appeals: [[200, null], "banned-account", [409, "appeal_open"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
       reinstated: [[403, "independent_review_required"], [200, null], [{ banEnforcementId: String(ban?.enforcement_id), githubId: responsible, githubLogin: "responsible-41" }]],
       afterRelease: [],
@@ -218,8 +210,6 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "60
     try project("admin-demo", [{ status: "active", tier: "community", kind: "Created" }], "3003")
     const base = manifest("admin-demo", "active", "community", "3003")
     const revise = (expectedRevision: number, next: unknown) => revised(admin, expectedRevision, next)
-    // An exception replaces the manifest, any field but the project id, in one revision (spec/backend/projects.md,
-    // "Administrators hold, delist, change the steward or place a project").
     const placed = try revise(1, { ...base, listingTier: "featured" })
     const held = try revise(2, { ...base, listingTier: "featured", status: "paused" })
     const twoFields = try revise(3, { ...base, listingTier: "community", status: "paused", name: "Renamed" })

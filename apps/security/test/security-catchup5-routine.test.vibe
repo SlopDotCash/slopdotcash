@@ -16,9 +16,10 @@ import { jsonValue, routinePrompt } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { caseRoutes } from "../src/cases/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
+import { routineClosingExclusions } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { routineRoutes, routineSettings } from "../src/routine/routes.vibe"
-import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { type World, digest, maintainer, origin, request, routineLine, rows, started as startedWorld } from "./support/intake/harness.ts"
 
 type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
 
@@ -59,7 +60,7 @@ const fixture: ProjectView = {
 
 const ports = Layer.mergeAll(
   Layer.succeed(Registry, {
-    project: (projectId) => succeed(projectId === project ? fixture : undefined),
+    project: (projectId) => succeed(projectId === project ? fixture : projectId === "intake-lines" ? { ...fixture, projectId } : undefined),
     byRepository: () => succeed(undefined),
     byPath: () => succeed(undefined),
     active: () => succeed([fixture]),
@@ -152,8 +153,8 @@ function read(overrides: Readonly<Record<string, unknown>>): ProviderAnswer {
   return { text: JSON.stringify({ lossOfFundsPlausible: false, duplicateOfCaseId: null, doesNotQualifyIndex: null, proof: "present", missing: [], severity: "medium", ...overrides }) }
 }
 
-effect function submit(world: World, as: string, key: string, summary: string, description: string) {
-  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report: { summary, description, severity: "high" } } }))
+effect function submit(world: World, as: string, key: string, summary: string, description: string, projectId = project) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId, idempotencyKey: key, origin: "slop", report: { summary, description, severity: "high" } } }))
   if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
   return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
 }
@@ -224,6 +225,28 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same(
       { appealed: appealed.status, returned: [returned?.receipt, returned?.appeal], triages: triages[0]?.count, again: again.status, reread: reread[0]?.count },
       { appealed: 200, returned: ["triaging", "returned"], triages: 0, again: 200, reread: 1 },
+    )
+
+    const dust = "Fee accounting leaves rounding dust in the router"
+    const lined = try submit(world, "52007", "routine-lines-000001", dust, "swap() rounds the protocol fee down, so every trade leaves less than one cent of dust in the router. The attached test shows the dust after 100 trades.", "intake-lines")
+    const closing = routineClosingExclusions({ excludedFindings: [routineLine] })
+    const position = closing.indexOf(routineLine)
+    for (const index of [position, closing.length - 1 - position]) {
+      fake.reply((call) => routineOf(dust)(call) && (jsonValue(said(call)) as { readonly doesNotQualify?: ReadonlyArray<string> }).doesNotQualify?.[index] === routineLine, read({ doesNotQualifyIndex: index, severity: "low" }))
+    }
+    clock.set(clock.now() + 4 * minute)
+    const linedRun = try exchanged(routined, routined.live, "/api/v1/security-routine", admin, { action: "run" })
+    const linedCase = try caseState(world, lined.caseId)
+    const linedRows = try promise(() => rows(world, "SELECT outcome, basis, exclusion_line AS line, applied, model_calls AS calls FROM security_routine_decisions WHERE case_id=? AND mode='live'", lined.caseId))
+    const linedReasons = try promise(() => rows(world, "SELECT reason FROM security_case_events WHERE case_id=? AND kind='decide' AND actor_github_id='slop'", lined.caseId))
+    try same(
+      { run: linedRun.status, receipt: [linedCase?.receipt, linedCase?.appeal], rows: linedRows, reasons: linedReasons },
+      {
+        run: 200,
+        receipt: ["out-of-scope", "none"],
+        rows: [{ outcome: "does-not-qualify", basis: "two-calls", line: routineLine, applied: 1, calls: 2 }],
+        reasons: [{ reason: `Slop's screening closed this report because it matches the program's published "Does not qualify" list: "${routineLine}". If you think this is wrong, you can appeal once and the project owner will review the report.` }],
+      },
     )
   })
 

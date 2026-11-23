@@ -1,0 +1,36 @@
+// spec/points/reviewedHistory.md, "Story: Apply a reviewed historical packet only as the owner reviewed it"; spec/points/assessmentAudit.md, "Story: Audit the assessments of a historical scope before owner review"
+import { d1Http } from "@repo/platform/d1Http"
+import { github } from "@repo/platform/github"
+import { githubApp } from "@repo/platform/github/app"
+import { databases } from "../../../evaluations/check.vibe"
+import { actionsToken } from "../../../ingestion/token.vibe"
+
+export error ReviewedPublicationRefused { message: string }
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function reviewedServices<A, E, R>(run: A!E!R) {
+  const accountId = try environment("CLOUDFLARE_ACCOUNT_ID")
+  const apiToken = try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make(""))
+  const token = try actionsToken()
+  const appId = try environment("SLOPBOT_APP_ID")
+  const privateKey = try Config.withDefault(Config.Redacted("SLOPBOT_APP_PRIVATE_KEY"), Redacted.make(""))
+  provide Layer.mergeAll(
+    d1Http({ accountId, databaseId: databases.production, token: apiToken }),
+    github({ token, userAgent: "slopbot" }),
+    githubApp({ appId, privateKey, userAgent: "slop-october-owner-check" }),
+  ) {
+    return try run
+  }
+}
+
+export effect function phased<P extends string, A, E, R>(initial: P, run: (setPhase: (phase: P) => void) => A!E!R) {
+  let phase: P = initial
+  const setPhase = (next: P) => {
+    phase = next
+  }
+  const refused = () => Effect.fail(new ReviewedPublicationRefused({ message: `Reviewed historical Points publication refused during ${phase}; private inputs retained in runner` }))
+  return try Effect.catchDefect(Effect.catch(run(setPhase), refused), refused)
+}

@@ -466,6 +466,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
 
     try written(records, agentRecords(head, everyRecord(head)))
     const complete = try gate(head)
+    const commanded = try settled(routed(configured(evidence(["agent-clients", records, repository]), { GITHUB_SHA: head }), asFetch(site)))
     try written(records, agentRecords(head, everyRecord(head).filter((record) => !(record.workflow === "contributor-skill" && record.client === "muse"))))
     const missingClient = try gate(head)
     const { model: _model, ...modelless } = agentRecord("slop-skill", "grok", head)
@@ -488,8 +489,9 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     try sealEvidence(out, verification(unrelated, { bytes: log.length, sha256: try sha256Hex(log) }), log)
     const releasedWithoutRecords = try settled(configured(evidence(["validate", out]), { GITHUB_SHA: unrelated }))
 
-    try Effect.try(() => assert.deepStrictEqual({ complete, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, releasedWithoutRecords }, {
+    try Effect.try(() => assert.deepStrictEqual({ complete, commanded, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, releasedWithoutRecords }, {
       complete: "ok",
+      commanded: "ok",
       missingClient: `release refused: the affected agent-client workflows lack passing records for ${head}: contributor-skill has no recorded result for muse`,
       missingModel: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
       missingVersion: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",

@@ -9,6 +9,7 @@ export interface NewSetup {
   readonly manifest: unknown
   readonly referrer: string | null
   readonly monthlyAmount: string | null
+  readonly bountyAmount: string | null
   readonly actor: string
 }
 
@@ -22,7 +23,7 @@ function accessLost(failure: Failure): boolean {
 
 effect function created(setup: NewSetup) {
   try requireEditorActor(setup.actor)
-  const answer = try createProject({ manifest: setup.manifest, referrer: setup.referrer, monthlyAmount: setup.monthlyAmount, expectedActor: setup.actor })
+  const answer = try createProject({ manifest: setup.manifest, referrer: setup.referrer, monthlyAmount: setup.monthlyAmount, bountyAmount: setup.bountyAmount, expectedActor: setup.actor })
   try requireEditorActor(setup.actor)
   return answer
 }

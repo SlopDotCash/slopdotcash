@@ -16,6 +16,9 @@
       "migrations_dir": "../../../migrations"
     }
   ],
+  "services": [
+    { "binding": "SLOPBOT", "service": "slop-repository-access-staging" }
+  ],
   "send_email": [
     { "name": "ADMIN_EMAIL" }
   ],

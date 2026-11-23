@@ -8,6 +8,7 @@ import { type ReactNode, useState } from "react";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import type { PageProps } from "../../app/pages.ts";
 import { formatDateTime } from "../../app/format.ts";
+import { NotFoundHead } from "../../app/notFoundHead.ts";
 import { formatRewardMinor } from "../../kernels/assetText.ts";
 import { type ProjectCycleView, projectActivityCollected, projectCycleHasOpened, projectCycleView } from "../../projections/projectView.ts";
 import { cutsKey } from "../../reads/payments.vibe";
@@ -53,6 +54,14 @@ type Found = {
   sectionReads: ProjectSection;
   reads: ContributorSection;
 };
+
+function CycleUnavailable() {
+  return (
+    <NotFound title="Cycle unavailable">
+      <NotFoundHead />
+    </NotFound>
+  );
+}
 
 function Notice({ project, cycleId, status, onRetry, message }: { project: ShownProject; cycleId: string; status: ReadStatus; onRetry?: () => void; message?: string }) {
   return (
@@ -150,7 +159,7 @@ function CycleView({ found, record, view, index, snapshotAt, freshness }: { foun
   const nowMs = Date.now();
   const reviewEndsMs = record?.state === "review" && record.reviewEndsAt ? Date.parse(record.reviewEndsAt) : undefined;
   useBoundary(section, nextBoundary(nowMs, [reviewEndsMs, ownerCutoffMs(period), index ? staleFrom(index.generatedAt) : undefined, to ? Date.parse(to) - reminderLeadMs : undefined]));
-  if (!from || !to) return <NotFound title="Cycle unavailable" />;
+  if (!from || !to) return <CycleUnavailable />;
   const facts: CycleFacts = { record, view, period, capMinor: capOf(project, period), from, to, nowMs };
   const lifecycle = lifecycleOf(facts);
   const { stages, current } = stagesOf(facts);
@@ -256,6 +265,7 @@ function Live({ found, force, onRetry }: { found: Found; force: boolean; onRetry
     const listed = findProject(boot, project.id) !== undefined;
     return (
       <NotFound title={`No ${formatMonth(cycleId)} cycle record`}>
+        <NotFoundHead />
         <p>
           {live.collected ? "" : "Not collected yet · "}
           <a href={listed ? `/projects/${project.slug}` : `/cycles?project=${encodeURIComponent(project.id)}`} className={linkClass}>
@@ -287,7 +297,7 @@ export function CyclePage(props: CyclePageProps) {
   const sectionReads = useOnce(section, "reads", () => projectReads());
   const reads = useOnce(contributorRuntime(runtime), "reads", () => contributorReads());
   const period = monthPattern.test(route.cycleId) ? parsePeriod(route.cycleId) : undefined;
-  if (period === undefined) return <NotFound title="Cycle unavailable" />;
+  if (period === undefined) return <CycleUnavailable />;
   if (registry.status === "running" || sectionReads.status === "running" || reads.status === "running") {
     return (
       <main className={pageClass}>

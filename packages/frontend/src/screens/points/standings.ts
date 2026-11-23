@@ -127,11 +127,6 @@ export function standingRows(history: StandingHistory, period: Period, nowMs: nu
     .sort((left, right) => right.points - left.points || left.actor.id.localeCompare(right.actor.id));
 }
 
-/** Every member's total over all of history, by actor id. @throws {RangeError} */
-export function lifetimeTotals(history: StandingHistory): ReadonlyMap<string, number> {
-  return new Map(standingRows(history, "lifetime", 0).map((row) => [row.actor.id, row.points]));
-}
-
 /** Rows whose login contains the query, ignoring case. @throws {never} */
 export function matching<T>(rows: ReadonlyArray<T>, query: string, loginOf: (row: T) => string): ReadonlyArray<T> {
   const wanted = query.toLowerCase();

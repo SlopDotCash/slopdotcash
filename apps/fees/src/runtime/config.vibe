@@ -1,9 +1,9 @@
-// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Signing needs a live mode and a published listing of the network, its key, native limits and wallet"
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"
 import { millisOf } from "@repo/platform/clock"
 import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { positiveBudgetFits } from "@repo/settlement/kernels/budget"
 import type { Environment, Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts"
-import { apply, initial } from "../../gen/fees__runtime.effect.vibe"
+import { apply, initial, readinessEntryApplies, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
 import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, definitions, evmNetworks, expectedSecrets, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
 import { jupiter, kyberswap } from "./pins.ts"
 
@@ -299,10 +299,43 @@ export interface Held { readonly runtime: Runtime; readonly wallets: ReadonlyArr
 
 export const unpublished: Held = { runtime: initial, wallets: ["unpublished EVM fee wallet", "unpublished Solana fee wallet"] }
 
+export interface ReadinessEntry { readonly network: Network; readonly wallet: string }
+export interface ReadinessSettings { readonly entries: ReadonlyArray<ReadinessEntry>; readonly replacementActive: boolean }
+
+export type ReadinessEvent =
+  | { readonly type: "verifyReadiness"; readonly network: Network; readonly wallet: string }
+  | { readonly type: "withdrawReadiness"; readonly network: Network }
+  | { readonly type: "setReplacement"; readonly active: boolean }
+
+const readinessPair = /^([a-z]+):(\S+)$/u
+
+effect function readinessEntryOf(text: string) {
+  const match = readinessPair.exec(text)
+  const network = match === null ? undefined : networkNamed(match[1] ?? "")
+  const wallet = match?.[2] ?? ""
+  if (network === undefined || !isTokenAddress(network, wallet)) throw new ConfigInvalid({ name: "FEE_READY", issue: "each entry must be network:walletAddress with a known network and a valid address" })
+  return { network, wallet } satisfies ReadinessEntry
+}
+
+export effect function decodeReadiness(vars: FeeVars) {
+  const texts = [...new Set((vars.FEE_READY ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))]
+  const entries: Array<ReadinessEntry> = []
+  for (const text of texts) entries.push(try readinessEntryOf(text))
+  const replacement = (vars.FEE_REPLACEMENT_ACTIVE ?? "").trim()
+  if (replacement !== "" && replacement !== "true" && replacement !== "false") throw new ConfigInvalid({ name: "FEE_REPLACEMENT_ACTIVE", issue: "must be true or false" })
+  return { entries, replacementActive: replacement === "true" } satisfies ReadinessSettings
+}
+
+export function sameReadiness(left: ReadinessSettings, right: ReadinessSettings) {
+  const pairs = (settings: ReadinessSettings) => [...new Set(settings.entries.map((entry) => `${entry.network}:${entry.wallet}`))].sort().join(",")
+  return left.replacementActive === right.replacementActive && pairs(left) === pairs(right)
+}
+
 export type RuntimeEvent =
   | { readonly type: "chooseEnvironment"; readonly environment: Environment }
   | { readonly type: "setReleaseVariable"; readonly variable: boolean }
   | { readonly type: "publish"; readonly source: number; readonly config: FeeConfig }
+  | ReadinessEvent
 
 function walletId(wallets: ReadonlyArray<string>, address: string | undefined) {
   if (address === undefined) return 0
@@ -337,10 +370,23 @@ function specEvent(held: Held, event: RuntimeEvent): { readonly event: Event; re
       return { event: { type: "chooseEnvironment", environment: event.environment }, wallets: held.wallets }
     case "setReleaseVariable":
       return { event: { type: "setReleaseVariable", variable: event.variable }, wallets: held.wallets }
+    case "verifyReadiness":
+      return { event: { type: "verifyReadiness", network: event.network }, wallets: held.wallets }
+    case "withdrawReadiness":
+      return { event: { type: "withdrawReadiness", network: event.network }, wallets: held.wallets }
+    case "setReplacement":
+      return { event: { type: "setReplacement", active: event.active }, wallets: held.wallets }
   }
 }
 
+export function publishedWallet(held: Held, network: Network) {
+  return held.wallets[walletOf(held.runtime, network) - 1]
+}
+
+export error ReadinessUnbound { network: Network }
+
 export effect function send(held: Held, event: RuntimeEvent, by: Sender) {
+  if (event.type === "verifyReadiness" && !readinessEntryApplies(held.runtime, event.network, walletId(held.wallets, event.wallet))) throw new ReadinessUnbound({ network: event.network })
   const next = specEvent(held, event)
   const runtime = try apply(held.runtime, next.event, by)
   return { runtime, wallets: next.wallets } satisfies Held
@@ -348,10 +394,13 @@ export effect function send(held: Held, event: RuntimeEvent, by: Sender) {
 
 export const isolatePublication = 1
 
+export interface ReadinessOutcome { readonly event: ReadinessEvent; readonly granted: boolean }
+
 export interface Derived {
   readonly environment: Environment
   readonly config: FeeConfig
   readonly held: Held
+  readonly readiness: ReadonlyArray<ReadinessOutcome>
 }
 
 export interface Release {
@@ -360,29 +409,47 @@ export interface Release {
   readonly releaseVariable: boolean
   readonly source: number
   readonly previous: Held
+  readonly ownerApproval: ReadinessSettings
 }
 
 interface Admission {
   readonly environment: Environment
   readonly config: FeeConfig
+  readonly settings: ReadinessSettings
   readonly releaseVariable: boolean
   readonly source: number
   readonly previous: Held
 }
 
+function readinessEvents(held: Held, settings: ReadinessSettings): ReadonlyArray<ReadinessEvent> {
+  const { ready, replacementActive } = held.runtime
+  const approved = (network: Network) => settings.entries.some((entry) => entry.network === network && walletId(held.wallets, entry.wallet) === walletOf(held.runtime, network))
+  const withdrawn = networkOrder.filter((network) => readyFor(ready, network) && !approved(network)).map((network): ReadinessEvent => ({ type: "withdrawReadiness", network }))
+  const verified = settings.entries.filter((entry) => !readyFor(ready, entry.network)).map((entry): ReadinessEvent => ({ type: "verifyReadiness", network: entry.network, wallet: entry.wallet }))
+  const replacement: ReadonlyArray<ReadinessEvent> = settings.replacementActive === replacementActive ? [] : [{ type: "setReplacement", active: settings.replacementActive }]
+  return [...withdrawn, ...verified, ...replacement]
+}
+
 effect function admit(admission: Admission) {
-  const { environment, config, releaseVariable, source, previous } = admission
+  const { environment, config, settings, releaseVariable, source, previous } = admission
   let held = previous
   if (environment !== held.runtime.environment) held = try send(held, { type: "chooseEnvironment", environment }, "ReleaseWorkflow")
   if (releaseVariable !== held.runtime.variableEnabled) held = try send(held, { type: "setReleaseVariable", variable: releaseVariable }, "Owner")
   held = try send(held, { type: "publish", source, config }, "ReleaseWorkflow")
-  return { environment, config, held } satisfies Derived
+  const readiness: Array<ReadinessOutcome> = []
+  for (const event of readinessEvents(held, settings)) {
+    const next = send(held, event, "Owner") catch () => undefined
+    readiness.push({ event, granted: next !== undefined })
+    held = next ?? held
+  }
+  return { environment, config, held, readiness } satisfies Derived
 }
 
 export effect function isolateRuntime(vars: FeeVars, secrets: ReadonlyArray<string>) {
   const environment = try environmentOf(vars)
   const config = try decodeConfig(vars, secrets)
-  return try admit({ environment, config, releaseVariable: environment === "Production", source: isolatePublication, previous: unpublished })
+  const settings = try decodeReadiness(vars)
+  return try admit({ environment, config, settings, releaseVariable: environment === "Production", source: isolatePublication, previous: unpublished })
 }
 
 export effect function preflight(release: Release) {
@@ -390,7 +457,9 @@ export effect function preflight(release: Release) {
   const expected: ReadonlyArray<string> = expectedSecrets(environment)
   if (release.secretInventory.some((name) => !expected.includes(name))) throw new ConfigInvalid({ name: "secrets", issue: "the fee-converter Worker secret inventory contains unexpected entries" })
   const config = try decodeConfig(release.vars, release.secretInventory)
-  return try admit({ environment, config, releaseVariable: release.releaseVariable, source: release.source, previous: release.previous })
+  const settings = try decodeReadiness(release.vars)
+  if (!sameReadiness(settings, release.ownerApproval)) throw new ConfigInvalid({ name: "FEE_READY", issue: "FEE_READY and FEE_REPLACEMENT_ACTIVE differ from the owner's authenticated approval" })
+  return try admit({ environment, config, settings, releaseVariable: release.releaseVariable, source: release.source, previous: release.previous })
 }
 
 export function summary(derived: Derived) {

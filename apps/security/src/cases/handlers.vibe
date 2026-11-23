@@ -1,11 +1,12 @@
 // spec/settlement/privateAward.md, "Direct payment actions require a current financial approver"; spec/settlement/privateAward.md, "A vault-backed award reserves its bounty vault in the same step"; spec/settlement/privateAward.md, "Exact amounts are shown before authorization"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/security/remediation.md, "Remediation acts under the case's current roles"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
-import { D1, DatabaseFailure, type Statement, first, sql } from "@repo/platform/d1"
+import { DatabaseFailure, type Statement, sql } from "@repo/platform/d1"
 import { refuse } from "@repo/platform/http"
 import type { Json } from "@repo/ports/backend"
 import { type CaseContext, type DirectPaymentAction, DirectPayments, DirectRefused, type PaymentViewer, RecoveryRefused, SolanaPayerRefused } from "@repo/ports/settlement"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { type CaseRole, caseEvent } from "../receipt/statements.vibe"
 import { remediationAct, remediationContribution } from "../remediation/routes.vibe"
+import { common, exactKeys } from "./actions.vibe"
 import { type CaseActionInput, CaseActionHandlers, opened } from "./routes.vibe"
 import { type Observed, type Refusal, accessLog, caseNotices, notAllowed, refused } from "./store.vibe"
 import { type ExtraActions, type PaymentView, noExtraActions } from "./view.vibe"
@@ -15,15 +16,15 @@ export interface CaseActionSet<R> {
   readonly act: (action: string, input: CaseActionInput) => (unknown | undefined)!unknown!R
 }
 
-schema Present { ok: number }
-
 const paymentActions: ReadonlyArray<DirectPaymentAction> = ["consent-payment", "prepare-payment", "verify-payment", "recover-payment"]
 const payerActions: ReadonlyArray<DirectPaymentAction> = ["prepare-payment", "verify-payment", "recover-payment"]
 const staleCase = "stale case revision"
-const paymentRows = {
-  ...actionRows,
-  paymentPreparationChanged: { status: actionRows.status409.status, error: "payment_preparation_changed", message: "The payment wallets or consent changed. Review the payment again." },
-} as const
+const paymentKeys: Readonly<Record<DirectPaymentAction, { readonly required: ReadonlyArray<string>; readonly optional: ReadonlyArray<string> }>> = {
+  "consent-payment": { required: [...common, "network", "confirmation"], optional: [] },
+  "prepare-payment": { required: [...common, "network", "confirmation"], optional: [] },
+  "verify-payment": { required: [...common, "transactionIds", "confirmation"], optional: [] },
+  "recover-payment": { required: [...common, "confirmation"], optional: ["cancellationTransactionId", "signatures"] },
+}
 const railMissing: Readonly<Record<DirectPaymentAction, Refusal>> = {
   "consent-payment": actionRows.railUnavailableTheProgramHasNo,
   "prepare-payment": actionRows.railUnavailableTheProgramHasNo,
@@ -74,53 +75,41 @@ function revisionGuard(caseId: string, revision: number): Statement {
   return sql`SELECT CASE WHEN (SELECT revision FROM security_cases WHERE id = ${caseId}) = ${revision} THEN 1 ELSE json(${staleCase}) END AS fresh`
 }
 
-effect function eventDetail(action: DirectPaymentAction, caseId: string, body: Readonly<Record<string, unknown>>) {
-  if (action === "consent-payment") return { network: String(body.network), publicChainVisibilityAccepted: true }
-  if (action === "verify-payment") return { verified: true, rail: "direct" }
-  if (action === "recover-payment") return { rail: "direct" }
-  const direct = try first(Present, sql`SELECT 1 AS ok FROM security_direct_awards WHERE case_id = ${caseId}`)
-  if (direct === undefined) return { network: String(body.network), publicChainVisibilityAccepted: true }
-  const refreshed = try first(Present, sql`SELECT 1 AS ok FROM security_direct_payments WHERE case_id = ${caseId}`)
-  return refreshed === undefined ? { network: String(body.network), rail: "direct" } : { network: String(body.network), rail: "direct", refreshed: true }
-}
-
 function actingRole(action: DirectPaymentAction, observed: Observed): CaseRole {
   if (action === "consent-payment") return "reporter"
   return observed.roles.has("security-maintainer") ? "security-maintainer" : "financial"
 }
 
-function isProgress(answer: Json) {
-  return typeof answer === "object" && answer !== null && !Array.isArray(answer) && typeof (answer as { readonly state?: Json }).state === "string"
+function isRecord(detail: Json): detail is { readonly [key: string]: Json } {
+  return typeof detail === "object" && detail !== null && !Array.isArray(detail)
+}
+
+function recoveryProgress(action: DirectPaymentAction, detail: Json) {
+  return action === "recover-payment" && isRecord(detail) && typeof detail.state === "string"
 }
 
 effect function paid(action: DirectPaymentAction, input: CaseActionInput) {
   const { observed, actor, body, idempotencyKey, at } = input
+  try exactKeys(body, paymentKeys[action].required, paymentKeys[action].optional)
   if (!roleActions(observed).includes(action)) throw notAllowed(action)
   const payments = try Effect.serviceOption(DirectPayments)
   if (Option.isNone(payments)) throw refused(railMissing[action])
   const { row } = observed.record
   const revision = row.revision + 1
-  const detail = try eventDetail(action, row.id, body)
-  const notice = { caseId: row.id, revision, kind: action, idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail, program: observed.program, relatedReview: false, at }
-  const later = action === "recover-payment"
-  const notices = later ? [] : try caseNotices(notice)
-  const alongside = [
+  const notices = try caseNotices({ caseId: row.id, revision, kind: action, idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail: {}, program: observed.program, relatedReview: false, at })
+  const alongside = (detail: Json): ReadonlyArray<Statement> => [
     revisionGuard(row.id, row.revision),
     sql`UPDATE security_cases SET revision = revision + 1, updated_at = ${at} WHERE id = ${row.id} AND revision = ${row.revision}`,
-    caseEvent({ caseId: row.id, revision, kind: action, actorGithubId: actor.githubId, role: actingRole(action, observed), idempotencyKey, reason: null, evidenceReference: null, detail, at, guard: true }),
+    caseEvent({ caseId: row.id, revision, kind: action, actorGithubId: actor.githubId, role: actingRole(action, observed), idempotencyKey, reason: null, evidenceReference: null, detail: isRecord(detail) ? detail : { value: detail }, at, guard: true }),
     accessLog(row.id, actor.githubId, observed.roles, "write", at),
-    ...notices,
+    ...recoveryProgress(action, detail) ? [] : notices,
   ]
-  const answer = payments.value.act(action, contextOf(observed, actor.githubId), body, alongside) catch effect (error) => match (error) {
-    when DirectRefused: throw refused(paymentRows[error.reason]);
-    when RecoveryRefused: throw refused(paymentRows[error.reason]);
+  try payments.value.act(action, contextOf(observed, actor.githubId), body, alongside) catch effect (error) => match (error) {
+    when DirectRefused: throw refused(actionRows[error.reason]);
+    when RecoveryRefused: throw refused(actionRows[error.reason]);
     when SolanaPayerRefused: throw refuse(actionRows.payerRefused.status, actionRows.payerRefused.error, error.message);
     when DatabaseFailure: throw error.message.includes("malformed JSON") ? refused(actionRows.staleRevision) : error;
     default: throw error;
-  }
-  if (later && !isProgress(answer)) {
-    const statements = try caseNotices(notice)
-    if (statements.length > 0) try (try D1).batch(statements)
   }
   return try opened(actor, row.id)
 }
