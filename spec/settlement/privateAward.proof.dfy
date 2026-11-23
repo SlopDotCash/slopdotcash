@@ -506,7 +506,7 @@ lemma reviewRelated_ensures(s: PrivateAward, id: int, by_: int, checkedEpoch: in
       settlement__money_lawAddCongruence_ensures(b.reserved, security__bounty_openVaultGross(b), gross);
       settlement__money_lawAddCongruence_ensures(s.settlement.vault.reserved, b.reserved, gross);
     } else {
-      DroppedHoldKeepsRules(id, after, b);
+      DroppedHoldKeepsRules(b, id, by_, checkedEpoch);
     }
     assert vaultObligation(s, id, gross).vault == s.settlement.vault;
     assert vaultObligation(s, id, gross).payment.gross == gross;
@@ -1118,18 +1118,26 @@ lemma RecordedHoldKeepsMatch(id: int, after: security__cases_PrivateCase, amount
   }
 }
 
+// A refusal keeps exactly the other cases' holds, through the library's filter view.
+lemma RefusedHolds(b: security__bounty_Bounty, id: int, by_: int, checkedEpoch: int)
+  ensures security__bounty_reviewRelated(b, id, by_, checkedEpoch, false).holds == ProofLib.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds)
+{
+}
+
 // A refused proposal drops its hold; every other hold still matches its unchanged case.
-lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: security__bounty_Bounty)
+lemma DroppedHoldKeepsRules(b: security__bounty_Bounty, id: int, by_: int, checkedEpoch: int)
   requires security__bounty_alwaysHoldsMatchCases(b) && security__bounty_alwaysCasesKeepAwardRules(b) && security__bounty_alwaysReservedIsOpenVaultHolds(b) && id in security__bounty_caseIds
   requires !security__cases_committed(security__bounty_caseOf(b, id))
-  requires !security__cases_committed(after) && !after.relatedReview.ReviewPending?
-  requires security__cases_alwaysProposalCommitsNothing(after) && security__cases_alwaysCommitmentMatchesAward(after)
-    && security__cases_alwaysFullAwardHeld(after) && security__cases_alwaysStandardAwardRail(after)
-    && security__cases_alwaysUnpaidHasNoAward(after) && security__cases_alwaysVerifiedReceiptValid(after)
-    && security__cases_alwaysConfirmedHasRootCause(after) && security__cases_alwaysAppealState(after)
-  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds))) && security__bounty_alwaysCasesKeepAwardRules(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds))) && security__bounty_alwaysReservedIsOpenVaultHolds(security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds)))
+  requires !security__cases_committed(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id))
+  requires !security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id).relatedReview.ReviewPending?
+  requires security__cases_alwaysProposalCommitsNothing(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id)) && security__cases_alwaysCommitmentMatchesAward(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id))
+    && security__cases_alwaysFullAwardHeld(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id)) && security__cases_alwaysStandardAwardRail(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id))
+    && security__cases_alwaysUnpaidHasNoAward(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id)) && security__cases_alwaysVerifiedReceiptValid(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id))
+    && security__cases_alwaysConfirmedHasRootCause(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id)) && security__cases_alwaysAppealState(security__bounty_caseOf(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false), id))
+  ensures security__bounty_alwaysHoldsMatchCases(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false)) && security__bounty_alwaysCasesKeepAwardRules(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false)) && security__bounty_alwaysReservedIsOpenVaultHolds(security__bounty_reviewRelated(b, id, by_, checkedEpoch, false))
 {
-  var nb := security__bounty_putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: security__bounty_Hold) => (h.caseId != id), b.holds));
+  var nb := security__bounty_reviewRelated(b, id, by_, checkedEpoch, false);
+  RefusedHolds(b, id, by_, checkedEpoch);
   forall x
     ensures x in nb.holds <==> x in b.holds && x.caseId != id
   {
