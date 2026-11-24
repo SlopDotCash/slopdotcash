@@ -25,6 +25,7 @@ verification remain external evidence boundaries for the future shell.
 - [Optional X profile connection](./xConnection.md)
 - [Repository merge activity](./mergeActivity.md)
 - [Project intake cap](./intakeCap.md)
+- [Backlog rule and catch-up pause](./backlogRule.md)
 - [Slopbot ready-label settings](./readyLabelSettings.md)
 - [Submission fee terms](./submissionFeeTerms.md)
 - [Submission fee settings](./submissionFeeSettings.md)
