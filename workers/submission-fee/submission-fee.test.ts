@@ -2665,23 +2665,31 @@ describe("the standing ledger in the configuration", () => {
   };
   const DEPLOYED = `0x${"D".repeat(40)}`;
 
-  test("it is absent while the contract is not recorded, and the two fee ledgers are as before", () => {
+  test("the recorded deployment is the third ledger; a missing or half-recorded one leaves the two fee ledgers as before", () => {
     const config = parseConfig(gas);
     expect(config.networks.map((n) => n.network)).toEqual([
       "base-mainnet",
       "robinhood-mainnet",
+      STANDING_DEPOSIT_LEDGER,
     ]);
+    expect(config.networks[2]).toMatchObject({
+      chain: "robinhood-mainnet",
+      contract: "0x446604d5c3cc99c60cce3d5c4357bc60f5b45993",
+      startBlock: 122128533,
+    });
     expect(config.unset).toEqual([]);
+    const fees = config.networks.slice(0, 2);
     for (const half of [
+      { contract: null, startBlock: null },
       { contract: DEPLOYED, startBlock: null },
       { contract: null, startBlock: 5 },
       { contract: "0x1234", startBlock: 5 },
     ])
-      expect(parseConfig(gas, half).networks).toEqual(config.networks);
+      expect(parseConfig(gas, half).networks).toEqual(fees);
   });
 
   test("once recorded it is a third ledger on the Robinhood Chain tables", () => {
-    const before = parseConfig(gas);
+    const before = parseConfig(gas, { contract: null, startBlock: null });
     const config = parseConfig(gas, { contract: DEPLOYED, startBlock: 5 });
     expect(config.networks.slice(0, 2)).toEqual(before.networks);
     const fee = before.networks[1];
