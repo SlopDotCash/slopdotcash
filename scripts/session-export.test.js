@@ -1568,3 +1568,260 @@ test("codex shapes still pass the guard when read directly", async () => {
   );
   assert.ok(!readFileSync(res.path, "utf8").includes("SECRET-BODY"));
 });
+
+// ---- fix round 6: the first real Claude Code run ----
+test("the user name is removed when it sits next to a hyphen, underscore or dot", () => {
+  const over = {
+    repoRoot: "/Users/drewpierson/src/proj",
+    homeDir: "/Users/drewpierson",
+    userName: "drewpierson",
+  };
+  const slug = "saved in -Users-drewpierson--claude-spares-spare-Y9YL6q/x.txt";
+  const out = clean(
+    [
+      ev("assistant", slug),
+      ev("assistant", "a drewpierson_x b drewpierson.y c x.drewpierson"),
+      ev("assistant", "project -Users-drewpierson-src-proj here"),
+    ],
+    over,
+  );
+  const text = out.events.map((e) => e.text).join("\n");
+  assert.ok(!text.includes("drewpierson"), text);
+  assert.ok(!text.includes("-Users-"), text);
+  assert.ok(text.includes("claude-spares-spare-Y9YL6q/x.txt"));
+  const home = clean(
+    [ev("assistant", "dir -home-bob_2--cache and bob_2.log")],
+    {
+      repoRoot: "/home/bob_2/proj",
+      homeDir: "/home/bob_2",
+      userName: "someone",
+    },
+  );
+  assert.ok(!home.events[0].text.includes("bob_2"), home.events[0].text);
+});
+
+test("a secret inside the repo path does not stop the path becoming repo-relative", () => {
+  const repoRoot = "/home/alice/work-b76b10fbcafe42/proj";
+  const out = clean(
+    [
+      ev("assistant", `edited ${repoRoot}/src/a.ts and ${repoRoot}`),
+      ev("tool_call", undefined, {
+        tool: "Read",
+        args: { file_path: `${repoRoot}/src/a.ts` },
+      }),
+    ],
+    {
+      repoRoot,
+      knownSecrets: ["b76b10fbcafe42"],
+      env: { SESSION_ID: "work-b76b10fbcafe42" },
+    },
+  );
+  assert.equal(out.events[0].text, "edited src/a.ts and .");
+  assert.equal(out.events[1].args.file_path, "src/a.ts");
+  const text = JSON.stringify(out.events);
+  for (const bad of ["alice", "/home", "b76b10fbcafe42", "LOCAL_PATH"])
+    assert.ok(!text.includes(bad), bad);
+});
+
+test("home credential files give only credential values to the guard, never host names", () => {
+  const into = new Set();
+  addSecretStrings(
+    "github.com: x\nexample.co.uk\nhost=api.example.com\n",
+    into,
+  );
+  for (const s of into) assert.ok(!/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(s), s);
+  const w = world();
+  mkdirSync(join(w.homeDir, ".config", "gh"), { recursive: true });
+  const tok = `gho_${"FAKEtoken1234".repeat(3)}`;
+  writeFileSync(
+    join(w.homeDir, ".config", "gh", "hosts.yml"),
+    `github.com:\n    user: drew-dot-com\n    oauth_token: ${tok}\n    git_protocol: https\n`,
+  );
+  mkdirSync(join(w.homeDir, ".aws"), { recursive: true });
+  writeFileSync(
+    join(w.homeDir, ".aws", "credentials"),
+    "[default]\nregion = eu-west-1-example\naws_secret_access_key = AwsSecretValue123\n",
+  );
+  writeFileSync(
+    join(w.homeDir, ".pypirc"),
+    "[pypi]\nrepository = https://upload.pypi.org/legacy/\nusername = __token__\npassword = pypi-AgEIcHlwaS5vcmcFAKE\n",
+  );
+  const index = makeRepoIndex([], w.repoRoot, w.homeDir);
+  const known = collectKnownSecrets(index, w.homeDir).strings;
+  assert.ok(known.includes(tok));
+  assert.ok(known.includes("AwsSecretValue123"));
+  assert.ok(known.includes("pypi-AgEIcHlwaS5vcmcFAKE"));
+  for (const bad of [
+    "github.com",
+    "drew-dot-com",
+    "git_protocol",
+    "eu-west-1-example",
+    "https://upload.pypi.org/legacy/",
+    "upload.pypi.org",
+    "__token__",
+  ])
+    assert.ok(!known.includes(bad), bad);
+  const out = clean(
+    [
+      ev(
+        "assistant",
+        `see https://github.com/toon-protocol/toon-plugins and ${tok}`,
+      ),
+    ],
+    { knownSecrets: known },
+  );
+  assert.ok(
+    out.events[0].text.includes(
+      "https://github.com/toon-protocol/toon-plugins",
+    ),
+    out.events[0].text,
+  );
+  assert.ok(!out.events[0].text.includes(tok));
+});
+
+test("name-only commands and globs over repo files keep their output", async () => {
+  const w = world();
+  mkdirSync(join(w.repoRoot, "checks"), { recursive: true });
+  writeFileSync(join(w.repoRoot, "checks", "a.test.mjs"), "test(1)\n");
+  writeFileSync(join(w.repoRoot, "checks", "b.test.mjs"), "test(2)\n");
+  writeFileSync(join(w.repoRoot, "notes.txt"), "NOTES-BODY\n");
+  execFileSync("git", [
+    "-C",
+    w.repoRoot,
+    "add",
+    "checks/a.test.mjs",
+    "checks/b.test.mjs",
+  ]);
+  const status =
+    "On branch main\nUntracked files:\n\tlist.txt\n\tnotes.txt\n\tsrc/new.ts\n\tuntracked.txt\n";
+  const keep = [
+    ["ls checks", "a.test.mjs\nb.test.mjs"],
+    ["git status", status],
+    ["node --test checks/*.test.mjs", "# pass 2\n# fail 0"],
+    ["git log --oneline -3", "abc1234 first commit"],
+    ["git diff --stat", " checks/a.test.mjs | 1 +\n 1 file changed"],
+    ["find checks -name '*.mjs' -type f", "checks/a.test.mjs"],
+    ["git branch", "* main"],
+    ["tree checks", "checks\n├── a.test.mjs\n└── b.test.mjs"],
+    ["git status --short && git diff --name-only", "?? notes.txt"],
+    [`ls ${w.repoRoot}/checks`, "a.test.mjs"],
+  ];
+  const strip = [
+    ["cat *.env", "LEAKWORD-A"],
+    ["cat .e*", "LEAKWORD-B"],
+    ["ls ~", "LEAKWORD-C"],
+    ["git log -p -- .env", "LEAKWORD-D"],
+    ["ls secrets", "LEAKWORD-E"],
+    ["cat *.txt", "LEAKWORD-F"],
+    ["find . -name x -exec cat {} ;", "LEAKWORD-G"],
+    ["git log --stat -p -- notes.txt", "LEAKWORD-H"],
+    ["ls checks > out.txt; cat notes.txt", "LEAKWORD-I"],
+    ["cat check*", "LEAKWORD-J"],
+  ];
+  build(w, ({ call }) => {
+    for (const [command, out] of [...keep, ...strip])
+      call("Bash", { command }, out);
+  });
+  const { events } = await runOut(w);
+  const r = results(events).map((e) => e.text);
+  for (const [command, out] of keep)
+    assert.ok(r.includes(out), `${command} should be kept`);
+  const text = JSON.stringify(events);
+  for (const [command, out] of strip)
+    assert.ok(!text.includes(out), `${command} should be redacted`);
+  assert.ok(!text.includes("NOTES-BODY"));
+  const off = await runOut(w, unlicensed);
+  for (const [, out] of keep.slice(0, 3))
+    assert.ok(!results(off.events).some((e) => e.text === out));
+});
+
+test("header counts equal the markers in the written events", async () => {
+  const w = world();
+  build(w, ({ call }) => {
+    call("Bash", { command: "cat .env" }, "API_PASS=hunter2hunter2");
+    call(
+      "WebFetch",
+      { url: "https://x.example", prompt: "p" },
+      "hunter2hunter2",
+    );
+    call(
+      "Bash",
+      { command: "cat /etc/hosts", description: "x" },
+      "hunter2hunter2",
+    );
+  });
+  const { header, events } = await runOut(w);
+  const text = events.map((e) => JSON.stringify(e)).join("\n");
+  const found = {};
+  for (const m of text.matchAll(/\[REDACTED:([A-Z_]+)\]/g))
+    found[m[1]] = (found[m[1]] ?? 0) + 1;
+  assert.deepEqual(header.counts, found);
+});
+
+test("sessions in subagent folders are found", () => {
+  const w = world();
+  const sub = join(
+    w.homeDir,
+    ".claude",
+    "projects",
+    "p1",
+    "sess1",
+    "subagents",
+  );
+  mkdirSync(sub, { recursive: true });
+  const lines = readFileSync(w.session, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.stringify({ ...JSON.parse(l), isSidechain: true }));
+  writeFileSync(join(sub, "agent-a1.jsonl"), `${lines.join("\n")}\n`);
+  writeFileSync(w.session, "{}\n");
+  const found = findSessionFile(MARKER, { homeDir: w.homeDir });
+  assert.equal(found?.path, join(sub, "agent-a1.jsonl"));
+  const deeper = join(w.homeDir, ".claude", "projects", "p1", "sess2");
+  mkdirSync(deeper, { recursive: true });
+  writeFileSync(join(deeper, "x.jsonl"), `${lines.join("\n")}\n`);
+  utimesSync(join(sub, "agent-a1.jsonl"), new Date(1000), new Date(1000));
+  assert.equal(
+    findSessionFile(MARKER, { homeDir: w.homeDir })?.path,
+    join(deeper, "x.jsonl"),
+  );
+  assert.equal(
+    findSessionFile(MARKER, {
+      homeDir: w.homeDir,
+      startedAt: new Date(Date.now() + 60000).toISOString(),
+    }),
+    null,
+  );
+});
+
+test("an exported subagent session keeps its events", async () => {
+  const w = world();
+  const sub = join(w.homeDir, ".claude", "projects", "p1", "s", "subagents");
+  mkdirSync(sub, { recursive: true });
+  const lines = readFileSync(w.session, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.stringify({ ...JSON.parse(l), isSidechain: true }));
+  writeFileSync(join(sub, "agent-b.jsonl"), `${lines.join("\n")}\n`);
+  writeFileSync(w.session, "{}\n");
+  const res = await exportSession(w.opts());
+  assert.equal(res.source, "client-file");
+});
+
+test("a name-only command does not hide a second command", async () => {
+  const w = world();
+  writeFileSync(join(w.repoRoot, "notes"), "NOTES-BODY\n");
+  const cmds = [
+    "ls & cat notes",
+    "ls (cat notes)",
+    "git status | head notes",
+    "ls; cat notes",
+    "git log --oneline || cat notes",
+    "ls checks > x && cat notes",
+  ];
+  build(w, ({ call }) => {
+    for (const command of cmds) call("Bash", { command }, "NOTES-BODY");
+  });
+  const { events } = await runOut(w);
+  assert.ok(!JSON.stringify(events).includes("NOTES-BODY"));
+});

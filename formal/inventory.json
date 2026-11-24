@@ -5831,9 +5831,9 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/session-export.mjs",
-      "sha256": "14772a6b241d6e0d8f768929f3e6b33fcdb7c9b55059f1ac6f8112ae71ad0224",
+      "sha256": "4d442b2a686d63b4c78af1239171149d61ba66bba6f09334faa6039d3e502121",
       "models": ["formal/models/contributor/contributor_session_cleaner.qnt"],
-      "candidateLines": [726, 757, 777, 780, 920, 927],
+      "candidateLines": [778, 809, 829, 832, 1060, 1067, 1339, 1341, 1380],
       "review": "mapped-abstraction"
     },
     {
@@ -14082,12 +14082,15 @@
     },
     {
       "path": "formal/models/contributor/contributor_session_cleaner.qnt",
-      "sha256": "46de0165eb7190577cda8331f4a28d1e16c5aa457a174a66fc3e20a23568fe5a",
+      "sha256": "6ccb9767b597e1b30d7847612e923d3c6f36c8854b23109f2e14cdaee1f1b743",
       "sources": [
         "skills/project-contributor-template/scripts/session-export.mjs"
       ],
       "scenarios": [
         "keptWhenLicensedTest",
+        "nameOnlyKeptTest",
+        "nameOnlyOutsidePathTest",
+        "nameOnlyUnlicensedTest",
         "outsideRedactedTest",
         "unlicensedRedactedTest"
       ]
