@@ -1,5 +1,12 @@
 // @source src/lib/standing-deposit.mjs
 // @source migrations/0149_standing_deposits.sql
+// @source migrations/0150_standing_deposit_merged_authors.sql
+// @source workers/slopbot/standing-deposit.ts
+// @source workers/submission-fee/standing.ts
+// @evidence scripts/standing-deposit.test.ts
+// @evidence workers/slopbot/submission-fee.test.ts
+// @evidence workers/submission-fee/standing.test.ts
+// @evidence workers/submission-fee/submission-fee.test.ts
 // One contributor's standing deposit (operator decision, 23 November 2026;
 // PRD section 5, "Standing deposit"; section 6, FEE-08) and two pull
 // requests it may cover. The website writes the row and the withdrawal
