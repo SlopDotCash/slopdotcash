@@ -4,6 +4,10 @@
 import { describe, expect, test } from "bun:test";
 import { reportDepositItem } from "../../src/lib/security-report-deposit.mjs";
 import {
+  STANDING_DEPOSIT_LEDGER,
+  standingDepositItem,
+} from "../../src/lib/standing-deposit.mjs";
+import {
   SUBMISSION_FEE_BURN,
   SUBMISSION_FEE_KEPT_TO,
   SUBMISSION_FEE_TOKENS,
@@ -11,7 +15,11 @@ import {
 } from "../../src/lib/submission-fee.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { D1BuybackStore } from "../fee-converter/buyback-store";
-import type { NetworkConfig, SubmissionFeeConfig } from "./config";
+import {
+  type NetworkConfig,
+  parseConfig,
+  type SubmissionFeeConfig,
+} from "./config";
 import {
   type ChainDeposit,
   type ChainEvent,
@@ -25,6 +33,7 @@ import {
   PayoutFailedError,
   type ProbeResult,
   runNetwork,
+  SendConflictError,
   type SendEntry,
   SendRevertedError,
   type SendRow,
@@ -2235,5 +2244,470 @@ describe("report deposits", () => {
       reject_reason: "unknown_item",
     });
     expect(t.chain.signed[1].entries).toEqual([{ id: 3, refund: true }]);
+  });
+});
+
+// The standing deposit (operator decision, 23 November 2026; PRD section 5):
+// a second SubmissionDeposits contract on Robinhood Chain, read as its own
+// ledger. Its deposits pay rows in `standing_deposits` only; Slopbot decides
+// what is due on a row, and the Worker sends what it says.
+describe("standing deposits", () => {
+  const RC = "robinhood-mainnet";
+  const LEDGER = STANDING_DEPOSIT_LEDGER;
+  const STANDING_CONTRACT = `0x${"d".repeat(40)}`;
+  const standingNet: NetworkConfig = {
+    ...network,
+    network: LEDGER,
+    chain: RC,
+    chainId: 4663,
+    contract: STANDING_CONTRACT,
+  };
+  const rc: NetworkConfig = { ...network, network: RC, chainId: 4663 };
+  const SLOP = (SUBMISSION_FEE_TOKENS[RC].slop as string).toLowerCase();
+  const USDG = (SUBMISSION_FEE_TOKENS[RC].usdg as string).toLowerCase();
+  const BURN = SUBMISSION_FEE_BURN.toLowerCase();
+  const DUE = `790${"0".repeat(18)}`;
+  const ALICE = 9001;
+  const BOB = 9002;
+
+  function standing() {
+    const t = setup();
+    t.chain.id = 4663;
+    const run = (mode: "dry_run" | "live" = "live", siblings?: string[]) =>
+      runNetwork({ ...t.deps(mode), network: standingNet, siblings });
+    const ask = (githubId: number, round = 1, slopAmount = DUE) =>
+      t.sqlite
+        .query(
+          "INSERT INTO standing_deposits (id, github_id, round, item, slop_amount, slop_per_usd, asked_at) VALUES (?, ?, ?, ?, ?, '78.908929', ?)",
+        )
+        .run(
+          `sd_${String(githubId).padStart(8, "0")}_${round}`,
+          githubId,
+          round,
+          standingDepositItem(githubId, round),
+          slopAmount,
+          START,
+        );
+    const row = (githubId: number, round = 1) =>
+      t.sqlite
+        .query(
+          "SELECT paid_at, paid_network, paid_deposit_id, cancelled_at, outcome, outcome_reason, outcome_at FROM standing_deposits WHERE github_id = ? AND round = ?",
+        )
+        .get(githubId, round) as Record<string, unknown>;
+    const decide = (
+      githubId: number,
+      outcome: string,
+      reason: string,
+      round = 1,
+    ) =>
+      t.sqlite
+        .query(
+          "UPDATE standing_deposits SET outcome = ?, outcome_reason = ?, outcome_at = ?, strike_repository_id = ?, strike_pull_number = ? WHERE github_id = ? AND round = ?",
+        )
+        .run(
+          outcome,
+          reason,
+          START,
+          reason === "strike" ? REPOSITORY : null,
+          reason === "strike" ? 12 : null,
+          githubId,
+          round,
+        );
+    const pay = (
+      id: number,
+      githubId: number,
+      block: number,
+      overrides: Partial<ChainDeposit> = {},
+      round = 1,
+    ) =>
+      t.chain.pay(id, 1, block, {
+        item: standingDepositItem(githubId, round),
+        token: SLOP,
+        amount: DUE,
+        keptTo: BURN,
+        ...overrides,
+      });
+    const deposit = (id: number, ledger: string = LEDGER) =>
+      t.sqlite
+        .query(
+          "SELECT * FROM submission_fee_deposits WHERE network = ? AND deposit_id = ?",
+        )
+        .get(ledger, id) as Record<string, unknown> | null;
+    const finalize = () => {
+      t.chain.latest += 20;
+      t.chain.finalized = t.chain.latest;
+    };
+    const settle = () => {
+      t.chain.mine(t.chain.signed.at(-1)?.rawTx as string, t.chain.latest + 1);
+      finalize();
+    };
+    return { ...t, run, ask, row, decide, pay, deposit, finalize, settle };
+  }
+
+  test("an accepted deposit marks its row paid, before finality, on the standing ledger only", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.chain.latest = 113;
+    expect(await t.run()).toMatchObject({ recorded: 1, judged: 1, paid: 1 });
+    expect(t.deposit(1)).toMatchObject({
+      item: standingDepositItem(ALICE, 1),
+      repository_id: null,
+      pull_number: null,
+      accepted: 1,
+      state: "open",
+      finalized_at: null,
+    });
+    expect(t.row(ALICE)).toMatchObject({
+      paid_at: "2026-12-01T12:00:00.000Z",
+      paid_network: LEDGER,
+      paid_deposit_id: 1,
+      outcome: null,
+    });
+    expect(t.logs).toContainEqual({
+      event: "submission_fee_standing_paid",
+      network: LEDGER,
+      depositId: 1,
+    });
+    // Its cursor is its own.
+    t.finalize();
+    await t.run();
+    const cursor = t.sqlite
+      .query("SELECT network FROM submission_fee_cursors")
+      .all();
+    expect(cursor).toEqual([{ network: LEDGER }]);
+    expect(t.deposit(1)?.finalized_at).not.toBe(null);
+  });
+
+  test("the per pull request contract never pays a standing row", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    // The same deposit read by the Robinhood Chain fee ledger.
+    const fee = () => runNetwork({ ...t.deps(), network: rc });
+    expect(await fee()).toMatchObject({ recorded: 1, judged: 0, paid: 0 });
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await fee()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.deposit(1, RC)).toMatchObject({
+      accepted: 0,
+      reject_reason: "unknown_item",
+    });
+    expect(t.row(ALICE).paid_at).toBe(null);
+  });
+
+  test("every deposit that does not meet the terms is refused and sent back, never kept", async () => {
+    const t = standing();
+    for (const id of [ALICE, BOB]) t.ask(id);
+    t.ask(3, 1);
+    t.sqlite.exec(
+      `UPDATE standing_deposits SET cancelled_at = '${START}' WHERE github_id = 3`,
+    );
+    t.pay(1, ALICE, 110, { token: USDG, amount: "10000000" });
+    t.pay(2, ALICE, 110, { keptTo: FEE_WALLET });
+    t.pay(3, ALICE, 110, { amount: (BigInt(DUE) - 1n).toString() });
+    t.pay(4, 3, 110);
+    t.pay(5, BOB, 110);
+    t.pay(6, BOB, 110, { payer: `0x${"b".repeat(40)}` });
+    t.finalize();
+    // A dry run judges and signs nothing.
+    await t.run("dry_run");
+    const reasons = [1, 2, 3, 4, 5, 6].map((id) => {
+      const row = t.deposit(id);
+      return [row?.accepted, row?.reject_reason];
+    });
+    expect(reasons).toEqual([
+      [0, "standing_token_not_slop"],
+      [0, "wrong_kept_to"],
+      [0, "amount_below_due"],
+      [0, "standing_cancelled"],
+      [1, null],
+      [0, "item_already_paid"],
+    ]);
+    expect(t.row(ALICE).paid_at).toBe(null);
+    expect(t.row(3)).toMatchObject({ paid_at: null, cancelled_at: START });
+    expect(t.row(BOB).paid_deposit_id).toBe(5);
+    // Even a row edited to say kept never keeps a refused deposit.
+    t.decide(BOB, "kept_due", "strike");
+    t.sqlite.exec(
+      `UPDATE standing_deposits SET paid_deposit_id = 6 WHERE github_id = ${BOB}`,
+    );
+    await t.run();
+    expect(t.chain.signed.flatMap((tx) => tx.entries)).toEqual([
+      { id: 1, refund: true },
+      { id: 2, refund: true },
+      { id: 3, refund: true },
+      { id: 4, refund: true },
+      { id: 6, refund: true },
+    ]);
+  });
+
+  test("a deposit of another token is refused at once and never resolved", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110, { token: `0x${"9".repeat(40)}` });
+    t.finalize();
+    for (let run = 0; run < 2; run += 1) {
+      expect(await t.run()).toMatchObject({ send: "none" });
+      t.clock.at += 40 * 24 * 60 * 60 * 1000;
+    }
+    expect(t.deposit(1)).toMatchObject({
+      accepted: 0,
+      reject_reason: "token_not_accepted",
+    });
+    expect(t.chain.simulations).toBe(0);
+  });
+
+  test("a deposit for an item no row has waits a day, then is sent back", async () => {
+    const t = standing();
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    expect(await t.run()).toMatchObject({ judged: 0, send: "none" });
+    t.clock.at += 24 * 60 * 60 * 1000;
+    expect(await t.run()).toMatchObject({ judged: 1, send: "sent" });
+    expect(t.deposit(1)?.reject_reason).toBe("unknown_item");
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+  });
+
+  test("kept only when the row it paid says kept_due, then the row reads kept", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    await t.run();
+    expect(await t.run()).toMatchObject({ send: "none" });
+    t.decide(ALICE, "kept_due", "strike");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: false }]);
+    expect(t.row(ALICE).outcome).toBe("kept_due");
+    t.settle();
+    expect(await t.run()).toMatchObject({ resolved: 1 });
+    expect(t.deposit(1)).toMatchObject({ state: "kept", kept_to: BURN });
+    expect(t.row(ALICE)).toMatchObject({
+      outcome: "kept",
+      outcome_reason: "strike",
+    });
+    expect(t.row(ALICE).outcome_at).toBe(t.deposit(1)?.resolved_at);
+  });
+
+  test("refund_due sends it back, and the row reads refunded with its reason", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.finalize();
+    await t.run();
+    t.decide(ALICE, "refund_due", "withdrawn");
+    expect(await t.run()).toMatchObject({ send: "sent" });
+    expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    t.settle();
+    await t.run();
+    expect(t.deposit(1)?.state).toBe("refunded");
+    expect(t.row(ALICE)).toMatchObject({
+      outcome: "refunded",
+      outcome_reason: "withdrawn",
+    });
+  });
+
+  test("a deposit reorganised away before finality stops paying its row", async () => {
+    const t = standing();
+    t.ask(ALICE);
+    t.pay(1, ALICE, 110);
+    t.chain.latest = 113;
+    await t.run();
+    expect(t.row(ALICE).paid_deposit_id).toBe(1);
+    t.chain.reorgOut(1);
+    await t.run();
+    expect(t.deposit(1)).toBe(null);
+    expect(t.row(ALICE)).toMatchObject({
+      paid_at: null,
+      paid_network: null,
+      paid_deposit_id: null,
+    });
+  });
+
+  describe("one key on one chain", () => {
+    test("a ledger waits while its sibling on the same chain has a send in flight", async () => {
+      const t = standing();
+      // The Robinhood Chain fee ledger has a live send in flight.
+      t.sqlite
+        .query(
+          "INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, created_at, updated_at) VALUES ('sfs_inflight01', ?, 'live', ?, '[{\"id\":1,\"refund\":true}]', ?, ?, '0x02ffffffff', 0, '400', 'submitted', ?, ?)",
+        )
+        .run(RC, CONTRACT, RESOLVER, `0x${"e".repeat(64)}`, START, START);
+      t.ask(ALICE);
+      t.pay(1, ALICE, 110);
+      t.finalize();
+      await t.run("live", [RC]);
+      t.decide(ALICE, "refund_due", "withdrawn");
+      expect(await t.run("live", [RC])).toMatchObject({
+        send: "sibling_in_flight",
+      });
+      expect(t.chain.signed).toEqual([]);
+      // A dry run records the list; nothing is signed either way.
+      expect(await t.run("dry_run", [RC])).toMatchObject({ send: "recorded" });
+      // Once the sibling's send is settled, this ledger sends.
+      t.sqlite.exec(
+        "UPDATE submission_fee_sends SET state = 'finalized', block_number = 1, finalized_at = updated_at WHERE id = 'sfs_inflight01'",
+      );
+      expect(await t.run("live", [RC])).toMatchObject({ send: "sent" });
+      expect(t.chain.signed[0].entries).toEqual([{ id: 1, refund: true }]);
+    });
+
+    test("the insert itself refuses a send while a sibling holds one, and the day's limit is shared", async () => {
+      const t = standing();
+      const row = (
+        id: string,
+        ledger: string,
+        tx: string,
+        wei = "400",
+        state: SendRow["state"] = "submitted",
+      ): SendRow => ({
+        id,
+        network: ledger,
+        mode: "live",
+        contract: ledger === RC ? CONTRACT : STANDING_CONTRACT,
+        deposits: [{ id: 1, refund: true }],
+        resolver: RESOLVER,
+        txId: `0x${tx.repeat(64)}`,
+        rawTx: "0x02ffffffff",
+        evmNonce: 0,
+        maximumNativeWei: wei,
+        state,
+        reason: state === "failed" ? "resolve transaction reverted" : null,
+        blockNumber: null,
+        createdAt: START,
+        updatedAt: START,
+        finalizedAt: null,
+      });
+      const limits = network.gas;
+      await t.store.insertSend(row("sfs_ledger_a01", RC, "a"), limits, [
+        LEDGER,
+      ]);
+      // A run that read no open sibling before signing still loses here.
+      await expect(
+        t.store.insertSend(row("sfs_ledger_b01", LEDGER, "b"), limits, [RC]),
+      ).rejects.toBeInstanceOf(SendConflictError);
+      t.sqlite.exec(
+        "UPDATE submission_fee_sends SET state = 'finalized', block_number = 1, finalized_at = updated_at WHERE id = 'sfs_ledger_a01'",
+      );
+      // 400 spent today on the shared key; 1,000 more stays inside 2,500.
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START), [RC]),
+      ).resolves.toBeUndefined();
+      // A failed send still spent its reserve against the day's limit.
+      await t.store.insertSend(
+        row("sfs_spent_c01", RC, "c", "1500", "failed"),
+        { perTransactionWei: "2000", perDayWei: "5000" },
+      );
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START), [RC]),
+      ).rejects.toBeInstanceOf(GasBudgetError);
+      // Without siblings each ledger counts only its own spend, as before.
+      await expect(
+        t.store.assertGasBudget(LEDGER, "1000", limits, new Date(START)),
+      ).resolves.toBeUndefined();
+    });
+
+    test("the run names the other ledgers on the same chain as siblings", async () => {
+      const t = standing();
+      const fee = new Chain();
+      fee.id = 4663;
+      t.sqlite
+        .query(
+          "INSERT INTO submission_fee_sends (id, network, mode, contract, deposits, resolver, tx_id, raw_tx, evm_nonce, maximum_native_wei, state, created_at, updated_at) VALUES ('sfs_inflight01', ?, 'live', ?, '[{\"id\":1,\"refund\":true}]', ?, ?, '0x02ffffffff', 0, '400', 'submitted', ?, ?)",
+        )
+        .run(RC, CONTRACT, RESOLVER, `0x${"e".repeat(64)}`, START, START);
+      fee.mempool.add("0x02ffffffff");
+      t.ask(ALICE);
+      t.pay(1, ALICE, 110);
+      t.finalize();
+      const three = (config: SubmissionFeeConfig): SubmissionFeeConfig => ({
+        ...config,
+        unset: [],
+        networks: [network, rc, standingNet],
+      });
+      const live = {
+        ...env("live", t.db),
+        SUBMISSION_FEE_RESOLVER_KEY: `0x${"1".repeat(64)}`,
+      };
+      const chainFor = (config: NetworkConfig) =>
+        config.network === LEDGER ? t.chain : fee;
+      await runDeposits(live, () => new Date(t.clock.at), {
+        config: three,
+        chain: chainFor,
+        log: () => {},
+      });
+      expect(t.row(ALICE).paid_deposit_id).toBe(1);
+      t.decide(ALICE, "refund_due", "withdrawn");
+      const result = await runDeposits(live, () => new Date(t.clock.at), {
+        config: three,
+        chain: chainFor,
+        log: () => {},
+      });
+      expect(result).toMatchObject({
+        status: "ran",
+        networks: [
+          { network: NETWORK },
+          { network: RC, send: "in_flight" },
+          { network: LEDGER, send: "sibling_in_flight" },
+        ],
+      });
+      expect(t.chain.signed).toEqual([]);
+    });
+  });
+});
+
+describe("the standing ledger in the configuration", () => {
+  const gas = {
+    SUBMISSION_FEE_MODE: "dry_run",
+    SUBMISSION_FEE_MAX_NATIVE_PER_TX_WEI: "1000",
+    SUBMISSION_FEE_MAX_NATIVE_PER_DAY_WEI: "2500",
+  };
+  const DEPLOYED = `0x${"D".repeat(40)}`;
+
+  test("it is absent while the contract is not recorded, and the two fee ledgers are as before", () => {
+    const config = parseConfig(gas);
+    expect(config.networks.map((n) => n.network)).toEqual([
+      "base-mainnet",
+      "robinhood-mainnet",
+    ]);
+    expect(config.unset).toEqual([]);
+    for (const half of [
+      { contract: DEPLOYED, startBlock: null },
+      { contract: null, startBlock: 5 },
+      { contract: "0x1234", startBlock: 5 },
+    ])
+      expect(parseConfig(gas, half).networks).toEqual(config.networks);
+  });
+
+  test("once recorded it is a third ledger on the Robinhood Chain tables", () => {
+    const before = parseConfig(gas);
+    const config = parseConfig(gas, { contract: DEPLOYED, startBlock: 5 });
+    expect(config.networks.slice(0, 2)).toEqual(before.networks);
+    const fee = before.networks[1];
+    expect(fee).toMatchObject({
+      network: "robinhood-mainnet",
+      chain: "robinhood-mainnet",
+    });
+    expect(config.networks[2]).toEqual({
+      ...fee,
+      network: STANDING_DEPOSIT_LEDGER,
+      chain: "robinhood-mainnet",
+      contract: DEPLOYED.toLowerCase(),
+      startBlock: 5,
+    });
+    expect(
+      parseConfig(
+        { ...gas, RPC_URL_SUBMISSION_FEE_ROBINHOOD: "https://rpc.example" },
+        { contract: DEPLOYED, startBlock: 5 },
+      ).networks[2].rpcUrl,
+    ).toBe("https://rpc.example");
+  });
+
+  test("the standing contract cannot be a fee contract", () => {
+    const fee = parseConfig(gas).networks[1].contract;
+    expect(() => parseConfig(gas, { contract: fee, startBlock: 5 })).toThrow(
+      "must differ",
+    );
   });
 });

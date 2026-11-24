@@ -1,5 +1,5 @@
 // @source migrations/0148_trace_licensing.sql
-// @source migrations/0149_trace_terms_v3.sql
+// @source migrations/0151_trace_terms_v3.sql
 // @source backend/trace-licensing/handler.ts
 // @source src/lib/trace-licensing.ts
 // @source src/TraceLicensing.tsx

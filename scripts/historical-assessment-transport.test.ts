@@ -2,11 +2,16 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { sha256Hex } from "../src/lib/sha256";
+import {
+  GENERATED_AT,
+  penaltyScoreInput,
+} from "../tests/penalty-score-fixture";
 import { valueHistory } from "../workers/slopbot/value-journal";
 import { readWorkUnitHistory } from "../workers/slopbot/value-work-unit-consumption";
 import { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
 import type { HistoricalAssessmentCatalog } from "./historical-assessment-catalog";
 import { createHistoricalAssessmentTransport } from "./historical-assessment-transport";
+import { preflightHistoricalClosedBindings } from "./historical-closed-preflight";
 import {
   fetchValueHistoryPage,
   fetchWorkUnitHistoryPage,
@@ -138,6 +143,120 @@ function grouped() {
     catalog: frozen([migrated], [first, sibling, current, unrelated]),
   };
 }
+
+function closedSource(number: number) {
+  const template = penaltyScoreInput([], GENERATED_AT)
+    .closedUnmergedPullRequests?.[0];
+  if (!template) throw new Error("Missing closed fixture");
+  return {
+    ...template,
+    id: pullId(number),
+    number,
+    url: `https://github.com/${scope.repository}/pull/${number}`,
+    headRefOid: headSha,
+    closedAt: source(number).occurredAt,
+    mergedAt: null,
+    reviews: [],
+  };
+}
+
+test("closure preflight reads current joint heads without collecting the merged group", async () => {
+  const { catalog, current, first } = grouped();
+  const closed = closedSource(1);
+  const binding = {
+    number: closed.number,
+    headSha,
+    occurredAt: closed.closedAt,
+    digest: current.record_digest,
+  };
+  const unexpected = async () => {
+    throw new Error("No live evidence read is needed for this joint head");
+  };
+  const input = {
+    history: createHistoricalAssessmentTransport(catalog, scope),
+    scope,
+    closed: [closed],
+    approved: new Map([[closed.id, binding]]),
+    emptyLegacy: new Map(),
+    github: { get: unexpected, graphql: unexpected, fileText: unexpected },
+  };
+  await expect(
+    preflightHistoricalClosedBindings(input),
+  ).resolves.toBeUndefined();
+  await expect(
+    preflightHistoricalClosedBindings({
+      ...input,
+      approved: new Map([
+        [closed.id, { ...binding, digest: first.record_digest }],
+      ]),
+    }),
+  ).rejects.toMatchObject({
+    reason: "lifecycle",
+    check: "approved-context-different-decision",
+  });
+  await expect(
+    preflightHistoricalClosedBindings({
+      ...input,
+      history: createHistoricalAssessmentTransport(frozen([], []), scope),
+    }),
+  ).rejects.toMatchObject({
+    reason: "lifecycle",
+    check: "approved-context-missing-decision",
+  });
+  await expect(
+    preflightHistoricalClosedBindings({
+      ...input,
+      approved: new Map([[closed.id, { ...binding, standaloneReview: true }]]),
+    }),
+  ).rejects.toMatchObject({
+    reason: "assessment",
+    check: "standalone-review-decision",
+  });
+});
+
+test("closure preflight uses exact legacy decision ingestion without merged attribution", async () => {
+  const closed = closedSource(4);
+  const requests: string[] = [];
+  const github = {
+    async get(path: string) {
+      requests.push(path);
+      if (path !== `/repos/${scope.repository}`) {
+        throw new Error("Unexpected live evidence read");
+      }
+      return { node_id: scope.repositoryNodeId, private: false };
+    },
+    async graphql() {
+      throw new Error("Unexpected attribution or actor read");
+    },
+    async fileText() {
+      throw new Error("Unexpected policy read for a missing decision");
+    },
+  } as unknown as Parameters<typeof loadValueInputs>[0];
+  await expect(
+    preflightHistoricalClosedBindings({
+      history: createHistoricalAssessmentTransport(frozen([], []), scope),
+      scope,
+      closed: [closed],
+      approved: new Map(),
+      emptyLegacy: new Map([
+        [
+          closed.id,
+          {
+            number: closed.number,
+            headSha,
+            occurredAt: closed.closedAt,
+            digest: sourceDigest,
+          },
+        ],
+      ]),
+      github,
+    }),
+  ).rejects.toMatchObject({
+    reason: "assessment",
+    check: "empty-legacy-decision",
+  });
+  expect(requests).toEqual([`/repos/${scope.repository}`]);
+});
 
 test("matches the deployed per-source SQL and retains both predecessor roots", async () => {
   const { catalog, current } = grouped();

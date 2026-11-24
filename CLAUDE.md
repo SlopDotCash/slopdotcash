@@ -129,6 +129,9 @@ alias only.
     the same key resolves the deposit on a private security report (PRD
     section 8, "Report deposit") with the same two outcomes, a refund to the
     payer or "kept" to the burn address, for the row the security API marked.
+    Operator decision of 23 November 2026: it also resolves standing deposits
+    in a second deployment of the same contract on Robinhood Chain (PRD
+    section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -344,7 +347,16 @@ makes the deposit due back; a pull request closed without a merge for 7 days
 keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned), except
 one that closes an issue labelled `slop-wanted` before it was opened, which is
 sent back unless a maintainer adds `slop-keep-fee` (operator decision,
-22 November 2026). Slopbot
+22 November 2026). A contributor
+may instead post one standing deposit of SLOP worth 10 US dollars from
+`/deposit` (`src/lib/standing-deposit.mjs`; operator decision, 23 November
+2026; PRD section 5, "Standing deposit"). While it stands, Slopbot covers that
+contributor's pull requests on a project that accepts it and has merged one of
+theirs, at most 10 open at once, without asking the fee. It is kept, and
+burned, only when a maintainer closes a covered pull request within 21 days
+and adds `slop-keep-fee`, and both stand 48 hours; an ordinary close costs
+nothing. A withdrawal stops new cover at once and the deposit is sent back 21
+days later. Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
 The comment links the pay page
@@ -742,6 +754,11 @@ vault holds it; otherwise the pool reads as points only (PRD section 6,
 operator decision of 15 November 2026). From December 2026 a month is
 promised only if the vault covered it on the 1st, and Slop's pages refuse a
 withdrawal below the promised amount.
+/record, /receipts, the program terms pages and /privacy read only
+`/data/record.json`, which every release build rebuilds (`scripts/record/`)
+and which keeps the previous record on any failure; a published payout
+receipt never disappears (PRD section 7, operator decision of 23 November
+2026).
 
 ## Project authority and IP
 

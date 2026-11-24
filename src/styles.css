@@ -4260,3 +4260,48 @@ nav[aria-label="Project navigation"] {
 .vault-public-funding .vault-contract-details[open] summary {
   margin-bottom: 0.65rem;
 }
+
+.sponsored-pools-notice {
+  border-bottom: 1px solid var(--brand-color-line-strong);
+  background: var(--brand-color-raised);
+  color: var(--brand-color-ink);
+}
+
+.sponsored-pools-notice-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 10px;
+}
+
+.sponsored-pools-notice p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.sponsored-pools-notice a {
+  color: var(--brand-color-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sponsored-pools-notice button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--brand-radius-small);
+  background: transparent;
+  color: var(--brand-color-muted);
+  cursor: pointer;
+}
+
+.sponsored-pools-notice button:hover {
+  color: var(--brand-color-ink);
+}

@@ -72,7 +72,7 @@ describe("trace licensing migration", () => {
 });
 
 describe("trace terms v3 migration", () => {
-  const V3 = "0149_trace_terms_v3.sql";
+  const V3 = "0151_trace_terms_v3.sql";
 
   test("rebuild keeps every row, id, index and trigger and accepts v3", () => {
     const { sqlite } = sqliteD1(MIGRATIONS.filter((m) => m < V3));
