@@ -5427,9 +5427,9 @@
     },
     {
       "path": "scripts/restore-collection-memo.py",
-      "sha256": "05353286dbe243932cb36190af9eb9d9104a26f8cb688aafd693378b9e98180a",
+      "sha256": "89522474bf15278685b2c87df8c32c249e785702131c37b524ad0c9c2a67a1a2",
       "models": ["formal/models/points/incremental_collection.qnt"],
-      "candidateLines": [64, 110, 141],
+      "candidateLines": [64, 110],
       "review": "mapped-abstraction"
     },
     {
