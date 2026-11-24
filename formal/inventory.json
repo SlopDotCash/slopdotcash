@@ -5163,10 +5163,10 @@
     },
     {
       "path": "scripts/pull-request-git-files.ts",
-      "sha256": "2fb486e6d86b957cfdd4e557e7f889998d27d3c6478d9e041c50a6a6c905d962",
+      "sha256": "57b0b3d88a9796ad8a4023797ece868e4b74766320a7b096ee18e540973e1d01",
       "models": ["formal/models/tooling/git_file_recovery.qnt"],
       "candidateLines": [
-        6, 128, 169, 170, 195, 196, 197, 199, 200, 217, 234, 242, 245, 263
+        5, 135, 176, 177, 202, 203, 204, 206, 207, 224, 241, 249, 252, 270
       ],
       "review": "mapped-abstraction"
     },
@@ -5529,14 +5529,15 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "ca6042c20b1242864719c80f9b064501079114a4edb3a91509e4478bae1aa45d",
+      "sha256": "72444fcefeb8712ec945604cea5355a55b6478186622f1706e0ca041fc3918c7",
       "models": [
         "formal/models/points/historical_assessment_audit.qnt",
         "formal/models/points/source_import.qnt"
       ],
       "candidateLines": [
-        3, 248, 249, 250, 251, 253, 258, 301, 316, 317, 323, 324, 459, 1183,
-        1412, 1432, 1646, 1664, 1671, 1803, 1898, 2060
+        3, 249, 250, 251, 252, 254, 259, 302, 317, 318, 324, 325, 460, 1169,
+        1398, 1418, 1555, 1556, 1557, 1563, 1565, 1567, 1569, 1571, 1574, 1576,
+        1624, 1626, 1682, 1700, 1707, 1839, 1934, 2096
       ],
       "review": "mapped-abstraction"
     },
@@ -5725,9 +5726,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
+      "sha256": "f38f2ba7eafb17a79f3577891aa1b31a7c0d83dfb66f256a5b280ee3a97647a7",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [289, 290],
+      "candidateLines": [315, 316],
       "review": "mapped-abstraction"
     },
     {
@@ -16609,7 +16610,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "aadaca864fad7f3bb87856ce9d26ac5154ca0718bb09bdc3cf84d02083f92ba7",
+      "sha256": "a22926af6631a18131ba306f4c179a997784d2781fc6e6e84261a35f3b08b5fb",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",

@@ -1,9 +1,8 @@
 /** Recover complete PR file metadata when GitHub cannot render a large diff.
  * Only immutable public Git objects are read; no source is checked out or run.
  */
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PullRequestFile } from "../src/lib/leaderboard";
@@ -33,38 +32,46 @@ async function streamGit(
   homeDirectory = directory,
 ): Promise<void> {
   const command = publicGitProcess(directory, args);
-  const child = spawn(command.file, command.args, {
-    ...command.options,
-    env: {
-      ...command.options.env,
-      HOME: homeDirectory,
-      XDG_CONFIG_HOME: homeDirectory,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const completed = new Promise<void>((resolve, reject) => {
-    child.once("error", () =>
-      reject(new Error("Native Git object read failed")),
-    );
-    child.once("close", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error("Native Git object read failed")),
-    );
-  });
-  // Git diagnostics may include repository content. Drain without publishing it.
-  child.stderr.resume();
+  const spool = await mkdtemp(join(tmpdir(), "slop-git-object-output-"));
   try {
-    await Promise.all([
-      completed,
-      (async () => {
-        for await (const chunk of child.stdout) read(Buffer.from(chunk));
-      })(),
-    ]);
-  } catch (error) {
-    child.kill("SIGKILL");
-    await completed.catch(() => {});
-    throw error;
+    const output = await open(join(spool, "stdout"), "wx+", 0o600);
+    try {
+      // Capture stdout in a regular file so Node pipe closure cannot race a
+      // short-lived Git process. Never interpret the output of a failed read.
+      let exited: number;
+      try {
+        exited = await Bun.spawn([command.file, ...command.args], {
+          env: {
+            ...command.options.env,
+            HOME: homeDirectory,
+            XDG_CONFIG_HOME: homeDirectory,
+          },
+          timeout: command.options.timeout,
+          stdin: "ignore",
+          stdout: output.fd,
+          // Git diagnostics may include repository content.
+          stderr: "ignore",
+        }).exited;
+      } catch {
+        throw new Error("Native Git object read failed");
+      }
+      if (exited !== 0) throw new Error("Native Git object read failed");
+
+      const size = (await output.stat()).size;
+      let offset = 0;
+      while (offset < size) {
+        const chunk = Buffer.allocUnsafe(Math.min(size - offset, 64 * 1024));
+        // The child and this handle share the kernel file offset.
+        const { bytesRead } = await output.read(chunk, 0, chunk.length, offset);
+        if (bytesRead === 0) throw new Error("Native Git object read failed");
+        offset += bytesRead;
+        read(chunk.subarray(0, bytesRead));
+      }
+    } finally {
+      await output.close();
+    }
+  } finally {
+    await rm(spool, { recursive: true, force: true });
   }
 }
 
