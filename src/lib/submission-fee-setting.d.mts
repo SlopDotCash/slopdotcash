@@ -4,6 +4,8 @@ export type SubmissionFeeSetting = {
   readonly enabled: boolean;
   /** Six-decimal stablecoin base units; absent means the platform default. */
   readonly amountMinor?: string;
+  /** `false` when the owner refuses standing deposits; absent is on. */
+  readonly standingDeposits?: false;
 };
 
 export declare const SUBMISSION_FEE_SETTING_LIMITS: Readonly<{

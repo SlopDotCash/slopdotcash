@@ -11,7 +11,8 @@
 // abuse detection. Writes and authorization failures return immediately, and
 // exhausted retries cannot manufacture a success. PR file and exact commit-PR
 // association reads can retry HTTP 500 twice. Exact commit file pages also
-// retry HTTP 500 twice, HTTP 422 once and HTTP 502 twice independently. Retries
+// retry HTTP 500 twice, HTTP 422 once and HTTP 502 twice independently. An
+// exact single pull request read retries HTTP 500, 422 and 502 twice each. Retries
 // preserve the quota retry count. Tests cover URLs, delays, and caller signals.
 module github_ingestion_read {
   pure val limitSignals = Set("primary","retryAfter","status429","secondaryMessage")
@@ -36,15 +37,16 @@ module github_ingestion_read {
   action choosePullFiles = chooseFilePage("pull")
   action chooseCommitPulls = chooseFilePage("commit-pulls")
   action chooseCommitFiles = chooseFilePage("commit")
+  action choosePullRead = chooseFilePage("pull-read")
   action restore = all {s.phase=="ready",s.read,not(s.cache),s.filePage=="none",s'=s.with("cache",true)}
   action request = all {Set("ready","wait","file-wait").contains(s.phase),
     s.phase=="file-wait" or s.attempt<5,
     s'=s.with("phase","request")
       .with("attempt",if(s.phase=="file-wait") s.attempt else s.attempt+1)
       .with("conditional",s.cache)}
-  val serverRetryLimit = if(Set("pull","commit-pulls","commit").contains(s.filePage)) 2 else 0
-  val validationRetryLimit = if(s.filePage=="commit") 1 else 0
-  val gatewayRetryLimit = if(s.filePage=="commit") 2 else 0
+  val serverRetryLimit = if(Set("pull","commit-pulls","commit","pull-read").contains(s.filePage)) 2 else 0
+  val validationRetryLimit = if(s.filePage=="commit") 1 else if(s.filePage=="pull-read") 2 else 0
+  val gatewayRetryLimit = if(Set("commit","pull-read").contains(s.filePage)) 2 else 0
   action fileError(status: int): bool = all {s.phase=="request",
     s'=if(s.read and status==500 and s.serverRetries<serverRetryLimit)
       s.with("phase","file-wait").with("serverRetries",s.serverRetries+1)
@@ -71,12 +73,12 @@ module github_ingestion_read {
   action checkpoint = all {s.read,Set("ready","wait","file-wait","request").contains(s.phase),
     s'=s.with("phase","checkpoint")}
   action success = all {s.phase=="request",s'=s.with("phase","done").with("success",true).with("limited",false)}
-  action step = any {chooseWrite,choosePullFiles,chooseCommitPulls,chooseCommitFiles,restore,request,
+  action step = any {chooseWrite,choosePullFiles,chooseCommitPulls,chooseCommitFiles,choosePullRead,restore,request,
     validatorMismatch,revalidate,limit,refuse,fileError(500),fileError(422),fileError(502),checkpoint,success,s'=s}
   val invariant = all {s.attempt<=5,not(s.read) implies s.attempt<=1,
     s.serverRetries<=serverRetryLimit, s.serverRetries>0 implies s.read and s.filePage!="none",
-    s.validationRetries<=validationRetryLimit, s.validationRetries>0 implies s.read and s.filePage=="commit",
-    s.gatewayRetries<=gatewayRetryLimit, s.gatewayRetries>0 implies s.read and s.filePage=="commit",
+    s.validationRetries<=validationRetryLimit, s.validationRetries>0 implies s.read and Set("commit","pull-read").contains(s.filePage),
+    s.gatewayRetries<=gatewayRetryLimit, s.gatewayRetries>0 implies s.read and Set("commit","pull-read").contains(s.filePage),
     s.phase=="file-wait" implies (s.serverRetries>0 or s.validationRetries>0 or s.gatewayRetries>0) and not(s.success),
     s.phase=="wait" implies s.read and s.limited and s.attempt<5 and limitSignals.contains(s.signal),
     s.replayed implies s.read and s.cache and s.confirmed and s.success,
@@ -115,6 +117,15 @@ module github_ingestion_read {
     .then(limit).then(request).then(limit).then(request).then(limit).then(request).then(limit).then(request)
     .then(fileError(500)).then(request).expect(s.attempt==5 and s.serverRetries==1 and invariant)
     .then(limit).expect(s.phase=="failed" and invariant).then(request.fail())
+  run pullReadValidationErrorsRecoverTest = init.then(choosePullRead).then(request)
+    .then(fileError(422)).then(request).then(fileError(422)).then(request).then(success)
+    .expect(s.attempt==1 and s.validationRetries==2 and s.success and invariant)
+  run pullReadValidationErrorsStayBoundedTest = init.then(choosePullRead).then(request)
+    .then(fileError(422)).then(request).then(fileError(422)).then(request).then(fileError(422))
+    .expect(s.phase=="failed" and s.validationRetries==2 and invariant)
+  run pullReadServerErrorRecoversTest = init.then(choosePullRead).then(request)
+    .then(fileError(500)).then(request).then(success)
+    .expect(s.serverRetries==1 and s.success and invariant)
   run commitFileErrorRecoversTest = init.then(chooseCommitFiles).then(request)
     .then(fileError(422)).then(request).then(success)
     .expect(s.attempt==1 and s.validationRetries==1 and s.success and invariant)

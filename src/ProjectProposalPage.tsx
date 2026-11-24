@@ -48,6 +48,7 @@ import {
   READY_LABEL_LIMITS,
   type ReadyLabelSettings,
 } from "./lib/slopbot-ready.mjs";
+import { standingDepositsAccepted } from "./lib/standing-deposit.mjs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "./lib/submission-fee.mjs";
 import {
   SUBMISSION_FEE_HINT,
@@ -744,13 +745,15 @@ function submissionFeeSummary(
 }
 
 /**
- * The refundable submission fee (PRD section 5). The amount field appears
- * only where the owner can set it, on the settings page.
+ * The refundable submission fee (PRD section 5). The amount field and the
+ * standing deposit choice appear only where the owner can set them, on the
+ * settings page.
  */
 function SubmissionFeeFields({
   value,
   onChange,
   amount,
+  standing,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -759,6 +762,8 @@ function SubmissionFeeFields({
     onChange: (value: string) => void;
     error: string | undefined;
   };
+  /** Accept standing deposits (PRD section 5); absent on the new-project form. */
+  standing?: { value: string; onChange: (value: string) => void };
 }) {
   return (
     <div>
@@ -787,6 +792,19 @@ function SubmissionFeeFields({
           onChange={amount.onChange}
           value={amount.value}
         />
+      ) : null}
+      {standing && value === "true" ? (
+        <label className="checkbox-field">
+          <input
+            checked={standing.value === "true"}
+            name="standingDeposits"
+            onChange={(event) =>
+              standing.onChange(String(event.currentTarget.checked))
+            }
+            type="checkbox"
+          />{" "}
+          Accept standing deposits
+        </label>
       ) : null}
     </div>
   );
@@ -2581,6 +2599,8 @@ type UpdateDraft = ReadyDraft & {
   submissionFee: string;
   /** The stablecoin amount as typed, for example "2" or "2.50". */
   submissionFeeAmount: string;
+  /** "true" unless the owner refuses standing deposits. */
+  standingDeposits: string;
   wantedIssues: string;
   reportDeposit: string;
   intakeCap: string;
@@ -2615,6 +2635,7 @@ const DRAFT_FIELDS = [
   "readyProtectedPaths",
   "submissionFee",
   "submissionFeeAmount",
+  "standingDeposits",
   "wantedIssues",
   "reportDeposit",
   "intakeCap",
@@ -2914,6 +2935,7 @@ function ProjectUpdateForm({
     submissionFeeAmount: submissionFeeAmountText(
       currentFee?.amountMinor ?? SUBMISSION_FEE_SETTING_LIMITS.defaultMinor,
     ),
+    standingDeposits: String(currentFee?.standingDeposits !== false),
     wantedIssues: String(current.slopbot?.wantedIssues === true),
     // On unless the project turned it off; absent is on.
     reportDeposit: String(reportDepositOn(current)),
@@ -3082,7 +3104,7 @@ function ProjectUpdateForm({
   const feeAmount = submissionFeeAmountDraft(value.submissionFeeAmount);
   // Off keeps the owner's last amount so turning it back on restores it. An
   // invalid amount keeps the published setting until it is corrected.
-  const nextFee: SubmissionFeeSetting | undefined = feeOn
+  const feeChoice: SubmissionFeeSetting | undefined = feeOn
     ? feeAmount.error !== undefined ||
       (currentFee?.enabled === true &&
         (currentFee.amountMinor ??
@@ -3092,6 +3114,18 @@ function ProjectUpdateForm({
     : currentFee?.enabled === true
       ? { ...currentFee, enabled: false }
       : currentFee;
+  // Standing deposits are refused only by `standingDeposits: false`; an
+  // accepting setting stores nothing for them.
+  let nextFee = feeChoice;
+  if (nextFee !== undefined || value.standingDeposits !== "true") {
+    const { standingDeposits: _refused, ...fee } = nextFee ?? {
+      enabled: false,
+    };
+    nextFee =
+      value.standingDeposits === "true"
+        ? fee
+        : { ...fee, standingDeposits: false };
+  }
   const share = maintainerShareDraft(value.maintainerShare);
   const errors: Record<string, string | undefined> = {
     ...(readyOn ? ready.errors : {}),
@@ -3330,6 +3364,12 @@ function ProjectUpdateForm({
       label: "Submission fee",
       before: submissionFeeSummary(current.slopbot?.submissionFee),
       after: submissionFeeSummary(next.slopbot?.submissionFee),
+    },
+    {
+      field: "standingDeposits",
+      label: "Standing deposits",
+      before: standingDepositsAccepted(current) ? "Accepted" : "Refused",
+      after: standingDepositsAccepted(next) ? "Accepted" : "Refused",
     },
     {
       field: "wantedIssues",
@@ -3841,6 +3881,10 @@ function ProjectUpdateForm({
               value: value.submissionFeeAmount,
             }}
             onChange={set("submissionFee")}
+            standing={{
+              onChange: set("standingDeposits"),
+              value: value.standingDeposits,
+            }}
             value={value.submissionFee}
           />
         )}
