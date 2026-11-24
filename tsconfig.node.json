@@ -70,6 +70,7 @@
     "src/lib/evm-fee-deposit.ts",
     "src/lib/submission-fee-page.ts",
     "src/lib/report-deposit-page.ts",
+    "src/lib/standing-deposit-page.ts",
     "src/lib/evm-vault-actions.ts",
     "src/lib/network-names.ts",
     "src/lib/referral-claims.ts",

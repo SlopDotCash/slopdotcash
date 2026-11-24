@@ -118,8 +118,11 @@ function readDeposited(item: string): Deposited | null {
   }
 }
 
-/** What a deposit pays: a pull request's fee, or the deposit on a private report. */
-export type FeeSubject = "pull request" | "report";
+/**
+ * What a deposit pays: a pull request's fee, the deposit on a private report,
+ * or a contributor's standing deposit.
+ */
+export type FeeSubject = "pull request" | "report" | "standing deposit";
 const WORDS: Record<
   FeeSubject,
   { label: string; recorded: string; kept: string; uncounted: string }
@@ -135,6 +138,12 @@ const WORDS: Record<
     recorded: "Slop records the deposit",
     kept: "a kept deposit",
     uncounted: "it did not count for this report",
+  },
+  "standing deposit": {
+    label: "Pay the standing deposit",
+    recorded: "Slop records the standing deposit",
+    kept: "a kept deposit",
+    uncounted: "it did not count as your standing deposit",
   },
 };
 

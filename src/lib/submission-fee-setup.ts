@@ -11,6 +11,12 @@
  */
 
 import { REPORT_DEPOSIT_SWITCHED_ON } from "./security-report-deposit.mjs";
+import {
+  STANDING_DEPOSIT_CONTRACT,
+  STANDING_DEPOSIT_NETWORK,
+  STANDING_DEPOSIT_START_BLOCK,
+  standingDepositDeployed,
+} from "./standing-deposit.mjs";
 import { SUBMISSION_FEE_SWITCHED_ON } from "./submission-fee.mjs";
 import { type FeeTables, PUBLISHED_FEE_TABLES } from "./submission-fee-page";
 
@@ -19,6 +25,8 @@ type FeeFixture = {
   /** The report deposit's own switch (`REPORT_DEPOSIT_SWITCHED_ON`). */
   reportDeposit?: boolean;
   tables?: Partial<FeeTables>;
+  /** A standing deposit contract of a private local chain (`STANDING_DEPOSIT_CONTRACT`). */
+  standingDeposit?: { contract: string; startBlock: number };
 };
 
 function fixture(): FeeFixture | undefined {
@@ -58,5 +66,43 @@ export function reportDepositSetup(): {
   return {
     switchedOn: REPORT_DEPOSIT_SWITCHED_ON,
     tables: PUBLISHED_FEE_TABLES,
+  };
+}
+
+/**
+ * The same for the standing deposit page (PRD section 5, "Standing
+ * deposit"): the deployed bundle uses `STANDING_DEPOSIT_CONTRACT` and its
+ * start block, which are null until the second deposit contract is
+ * deployed; the browser-test build may set `standingDeposit` on the same
+ * fixture object. `tables` name the standing contract on Robinhood Chain, so
+ * every way to pay is checked against it and never against the per pull
+ * request contract.
+ */
+export function standingDepositSetup(): {
+  deployed: boolean;
+  contract: string | null;
+  tables: FeeTables;
+} {
+  const test = fixture();
+  const base = test
+    ? { ...PUBLISHED_FEE_TABLES, ...test.tables }
+    : PUBLISHED_FEE_TABLES;
+  const contract = test
+    ? (test.standingDeposit?.contract ?? null)
+    : STANDING_DEPOSIT_CONTRACT;
+  const startBlock = test
+    ? (test.standingDeposit?.startBlock ?? null)
+    : STANDING_DEPOSIT_START_BLOCK;
+  const deployed = standingDepositDeployed(contract, startBlock);
+  return {
+    deployed,
+    contract: deployed ? contract : null,
+    tables: {
+      ...base,
+      contracts: {
+        ...base.contracts,
+        [STANDING_DEPOSIT_NETWORK]: deployed ? contract : null,
+      },
+    },
   };
 }
