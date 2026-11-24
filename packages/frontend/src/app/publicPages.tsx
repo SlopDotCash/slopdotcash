@@ -1,4 +1,4 @@
-// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"
+// spec/frontend/registry.md, "A page that acts on a project manifest needs a current registry and other pages show the last good registry labelled stale"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Listings tag a positive current amount as Vaulted, Promised or Configured, and say when it is not vaulted"; spec/frontend/poolListing.md, "Home shows the listed Featured and Community projects once the funding read settles, Featured as cards and Community ten to a page"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/frontend/projections.md, "Free funds show how many whole months of the current amount they cover"; spec/frontend/views.md, "A published maintainer share shows this month's share, and next month's while a change waits"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"; spec/frontend/views.md, "Who-builds counts come only from the committed 2026-09-17 snapshot pinned by its digest"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"; spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
 import type { Effect } from "effect";
 import { minCap } from "../../gen/backend__intakeCap.ts";
 import type { PoolRead } from "../../gen/frontend__projections.ts";
@@ -12,7 +12,7 @@ import { repositoryRegistryOf } from "../reads/registryTerms.ts";
 import { HomePage, projectCoverage } from "../screens/home/index.ts";
 import type { ListedProject, MergeLine, Shown } from "../screens/home/index.ts";
 import { poolReadOf } from "../screens/projects/history.ts";
-import { type MergeIndex, projectFunding, projectHeld, projectPromiseOf, slopbotSettings } from "../screens/projects/summary.ts";
+import { type MergeIndex, projectFunding, projectHeld, projectOutOfRotation, projectPromiseOf, slopbotSettings } from "../screens/projects/summary.ts";
 import { projectOf } from "../screens/projects/project.schema.ts";
 import { loadWork, type ProjectRuntime, projectReads, projectRuntime } from "../screens/projects/reads.vibe";
 import { useShownRead } from "../screens/projects/hooks.ts";
@@ -27,6 +27,7 @@ interface Listing {
   readonly projects: Shown<ReadonlyArray<ListedProject>>;
   readonly funding: PoolRead;
   readonly capped: boolean;
+  readonly outOfRotation: boolean;
 }
 
 const unread: Shown<never> = { status: "Loading", value: undefined };
@@ -61,6 +62,7 @@ function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>):
       promise,
       coverage,
       held: projectHeld(project, merge, nowMs),
+      outOfRotation: projectOutOfRotation(project, merge, nowMs),
       ...(shareLine === undefined ? {} : { shareLine }),
       escrow: { deployments: project.deployments },
     } satisfies ListedProject;
@@ -69,6 +71,7 @@ function useListing(reads: Reads, boot: RegistryBoot, merge: Shown<MergeIndex>):
     projects: { status: registryStatus(boot), value: boot.error === undefined ? listed : undefined },
     funding: poolReadOf(pool.status),
     capped: shown.some(({ project }) => slopbotSettings(project).intakeCap >= minCap),
+    outOfRotation: listed.some((project) => project.outOfRotation === true),
   };
 }
 
@@ -90,13 +93,13 @@ function HomeMerged({ runtime, reads, boot }: ListedProps) {
 }
 
 function HomeListed({ runtime, reads, boot }: ListedProps) {
-  const { projects, funding, capped } = useListing(reads, boot, unmerged);
-  return capped ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
+  const { projects, funding, capped, outOfRotation } = useListing(reads, boot, unmerged);
+  return capped || outOfRotation ? <HomeMerged runtime={runtime} reads={reads} boot={boot} /> : <HomePage runtime={runtime} projects={projects} funding={funding} />;
 }
 
 const failedRead: Shown<never> = { status: "Failed", value: undefined, onRetry: () => location.reload() };
 
-/** `/`: the home page over the project registry, this month's pool funding and owner promises, and the merge activity once some project has an intake cap. */
+/** `/`: the home page over the project registry, this month's pool funding and owner promises, and the merge activity once some project has an intake cap or is out of rotation. */
 export function HomeRoute({ runtime }: PageProps) {
   const { reads, boot } = useSection(runtime);
   if (reads.status === "done" && boot.status === "done") return <HomeListed runtime={runtime} reads={reads.value} boot={boot.value} />;
