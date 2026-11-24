@@ -8,6 +8,13 @@
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import {
+  STANDING_DEPOSIT_CONTRACT,
+  STANDING_DEPOSIT_LEDGER,
+  STANDING_DEPOSIT_NETWORK,
+  STANDING_DEPOSIT_START_BLOCK,
+  standingDepositDeployed,
+} from "../../src/lib/standing-deposit.mjs";
+import {
   SUBMISSION_FEE_BURN,
   SUBMISSION_FEE_CHAIN_IDS,
   SUBMISSION_FEE_CONFIRMATIONS,
@@ -38,7 +45,16 @@ export interface GasLimits {
 }
 
 export interface NetworkConfig {
+  /** The ledger key: deposit, cursor, send and parked rows are keyed by it. */
   network: string;
+  /**
+   * The chain whose token, kept-to, chain id, confirmation and RPC tables
+   * apply. It equals `network` for the per pull request contracts on Base
+   * and Robinhood Chain; the standing deposit contract (operator decision,
+   * 23 November 2026) is its own ledger on the Robinhood Chain tables.
+   * Absent means `network`.
+   */
+  chain?: string;
   chainId: number;
   /** Lowercase address of the SubmissionDeposits contract. */
   contract: string;
@@ -97,6 +113,17 @@ export const OFFICIAL_POOL = Object.freeze({
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/u;
 
+/** The chain whose tables apply to a ledger. */
+export function chainOf(network: Pick<NetworkConfig, "network" | "chain">) {
+  return network.chain ?? network.network;
+}
+
+/** A deployed contract that is not in the reviewed fee tables. */
+export interface StandingDeployment {
+  contract: string | null;
+  startBlock: number | null;
+}
+
 function wei(value: string | undefined, name: string): string {
   const text = (value ?? "").trim();
   if (
@@ -114,6 +141,33 @@ function rpc(value: string | undefined, fallback: string, name: string) {
   return url;
 }
 
+/** The reviewed chain id, confirmations and log page of a fee chain. */
+function chainFacts(network: string) {
+  const definition = (
+    ESCROW_NETWORKS as Record<
+      string,
+      { chainId?: string; scanPageBlocks?: string } | undefined
+    >
+  )[network];
+  const chainId = (SUBMISSION_FEE_CHAIN_IDS as Record<string, number>)[network];
+  const confirmations = (
+    SUBMISSION_FEE_CONFIRMATIONS as Record<string, number>
+  )[network];
+  const page = Number(definition?.scanPageBlocks);
+  if (
+    !definition ||
+    Number(definition.chainId) !== chainId ||
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    !Number.isSafeInteger(confirmations) ||
+    confirmations < 1 ||
+    !SUBMISSION_FEE_KEPT_TO[network] ||
+    !SUBMISSION_FEE_TOKENS[network]
+  )
+    throw new TypeError(`${network} is not a registered fee network`);
+  return { chainId, confirmations, page };
+}
+
 export function parseMode(env: SubmissionFeeEnv): Mode {
   const mode = (env.SUBMISSION_FEE_MODE ?? "off").trim();
   if (mode !== "off" && mode !== "dry_run" && mode !== "live")
@@ -126,8 +180,17 @@ export function parseMode(env: SubmissionFeeEnv): Mode {
  * contract address and its start block are set in the reviewed tables; one
  * without the other is refused. The gas ceilings are required in every mode
  * but `off`, so a `dry_run` proves the configuration `live` will use.
+ *
+ * `standing` is the standing deposit contract; it defaults to the reviewed
+ * constants and only tests pass another.
  */
-export function parseConfig(env: SubmissionFeeEnv): SubmissionFeeConfig {
+export function parseConfig(
+  env: SubmissionFeeEnv,
+  standing: StandingDeployment = {
+    contract: STANDING_DEPOSIT_CONTRACT,
+    startBlock: STANDING_DEPOSIT_START_BLOCK,
+  },
+): SubmissionFeeConfig {
   const mode = parseMode(env);
   const gas: GasLimits = {
     perTransactionWei: wei(
@@ -163,33 +226,11 @@ export function parseConfig(env: SubmissionFeeEnv): SubmissionFeeConfig {
       throw new TypeError(
         `${network} needs both a contract address and a start block`,
       );
-    const definition = (
-      ESCROW_NETWORKS as Record<
-        string,
-        { chainId?: string; scanPageBlocks?: string } | undefined
-      >
-    )[network];
-    const chainId = (SUBMISSION_FEE_CHAIN_IDS as Record<string, number>)[
-      network
-    ];
-    const confirmations = (
-      SUBMISSION_FEE_CONFIRMATIONS as Record<string, number>
-    )[network];
-    const page = Number(definition?.scanPageBlocks);
-    if (
-      !definition ||
-      Number(definition.chainId) !== chainId ||
-      !Number.isSafeInteger(page) ||
-      page < 1 ||
-      !Number.isSafeInteger(confirmations) ||
-      confirmations < 1 ||
-      !SUBMISSION_FEE_KEPT_TO[network] ||
-      !SUBMISSION_FEE_TOKENS[network]
-    )
-      throw new TypeError(`${network} is not a registered fee network`);
+    const facts = chainFacts(network);
     networks.push({
       network,
-      chainId,
+      chain: network,
+      chainId: facts.chainId,
       contract: contract.toLowerCase(),
       startBlock: startBlock as number,
       rpcUrl: rpc(
@@ -197,8 +238,32 @@ export function parseConfig(env: SubmissionFeeEnv): SubmissionFeeConfig {
         DEFAULT_RPC[network],
         RPC_VAR[network],
       ),
-      confirmations,
-      scanPageBlocks: page,
+      confirmations: facts.confirmations,
+      scanPageBlocks: facts.page,
+      gas,
+    });
+  }
+  // The standing deposit contract: a ledger of its own on the Robinhood Chain
+  // tables, read only once its address and start block are recorded. While
+  // they are null the ledger does not exist and nothing is reported for it.
+  if (standingDepositDeployed(standing.contract, standing.startBlock)) {
+    const chain = STANDING_DEPOSIT_NETWORK;
+    const facts = chainFacts(chain);
+    const contract = (standing.contract as string).toLowerCase();
+    // Two ledgers reading one contract would judge each deposit twice.
+    if (networks.some((network) => network.contract === contract))
+      throw new TypeError(
+        "The standing deposit contract must differ from the fee contracts",
+      );
+    networks.push({
+      network: STANDING_DEPOSIT_LEDGER,
+      chain,
+      chainId: facts.chainId,
+      contract,
+      startBlock: standing.startBlock as number,
+      rpcUrl: rpc(env[RPC_VAR[chain]], DEFAULT_RPC[chain], RPC_VAR[chain]),
+      confirmations: facts.confirmations,
+      scanPageBlocks: facts.page,
       gas,
     });
   }

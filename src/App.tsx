@@ -157,6 +157,7 @@ const SecurityProgramPage = lazy(() =>
 );
 const SubmissionFeePage = lazy(() => import("./SubmissionFeePage"));
 const ReportDepositPage = lazy(() => import("./ReportDepositPage"));
+const StandingDepositPage = lazy(() => import("./StandingDepositPage"));
 const RequestedReposPage = lazy(() => import("./RequestedRepos"));
 const RecordPage = lazy(() => import("./RecordPage"));
 const ReceiptsPage = lazy(() => import("./ReceiptsPage"));
@@ -222,6 +223,7 @@ type PageRouteKind =
   | "requested"
   | "record"
   | "receipts"
+  | "standing-deposit"
   | TermsRouteKind;
 /** Program terms pages and the privacy policy, each one fixed segment. */
 type TermsRouteKind =
@@ -301,6 +303,12 @@ const ROUTES: Record<
   fee: { snapshot: false, registry: "cached" },
   // The record names no project, so the page needs no registry.
   "report-deposit": { snapshot: false, registry: "independent" },
+  // The signed-in contributor's own deposit; it names no project.
+  "standing-deposit": {
+    snapshot: false,
+    registry: "independent",
+    privateTitle: "Standing deposit",
+  },
   // Repositories not on Slop: the page reads no project registry.
   requested: { snapshot: false, registry: "independent" },
   // The public record pages read only /data/record.json.
@@ -328,6 +336,7 @@ const PAGE_ROUTES = new Map<string, PageRouteKind>([
   ["requested", "requested"],
   ["record", "record"],
   ["receipts", "receipts"],
+  ["deposit", "standing-deposit"],
   ["referrals", "referrals"],
   ["buyback", "buyback"],
   ["october-allocation", "october-allocation"],
@@ -452,7 +461,12 @@ function routeHead(route: Route): { title: string; path: string | null } {
   if (privateTitle) {
     return {
       title: pageTitle(privateTitle),
-      path: route.kind === "security-cases" ? "/security" : `/${route.kind}`,
+      path:
+        route.kind === "security-cases"
+          ? "/security"
+          : route.kind === "standing-deposit"
+            ? "/deposit"
+            : `/${route.kind}`,
     };
   }
   // One page per pull request: titled, never indexed.
@@ -2033,6 +2047,7 @@ function AppContent({ route }: { route: Route }) {
     content = <RecordTermsPage name={route.kind} />;
   else if (route.kind === "report-deposit")
     content = <ReportDepositPage key={route.caseId} caseId={route.caseId} />;
+  else if (route.kind === "standing-deposit") content = <StandingDepositPage />;
   else content = <NotFound />;
   return (
     <>

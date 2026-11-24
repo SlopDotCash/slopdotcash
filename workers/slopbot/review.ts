@@ -1551,6 +1551,7 @@ async function runReview(
         github: context.github,
         projectId: context.registration.projectId,
         exemption,
+        author: { id: issue.user.id, login: issue.user.login },
         openedAt: context.pull?.created_at,
         mayAsk: await monthlyReviewOpen(
           db,

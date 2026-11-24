@@ -60,11 +60,18 @@ export function submissionFeeAmountText(minor) {
 export function assertSubmissionFeeSetting(value, field) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new TypeError(`${field} must be an object`);
-  const keys = Object.keys(value).sort().join(",");
+  const keys = Object.keys(value)
+    .filter((key) => key !== "standingDeposits")
+    .sort()
+    .join(",");
   if (keys !== "enabled" && keys !== "amountMinor,enabled")
     throw new TypeError(`${field} has unexpected or missing fields`);
   if (typeof value.enabled !== "boolean")
     throw new TypeError(`${field}.enabled must be a boolean`);
+  // The standing deposit (operator decision, 23 November 2026): stored only
+  // as `false`, when the owner refuses standing deposits. Absent is on.
+  if (value.standingDeposits !== undefined && value.standingDeposits !== false)
+    throw new TypeError(`${field}.standingDeposits must be false when present`);
   if (value.amountMinor === undefined) return;
   if (
     typeof value.amountMinor !== "string" ||

@@ -195,6 +195,75 @@ names a report is an unknown item.
 **The log** names a paid report only by its deposit
 (`submission_fee_report_paid`, network and deposit id), never by its case.
 
+## Standing deposits
+
+A contributor can post one standing deposit of SLOP instead of paying a fee
+on every pull request (operator decision, 23 November 2026; PRD section 5,
+"Standing deposit", and section 6, FEE-08). It is held in a second
+deployment of the unchanged `SubmissionDeposits` contract on Robinhood
+Chain, with a 365-day reclaim delay. The website writes one row per account
+and round in `standing_deposits` (migration 0149), Slopbot decides when the
+deposit is due back or kept, and this Worker does the chain side only.
+
+**A ledger of its own.** The second contract is read as the ledger
+`robinhood-standing` (`STANDING_DEPOSIT_LEDGER` in
+`src/lib/standing-deposit.mjs`). Its deposit, cursor, send and parked rows
+are keyed by that name, so its deposit ids never meet the fee contract's.
+Its token, burn address, chain id, confirmation count, log page and RPC
+endpoint are Robinhood Chain's (`chain: "robinhood-mainnet"` in its
+configuration). The ledger exists only once `STANDING_DEPOSIT_CONTRACT` and
+`STANDING_DEPOSIT_START_BLOCK` are recorded; while they are null nothing is
+read and nothing is reported for it. The standing contract may not be one of
+the fee contracts.
+
+**When a deposit pays a standing row** (`standingDepositCounts` in
+`standing.ts`). All of these:
+
+- its `item` is the `item` of a row in `standing_deposits`
+  (`standingDepositItem(githubId, round)`);
+- it is on the standing ledger, never the fee contract;
+- the token is SLOP from the Robinhood Chain table;
+- `keptTo` is the burn address;
+- the row was not withdrawn before payment (`cancelled_at` is null);
+- the amount is at least the row's `slop_amount`;
+- the row is not already paid by another deposit, and not already decided.
+
+Reasons specific to it: `standing_wrong_ledger`, `standing_token_not_slop`,
+`standing_cancelled`, `standing_amount_invalid`. The shared reasons keep
+their meaning. A refused deposit of an accepted token is sent back once it is
+finalized, never kept. A deposit of a token outside the table is never
+resolved. A deposit whose item no row has waits 24 hours after it is
+finalized and is then sent back as `unknown_item`. A deposit on either fee
+ledger never pays a standing row, and a standing deposit never pays a pull
+request or a report.
+
+**What the Worker writes on the row.** `paid_at`, `paid_network`
+(`robinhood-standing`) and `paid_deposit_id` once the deposit has the
+confirmation count on top of it, only if no other deposit paid the row and it
+was not withdrawn. It clears them when that unfinalized deposit is
+reorganised away or replaced and the row has no outcome. After the
+contract's finalized `Resolved` or `Reclaimed` event it writes `outcome`
+`refunded` or `kept` and `outcome_at`. `outcome_reason` and the strike
+columns are Slopbot's and are never changed here.
+
+**What is sent** (`standingResolveAction`). For a finalized, accepted
+deposit: sent back when the row it paid says `refund_due`; kept, to the burn
+address, only when that row says `kept_due`, names this very deposit as the
+one that paid, and the deposit is SLOP on the standing ledger kept to the
+burn address. Nothing else keeps a standing deposit.
+
+**One key, one nonce.** The standing ledger and the Robinhood Chain fee
+ledger sign with the same resolver key, so they share its nonce. Neither
+signs while the other has a send in flight: the run reports
+`sibling_in_flight` and waits, which is not an error, and the insert of a
+live send repeats the check so two runs can never both hold a signed nonce.
+The day's native-fee ceiling counts the sends of both ledgers, since one key
+pays for them. On Base nothing changes.
+
+**The log** names a paid standing row only by its deposit
+(`submission_fee_standing_paid`, ledger and deposit id), never by its
+account.
+
 ## Sending
 
 The resolver key can do one thing: mark an open deposit "refund" (its amount

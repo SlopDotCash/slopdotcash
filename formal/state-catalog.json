@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6b5ea73a501c9dce2f2e46a93a675a506e3d91782b401e95e8ea780d591c25d3",
+  "inventorySha256": "d925f5fa388653b642d8e2848897e3df2d7203aa90dbc1b221d9728821525276",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2351,6 +2351,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0149_standing_deposits.sql",
+      "line": 64,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["clear", "pending", "strike", "watch"],
+      "models": ["formal/models/fees/standing_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -2970,7 +2980,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 586,
+      "line": 600,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2999,7 +3009,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1349,
+      "line": 1363,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -3231,7 +3241,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1223,
+      "line": 1241,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -3260,7 +3270,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1722,
+      "line": 1740,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -3289,7 +3299,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2801,
+      "line": 2822,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -3318,7 +3328,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2806,
+      "line": 2827,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3347,7 +3357,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2813,
+      "line": 2834,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3376,7 +3386,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2816,
+      "line": 2837,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -4315,6 +4325,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/standing-deposit-page.ts",
+      "line": 56,
+      "name": "outcomeReason",
+      "kind": "string-union",
+      "values": ["expired", "strike", "withdrawn"],
+      "models": ["formal/models/ui/ui_standing_deposit.qnt"],
+      "lexicallyUnmentionedValues": ["expired", "strike", "withdrawn"],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/submission-fee-page.ts",
       "line": 51,
       "name": "FeeOutcome",
@@ -4870,7 +4890,7 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "line": 230,
+      "line": 231,
       "name": "INSTALLATION_STATES",
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
@@ -5000,7 +5020,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3018,
+      "line": 3019,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -5023,7 +5043,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3092,
+      "line": 3093,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -5046,7 +5066,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 3155,
+      "line": 3156,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -5068,8 +5088,28 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/slopbot/standing-deposit.ts",
+      "line": 48,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["clear", "pending", "strike", "watch"],
+      "models": ["formal/models/fees/standing_deposit.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/standing-deposit.ts",
+      "line": 265,
+      "name": "reason",
+      "kind": "string-union",
+      "values": ["expired", "strike", "withdrawn"],
+      "models": ["formal/models/fees/standing_deposit.qnt"],
+      "lexicallyUnmentionedValues": ["expired", "withdrawn"],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 50,
+      "line": 64,
       "name": "FeeMode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -5082,7 +5122,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 181,
+      "line": 195,
       "name": "FeeOutcomeWhy",
       "kind": "string-union",
       "values": ["closed", "marked", "merged", "undecided", "wanted"],
@@ -5095,7 +5135,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 313,
+      "line": 343,
       "name": "GateState",
       "kind": "string-union",
       "values": ["asked", "asking", "paid", "recorded", "released"],
@@ -5108,7 +5148,7 @@
     },
     {
       "path": "workers/slopbot/submission-fee.ts",
-      "line": 847,
+      "line": 1131,
       "name": "outcome",
       "kind": "string-union",
       "values": ["kept_due", "refund_due"],
@@ -5215,7 +5255,7 @@
     },
     {
       "path": "workers/submission-fee/config.ts",
-      "line": 21,
+      "line": 28,
       "name": "Mode",
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
@@ -5225,7 +5265,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 118,
+      "line": 138,
       "name": "SendState",
       "kind": "string-union",
       "values": ["failed", "finalized", "recorded", "submitted", "unknown"],
@@ -5239,7 +5279,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 132,
+      "line": 152,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5253,7 +5293,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 164,
+      "line": 184,
       "name": "ParkReason",
       "kind": "string-union",
       "values": ["payout_failed", "reverted_alone"],
@@ -5267,7 +5307,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 167,
+      "line": 187,
       "name": "ProbeResult",
       "kind": "string-union",
       "values": ["ok", "payout_failed", "reverted"],
@@ -5281,7 +5321,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 227,
+      "line": 247,
       "name": "state",
       "kind": "string-union",
       "values": ["kept", "reclaimed", "refunded"],
@@ -5295,7 +5335,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 287,
+      "line": 322,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],
@@ -5309,7 +5349,7 @@
     },
     {
       "path": "workers/submission-fee/core.ts",
-      "line": 443,
+      "line": 499,
       "name": "status",
       "kind": "string-union",
       "values": ["chain_mismatch", "ran"],
@@ -5323,7 +5363,7 @@
     },
     {
       "path": "workers/submission-fee/index.ts",
-      "line": 60,
+      "line": 63,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5336,7 +5376,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 141,
+      "line": 177,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -5351,7 +5391,7 @@
     },
     {
       "path": "workers/submission-fee/store.ts",
-      "line": 688,
+      "line": 793,
       "name": "state",
       "kind": "string-union",
       "values": ["kept_due", "open", "refund_due"],

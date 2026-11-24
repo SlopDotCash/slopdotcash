@@ -38,6 +38,7 @@ import {
   reviewItem,
 } from "./review";
 import { dispatchSpendAlert } from "./spend-alerts";
+import { checkStandingDeposits } from "./standing-deposit";
 import { hasSlopParticipationFooter } from "./submission-evidence";
 import {
   dispatchFeeChecks,
@@ -614,6 +615,7 @@ export default {
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchReadyChecks(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchFeeChecks(env, env.SLOPBOT_QUEUE),
+      checkStandingDeposits(env),
       processPendingPointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
