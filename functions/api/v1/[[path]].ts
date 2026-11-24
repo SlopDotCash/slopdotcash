@@ -69,12 +69,14 @@ import { reportDepositMode } from "../../../backend/security/report-deposit";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
+import { handleStandingDeposit } from "../../../backend/standing-deposit/handler";
 import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
   CloudflareTracePersistence,
   privateIntakeStatus,
 } from "../../../backend/trace/cloudflare-persistence";
 import { handleTraceApi } from "../../../backend/trace/handler";
+import { handleTraceLicensing } from "../../../backend/trace-licensing/handler";
 import { githubFlaggerStanding } from "../../../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -499,6 +501,19 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralCode !== null) return referralCode;
+  const standingDeposit = await handleStandingDeposit(request, {
+    db,
+    sessionActor,
+    now,
+    randomId,
+  });
+  if (standingDeposit !== null) return standingDeposit;
+  const traceLicensing = await handleTraceLicensing(request, {
+    db,
+    sessionActor,
+    now,
+  });
+  if (traceLicensing !== null) return traceLicensing;
   const repoRequests = await handleRepoRequests(request, {
     db,
     sessionActor,

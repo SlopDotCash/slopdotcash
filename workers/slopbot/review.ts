@@ -4,6 +4,7 @@
 
 import { notifySlopbotScamReview } from "../../backend/notifications/events";
 import { hasParticipationBan } from "../../backend/projects/account-bans";
+import { validIsoTimestamp } from "../../backend/trace/validation";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { POINTS_PER_THIRD } from "../../src/lib/points";
 import { publishAppealComment } from "./appeal-publication";
@@ -180,6 +181,7 @@ type Issue = {
 type Pull = {
   draft: boolean;
   merged: boolean;
+  merged_at?: string | null;
   created_at?: string | null;
   head: { sha: string };
   base: { sha: string; ref: string; repo: { id: number } };
@@ -1549,6 +1551,7 @@ async function runReview(
         github: context.github,
         projectId: context.registration.projectId,
         exemption,
+        author: { id: issue.user.id, login: issue.user.login },
         openedAt: context.pull?.created_at,
         mayAsk: await monthlyReviewOpen(
           db,
@@ -2303,6 +2306,7 @@ type AppealSession = {
   github: GitHubClient;
   repo: Repo;
   issue: Issue;
+  pull: Pull | null;
   revision: string;
   registration: Context["registration"];
   /** A retired project: no review, so no model call or GitHub write. Only
@@ -2344,11 +2348,12 @@ async function appealSession(
     `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
   );
   if (issue === null) return "ignored";
-  const { revision } = await itemRevision(github, job, issue);
+  const { pull, revision } = await itemRevision(github, job, issue);
   return {
     github,
     repo,
     issue,
+    pull,
     revision,
     registration,
     reversalOnly: reviewable === null,
@@ -2580,11 +2585,17 @@ export async function recordHumanSignal(
     job.kind === "human_reopen" ? await reopenSource(db, job) : null;
   if (job.kind === "human_reopen") {
     if (!source) return "reopen source unavailable; no decision";
+    const mergedAfterReopen =
+      job.senderId !== issue.user.id &&
+      session.pull?.merged === true &&
+      validIsoTimestamp(session.pull.merged_at) &&
+      Date.parse(session.pull.merged_at) >= Date.parse(source.occurredAt);
     if (
       source.itemNodeId !== issue.node_id ||
       (issue.state !== "open" &&
         (issue.state !== "closed" ||
-          (issue.closed_by &&
+          (!mergedAfterReopen &&
+            issue.closed_by &&
             Number.isSafeInteger(issue.closed_by.id) &&
             issue.closed_by.id > 0 &&
             String(issue.closed_by.id) !== env.SLOPBOT_APP_USER_ID)))

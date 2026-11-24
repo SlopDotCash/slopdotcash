@@ -327,7 +327,22 @@ identities and states only.
 
 `.github/workflows/vetting-controller.yml` runs this same controller on an
 ephemeral trusted GitHub runner. It dispatches the reviewed `main` and
-`development` revisions to their existing protected environments. Source and
+`development` revisions to their existing protected environments. A pass runs
+when the deployed isolated runner reports the checkout's own commit, or an
+earlier commit of the same branch with no scanner input changed since
+(operator decision, 23 November 2026; `scripts/vetting-runner-equivalence.ts`).
+Scanner inputs are the relative-import closure of the controller, the vetting
+API and the isolated runner, every non-test, non-Markdown file under
+`workers/vetting/`, `workers/vetting-sandbox/` and `backend/vetting/`, this
+workflow, `package.json` and `bun.lock`. The controller reads GitHub's compare
+of the two commits; a compare that is unreadable, not `ahead` or truncated at
+300 files refuses the pass until the checkout's own release is deployed. The
+dispatcher applies the same rule with the directory and file list before
+dispatching, using the commit the environment's site serves. Each release
+publishes the scanner input list of its commit at `/scanner-inputs.json`;
+the outside scheduler that starts scans while `main` is not the default
+branch refuses a merge that touches a listed file, so it agrees with the
+controller. Source and
 model responses stay in private temporary files and are deleted at the end of
 the pass; no workflow artifact contains them. Risky artifacts still execute
 only through the separate Cloudflare sandbox.

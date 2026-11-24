@@ -1,0 +1,95 @@
+/* Public record pages: /record, /receipts, the program terms and /privacy. */
+.record-page > p,
+.record-page section > p,
+.record-page li {
+  max-width: 74ch;
+}
+
+.record-page h2 {
+  margin-top: 40px;
+}
+
+.record-stamp,
+.record-note,
+.record-links {
+  color: var(--muted);
+}
+
+.record-status {
+  margin: 20px 0;
+  padding: 14px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.record-status p:last-child {
+  margin-bottom: 0;
+}
+
+.record-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-pill {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.record-addr,
+.record-page code {
+  font-family: var(--brand-font-data);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.record-receipt {
+  margin-top: 40px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.record-receipt dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 12px 0;
+}
+
+.record-receipt dt {
+  color: var(--muted);
+}
+
+.record-receipt dd {
+  margin: 0;
+}
+
+/* The page shell breaks words anywhere; keep table words whole and let the
+   table wrap scroll sideways instead. */
+.record-page .plain-table :is(th, td) {
+  overflow-wrap: normal;
+}
+
+.record-receipt-table.plain-table {
+  min-width: 0;
+}
+
+.record-links {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 560px) {
+  .record-receipt dl {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .record-receipt dd {
+    margin-bottom: 8px;
+  }
+}

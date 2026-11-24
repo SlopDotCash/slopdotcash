@@ -129,6 +129,9 @@ alias only.
     the same key resolves the deposit on a private security report (PRD
     section 8, "Report deposit") with the same two outcomes, a refund to the
     payer or "kept" to the burn address, for the row the security API marked.
+    Operator decision of 23 November 2026: it also resolves standing deposits
+    in a second deployment of the same contract on Robinhood Chain (PRD
+    section 6, FEE-08), with the same two outcomes, for the row Slopbot marked.
 - The owner may authorize an agent to use necessary existing credentials
   privately and execute reviewed setup, testnet or mainnet plans (owner
   decision, 25 October 2026; PRD section 11). Stay within the authorized
@@ -344,7 +347,16 @@ makes the deposit due back; a pull request closed without a merge for 7 days
 keeps it (a stablecoin fee to Slop as fee income, a SLOP fee burned), except
 one that closes an issue labelled `slop-wanted` before it was opened, which is
 sent back unless a maintainer adds `slop-keep-fee` (operator decision,
-22 November 2026). Slopbot
+22 November 2026). A contributor
+may instead post one standing deposit of SLOP worth 10 US dollars from
+`/deposit` (`src/lib/standing-deposit.mjs`; operator decision, 23 November
+2026; PRD section 5, "Standing deposit"). While it stands, Slopbot covers that
+contributor's pull requests on a project that accepts it and has merged one of
+theirs, at most 10 open at once, without asking the fee. It is kept, and
+burned, only when a maintainer closes a covered pull request within 21 days
+and adds `slop-keep-fee`, and both stand 48 hours; an ordinary close costs
+nothing. A withdrawal stops new cover at once and the deposit is sent back 21
+days later. Slopbot
 moves no money, never closes a pull request for an unpaid fee, and never
 blocks a maintainer's own review or merge; scoring does not read the fee.
 The comment links the pay page
@@ -512,8 +524,17 @@ Operator decision, 22 November 2026: contract version 2
 upload by default after showing the file and a one-line decline, and adds paid
 licensing as a separate account opt-in: 50% of each sale to contributors,
 merged or closed pull requests only, never re-identification or resale.
-Version 1 keeps governing traces uploaded under it. Licensing is not available
-until the account setting exists.
+Version 1 keeps governing traces uploaded under it. Operator decision,
+23 November 2026: licensing is available from the account settings
+(`/account#trace-licensing`), off by default, and turning it on needs the
+provider-terms confirmation. A contributor's earlier or unlicensed traces are
+licensed only by an explicit opt-in, one by one or all listed at once; turning
+the setting off or closing the account withdraws every unsold licence. No trace
+has been sold or exported. Operator decision, 23 November 2026: contract
+version 3 (`backend/trace/README.md#private-trace-privacy-contract-v3`) keeps
+the contents of files in the project's own repository when GitHub reports an
+OSI-approved licence for it, and licenses a version 3 upload at upload only
+when the setting is on and was last confirmed under version 3.
 
 Trace bodies are permanent private R2 objects. D1 stores only safe metadata and
 digests. No website or API route returns a trace body, including to
@@ -733,6 +754,11 @@ vault holds it; otherwise the pool reads as points only (PRD section 6,
 operator decision of 15 November 2026). From December 2026 a month is
 promised only if the vault covered it on the 1st, and Slop's pages refuse a
 withdrawal below the promised amount.
+/record, /receipts, the program terms pages and /privacy read only
+`/data/record.json`, which every release build rebuilds (`scripts/record/`)
+and which keeps the previous record on any failure; a published payout
+receipt never disappears (PRD section 7, operator decision of 23 November
+2026).
 
 ## Project authority and IP
 
@@ -799,7 +825,11 @@ To publish new data without a commit, run the release workflow by hand
 `daily-collection.yml` workflow does this every day at 07:17 UTC unless a
 collection is already running, publishes a superseded collection through a
 `data_from_run` release, and resumes a failed collection once (operator
-decision, 19 November 2026). Every production release requires current main equivalence. Every
+decision, 19 November 2026). Saved commit attributions in the collection memo survive
+code changes; a change that could make a saved answer come out differently
+must raise `ATTRIBUTION_RULES_VERSION` in `scripts/collection-memo.ts`, and a
+test pins the rule sources (PRD section 11, operator decision, 24 November
+2026). Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

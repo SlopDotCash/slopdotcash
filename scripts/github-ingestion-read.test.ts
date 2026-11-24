@@ -148,7 +148,7 @@ for (const path of [
 }
 
 for (const path of [
-  "/repos/owner/repo/pulls/7",
+  "/repos/owner/repo/pulls/7?state=all",
   "/repos/owner/repo/pulls/7/reviews/9",
   "/repos/owner/repo/issues/7",
   "/repos/owner/repo/issues/comments?per_page=100",
@@ -175,12 +175,144 @@ test("persistent PR file failures return the complete third HTTP 500 response", 
   expect(f.waits).toEqual([1_000, 2_000]);
 });
 
+// A single pull request read can answer a transient 422 or 500; the same read
+// a few seconds later succeeds (23 Nov: one 422 on elizaOS/eliza#37149 ended a
+// three-hour collection, and the read answered 200 afterwards).
+const pullReadError = () =>
+  Response.json({ message: "Validation Failed" }, { status: 422 });
+for (const path of [
+  "/repos/elizaOS/eliza/pulls/37149",
+  "/repositories/42/pulls/7",
+]) {
+  test(`single pull request reads recover from two HTTP 422 responses at ${path}`, async () => {
+    const pull = { number: 7, merged: true };
+    const f = fixture([
+      pullReadError,
+      pullReadError,
+      () => Response.json(pull),
+    ]);
+    expect(await f.client.get<typeof pull>(path)).toEqual(pull);
+    expect(f.urls).toEqual(Array(3).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+  test(`single pull request reads recover from two HTTP 500 responses at ${path}`, async () => {
+    const pull = { number: 7, merged: true };
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(pull),
+    ]);
+    expect(await f.client.get<typeof pull>(path)).toEqual(pull);
+    expect(f.calls()).toBe(3);
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("persistent single pull request failures return the third HTTP 422 response", async () => {
+  const finalBody = { message: "Still unavailable" };
+  const f = fixture([
+    pullReadError,
+    pullReadError,
+    () => Response.json(finalBody, { status: 422 }),
+    () => Response.json({ number: 7 }),
+  ]);
+  const response = await f.read(
+    "https://api.github.com/repos/owner/repo/pulls/7",
+  );
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(3);
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+test("HTTP 422 retries require an exact single pull request GET", async () => {
+  const url = "https://api.github.com/repos/owner/repo/pulls/7";
+  for (const [input, init] of [
+    [`${url}?state=all`, undefined],
+    [`${url}/merge`, undefined],
+    [`${url}#fragment`, undefined],
+    ["https://api.github.com/repos/owner/repo/pulls/07", undefined],
+    [url, { method: "PATCH" }],
+  ] as const) {
+    const f = fixture([pullReadError]);
+    expect((await f.read(input, init)).status).toBe(422);
+    expect(f.urls).toEqual([input]);
+    expect(f.waits).toEqual([]);
+  }
+});
+
 const commitSha = "a".repeat(40);
 const commitPath = `/repos/owner/repo/commits/${commitSha}`;
 const commitFilesPath = `${commitPath}?per_page=100&page=1`;
 const commitReadError = () =>
   Response.json({ message: "Validation Failed" }, { status: 422 });
 const commitGatewayError = () => new Response("Bad Gateway", { status: 502 });
+
+const failedCommitSha = "92aef0fa346078323fd44e35ac136539657592f3";
+for (const [path, sha] of [
+  [
+    `/repos/SlopDotCash/slopdotcash/commits/${failedCommitSha}?per_page=100&page=1`,
+    failedCommitSha,
+  ],
+  [`/repositories/42/commits/${commitSha}?per_page=100&page=2`, commitSha],
+] as const) {
+  test(`commit file reads recover from two HTTP 500 responses on the same page at ${path}`, async () => {
+    const commit = {
+      sha,
+      files: [{ filename: "source.ts", additions: 9, deletions: 2 }],
+    };
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(commit),
+    ]);
+    expect(await f.client.get<typeof commit>(path)).toEqual(commit);
+    expect(f.urls).toEqual(Array(3).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("commit file HTTP 500, validation and gateway retries stay independently bounded", async () => {
+  const terminalBody = { message: "Commit file page unavailable" };
+  const f = fixture([
+    fileReadError,
+    commitGatewayError,
+    commitReadError,
+    fileReadError,
+    commitGatewayError,
+    () =>
+      Response.json(terminalBody, {
+        status: 500,
+        statusText: "Commit unavailable",
+        headers: { "x-github-request-id": "terminal-request" },
+      }),
+    () => Response.json({ sha: commitSha, files: [] }),
+  ]);
+  const url = `https://api.github.com${commitFilesPath}`;
+  const response = await f.read(url);
+  expect(response.status).toBe(500);
+  expect(response.statusText).toBe("Commit unavailable");
+  expect(response.headers.get("x-github-request-id")).toBe("terminal-request");
+  expect(await response.json()).toEqual(terminalBody);
+  expect(f.urls).toEqual(Array(6).fill(url));
+  expect(f.waits).toEqual([1_000, 1_000, 1_000, 2_000, 2_000]);
+});
+
+test("HTTP 500 retries require an exact GitHub commit file page GET", async () => {
+  const url = `https://api.github.com${commitFilesPath}`;
+  for (const [input, init] of [
+    [`https://api.github.com${commitPath}`, undefined],
+    [url.replace(commitSha, "abcdef0"), undefined],
+    [url.replace("per_page=100", "per_page=50"), undefined],
+    [`${url}#fragment`, undefined],
+    [url, { method: "POST" }],
+  ] as const) {
+    const f = fixture([fileReadError]);
+    expect((await f.read(input, init)).status).toBe(500);
+    expect(f.urls).toEqual([input]);
+    expect(f.waits).toEqual([]);
+  }
+});
 
 for (const path of [
   commitFilesPath,
@@ -390,7 +522,6 @@ test("commit-associated PR retry scope excludes mutable refs and noncanonical qu
     commitPullsPath.replace("per_page=100", "per_page=99"),
     commitPullsPath.replace("?per_page=100", "?page=1&per_page=100"),
     `/repositories/0/commits/${commitSha}/pulls?per_page=100`,
-    commitFilesPath,
   ];
   for (const path of paths) {
     const f = fixture([fileReadError]);

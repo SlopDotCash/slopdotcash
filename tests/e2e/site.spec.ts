@@ -1659,12 +1659,23 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status(), path).toBe(200);
   }
+  // The public record pages are Pages rewrites to the application.
+  for (const path of [
+    "/record",
+    "/receipts",
+    "/receipts/",
+    "/referrals",
+    "/buyback",
+    "/october-allocation",
+    "/sponsored-pools",
+    "/privacy",
+  ]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(200);
+  }
   for (const path of [
     "/models",
     "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
     "/operator/traces",
     "/operator/traces/",
   ]) {
@@ -1674,7 +1685,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
 
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(200);
-  expect(await sitemap.text()).not.toContain("/receipts");
+  expect(await sitemap.text()).toContain("https://slop.cash/receipts");
 
   const [
     bootstrapResponse,
@@ -1683,6 +1694,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityResponse,
     privateTraceContractResponse,
     privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1694,6 +1706,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
     request.get("/protocol/private-trace-v2.md"),
+    request.get("/protocol/private-trace-v3.md"),
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
@@ -1706,6 +1719,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityResponse,
     privateTraceContractResponse,
     privateTraceContractV2Response,
+    privateTraceContractV3Response,
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
@@ -1752,15 +1766,47 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
   expect(privateTraceContractV2).toContain(
     "# Private trace privacy contract v2",
   );
-  expect(privateTraceContractV2).toContain("Licensing is not available yet");
-  expect(privateTraceContractV2).toContain("50% of what the buyer pays");
-  expect(privateTraceContractV2).toContain("while the setting is on");
-  expect(privateTraceContractV2).toContain(
-    "also store the terms version once consent records ship",
+  // Phrases are matched across line wraps, so a rewrap of the README holds.
+  const privateTraceContractV2Text = privateTraceContractV2.replace(
+    /\s+/gu,
+    " ",
   );
+  expect(privateTraceContractV2Text).toContain(
+    "Licensing is available from your account settings",
+  );
+  expect(privateTraceContractV2Text).toContain("every listed trace at once");
+  expect(privateTraceContractV2Text).toContain(
+    "Closing the account withdraws every unsold licence",
+  );
+  expect(privateTraceContractV2Text).not.toContain(
+    "Licensing is not available",
+  );
+  expect(privateTraceContractV2Text).toContain("50% of what the buyer pays");
+  expect(privateTraceContractV2Text).toContain("while the setting is on");
+  expect(privateTraceContractV2Text).not.toContain("once consent records ship");
   expect(privateTraceContractV2).toContain("Retention is permanent");
   expect(privateTraceContractV2).toContain("[REDACTED:CREDENTIAL]");
   expect(privateTraceContractV2).not.toContain("## Cloudflare provisioning");
+  expect(privateTraceContractV2).not.toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3Response.headers()["content-type"]).toContain(
+    "text/markdown",
+  );
+  const privateTraceContractV3 = await privateTraceContractV3Response.text();
+  expect(privateTraceContractV3).toContain(
+    "# Private trace privacy contract v3",
+  );
+  expect(privateTraceContractV3).toContain("private-trace-v3");
+  const privateTraceContractV3Text = privateTraceContractV3.replace(
+    /\s+/gu,
+    " ",
+  );
+  expect(privateTraceContractV3Text).toContain("OSI-approved licence");
+  expect(privateTraceContractV3Text).toContain(
+    "does not cover a version 3 trace",
+  );
+  expect(privateTraceContractV3).toContain("[REDACTED:OUTSIDE_REPO]");
+  expect(privateTraceContractV3).toContain("Retention is permanent");
+  expect(privateTraceContractV3).not.toContain("## Storage contract");
   expect(privateTraceContractV2).not.toContain("## Storage contract");
   for (const response of [pointsRulesResponse, scoringRulesResponse]) {
     const rules = await response.text();
@@ -1993,7 +2039,8 @@ for (const route of [
       path = `/cycles/${cycle.projectId}/${cycle.cycleId}`;
     }
     await page.goto(path, { waitUntil: "networkidle" });
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
+    // Only the footer links the payout receipts page (/record and /receipts).
+    await expect(page.locator('main a[href^="/receipts"]')).toHaveCount(0);
     const project = PROJECTS.find(
       (candidate) => path === `/projects/${candidate.id}`,
     );
@@ -2282,7 +2329,7 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(referral).toContainText("paid its contributors");
   await expect(
     referral.getByRole("link", { name: "Referral terms" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  ).toHaveAttribute("href", "/referrals");
   const buyback = faq.locator("article", {
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
@@ -2295,21 +2342,13 @@ test("how it works answers the referral and buyback questions", async ({
   await expect(buyback).not.toContainText("starts with the first fee");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
-  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
+  ).toHaveAttribute("href", "/buyback");
 });
 
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
-  for (const path of [
-    "/models",
-    "/models/",
-    "/receipts",
-    "/receipts/",
-    "/receipts?q=old-run",
-    "/constructor",
-    "/__proto__",
-  ]) {
+  for (const path of ["/models", "/models/", "/constructor", "/__proto__"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", { name: "Page not found", exact: true }),
@@ -2320,7 +2359,6 @@ test("refuses retired and unknown paths and recovers to projects", async ({
       "noindex",
     );
     await expect(page.locator(".receipt-record")).toHaveCount(0);
-    await expect(page.locator('a[href^="/receipts"]')).toHaveCount(0);
     await page
       .getByRole("link", { name: "See open projects", exact: true })
       .click();

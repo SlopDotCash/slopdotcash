@@ -226,12 +226,18 @@ export function githubIngestionReadTransport(
         !url.hash &&
         /^\/commits\/[a-f0-9]{40}\/pulls$/u.test(repositoryPath) &&
         /^\?per_page=100(?:&page=[1-9]\d*)?$/u.test(url.search);
-      const readRetry =
-        pullFiles || commitPulls
-          ? { status: 500, limit: 2 }
-          : commitFilePage
-            ? { status: 422, limit: 1 }
-            : null;
+      // A single pull request read can also answer a transient 422 or 500
+      // (23 Nov: one 422 on elizaOS/eliza#37149 ended a three-hour
+      // collection; the same read answered 200 afterwards).
+      const pullRead =
+        gatewayRetry &&
+        /^\/pulls\/[1-9]\d*$/u.test(repositoryPath) &&
+        url.search === "";
+      const serverErrorRetry =
+        pullFiles ||
+        commitPulls ||
+        ((commitFilePage || pullRead) && gatewayRetry);
+      const validationRetryLimit = pullRead ? 2 : commitFilePage ? 1 : 0;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -283,7 +289,8 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
-      let readRetries = 0;
+      let serverRetries = 0;
+      let validationRetries = 0;
       let gatewayRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
@@ -328,12 +335,16 @@ export function githubIngestionReadTransport(
             response.status === 503 ||
             response.status === 504) &&
           gatewayRetries < 2;
-        const retryRead =
-          readRetry &&
-          response.status === readRetry.status &&
-          readRetries < readRetry.limit;
-        if (retryGateway || retryRead) {
-          const retry = retryGateway ? ++gatewayRetries : ++readRetries;
+        const retryServer =
+          serverErrorRetry && response.status === 500 && serverRetries < 2;
+        const retryValidation =
+          response.status === 422 && validationRetries < validationRetryLimit;
+        if (retryGateway || retryServer || retryValidation) {
+          const retry = retryGateway
+            ? ++gatewayRetries
+            : retryServer
+              ? ++serverRetries
+              : ++validationRetries;
           const delay = retry * 1_000;
           await response.body?.cancel();
           checkDeadline(delay);

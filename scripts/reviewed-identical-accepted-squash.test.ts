@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "../src/lib/sha256";
@@ -10,6 +10,79 @@ import {
 } from "./pull-request-git-files";
 import { verifyHistoricalIdenticalAcceptedChanges } from "./run-reviewed-historical-points";
 import { publicGitProcess } from "./value-merge-ingestion";
+
+test("native Git proof consumes complete output only after a successful exit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "slop-git-output-fixture-"));
+  // A signaled or nonzero child can leave bytes that look like complete
+  // output. Run the real proof reader in a child with an isolated PATH.
+  const program = `
+    import { ChildProcess } from "node:child_process";
+    import { changeDigest } from ${JSON.stringify(new URL("./pull-request-git-files.ts", import.meta.url).href)};
+    const spawn = ChildProcess.prototype.spawn;
+    ChildProcess.prototype.spawn = function (...args) {
+      const result = spawn.apply(this, args);
+      const stdout = this.stdout;
+      if (stdout) queueMicrotask(() => stdout.destroy());
+      return result;
+    };
+    try {
+      console.log(await changeDigest(process.env.GIT_FIXTURE_DIRECTORY, "base", "head"));
+    } catch (error) {
+      console.log(error.message);
+    }
+  `;
+  try {
+    await writeFile(
+      join(directory, "git"),
+      `#!/bin/sh
+printf 'partial output\\n'
+case "$(cat "$(dirname "$0")/mode")" in
+  pipe) trap - PIPE; kill -PIPE "$$"; exit 91 ;;
+  failure) exit 128 ;;
+esac
+/usr/bin/head -c 131073 /dev/zero
+`,
+      { mode: 0o700 },
+    );
+    const complete = Buffer.concat([
+      Buffer.from("partial output\n"),
+      Buffer.alloc(131073),
+    ]);
+    for (const [mode, expected] of [
+      ["pipe", "Native Git object read failed"],
+      ["failure", "Native Git object read failed"],
+      ["success", sha256Hex(complete)],
+    ]) {
+      await writeFile(join(directory, "mode"), mode);
+      const child = Bun.spawn(
+        [process.execPath, "--no-env-file", "--eval", program],
+        {
+          env: {
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            TMPDIR: directory,
+            GIT_FIXTURE_DIRECTORY: directory,
+          },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        },
+      );
+      const [exitCode, stdout] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stdout.trimEnd()).toBe(expected);
+      expect(
+        (await readdir(directory)).filter((name) =>
+          name.startsWith("slop-git-object-output-"),
+        ),
+      ).toEqual([]);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 45_000);
 
 for (const scenario of [
   "identical two-parent merges",
