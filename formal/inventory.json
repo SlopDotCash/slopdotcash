@@ -997,16 +997,17 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "sha256": "614bcb9ff4f05b4e4ca9c0b66280f45fa5d3b0cdd65e28a57415aafce168375e",
+      "sha256": "c9f01530c943e2d9998b58aa7352a689631db7d24b7695d1b5dfa77ee5b777f5",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
-        "formal/models/api/api_private_case_transaction.qnt"
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_queue.qnt"
       ],
       "candidateLines": [
-        36, 542, 562, 579, 580, 581, 605, 657, 730, 746, 774, 779, 781, 812,
-        813, 874, 899, 917, 957, 965, 978, 1011, 1021, 1040, 1043, 1045, 1058,
-        1110
+        36, 542, 562, 579, 583, 584, 585, 609, 661, 734, 750, 778, 783, 785,
+        816, 817, 878, 903, 921, 961, 969, 982, 1015, 1025, 1044, 1047, 1049,
+        1062, 1114
       ],
       "review": "mapped-abstraction"
     },
@@ -1156,6 +1157,13 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "candidateLines": [161, 167, 174, 240, 243],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/operator-queue.ts",
+      "sha256": "f4851d3abcc415cc38d7d6e12d99da8f7091896238b155945b34c194f94a2812",
+      "models": ["formal/models/api/api_security_queue.qnt"],
+      "candidateLines": [2, 28, 95, 104, 118, 172, 219, 222, 230],
       "review": "mapped-abstraction"
     },
     {
@@ -2407,18 +2415,19 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "41f07029c73395aaa80cfa00113576ec09b485630d42dc00010b1f9d5a1b773d",
+      "sha256": "f919af529d834b6729ae0e9619392ea4da6720895d22542d0dd1278578bef13e",
       "models": [
         "formal/models/api/api_points_session_lifetime.qnt",
         "formal/models/api/api_protected_point_months.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/api_reserved_awards_feed.qnt",
+        "formal/models/api/api_security_queue.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_route_authorization.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [591, 592, 628, 641],
+      "candidateLines": [605, 606, 642, 655],
       "review": "mapped-abstraction"
     },
     {
@@ -12043,6 +12052,29 @@
         "lostAccessWaitsTest",
         "ownerClosesSavedRequestTest",
         "serverFinishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_queue.qnt",
+      "sha256": "4069b2b467a2109fdde8e4f3bb09e03b891c6e8a3ab709e7d1aad18e1cca9077",
+      "sources": [
+        "backend/security/analysis.ts",
+        "backend/security/operator-queue.ts",
+        "functions/api/v1/[[path]].ts"
+      ],
+      "scenarios": [
+        "completeIsNeverRetriedTest",
+        "dailyCeilingRefusesTest",
+        "decidedReportIsSkippedTest",
+        "failedWaitsThirtyMinutesTest",
+        "fourAttemptsStopTheJobTest",
+        "heldReportIsSkippedTest",
+        "lostBackgroundAttemptIsRetriedTest",
+        "missingAnalysisRunsTest",
+        "readChangesNothingTest",
+        "unscreenedReportIsSkippedTest",
+        "unsetSecretIsNotFoundTest",
+        "wrongOrMissingTokenIsNotFoundTest"
       ]
     },
     {
