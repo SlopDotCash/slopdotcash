@@ -264,6 +264,7 @@ export class AttributionRecorder {
     if (this.reasons.length || !result || this.incoming === null) return null;
     return {
       outcomeId,
+      computedAt: null,
       fence,
       pulls: [...this.pulls.values()].sort((a, b) =>
         a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
