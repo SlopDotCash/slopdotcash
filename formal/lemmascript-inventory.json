@@ -6566,7 +6566,7 @@
 {"path":"scripts/restore-collected-data.py","sha256":"ff1265cf3edff3e899ed3da9ba8f0645c26d2b9ca3b7f5cdefa82ec820710492","language":"python","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"scripts/restore-collection-memo.py","sha256":"05353286dbe243932cb36190af9eb9d9104a26f8cb688aafd693378b9e98180a","language":"python","disposition":"outside-typescript-toolchain","functions":[
+{"path":"scripts/restore-collection-memo.py","sha256":"89522474bf15278685b2c87df8c32c249e785702131c37b524ad0c9c2a67a1a2","language":"python","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"scripts/restore-historical-assessment-replay.py","sha256":"98744a07783043ab44c49bb161b10c2c98e7cf743a609296a364acc66fb0be60","language":"python","disposition":"outside-typescript-toolchain","functions":[
