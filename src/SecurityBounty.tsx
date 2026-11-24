@@ -4884,6 +4884,10 @@ function SecurityInboxContent({
     const id = new URLSearchParams(window.location.search).get("case");
     return id && /^sc_[A-Za-z0-9_-]{8,72}$/u.test(id) ? id : null;
   });
+  // An opened case renders below every report, so opening one (or arriving
+  // with ?case=) brings it into view and moves focus to it.
+  const caseView = useRef<HTMLButtonElement>(null);
+  const revealCase = useRef(selected !== null);
   const [note, setNote] = useState<string | null>(null);
   const [knownSubmissionCases, setKnownSubmissionCases] = useState<string[]>(
     [],
@@ -4918,10 +4922,20 @@ function SecurityInboxContent({
         "",
         `${embedded ? "/inbox" : "/security"}?${query}`,
       );
+      revealCase.current = caseId !== null;
       if (caseId) reload();
     },
     [reload, embedded],
   );
+  const listReady = list.status === "ready";
+  useEffect(() => {
+    if (!selected || !listReady || !revealCase.current) return;
+    const target = caseView.current;
+    if (!target) return;
+    revealCase.current = false;
+    target.scrollIntoView({ block: "start" });
+    target.focus({ preventScroll: true });
+  }, [selected, listReady]);
   const created = (record: SecurityCase) => {
     setSelected(record.id);
     setNote("Report saved.");
@@ -5080,8 +5094,9 @@ function SecurityInboxContent({
               <>
                 <button
                   aria-label="Back to reports"
+                  ref={caseView}
                   type="button"
-                  className="text-button"
+                  className="text-button security-case-back"
                   title="Back to reports"
                   onClick={() => openCase(null)}
                 >
