@@ -162,6 +162,32 @@ export function apiErrorResponse(
   });
 }
 
+/**
+ * A log-safe shape of a server failure: the error's class, a fixed code when
+ * the message starts with a known database or platform code, and the names of
+ * the first stack frames. Never the message text, which can carry data.
+ */
+export function failureShape(caught: unknown): string {
+  if (!(caught instanceof Error)) return `thrown:${typeof caught}`;
+  const code =
+    /^(D1_[A-Z_]+|SQLITE_[A-Z_]+)/u.exec(caught.message)?.[1] ??
+    (/network connection lost/iu.test(caught.message)
+      ? "network-connection-lost"
+      : /overloaded/iu.test(caught.message)
+        ? "overloaded"
+        : /timed? ?out/iu.test(caught.message)
+          ? "timeout"
+          : undefined);
+  const frames = (caught.stack ?? "")
+    .split("\n")
+    .slice(1, 6)
+    .map((line) => /at (?:async )?([\w$.<>]+) /u.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
+  return [caught.name, code, frames.join("<")]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" ");
+}
+
 export function cookieValue(request: Request, name: string): string | null {
   const found = (request.headers.get("cookie") ?? "")
     .split(";")
