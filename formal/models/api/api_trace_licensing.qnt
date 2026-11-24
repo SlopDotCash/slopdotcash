@@ -29,8 +29,9 @@
 // every licensed trace (reason setting_off). optIn / optInAll: only while the
 // setting is on and the account is neither closed nor banned; a bulk opt-in
 // whose expected count differs from the eligible count (finalized, not
-// currently licensed) is refused and writes nothing, so a refusal never
-// re-licenses a withdrawn trace. close: withdraws every licence and turns the
+// currently licensed, and for a v3 trace only once conf is v3) is refused and
+// writes nothing, so a refusal never re-licenses a withdrawn trace. A chosen
+// v3 trace while conf is not v3 is refused (confirm_again) and writes nothing. close: withdraws every licence and turns the
 // setting off, writing the account_closed event only when the setting was on
 // or a licence existed. reopen restores neither. ban: licences stay.
 // Invariant: a licence exists only where the trace's latest event is a grant
@@ -54,8 +55,10 @@ module api_trace_licensing {
   val empty: Trace = { final: false, v: 1, lic: 0, ev: 0, basis: 0 }
   def licensedCount(m: int -> Trace): int =
     Set(1, 2).fold(0, (n, i) => if (m.get(i).lic == 1) n + 1 else n)
+  def eligible(t: Trace, c: int): bool =
+    t.final and t.lic != 1 and (t.v != 3 or c == 3)
   def eligibleCount(m: int -> Trace): int =
-    Set(1, 2).fold(0, (n, i) => if (m.get(i).final and m.get(i).lic != 1) n + 1 else n)
+    Set(1, 2).fold(0, (n, i) => if (eligible(m.get(i), conf)) n + 1 else n)
   def withdrawAll(m: int -> Trace): int -> Trace =
     m.keys().mapBy(i => if (m.get(i).lic == 1) m.get(i).with("lic", 2).with("ev", 2) else m.get(i))
 
@@ -118,7 +121,7 @@ module api_trace_licensing {
 
   action optIn(i: int): bool = all {
     on, not(closed), not(banned),
-    traces.get(i).final, traces.get(i).lic != 1,
+    eligible(traces.get(i), conf),
     traces' = traces.set(i, traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2)),
     on' = on, closed' = closed, banned' = banned,
     // The opt-in writes an opted_in account event with the grant.
@@ -133,7 +136,7 @@ module api_trace_licensing {
     expected == eligibleCount(traces),
     expected > 0,
     traces' = traces.keys().mapBy(i =>
-      if (traces.get(i).final and traces.get(i).lic != 1)
+      if (eligible(traces.get(i), conf))
         traces.get(i).with("lic", 1).with("ev", 1).with("basis", 2)
       else traces.get(i)),
     on' = on, closed' = closed, banned' = banned,
@@ -145,6 +148,14 @@ module api_trace_licensing {
   // changes, in particular no withdrawn trace becomes licensed.
   action optInRefused(expected: int): bool = all {
     expected != eligibleCount(traces) or not(on) or closed or banned,
+    on' = on, closed' = closed, banned' = banned, traces' = traces,
+    conf' = conf,
+    wrote' = false,
+  }
+
+  // A chosen v3 trace before the v3 confirmation: 409 confirm_again.
+  action optInNeedsConfirm(i: int): bool = all {
+    on, traces.get(i).final, traces.get(i).v == 3, conf != 3,
     on' = on, closed' = closed, banned' = banned, traces' = traces,
     conf' = conf,
     wrote' = false,
@@ -178,6 +189,7 @@ module api_trace_licensing {
     finalize(2, 1), finalize(2, 2), finalize(2, 3),
     enable, enableUnderV2, reconfirm, noopToggle, disable,
     optIn(1), optIn(2), optInAll(1), optInAll(2), optInRefused(0), optInRefused(1),
+    optInNeedsConfirm(1), optInNeedsConfirm(2),
     close, reopen, ban,
   }
 
@@ -191,10 +203,12 @@ module api_trace_licensing {
     traces.get(i).basis == 1 implies (traces.get(i).v == 2 or traces.get(i).v == 3))
   val v3UploadNeedsV3Confirmation = Set(1, 2).forall(i =>
     (traces.get(i).basis == 1 and traces.get(i).v == 3) implies conf == 3)
+  val v3LicenceNeedsV3Confirmation = Set(1, 2).forall(i =>
+    (traces.get(i).lic == 1 and traces.get(i).v == 3) implies conf == 3)
   val closedHoldsNothing = closed implies (not(on) and licensedCount(traces) == 0)
   val invariant = all {
     licenceBacked, grantBacked, licensedNeedsConsent, uploadBasisIsV2OrV3,
-    v3UploadNeedsV3Confirmation, closedHoldsNothing,
+    v3UploadNeedsV3Confirmation, v3LicenceNeedsV3Confirmation, closedHoldsNothing,
   }
 
   run uploadWhileOnTest = init.then(enable).then(finalize(1, 2)).then(finalize(2, 1))
@@ -221,6 +235,15 @@ module api_trace_licensing {
   run reconfirmLicensesLaterV3Test = init.then(enableUnderV2).then(finalize(1, 3))
     .then(reconfirm).expect(wrote and on and traces.get(1).lic == 0)
     .then(finalize(2, 3)).expect(traces.get(2).lic == 1 and traces.get(2).basis == 1)
+  run v3OptInNeedsV3ConfirmationTest = init.then(enableUnderV2).then(finalize(1, 3))
+    .then(finalize(2, 2)).then(optInNeedsConfirm(1))
+    .expect(not(wrote) and traces.get(1).lic == 0)
+    .then(disable).then(enableUnderV2).then(optInAll(2)).fail()
+  run v3OptInAfterReconfirmTest = init.then(enableUnderV2).then(finalize(1, 3))
+    .then(finalize(2, 1)).then(optInAll(1))
+    .expect(traces.get(1).lic == 0 and traces.get(2).lic == 1)
+    .then(reconfirm).then(optIn(1))
+    .expect(traces.get(1).lic == 1 and traces.get(1).basis == 2 and conf == 3)
   run optInWritesTest = init.then(enable).then(finalize(1, 1)).then(optIn(1))
     .expect(wrote and traces.get(1).lic == 1 and traces.get(1).basis == 2)
 }

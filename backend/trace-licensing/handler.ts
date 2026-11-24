@@ -71,14 +71,17 @@ const LATEST_EVENT = `(SELECT MAX(event.id) FROM trace_licensing_events event
   WHERE event.github_id = ? AND event.kind = ?)`;
 
 /**
- * The account's finalized runs that are not currently licensed. Bound with
- * the GitHub id, then (when `chosen`) a JSON array of run ids.
+ * The account's finalized runs that are not currently licensed. A version 3
+ * run counts only once the setting was last confirmed under version 3. Bound
+ * with the GitHub id twice, then (when `chosen`) a JSON array of run ids.
  */
 function eligibleRuns(chosen: boolean): string {
   return `SELECT run.id AS run_id FROM trace_runs run
     WHERE run.github_user_id = ? AND run.state = 'finalized'
       AND NOT EXISTS (SELECT 1 FROM trace_licences licence
         WHERE licence.run_id = run.id AND licence.state = 'licensed')
+      AND (run.terms_version IS NOT '${TERMS_VERSION}'
+        OR ${CONFIRMED_TERMS} IS '${TERMS_VERSION}')
       ${chosen ? "AND run.id IN (SELECT value FROM json_each(?))" : ""}`;
 }
 
@@ -457,18 +460,32 @@ async function optIn(
       "Turn trace licensing on before opting traces in.",
     );
   const chosen = choice.kind === "chosen";
-  const scope = chosen ? [githubId, JSON.stringify(choice.runIds)] : [githubId];
+  const scope = chosen
+    ? [githubId, githubId, JSON.stringify(choice.runIds)]
+    : [githubId, githubId];
   if (chosen) {
     const owned = await db
       .prepare(
-        `SELECT count(*) AS n FROM trace_runs
+        `SELECT count(*) AS n,
+           count(CASE WHEN terms_version = '${TERMS_VERSION}' THEN 1 END) AS current
+         FROM trace_runs
          WHERE github_user_id = ? AND state = 'finalized'
            AND id IN (SELECT value FROM json_each(?))`,
       )
-      .bind(...scope)
-      .first<{ n: number }>();
+      .bind(githubId, JSON.stringify(choice.runIds))
+      .first<{ n: number; current: number }>();
     if ((owned?.n ?? 0) !== choice.runIds.length)
       fail(404, "run_not_found", "A run is not one of your finalized traces.");
+    // A version 3 upload is licensed only after confirming under version 3.
+    if (
+      (owned?.current ?? 0) > 0 &&
+      (await readSetting(db, githubId)).confirmedTermsVersion !== TERMS_VERSION
+    )
+      fail(
+        409,
+        "confirm_again",
+        "Confirm licensing again under the current terms before licensing these traces.",
+      );
   }
   const eligible = eligibleRuns(chosen);
   const counted = await db
