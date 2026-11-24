@@ -8178,9 +8178,9 @@
     },
     {
       "path": "src/lib/standing-deposit.mjs",
-      "sha256": "ffe6bbef5b1432a6520ce5a0b32afeeff93725d178950086c2411d0f462079e8",
+      "sha256": "468fd979f3e6fc499bf4a8c5e7ff9fa9857fe612bb8fb84b20066d195877fda8",
       "models": ["formal/models/fees/standing_deposit.qnt"],
-      "candidateLines": [19, 177, 201, 212, 226],
+      "candidateLines": [19, 179, 203, 214, 228],
       "review": "mapped-abstraction"
     },
     {
