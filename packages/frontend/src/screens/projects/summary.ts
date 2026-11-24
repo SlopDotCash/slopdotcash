@@ -1,13 +1,15 @@
-// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "An owner's honor-system promise shows this month's amount as promised, never as vault-backed"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/views.md, "Suggested work lists the wanted issues first, unclaimed before taken, at most ten, and a failed wanted read leaves the suggestions as before"; spec/backend/intakeCap.md, "The lists leave a paused project out, its page says why, and a failed read lists it as before"; spec/backend/backlogRule.md, "The lists leave an out-of-rotation project out and its page says why"
 import type { MergeRepository, WantedIssue } from "@repo/backend/client";
 import type { WorkItem, WorkQueue } from "@repo/points/client";
 import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { fromAmount, parseBaseUnits } from "@repo/settlement/kernels/amounts";
-import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
+import { formatPeriod, periodContaining, type Period } from "@repo/settlement/kernels/calendar";
 import { Result, Schema } from "effect";
+import type { BacklogRead } from ".../../../gen/backend__backlogRule.ts";
+import { catchUpNotice, dormantNotice, overLimitHeld, overLimitNotice } from ".../../../gen/backend__backlogRule.ts";
 import type { StoredCount } from "../../../gen/backend__intakeCap.ts";
 import { wantedLabelName } from "../../../gen/backend__mergeActivity.ts";
-import { intakeHeld, type ListingFacts } from "../../../gen/frontend__poolListing.ts";
+import { backlogHeld, intakeHeld, type ListingFacts } from ".../../../gen/frontend__poolListing.ts";
 import { type PromiseFacts, promiseWarning } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type WantedRead, wantedListed } from "../../../gen/frontend__views.ts";
@@ -44,7 +46,7 @@ export const workShown = 10;
 const hourMs = 3_600_000;
 
 const SlopbotSettings = Schema.Struct({
-  slopbot: Schema.optional(Schema.Struct({ intakeCap: Schema.optional(Schema.Number), wantedIssues: Schema.optional(Schema.Boolean) })),
+  slopbot: Schema.optional(Schema.Struct({ intakeCap: Schema.optional(Schema.Number), wantedIssues: Schema.optional(Schema.Boolean), catchUpUntil: Schema.optional(Schema.String) })),
 });
 
 const decodeSlopbot = Schema.decodeUnknownResult(SlopbotSettings);
@@ -67,7 +69,7 @@ export function formatMonth(month: string): string {
 }
 
 /** @throws {never} */
-export function capOf(project: ShownProject, period: Period): bigint {
+export function capOf(project: Pick<ShownProject, "reward">, period: Period): bigint {
   const month = formatPeriod(period);
   return project.reward.cycleCaps.find((cap) => cap.cycleId === month)?.monthlyCapMinor ?? project.reward.monthlyCapMinor;
 }
@@ -89,18 +91,25 @@ export function projectListing({ project, networkPays, nowMs }: { project: Shown
   return { securityOpen: project.securityBounty?.status === "open", pool: funding.facts };
 }
 
-/** The owner's Slopbot settings of an active project: the intake cap, zero while off, and whether the wanted label is on. @throws {never} */
-export function slopbotSettings(project: Pick<ShownProject, "status" | "record">): { readonly active: boolean; readonly intakeCap: number; readonly wantedIssues: boolean } {
+/** The owner's Slopbot settings of an active project: the intake cap, zero while off, the catch-up pause's end date, and whether the wanted label is on. @throws {never} */
+export function slopbotSettings(project: Pick<ShownProject, "status" | "record">): { readonly active: boolean; readonly intakeCap: number; readonly catchUpUntil: string | undefined; readonly wantedIssues: boolean } {
   const decoded = decodeSlopbot(project.record);
   const record = Result.isSuccess(decoded) ? decoded.success : undefined;
   const cap = record?.slopbot?.intakeCap;
-  return { active: project.status === "active", intakeCap: cap !== undefined && Number.isSafeInteger(cap) ? cap : 0, wantedIssues: record?.slopbot?.wantedIssues === true };
+  return { active: project.status === "active", intakeCap: cap !== undefined && Number.isSafeInteger(cap) ? cap : 0, catchUpUntil: record?.slopbot?.catchUpUntil, wantedIssues: record?.slopbot?.wantedIssues === true };
 }
 
 /** One repository's stored count of open outside pull requests, in whole hours; a row read before the count existed holds nothing. @throws {never} */
 function storedCount(row: MergeRepository): StoredCount {
   const observed = Date.parse(row.observedAt);
   return row.openOutside === null || !Number.isFinite(observed) ? { read: false, count: 0, observedAt: 0 } : { read: true, count: row.openOutside, observedAt: Math.floor(observed / hourMs) };
+}
+
+/** One repository's stored backlog read, in whole hours: the outside pull requests waiting seven days or more and the latest merge; a row without a date holds nothing. @throws {never} */
+function storedBacklogRead(row: MergeRepository): BacklogRead {
+  const observed = Date.parse(row.observedAt);
+  const lastMergedAt = row.lastMergedAt === null ? 0 : Date.parse(row.lastMergedAt);
+  return !Number.isFinite(observed) ? { read: false, waiting: 0, lastMergedAt: 0, observedAt: 0 } : { read: true, waiting: row.waitingOutside, lastMergedAt: Number.isFinite(lastMergedAt) ? Math.floor(lastMergedAt / hourMs) : 0, observedAt: Math.floor(observed / hourMs) };
 }
 
 /** @throws {never} */
@@ -135,6 +144,34 @@ export function projectHeld(project: Pick<ShownProject, "id" | "status" | "recor
   if (merge.status !== "Current" && merge.status !== "Stale") return false;
   const { active, intakeCap } = slopbotSettings(project);
   return intakeHeld(intakeCap, active, (merge.value?.get(project.id) ?? []).map(storedCount), Math.floor(nowMs / hourMs));
+}
+
+/** Whether the backlog rule never judges this project: it is not a monthly-pool project, or its monthly amount this month is zero. @throws {RangeError} */
+export function backlogExempt(project: Pick<ShownProject, "reward">, nowMs: number): boolean {
+  return project.reward.kind !== "monthly-pool" || capOf(project, periodContaining(Math.floor(nowMs / 1000))) <= 0n;
+}
+
+/** Whether the backlog rule holds this project out of rotation: active, judged, not catching up, and over the limit or dormant on a recent read; a pending or failed read holds nothing. @throws {RangeError} */
+export function projectOutOfRotation(project: Pick<ShownProject, "id" | "status" | "record" | "reward">, merge: Shown<MergeIndex>, nowMs: number): boolean {
+  if (merge.status !== "Current" && merge.status !== "Stale") return false;
+  const { active, catchUpUntil } = slopbotSettings(project);
+  const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
+  const until = Number.isFinite(parsed) ? Math.floor(parsed / hourMs) : 0;
+  const now = Math.floor(nowMs / hourMs);
+  return backlogHeld(active, backlogExempt(project, nowMs), until > now, until, (merge.value?.get(project.id) ?? []).map(storedBacklogRead), now);
+}
+
+/** The one line the project page shows while the backlog rule holds it out of rotation, or while a catch-up pause runs; nothing otherwise. @throws {RangeError} */
+export function projectBacklogNotice(project: Pick<ShownProject, "id" | "status" | "record" | "reward">, merge: Shown<MergeIndex>, nowMs: number): string | undefined {
+  if (merge.status !== "Current" && merge.status !== "Stale") return undefined;
+  const { active, catchUpUntil } = slopbotSettings(project);
+  const parsed = catchUpUntil === undefined ? Number.NaN : Date.parse(catchUpUntil);
+  const until = Number.isFinite(parsed) ? Math.floor(parsed / hourMs) : 0;
+  const now = Math.floor(nowMs / hourMs);
+  if (until > now) return catchUpNotice;
+  const reads = (merge.value?.get(project.id) ?? []).map(storedBacklogRead);
+  if (!backlogHeld(active, backlogExempt(project, nowMs), false, until, reads, now)) return undefined;
+  return overLimitHeld(reads, now) ? overLimitNotice : dormantNotice;
 }
 
 /** The project's open wanted issues as the merge activity read supplies them, read only with the current label of an active project that turned it on. @throws {never} */
