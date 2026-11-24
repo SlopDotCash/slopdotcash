@@ -9,8 +9,16 @@
  *   Git objects never change, so these are reused exactly.
  * - Commit attribution results per merged pull request, with every fence the
  *   computation depended on. A result is reused only when the live census
- *   values, the attribution code digest and every recorded dependency still
- *   match (see attribution-memo.ts). Everything else is collected live.
+ *   values and every recorded dependency still match (see attribution-memo.ts),
+ *   the memo was written under the same ATTRIBUTION_RULES_VERSION, and the
+ *   answer is younger than its refresh age. Everything else is collected live.
+ *
+ * Operator decision, 24 November 2026: saved answers survive code changes that
+ * leave the attribution rules alone. A change to how an answer is reached must
+ * raise ATTRIBUTION_RULES_VERSION; a test pins the rule sources so such a
+ * change cannot land unnoticed. When any other code changed, more reused
+ * answers are recomputed as an audit, and each answer is recomputed at the
+ * latest a week after it was computed, on a spread of days.
  *
  * Census searches, hydration, review censuses and every consistency guard
  * still read GitHub live. The memo never changes what a collection publishes;
@@ -20,11 +28,44 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
-export const COLLECTION_MEMO_FORMAT = "slop-collection-memo-v1";
-/** A run whose memo line has not been fully recollected for this long is full. */
+export const COLLECTION_MEMO_FORMAT = "slop-collection-memo-v2";
+const COLLECTION_MEMO_FORMAT_V1 = "slop-collection-memo-v1";
+/** Retained private evidence older than this is not reused (accepted-implementation-memo.ts). */
 export const COLLECTION_MEMO_FULL_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+/** A saved attribution is recomputed at the latest this long after it was computed. */
+export const ATTRIBUTION_REFRESH_MS = COLLECTION_MEMO_FULL_INTERVAL_MS;
 /** About one reusable attribution in this many is also computed live. */
 export const ATTRIBUTION_AUDIT_ONE_IN = 50;
+/** The audit sample when code changed since the memo but the rules did not. */
+export const ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN = 10;
+/**
+ * Raise this whenever a change could make a saved attribution answer come out
+ * differently: which commits are eligible, how earlier pull requests are found
+ * or judged original, how a retained copy is proved, or what is recorded and
+ * fenced. A raised version makes the next collection recompute every answer.
+ */
+export const ATTRIBUTION_RULES_VERSION = 1;
+/**
+ * The sources that hold the attribution rules. A `region` names the
+ * `// attribution-rules: begin <region>` and `// attribution-rules: end
+ * <region>` markers that bound the rules inside a larger file.
+ */
+export const ATTRIBUTION_RULES_SOURCES: readonly {
+  path: string;
+  region?: string;
+}[] = [
+  { path: "scripts/attribution-memo.ts" },
+  { path: "scripts/retained-commit-credit.ts" },
+  { path: "scripts/value-ingestion.ts", region: "retained-authors" },
+  { path: "workers/slopbot/value-evidence.ts", region: "reference-discovery" },
+];
+/**
+ * Digest of ATTRIBUTION_RULES_SOURCES when ATTRIBUTION_RULES_VERSION was last
+ * reviewed. A test fails when they differ: decide whether the change needs a
+ * new version, then update this value.
+ */
+export const ATTRIBUTION_RULES_DIGEST =
+  "0446736c656f090c26112c3098bcb2fc9d9bc5fea09085788bfbb31fac105e53";
 const MAX_MEMO_BYTES = 512 * 1024 * 1024;
 const MAX_COMMIT_LINES = 2_000_000;
 const MAX_ATTRIBUTIONS = 200_000;
@@ -84,6 +125,8 @@ export interface AttributionMemoFence {
 
 export interface AttributionMemoEntry {
   outcomeId: string;
+  /** When the answer was computed live; null until this run's memo is written. */
+  computedAt: string | null;
   fence: AttributionMemoFence;
   pulls: AttributionPullDependency[];
   references: AttributionReferenceDependency[];
@@ -98,6 +141,7 @@ export interface CollectionMemoFile {
   cutoffAt: string;
   lastFullAt: string;
   attributionCodeDigest: string;
+  attributionRulesVersion: number;
   commitLines: CommitLineRow[];
   attributions: AttributionMemoEntry[];
 }
@@ -156,14 +200,28 @@ function parseCommitLine(value: unknown, index: number): CommitLineRow {
   ];
 }
 
-function parseEntry(value: unknown, index: number): AttributionMemoEntry {
+function parseEntry(
+  value: unknown,
+  index: number,
+  v1ComputedAt: string | null,
+): AttributionMemoEntry {
   const path = `attributions[${index}]`;
   const entry = record(value, path);
   exactKeys(
     entry,
-    ["outcomeId", "fence", "pulls", "references", "incoming", "result"],
+    [
+      "outcomeId",
+      ...(v1ComputedAt ? [] : ["computedAt"]),
+      "fence",
+      "pulls",
+      "references",
+      "incoming",
+      "result",
+    ],
     path,
   );
+  const computedAt = v1ComputedAt ?? entry.computedAt;
+  if (!isoInstant(computedAt)) fail(`${path}.computedAt`);
   const fence = record(entry.fence, `${path}.fence`);
   exactKeys(
     fence,
@@ -271,6 +329,7 @@ function parseEntry(value: unknown, index: number): AttributionMemoEntry {
   } else fail(`${path}.result.kind`);
   return {
     outcomeId: text(entry.outcomeId, `${path}.outcomeId`, 128),
+    computedAt,
     fence: {
       number: count(fence.number, `${path}.fence.number`),
       url: text(fence.url, `${path}.fence.url`),
@@ -291,6 +350,12 @@ function parseEntry(value: unknown, index: number): AttributionMemoEntry {
 export function parseCollectionMemo(bytes: string): CollectionMemoFile {
   if (bytes.length > MAX_MEMO_BYTES) fail("file is too large");
   const value = record(JSON.parse(bytes), "memo");
+  // A version 1 memo predates the rules version and per-answer dates. It was
+  // written under rules version 1; its answers are dated at its last full run,
+  // the earliest any of them could have been computed.
+  const v1 = value.format === COLLECTION_MEMO_FORMAT_V1;
+  if (!v1 && value.format !== COLLECTION_MEMO_FORMAT)
+    fail("unsupported format");
   exactKeys(
     value,
     [
@@ -299,12 +364,18 @@ export function parseCollectionMemo(bytes: string): CollectionMemoFile {
       "cutoffAt",
       "lastFullAt",
       "attributionCodeDigest",
+      ...(v1 ? [] : ["attributionRulesVersion"]),
       "commitLines",
       "attributions",
     ],
     "memo",
   );
-  if (value.format !== COLLECTION_MEMO_FORMAT) fail("unsupported format");
+  const attributionRulesVersion = v1 ? 1 : value.attributionRulesVersion;
+  if (
+    !Number.isSafeInteger(attributionRulesVersion) ||
+    (attributionRulesVersion as number) < 1
+  )
+    fail("attribution rules version");
   if (
     !isoInstant(value.producedAt) ||
     !isoInstant(value.cutoffAt) ||
@@ -325,7 +396,15 @@ export function parseCollectionMemo(bytes: string): CollectionMemoFile {
   )
     fail("collections");
   const commitLines = value.commitLines.map(parseCommitLine);
-  const attributions = value.attributions.map(parseEntry);
+  const attributions = value.attributions.map((entry, index) =>
+    parseEntry(entry, index, v1 ? (value.lastFullAt as string) : null),
+  );
+  for (const entry of attributions)
+    if (
+      Date.parse(entry.computedAt as string) >
+      Date.parse(value.producedAt as string)
+    )
+      fail("an attribution was computed after the memo");
   const commitIds = new Set<string>();
   for (const [repository, commit] of commitLines) {
     const key = `${repository}\0${commit}`;
@@ -343,6 +422,7 @@ export function parseCollectionMemo(bytes: string): CollectionMemoFile {
     cutoffAt: value.cutoffAt as string,
     lastFullAt: value.lastFullAt as string,
     attributionCodeDigest: value.attributionCodeDigest,
+    attributionRulesVersion: attributionRulesVersion as number,
     commitLines,
     attributions,
   };
@@ -410,6 +490,47 @@ export function attributionCodeDigest(
     .digest("hex");
 }
 
+/**
+ * Digest of the attribution rule sources (ATTRIBUTION_RULES_SOURCES): whole
+ * files, or the text between a region's begin and end markers.
+ */
+export function attributionRulesDigest(
+  root = resolve(dirname(new URL(import.meta.url).pathname), ".."),
+  sources = ATTRIBUTION_RULES_SOURCES,
+): string {
+  const parts = sources.map(({ path, region }) => {
+    const source = readFileSync(join(root, path), "utf8");
+    if (!region) return [path, source];
+    const begin = `// attribution-rules: begin ${region}\n`;
+    const end = `// attribution-rules: end ${region}\n`;
+    const start = source.indexOf(begin);
+    const stop = source.indexOf(end);
+    if (
+      start < 0 ||
+      stop < start ||
+      source.indexOf(begin, start + 1) >= 0 ||
+      source.indexOf(end, stop + 1) >= 0
+    )
+      fail(`attribution rules region ${region} in ${path} is not marked once`);
+    return [path, region, source.slice(start, stop + end.length)];
+  });
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+/**
+ * How long one saved answer may be reused, between half and all of
+ * ATTRIBUTION_REFRESH_MS, fixed per outcome. Answers recomputed together
+ * therefore come due on different days, and once recomputed they stay spread.
+ */
+export function attributionRefreshAge(outcomeId: string): number {
+  const fraction =
+    createHash("sha256")
+      .update(`slop-attribution-refresh\0${outcomeId}`)
+      .digest()
+      .readUInt32BE(0) / 0x1_0000_0000;
+  return Math.floor((ATTRIBUTION_REFRESH_MS * (1 + fraction)) / 2);
+}
+
 /** Immutable commit line statistics, read from and written to the memo. */
 export class CommitLineMemo {
   private readonly known = new Map<string, CommitLineRow>();
@@ -471,6 +592,8 @@ export class CollectionMemoSession {
   };
   /** Why live attributions could not be recorded for reuse, by reason. */
   readonly notReusable = new Map<string, number>();
+  /** Saved answers left out because they reached their refresh age. */
+  expired = 0;
 
   constructor(
     readonly mode: CollectionMode,
@@ -479,7 +602,10 @@ export class CollectionMemoSession {
     readonly reason: string,
     commitLines: readonly CommitLineRow[] = [],
     prior: readonly AttributionMemoEntry[] = [],
+    readonly auditOneIn: number = ATTRIBUTION_AUDIT_ONE_IN,
   ) {
+    if (!Number.isSafeInteger(auditOneIn) || auditOneIn < 1)
+      throw new Error("Invalid attribution audit rate");
     this.commitLines = new CommitLineMemo(commitLines);
     this.prior = new Map(
       mode === "incremental"
@@ -518,7 +644,7 @@ export class CollectionMemoSession {
     const digest = createHash("sha256")
       .update(`${cutoffAt}\0${outcomeId}`)
       .digest();
-    return digest.readUInt32BE(0) % ATTRIBUTION_AUDIT_ONE_IN === 0;
+    return digest.readUInt32BE(0) % this.auditOneIn === 0;
   }
 
   serialize(cutoffAt: string, producedAt: string): string {
@@ -528,28 +654,43 @@ export class CollectionMemoSession {
       cutoffAt,
       lastFullAt: this.mode === "full" ? producedAt : this.lastFullAt,
       attributionCodeDigest: this.codeDigest,
+      attributionRulesVersion: ATTRIBUTION_RULES_VERSION,
       commitLines: this.commitLines.rows(),
-      attributions: [...this.next.values()].sort((a, b) =>
-        a.outcomeId < b.outcomeId ? -1 : a.outcomeId > b.outcomeId ? 1 : 0,
-      ),
+      attributions: [...this.next.values()]
+        // A live answer is dated by the run that computed it.
+        .map((entry) => ({
+          ...entry,
+          computedAt: entry.computedAt ?? producedAt,
+        }))
+        .sort((a, b) =>
+          a.outcomeId < b.outcomeId ? -1 : a.outcomeId > b.outcomeId ? 1 : 0,
+        ),
     };
     return `${JSON.stringify(file)}\n`;
   }
 }
 
 /**
- * Decide the mode for this run. No memo, a forced full run, a memo line whose
- * last full collection is older than a week, or a memo from different
- * attribution code all recompute attributions live. Commit statistics are
- * immutable, so a readable memo always supplies them.
+ * Decide the mode for this run. No memo, a forced full run, or a memo written
+ * under other attribution rules recomputes every attribution live. Otherwise
+ * the run is incremental: answers past their refresh age are left out, and if
+ * any other code changed since the memo the audit sample grows. Commit
+ * statistics are immutable, so a readable memo always supplies them.
  */
 export function openCollectionMemo(options: {
   memo: CollectionMemoFile | null;
   forceFull: boolean;
   now: Date;
   codeDigest: string;
+  rulesVersion?: number;
 }): CollectionMemoSession {
-  const { memo, forceFull, now, codeDigest } = options;
+  const {
+    memo,
+    forceFull,
+    now,
+    codeDigest,
+    rulesVersion = ATTRIBUTION_RULES_VERSION,
+  } = options;
   if (!memo)
     return new CollectionMemoSession(
       "full",
@@ -559,20 +700,38 @@ export function openCollectionMemo(options: {
     );
   if (Date.parse(memo.producedAt) > now.getTime())
     fail("memo was produced in the future");
-  const reason = forceFull
+  const fullReason = forceFull
     ? "full collection requested"
-    : now.getTime() - Date.parse(memo.lastFullAt) >
-        COLLECTION_MEMO_FULL_INTERVAL_MS
-      ? "weekly full collection"
-      : memo.attributionCodeDigest !== codeDigest
-        ? "attribution code changed"
-        : null;
-  return new CollectionMemoSession(
-    reason ? "full" : "incremental",
+    : memo.attributionRulesVersion !== rulesVersion
+      ? "attribution rules changed"
+      : null;
+  if (fullReason)
+    return new CollectionMemoSession(
+      "full",
+      codeDigest,
+      memo.lastFullAt,
+      fullReason,
+      memo.commitLines,
+    );
+  const codeChanged = memo.attributionCodeDigest !== codeDigest;
+  const current = memo.attributions.filter(
+    (entry) =>
+      now.getTime() - Date.parse(entry.computedAt as string) <
+      attributionRefreshAge(entry.outcomeId),
+  );
+  const session = new CollectionMemoSession(
+    "incremental",
     codeDigest,
     memo.lastFullAt,
-    reason ?? "previous memo matches",
+    codeChanged
+      ? `code changed since the previous memo; auditing 1 in ${ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN}`
+      : "previous memo matches",
     memo.commitLines,
-    memo.attributions,
+    current,
+    codeChanged
+      ? ATTRIBUTION_CHANGED_CODE_AUDIT_ONE_IN
+      : ATTRIBUTION_AUDIT_ONE_IN,
   );
+  session.expired = memo.attributions.length - current.length;
+  return session;
 }

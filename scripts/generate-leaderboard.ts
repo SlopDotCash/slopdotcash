@@ -6522,7 +6522,7 @@ if (import.meta.main) {
     const { session, output } = collectionMemo;
     const lines = session.commitLines;
     process.stderr.write(
-      `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.stats.audited} audited, ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
+      `[slop.cash] collection memo: commit statistics ${lines.reused} reused, ${lines.read} read; attributions ${session.stats.reused} reused, ${session.stats.live} computed live, ${session.expired} past their refresh age, ${session.stats.audited} audited (1 in ${session.auditOneIn}), ${session.stats.auditMismatches} audit mismatches, ${session.stats.fenceMisses} changed since the last collection\n`,
     );
     if (session.notReusable.size)
       process.stderr.write(

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "220012b7ac7f1144f8615f4172363b16ee4230e88464620c03142f41815923d7",
+  "inventorySha256": "66228392c8789f7a97a35b3a4dc73450719ba8cb03dd328ee0629567ca5cf590",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2379,7 +2379,7 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "line": 50,
+      "line": 91,
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "MERGED", "OPEN"],
@@ -2389,7 +2389,7 @@
     },
     {
       "path": "scripts/collection-memo.ts",
-      "line": 455,
+      "line": 576,
       "name": "CollectionMode",
       "kind": "string-union",
       "values": ["full", "incremental"],
