@@ -296,7 +296,48 @@ export function validateVerdict(raw: unknown): Verdict | null {
   };
 }
 
-// --- Pricing (BOT-07, BOT-10) ------------------------------------------------
+export type MisreadLiteralKind = "sha256" | "hex-address";
+
+export type MisreadLiteralClaim = {
+  literal: string;
+  kind: MisreadLiteralKind;
+  denial: string;
+};
+
+// A 64-hex-char token is a valid SHA-256 digest; a 0x-prefixed 40-hex-char
+// token is a literal address, not a name.
+const SHA256_LITERAL = /\b[0-9a-fA-F]{64}\b/gu;
+const HEX_ADDRESS_LITERAL = /\b0x[0-9A-Fa-f]{40}\b/gu;
+const DENIAL_PATTERN =
+    /\binvalid\b|\bundefined\b|\bnot valid\b|\bdoes not exist\b|\bdoesn't exist\b|\bno such\b|\bnot defined\b|\bunknown\b|\bnot found\b|\bnot a real\b|\bnot a proper\b/iu;
+
+/**
+* Deterministic guard for #1930: a verdict that calls a literal value
+* invalid/undefined is a model misread, not a finding. The denial must sit
+* near the literal (within 80 characters either side) so an unrelated
+* "invalid" elsewhere in the text does not trip the guard. Checks every
+* literal in the text and returns the first one with a nearby denial, or
+* null. Pure: no imports, no I/O, safe to unit-test in isolation.
+ */
+export function misreadLiteralClaim(text: string): MisreadLiteralClaim | null {
+  const literals: { literal: string; index: number; kind: MisreadLiteralKind }[] = [];
+  for (const match of text.matchAll(SHA256_LITERAL)) {
+    literals.push({ literal: match[0], index: match.index ?? 0, kind: "sha256" });
+  }
+  for (const match of text.matchAll(HEX_ADDRESS_LITERAL)) {
+    literals.push({ literal: match[0], index: match.index ?? 0, kind: "hex-address" });
+  }
+  literals.sort((a, b) => a.index - b.index);
+  for (const { literal, index, kind } of literals) {
+    const start = Math.max(0, index - 80);
+    const end = Math.min(text.length, index + literal.length + 80);
+    const denial = DENIAL_PATTERN.exec(text.slice(start, end));
+    if (denial) return { literal, kind, denial: denial[0] };
+  }
+  return null;
+}
+
+  // --- Pricing (BOT-07, BOT-10) ------------------------------------------------
 
 // Rates are integer micro-USD per million tokens. A rate change needs a new
 // version that takes effect at a future UTC month boundary.
