@@ -42,6 +42,8 @@ machine, before anything is uploaded. Credentials, local paths and paths
 outside the repository are replaced with markers such as
 `[REDACTED:CREDENTIAL]`. In this mode a tool result has no provable file path,
 so its text is replaced with `[REDACTED:SOURCE]` unless it is empty. Your
-messages and tool calls are what the log keeps. The cleaner is pattern based
+messages are kept. A tool call keeps its tool name, but its argument values
+are kept only for shell, file read, file write and search tools; every other
+tool's argument values are replaced too. The cleaner is pattern based
 and can miss a secret, so the operator reads the cleaned file before approving
 the upload.
