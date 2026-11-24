@@ -5148,10 +5148,10 @@
     },
     {
       "path": "scripts/pull-request-git-files.ts",
-      "sha256": "2fb486e6d86b957cfdd4e557e7f889998d27d3c6478d9e041c50a6a6c905d962",
+      "sha256": "57b0b3d88a9796ad8a4023797ece868e4b74766320a7b096ee18e540973e1d01",
       "models": ["formal/models/tooling/git_file_recovery.qnt"],
       "candidateLines": [
-        6, 128, 169, 170, 195, 196, 197, 199, 200, 217, 234, 242, 245, 263
+        5, 135, 176, 177, 202, 203, 204, 206, 207, 224, 241, 249, 252, 270
       ],
       "review": "mapped-abstraction"
     },
