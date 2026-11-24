@@ -5875,10 +5875,11 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/session-export.mjs",
-      "sha256": "03de22108b40b3559dbb2e3ea79118fde52b1ccb41e0894001319105b9fde165",
+      "sha256": "a3392569e3ed418b708ab50866197ebd68480f70c00aaaf19fd25ad80a0da608",
       "models": ["formal/models/contributor/contributor_session_cleaner.qnt"],
       "candidateLines": [
-        777, 808, 828, 831, 1059, 1066, 1409, 1411, 1412, 1456, 1458, 1567, 1588
+        777, 808, 828, 831, 1059, 1068, 1069, 1412, 1414, 1415, 1459, 1461,
+        1570, 1591
       ],
       "review": "mapped-abstraction"
     },

@@ -1063,6 +1063,9 @@ export function collectKnownSecrets(
     // Unknown: read every written file into the guard.
     for (const abs of index.written) ignored.add(abs);
   }
+  // A failed listing means unread files may hold secrets: report the guard
+  // as capped so every unresolvable shell result is redacted.
+  if (listed?.status !== 0) capped = true;
   if (listed && listed.status === 0) {
     let files = 0;
     const budget = { left: MAX_GUARD_TOTAL_BYTES, over: false };
@@ -1627,7 +1630,7 @@ function guardEvents(events, g) {
       const cmd = commandText(call?.input);
       const base = e.cwd ?? g.repoRoot;
       const tool = typeof e.tool === "string" ? e.tool : "";
-      if (isReceiptOnly(cmd, base, g)) {
+      if (SHELL_TOOL.test(tool) && isReceiptOnly(cmd, base, g)) {
         // the receipt tool's own output
       } else if (!g.keepRepoFiles) {
         const t = (e.text ?? "").trim();
