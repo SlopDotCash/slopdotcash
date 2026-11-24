@@ -45,8 +45,8 @@ test("the amount is 10 dollars at the rate, rounded up to a whole SLOP", () => {
   expect(standingDepositAmount("80")).toBe(`800${"0".repeat(18)}`);
 });
 
-test("nothing is deployed until an address and a start block are recorded", () => {
-  expect(standingDepositDeployed()).toBe(false);
+test("the deployed contract is recorded, and an address alone is not enough", () => {
+  expect(standingDepositDeployed()).toBe(true);
   expect(
     standingDepositDeployed("0xDe40B32A4156ABC2A05987367966d994BcFbf8D8", null),
   ).toBe(false);

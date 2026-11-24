@@ -151,11 +151,13 @@ test.beforeEach(async ({ diagnostics }) => {
   diagnostics.allowPreviewApiMisses();
 });
 
-test("the deployed bundle has no standing contract: one sentence, no control, no read", async ({
+test("a bundle with no standing contract: one sentence, no control, no read", async ({
   page,
 }) => {
-  // The recorded deployment itself; recording it must change this test.
-  expect(STANDING_DEPOSIT_CONTRACT).toBeNull();
+  // The recorded deployment of 24 November 2026; the fixture below removes it.
+  expect(STANDING_DEPOSIT_CONTRACT).toBe(
+    "0x446604d5c3Cc99c60CCE3d5C4357BC60f5b45993",
+  );
   await deploy(page, null);
   await signIn(page, true);
   let reads = 0;
@@ -389,7 +391,7 @@ test("the per pull request pay page points to /deposit once the standing contrac
   ).toHaveAttribute("href", "/deposit");
 });
 
-test("the FAQ answers whether the fee can be skipped, and says it is not open yet", async ({
+test("the FAQ answers whether the fee can be skipped and links /deposit", async ({
   page,
 }) => {
   await page.goto("/how-it-works#faq", { waitUntil: "networkidle" });
@@ -399,11 +401,13 @@ test("the FAQ answers whether the fee can be skipped, and says it is not open ye
     }),
   });
   await expect(answer).toContainText(
-    "Not yet. Slop has not opened standing deposits.",
+    "Yes, with a standing deposit: one refundable deposit of SLOP on Robinhood Chain",
   );
   await expect(answer).toContainText("an ordinary close costs nothing.");
   await expect(answer).toContainText(
     "It does not buy a review, a merge or Points.",
   );
-  await expect(answer.getByRole("link")).toHaveCount(0);
+  await expect(
+    answer.getByRole("link", { name: "Post or manage yours" }),
+  ).toHaveAttribute("href", "/deposit");
 });
