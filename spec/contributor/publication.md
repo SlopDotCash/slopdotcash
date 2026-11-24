@@ -124,16 +124,17 @@ pure def lawPausedClearedProjectStillServes(known: ArtifactFacts): bool =
 `/.well-known/slop/projects.json` is `{ schemaVersion: "1", projects }`. A
 project contributes rows only when its public read is listed, its status is
 active (not paused), it publishes generated skills, it is not left out as
-not listed this month or paused at its intake cap (below) and its clearance for the index's
-`templateSha256` is cleared; an unverified clearance leaves it out rather
-than failing the index. Each of its repositories gives one row:
+not listed this month, paused at its intake cap or out of rotation under
+the [backlog rule](../backend/backlogRule.md) (both below) and its clearance
+for the index's `templateSha256` is cleared; an unverified clearance leaves
+it out rather than failing the index. Each of its repositories gives one row:
 `project_id`, `project_url` (`https://slop.cash/projects/<id>/`),
 `repository` (the repository's last alias, else its id), `review_skill`,
 `review_skill_manifest`
 (`https://slop.cash/projects/<id>/review-skill-manifest.json`), `skill` and
-`skill_source`. Apart from the month listing and the intake cap, this gate is exactly the
-installer's (`frontend/projections.md` `installable`, used by
-[skill authority](./skillAuthority.md)).
+`skill_source`. Apart from the month listing, the intake cap and the backlog
+rule, this gate is exactly the installer's (`frontend/projections.md`
+`installable`, used by [skill authority](./skillAuthority.md)).
 
 ```quint
 type RepositoryEntry = { id: str, lastAlias: str }
@@ -157,7 +158,7 @@ pure def lawOneRowPerRepository(known: ArtifactFacts, projectId: str, repositori
 pure def lawPausedProjectNotDiscovered(known: ArtifactFacts): bool = not(known.active) implies not(discoverable(known))
 ```
 
-### Discovery leaves out a monthly pool configured at zero this month or a project paused at its intake cap, and a failed count read pauses nothing
+### Discovery leaves out a monthly pool configured at zero this month, a project paused at its intake cap or out of rotation, and a failed count read pauses nothing
 
 Discovery reads no vault funding (operator decision, 18 November 2026). The
 month listing comes from the registry alone: a project is listed this month when `listedThisMonth` of the
@@ -171,6 +172,9 @@ the [merge activity](../backend/mergeActivity.md) once: a project that the
 [intake cap](../backend/intakeCap.md) has paused (its cap is set and a count
 of one of its repositories at or above it was observed no more than 72 hours
 ago) is `IntakePaused` and left out until a later count falls below the cap.
+A project out of rotation under the [backlog rule](../backend/backlogRule.md)
+is `IntakePaused` the same way, from a stored merge-activity read taken no
+more than three days ago.
 A read that is absent, empty or null, or that throws, is `IntakeUnread` and
 pauses nothing; one that throws logs `project discovery intake counts
 unavailable`. A project with no stored count pauses nothing. The discovery
