@@ -39,13 +39,15 @@ export const STANDING_DEPOSIT_NETWORK = "robinhood-mainnet";
 export const STANDING_DEPOSIT_LEDGER = "robinhood-standing";
 /**
  * The second `SubmissionDeposits` deployment, with a 365-day reclaim delay
- * (`contracts/evm/script/DeployStandingDeposits.sol`). Null until it is
- * deployed and recorded; while null nobody can post a standing deposit and
- * nothing changes for anyone.
+ * (`contracts/evm/script/DeployStandingDeposits.sol`), deployed on
+ * Robinhood Chain on 24 November 2026 (`contracts/DEPLOY-MAINNET.md`,
+ * "Standing deposit contract"). While null, nobody could post a standing
+ * deposit and nothing changed for anyone.
  */
-export const STANDING_DEPOSIT_CONTRACT = null;
+export const STANDING_DEPOSIT_CONTRACT =
+  "0x446604d5c3Cc99c60CCE3d5C4357BC60f5b45993";
 /** The block of that deployment, where the event scan starts. */
-export const STANDING_DEPOSIT_START_BLOCK = null;
+export const STANDING_DEPOSIT_START_BLOCK = 122128533;
 export const STANDING_DEPOSIT_RECLAIM_DAYS = 365;
 export const STANDING_DEPOSIT_USD_MINOR = "10000000"; // 10.00 USD, six decimals
 /** A covered pull request can cost the deposit only if closed within this many days of opening. */
