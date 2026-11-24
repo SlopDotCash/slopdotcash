@@ -185,7 +185,7 @@ no owner action is needed.
 ```quint
 pure def alwaysReturnNeedsClearRead(s: Backlog): bool =
   (s.wasOut and not(outOfRotation(s)) and s.active and not(s.exempt) and not(catchUpRunning(s)) and s.now >= startsAtHours)
-    implies s.reads.every(r => not(overLimitHeld(List(r), s.now)) and not(dormantHeld(List(r), s.now)))
+        implies (not(overLimitHeld(s.reads, s.now)) and not(dormantHeld(s.reads, s.now)))
 pure def sometimesBackByItself(s: Backlog): bool = s.wasOut and not(outOfRotation(s)) and s.active
   and s.reads.every(r => r.read) and s.browser == ListReady
 ```
