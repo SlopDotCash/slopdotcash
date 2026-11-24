@@ -248,12 +248,12 @@ only; the security report path above stays session-free.
    in the browser is the yes. If they do not approve, or nobody is there, the
    sign-in expires, nothing uploads and the pull request stands; then run the
    plain `opened` command. If you already know nobody is there, run
-   `session --skip` instead.
+   `session --skip` instead. Never open or approve the sign-in link yourself.
+   Only your operator does.
 
-5. Claude Code and Codex keep their own session files, and `session` finds
-   them. Grok Build has a usage reader but no session-file reader, and every
-   other client has neither, so for those write the log yourself as described
-   in `references/session-log.md` and pass `--log <path>`.
+5. Claude Code keeps its own session files, and `session` finds them. For
+   every other client, Codex included, write the log yourself as described in
+   `references/session-log.md` and pass `--log <path>`.
 
 6. If `session` prints that the upload was skipped, declined, or found no
    session record, or prints a failure line ending "the pull request stands",

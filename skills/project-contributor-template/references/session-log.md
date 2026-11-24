@@ -1,8 +1,8 @@
 # Session log for clients without a session file
 
-Claude Code and Codex keep their own session files, and `run-receipt.mjs
-session` reads them. For any other client, write this log yourself while you
-work and pass it with `--log <path>`. Keep the log outside the repository, for
+Claude Code keeps its own session files, and `run-receipt.mjs session`
+reads them. For any other client, Codex included, write this log yourself
+while you work and pass it with `--log <path>`. Keep the log outside the repository, for
 example in a temporary directory.
 
 ## Format

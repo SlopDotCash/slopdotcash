@@ -288,8 +288,8 @@ contribution.
 This section is version 3 of the content and privacy contract for a Slop
 private trace (operator decision, 23 November 2026). It is version 2 with
 three changes: a trace keeps the contents of files inside the project's own
-openly licensed public repository, the run's pull request is recorded before
-the upload, and licensing a version 3 upload needs a licensing confirmation
+openly licensed public repository, the run's pull request is recorded on the
+run before the trace is finalized, and licensing a version 3 upload needs a licensing confirmation
 given under version 3. Versions 1 and 2 above
 stay published unchanged at `/protocol/private-trace-v1.md` and
 `/protocol/private-trace-v2.md` and keep governing every trace uploaded under
@@ -315,11 +315,10 @@ one-line way to decline. Declining sends nothing. The uploader sends the
 shown bytes without transformation; a changed file has a different digest and
 needs a new upload. Upload alone never licenses a trace.
 
-The client records the run's pull request on the measured run before it
-uploads the trace, so the trace can be joined to that pull request: start the
-run, do the work, open the pull request, record it on the run, then prepare
-and upload the trace. A trace uploaded before its pull request is recorded
-cannot be joined to it later. A client uploading under this version names it
+The client joins the trace to the run's pull request: start the run, do the
+work, open the pull request, then prepare and upload the trace. The pull
+request is recorded on the run after the upload and before the trace is
+finalized. Only a finalized trace joined to a pull request can be licensed. A client uploading under this version names it
 as `private-trace-v3` in the upload intent.
 
 A human who did not use an agent may declare a human-only contribution and
@@ -343,7 +342,7 @@ describe. The contributor confirms again under this version by ticking the
 same confirmation while the setting is on. Confirming again records the new
 confirmation and its terms version; it turns nothing off and changes no
 existing licence. A version 3 trace uploaded before that confirmation is
-licensed only by an explicit opt-in. Any of the contributor's traces not already licensed,
+licensed only by an explicit opt-in after confirming under this version. Any of the contributor's traces not already licensed,
 including version 1 traces and traces uploaded while the setting was off, is
 licensed only when the contributor opts it in explicitly, trace by trace or
 every listed trace at once after seeing the list and its count; if the count
