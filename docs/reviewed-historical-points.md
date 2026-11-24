@@ -15,6 +15,10 @@ replay before the owner reviews a correction packet. The audit receipt binds
 the captured journal heads. Publication uses a current owner-reviewed packet
 and the trusted financial and source checks.
 
+Both read-only operations use the repository-scoped Collector App when it is
+configured. They fall back to the workflow token if the App cannot issue a
+token. Audits still require the same complete REST and GraphQL evidence.
+
 The read-only `replay-assessments` operation takes the same scope and digest
 inputs. It replays the canonical scorer against the frozen assessment catalog
 and the complete GitHub census for the selected repository. It rechecks the
