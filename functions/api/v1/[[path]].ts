@@ -50,6 +50,7 @@ import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { handleRepoRequests } from "../../../backend/referrals/repo-requests";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
+import type { SecurityApiDependencies } from "../../../backend/security/case-store";
 import { defaultDirectPaymentConfiguration } from "../../../backend/security/direct-payments";
 import {
   githubAdvisoryClient,
@@ -62,10 +63,12 @@ import {
   githubIntakeOAuth,
   type IntakeConfig,
 } from "../../../backend/security/intake-grant";
+import { handleSecurityQueue } from "../../../backend/security/operator-queue";
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
 import { reportDepositMode } from "../../../backend/security/report-deposit";
+import { analysisDependencies } from "../../../backend/security/report-intake";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
@@ -381,7 +384,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
       : config;
   };
-  const securityResponse = await handleSecurityApi(request, {
+  const securityDependencies: SecurityApiDependencies = {
     db,
     directPayments: directPaymentConfig,
     // A separate key namespace; contributor trace APIs never read reports.
@@ -418,7 +421,11 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       mode: reportDepositMode(env.SECURITY_REPORT_DEPOSIT),
       adminGithubIds,
     },
-  });
+  };
+  const securityResponse = await handleSecurityApi(
+    request,
+    securityDependencies,
+  );
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(request);
   if (evidenceResponse !== null) return evidenceResponse;
@@ -548,6 +555,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (protectedPointMonths !== null) return protectedPointMonths;
+  // The same rule and secret as the reserved-awards feed, for the job that
+  // retries missing or failed report analyses with the full time limit.
+  const securityQueue = await handleSecurityQueue(request, {
+    token: env.OPERATOR_FEED_TOKEN,
+    analysis: analysisDependencies(securityDependencies),
+  });
+  if (securityQueue !== null) return securityQueue;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
