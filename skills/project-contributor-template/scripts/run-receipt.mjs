@@ -1606,6 +1606,7 @@ export function disclosePrivateTrace(trace) {
         `Content-Type: ${trace.contentType}`,
         `SHA-256: ${trace.sha256}`,
         `Cleaned on this machine by ${trace.cleaner}: ${redactionCounts(trace.counts)}. Cleaning is pattern-based and may miss a secret; read the file.`,
+        ...(typeof trace.projectCode === "string" ? [trace.projectCode] : []),
         `To skip this run: rerun with --skip. To stop on this machine: node ${skillDirectory}/scripts/run-receipt.mjs trace-off`,
         "Do not authorize unless you accept the disclosed bytes and permanent-retention contract.",
       ].join("\n")}\n`,
@@ -3146,21 +3147,24 @@ function sessionSettingsPath() {
 
 function readSessionSettings() {
   const path = sessionSettingsPath();
-  if (!existsSync(path)) return { upload: true, licensingLinkShown: false };
+  const damaged = { upload: false, licensingLinkShown: false, damaged: true };
+  if (!existsSync(path))
+    return { upload: true, licensingLinkShown: false, damaged: false };
   try {
     const stats = lstatSync(path);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 4096)
-      return { upload: false, licensingLinkShown: false };
+      return damaged;
     const value = JSON.parse(readFileSync(path, "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value))
-      return { upload: false, licensingLinkShown: false };
+      return damaged;
     return {
       upload: value.upload !== false,
       licensingLinkShown: value.licensingLinkShown === true,
+      damaged: false,
     };
   } catch {
     // error-policy:J3 a damaged setting fails closed to no upload.
-    return { upload: false, licensingLinkShown: false };
+    return damaged;
   }
 }
 
@@ -3222,6 +3226,30 @@ function readAttachedRecord(path, runId) {
   return value;
 }
 
+// The disclosure line on project code, read from the header of the exact
+// file that is shown, so a rerun reports what the uploaded bytes hold.
+function projectCodeLine(path) {
+  let header;
+  try {
+    const text = readFileSync(path, "utf8");
+    const end = text.indexOf("\n");
+    header = JSON.parse(end < 0 ? text : text.slice(0, end));
+  } catch {
+    // error-policy:J3 an unreadable header leaves the line out.
+    return null;
+  }
+  if (!header || typeof header !== "object") return null;
+  const licence =
+    typeof header.licence === "string" && header.licence !== ""
+      ? header.licence
+      : null;
+  if (header.repoFilesKept === true && licence !== null)
+    return `Project code: kept (licence ${licence})`;
+  return licence === null
+    ? "Project code: removed (no licence reported by GitHub)"
+    : `Project code: removed (licence ${licence} is not on the OSI-approved list)`;
+}
+
 function headCommit(repositoryRoot) {
   try {
     return git(repositoryRoot, ["rev-parse", "HEAD"]);
@@ -3242,11 +3270,18 @@ async function sessionRun(options, deps = {}) {
   const settings = readSessionSettings();
   if (options.skip || !settings.upload) {
     renderResult(
-      { status: "skipped", message: "Session upload skipped." },
+      {
+        status: "skipped",
+        message:
+          !options.skip && settings.damaged
+            ? "Session upload skipped (settings file unreadable; run trace-on to reset)."
+            : "Session upload skipped.",
+      },
       options.json,
     );
     return;
   }
+  let markLicensingShown = false;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
   try {
     const pullRequest = projectPullRequestUrl(options.pullRequest);
@@ -3302,6 +3337,7 @@ async function sessionRun(options, deps = {}) {
         clientVersion: options.clientVersion,
         provider: state.provider,
         model: state.model,
+        startedAt: state.startedAt,
         startCommit: null,
         endCommit: headCommit(repositoryRoot),
       };
@@ -3364,6 +3400,7 @@ async function sessionRun(options, deps = {}) {
             cleaner: shown.cleaner,
             counts: shown.counts,
             alreadyUploaded: shown.alreadyUploaded,
+            projectCode: shown.present ? projectCodeLine(shown.path) : null,
           }),
         afterIntent: (trace) =>
           writePrivateJson(recordPath, {
@@ -3410,7 +3447,7 @@ async function sessionRun(options, deps = {}) {
       },
       options.json,
     );
-    if (showLicensing) writeSessionSettings({ licensingLinkShown: true });
+    markLicensingShown = showLicensing;
   } catch (error) {
     const reason = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/gu, " ")
@@ -3422,6 +3459,15 @@ async function sessionRun(options, deps = {}) {
       },
       options.json,
     );
+  }
+  // Outside the upload's try: failing to remember the shown line must never
+  // report a finished upload as failed.
+  if (markLicensingShown) {
+    try {
+      writeSessionSettings({ licensingLinkShown: true });
+    } catch {
+      // error-policy:J3 the licensing line shows again next time.
+    }
   }
 }
 
