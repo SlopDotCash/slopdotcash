@@ -18,7 +18,7 @@ discovery (`/.well-known/slop/projects.json`,
 [publication](../contributor/publication.md)) list by `listedThisMonth`
 whatever the project's status; Home also needs an active, placed project.
 Each of them also leaves out a project paused at its intake cap or
-out of rotation under the [backlog rule](./backlogRule.md).
+out of rotation under the [backlog rule](../backend/backlogRule.md).
 
 ## Story: List a monthly pool only in a month it has an amount
 
@@ -64,8 +64,8 @@ pure val listingValues = Set(
 
 ### A project left out of the lists still opens by direct link and says why
 
-A project paused at its intake cap ([intake cap](./backend/intakeCap.md),
-`paused`) or out of rotation under the [backlog rule](./backend/backlogRule.md)
+A project paused at its intake cap ([intake cap](../backend/intakeCap.md),
+`paused`) or out of rotation under the [backlog rule](../backend/backlogRule.md)
 (`backlogHeld`) is left out of Home and /sponsors as well, by conjunction with the
 monthly listing: the browser holds a project only from a stored count it
 read, so while its merge activity read is pending or failed it passes no
@@ -117,7 +117,7 @@ pure val untilValues = Set(0, 498913, 499248)
 
 Home lists a placed, open project that is listed this month, whose card does
 not advertise a security bounty and that is not held at its intake cap or
-out of rotation under the [backlog rule](./backend/backlogRule.md)
+out of rotation under the [backlog rule](../backend/backlogRule.md)
 (development `src/App.tsx` `HomePage` and `src/lib/home-projects.ts`
 `homeProjects` at `8660a6121`). While the pool funding read loads, the
 section shows no project and no "No projects yet."; once the read settles,
