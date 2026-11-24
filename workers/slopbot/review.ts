@@ -47,6 +47,7 @@ import {
   CONFIG_PATH,
   type ConfigResult,
   type Job,
+  misreadLiteralClaim,
   NEVER_CLOSE,
   projectRepositoryConfig,
   SECURITY_CATEGORIES,
@@ -815,6 +816,21 @@ function grounded(
     verdict.evidence.every((e) => modelItemText(context).includes(e));
   if (!evidenceOk)
     return { ok: false, why: "no verbatim evidence from the item" };
+  
+  // #1930: a low_quality finding that calls a literal value invalid or
+  // undefined is a model misread, not a defect. An ungrounded finding
+  // goes to the maintainer first and never closes (PRD section 5).
+  if (verdict.category === "low_quality") {
+    const misread = misreadLiteralClaim(
+        [verdict.summary, ...verdict.evidence].join("\n"),
+      );
+        if (misread) {
+          return {
+            ok: false,
+            why: `low_quality finding calls a literal ${misread.kind} ${misread.denial}`,
+          };
+        }
+  }
   if (UNIVERSAL_CATEGORIES.has(verdict.category))
     return { ok: true, why: "universal category" };
   if (context.policy.length === 0 || context.policy.some((f) => f.truncated)) {
