@@ -26,7 +26,7 @@ import {
   readFeeItem,
   readFeeRates,
 } from "./lib/submission-fee-page";
-import { feePageSetup } from "./lib/submission-fee-setup";
+import { feePageSetup, standingDepositSetup } from "./lib/submission-fee-setup";
 import { usePublicResource } from "./lib/use-public-resource";
 import { WANTED_LABEL } from "./lib/wanted-label.mjs";
 import { formatDate, Spinner } from "./Presentation";
@@ -265,6 +265,7 @@ function Due({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(() => hasSavedRequest(item.item));
+  const [{ deployed: standing }] = useState(standingDepositSetup);
   const confirmDue = useCallback(
     async (way: FeeWay) => {
       const latest = await loadFeeItem(
@@ -316,6 +317,14 @@ function Due({
                 SLOP is not offered right now: Slop's published SLOP rate could
                 not be read, so the SLOP amount could not be checked. Reload the
                 page to try again.
+              </p>
+            ) : null}
+            {standing ? (
+              <p>
+                Contribute often? A{" "}
+                <Link href="/deposit">standing deposit</Link> can stand in for
+                this fee on projects that accept it, once you have a merged pull
+                request there.
               </p>
             ) : null}
           </section>

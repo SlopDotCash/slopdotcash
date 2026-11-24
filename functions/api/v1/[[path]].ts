@@ -69,6 +69,7 @@ import { reportDepositMode } from "../../../backend/security/report-deposit";
 import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
+import { handleStandingDeposit } from "../../../backend/standing-deposit/handler";
 import { handleSubmissionFeeApi } from "../../../backend/submission-fee/handler";
 import {
   CloudflareTracePersistence,
@@ -500,6 +501,13 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralCode !== null) return referralCode;
+  const standingDeposit = await handleStandingDeposit(request, {
+    db,
+    sessionActor,
+    now,
+    randomId,
+  });
+  if (standingDeposit !== null) return standingDeposit;
   const traceLicensing = await handleTraceLicensing(request, {
     db,
     sessionActor,
