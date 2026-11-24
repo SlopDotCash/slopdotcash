@@ -23,6 +23,16 @@ describe("the documents name what exists", () => {
   const manifest = (dir: string): Record<string, Record<string, string> | undefined> => JSON.parse(read(path.join(dir, "package.json")));
   const within = (dir: string) => fs.existsSync(path.join(project, dir)) ? fs.readdirSync(path.join(project, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => `${dir}/${e.name}`) : [];
 
+  const trackedEntries = async () => {
+    const listed = await exec("git", ["ls-files", "--stage", "-z"], project);
+    assert.equal(listed.status, 0, listed.stderr);
+    return listed.stdout.split("\0").filter(Boolean).map((entry) => {
+      const tab = entry.indexOf("\t");
+      const [mode, object] = entry.slice(0, tab).split(" ");
+      return { mode, object, file: entry.slice(tab + 1) };
+    });
+  };
+
   test("every repository path, pnpm script and link in the documents and skills leads somewhere", () => {
     const workspace = ["packages", "apps"].flatMap(within).filter((dir) => fs.existsSync(path.join(project, dir, "package.json")));
     // What pnpm itself provides, and what a document proposes rather than names.
@@ -71,24 +81,26 @@ describe("the documents name what exists", () => {
     const plan: { globalCacheInputs: { files: Record<string, string> }; tasks: { taskId: string; inputs: Record<string, string> }[] } = JSON.parse(dry.stdout);
     const global = Object.keys(plan.globalCacheInputs.files);
     const [docs, examples, ...tools] = ["selftest:docs", "selftest:examples", ...shards].map((task) => new Set([...global, ...Object.keys(plan.tasks.find((t) => t.taskId === `//#${task}`)!.inputs)]));
-    const tracked = (await exec("git", ["ls-files"], project)).stdout.trim().split("\n").filter((file) => fs.lstatSync(path.join(project, file)).isFile());
+    const tracked = (await trackedEntries()).filter(({ mode, file }) =>
+      mode !== "160000" && fs.lstatSync(path.join(project, file), { throwIfNoEntry: false })?.isFile()).map(({ file }) => file);
     const missed = (hashed: Set<string>, read: (file: string) => boolean) => tracked.filter((file) => read(file) && !hashed.has(file));
     const workspace = (file: string) => /^(apps|packages|spec)\//.test(file);
     const [shardA, shardB, packed] = tools;
     const toolInput = (file: string) => ![docsSource, examplesSource].includes(file)
-      && (PACKED.includes(file) || /^(vibestack\/(?!examples\/)|vibestack\/examples\/order\/|\.agents\/skills\/)/.test(file));
+      && ((!workspace(file) && PACKED.includes(file)) || /^(vibestack\/(?!examples\/)|vibestack\/examples\/order\/|\.agents\/skills\/)/.test(file));
     assert.deepEqual({
       docs: missed(docs, () => true),
       examples: missed(examples, (file) => ![toolSource, docsSource, toolMetadata].includes(file) && /^vibestack\/(examples\/|(?!studio\/|fixtures\/|(testing|stories|design)\/test\/))/.test(file)),
       tools: tools.flatMap((hashed) => missed(hashed, (file) => toolInput(file) && (hashed === packed || file !== "README.md"))),
-      packed: missed(packed, (file) => file === ".gitignore" || workspace(file)),
+      packed: missed(packed, (file) => file === ".gitignore" || PACKED.includes(file) || /^(packages|spec)\//.test(file)),
+      unstagedAppFiles: [...packed].filter((file) => file.startsWith("apps/") && !PACKED.includes(file)),
       readmeInFixtures: [shardA, shardB].some((hashed) => hashed.has("README.md")),
       workspaceInFixtures: [shardA, shardB].flatMap((hashed) => [...hashed].filter(workspace)),
       examplesInTools: tools.flatMap((hashed) => [...hashed]).filter((file) => /^vibestack\/examples\/(?!order\/)/.test(file)),
       selftestInGlobal: global.filter((file) => /^vibestack\/(selftest\.ts$|selftests\/|remote-cache\.ts$)|\/test\//.test(file)),
       independentSourcesInTools: tools.flatMap((hashed) => [docsSource, examplesSource].filter((file) => hashed.has(file))),
       independentSourcesInExamples: [toolSource, docsSource, toolMetadata].filter((file) => examples.has(file)),
-    }, { docs: [], examples: [], tools: [], packed: [], readmeInFixtures: false, workspaceInFixtures: [], examplesInTools: [], selftestInGlobal: [], independentSourcesInTools: [], independentSourcesInExamples: [] });
+    }, { docs: [], examples: [], tools: [], packed: [], unstagedAppFiles: [], readmeInFixtures: false, workspaceInFixtures: [], examplesInTools: [], selftestInGlobal: [], independentSourcesInTools: [], independentSourcesInExamples: [] });
     assert.deepEqual([shards, listed("selftest").sort(), listed("verify").filter((task) => task.includes("selftest")).sort()],
       [["selftest:tools:a", "selftest:tools:b", "selftest:tools:rest"], selftests.map((task) => `//#${task}`), selftests.map((task) => `//#${task}`)], "pnpm selftest and pnpm verify run every selftest task");
     const each = "the tools each check catches its own kind of mistake";
@@ -143,12 +155,19 @@ describe("the documents name what exists", () => {
     fs.mkdirSync(path.join(root, "packages/kit"), { recursive: true });
     fs.writeFileSync(path.join(root, "spec/kit/index.md"), "# Kit\n");
     fs.writeFileSync(path.join(root, "packages/kit/package.json"), JSON.stringify({ name: "@repo/kit", scripts }));
-    for (const file of (await exec("git", ["ls-files"], project)).stdout.trim().split("\n")) {
-      if (fs.lstatSync(path.join(project, file)).isDirectory()) continue;
-      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      fs.cpSync(path.join(project, file), path.join(root, file), { verbatimSymlinks: true });
+    const initialized = await exec("git", ["init", "-q"], root);
+    assert.equal(initialized.status, 0, initialized.stderr);
+    for (const { mode, object, file } of await trackedEntries()) {
+      const destination = path.join(root, file);
+      if (mode === "160000") {
+        fs.mkdirSync(destination, { recursive: true });
+        const indexed = await exec("git", ["update-index", "--add", "--cacheinfo", mode, object, file], root);
+        assert.equal(indexed.status, 0, indexed.stderr);
+      } else if (fs.lstatSync(path.join(project, file), { throwIfNoEntry: false })) {
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.cpSync(path.join(project, file), destination, { verbatimSymlinks: true });
+      }
     }
-    await exec("git", ["init", "-q"], root);
     const staged = await exec("git", ["add", "-A"], root);
     assert.equal(staged.status, 0, staged.stderr);
     const evaluatorHome = path.join(root, "custom quint home");
@@ -177,9 +196,11 @@ describe("the documents name what exists", () => {
     };
     const studio = (ids: string[]) => ids.filter((id) => /^(vibestack-studio#(?!check)|@repo\/(ui#(build|typecheck)|design-system#build)|\/\/#lint:css)/.test(id));
     const append = (file: string, text = "\nMore words.\n") => () => fs.appendFileSync(path.join(root, file), text);
-    const vibeDeclared = ["apps/app", "packages/ui", "vibestack/studio"].filter((dir) => read(`${dir}/tsconfig.json`, root).includes(".vibe/declarations")).map((dir) => `${JSON.parse(read(`${dir}/package.json`, root)).name}#typecheck`);
+    const vibeDeclared = [...["packages", "apps"].flatMap(within), "vibestack/studio"]
+      .filter((dir) => fs.existsSync(path.join(root, dir, "tsconfig.json")) && read(`${dir}/tsconfig.json`, root).includes(".vibe/declarations"))
+      .map((dir) => `${JSON.parse(read(`${dir}/package.json`, root)).name}#typecheck`);
     const [prose, selftest, fixture, frameworkTest] = [
-      await changedBy(append("spec/app/index.md")),
+      await changedBy(append("spec/kit/index.md")),
       await changedBy(append(toolSource, "\n")),
       await changedBy(append("vibestack/fixtures/door.md")),
       await changedBy(append("vibestack/design/test/design.test.ts", "\n")),
@@ -212,7 +233,7 @@ describe("the documents name what exists", () => {
       analyzeWaitsFor: tasks.get("//#analyze")!.dependencies.toSorted(),
       lintWaitsFor: vibeDeclared.filter((id) => tasks.get("//#lint:js")!.dependencies.includes(id)),
       devWaitsFor: tasks.get("vibestack-studio#dev")!.dependencies.toSorted(),
-      prose: [studio(prose), prose.includes("@repo/app#test"), prose.includes("//#analyze")],
+      prose: [studio(prose), prose.includes("@repo/kit#test"), prose.includes("//#analyze")],
       readme: [selftests(readme), readme.includes("//#analyze")],
       selftest: [studio(selftest), selftest.includes("//#build"), ["a", "b", "rest"].every((shard) => selftest.includes(`//#selftest:tools:${shard}`))],
       fixture: { studio: studio(fixture), build: fixture.includes("//#build"), selftest: fixture.includes("//#selftest:tools:a") },
@@ -235,5 +256,91 @@ describe("the documents name what exists", () => {
       frameworkTest: { build: false, test: true },
       independentOwner: true, leftovers: [],
     }, "the owners' tasks, @repo/kit's among them, wait for the root's gen, and install's //#build does not, so `gen --if-valid` after it keeps a half-edited spec from failing install");
+
+    await context.test("legacy proof exclusions cannot preserve stale generation and build keys", () => verifyGenerationInputs(root));
   });
 });
+
+async function verifyGenerationInputs(root: string) {
+  fs.rmSync(path.join(root, "packages/kit/spec"), { recursive: true });
+  fs.symlinkSync(path.join(project, "node_modules"), path.join(root, "node_modules"), "dir");
+  const generationPlan = async (options: string[] = [], env: NodeJS.ProcessEnv = {}) => {
+    const dry = await exec(process.execPath, [path.join(root, "vibestack/spec.ts"), "tasks", "//#gen", "@repo/kit#build", "//#lint:css", "--dry=json", "--cache=local:w", ...options], root, {
+      ...process.env, TURBO_TOKEN: "", TURBO_ROOT_TURBO_JSON: undefined, GITHUB_ACTIONS: "true", GITHUB_JOB: "verify", GITHUB_WORKSPACE: root,
+      GITHUB_REPOSITORY: "lalalune/vibestack", GITHUB_WORKFLOW_REF: "lalalune/vibestack/.github/workflows/ci.yml@refs/heads/main", ...env,
+    });
+    assert.equal(dry.status, 0, dry.stderr);
+    const tasks: { taskId: string; hash: string; resolvedTaskDefinition: { cache: boolean; env: string[] } }[] = JSON.parse(dry.stdout).tasks;
+    const generation = tasks.find(({ taskId }) => taskId === "//#gen");
+    const build = tasks.find(({ taskId }) => taskId === "@repo/kit#build");
+    const css = tasks.find(({ taskId }) => taskId === "//#lint:css");
+    assert.ok(generation && build && css);
+    assert.ok(build.resolvedTaskDefinition.cache);
+    return { gen: generation.hash, build: build.hash, cssEnv: css.resolvedTaskDefinition.env };
+  };
+  const changed = (before: { gen: string; build: string }, after: { gen: string; build: string }, file: string) => {
+    assert.notEqual(after.gen, before.gen, `generation key for ${file}`);
+    assert.notEqual(after.build, before.build, `dependent build key for ${file}`);
+  };
+
+  const companion = path.join(root, "spec/kit/index.proof.dfy");
+  fs.writeFileSync(companion, "lemma One() {}\n");
+  const canonical = await generationPlan();
+  fs.appendFileSync(companion, "lemma Two() {}\n");
+  assert.deepEqual(await generationPlan(), canonical);
+  fs.appendFileSync(path.join(root, "spec/kit/index.md"), "\nThis is still the kit.\n");
+  changed(canonical, await generationPlan(), "spec/kit/index.md");
+
+  const legacy = "legacy turbo.jsonc";
+  const config = JSON.parse(read("turbo.json", root));
+  config.tasks["//#gen"].inputs.push("!spec/**/*.proof.dfy");
+  const customEnv = ["LEGACY_PROOF_TEST"];
+  config.tasks["//#lint:css"].env = customEnv;
+  const writeLegacyConfig = () => fs.writeFileSync(path.join(root, legacy), JSON.stringify(config).replace(/^{/, "{\n// The project selects this config.\n"));
+  writeLegacyConfig();
+  const selected = ["--root-turbo-json", legacy];
+  const rootOnly = await generationPlan(selected);
+  assert.deepEqual(rootOnly.cssEnv, customEnv);
+  fs.appendFileSync(companion, "lemma Three() {}\n");
+  assert.deepEqual(await generationPlan(selected), rootOnly);
+
+  const standalone = path.join(root, "packages/kit/spec");
+  fs.mkdirSync(standalone);
+  changed(rootOnly, await generationPlan(selected), "empty packages/kit/spec with only the root proof exclusion");
+  fs.rmdirSync(standalone);
+  assert.deepEqual(await generationPlan(selected), rootOnly);
+
+  config.tasks["//#gen"].inputs.push("!apps/*/spec/**/*.proof.dfy", "!packages/*/spec/**/*.proof.dfy");
+  writeLegacyConfig();
+  const attached = await generationPlan(selected);
+
+  for (const area of ["spec/kit", "apps/app/spec", "packages/ui/spec"]) {
+    const file = `${area}/old.proof.dfy/model.md`;
+    const directory = path.join(root, area);
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), "# Hidden model\n");
+    const before = await generationPlan(selected);
+    changed(attached, before, file);
+    fs.appendFileSync(path.join(root, file), "\nA second version of this model.\n");
+    const after = await generationPlan(selected);
+    changed(before, after, file);
+    assert.deepEqual(after.cssEnv, customEnv);
+    if (area === "spec/kit") {
+      assert.deepEqual(await generationPlan([`--root-turbo-json=${legacy}`]), after);
+      assert.deepEqual(await generationPlan([], { TURBO_ROOT_TURBO_JSON: legacy }), after);
+      assert.deepEqual(await generationPlan([...selected, "--cwd=packages/kit"]), after);
+    }
+    fs.rmSync(path.join(directory, "old.proof.dfy"), { recursive: true });
+    if (area !== "spec/kit") fs.rmdirSync(directory);
+  }
+
+  const manifest = JSON.parse(read("package.json", root));
+  for (const scripts of [{ ...manifest.scripts, pregen: "node -e 0" }, { ...manifest.scripts, gen: "node custom-generator.mjs" }]) {
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ ...manifest, scripts }));
+    const attached = await generationPlan(selected);
+    fs.mkdirSync(standalone);
+    changed(attached, await generationPlan(selected), "a legacy generation task with a project-defined command or hook");
+    fs.rmdirSync(standalone);
+  }
+
+}

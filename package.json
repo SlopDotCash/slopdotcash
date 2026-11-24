@@ -28,7 +28,7 @@
     "test:models": "node vibestack/spec.ts tasks check",
     "typecheck": "vibelang --noEmit -p tsconfig.json",
     "lint": "node vibestack/spec.ts tasks //#lint:js //#lint:css",
-    "lint:js": "eslint . --max-warnings 0",
+    "lint:js": "NODE_OPTIONS=--max-old-space-size=6144 node eslint.config.js",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "analyze": "knip && madge --circular vibestack packages apps && jscpd .",
     "quick": "node vibestack/spec.ts tasks typecheck test //#lint:js //#lint:css",
@@ -121,6 +121,7 @@
     "./stories/storybook": "./vibestack/stories/storybook.ts",
     "./design/eslint": "./vibestack/design/eslint.ts",
     "./design/project": "./vibestack/design/project.ts",
+    "./eslint": "./vibestack/eslint.ts",
     "./package.json": "./package.json",
     "./design/tokens": "./vibestack/design/tokens.ts"
   },
@@ -134,6 +135,7 @@
       "./stories/storybook": "./dist/stories/storybook.js",
       "./design/eslint": "./dist/design/eslint.js",
       "./design/project": "./dist/design/project.js",
+      "./eslint": "./dist/eslint.js",
       "./package.json": "./package.json",
       "./design/tokens": "./dist/design/tokens.js"
     }
